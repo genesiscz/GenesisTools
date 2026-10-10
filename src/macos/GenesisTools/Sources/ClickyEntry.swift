@@ -16,12 +16,24 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     private var terminating = false
     private var terminationReplied = false
 
-    init(descriptor: Int32, pageID: String?) {
+    private let snapshotPath: String?
+    private let headless: Bool
+    /// A `--snapshot` or `--headless` run: no Flow/Focus services, no status item, no Clicky, never on screen.
+    private var offscreen: Bool { snapshotPath != nil || headless }
+
+    init(descriptor: Int32, pageID: String?, snapshotPath: String? = nil, headless: Bool = false) {
         self.descriptor = descriptor
         self.initialPageID = pageID
+        self.snapshotPath = snapshotPath
+        self.headless = headless
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !offscreen { observeSettingsRequests() }
+        launch()
+    }
+
+    private func observeSettingsRequests() {
         observer = DistributedNotificationCenter.default().addObserver(
             forName: clickySettingsNotification, object: nil, queue: .main
         ) { [weak self] notification in
@@ -30,6 +42,9 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
                 ClickyHost.shared.showSettings(pageID: notification.userInfo?["page"] as? String)
             }
         }
+    }
+
+    private func launch() {
         let stateRoot = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
         let runtime: FlowFocusRuntime
         do { runtime = try NativeFlowRuntime.resolve(stateRoot: stateRoot) }
@@ -50,7 +65,7 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
             guard let transforms else { throw CancellationError() }
             return try await transforms.run(request)
         }
-        runtimeStart = Task { await runtime.start() }
+        if !offscreen { runtimeStart = Task { await runtime.start() } }
         for section in WidgetFeatureSettings.sections(
             model: model, modules: WidgetModuleChoice.builtins, flowRuntime: runtime, transforms: transforms,
             openSession: { session in
@@ -65,6 +80,15 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
             if patch["showWidget"] == .bool(true) { WidgetLaunch.ensureRunning() }
         }
         model.startSettings()
+        if let snapshotPath {
+            let delay = Double(snapshotArgument("--snapshot-delay") ?? "") ?? 2
+            ClickyHost.shared.snapshotSettings(pageID: initialPageID, to: snapshotPath, delay: delay)
+            return
+        }
+        if headless {
+            ClickyHost.shared.showSettingsHeadless(pageID: initialPageID)
+            return
+        }
 
         let menu = NSMenu()
         let root = NSMenuItem()
@@ -78,6 +102,12 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menu
         ClickyHost.shared.start(standalone: true)
         ClickyHost.shared.showSettings(pageID: initialPageID)
+    }
+
+    private func snapshotArgument(_ flag: String) -> String? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: flag), args.indices.contains(index + 1) else { return nil }
+        return args[index + 1]
     }
 
     @objc private func showSettings() { ClickyHost.shared.showSettings() }
@@ -120,6 +150,20 @@ func runClicky(_ args: [String] = []) -> Never {
     MainActor.assumeIsolated {
         let pageID = args.firstIndex(of: "--page").flatMap { index in
             args.indices.contains(index + 1) ? args[index + 1] : nil
+        }
+        let snapshotPath = args.firstIndex(of: "--snapshot").flatMap { index in
+            args.indices.contains(index + 1) ? args[index + 1] : nil
+        }
+        let headless = args.contains("--headless")
+        if snapshotPath != nil || headless {
+            let app = NSApplication.shared
+            let delegate = ClickyAppDelegate(
+                descriptor: -1, pageID: pageID, snapshotPath: snapshotPath, headless: headless)
+            app.delegate = delegate
+            app.setActivationPolicy(.prohibited)
+            app.run()
+            withExtendedLifetime(delegate) {}
+            exit(0)
         }
         let root = NativePreview.root
         do {

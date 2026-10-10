@@ -324,6 +324,31 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    func testDeletingActivityFromAClientSettingsWindowRunsInTheOwnersLedger() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        do {
+            XCTAssertEqual(client.role, .client("test.owner"))
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let store = try XCTUnwrap(owner.focus.store)
+            let recent = try store.openSegment(ActivityStore.Segment(
+                startedMs: nowMs - 60_000, appBundle: "com.example.fixture", appName: "Fixture", windowTitle: "recent"))
+            try store.closeSegment(id: recent, at: nowMs - 30_000)
+            let result = try await client.focus.forgetActivity(from: Date().addingTimeInterval(-3_600),
+                                                               to: Date().addingTimeInterval(1))
+            XCTAssertEqual(result.segments, 1)
+            XCTAssertTrue(try store.segments(from: 0, to: nowMs + 1).isEmpty)
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)
@@ -365,7 +390,7 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.start()
         await client.start()
         do {
-            FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
+            await FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
             try await waitUntil {
                 (owner.configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String == "@account/work:fixture-model"
             }
@@ -376,6 +401,43 @@ final class FlowFocusRuntimeTests: XCTestCase {
             } catch {
                 XCTAssertFalse(error.localizedDescription.isEmpty)
             }
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
+    func testAShortcutRecorderInAClientSuspendsTheOwnersLiveShortcutUntilItStops() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.hotkey-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.hotkey-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        do {
+            owner.flow.preRollEffect = { _ in }
+            owner.flow.config.showPill = false
+            // F19 alone: a chord nobody uses, so the test never takes the shortcut of the person running it.
+            owner.flow.config.keyCode = 0x50
+            owner.flow.config.modifiers = 0
+            owner.flow.hotkeySuspensionLimit = .milliseconds(400)
+            owner.flow.start()
+
+            client.flow.suspendHotkey(true)
+            try await waitUntil { owner.flow.hotkeySuspended }
+            XCTAssertFalse(client.flow.hotkeySuspended, "the client only asks; the owner holds the shortcut")
+            client.flow.suspendHotkey(false)
+            try await waitUntil { !owner.flow.hotkeySuspended }
+
+            owner.flow.suspendHotkey(true)
+            try await waitUntil { !owner.flow.hotkeySuspended }
+            // The live Carbon registration: a headless runner refuses it (CompanionHotKeyTests skips the same way).
+            try XCTSkipUnless(owner.flow.hotkeyRegistered, "Carbon refused registration (headless test runner)")
+            owner.flow.suspendHotkey(true)
+            XCTAssertFalse(owner.flow.hotkeyRegistered, "a suspended shortcut is not registered, so the recorder sees it")
+            owner.flow.suspendHotkey(false)
+            XCTAssertTrue(owner.flow.hotkeyRegistered)
         } catch {
             await client.stop()
             await owner.stop()

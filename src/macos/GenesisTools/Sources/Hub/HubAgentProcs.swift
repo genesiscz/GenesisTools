@@ -130,7 +130,7 @@ struct ProcStopOutcome: Decodable {
 
 enum ProcsFormat {
     static func memory(_ kb: Double) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(kb * 1024), countStyle: .memory)
+        ByteFormat.memory(Int64(kb * 1024))
     }
 
     /// `42m`, `5h 10m`, `6d 1h`: the same words as `tools hub procs`.
@@ -214,6 +214,9 @@ final class AgentProcsStore: ObservableObject {
     /// Runs while the pane is on screen; SwiftUI cancels the `.task` that calls it when the pane goes.
     func poll() async {
         while !Task.isCancelled {
+            // A pane behind other windows asks nothing (Hub/HubVisibility.swift).
+            await HubVisibility.shared.untilVisible()
+            guard !Task.isCancelled else { return }
             await refresh()
             try? await Task.sleep(nanoseconds: AgentProcs.refreshSeconds * 1_000_000_000)
         }

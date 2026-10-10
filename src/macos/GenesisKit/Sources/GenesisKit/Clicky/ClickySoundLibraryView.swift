@@ -50,16 +50,18 @@ struct ClickySoundLibraryView: View {
                     Text(search.isEmpty ? "No available sounds. Reconnect the library folder and refresh." : "No sounds match this search.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                DisclosureGroup("Manage folders") {
-                    ForEach(library.records) { record in
-                        HStack {
-                            Label(record.displayName, systemImage: "folder")
-                            Spacer()
-                            Button("Remove") { model.removeSoundLibrary(record.id) }
-                                .help("Remove the library from Clicky. Files are kept.")
-                        }.font(.system(size: 11)).padding(.vertical, 4)
+                NativeSettingsDisclosure("Manage folders", identifier: "clicky.library.folders") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(library.records) { record in
+                            HStack {
+                                Label(record.displayName, systemImage: "folder")
+                                Spacer()
+                                Button("Remove") { model.removeSoundLibrary(record.id) }
+                                    .instantTooltip("Remove the library from Clicky. Its files stay on disk.")
+                            }.font(.system(size: 11)).padding(.vertical, 4)
+                        }
                     }
-                }.font(.system(size: 12))
+                }
             } else {
                 Label("Choose an audio folder with a registry.json file. Nothing is downloaded automatically.", systemImage: "folder.badge.plus")
                     .font(.system(size: 11)).foregroundStyle(.secondary)

@@ -380,6 +380,8 @@ final class PRsModel: ObservableObject {
                 apply(list, key: key, flash: false)
                 showingCache = true
                 HubSWR.painted("prs.list", "\(list.prs.count) prs")
+                // The rows' and the header's readiness badges from disk too, not after the fresh list.
+                PRReadinessStore.shared.paintCached()
                 if wanted == nil, selectedID == nil || selected == nil, let first = prs.first(where: { $0.isMine == true }) ?? prs.first {
                     select(first)
                 }
@@ -1216,52 +1218,64 @@ struct PRListView: View {
                 NoticePill(text: error, isError: true) { prs.dismissError(error) }
                     .padding(.horizontal, 10)
             }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                    if prs.prs.isEmpty, prs.loading {
-                        SkeletonRows(count: 10, leading: .dot)
-                            .skeletonShimmer()
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Loading PRs and MRs")
-                    }
-                    ForEach(groups, id: \.project) { group in
-                        Section {
-                            if !prefs.collapsed.contains(group.project) {
-                                ForEach(group.rows) { pr in
-                                    row(pr)
-                                        .transition(SWR.rowTransition)
-                                }
-                                if prs.fullProjects.contains(group.project) {
-                                    let busy = prs.projectLoading.contains(group.project)
-                                    GhostButton(
-                                        busy ? "Loading…" : "Load \(PRsModel.pageSize) more",
-                                        symbol: "arrow.down.circle",
-                                        tooltip: "Ask \(group.repo) for \(PRsModel.pageSize) more PRs/MRs",
-                                        fullWidth: true
-                                    ) {
-                                        prs.loadMore(project: group.project)
-                                    }
-                                    .disabled(busy)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                }
-                            }
-                        } header: {
-                            GroupHeader(
-                                title: group.repo,
-                                count: group.rows.count,
-                                prefs: prefs,
-                                allNames: groups.map(\.project),
-                                path: group.rows.first?.repoRoot,
-                                key: group.project,
-                                starred: true,
-                                remove: prs.isRemovable(group.project) ? { prs.removeProject(group.project) } : nil
-                            )
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                        if prs.prs.isEmpty, prs.loading {
+                            SkeletonRows(count: 10, leading: .dot)
+                                .skeletonShimmer()
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Loading PRs and MRs")
                         }
+                        ForEach(groups, id: \.project) { group in
+                            Section {
+                                if !prefs.collapsed.contains(group.project) {
+                                    ForEach(group.rows) { pr in
+                                        row(pr)
+                                            .id(pr.id)
+                                            .transition(SWR.rowTransition)
+                                    }
+                                    if prs.fullProjects.contains(group.project) {
+                                        let busy = prs.projectLoading.contains(group.project)
+                                        GhostButton(
+                                            busy ? "Loading…" : "Load \(PRsModel.pageSize) more",
+                                            symbol: "arrow.down.circle",
+                                            tooltip: "Ask \(group.repo) for \(PRsModel.pageSize) more PRs/MRs",
+                                            fullWidth: true
+                                        ) {
+                                            prs.loadMore(project: group.project)
+                                        }
+                                        .disabled(busy)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                            } header: {
+                                GroupHeader(
+                                    title: group.repo,
+                                    count: group.rows.count,
+                                    prefs: prefs,
+                                    allNames: groups.map(\.project),
+                                    path: group.rows.first?.repoRoot,
+                                    key: group.project,
+                                    starred: true,
+                                    remove: prs.isRemovable(group.project) ? { prs.removeProject(group.project) } : nil,
+                                    // A full page came back: there are more on the forge than the list holds.
+                                    more: prs.fullProjects.contains(group.project)
+                                )
+                            }
+                        }
+                        moreProjects(shown: Set(groups.map(\.project)))
                     }
-                    moreProjects(shown: Set(groups.map(\.project)))
+                    .padding(.bottom, 12)
                 }
-                .padding(.bottom, 12)
+                .modifier(SidebarReveal(
+                    proxy: proxy,
+                    selection: prs.selectedID,
+                    group: groups.first { $0.rows.contains { $0.id == prs.selectedID } }?.project,
+                    loaded: !prs.prs.isEmpty,
+                    prefs: prefs
+                ))
             }
         }
         // The list's own layout width: a sidebar drag that re-lays it out per step flips this per step.
@@ -1735,7 +1749,7 @@ struct PRDetailView: View {
                     let filesURL = detail.webUrls?.files.flatMap(URL.init(string:))
                     if let files = detail.changedFiles {
                         ExternalLink(
-                            text: "\(files) files",
+                            text: Plural.count(files, "file"),
                             url: filesURL,
                             font: .system(size: 11.5),
                             glyph: .onHover,
@@ -1909,8 +1923,9 @@ struct PRDetailView: View {
                         }
                     } else {
                         PRSection(title: "Commits", count: commits.count, folded: $foldCommits, flat: true) {
+                            let authors = PRCommitRow.showsAuthors(commits)
                             ForEach(commits.reversed()) { commit in
-                                PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false) {
+                                PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
                                     if let url = pr.commitURL(commit.sha) { ExternalOpener.open(url) }
                                 }
                             }
@@ -1949,7 +1964,9 @@ struct PRDetailView: View {
             let markdown = linkedDescription(body)
             rows.append(PanelFindRow(id: Self.descriptionID, fields: [PanelFindField("desc", markdown, markdown: true)], container: Self.descriptionSectionID))
         }
-        rows += (detail?.commits ?? []).reversed().map(PRCommitRow.searchable)
+        let commits = detail?.commits ?? []
+        let authors = PRCommitRow.showsAuthors(commits)
+        rows += commits.reversed().map { PRCommitRow.searchable($0, showsAuthor: authors) }
         rows += PRChecksSection.sorted(detail?.checks ?? []).map { check in
             PanelFindRow(id: "check:\(check.id)", fields: [PanelFindField("link", check.name)], container: Self.checksID)
         }
@@ -2078,8 +2095,9 @@ struct PRCommitsSection: View {
                 .font(.system(size: 11.5))
                 .instantTooltip("Show the whole \(pr.isGitLab ? "MR" : "PR") in the diff again")
         )) {
+            let authors = PRCommitRow.showsAuthors(commits)
             ForEach(commits.reversed()) { commit in
-                PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown, inApp: true) {
+                PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown, inApp: true, showsAuthor: authors) {
                     if prs.showCommit(commit) { revealDiff() }
                 }
             }
@@ -2094,7 +2112,15 @@ struct PRCommitRow: View {
     let commit: HubPRDetail.Commit
     let selected: Bool
     let inApp: Bool
+    /// Off when every commit has one author: the same name on each row took the room the subject needed
+    /// ("fix(widget): the roster cac…" beside the same login twenty times, H16).
+    var showsAuthor = true
     let action: () -> Void
+
+    /// More than one author among the commits: only then does a row name its author.
+    static func showsAuthors(_ commits: [HubPRDetail.Commit]) -> Bool {
+        Set(commits.compactMap(\.author)).count > 1
+    }
 
     var body: some View {
         let hostURL = pr.commitURL(commit.sha)
@@ -2103,11 +2129,13 @@ struct PRCommitRow: View {
                 FindText(String(commit.sha.prefix(8)), field: "sha")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(selected ? Color(red: 0.62, green: 0.78, blue: 1) : ReviewPalette.dim)
+                    .fixedSize()
                 FindText(commit.title, field: "title")
                     .font(.system(size: 12))
                     .foregroundColor(Color.white.opacity(0.9))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .layoutPriority(1)
                 if commit.body != nil {
                     Image(systemName: "text.alignleft")
                         .font(.system(size: 9))
@@ -2115,10 +2143,10 @@ struct PRCommitRow: View {
                         .accessibilityHidden(true)
                 }
                 Spacer(minLength: 6)
-                if let author = commit.author {
+                if showsAuthor, let author = commit.author {
                     FindText(author, field: "author").font(.system(size: 11)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                 }
-                LiveAgo(date: commit.when)
+                LiveAgo(date: commit.when, style: .brief)
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()
@@ -2150,11 +2178,11 @@ struct PRCommitRow: View {
     }
 
     /// What ⌘F searches in a commit row, under the keys its FindTexts use.
-    static func searchable(_ commit: HubPRDetail.Commit) -> PanelFindRow {
+    static func searchable(_ commit: HubPRDetail.Commit, showsAuthor: Bool = true) -> PanelFindRow {
         PanelFindRow(id: commit.sha, fields: [
             PanelFindField("sha", String(commit.sha.prefix(8))),
             PanelFindField("title", commit.title),
-            PanelFindField("author", commit.author ?? ""),
+            PanelFindField("author", showsAuthor ? commit.author ?? "" : ""),
         ])
     }
 

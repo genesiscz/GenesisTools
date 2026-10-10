@@ -32,12 +32,20 @@ public struct NativeSettingsDisclosure<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .nativeSettingsPointer()
             .accessibilityIdentifier(identifier)
             .accessibilityLabel(title)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             if expanded { content.padding(.top, 8) }
         }
     }
+}
+
+extension View {
+    /// The pointing-hand cursor over a clickable settings control, so a row, a recorder or a text-like button reads as
+    /// clickable before it is pressed. The shared `pointerCursor()`, which also resets the cursor when the control
+    /// disappears under the pointer.
+    public func nativeSettingsPointer() -> some View { pointerCursor() }
 }
 
 public struct NativeSettingsNumberPicker: View {

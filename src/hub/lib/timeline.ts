@@ -12,9 +12,10 @@ import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { startOfDay } from "@genesiscz/utils/date";
 import { type CommandRunner, spawnRunner } from "@genesiscz/utils/git/origins";
-import { LOG_FORMAT, parseLogZ } from "@genesiscz/utils/git/porcelain";
+import { type CommitInfo, LOG_FORMAT_WITH_SOURCE, parseLogZ } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached, capMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import type { NotifyItem } from "./notify";
@@ -23,6 +24,7 @@ import type { ThreadsResult } from "./pr";
 import { type HubPr, hubPrs } from "./prs";
 
 const log = logger.child({ component: "hub/timeline" });
+const prof = profiler.scope("hub-timeline");
 
 /**
  * Activity in one feed: sessions (start, last turn), commits, pushes, PR events, review comments,
@@ -85,6 +87,22 @@ export interface TimelineEvent {
     threadId?: string;
     path?: string;
     line?: number;
+    /** A commit row that stands for its copies on other branches (cherry-picked or rebased): those copies. */
+    alsoOn?: TimelineCopy[];
+}
+
+/** One folded copy of a commit: its sha and the branch the log reached it by (null when no branch did). */
+export interface TimelineCopy {
+    sha: string;
+    branch: string | null;
+}
+
+/** What `foldCopies` needs to know about the candidate commits of one repository. */
+export interface CommitCopyFacts {
+    /** `git patch-id --stable` by sha; a merge or an empty commit has none. */
+    patchIds: ReadonlyMap<string, string>;
+    /** The candidates the checked-out branch (the main checkout's HEAD) holds. */
+    onHead: ReadonlySet<string>;
 }
 
 export interface TimelineResult {
@@ -108,6 +126,9 @@ export interface TimelineResult {
 
 /** Hard bounds: a busy day still answers in about a second, and a page never exceeds `pageMax`. */
 export const TIMELINE_LIMITS = { repos: 25, pageDefault: 300, pageMax: 1000, prsPerProject: 30, prsInRange: 100 };
+
+/** A page that ends this close to "now" is the live page (its cache key and its 1-minute cap). */
+const TIMELINE_LIVE_SLACK_MS = 15_000;
 
 export const TIMELINE_RANGE_PRESETS = ["hour", "24h", "today", "yesterday", "7d", "30d"] as const;
 export type TimelineRangePreset = (typeof TIMELINE_RANGE_PRESETS)[number];
@@ -148,8 +169,8 @@ export interface TimelineDeps {
     lastBranch: (path: string) => string | null;
     repoOf: (cwd: string) => Promise<RepoRef | null>;
     /**
-     * `git log -z LOG_FORMAT` output of the window's commits on every ref (newest `limit`; only the
-     * checkout user's when `author` is "me"), and the checkout's user email.
+     * `git log -z LOG_FORMAT_WITH_SOURCE` output of the window's commits on every ref (newest `limit`;
+     * only the checkout user's when `author` is "me"), and the checkout's user email.
      */
     commits: (
         repo: RepoRef,
@@ -157,6 +178,11 @@ export interface TimelineDeps {
         limit: number,
         author: TimelineAuthor
     ) => Promise<{ log: string; email: string }>;
+    /**
+     * For commits that may be copies of one another (`copyCandidates`): their patch-ids (one batched
+     * `diff-tree | patch-id` for the shas not cached yet) and which of them the checked-out branch holds.
+     */
+    commitCopies: (repo: RepoRef, shas: string[], window: TimelineWindow) => Promise<CommitCopyFacts>;
     /** The raw lines of every remote-tracking reflog, with the branch each belongs to. */
     remoteLogs: (repo: RepoRef) => Array<{ branch: string; lines: string[] }>;
     /**
@@ -563,6 +589,231 @@ function ciEvents(
     return events;
 }
 
+/** A commit as git read it, with the row made of it. */
+interface CommitRow {
+    commit: CommitInfo;
+    event: TimelineEvent;
+}
+
+/** Cherry-pick and rebase keep the author, the author time and the subject; a conflict changes only the patch. */
+function changeKey(commit: CommitInfo): string {
+    return `${commit.author.email.toLowerCase()}\0${commit.author.epoch}\0${commit.subject}`;
+}
+
+function countBy<T>(items: readonly T[], key: (item: T) => string): Map<string, number> {
+    const counts = new Map<string, number>();
+
+    for (const item of items) {
+        const found = key(item);
+        counts.set(found, (counts.get(found) ?? 0) + 1);
+    }
+
+    return counts;
+}
+
+function authoredKey(commit: CommitInfo): string {
+    return `${commit.author.email.toLowerCase()}\0${commit.author.epoch}`;
+}
+
+/**
+ * The commits of a page that may be copies of one another: they share a subject, or an author and author
+ * time (a pick reworded on the way keeps those). Only these get a patch-id, so a page with neither repeated
+ * costs no extra git run.
+ */
+export function copyCandidates(commits: readonly CommitInfo[]): string[] {
+    const bySubject = countBy(commits, (commit) => commit.subject);
+    const byAuthored = countBy(commits, authoredKey);
+    return commits
+        .filter((commit) => (bySubject.get(commit.subject) ?? 0) > 1 || (byAuthored.get(authoredKey(commit)) ?? 0) > 1)
+        .map((commit) => commit.sha);
+}
+
+/** `refs/heads/feat/x` → `feat/x`, `refs/remotes/origin/x` → `origin/x`, a tag → its name; HEAD or nothing → null. */
+export function branchOfRef(ref: string | undefined): string | null {
+    if (!ref || ref === "HEAD") {
+        return null;
+    }
+
+    return ref.replace(/^refs\/(heads|remotes|tags)\//, "");
+}
+
+/** "also on polish/hub-ui", "also on a, b", "also on a, b +2"; a copy no branch reaches shows its sha. */
+function alsoOnLabel(copies: readonly TimelineCopy[]): string {
+    const names = [...new Set(copies.map((copy) => copy.branch ?? short(copy.sha)))];
+    const shown = names.slice(0, 2).join(", ");
+    return `also on ${shown}${names.length > 2 ? ` +${names.length - 2}` : ""}`;
+}
+
+/**
+ * One row per change, not one per branch it landed on (2026-10-10: every cherry-picked commit of the campaign
+ * showed twice or three times). Commits are copies when their patch-ids are equal, or when they share the
+ * author, author time and subject: cherry-pick and rebase keep those, and a conflict resolved on the way
+ * changes the patch (the fix(hub) commit picked onto feat/agents-comms-polish differs in one file).
+ *
+ * The row that stays is the copy the checked-out branch holds, the newest of them; with none there, the newest
+ * copy, the latest landing. It lists the others in `alsoOn` and its detail. Two copies on the checked-out
+ * branch (a change applied twice on one history) both stay. Newest first in, newest first out.
+ */
+export function foldCopies(rows: readonly CommitRow[], facts: CommitCopyFacts): TimelineEvent[] {
+    const parent = new Map<string, string>();
+    const find = (sha: string): string => {
+        let root = sha;
+
+        while (parent.get(root) !== root) {
+            root = parent.get(root) ?? root;
+        }
+
+        parent.set(sha, root);
+        return root;
+    };
+    const firstByKey = new Map<string, string>();
+    const join = (key: string, sha: string) => {
+        const first = firstByKey.get(key);
+
+        if (first === undefined) {
+            firstByKey.set(key, sha);
+        } else {
+            parent.set(find(sha), find(first));
+        }
+    };
+
+    for (const { commit } of rows) {
+        parent.set(commit.sha, commit.sha);
+    }
+
+    for (const { commit } of rows) {
+        join(`change\0${changeKey(commit)}`, commit.sha);
+        const patchId = facts.patchIds.get(commit.sha);
+
+        if (patchId) {
+            join(`patch\0${patchId}`, commit.sha);
+        }
+    }
+
+    const groups = new Map<string, CommitRow[]>();
+
+    for (const row of rows) {
+        const root = find(row.commit.sha);
+        groups.set(root, [...(groups.get(root) ?? []), row]);
+    }
+
+    const dropped = new Set<string>();
+
+    for (const copies of groups.values()) {
+        if (copies.length < 2) {
+            continue;
+        }
+
+        const newest = [...copies].sort((a, b) => b.commit.committer.epoch - a.commit.committer.epoch);
+        const keep = newest.find((row) => facts.onHead.has(row.commit.sha)) ?? newest[0];
+        const folded = newest.filter((row) => row !== keep && !facts.onHead.has(row.commit.sha));
+
+        if (folded.length === 0) {
+            continue;
+        }
+
+        keep.event.alsoOn = folded.map((row) => ({ sha: row.commit.sha, branch: branchOfRef(row.commit.source) }));
+        keep.event.detail = `${short(keep.commit.sha)} · ${alsoOnLabel(keep.event.alsoOn)}`;
+
+        for (const row of folded) {
+            dropped.add(row.commit.sha);
+        }
+    }
+
+    return rows.filter((row) => !dropped.has(row.commit.sha)).map((row) => row.event);
+}
+
+/** A sha's patch-id never changes; the file only ages out when no page wrote it for a year. */
+const PATCH_ID_TTL = "365 days";
+
+/** Patch-ids never change for a sha: the hub keeps them in one file, bounded to the newest `limit` entries. */
+export async function cachedPatchIds({
+    repo,
+    shas,
+    storage,
+    compute,
+    limit = 5_000,
+}: {
+    /** One file per repository (its common dir): four repositories read at once never write one file. */
+    repo: string;
+    shas: readonly string[];
+    storage: Storage;
+    compute: (missing: string[]) => Promise<Map<string, string>>;
+    limit?: number;
+}): Promise<{ patchIds: Map<string, string>; computed: number }> {
+    const key = `timeline/patch-ids-${createHash("sha1").update(repo).digest("hex").slice(0, 12)}.json`;
+    const known = (await storage.getCacheFile<Record<string, string>>(key, PATCH_ID_TTL)) ?? {};
+    const missing = shas.filter((sha) => !(sha in known));
+
+    if (missing.length > 0) {
+        const found = await compute(missing);
+
+        // A sha with no patch (a merge, an empty commit) is kept as "", so it is not asked again.
+        for (const sha of missing) {
+            known[sha] = found.get(sha) ?? "";
+        }
+
+        const entries = Object.entries(known);
+        await storage.putCacheFile(
+            key,
+            Object.fromEntries(entries.slice(Math.max(0, entries.length - limit))),
+            PATCH_ID_TTL
+        );
+    }
+
+    const patchIds = new Map<string, string>();
+
+    for (const sha of shas) {
+        if (known[sha]) {
+            patchIds.set(sha, known[sha]);
+        }
+    }
+
+    return { patchIds, computed: missing.length };
+}
+
+/** `git diff-tree --stdin -p | git patch-id --stable` over `shas` (full ids), in one pipeline. */
+export async function patchIdsOf(cwd: string, shas: readonly string[]): Promise<Map<string, string>> {
+    const diff = Bun.spawn(["git", "diff-tree", "--stdin", "-p", "--no-color"], {
+        cwd,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+    });
+    diff.stdin.write(`${shas.join("\n")}\n`);
+    diff.stdin.end();
+    const patch = Bun.spawn(["git", "patch-id", "--stable"], {
+        cwd,
+        stdin: diff.stdout,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+    });
+    const [out, diffCode, patchCode] = await Promise.all([
+        new Response(patch.stdout).text(),
+        diff.exited,
+        patch.exited,
+    ]);
+
+    if (diffCode !== 0 || patchCode !== 0) {
+        const stderr = (await new Response(diff.stderr).text()) + (await new Response(patch.stderr).text());
+        throw new Error(`git patch-id exited ${diffCode}/${patchCode}: ${stderr.trim().slice(0, 200)}`);
+    }
+
+    const found = new Map<string, string>();
+
+    for (const line of out.split("\n")) {
+        const [patchId, sha] = line.trim().split(" ");
+
+        if (patchId && sha) {
+            found.set(sha, patchId);
+        }
+    }
+
+    return found;
+}
+
 async function repoEvents(
     repo: RepoRef,
     window: TimelineWindow,
@@ -571,28 +822,47 @@ async function repoEvents(
     deps: TimelineDeps
 ): Promise<SourceEvents[]> {
     const project = basename(repo.root);
-    const { log: text, email } = await deps.commits(repo, window, limit, filters.author ?? "all");
+    const { log: text, email } = await prof.measureAsync(`repo.commits ${project}`, () =>
+        deps.commits(repo, window, limit, filters.author ?? "all")
+    );
     const me = email.trim().toLowerCase();
-    const commits: TimelineEvent[] = [];
+    const read: CommitRow[] = [];
 
-    for (const commit of parseLogZ(text)) {
+    for (const commit of parseLogZ(text, { withSource: true })) {
         if (!inWindow(commit.committer.epoch * 1000, window)) {
             continue;
         }
 
-        commits.push({
-            id: `commit:${commit.sha}`,
-            kind: "commit",
-            at: iso(commit.committer.epoch * 1000),
-            title: commit.subject,
-            detail: short(commit.sha),
-            project,
-            repo: repo.root,
-            sha: commit.sha,
-            author: commit.author.name,
-            ...(me ? { mine: commit.author.email.toLowerCase() === me } : {}),
+        read.push({
+            commit,
+            event: {
+                id: `commit:${commit.sha}`,
+                kind: "commit",
+                at: iso(commit.committer.epoch * 1000),
+                title: commit.subject,
+                detail: short(commit.sha),
+                project,
+                repo: repo.root,
+                sha: commit.sha,
+                author: commit.author.name,
+                ...(me ? { mine: commit.author.email.toLowerCase() === me } : {}),
+            },
         });
     }
+
+    const candidates = copyCandidates(read.map((row) => row.commit));
+    // The checked-out branch is read only across the candidates' own times, not the whole range.
+    const times = read.filter((row) => candidates.includes(row.commit.sha)).map((row) => row.commit.committer.epoch);
+    const span: TimelineWindow = {
+        since: new Date(Math.min(...times) * 1000),
+        upper: new Date((Math.max(...times) + 1) * 1000),
+    };
+    const commits =
+        candidates.length === 0
+            ? read.map((row) => row.event)
+            : await prof.measureAsync(`fold ${project} ${candidates.length} candidates`, async () =>
+                  foldCopies(read, await deps.commitCopies(repo, candidates, span))
+              );
 
     const pushes: TimelineEvent[] = [];
 
@@ -616,14 +886,16 @@ async function repoEvents(
         }
     }
 
-    // git already cut the log at `limit`: a full page of commits means older ones exist in the window.
+    // git already cut the log at `limit`: a full page of commits means older ones exist in the window. Both
+    // follow what git read, before the fold: the page ends where the read stopped.
     commits.sort((a, b) => b.at.localeCompare(a.at));
+    const oldestRead = read.map((row) => row.event.at).sort()[0] ?? null;
     return [
         {
             name: `${project} commits`,
             events: commits.filter((event) => keepsEvent(event, filters)),
-            truncated: commits.length >= limit,
-            oldestAt: commits.at(-1)?.at ?? null,
+            truncated: read.length >= limit,
+            oldestAt: oldestRead,
         },
         bounded(`${project} pushes`, pushes, limit, filters),
     ];
@@ -809,6 +1081,42 @@ export async function collectTimeline({
 }
 
 // MARK: - Real sources
+
+/**
+ * The window's commits on every branch and remote: `--all` without `refs/stash`, whose "WIP on …" and
+ * "index on …" commits are a stash's bookkeeping, not work (a `git stash` showed as two commits, 2026-10-10).
+ */
+export function timelineLogArgs({
+    window,
+    limit,
+    author,
+    email,
+}: {
+    window: TimelineWindow;
+    limit: number;
+    author: TimelineAuthor;
+    email: string;
+}): string[] {
+    const args = [
+        "log",
+        "-z",
+        // `%S`: the ref each commit was reached by, the branch a folded copy names ("also on …").
+        LOG_FORMAT_WITH_SOURCE,
+        // Before `--all`: an exclusion applies to the next `--all`, `--branches` or `--glob` only.
+        "--exclude=refs/stash",
+        "--all",
+        `--since=${window.since.toISOString()}`,
+        `--until=${window.upper.toISOString()}`,
+        `-${limit}`,
+    ];
+
+    // "others" cannot be asked of git without PCRE, so it is filtered after the read.
+    if (author === "me" && email) {
+        args.push(`--author=${email}`);
+    }
+
+    return args;
+}
 
 export async function git(args: string[], cwd: string, runner: CommandRunner = spawnRunner): Promise<string> {
     const result = await runner(["git", ...args], { cwd, timeoutMs: 15_000 });
@@ -1005,22 +1313,34 @@ export const realTimelineDeps: TimelineDeps = {
     },
     commits: async (repo, window, limit, author) => {
         const email = (await git(["config", "user.email"], repo.root).catch(() => "")).trim();
-        const args = [
-            "log",
-            "-z",
-            LOG_FORMAT,
-            "--all",
-            `--since=${window.since.toISOString()}`,
-            `--until=${window.upper.toISOString()}`,
-            `-${limit}`,
-        ];
-
-        // "others" cannot be asked of git without PCRE, so it is filtered after the read.
-        if (author === "me" && email) {
-            args.push(`--author=${email}`);
-        }
-
-        return { log: await git(args, repo.root), email };
+        return { log: await git(timelineLogArgs({ window, limit, author, email }), repo.root), email };
+    },
+    commitCopies: async (repo, shas, window) => {
+        const { patchIds, computed } = await cachedPatchIds({
+            repo: repo.commonDir,
+            shas,
+            storage: hubStorage(),
+            compute: (missing) =>
+                prof.measureAsync(`fold.patch-ids ${basename(repo.root)} ${missing.length}`, () =>
+                    patchIdsOf(repo.root, missing)
+                ),
+        });
+        // The main checkout's branch in the window: the copy it holds is the row that stays.
+        const onHead = await prof.measureAsync(`fold.head ${basename(repo.root)}`, () =>
+            git(
+                ["rev-list", `--since=${window.since.toISOString()}`, `--until=${window.upper.toISOString()}`, "HEAD"],
+                repo.root
+            ).catch((error) => {
+                log.debug({ error, repo: repo.root }, "timeline: no HEAD to prefer copies on");
+                return "";
+            })
+        );
+        const wanted = new Set(shas);
+        log.debug({ repo: repo.root, candidates: shas.length, computed }, "timeline: commit copies");
+        return {
+            patchIds,
+            onHead: new Set(onHead.split("\n").filter((sha) => wanted.has(sha))),
+        };
     },
     remoteLogs: (repo) => {
         const dir = join(repo.commonDir, "logs", "refs", "remotes");
@@ -1071,7 +1391,10 @@ export async function buildTimeline({
     const size = Math.min(TIMELINE_LIMITS.pageMax, Math.max(1, Math.floor(limit)));
     const end = until ?? now;
     const upper = before && before < end ? before : end;
-    const live = upper.getTime() >= now.getTime() - 1_000;
+    // The caller sets `--until` to its own clock and then starts this process: under load Bun's startup alone
+    // took more than a second, the page read as an old one keyed by its exact end, never hit, and left one cache
+    // file per call (272 in the hub's cache folder, 2026-10-10).
+    const live = upper.getTime() >= now.getTime() - TIMELINE_LIVE_SLACK_MS;
     const shape = [
         filters.author ?? "all",
         filters.needsMe ? "needs-me" : "",
@@ -1086,17 +1409,19 @@ export async function buildTimeline({
         key,
         maxAgeSeconds: capMaxCacheAge(maxCacheAgeSeconds, live ? 60 : 600),
         fetch: async () => ({
-            ...(await collectTimeline({
-                since,
-                until: end,
-                before,
-                limit: size,
-                filters,
-                now,
-                prs,
-                prsMaxCacheAgeSeconds: maxCacheAgeSeconds,
-                deps,
-            })),
+            ...(await prof.measureAsync(`collect ${size}`, () =>
+                collectTimeline({
+                    since,
+                    until: end,
+                    before,
+                    limit: size,
+                    filters,
+                    now,
+                    prs,
+                    prsMaxCacheAgeSeconds: maxCacheAgeSeconds,
+                    deps,
+                })
+            )),
             elapsedMs: Math.round(performance.now() - started),
             cached: false,
         }),

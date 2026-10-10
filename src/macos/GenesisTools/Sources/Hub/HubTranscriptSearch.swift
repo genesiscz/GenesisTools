@@ -318,7 +318,7 @@ private struct HubSearchHitRow: View {
                         .foregroundColor(Color.white.opacity(0.9))
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    LiveAgo(date: hit.when) { ago in
+                    LiveAgo(date: hit.when, style: .brief) { ago in
                         [hit.project ?? (hit.cwd as NSString).lastPathComponent, ago].filter { !$0.isEmpty }.joined(separator: " · ")
                     }
                     .font(.system(size: 10.5))

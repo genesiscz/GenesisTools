@@ -156,26 +156,25 @@ public struct FeatureSettingsView: View {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 19, weight: .medium))
                     .foregroundStyle(.white.opacity(0.7))
                 Text(title).font(.system(size: 24, weight: .semibold, design: .rounded))
-            }.padding(.horizontal, 24).padding(.top, 28).padding(.bottom, 25)
+            }.padding(.horizontal, 24).padding(.top, 28).padding(.bottom, 16)
+            // The list scrolls under the header with a visible scroller and room after the last row, so the last
+            // page is never hidden behind a footer (it was: "Providers" sat half cut above one in a 760 pt window).
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 12) {
                     ForEach(store.sections) { section in
-                        VStack(alignment: .leading, spacing: 5) {
+                        VStack(alignment: .leading, spacing: 1) {
                             if !section.title.isEmpty {
                                 Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(
                                     .secondary
                                 )
-                                .padding(.horizontal, 12).padding(.bottom, 5)
+                                .padding(.horizontal, 10).padding(.bottom, 4)
                             }
                             ForEach(section.pages) { page in navigationRow(page) }
                         }
                     }
-                }.padding(.horizontal, 12).padding(.bottom, 20)
+                }.padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 16)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("GenesisTools").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                Text("Feature settings").font(.system(size: 10)).foregroundStyle(.tertiary)
-            }.padding(24)
+            .scrollIndicators(.automatic)
         }.frame(width: 238)
             .titlebarBackground(Color.white.opacity(0.025))
     }
@@ -189,16 +188,18 @@ public struct FeatureSettingsView: View {
                 withAnimation(.easeInOut(duration: 0.18)) { _ = store.select(pageID: page.id) }
             }
         } label: {
-            HStack(spacing: 11) {
-                NativeSettingsPageIcon(symbol: page.symbol, tint: page.tint)
+            HStack(spacing: 10) {
+                NativeSettingsPageIcon(symbol: page.symbol, tint: page.tint, size: 22)
                 Text(page.title).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
                 Spacer(minLength: 0)
-            }.padding(.horizontal, 11).padding(.vertical, 9).contentShape(Rectangle())
+            }.padding(.horizontal, 10).padding(.vertical, 5).contentShape(Rectangle())
         }.buttonStyle(.genHoverRow())
+            .nativeSettingsPointer()
             .background {
                 if selected {
-                    RoundedRectangle(cornerRadius: 13).fill(.white.opacity(0.09))
-                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(0.08), lineWidth: 0.5))
+                    RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.09))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.08), lineWidth: 0.5))
                         .matchedGeometryEffect(id: "settings.selection", in: navigation)
                 }
             }

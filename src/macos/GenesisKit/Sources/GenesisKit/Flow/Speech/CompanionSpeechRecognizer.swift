@@ -257,28 +257,26 @@ public final class CompanionSpeechRecognizer: ObservableObject {
 
     // MARK: - Permissions
 
+    // Through GenesisKit's permission module, so the denial simulation applies to dictation too.
+
     public nonisolated static func speechAuthorized() -> Bool {
-        SFSpeechRecognizer.authorizationStatus() == .authorized
+        PermissionAccess.live.isGranted(.speechRecognition)
     }
 
     public nonisolated static func speechAuthorizationDetermined() -> Bool {
-        SFSpeechRecognizer.authorizationStatus() != .notDetermined
+        PermissionAccess.live.status(.speechRecognition) != .notDetermined
     }
 
     public nonisolated static func requestSpeechAuthorization() async -> Bool {
-        await withCheckedContinuation { cont in
-            SFSpeechRecognizer.requestAuthorization { status in
-                cont.resume(returning: status == .authorized)
-            }
-        }
+        await PermissionAccess.live.request(.speechRecognition).isGranted
     }
 
     public nonisolated static func micAuthorized() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        PermissionAccess.live.isGranted(.microphone)
     }
 
     public nonisolated static func requestMicAuthorization() async -> Bool {
-        await AVCaptureDevice.requestAccess(for: .audio)
+        await PermissionAccess.live.request(.microphone).isGranted
     }
 
     /// `Locale.current.identifier` on macOS carries user preference subtags

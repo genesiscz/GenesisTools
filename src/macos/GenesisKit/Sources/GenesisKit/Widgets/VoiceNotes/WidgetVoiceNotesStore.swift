@@ -20,7 +20,6 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     @Published public private(set) var error: String?
     @Published public private(set) var receipt: String?
     @Published public private(set) var microphonePermission: VoiceMicrophonePermission
-    @Published public var presentsMicrophoneAlert = false
     @Published public var selectedID: String?
     @Published public var recipientKey = ""
     @Published private var drafts: [String: String] = [:]
@@ -38,7 +37,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private let readMicrophonePermission: () -> VoiceMicrophonePermission
     private let requestMicrophonePermission: () async throws -> VoiceMicrophonePermission
     private let activateForMicrophone: () -> Void
-    private let openMicrophoneSettingsAction: () -> Void
+    private let presentMicrophonePermission: @MainActor (PermissionNeed) -> Void
     private var operation: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var watcher: DirectoryWatcher?
@@ -77,16 +76,12 @@ public final class WidgetVoiceNotesStore: ObservableObject {
          readMicrophonePermission: @escaping () -> VoiceMicrophonePermission = { .current },
          requestMicrophonePermission: @escaping () async throws -> VoiceMicrophonePermission = { try await VoiceMicrophonePermission.request() },
          activateForMicrophone: @escaping () -> Void = { NSApp?.activate(ignoringOtherApps: true) },
-         openMicrophoneSettings: @escaping () -> Void = {
-             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                 NSWorkspace.shared.open(url)
-             }
-         }) {
+         presentMicrophonePermission: @escaping @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) }) {
         self.micLauncher = micLauncher
         self.readMicrophonePermission = readMicrophonePermission
         self.requestMicrophonePermission = requestMicrophonePermission
         self.activateForMicrophone = activateForMicrophone
-        openMicrophoneSettingsAction = openMicrophoneSettings
+        self.presentMicrophonePermission = presentMicrophonePermission
         microphonePermission = readMicrophonePermission()
         self.request = request
         self.execute = execute
@@ -167,8 +162,17 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         microphonePermission = readMicrophonePermission()
     }
 
-    public func openMicrophoneSettings() {
-        openMicrophoneSettingsAction()
+    /// The permission dialog for the microphone: it asks macOS while the grant is undetermined and otherwise
+    /// explains it and opens the Microphone pane.
+    public func reviewMicrophoneAccess() {
+        presentMicrophonePermission(microphoneNeed)
+    }
+
+    private var microphoneNeed: PermissionNeed {
+        PermissionNeed(
+            .microphone,
+            reason: "Voice Notes records a short clip from your microphone. It stays on this Mac until you choose Transcribe.",
+            onGranted: { [weak self] in self?.refreshMicrophonePermission() })
     }
 
     private func prepareMicrophone() async throws {
@@ -181,7 +185,6 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             try Task.checkCancellation()
         }
         guard microphonePermission == .authorized else {
-            presentsMicrophoneAlert = true
             throw VoiceCommandFailure.microphonePermission
         }
     }
@@ -339,7 +342,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private func report(_ error: Error) {
         if (error as? VoiceCommandFailure) == .microphonePermission {
             refreshMicrophonePermission()
-            presentsMicrophoneAlert = microphonePermission != .authorized
+            if microphonePermission != .authorized { presentMicrophonePermission(microphoneNeed) }
         }
         self.error = error.localizedDescription
         PerfLog.mark("widget.voice-notes \(error.localizedDescription)")

@@ -16,6 +16,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var stopped = false
     private var featureSettings: FeatureSettingsWindowController?
     private var panels: [WidgetSurfaceID: EdgePanelController<WidgetHostView>] = [:]
+    /// Screen center of each side rail, from the last `sync()`. Every layout pass of a rail reads it.
+    private var railCenters: [WidgetSurfaceID: CGFloat] = [:]
+    /// The window height of each surface when it is expanded, from the last `sync()`. A pane built ahead of the
+    /// expansion takes this height, so opening does not lay it out again.
+    private var expandedWindowHeights: [WidgetSurfaceID: CGFloat] = [:]
+    /// The Agents pane never fits below this, so a nearly empty inbox still reads as a panel.
+    static let minimumAgentHeight: CGFloat = 320
     private var display: NSScreen?
     private var lastLayout: WidgetLayoutConfiguration?
     private var settings: NSWindow?
@@ -30,6 +37,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// A launch that waits for the first snapshot, because only the snapshot says whether the widget is on.
     private var launchPending = false
     private var pendingSessionKey: String?
+    /// The surface a shelf capture started from; it reopens there when the image is staged.
+    private var captureReturn: WidgetSurfaceID?
     public var settingsPresenter: ((String) -> Void)?
     /// Orders one edge panel front. Tests replace it to prove a hidden widget never shows a panel.
     var orderFront: (EdgePanelController<WidgetHostView>) -> Void = { $0.show() }
@@ -63,7 +72,20 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             binaryPath: binaryPath, stateRoot: stateRoot,
             recipients: { [weak model] in model?.snapshot?.sessions ?? [] },
             didAttach: { [weak self] session in self?.showShelfDraft(for: session) },
-            onCaptureWillBegin: { [weak model] in model?.collapse() },
+            onCaptureWillBegin: { [weak self] in
+                guard let self else { return }
+                // Expanded, or the hover preview the Capture button was pressed in.
+                self.captureReturn = self.model.expanded.map {
+                    WidgetSurfaceID(edge: $0, group: $0 == .top ? 0 : self.model.activeSideGroup)
+                } ?? self.model.hoveredSurface
+                self.model.collapse()
+            },
+            onCaptureStaged: { [weak self] in
+                guard let self, let surface = self.captureReturn else { return }
+                self.captureReturn = nil
+                // The selection overlay is gone; show the new capture arriving in the shelf it was taken from.
+                if self.model.expanded == nil { self.model.openModule("capture", on: surface) }
+            },
             onDialogVisibilityChanged: { [weak self] visible in
                 guard let self else { return }
                 self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
@@ -85,7 +107,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             micLauncher: micLauncher ?? "", acquireAudio: { try await runtime.acquireExternalAudio() },
             settings: { [weak model] in
                 let preferences = model?.snapshot?.state.preferences
-                return WidgetVoiceNoteSettings(provider: preferences?.voiceProvider ?? "openai",
+                return WidgetVoiceNoteSettings(provider: preferences?.voiceProvider ?? "xai",
                     account: preferences?.voiceAccount, model: preferences?.voiceModel, language: preferences?.voiceLanguage)
             }, sessions: { [weak model] in model?.snapshot?.sessions ?? [] },
             attachDraft: { [weak self, weak model] session, note in
@@ -133,6 +155,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 }
             }
         model.presentationChanged = { [weak self] in self?.sync() }
+        model.pointerChanged = { [weak self] surface, inside in
+            guard let motion = self?.panels[surface]?.motion, motion.pointerInside != inside else { return }
+            motion.pointerInside = inside
+        }
         model.showSettings = { [weak self] in self?.showSettings() }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
     }
@@ -259,11 +285,27 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func compactRailCenter(for surface: WidgetSurfaceID) -> CGFloat? {
-        guard surface.edge != .top, let screen = display else { return nil }
-        let compact = compactSideAllocation()
-        guard let index = compact.surfaces.firstIndex(of: surface) else { return nil }
-        return WidgetClusterGeometry.centers(heights: compact.heights, position: model.sidePosition,
-            visible: screen.visibleFrame, gap: compact.gap)[index]
+        surface.edge == .top ? nil : railCenters[surface]
+    }
+
+    /// The expanded content height of a surface: the Agents pane fits its measured content up to the detail size
+    /// (W3); other modules keep their declared size.
+    private func expandedContentHeight(
+        _ surface: WidgetSurfaceID, module: WidgetModuleDescriptor?, visible: CGSize
+    ) -> CGFloat {
+        guard module?.id == "agents" else { return (module?.expandedSize.height ?? 440) + 40 }
+        let detail = WidgetClusterGeometry.detailSize(visible: visible).height
+        let fitted = min(detail, max(Self.minimumAgentHeight, model.agentFitHeight ?? detail))
+        let row = surface.edge == .top && moduleIDs(for: surface).count > 1 ? WidgetHostView.topModuleRowHeight : 0
+        return fitted + row
+    }
+
+    private func panelShape(_ surface: WidgetSurfaceID, _ presentation: WidgetModulePresentation) -> EdgePanelShape {
+        let preferences = model.snapshot?.state.preferences
+        return WidgetHostView.panelShape(
+            edge: surface.edge, presentation: presentation,
+            classic: surface.edge != .top && preferences?.sideStyle == "classic",
+            joined: preferences?.joinedEdges ?? true)
     }
 
     private func moduleIDs(for surface: WidgetSurfaceID) -> [String] {
@@ -294,11 +336,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             return
         }
         installPanelMonitors()
+        // "Main display" (an empty ID) is the display with the menu bar, as in System Settings. NSScreen.main is the
+        // display with keyboard focus, so it put the widget on whichever display the user worked on at launch.
         let requested = NSScreen.screens.first { Self.id($0) == screenID }
-        let retained = screenID.isEmpty ? display.flatMap { previous in
-            NSScreen.screens.first { Self.id($0) == Self.id(previous) }
-        } : nil
-        guard let screen = requested ?? retained ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = requested ?? NSScreen.screens.first else { return }
         let sameDisplay = display.map { Self.id($0) == Self.id(screen) && $0.frame == screen.frame } ?? false
         display = screen
         lastDisplayID = screenID
@@ -331,9 +372,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let compact = CGSize(
                 width: top ? topCompactWidth : 44,
                 height: top ? topHeaderHeight : compactHeight(ids))
+            let motion = sameDisplay ? previous[surface]?.motion ?? EdgePanelMotion() : EdgePanelMotion()
             let content = { [self] in
                 WidgetHostView(
-                    model: model, registry: modules, surface: surface, moduleIDs: ids,
+                    model: model, registry: modules, motion: motion, surface: surface, moduleIDs: ids,
                     cutout: cutout, headerHeight: topHeaderHeight,
                     headerMinimumHeight: max(36, screen.safeAreaInsets.top + 6),
                     visibleHeight: screen.visibleFrame.height,
@@ -342,6 +384,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                         guard id == "agents", let visible = self?.display?.visibleFrame.size else { return nil }
                         return WidgetClusterGeometry.detailSize(visible: visible).width
                     },
+                    expandedWindowHeight: { [weak self] in self?.expandedWindowHeights[surface] },
                     topSizeChanged: { [weak self] size in
                         DispatchQueue.main.async { self?.updateTopSize(size) }
                     })
@@ -353,7 +396,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 nextPanels[surface] = EdgePanelController(
                     placement: surface.edge, screen: screen, compactSize: compact,
                     expandedSize: CGSize(width: top ? 432 : 476, height: 600),
-                    title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)", content: content)
+                    title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)", motion: motion,
+                    shape: { [weak self] presentation in
+                        self?.panelShape(surface, presentation)
+                            ?? EdgePanelShape(placement: surface.edge, shoulder: 0, corner: 0, joined: false)
+                    }, content: content)
             }
         }
         panels = nextPanels
@@ -402,12 +449,20 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             case .compact: preferred = compact
             case .preview: preferred = max(compact, module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             case .expanded:
-                let height = module?.id == "agents"
-                    ? WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size).height
-                    : (module?.expandedSize.height ?? 440) + 40
-                preferred = max(compact, height)
+                preferred = max(compact, expandedContentHeight(surface, module: module, visible: screen.visibleFrame.size))
             }
             return (compact, preferred)
+        }
+        let compactRequests = sideSurfaces.map { surface -> (minimum: CGFloat, preferred: CGFloat) in
+            let compact = compactHeight(moduleIDs(for: surface))
+            return (compact, compact)
+        }
+        for (index, surface) in sideSurfaces.enumerated() {
+            var requests = compactRequests
+            requests[index].preferred = max(requests[index].minimum, expandedContentHeight(
+                surface, module: selectedModule(for: surface), visible: screen.visibleFrame.size))
+            expandedWindowHeights[surface] = WidgetClusterGeometry.allocate(
+                heights: requests, visibleHeight: screen.visibleFrame.height).heights[index]
         }
         let allocation = WidgetClusterGeometry.allocate(
             heights: requestedHeights, visibleHeight: screen.visibleFrame.height)
@@ -418,6 +473,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let centers = WidgetClusterGeometry.centers(
             heights: compactAllocation.heights, position: model.sidePosition,
             visible: screen.visibleFrame, gap: compactAllocation.gap)
+        railCenters = Dictionary(zip(sideSurfaces, centers), uniquingKeysWith: { first, _ in first })
         for (surface, controller) in panels {
             let top = surface.edge == .top
             let visible = model.placement == "both" || (model.placement == "top" ? top : !top)
@@ -429,11 +485,12 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let module = selectedModule(for: surface)
             let presentation = model.presentation(for: surface)
             let detailSize = WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size)
-            let contentHeight = module?.id == "agents" ? detailSize.height : (module?.expandedSize.height ?? 440) + 40
+            let contentHeight = expandedContentHeight(surface, module: module, visible: screen.visibleFrame.size)
             let width = module?.id == "agents" ? detailSize.width : (module?.expandedSize.width ?? 432)
             let previewSize = CGSize(width: module?.previewSize.width ?? 324,
                 height: module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             if top {
+                expandedWindowHeights[surface] = min(screen.visibleFrame.height - 20, contentHeight + topHeaderHeight)
                 controller.setCompactSize(CGSize(width: topCompactWidth, height: topHeaderHeight))
                 controller.setExpandedSize(
                     CGSize(
@@ -488,7 +545,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let surface = WidgetSurfaceID(
             edge: model.expanded ?? model.side, group: model.expanded == .top ? 0 : model.activeSideGroup)
         let anchor = panels[surface]?.panel
-        guard let screen = anchor?.screen ?? NSScreen.main else { return }
+        guard let screen = anchor?.screen ?? NSScreen.screens.first else { return }
         let frame = EdgePanelGeometry.mediaFrame(
             anchor: anchor?.frame ?? screen.visibleFrame, visible: screen.visibleFrame)
         let window = NSWindow(
@@ -586,6 +643,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
             return event
         }
+        let editingText = panel.firstResponder is NSTextView
+            || (panel.firstResponder as? NSControl)?.currentEditor() != nil
+        if MediaPreviewKeyboard.handle(keyCode: event.keyCode, editingText: editingText) {
+            return nil
+        }
         if event.keyCode == 53 {
             model.collapse()
             return nil
@@ -616,179 +678,5 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public static func id(_ screen: NSScreen) -> String {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue
             ?? screen.localizedName
-    }
-}
-
-private struct WidgetSettingsView: View {
-    @ObservedObject var model: WidgetModel
-    @State var display: String
-    let onDisplay: (String) -> Void
-    @State private var query = ""
-    @State private var account = ""
-
-    private var all: [WidgetSession] { model.snapshot?.sessions ?? [] }
-    private var filtered: [WidgetSession] {
-        all.filter {
-            query.isEmpty
-                || ($0.title + " " + $0.project + " " + $0.target.provider)
-                    .localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                GenesisWidgetMark()
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Your agents, within reach").font(.title2.weight(.semibold))
-                    Text("Pin sessions, filter projects, and choose where the inbox lives.").font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Open Hub") { model.openHub?(model.selected) }
-            }
-            Toggle(
-                "Show the widget",
-                isOn: Binding(
-                    get: { model.snapshot?.state.preferences.showWidget ?? false },
-                    set: { preferences(["showWidget": .bool($0)]) })
-            ).toggleStyle(.switch)
-            if !(model.snapshot?.state.preferences.showWidget ?? false) {
-                Text(WidgetFeatureSettings.hiddenNotice).font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Picker(
-                    "Placement",
-                    selection: Binding(
-                        get: { model.placement }, set: { preferences(["placement": .string($0)]) })
-                ) {
-                    Text("Top").tag("top")
-                    Text("Side").tag("side")
-                    Text("Both").tag("both")
-                }.pickerStyle(.segmented)
-                Picker(
-                    "Edge",
-                    selection: Binding(
-                        get: { model.side.rawValue }, set: { preferences(["side": .string($0)]) })
-                ) {
-                    Text("Right").tag("right")
-                    Text("Left").tag("left")
-                }.frame(width: 130)
-                Button("Open") { model.open(model.placement == "top" ? .top : model.side) }
-            }
-            HStack {
-                Picker("Display", selection: $display) {
-                    Text("Main display").tag("")
-                    ForEach(NSScreen.screens, id: \.self) {
-                        Text($0.localizedName).tag(WidgetCoordinator.id($0))
-                    }
-                }.onChange(of: display) { _, value in onDisplay(value) }
-                Toggle("Reduce motion", isOn: $model.reduceMotion)
-                    .onChange(of: model.reduceMotion) { _, _ in model.presentationChanged?() }
-                Toggle("Opaque", isOn: $model.reduceTransparency)
-            }.font(.caption).toggleStyle(.checkbox)
-            HStack {
-                Menu("Projects (\(model.snapshot?.state.preferences.projects.count ?? 0))") {
-                    Button("All projects") { preferences(["projects": []]) }
-                    Divider()
-                    ForEach(Array(Set(all.map { $0.target.cwd })).sorted(), id: \.self) { cwd in
-                        let selected = model.snapshot?.state.preferences.projects.contains(cwd) == true
-                        Button {
-                            var values = model.snapshot?.state.preferences.projects ?? []
-                            if selected { values.removeAll { $0 == cwd } } else { values.append(cwd) }
-                            preferences(["projects": .array(values.map(WidgetJSON.string))])
-                        } label: {
-                            Label(
-                                cwd.isEmpty ? "Unassigned" : URL(fileURLWithPath: cwd).lastPathComponent,
-                                systemImage: selected ? "checkmark" : "folder")
-                        }
-                    }
-                }
-                Menu("Sessions (\(model.snapshot?.state.preferences.sessions.count ?? 0))") {
-                    Button("All sessions") { preferences(["sessions": []]) }
-                    Divider()
-                    ForEach(all) { session in
-                        let selected = model.snapshot?.state.preferences.sessions.contains(session.key) == true
-                        Button {
-                            var values = model.snapshot?.state.preferences.sessions ?? []
-                            if selected {
-                                values.removeAll { $0 == session.key }
-                            } else {
-                                values.append(session.key)
-                            }
-                            preferences(["sessions": .array(values.map(WidgetJSON.string))])
-                        } label: {
-                            Label(session.title, systemImage: selected ? "checkmark" : "circle")
-                        }
-                    }
-                }
-                Button("Reset filters") { preferences(["projects": [], "sessions": []]) }
-                Spacer()
-                Text(
-                    "\(all.filter(\.hiddenByFilter).count) filtered · \(all.filter { !$0.pinned }.count) unpinned"
-                ).font(.caption).foregroundStyle(.secondary)
-            }
-            TextField("Find a session or project", text: $query).textFieldStyle(.roundedBorder)
-            List(filtered) { session in
-                HStack(spacing: 10) {
-                    Circle().fill(session.visualStatus.color).frame(width: 7, height: 7)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(session.title).lineLimit(1)
-                        Text(session.target.provider.capitalized + " · " + session.project).font(.caption2)
-                            .foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer()
-                    if session.hiddenByFilter { Text("Filtered").font(.caption2).foregroundStyle(.secondary) }
-                    Button {
-                        model.action([
-                            "action": "visibility", "key": .string(session.key), "pinned": .bool(!session.pinned),
-                        ])
-                    } label: {
-                        Image(systemName: session.pinned ? "pin.fill" : "pin")
-                    }.buttonStyle(.plain).help(session.pinned ? "Unpin from widget" : "Show in widget")
-                        .accessibilityLabel((session.pinned ? "Unpin " : "Pin ") + session.title)
-                    Button("Open") {
-                        model.select(session.key, edge: model.placement == "top" ? .top : model.side)
-                    }
-                    .font(.caption).disabled(!session.pinned || session.hiddenByFilter)
-                    .accessibilityLabel("Open " + session.title)
-                }.accessibilityElement(children: .contain)
-            }.listStyle(.inset)
-            Toggle(
-                "Show changed files",
-                isOn: Binding(
-                    get: { model.snapshot?.state.preferences.showChanges ?? false },
-                    set: { preferences(["showChanges": .bool($0)]) })
-            ).toggleStyle(.switch).font(.caption)
-            HStack {
-                Picker(
-                    "Dictation",
-                    selection: Binding(
-                        get: { model.snapshot?.state.preferences.voiceProvider ?? "openai" },
-                        set: { preferences(["voiceProvider": .string($0)]) })
-                ) {
-                    ForEach(["openai", "xai", "deepgram", "elevenlabs"], id: \.self) {
-                        Text($0.capitalized).tag($0)
-                    }
-                }
-                TextField("Account (default if empty)", text: $account)
-                    .onSubmit { preferences(["voiceAccount": account.isEmpty ? .null : .string(account)]) }
-                TextField(
-                    "Language",
-                    text: Binding(
-                        get: { model.snapshot?.state.preferences.voiceLanguage ?? "en" },
-                        set: { preferences(["voiceLanguage": .string($0)]) })
-                ).frame(width: 55)
-            }.font(.caption)
-            Text(
-                "Voice uses your configured provider account. Recordings become editable text before you send."
-            )
-            .font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(22).preferredColorScheme(.dark)
-        .onAppear { account = model.snapshot?.state.preferences.voiceAccount ?? "" }
-    }
-    private func preferences(_ patch: [String: WidgetJSON]) {
-        model.action(["action": "preferences", "patch": .object(patch)])
     }
 }

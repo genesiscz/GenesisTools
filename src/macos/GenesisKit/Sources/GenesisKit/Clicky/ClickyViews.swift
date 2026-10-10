@@ -203,8 +203,10 @@ private struct ClickySettingsPageContent: View {
                         "Enable Clicky to request Input Monitoring. Only physical key positions are used for sounds. Typed text and passwords are never read or saved. Secure Input automatically silences Clicky."
                     )
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button("Open Input Monitoring settings", action: model.openInputSettings).buttonStyle(
-                        .genHoverPlain())
+                    Button(
+                        model.hasInputPermission ? "Open Input Monitoring settings" : "Allow Input Monitoring…",
+                        action: model.openInputSettings
+                    ).buttonStyle(.genHoverPlain())
                     Text("Clicky starts off each time you open it.").font(.system(size: 11)).foregroundStyle(.secondary)
                 }.padding(.top, 8)
             }.font(.system(size: 12))
@@ -257,6 +259,7 @@ private struct ClickySettingsPageContent: View {
                                     }
                                 }.padding(.vertical, 7).padding(.horizontal, 6).contentShape(Rectangle())
                             }.buttonStyle(.genHoverRow())
+                                .nativeSettingsPointer()
                                 .accessibilityLabel("Select \(profile.name) switch")
                             IconButton(systemName: "play.fill", tooltip: "Preview \(profile.name)") {
                                 model.previewStroke(profile)
@@ -325,12 +328,16 @@ private struct ClickySettingsPageContent: View {
             card("Muted applications") {
                 Text("Clicky stays quiet while any of these applications is in front.").font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                if model.preferences.excludedApplications.isEmpty {
+                    Text("No applications are muted.").font(.system(size: 12)).foregroundStyle(.tertiary)
+                }
                 ForEach(model.preferences.excludedApplications, id: \.self) { bundleID in
                     NativeSettingsApplicationRow(bundleID: bundleID) {
                         model.preferences.excludedApplications.removeAll { $0 == bundleID }
                     }
                 }
                 Button("Add application…", action: model.excludeApplication).buttonStyle(.bordered)
+                    .nativeSettingsPointer()
             }
         }
     }

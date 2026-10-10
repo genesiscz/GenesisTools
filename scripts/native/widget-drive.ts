@@ -1,0 +1,180 @@
+#!/usr/bin/env bun
+/**
+ * Drives the running widget face without touching the pointer, and records its windows while it does.
+ *
+ *   bun scripts/native/widget-drive.ts send "expand right 0"
+ *   bun scripts/native/widget-drive.ts windows
+ *   bun scripts/native/widget-drive.ts record --seconds 6 --out <dir> "0.5:hover right 0" "1.5:expand right 0" "4:collapse"
+ *
+ * Commands (WidgetWindow.swift runTestCommand): `expand <edge> [group]`, `module <id> <edge> [group]`,
+ * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `select <session key>`, `settings [page]`.
+ * Edges: top, right, left. The face honours them only with staging on (`bun scripts/native/staging.ts on`) or in the
+ * Preview bundle. `--preview` (first argument) drives GenesisTools Preview.app instead of the normal app. `record` films only the widget's own windows (ScreenCaptureKit via `tools control capture record`)
+ * and sends each step at its offset in seconds after the recording's first frame.
+ */
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { captureSessionsRoot } from "@app/control/lib/peekaboo";
+import { SafeJSON } from "@genesiscz/utils/json";
+
+const REPO = resolve(import.meta.dir, "..", "..");
+const PREVIEW = process.argv[2] === "--preview";
+const NOTIFICATION = PREVIEW
+    ? "com.genesiscz.genesistools.widget-preview.widget.test"
+    : "com.genesiscz.genesistools.widget.test";
+const FACE = PREVIEW ? "MacOS/GenesisWidgetPreview --widget" : "MacOS/GenesisTools --widget";
+
+function send(command: string, name = NOTIFICATION): void {
+    const script = `ObjC.import("Foundation");
+$.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObjectUserInfoDeliverImmediately(
+    ${SafeJSON.stringify(name)}, undefined, $({ command: ${SafeJSON.stringify(command)} }), true);`;
+    const result = Bun.spawnSync(["osascript", "-l", "JavaScript", "-e", script], { stderr: "pipe" });
+    if (result.exitCode !== 0) {
+        throw new Error(`osascript failed: ${result.stderr.toString().trim()}`);
+    }
+}
+
+function widgetPid(): number {
+    const ps = Bun.spawnSync(["pgrep", "-f", FACE]).stdout.toString().trim().split("\n");
+    const pid = Number(ps.filter(Boolean)[0]);
+    if (!pid) {
+        throw new Error("no running widget face (bun scripts/native/staging.ts start)");
+    }
+
+    return pid;
+}
+
+interface WindowInfo {
+    title: string;
+    window_id: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+function windows(): WindowInfo[] {
+    const pid = widgetPid();
+    const result = Bun.spawnSync([`${REPO}/tools`, "control", "window", "--app", String(pid), "--json"], {
+        stderr: "pipe",
+    });
+    const parsed = SafeJSON.parse(result.stdout.toString()) as { windows?: WindowInfo[] };
+    return parsed.windows ?? [];
+}
+
+/** The recorder starts `tools`, checks its native build and sets up ScreenCaptureKit before the first frame. */
+const FIRST_FRAME_DEADLINE_MS = 120_000;
+
+/**
+ * Resolves when the recorder has its first frame on disk: a new folder under `captureSessionsRoot()` holding
+ * `keep-0001.png`, the same signal the capture runner waits for before it starts a plan's own timeline. A step timed
+ * from the spawn instead can land before the capture starts and be missing from the recording.
+ */
+async function firstFrame(recorder: Bun.Subprocess<"ignore", "pipe", "pipe">, before: Set<string>): Promise<void> {
+    const root = captureSessionsRoot();
+    const deadline = Date.now() + FIRST_FRAME_DEADLINE_MS;
+    while (Date.now() < deadline) {
+        const names = existsSync(root) ? readdirSync(root) : [];
+        if (names.some((name) => !before.has(name) && existsSync(join(root, name, "keep-0001.png")))) {
+            return;
+        }
+
+        if (recorder.exitCode !== null) {
+            const stderr = await new Response(recorder.stderr).text();
+            throw new Error(`the recorder exited (code ${recorder.exitCode}) before its first frame: ${stderr.trim()}`);
+        }
+
+        await Bun.sleep(100);
+    }
+
+    recorder.kill();
+    throw new Error(`the recorder wrote no frame within ${FIRST_FRAME_DEADLINE_MS / 1000} s; it was stopped`);
+}
+
+async function record(args: string[]): Promise<void> {
+    let seconds = 6;
+    let out = "";
+    const steps: { at: number; command: string }[] = [];
+
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index];
+        if (arg === "--seconds") {
+            seconds = Number(args[++index]);
+        } else if (arg === "--out") {
+            out = resolve(args[++index]);
+        } else {
+            const colon = arg.indexOf(":");
+            steps.push({ at: Number(arg.slice(0, colon)), command: arg.slice(colon + 1) });
+        }
+    }
+
+    if (!out) {
+        throw new Error("record needs --out <dir>");
+    }
+
+    mkdirSync(out, { recursive: true });
+    const ids = windows().map((window) => window.window_id);
+    if (ids.length === 0) {
+        throw new Error("the widget face shows no windows (is the widget turned on?)");
+    }
+
+    const sessionsRoot = captureSessionsRoot();
+    const before = new Set(existsSync(sessionsRoot) ? readdirSync(sessionsRoot) : []);
+    const recorder = Bun.spawn(
+        [
+            `${REPO}/tools`,
+            "control",
+            "capture",
+            "record",
+            "--window-ids",
+            ids.join(","),
+            "--duration",
+            String(seconds),
+            "--active-fps",
+            "30",
+            "--video-out",
+            `${out}/recording.mp4`,
+        ],
+        { cwd: out, stdout: "pipe", stderr: "pipe" }
+    );
+    await firstFrame(recorder, before);
+    const started = performance.now();
+
+    for (const step of steps.sort((a, b) => a.at - b.at)) {
+        const wait = step.at * 1000 - (performance.now() - started);
+        if (wait > 0) {
+            await Bun.sleep(wait);
+        }
+
+        send(step.command);
+        console.log(`${((performance.now() - started) / 1000).toFixed(2)}s  ${step.command}`);
+    }
+
+    const [stdout, stderr, code] = await Promise.all([
+        new Response(recorder.stdout).text(),
+        new Response(recorder.stderr).text(),
+        recorder.exited,
+    ]);
+    console.log(stdout.trim());
+    if (code !== 0) {
+        console.error(stderr.trim());
+        process.exit(code);
+    }
+}
+
+const [verb, ...rest] = process.argv.slice(PREVIEW ? 3 : 2);
+
+if (verb === "send" && rest[0]) {
+    send(rest.join(" "));
+} else if (verb === "windows") {
+    for (const window of windows()) {
+        console.log(`${window.window_id}  ${window.title}  ${window.x},${window.y} ${window.width}x${window.height}`);
+    }
+} else if (verb === "record") {
+    await record(rest);
+} else {
+    console.error(
+        'usage: bun scripts/native/widget-drive.ts send "<command>" | windows | record --seconds N --out <dir> "<t>:<command>"…'
+    );
+    process.exit(2);
+}

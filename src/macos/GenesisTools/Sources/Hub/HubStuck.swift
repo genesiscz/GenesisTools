@@ -61,6 +61,9 @@ final class HubStuckStore: ObservableObject {
     func watch(_ sessionIds: [String]) async {
         watchedIds = sessionIds
         while !Task.isCancelled {
+            // Nobody sees the badges of a covered or minimized hub (Hub/HubVisibility.swift).
+            await HubVisibility.shared.untilVisible()
+            guard !Task.isCancelled else { return }
             await refresh(sessionIds)
             try? await Task.sleep(for: Self.interval)
         }

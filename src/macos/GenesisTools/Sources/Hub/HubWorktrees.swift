@@ -251,35 +251,45 @@ struct WorktreeListView: View {
 
     var body: some View {
         let groups = groups
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                if model.loadingWorktrees, model.worktrees.isEmpty {
-                    SkeletonRows(count: 8, leading: .dot)
-                        .skeletonShimmer()
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("Finding worktrees")
-                } else if !model.worktrees.isEmpty {
-                    WorktreeCleanupEntry(model: model)
-                }
-                ForEach(groups, id: \.repo) { group in
-                    Section {
-                        if !prefs.collapsed.contains(group.repo) {
-                            ForEach(group.rows) { worktree in
-                                row(worktree)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                    if model.loadingWorktrees, model.worktrees.isEmpty {
+                        SkeletonRows(count: 8, leading: .dot)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Finding worktrees")
+                    } else if !model.worktrees.isEmpty {
+                        WorktreeCleanupEntry(model: model)
+                    }
+                    ForEach(groups, id: \.repo) { group in
+                        Section {
+                            if !prefs.collapsed.contains(group.repo) {
+                                ForEach(group.rows) { worktree in
+                                    row(worktree)
+                                        .id(worktree.path)
+                                }
                             }
+                        } header: {
+                            GroupHeader(
+                                title: group.repo,
+                                count: group.rows.count,
+                                prefs: prefs,
+                                allNames: groups.map(\.repo),
+                                path: (group.rows.first { $0.isMain } ?? group.rows.first)?.path
+                            )
                         }
-                    } header: {
-                        GroupHeader(
-                            title: group.repo,
-                            count: group.rows.count,
-                            prefs: prefs,
-                            allNames: groups.map(\.repo),
-                            path: (group.rows.first { $0.isMain } ?? group.rows.first)?.path
-                        )
                     }
                 }
+                .padding(.bottom, 12)
             }
-            .padding(.bottom, 12)
+            .modifier(SidebarReveal(
+                proxy: proxy,
+                selection: model.selectedWorktree,
+                group: groups.first { $0.rows.contains { $0.path == model.selectedWorktree } }?.repo,
+                loaded: !model.worktrees.isEmpty,
+                prefs: prefs
+            ))
         }
     }
 
@@ -379,13 +389,16 @@ struct WorktreeDetailView: View {
                                 .foregroundColor(ReviewPalette.dim)
                                 .fixedSize()
                                 .instantTooltip("Agent sessions that worked in this worktree; the row scrolls sideways")
+                            // No scroller in a one-line strip, so its cut edge fades to say it continues (H16).
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 6) {
                                     ForEach(touching) { session in
                                         sessionChip(session)
                                     }
                                 }
+                                .scrollOverflowContent()
                             }
+                            .scrollOverflowHints(.horizontal, fade: 36)
                         }
                     }
                 }
@@ -415,7 +428,7 @@ struct WorktreeDetailView: View {
         HStack(spacing: 6) {
             ProviderBadge(provider: session.provider, size: 15)
             Text(session.displayTitle).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
-            LiveAgo(date: session.lastActivity).foregroundColor(ReviewPalette.dim)
+            LiveAgo(date: session.lastActivity, style: .brief).foregroundColor(ReviewPalette.dim)
             Button("Open") { model.openSession(session) }
                 .instantTooltip("Show this session's transcript, changes and decisions")
             Button("Resume") { resuming = session }

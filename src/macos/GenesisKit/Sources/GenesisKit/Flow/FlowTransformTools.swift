@@ -35,9 +35,12 @@ public final class FlowTransformTools {
         (configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String ?? ""
     }
 
-    public func save(accountID: String, model: String) {
-        configuration.setAppValue(["modelRef": "@account/\(accountID):\(model.trimmingCharacters(in: .whitespacesAndNewlines))"],
-                                  forKey: "flowTransforms")
+    /// Stores the account and model; false when the write was refused or failed, so the choice stays unsaved.
+    @discardableResult
+    public func save(accountID: String, model: String) async -> Bool {
+        await configuration.saveAppValue(
+            ["modelRef": "@account/\(accountID):\(model.trimmingCharacters(in: .whitespacesAndNewlines))"],
+            forKey: "flowTransforms")
     }
 
     public func choices() async throws -> FlowTransformChoices {

@@ -199,6 +199,8 @@ func runHub(_ args: [String]) -> Never {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
     }
     if request.isScripted {
+        // Its stall lines say so (`run=snapshot pid=…`), and it spawns no `sample` (GenesisKit PerfContext).
+        PerfContext.run = request.benchPath != nil ? "bench" : "snapshot"
         HubDefaults.isolate()
         // An embedded review re-anchors and saves comments; a scripted run must not touch the user's file.
         ReviewCommentStore.readOnly = true
@@ -291,7 +293,7 @@ func runHub(_ args: [String]) -> Never {
             MainActor.assumeIsolated {
                 // PRs mode shows the PR's own review, not the selected session's.
                 let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
-                HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style) {
+                HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style, showsDiff: { model.snapshotShowsDiff }) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                         let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
                         let showsDiff = model.mode == .prs || model.panes.contains(.changes)
@@ -307,7 +309,7 @@ func runHub(_ args: [String]) -> Never {
                         // has its first row up there with no empty band under it. A modal panel's dim layer
                         // covers the strip on purpose.
                         let titlebar = (covered ? "(a modal panel covers it) " : "")
-                            + WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line
+                            + HubPerf.measure("snapshot.audit") { WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line }
                         PerfLog.mark("hub.snapshot titlebar \(titlebar)")
                         FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
                         ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
@@ -327,6 +329,8 @@ func runHub(_ args: [String]) -> Never {
         if activate {
             app.activate(ignoringOtherApps: true)
         }
+        // Polls pause while nobody can see the window (Hub/HubVisibility.swift); scripted runs never pause.
+        MainActor.assumeIsolated { HubVisibility.shared.watch(window) }
         HubSingleInstance.serve { args in
             let later = HubRequest(args)
             model.apply(later)
@@ -451,6 +455,12 @@ enum HubTab: String, CaseIterable {
         case .files: return 220
         case .decisions: return 320
         }
+    }
+
+    /// The Files list stops growing: three short names took a third of a 1028 pt window, and the diff beside
+    /// it cut its lines at about 530 pt (H18). The other panes take the rest.
+    var maxPaneWidth: CGFloat {
+        self == .files ? 380 : .infinity
     }
 
     var idealPaneWidth: CGFloat {
@@ -1730,13 +1740,14 @@ struct HubRootView: View {
         let sidebarRoom = width - mainMinWidth - 1
         let windowMinWidth = ResizableSidePanel<EmptyView>.railWidth + 1 + mainMinWidth
         HStack(spacing: 0) {
-            ResizableSidePanel(key: "hub.sidebar", edge: .leading, title: "Sessions", defaultWidth: 320,
+            ResizableSidePanel(key: "hub.sidebar", edge: .leading, title: model.mode.title, defaultWidth: 320,
                                minWidth: Self.sidebarMinWidth, maxWidth: max(Self.sidebarMinWidth, sidebarRoom),
                                autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth,
                                // Sessions mode holds the layout for the transcript; every other
                                // mode's main view moves with the edge and reflows on release.
                                holdsLayout: model.mode == .sessions || model.mode == .agents,
-                               holdsContent: model.mode == .prs && ProcessInfo.processInfo.environment["GENESIS_HUB_HOLD_CONTENT"] != "0") {
+                               holdsContent: model.mode == .prs && ProcessInfo.processInfo.environment["GENESIS_HUB_HOLD_CONTENT"] != "0",
+                               railAccessory: AnyView(HubModeRail(model: model, inbox: model.inbox))) {
                 SessionListView(model: model)
             }
             if model.mode == .prs {
@@ -1856,6 +1867,21 @@ struct HubRootView: View {
 }
 
 extension HubModel {
+    /// The screen shows a web diff a `--snapshot` must wait for: PRs mode, a worktree's review, or the Changes pane
+    /// of an open session (Sessions, or a lead session in Agents). Inbox, Activity, the Agents list alone, worktree
+    /// cleanup and a session without Changes have none, and their snapshots used to wait out the whole 30 s for a
+    /// review that never loads (35 to 44 s per run, inventory H24, 2026-10-10).
+    @MainActor
+    var snapshotShowsDiff: Bool {
+        switch mode {
+        case .prs: return true
+        case .inbox, .timeline: return false
+        case .worktrees: return selectedWorktree != WorktreeCleanup.selectionID && review != nil
+        case .agents: return (agents.selectedMain != nil || agents.selected?.parent != nil) && panes.contains(.changes) && review != nil
+        case .sessions: return selected != nil && selectedID != AgentProcs.selectionID && panes.contains(.changes) && review != nil
+        }
+    }
+
     /// The main view on screen has a `TitlebarHeader`, so its first row belongs in the title bar; an
     /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
     @MainActor
@@ -1908,7 +1934,7 @@ private struct HubModePicker: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
 
-    private static let symbols: [HubMode: String] = [
+    static let symbols: [HubMode: String] = [
         .sessions: "text.bubble", .worktrees: "arrow.triangle.branch", .prs: "arrow.triangle.pull",
         .inbox: "tray", .timeline: "clock", .agents: "person.2",
     ]
@@ -1960,6 +1986,70 @@ private struct HubModePicker: View {
         .instantTooltip(mode.tooltip(waiting: waiting))
         .accessibilityLabel(Text(mode.title))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
+/// A row at the top of the Agents sidebar that opens another face of the app: a title, what it opens,
+/// the row hover and the pointer.
+private struct AgentsLaunchRow: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let tooltip: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundColor(ReviewPalette.dim)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 12.5))
+                Text(detail).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.forward.app")
+                .font(.system(size: 10))
+                .foregroundColor(ReviewPalette.dim)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .rowButton(action)
+        .padding(.horizontal, 6)
+        .instantTooltip(tooltip)
+        .accessibilityLabel(Text("\(title): \(detail)"))
+    }
+}
+
+/// The mode switch in the folded sidebar's rail: the six modes as one column of icons. At 900 pt the
+/// sidebar folds and the switch used to fold with it, so reaching Worktrees took two clicks (H13).
+private struct HubModeRail: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+
+    var body: some View {
+        let waiting = inbox.waitingCount
+        VStack(spacing: 4) {
+            ForEach(HubMode.allCases, id: \.self) { mode in
+                let selected = model.mode == mode
+                Button {
+                    model.setMode(mode)
+                } label: {
+                    Image(systemName: mode == .inbox && waiting > 0 ? "tray.full.fill" : HubModePicker.symbols[mode] ?? "circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(selected ? .white : Color.white.opacity(0.6))
+                        .frame(width: 22, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(selected ? Color.white.opacity(0.16) : Color.clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(mode.tooltip(waiting: waiting))
+                .accessibilityLabel(Text(mode.title))
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
+            }
+        }
     }
 }
 
@@ -2015,7 +2105,8 @@ private struct SessionListView: View {
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
-                IconButton(systemName: "lock.shield", tooltip: "Permissions and settings (⌘,)") {
+                // A gear is the settings glyph; the shield read as a security warning (H19).
+                IconButton(systemName: "gearshape", tooltip: "Permissions and settings (⌘,)") {
                     AppMenuTarget.shared.openSettings(nil)
                 }
                 .foregroundColor(ReviewPalette.dim)
@@ -2069,17 +2160,23 @@ private struct SessionListView: View {
                 TimelineListView(model: model, timeline: model.timeline)
             } else if model.mode == .agents {
                 // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
-                if NativePreview.enabled {
-                    Button { WidgetLaunch.start() } label: {
-                        Label("Widget sessions", systemImage: "rectangle.rightthird.inset.filled")
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                if NativeStaging.facesEnabled {
+                    // Each says what it opens: two bare names read as list entries nobody could place (H22).
+                    VStack(spacing: 2) {
+                        AgentsLaunchRow(
+                            title: "Widget",
+                            detail: "Opens the notch widget's settings",
+                            symbol: "rectangle.rightthird.inset.filled",
+                            tooltip: "Start the notch and side widget and open its settings: modules, edges and pinned sessions"
+                        ) { WidgetLaunch.start() }
+                        AgentsLaunchRow(
+                            title: "Clicky",
+                            detail: "Key sounds and the app's settings",
+                            symbol: "keyboard",
+                            tooltip: "Open the settings window at Clicky, the keyboard sounds"
+                        ) { ClickyLaunch.openSettings() }
                     }
-                    .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
-                    Button { ClickyLaunch.openSettings() } label: {
-                        Label("Clicky", systemImage: "keyboard")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
+                    .padding(.bottom, 6)
                 }
                 AgentsListView(model: model, agents: model.agents)
             } else {
@@ -2231,6 +2328,7 @@ struct SessionDetailView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("session.detail.body")
         let visible = model.tabOrder.filter { model.panes.contains($0) }
         let shown = Array(visible.prefix(fitting ?? visible.count))
         let railed = Array(visible.dropFirst(shown.count))
@@ -2245,7 +2343,7 @@ struct SessionDetailView: View {
                     ForEach(shown, id: \.self) { tab in
                         pane(tab)
                             .freezesWidthWhileResizing(heavy: tab == .transcript)
-                            .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: tab.maxPaneWidth, maxHeight: .infinity)
                     }
                 }
                 // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
@@ -2294,9 +2392,10 @@ struct SessionDetailView: View {
         case .transcript:
             if let agent, agent.node != nil {
                 if let row = agent.transcriptRow {
-                    HubSessionDetailHost(session: row, onShowChange: { path, line in
+                    HubTranscriptPane(session: row, onShowChange: { path, line in
                         model.showChange(path: path, line: line)
                     }, showsSidebar: model.panes.count == 1, agentChild: true)
+                        .equatable()
                         .id(agent.key)
                 } else {
                     Text("This agent has no transcript file")
@@ -2304,11 +2403,12 @@ struct SessionDetailView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                HubSessionDetailHost(session: session, onShowChange: { path, line in
+                HubTranscriptPane(session: session, onShowChange: { path, line in
                     model.showChange(path: path, line: line)
                 }, onOpenSubagent: { agent in
                     model.openSubagent(sessionId: session.sessionId, agentId: agent.id)
                 }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
+                    .equatable()
                     .id(session.id)
             }
         case .changes:
@@ -2392,7 +2492,7 @@ struct SessionDetailView: View {
                             if session.isLive {
                                 Text("live")
                             } else {
-                                LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                                LiveAgo(date: session.lastActivity, style: .brief) { "idle · \($0)" }
                             }
                         }
                             .font(.system(size: 11.5))

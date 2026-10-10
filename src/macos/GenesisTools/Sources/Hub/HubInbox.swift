@@ -66,7 +66,8 @@ struct InboxRef: Decodable, Hashable {
     let path: String
     let line: Int?
     let endLine: Int?
-    /// Resolved against the session's folder; null when no folder is known.
+    /// The file the path names (the loader tries the session's folder, its checkout and the main checkout,
+    /// then a unique suffix match); null when it could not be located.
     let absolute: String?
     /// The real lines read from disk by the loader; null when the file could not be read.
     let excerpt: String?
@@ -75,8 +76,29 @@ struct InboxRef: Decodable, Hashable {
     /// For syntax highlighting.
     let language: String?
     let missing: Bool?
+    /// The folders a relative path was looked up in.
+    let searched: [String]?
+    /// Files the path matched by suffix: more than one means it is ambiguous.
+    let matches: Int?
 
     var hasContent: Bool { (excerpt?.isEmpty == false) || missing == true }
+
+    /// Why a missing ref has no lines, in the words the card shows: what was searched and where. Never
+    /// "file not found" for a file that exists elsewhere (H5).
+    var unresolvedNote: (label: String, detail: String) {
+        let folders = (searched ?? []).map { ($0 as NSString).lastPathComponent }
+        let unique = folders.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        if let matches, matches > 1 {
+            return ("\(matches) matches", "\(matches) files end with \(path) under \(unique.first ?? "the session's folder"); the reply does not say which one.")
+        }
+        if path.hasPrefix("/") {
+            return ("not on disk", "\(path) is not on this Mac any more.")
+        }
+        if unique.isEmpty {
+            return ("can't locate", "The session's folder is not known, so \(path) cannot be looked up.")
+        }
+        return ("can't locate", "Not under \(unique.joined(separator: ", ")): the reply may name a file of another repository.")
+    }
 }
 
 struct InboxQuestion: Decodable, Hashable {
@@ -211,11 +233,17 @@ struct InboxSession: Decodable, Identifiable, Hashable {
     let drafted: Int?
     /// Answered decisions no send delivered yet; they ride the session's next prompt.
     let queued: Int?
+    /// Quiet for three days (the widget's rule, `INBOX_STALE_MS` in src/question/lib/inbox/build.ts): still
+    /// listed and answerable, but its items no longer count as waiting.
+    let stale: Bool?
     let reply: InboxReply?
     let items: [InboxItem]
 
     /// Listed only for its queued answers: nothing here waits for the user.
     var isQueuedOnly: Bool { waiting == 0 && (queued ?? 0) > 0 }
+    var isStale: Bool { stale ?? false }
+    /// What this session adds to the "waiting" badges: nothing once it is quiet for three days.
+    var countedWaiting: Int { isStale ? 0 : waiting }
 
     var id: String { sessionId ?? "form:\(cwd ?? "")" }
     var date: Date? { HubFormat.date(lastAt) }
@@ -381,7 +409,8 @@ final class HubInboxModel: ObservableObject {
     /// Called once after the next load (a snapshot run waits for it).
     var onLoaded: (() -> Void)?
 
-    var waitingCount: Int { sessions.reduce(0) { $0 + $1.waiting } }
+    /// The badge count (mode switch, header): items of sessions that moved in the last three days.
+    var waitingCount: Int { sessions.reduce(0) { $0 + $1.countedWaiting } }
 
     func sorted(_ sort: InboxSort, filter: String) -> [InboxSession] {
         sort.apply(sessions, filter: filter)
@@ -786,6 +815,8 @@ struct InboxListView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
+    /// Sessions quiet for three days fold under one row; a pick of one of them (a link) opens the fold.
+    @State private var showOlder = false
 
     private var sort: InboxSort { InboxSort(rawValue: sortKey) ?? .recent }
 
@@ -832,12 +863,35 @@ struct InboxListView: View {
                             .foregroundColor(ReviewPalette.dim)
                             .padding(14)
                     }
-                    ForEach(rows) { session in
+                    let older = rows.filter(\.isStale)
+                    ForEach(rows.filter { !$0.isStale }) { session in
                         InboxSessionRow(session: session, selected: session.id == inbox.selectedID)
                             .rowButton { inbox.selectedID = session.id }
                     }
+                    if !older.isEmpty {
+                        // The header alone is the disclosure, inset like the rows; the rows keep their own insets.
+                        GenDisclosure(isExpanded: $showOlder, accessibilityTitle: "Sessions quiet for three days or more") {
+                            EmptyView()
+                        } label: {
+                            Text(verbatim: "\(Plural.count(older.count, "session")) quiet for 3+ days")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundColor(ReviewPalette.dim)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .instantTooltip("Nothing moved in these sessions for three days. Their questions stay answerable here; they no longer count as waiting.")
+                        if showOlder {
+                            ForEach(older) { session in
+                                InboxSessionRow(session: session, selected: session.id == inbox.selectedID)
+                                    .rowButton { inbox.selectedID = session.id }
+                            }
+                        }
+                    }
                 }
                 .padding(.bottom, 12)
+            }
+            .onChange(of: inbox.selectedID, initial: true) { _, id in
+                if let id, rows.contains(where: { $0.id == id && $0.isStale }) { showOlder = true }
             }
         }
     }
@@ -860,19 +914,22 @@ private struct InboxSessionRow: View {
                 HStack(spacing: 6) {
                     Text(session.projectName).lineLimit(1)
                     Spacer(minLength: 0)
-                    LiveAgo(date: session.date).fixedSize()
+                    LiveAgo(date: session.date, style: .brief).fixedSize()
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
             }
             if session.waiting > 0 {
+                // Filled orange means "waiting for you" and nothing else; a quiet session's count is grey.
                 Text(verbatim: "\(session.waiting)")
                     .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.black)
+                    .foregroundColor(session.isStale ? ReviewPalette.dim : .black)
                     .frame(minWidth: 18, minHeight: 18)
-                    .background(Capsule().fill(InboxStyle.accent))
-                    .instantTooltip(session.waiting == 1 ? "1 answer waiting" : "\(session.waiting) answers waiting")
+                    .background(Capsule().fill(session.isStale ? Color.white.opacity(0.08) : InboxStyle.accent))
+                    .instantTooltip(session.isStale
+                        ? "\(Plural.count(session.waiting, "open item")), quiet for three days: not counted as waiting"
+                        : "\(Plural.count(session.waiting, "answer")) waiting")
             } else {
                 Badge("queued", color: ReviewPalette.modified, look: .filled)
                     .instantTooltip("Answered; the session's next prompt receives it. Nothing waits for you here.")
@@ -972,14 +1029,18 @@ struct InboxMain: View {
     /// "3 waiting in 2 sessions · 1 queued": what waits for the user, in how many sessions, and how
     /// many answers only wait for their session's next prompt.
     static func summary(_ rows: [InboxSession]) -> String {
-        let waiting = rows.reduce(0) { $0 + $1.waiting }
-        let sessions = rows.filter { $0.waiting > 0 }.count
+        let waiting = rows.reduce(0) { $0 + $1.countedWaiting }
+        let sessions = rows.filter { $0.countedWaiting > 0 }.count
+        let older = rows.filter { $0.isStale && $0.waiting > 0 }.count
         let queued = rows.reduce(0) { $0 + ($1.queued ?? 0) }
         var parts: [String] = []
         if waiting > 0 {
-            parts.append("\(waiting) waiting in \(sessions) session\(sessions == 1 ? "" : "s")")
+            parts.append("\(waiting) waiting in \(Plural.count(sessions, "session"))")
         } else {
             parts.append("nothing waiting")
+        }
+        if older > 0 {
+            parts.append("\(older) quiet for 3+ days")
         }
         if queued > 0 {
             parts.append("\(queued) queued")
@@ -1233,6 +1294,9 @@ struct InboxDecisionCard: View {
     @State private var note = ""
     @State private var noteSeeded = false
     @State private var showContext = false
+    /// The context is taller than its folded height: only then does it fade at the cut and offer "Show all".
+    @State private var contextOverflows = false
+    private static let contextFold: CGFloat = 150
     @State private var showAsk = false
     @State private var showReply = false
     @State private var saveTask: Task<Void, Never>?
@@ -1318,11 +1382,15 @@ struct InboxDecisionCard: View {
 
     private var headerRow: some View {
         HStack(spacing: 8) {
-            Text(verbatim: "\(item.number ?? 0)")
-                .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                .foregroundColor(.black)
-                .frame(minWidth: 20, minHeight: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(item.isOpen ? InboxStyle.accent : ReviewPalette.added))
+            // The decision's number in its session, outlined: a filled orange shape is the "waiting" count only.
+            let tint = item.isOpen ? InboxStyle.accent : ReviewPalette.added
+            Text(verbatim: "D\(item.number ?? 0)")
+                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                .foregroundColor(tint)
+                .padding(.horizontal, 5)
+                .frame(minHeight: 20)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(tint.opacity(0.8), lineWidth: 1))
+                .accessibilityLabel("Decision \(item.number ?? 0)")
             FindText(heading, field: "title")
                 .font(.system(size: 13.5, weight: .semibold))
                 .foregroundColor(Color.white.opacity(item.isOpen ? 0.95 : 0.7))
@@ -1338,7 +1406,7 @@ struct InboxDecisionCard: View {
             }
             Spacer(minLength: 8)
             if item.isOpen {
-                Label { LiveAgo(date: item.date) } icon: { Image(systemName: "clock") }
+                Label { LiveAgo(date: item.date, style: .brief) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             } else {
@@ -1377,15 +1445,28 @@ struct InboxDecisionCard: View {
             HStack(spacing: 6) {
                 Text("Context").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
                 Spacer()
-                Button(contextRevealed ? "Show less" : "Show all") { withAnimation(.easeInOut(duration: 0.15)) { showContext = !contextRevealed } }
-                    .buttonStyle(.genHoverPlain())
-                    .font(.system(size: 10.5))
-                    .foregroundColor(ReviewPalette.renamed)
+                if contextOverflows || showContext {
+                    Button(contextRevealed ? "Show less" : "Show all") { withAnimation(.easeInOut(duration: 0.15)) { showContext = !contextRevealed } }
+                        .buttonStyle(.genHoverPlain())
+                        .font(.system(size: 10.5))
+                        .foregroundColor(ReviewPalette.renamed)
+                }
             }
+            // Folded, a long context fades out at the cut instead of ending mid-line (H16).
+            let faded = contextOverflows && !contextRevealed
             MarkdownContentView(markdown: context, style: contextStyle)
                 .findField("context")
-                .frame(maxHeight: contextRevealed ? nil : 150, alignment: .top)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: Bool.self, of: { $0.size.height > Self.contextFold + 1 }) { contextOverflows = $0 }
+                .frame(maxHeight: contextRevealed ? nil : Self.contextFold, alignment: .top)
                 .clipped()
+                .mask {
+                    VStack(spacing: 0) {
+                        Rectangle()
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: faded ? 36 : 0)
+                    }
+                }
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1567,16 +1648,26 @@ private struct InboxExcerptCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Button { PathOpener.cursor(absolute, line: ref.line ?? 1) } label: {
+                if ref.missing == true {
+                    // Nothing to open: a link here opened a guessed path that does not exist.
+                    let note = ref.unresolvedNote
                     FindText(displayPath, field: field)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Color(red: 0.55, green: 0.7, blue: 1))
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip("Open \(displayPath) in Cursor")
-                Spacer()
-                if ref.missing == true {
-                    Text("file not found").font(.system(size: 10.5)).foregroundColor(ReviewPalette.removed)
+                        .foregroundColor(ReviewPalette.dim)
+                    Spacer()
+                    Label(note.label, systemImage: "questionmark.folder")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(ReviewPalette.dim)
+                        .instantTooltip(note.detail)
+                } else {
+                    Button { PathOpener.cursor(absolute, line: ref.line ?? 1) } label: {
+                        FindText(displayPath, field: field)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(Color(red: 0.55, green: 0.7, blue: 1))
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("Open \(absolute)\(ref.line.map { ":\($0)" } ?? "") in Cursor")
+                    Spacer()
                 }
             }
             if let excerpt = ref.excerpt, !excerpt.isEmpty {
@@ -1956,7 +2047,7 @@ private struct InboxFormCard: View {
                 }
                 Spacer()
                 CopyChip(label: String(item.id.suffix(8)), value: item.id, tooltip: "Copy the form id")
-                Label { LiveAgo(date: item.date) } icon: { Image(systemName: "clock") }
+                Label { LiveAgo(date: item.date, style: .brief) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }

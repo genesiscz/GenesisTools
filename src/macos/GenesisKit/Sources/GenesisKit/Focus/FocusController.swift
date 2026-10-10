@@ -42,6 +42,8 @@ public final class FocusController: ObservableObject {
     var configuration = FlowFocusConfiguration.shared
     var orchestrator = FocusOrchestrator.shared
     var remoteCommand: ((String, Data) -> Void)?
+    /// A client's request to the runtime owner that waits for its answer (set by the runtime for a client host).
+    var remoteRequest: ((String, Data) async throws -> Data)?
     private var presentsWindows = true
 
     // MARK: - Lifecycle
@@ -152,6 +154,7 @@ public final class FocusController: ObservableObject {
         available = false
         ownsRuntime = false
         remoteCommand = nil
+        remoteRequest = nil
     }
 
     private func makeHUD(engine: PomodoroEngine, recorder: ActivityRecorder) -> FocusHUDWindowController {
@@ -325,6 +328,38 @@ public final class FocusController: ObservableObject {
         if let nextPrune, now >= nextPrune { pruneExpiredActivity(now: now) }
     }
 
+    // MARK: - Forgetting activity
+
+    /// Deletes everything the ledger recorded between `from` and `to`: segments, input counts, sessions and gaps
+    /// (`ActivityStore.forget`). The owner runs the deletion off the main thread; a client asks the owner, because
+    /// a client's ledger connection is read-only.
+    public func forgetActivity(from: Date, to: Date) async throws -> FocusForgetResult {
+        let range = FocusForgetCommand(from: Int64(from.timeIntervalSince1970 * 1000), to: Int64(to.timeIntervalSince1970 * 1000))
+        guard range.from < range.to else { return FocusForgetResult(segments: 0, sessions: 0) }
+        let result: FocusForgetResult
+        if let remoteRequest {
+            let reply = try await remoteRequest("focus.forget", JSONEncoder().encode(range))
+            result = try JSONDecoder().decode(FocusForgetResult.self, from: reply)
+        } else {
+            guard ownsRuntime, let store else {
+                throw FlowFocusMailbox.Failure.unavailable(lastError ?? "The Focus ledger is unavailable.")
+            }
+            result = try await Task.detached(priority: .userInitiated) {
+                try FocusForgetResult.forget(range, in: store)
+            }.value
+        }
+        FlowFocusLog.focus.info("forgot activity \(range.from)..<\(range.to): segments=\(result.segments) sessions=\(result.sessions)")
+        didForget(range)
+        return result
+    }
+
+    /// After the owner's ledger forgot a range (here or for a client's `focus.forget`): the live recorder lets go of
+    /// a segment the deletion removed, and the views read the ledger again.
+    func didForget(_ range: FocusForgetCommand) {
+        recorder?.ledgerForgot(from: range.from, to: range.to)
+        studioModel?.reload()
+    }
+
     // MARK: - Interruptions
 
     /// A flow is interrupted when focus leaves the app it started in for longer than the
@@ -413,5 +448,22 @@ extension PomodoroEngine {
         default:
             break
         }
+    }
+}
+
+/// The range a "delete activity" request covers, in milliseconds since 1970, end exclusive.
+struct FocusForgetCommand: Codable, Equatable {
+    let from: Int64
+    let to: Int64
+}
+
+/// What a "delete activity" request removed.
+public struct FocusForgetResult: Codable, Equatable, Sendable {
+    public let segments: Int
+    public let sessions: Int
+
+    static func forget(_ range: FocusForgetCommand, in store: ActivityStore) throws -> FocusForgetResult {
+        let removed = try PerfLog.span("focus.forget") { try store.forget(from: range.from, to: range.to) }
+        return FocusForgetResult(segments: removed.segments, sessions: removed.sessions)
     }
 }

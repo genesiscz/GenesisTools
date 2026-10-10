@@ -1,5 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Flow/FlowView.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import AppKit
+import Speech
 import SwiftUI
 
 /// Flow's main surface: dictation history, insights, dictionary, snippets,
@@ -110,8 +111,8 @@ public struct FlowView: View {
 
     private var hotkeyHint: some View {
         VStack(alignment: .leading, spacing: GenSpacing.xs) {
-            Text("HOLD TO DICTATE")
-                .font(GenTypography.caption(9, weight: .bold))
+            Text(session.config.activation == .toggle ? "Press to dictate" : "Hold to dictate")
+                .font(GenTypography.caption(11, weight: .semibold))
                 .foregroundStyle(Color.settingsTextMuted)
             Text(FlowKeyNames.describe(keyCode: session.config.keyCode, modifiers: session.config.modifiers))
                 .font(GenTypography.mono(12))
@@ -156,111 +157,147 @@ public struct FlowView: View {
         case .snippets: FlowSnippetsPane(session: session)
         case .transforms: FlowTransformsPane(session: session)
         case .scratchpad: FlowScratchpadPane(session: session)
-        case .settings: FlowSettingsPane(session: session)
+        case .settings: ScrollView { FlowSettingsView(session: session).padding(GenSpacing.xl) }
         }
     }
 }
 
 // MARK: - Settings
 
-private struct FlowSettingsPane: View {
+/// Dictation settings in the shared native settings style: the Settings window's Dictation page and the
+/// dictation library's Settings section show this same view. Every `FlowConfig` field a reader uses has a control.
+public struct FlowSettingsView: View {
     @ObservedObject var session: FlowSession
+    private let openLibrary: (() -> Void)?
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: GenSpacing.xl) {
-                Text("Settings")
-                    .font(GenTypography.headline(20))
-                    .foregroundStyle(Color.genTextPrimary)
+    /// `openLibrary`: shows the dictation library (history, dictionary, snippets). Nil inside the library itself.
+    public init(session: FlowSession, openLibrary: (() -> Void)? = nil) {
+        self.session = session
+        self.openLibrary = openLibrary
+    }
 
-                group("ACCESS") {
-                    Text("Microphone and Speech Recognition access is requested only when you press Review, by the app handling dictation.")
-                        .font(GenTypography.body(12))
-                        .foregroundStyle(Color.settingsTextSecondary)
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            NativeSettingsCard("Access", subtitle: "Microphone and Speech Recognition access is requested only when you press Review, by the app handling dictation.") {
+                HStack(spacing: 12) {
                     Button(session.isRequestingPermissions ? "Waiting for macOS…" : "Review dictation access") {
                         session.requestDictationPermissions()
                     }
                     .buttonStyle(.bordered)
                     .disabled(session.isRequestingPermissions)
+                    .nativeSettingsPointer()
                     .accessibilityIdentifier("flow-review-permissions")
-                    HStack(spacing: GenSpacing.md) {
-                        Button("Microphone settings") { openPrivacy("Privacy_Microphone") }
-                        Button("Speech Recognition settings") { openPrivacy("Privacy_SpeechRecognition") }
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .font(GenTypography.caption(11))
-                    .foregroundStyle(Color.jarvisTeal)
+                    Spacer(minLength: 0)
+                    Button("Microphone settings") { PermissionAccess.live.openSettings(.microphone) }
+                        .buttonStyle(.genHoverPlain()).nativeSettingsPointer()
+                    Button("Speech Recognition settings") { PermissionAccess.live.openSettings(.speechRecognition) }
+                        .buttonStyle(.genHoverPlain()).nativeSettingsPointer()
                 }
-
-                group("CAPTURE") {
-                    toggle(
-                        "Enabled",
-                        subtitle: "Register the dictation hotkey.",
-                        value: binding(\.enabled)
-                    )
-                    picker(
-                        "Activation",
-                        selection: Binding(
-                            get: { session.config.activation },
-                            set: { session.config.activation = $0 }
-                        )
-                    )
-                    toggle(
-                        "Capture before the key",
-                        subtitle: "Keeps a \(Int(FlowPreRoll.windowSeconds * 1000)) ms rolling window so the words you say as you press are not lost. Holds the microphone open — macOS shows the orange indicator while it runs. Nothing is recorded or sent.",
-                        value: binding(\.preRoll)
-                    )
-                    toggle(
-                        "Show the pill",
-                        subtitle: "Floating indicator while dictating.",
-                        value: binding(\.showPill)
-                    )
-                }
-
-                group("OUTPUT") {
-                    toggle(
-                        "Paste automatically",
-                        subtitle: "Needs Accessibility. Without it, Flow copies and tells you.",
-                        value: binding(\.injectViaPaste)
-                    )
-                    toggle(
-                        "Put the clipboard back afterwards",
-                        subtitle: "Off by default on purpose: restoring re-exposes whatever was there — often a password or a 2FA code — to any app that reads the clipboard on a delay.",
-                        value: binding(\.restoreClipboard)
-                    )
-                }
-
-                group("TEXT") {
-                    toggle(
-                        "Learn dictionary entries",
-                        subtitle: "Suggest replacements for terms Flow keeps hearing.",
-                        value: binding(\.dictionaryLearning)
-                    )
-                    toggle(
-                        "Use Apple's server recognition",
-                        subtitle: "Off keeps transcription on this machine.",
-                        value: binding(\.forceServerRecognition)
-                    )
-                }
-
+                .font(.system(size: 12))
                 if !session.accessibilityTrusted {
-                    Button("Grant Accessibility") {
-                        session.requestAccessibility()
+                    Divider()
+                    NativeSettingsRow("Accessibility", detail: "Without Accessibility, Flow copies the text but cannot paste it for you.") {
+                        Button("Grant Accessibility") { session.requestAccessibility() }
+                            .buttonStyle(.bordered).nativeSettingsPointer()
                     }
-                    .buttonStyle(.genHoverPlain())
-                    .font(GenTypography.caption(12, weight: .semibold))
-                    .foregroundStyle(Color.genWarning)
-                    .instantTooltip("Without Accessibility, Flow copies the text but cannot paste it for you.")
                 }
             }
-            .padding(GenSpacing.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            NativeSettingsCard("Shortcut", subtitle: "The global shortcut that starts dictation in any app.") {
+                NativeSettingsToggle("Dictation shortcut", detail: "Register the shortcut. Off leaves dictation in the menu bar only.",
+                                     identifier: "flow-setting-enabled", isOn: binding(\.enabled))
+                Divider()
+                NativeSettingsRow("Shortcut", detail: hotkeyDetail) {
+                    HotkeyRecorder(
+                        chord: Binding(
+                            get: { HotkeyChord(keyCode: session.config.keyCode, modifiers: session.config.modifiers) },
+                            set: { chord in
+                                var config = session.config
+                                config.keyCode = chord.keyCode
+                                config.modifiers = chord.modifiers
+                                session.config = config
+                            }),
+                        defaultChord: HotkeyChord(keyCode: FlowConfig().keyCode, modifiers: FlowConfig.defaultModifiers),
+                        identifier: "flow-setting-shortcut",
+                        onListening: { session.suspendHotkey($0) })
+                }
+                .disabled(!session.config.enabled)
+                Divider()
+                NativeSettingsRow("Activation", detail: "Push to talk: hold the shortcut while you speak. Toggle: press once to start and again to stop.") {
+                    Picker("Activation", selection: Binding(get: { session.config.activation }, set: { session.config.activation = $0 })) {
+                        ForEach(FlowActivation.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden().pickerStyle(.segmented).fixedSize()
+                    .accessibilityIdentifier("flow-setting-activation")
+                }
+            }
+
+            NativeSettingsCard("Recognition", subtitle: "How Apple Speech turns your voice into text.") {
+                NativeSettingsRow("Language", detail: "The language you dictate in. System uses your Mac's language.") {
+                    Picker("Recognition language", selection: Binding(
+                        get: { session.config.localeIdentifier }, set: { session.config.localeIdentifier = $0 })) {
+                        Text("System (\(FlowRecognitionLanguages.systemName))").tag("")
+                        Divider()
+                        ForEach(FlowRecognitionLanguages.options(including: session.config.localeIdentifier)) { language in
+                            Text(language.name).tag(language.id)
+                        }
+                    }
+                    .labelsHidden().frame(maxWidth: 260).fixedSize()
+                    .accessibilityIdentifier("flow-setting-language")
+                }
+                Divider()
+                NativeSettingsRow("Keep listening after release", detail: "The microphone stays open this long after you let go, so the last word is not cut off.") {
+                    Picker("Keep listening after release", selection: Binding(
+                        get: { session.config.trailingGraceMs }, set: { session.config.trailingGraceMs = $0 })) {
+                        ForEach(FlowTrailingGrace.options(including: session.config.trailingGraceMs), id: \.self) {
+                            Text(FlowTrailingGrace.label($0)).tag($0)
+                        }
+                    }
+                    .labelsHidden().fixedSize()
+                    .accessibilityIdentifier("flow-setting-trailing-grace")
+                }
+                Divider()
+                NativeSettingsToggle("Capture before the shortcut",
+                                     detail: "Keeps a \(Int(FlowPreRoll.windowSeconds * 1000)) ms rolling window so the words you say as you press are not lost. Holds the microphone open, so macOS shows the orange indicator. Nothing is recorded or sent.",
+                                     identifier: "flow-setting-capture-before-the-key", isOn: binding(\.preRoll))
+                Divider()
+                NativeSettingsToggle("Use Apple's server recognition", detail: "Off keeps transcription on this Mac.",
+                                     identifier: "flow-setting-server-recognition", isOn: binding(\.forceServerRecognition))
+                Divider()
+                NativeSettingsToggle("Learn dictionary entries", detail: "Suggest replacements for terms Flow keeps hearing.",
+                                     identifier: "flow-setting-learn-dictionary-entries", isOn: binding(\.dictionaryLearning))
+            }
+
+            NativeSettingsCard("Output", subtitle: "Where the text goes when you finish.") {
+                NativeSettingsToggle("Show the pill", detail: "A floating indicator while you dictate.",
+                                     identifier: "flow-setting-show-the-pill", isOn: binding(\.showPill))
+                Divider()
+                NativeSettingsToggle("Paste automatically", detail: "Needs Accessibility. Without it, Flow copies the text and tells you.",
+                                     identifier: "flow-setting-paste-automatically", isOn: binding(\.injectViaPaste))
+                Divider()
+                NativeSettingsToggle("Put the clipboard back afterwards",
+                                     detail: "Off on purpose: restoring re-exposes whatever was there, often a password or a 2FA code, to any app that reads the clipboard on a delay.",
+                                     identifier: "flow-setting-put-the-clipboard-back-afterwards", isOn: binding(\.restoreClipboard))
+            }
+
+            if let openLibrary {
+                NativeSettingsCard {
+                    NativeSettingsRow("Dictation library", detail: "Your history, insights, dictionary, snippets and transforms.") {
+                        Button("Open library", action: openLibrary)
+                            .buttonStyle(.bordered).nativeSettingsPointer()
+                            .accessibilityIdentifier("flow-setting-open-library")
+                    }
+                }
+            }
         }
     }
 
-    private func openPrivacy(_ pane: String) {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
-        NSWorkspace.shared.open(url)
+    private var hotkeyDetail: String {
+        switch session.hotkeyStatus {
+        case .registered: return "Click the shortcut, then press the new one. Escape cancels."
+        case .unavailable(let chord): return "macOS refused \(chord). Choose another shortcut, or start dictation from the menu bar."
+        case .off: return FlowSession.offReason(labEnabled: session.labEnabled, enabled: session.config.enabled) ?? "Dictation is off."
+        }
     }
 
     /// Writes go through `FlowSession.config`, whose `didSet` persists once per
@@ -272,61 +309,47 @@ private struct FlowSettingsPane: View {
             set: { session.config[keyPath: path] = $0 }
         )
     }
+}
 
-    @ViewBuilder
-    private func group(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: GenSpacing.md) {
-            Text(title)
-                .font(GenTypography.caption(10, weight: .bold))
-                .foregroundStyle(Color.settingsTextMuted)
-            content()
-        }
+/// The languages Apple Speech can recognise, for the Language picker. Read once: the set does not change while the
+/// app runs, and the picker must not query the framework from a view body on every render.
+enum FlowRecognitionLanguages {
+    struct Language: Identifiable, Equatable {
+        let id: String
+        let name: String
     }
 
-    private func toggle(_ title: String, subtitle: String, value: Binding<Bool>) -> some View {
-        HStack(alignment: .top, spacing: GenSpacing.md) {
-            VStack(alignment: .leading, spacing: GenSpacing.xxs) {
-                Text(title)
-                    .font(GenTypography.body(13))
-                    .foregroundStyle(Color.genTextPrimary)
-                Text(subtitle)
-                    .font(GenTypography.caption(11))
-                    .foregroundStyle(Color.settingsTextMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: GenSpacing.lg)
-            // The title is the switch's accessible name; the visible label is the Text above, so it stays hidden.
-            Toggle(title, isOn: value)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(Color.jarvisTeal)
-                .accessibilityHint(subtitle)
-        }
-        .padding(GenSpacing.md)
-        .background(Color.settingsCard)
-        .clipShape(RoundedRectangle(cornerRadius: GenRadius.sm))
-        .accessibilityIdentifier("flow-setting-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+    static let supported: [Language] = SFSpeechRecognizer.supportedLocales()
+        .map { Language(id: $0.identifier, name: displayName($0.identifier)) }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+    static var systemName: String { displayName(Locale.current.identifier) }
+
+    /// The supported languages, plus a stored identifier this Mac does not list, so the picker never shows a blank.
+    static func options(including identifier: String, supported: [Language] = supported) -> [Language] {
+        guard !identifier.isEmpty, !supported.contains(where: { $0.id == identifier }) else { return supported }
+        return supported + [Language(id: identifier, name: "\(displayName(identifier)) (not available)")]
     }
 
-    private func picker(_ title: String, selection: Binding<FlowActivation>) -> some View {
-        HStack {
-            Text(title)
-                .font(GenTypography.body(13))
-                .foregroundStyle(Color.genTextPrimary)
-            Spacer()
-            Picker(title, selection: selection) {
-                ForEach(FlowActivation.allCases, id: \.self) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 210)
-            .instantTooltip("Push to talk: hold the key. Toggle: tap to start and stop")
-        }
-        .padding(GenSpacing.md)
-        .background(Color.settingsCard)
-        .clipShape(RoundedRectangle(cornerRadius: GenRadius.sm))
+    /// "English (United States)". A system identifier can carry keywords ("en_US@rg=czzzzz", a region override);
+    /// they are dropped before the lookup, which otherwise returns nothing.
+    static func displayName(_ identifier: String) -> String {
+        let base = String(identifier.split(separator: "@", maxSplits: 1).first ?? "")
+        return Locale.current.localizedString(forIdentifier: base) ?? identifier
+    }
+}
+
+/// Choices for how long the microphone keeps listening after the shortcut is released.
+enum FlowTrailingGrace {
+    static let presets = [0, 150, 250, 350, 500, 750, 1_000, 1_500, 2_000]
+
+    static func options(including value: Int) -> [Int] {
+        presets.contains(value) ? presets : (presets + [value]).sorted()
+    }
+
+    static func label(_ milliseconds: Int) -> String {
+        let text = milliseconds == 0 ? "Stop at once" : "\(milliseconds) ms"
+        return milliseconds == FlowConfig().trailingGraceMs ? "\(text) (default)" : text
     }
 }
 
@@ -463,9 +486,9 @@ private struct FlowHistoryPane: View {
 
     static func dayLabel(_ day: Date) -> String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(day) { return "TODAY" }
-        if calendar.isDateInYesterday(day) { return "YESTERDAY" }
-        return dayFormatter.string(from: day).uppercased()
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return dayFormatter.string(from: day)
     }
 }
 
@@ -593,8 +616,8 @@ private struct FlowInsightsPane: View {
                 )
 
                 if !session.suggestions.isEmpty {
-                    Text("DICTIONARY SUGGESTIONS")
-                        .font(GenTypography.caption(10, weight: .bold))
+                    Text("Dictionary suggestions")
+                        .font(GenTypography.caption(12, weight: .semibold))
                         .foregroundStyle(Color.settingsTextMuted)
                     Text("Words Flow keeps hearing that are not in your dictionary. Accept to fix the spelling everywhere.")
                         .font(GenTypography.body(12))
@@ -907,8 +930,8 @@ private struct FlowTransformsPane: View {
 
             if let result {
                 VStack(alignment: .leading, spacing: GenSpacing.sm) {
-                    Text("RESULT")
-                        .font(GenTypography.caption(9, weight: .bold))
+                    Text("Result")
+                        .font(GenTypography.caption(11, weight: .semibold))
                         .foregroundStyle(Color.settingsTextMuted)
                     Text(result)
                         .font(GenTypography.body(13))
@@ -1052,13 +1075,21 @@ public enum FlowKeyNames {
         return parts + keyName(keyCode)
     }
 
+    /// Carbon virtual key codes (ANSI layout) and their key-cap labels.
     private static let names: [UInt32: String] = [
         0x00: "A", 0x01: "S", 0x02: "D", 0x03: "F", 0x05: "G", 0x04: "H",
         0x26: "J", 0x28: "K", 0x25: "L", 0x0B: "B", 0x0E: "E", 0x22: "I",
         0x1F: "O", 0x23: "P", 0x0C: "Q", 0x0F: "R", 0x11: "T", 0x20: "U",
         0x09: "V", 0x0D: "W", 0x07: "X", 0x10: "Y", 0x06: "Z", 0x08: "C",
         0x2D: "N", 0x2E: "M",
-        0x31: "Space", 0x61: "F6", 0x60: "F5", 0x76: "F4", 0x63: "F3",
+        0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4", 0x17: "5", 0x16: "6", 0x1A: "7", 0x1C: "8", 0x19: "9", 0x1D: "0",
+        0x18: "=", 0x1B: "-", 0x1E: "]", 0x21: "[", 0x27: "'", 0x29: ";", 0x2A: "\\", 0x2B: ",", 0x2C: "/",
+        0x2F: ".", 0x32: "`",
+        0x31: "Space", 0x24: "↩", 0x30: "⇥", 0x33: "⌫", 0x75: "⌦", 0x35: "⎋",
+        0x7B: "←", 0x7C: "→", 0x7D: "↓", 0x7E: "↑", 0x73: "Home", 0x77: "End", 0x74: "Page Up", 0x79: "Page Down",
+        0x7A: "F1", 0x78: "F2", 0x63: "F3", 0x76: "F4", 0x60: "F5", 0x61: "F6", 0x62: "F7", 0x64: "F8",
+        0x65: "F9", 0x6D: "F10", 0x67: "F11", 0x6F: "F12", 0x69: "F13", 0x6B: "F14", 0x71: "F15", 0x6A: "F16",
+        0x40: "F17", 0x4F: "F18", 0x50: "F19", 0x5A: "F20",
     ]
 
     public static func keyName(_ code: UInt32) -> String {

@@ -151,18 +151,30 @@ struct RepoFacts: Codable, Equatable {
         return forge?.compare(base: pr.target, head: branch)
     }
 
-    /// Blocking: runs `tools`, so call it off the main thread only.
-    static func fetch(_ paths: [String], pr: Bool) -> [RepoFacts] {
-        guard !paths.isEmpty else { return [] }
-        let span = HubPerf.begin("repoFacts", "\(paths.count) paths pr=\(pr)")
+    /// What the CLI answers for a folder that is no checkout: every field empty.
+    static func none(_ path: String) -> RepoFacts {
+        RepoFacts(path: path, root: nil, repo: nil, branch: nil, head: nil, origin: nil, branchUrl: nil, headUrl: nil, pr: nil, prError: nil)
+    }
+
+    /// Blocking: runs `tools`, so call it off the main thread only. A folder that is gone from disk (a deleted
+    /// Copilot session-state checkout) is answered here: `tools hub repo` on one took 1.7 to 2.5 s under load
+    /// (24 runs on 2026-10-10, inventory H20), to say what a `stat` says.
+    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = ToolsCLIRunner.run) -> [RepoFacts] {
+        let present = paths.filter { FileManager.default.fileExists(atPath: $0) }
+        let missing = paths.filter { !present.contains($0) }.map(none)
+        if !missing.isEmpty {
+            HubPerf.log("repoFacts \(missing.count) missing folders answered without tools")
+        }
+        guard !present.isEmpty else { return missing }
+        let span = HubPerf.begin("repoFacts", "\(present.count) paths pr=\(pr)")
         defer { span.end() }
         do {
             // The CLI answers fresh by default; the PR lookup cache's own TTL (tools hub config) still caps a day.
-            let data = try ToolsCLIRunner.run(["hub", "repo"] + paths + (pr ? ["--pr", "--max-cache-age", "86400"] : []))
-            return try JSONDecoder().decode([RepoFacts].self, from: data)
+            let data = try run(["hub", "repo"] + present + (pr ? ["--pr", "--max-cache-age", "86400"] : []))
+            return try JSONDecoder().decode([RepoFacts].self, from: data) + missing
         } catch {
             HubPerf.log("repoFacts failed: \(error)")
-            return []
+            return missing
         }
     }
 }
@@ -210,6 +222,11 @@ final class RepoFactsStore: ObservableObject {
     /// The cached facts, or nil until the batch that fetches them lands. `pr` adds the PR/MR lookup (gh / glab).
     func facts(for path: String, pr: Bool = false) -> RepoFacts? {
         guard !path.isEmpty else { return nil }
+        // A folder this run already found to be no checkout has no branch, so no PR either: no second
+        // `tools hub repo --pr` for it on the next selection.
+        if pr, fresh.contains(path), byPath[path]?.root == nil {
+            return byPath[path]
+        }
         if pr {
             if requestedPR.insert(path).inserted {
                 requested.insert(path)
@@ -409,6 +426,68 @@ extension TitlebarHeader where Details == EmptyView {
     }
 }
 
+// MARK: - A scroll area as tall as its rows
+
+/// A scroll area that is as tall as its content, up to `maxHeight`, and fades at a cut edge when it is taller.
+/// The overlays (palette, prompts, find) gave their lists a fixed or greedy height: three prompts sat over 250 pt
+/// of empty panel, and the palette's height preference never left its scroll view, so it showed one row (H17).
+struct FittedScroll<Content: View>: View {
+    var maxHeight: CGFloat
+    var minHeight: CGFloat = 0
+    @ViewBuilder let content: () -> Content
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            content()
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { height = $0 }
+                .scrollOverflowContent()
+        }
+        .scrollOverflowHints()
+        .frame(height: min(maxHeight, max(minHeight, height)))
+    }
+}
+
+// MARK: - Keep a sidebar's selection in view
+
+/// A grouped sidebar keeps its selected row in view (hub inventory H4, 2026-10-10): a selection set by a link
+/// (`--worktree`, `--pr`), a reopen or the palette landed far below the fold or inside a collapsed group, and
+/// nothing on screen marked it. The row's group opens and the list scrolls to it once the row exists. The first
+/// reveal centres the row; later ones scroll only as far as needed, so a click on a row already on screen moves
+/// nothing. Rows carry their selection value as `.id(…)` inside the `ScrollViewReader`.
+struct SidebarReveal: ViewModifier {
+    let proxy: ScrollViewProxy
+    let selection: String?
+    /// The selected row's group key, or nil while the list does not hold the row.
+    let group: String?
+    /// The list has loaded once: before that a missing row means "not here yet", not "nothing to reveal".
+    let loaded: Bool
+    @ObservedObject var prefs: GroupPrefs
+    @State private var revealedOnce = false
+
+    func body(content: Content) -> some View {
+        content.onChange(of: [selection ?? "", group ?? "", loaded ? "loaded" : ""], initial: true) { _, _ in reveal() }
+    }
+
+    private func reveal() {
+        guard loaded else { return }
+        guard let selection, let group else {
+            revealedOnce = true
+            return
+        }
+        let anchor: UnitPoint? = revealedOnce ? nil : .center
+        revealedOnce = true
+        if prefs.collapsed.contains(group) {
+            prefs.collapsed.remove(group)
+            HubPerf.log("sidebar.reveal \(prefs.key): opened \(group) for \(selection)")
+        }
+        // The row exists only after the opened group's next layout.
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(selection, anchor: anchor) }
+        }
+    }
+}
+
 // MARK: - Group preferences (pin, collapse, order) for list sections
 
 /// Persisted per list: which groups are pinned (on top), collapsed, and their manual order.
@@ -586,6 +665,8 @@ struct GroupHeader: View {
     var starred = false
     /// A hide button: the PR list's projects opened from "More projects" leave the list again.
     var remove: (() -> Void)?
+    /// The group holds one page of a longer list: the count reads "40+", never a total (H8).
+    var more = false
 
     /// Where a header dragged over this one would land (a line on that edge); nil when none is.
     @State private var dropEdge: VerticalEdge?
@@ -613,7 +694,7 @@ struct GroupHeader: View {
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel(Text(title))
-            .accessibilityValue(Text(isCollapsed ? "collapsed, \(count) items" : "expanded, \(count) items"))
+            .accessibilityValue(Text(isCollapsed ? "collapsed, \(Plural.count(count, "item"))" : "expanded, \(Plural.count(count, "item"))"))
             .accessibilityHint(Text(isCollapsed ? "Expands the group" : "Collapses the group"))
             if let remove {
                 IconButton(systemName: "eye.slash", tooltip: "Hide \(title) again (it stays under More projects)", size: 9.5, action: remove)
@@ -624,7 +705,7 @@ struct GroupHeader: View {
             if let path {
                 IconButton(systemName: "doc.on.doc", tooltip: "Copy absolute path: \(path)", size: 9.5) { PathOpener.copy(path, what: "path") }
             }
-            Text(verbatim: "\(count)").font(.system(size: 10.5, design: .monospaced))
+            Text(verbatim: more ? "\(count)+" : "\(count)").font(.system(size: 10.5, design: .monospaced))
         }
         .foregroundColor(ReviewPalette.dim)
         .padding(.horizontal, 14)

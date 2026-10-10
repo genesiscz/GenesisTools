@@ -401,3 +401,9 @@ export function markEntriesRead(db: Database, ids: string[], opts: Pick<QueryOpt
 
     return updated;
 }
+
+/** "Mark all read": every unread answer recorded at or before `at` (epoch ms). Later answers stay unread. */
+export function markEntriesReadThrough(db: Database, at: number, opts: Pick<QueryOpts, "logBase"> = {}): number {
+    catchUp(db, opts.logBase);
+    return db.run("UPDATE entries SET read_at = ? WHERE read_at IS NULL AND ts <= ?", [Date.now(), at]).changes;
+}

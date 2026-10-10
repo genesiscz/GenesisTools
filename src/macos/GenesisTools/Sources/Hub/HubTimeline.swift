@@ -197,6 +197,8 @@ enum TimelineAuthor: String, CaseIterable {
 @MainActor
 final class HubTimelineModel: ObservableObject {
     static let pageSize = 200
+    /// More changed rows than this land without the slide (see `apply`).
+    static let animatedChangeLimit = 8
 
     @Published private(set) var events: [TimelineEvent] = []
     @Published private(set) var since: Date?
@@ -324,6 +326,16 @@ final class HubTimelineModel: ObservableObject {
         events.filter { $0.kind == kind.rawValue && (project == nil || $0.project == project) }.count
     }
 
+    /// A count over the loaded pages: "154+" while older pages of the range exist, so a page size never
+    /// reads as a total (H7: "200 events", "Every project 200" were the page size).
+    func pageCount(_ count: Int) -> String {
+        Self.pageCount(count, hasMore: hasMore)
+    }
+
+    nonisolated static func pageCount(_ count: Int, hasMore: Bool) -> String {
+        hasMore && count > 0 ? "\(count)+" : "\(count)"
+    }
+
     var projects: [(name: String, count: Int)] {
         let grouped = Dictionary(grouping: events.compactMap(\.project), by: { $0 })
         return grouped.map { ($0.key, $0.value.count) }.sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
@@ -416,13 +428,29 @@ final class HubTimelineModel: ObservableObject {
     private func apply(_ envelope: TimelineEnvelope, key: String, interval: DateInterval) {
         let samePage = shownKey == key
         shownKey = key
+        let fresh = Self.inRange(envelope.events, interval: interval)
+        if fresh.count != envelope.events.count {
+            HubPerf.log("timeline.apply dropped \(envelope.events.count - fresh.count) of \(envelope.events.count) events before \(HubFormat.iso.string(from: interval.start)) (page from \(envelope.since))")
+        }
         let before = samePage ? Dictionary(events.map { ($0.id, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first }) : [:]
-        let moved = SWR.changed(before: before, after: envelope.events.map { ($0.id, "\($0.hashValue)") })
-        withAnimation(SWR.animation) {
-            if events != envelope.events {
-                events = envelope.events
+        let after = fresh.map { ($0.id, "\($0.hashValue)") }
+        // Only a small refresh of the page on screen slides and flashes: a first paint, another range or a wholesale
+        // swap lands at once. Animated, the cached first page built an insertion for each of its 200 rows
+        // (`hub.mode.timeline` 556 ms of main thread, 2026-10-10), and a swap left fading rows among the new ones.
+        if SWR.animates(before: before, after: after, limit: Self.animatedChangeLimit) {
+            let moved = SWR.changed(before: before, after: after)
+            withAnimation(SWR.animation) {
+                if events != fresh {
+                    events = fresh
+                }
+                changed = moved
             }
-            changed = moved
+            SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
+        } else {
+            if events != fresh {
+                events = fresh
+            }
+            changed = []
         }
         warnings = envelope.warnings
         truncated = envelope.truncated ?? []
@@ -430,7 +458,15 @@ final class HubTimelineModel: ObservableObject {
         until = HubFormat.date(envelope.until) ?? interval.end
         hasMore = envelope.hasMore ?? false
         nextBefore = envelope.nextBefore
-        SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
+    }
+
+    /// The events of a page that belong to the range on screen. The disk cache is keyed by the range's
+    /// name, so "last 24 hours" from a run three days ago paints rows that are no longer in it.
+    nonisolated static func inRange(_ events: [TimelineEvent], interval: DateInterval) -> [TimelineEvent] {
+        events.filter { event in
+            guard let date = event.date else { return true }
+            return date >= interval.start
+        }
     }
 
     /// The next older page of the same range; rows already shown (a boundary shared by two pages) are skipped.
@@ -968,7 +1004,7 @@ struct TimelineListView: View {
             Image(systemName: kind.symbol).foregroundColor(kind.color).frame(width: 16)
             Text(kind.title).font(.system(size: 12.5))
             Spacer()
-            Text(verbatim: "\(timeline.count(kind))")
+            Text(verbatim: timeline.pageCount(timeline.count(kind)))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundColor(ReviewPalette.dim)
         }
@@ -979,7 +1015,7 @@ struct TimelineListView: View {
             if on { timeline.hidden.insert(kind.rawValue) } else { timeline.hidden.remove(kind.rawValue) }
         }
         .padding(.horizontal, 6)
-        .instantTooltip(on ? "Hide \(kind.title.lowercased())" : "Show \(kind.title.lowercased())")
+        .instantTooltip((on ? "Hide \(kind.title.lowercased())" : "Show \(kind.title.lowercased())") + (timeline.hasMore ? "\nThe count is of the loaded events; Load older at the end of the feed reads more." : ""))
     }
 
     private func projectRow(name: String?, count: Int) -> some View {
@@ -992,7 +1028,7 @@ struct TimelineListView: View {
                 .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                 .lineLimit(1)
             Spacer()
-            Text(verbatim: "\(count)")
+            Text(verbatim: timeline.pageCount(count))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundColor(ReviewPalette.dim)
         }
@@ -1015,6 +1051,24 @@ struct TimelineHour: Identifiable {
     /// Not the bare date: the midnight hour starts at its day's own start, and with one id for the
     /// day's section and its "00:00" group the lazy list drew that hour's header blank.
     var id: String { "hour:\(hour.timeIntervalSince1970)" }
+
+    /// The hour an event is grouped under (its local hour's start).
+    static func start(of date: Date, calendar: Calendar = .current) -> Date {
+        calendar.dateInterval(of: .hour, for: date)?.start ?? date
+    }
+}
+
+extension TimelineEvent {
+    /// The row's identity in the Activity list, for its `ForEach`, its find row and the find's scroll target: the
+    /// event inside its hour. Keyed by the event id alone, a row whose event moved to another hour kept drawing its
+    /// old content in the new place: the lazy list matched the explicit id across the hours' `ForEach`es and never
+    /// evaluated the row again. A session's "last turn" and a PR's "updated" keep their id and move on every refresh,
+    /// and the cached page paints before the fresh one, so after each load such rows showed their old time and
+    /// "1h ago" under the right hour ("22:07 say hi" under 23:00, H27, 2026-10-10).
+    var rowID: String {
+        let hour = date.map { TimelineHour.start(of: $0).timeIntervalSince1970 } ?? 0
+        return "\(hour)|\(id)"
+    }
 }
 
 /// The feed grouped by day, then by hour inside a day.
@@ -1030,7 +1084,7 @@ struct TimelineDay: Identifiable {
         }
         return byDay.keys.sorted(by: >).map { day in
             let byHour = Dictionary(grouping: byDay[day] ?? []) { event in
-                event.date.map { calendar.dateInterval(of: .hour, for: $0)?.start ?? $0 } ?? .distantPast
+                event.date.map { TimelineHour.start(of: $0, calendar: calendar) } ?? .distantPast
             }
             return TimelineDay(day: day, hours: byHour.keys.sorted(by: >).map { TimelineHour(hour: $0, events: byHour[$0] ?? []) })
         }
@@ -1102,7 +1156,8 @@ struct TimelineMain: View {
                         Section {
                             ForEach(day.hours) { hour in
                                 hourHeader(hour.hour, count: hour.events.count)
-                                ForEach(hour.events) { event in
+                                // `rowID`, not the event id: a row whose event moved hours is a new row (H27).
+                                ForEach(hour.events, id: \.rowID) { event in
                                     TimelineRowView(
                                         model: model,
                                         timeline: timeline,
@@ -1113,7 +1168,7 @@ struct TimelineMain: View {
                                         forge: event.repo.flatMap { repos.facts(for: $0)?.forge }
                                     )
                                     .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
-                                    .findRow(event.id)
+                                    .findRow(event.rowID)
                                         .padding(.horizontal, 10)
                                         .transition(SWR.rowTransition)
                                 }
@@ -1138,7 +1193,7 @@ struct TimelineMain: View {
 
     private func findRevision(_ events: [TimelineEvent]) -> String {
         let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
-        return events.map(\.id).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
+        return events.map(\.rowID).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
     }
 
     private func dayHeader(_ day: TimelineDay) -> some View {
@@ -1203,7 +1258,7 @@ struct TimelineMain: View {
                         .lineLimit(2)
                 }
             } else if !timeline.events.isEmpty {
-                Text("Everything in this range is shown (\(timeline.events.count) events, \(shown) after the filters).")
+                Text(verbatim: "Everything in this range is shown (\(Plural.count(timeline.events.count, "event")), \(shown) after the filters).")
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }
@@ -1226,7 +1281,7 @@ struct TimelineMain: View {
                             .foregroundColor(ReviewPalette.dim)
                             .lineLimit(1)
                     }
-                    Text(verbatim: "\(count) events")
+                    Text(verbatim: "\(timeline.pageCount(count)) \(count == 1 ? "event" : "events")")
                         .font(.system(size: 12))
                         .foregroundColor(ReviewPalette.dim)
                 }
@@ -1295,7 +1350,8 @@ struct TimelineRowView: View {
             PanelFindField("branch", event.timelineKind == .push || compact ? "" : event.branch ?? ""),
             PanelFindField("author", event.author ?? ""),
         ]
-        return PanelFindRow(id: event.id, fields: own + (detail.map(TimelineDetailFind.fields) ?? []))
+        // The id of the row's `findRow`, the scroll target of a match (`TimelineEvent.rowID`).
+        return PanelFindRow(id: event.rowID, fields: own + (detail.map(TimelineDetailFind.fields) ?? []))
     }
 
     private var openTooltip: String {
@@ -1380,7 +1436,7 @@ struct TimelineRowView: View {
                 if let author = event.author, kind != .session, kind != .sessionStart {
                     authorLabel(author, live: live)
                 }
-                LiveAgo(date: event.date)
+                LiveAgo(date: event.date, style: .brief)
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
@@ -1397,12 +1453,13 @@ struct TimelineRowView: View {
                         }
                     } else {
                         ForEach(actions) { action in
+                            // Faint at rest: the same glyphs come alive as buttons under the pointer, so at full
+                            // strength they read as six decorations per row (H19).
                             Image(systemName: action.symbol)
                                 .font(.system(size: 11))
                                 .frame(width: 16, height: 16)
                                 .padding(3)
-                                // A disabled IconButton: the style's 0.4 under the row's 0.35.
-                                .opacity(action.disabled ? 0.4 * 0.35 : 1)
+                                .opacity(action.disabled ? 0.4 * 0.35 : 0.4)
                         }
                         .accessibilityHidden(true)
                     }

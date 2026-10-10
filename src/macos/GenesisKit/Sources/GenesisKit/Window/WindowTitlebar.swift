@@ -327,11 +327,17 @@ public enum WindowTitlebar {
     /// view once.
     @MainActor
     public static func flatColumns(under window: NSWindow, columnWidth: CGFloat, depth: CGFloat = 120) -> [Audit.Band.Column] {
-        guard let view = window.contentView, view.bounds.height > 0,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return [] }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        let scale = CGFloat(rep.pixelsHigh) / view.bounds.height
-        let top = Int((stripHeight(of: window) * scale).rounded())
+        guard let view = window.contentView, view.bounds.height > 0 else { return [] }
+        // Only the strip and `depth` under it are read, so only they are drawn: the whole window cost a full
+        // render of every pane in each hub `--snapshot` (2026-10-10). The band starts at the view's top edge, so
+        // its pixel rows are the whole view's rows.
+        let strip = stripHeight(of: window)
+        let bandHeight = min(view.bounds.height, strip + depth)
+        let band = NSRect(x: 0, y: view.isFlipped ? 0 : view.bounds.height - bandHeight, width: view.bounds.width, height: bandHeight)
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: band) else { return [] }
+        view.cacheDisplay(in: band, to: rep)
+        let scale = CGFloat(rep.pixelsHigh) / bandHeight
+        let top = Int((strip * scale).rounded())
         let bottom = min(rep.pixelsHigh, top + Int(depth * scale))
         let columnPixels = max(3, Int(columnWidth * scale))
         guard top < bottom else { return [] }

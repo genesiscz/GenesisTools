@@ -18,7 +18,8 @@ struct WidgetReceiptContextView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        GenDisclosure(isExpanded: $expanded, minHeight: 26, spacing: 4, identifier: "widget.receipt.context",
+                      accessibilityTitle: "Source and context") {
             VStack(alignment: .leading, spacing: 10) {
                 if let source {
                     sourceRow("Source", source.agent)
@@ -64,7 +65,7 @@ struct WidgetReceiptContextView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .padding(.top, 8)
+            .padding(.horizontal, 4).padding(.bottom, 8)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "text.bubble")
@@ -72,7 +73,7 @@ struct WidgetReceiptContextView: View {
             }
             .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
         }
-        .padding(10)
+        .padding(4)
         .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
         .task(id: expanded) {
             guard ["answer", "decision", "todo", "form"].contains(card.kind), expanded || !hasPrewarmed else { return }

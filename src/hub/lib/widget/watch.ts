@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
@@ -6,7 +7,7 @@ import { sessionMessageQueueRoot } from "@genesiscz/utils/agent-sessions/message
 import { createWatcher, type WatcherSubscription, watchPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -14,26 +15,25 @@ import { prepareWidgetAsset } from "../composer/assets";
 import { widgetDispatcher } from "../composer/dispatch";
 import { type OutboxDispatcher, processWidgetOutbox } from "../composer/engine";
 import { recoverWidgetOutbox } from "../composer/outbox";
+import { readWarmStartRoster, writeWidgetRosterCache } from "./roster-cache";
+import {
+    type WidgetRosterProvider,
+    type WidgetRosterScope,
+    widgetRosterChange,
+    widgetSessionRoots,
+} from "./roster-index";
 import { WidgetRosterReader } from "./roster-reader";
-import { invalidateWidgetAgents, realWidgetSources, widgetSnapshot } from "./snapshot";
+import { realWidgetSources, widgetSnapshot } from "./snapshot";
 import { readWidgetState, widgetRoot } from "./storage";
 
 const prof = profiler.scope("widget");
 
-async function discoverWidgetSessions(signal: AbortSignal): Promise<void> {
-    const result = await boundedCommand({
-        command: [process.execPath, resolve(import.meta.dir, "../../index.ts"), "widget", "discover"],
-        cwd: resolve(import.meta.dir, "../../../.."),
-        timeoutMs: 120_000,
-        maxBufferBytes: 256 * 1024,
-        signal,
-    });
-    if (result.status !== 0) {
-        throw new Error(
-            `Widget session discovery failed: ${result.error?.message ?? (result.stderr.slice(-1000) || result.status)}`
-        );
-    }
-}
+/** The safety refresh: a roster read and a snapshot, for changes no file event reported. */
+const SAFETY_MS = 30_000;
+/** With an inbox source unwatched, the safety refresh is what notices its changes. */
+const DEGRADED_SAFETY_MS = 5000;
+/** Every this many safety ticks the whole catalog is refreshed, for changes outside the watched session roots. */
+const FULL_REFRESH_TICKS = 4;
 
 export async function watchWidget({
     root,
@@ -48,11 +48,12 @@ export async function watchWidget({
     emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>) => void;
     dependencies?: {
         prepare?: typeof prepareWidgetAsset;
-        discover?: (signal: AbortSignal) => Promise<void>;
         snapshot?: typeof widgetSnapshot;
         dispatcher?: OutboxDispatcher;
         inboxPaths?: { answerLog: string; database: string; decisions: string };
         watchInbox?: typeof createWatcher;
+        watchSessions?: typeof createWatcher;
+        sessionRoots?: Record<WidgetRosterProvider, string[]>;
     };
 }): Promise<void> {
     const directory = widgetRoot(root);
@@ -60,6 +61,10 @@ export async function watchWidget({
     await withFileLock(
         join(directory, "worker.lock"),
         async () => {
+            // Cold-start phases, as milliseconds since this process started (the app waits on the first snapshot).
+            prof.record("start lock", performance.now());
+            // This lock is the widget's "running" signal; refreshing now keeps the plugin hooks' state file current.
+            nativeInboxState({ refresh: true });
             await recoverWidgetOutbox(directory);
             const jobs = new Map<string, { revision: number; controller: AbortController; done: Promise<void> }>();
             const dispatcher = dependencies.dispatcher ?? widgetDispatcher({ signal });
@@ -80,12 +85,10 @@ export async function watchWidget({
                             }),
                         },
                     }));
-            const discover = dependencies.discover ?? discoverWidgetSessions;
-            let discoveryTask: Promise<void> | undefined;
             let dispatchTask: Promise<void> | undefined;
             let last = "";
-            let lastDiscovery = 0;
             const startedAt = Date.now();
+            let emitted = false;
             const profiledInbox = new Map<string, { at: number; id: string }>();
             const refresh = async () => {
                 const state = await readWidgetState(directory);
@@ -172,6 +175,14 @@ export async function watchWidget({
                             }
                         }
                     }
+                    if (!emitted) {
+                        emitted = true;
+                        prof.record(
+                            "start first snapshot",
+                            performance.now(),
+                            snapshot.rosterLoading ? "roster loading" : `sessions=${snapshot.sessions.length}`
+                        );
+                    }
                     emit(snapshot);
                 }
             };
@@ -200,47 +211,59 @@ export async function watchWidget({
                 })();
                 await refreshing;
             };
-            const requestDiscovery = () => {
-                if (signal.aborted || discoveryTask || Date.now() - lastDiscovery < 15_000) {
-                    return;
-                }
-                lastDiscovery = Date.now();
-                discoveryTask = prof
-                    .measureAsync("watch discovery", () => discover(signal))
-                    .then(() => {
-                        if (!signal.aborted) {
-                            invalidateWidgetAgents();
-                            roster?.refresh(true);
-                            return requestRefresh();
-                        }
-                    })
-                    .catch((error) => {
-                        if (!signal.aborted) {
-                            logger.warn(
-                                { error },
-                                "Widget session discovery failed; indexed sessions remain available"
-                            );
-                        }
-                    })
-                    .finally(() => {
-                        discoveryTask = undefined;
-                    });
-            };
             if (!dependencies.snapshot) {
+                let rosterReady = false;
                 roster = new WidgetRosterReader({
                     changed: () => {
+                        if (!rosterReady) {
+                            rosterReady = true;
+                            prof.record("start first roster", performance.now());
+                        }
+                        // One-shot snapshots (the settings page) read this instead of rebuilding the tree cold.
+                        if (roster && !roster.error && roster.agents.generatedAt) {
+                            const { rows, agents } = roster;
+                            writeWidgetRosterCache({ root: directory, roster: { rows, agents } }).catch((error) => {
+                                logger.debug({ error }, "Widget roster cache not written");
+                            });
+                        }
                         void requestRefresh();
                     },
                 });
+                // The first read of a fresh worker takes seconds; until it lands, show what the previous watch of this
+                // root last showed, and start that read now so the worker boots while the watchers are set up.
+                const warm = await readWarmStartRoster(directory);
+                if (warm) {
+                    roster.seed(warm);
+                }
+                prof.record("start roster cache", performance.now(), warm ? "seeded" : "none");
+                roster.refresh();
             }
             const subscription = watchPath(join(directory, "state.json"), requestRefresh, { debounceMs: 180 });
             let queueSubscription: WatcherSubscription | undefined;
             const inboxSubscriptions: WatcherSubscription[] = [];
-            const safety = setInterval(() => {
-                roster?.refresh();
-                requestDiscovery();
-                void requestRefresh();
-            }, 5000);
+            const sessionSubscriptions: WatcherSubscription[] = [];
+            let inboxDegraded = false;
+            let sessionsDegraded = false;
+            let safetyTicks = 0;
+            let cancelSafety: (() => void) | undefined;
+            const scheduleSafety = () => {
+                if (signal.aborted) {
+                    return;
+                }
+                const timer = setTimeout(
+                    () => {
+                        safetyTicks++;
+                        roster?.refresh();
+                        if (sessionsDegraded || safetyTicks % FULL_REFRESH_TICKS === 0) {
+                            roster?.request(["all"]);
+                        }
+                        void requestRefresh();
+                        scheduleSafety();
+                    },
+                    inboxDegraded ? DEGRADED_SAFETY_MS : SAFETY_MS
+                );
+                cancelSafety = () => clearTimeout(timer);
+            };
             try {
                 const queueDirectory = sessionMessageQueueRoot();
                 await mkdir(queueDirectory, { recursive: true, mode: 0o700 });
@@ -286,14 +309,26 @@ export async function watchWidget({
                         );
                         logger.debug({ directory: sourceDirectory, paths }, "Watching Widget inbox sources");
                     } catch (error) {
+                        inboxDegraded = true;
                         logger.warn(
                             { error, directory: sourceDirectory },
                             "Widget inbox source events unavailable; using safety refresh"
                         );
                     }
                 }
-                roster?.refresh();
-                requestDiscovery();
+                if (roster) {
+                    sessionsDegraded = !(await watchSessionRoots({
+                        roster,
+                        roots: dependencies.sessionRoots ?? widgetSessionRoots(),
+                        watch: dependencies.watchSessions ?? createWatcher,
+                        subscriptions: sessionSubscriptions,
+                        signal,
+                    }));
+                }
+                prof.record("start watchers armed", performance.now());
+                scheduleSafety();
+                // The full refresh catches up behind the first read, in the same resident worker.
+                roster?.request(["all"], { immediate: true });
                 await requestRefresh();
                 await new Promise<void>((resolve) => {
                     if (signal.aborted) {
@@ -303,15 +338,15 @@ export async function watchWidget({
                     }
                 });
             } finally {
-                clearInterval(safety);
+                cancelSafety?.();
                 roster?.stop();
                 await subscription.unsubscribe();
                 await queueSubscription?.unsubscribe();
-                for (const subscription of inboxSubscriptions) {
+                for (const subscription of [...inboxSubscriptions, ...sessionSubscriptions]) {
                     try {
                         await subscription.unsubscribe();
                     } catch (error) {
-                        logger.warn({ error }, "Widget inbox watcher cleanup failed");
+                        logger.warn({ error }, "Widget watcher cleanup failed");
                     }
                 }
                 await refreshing;
@@ -320,9 +355,77 @@ export async function watchWidget({
                 }
                 await Promise.allSettled([...jobs.values()].map((job) => job.done));
                 await dispatchTask;
-                await discoveryTask;
             }
         },
         1500
     );
+}
+
+/**
+ * Watches every provider's session roots and turns each burst of transcript changes into one roster request with
+ * the index scopes it can affect. Returns false when a root could not be watched; the safety refresh then
+ * refreshes the whole catalog on every tick instead.
+ */
+async function watchSessionRoots({
+    roster,
+    roots,
+    watch,
+    subscriptions,
+    signal,
+}: {
+    roster: WidgetRosterReader;
+    roots: Record<WidgetRosterProvider, string[]>;
+    watch: typeof createWatcher;
+    subscriptions: WatcherSubscription[];
+    signal: AbortSignal;
+}): Promise<boolean> {
+    const onEvents = (events: { path: string }[]) => {
+        const scopes = new Set<WidgetRosterScope>();
+        let read = false;
+        let listed: Set<string> | undefined;
+        const listedParent = (sessionId: string) => {
+            listed ??= new Set(roster.agents.parents.map((parent) => parent.sessionId));
+            return listed.has(sessionId);
+        };
+        for (const event of events) {
+            const change = widgetRosterChange({ path: event.path, roots, listedParent });
+            if (change === "read") {
+                read = true;
+            } else if (change) {
+                scopes.add(change);
+            }
+        }
+        if (read || scopes.size > 0) {
+            roster.request(scopes, { read });
+        }
+    };
+    const all = [...new Set([...roots.claude, ...roots.codex, ...roots.grok])];
+    let complete = true;
+    for (const root of all) {
+        if (signal.aborted) {
+            break;
+        }
+        if (!existsSync(root)) {
+            // A home that does not exist yet (another account) is found by the periodic full refresh.
+            logger.debug({ root }, "Widget session root absent; not watched");
+            continue;
+        }
+        try {
+            // No debounce here: the roster request coalesces a burst itself, and a trailing debounce would never fire
+            // while a busy transcript keeps writing.
+            subscriptions.push(
+                await watch(root, onEvents, {
+                    debounceMs: 0,
+                    ignorePatterns: [],
+                    filter: (event) =>
+                        widgetRosterChange({ path: event.path, roots, listedParent: () => true }) !== undefined,
+                })
+            );
+        } catch (error) {
+            complete = false;
+            logger.warn({ error, root }, "Widget session root events unavailable; the safety refresh covers it");
+        }
+    }
+    logger.debug({ roots: all.length, complete }, "Watching Widget session roots");
+    return complete;
 }

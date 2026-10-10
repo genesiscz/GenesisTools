@@ -74,7 +74,7 @@ final class HubQuestionSeamTests: XCTestCase {
         XCTAssertEqual(item.choices?.first?.recommended, true)
         let session = InboxSession(
             sessionId: "s", provider: "claude", title: nil, project: nil, cwd: nil, branch: nil, account: nil,
-            lastAt: "", waiting: 1, drafted: 1, queued: nil, reply: nil, items: [item]
+            lastAt: "", waiting: 1, drafted: 1, queued: nil, stale: nil, reply: nil, items: [item]
         )
         XCTAssertEqual(session.draftedItems.count, 1)
         XCTAssertTrue(item.findFields.contains { $0.key == "context" && $0.markdown })

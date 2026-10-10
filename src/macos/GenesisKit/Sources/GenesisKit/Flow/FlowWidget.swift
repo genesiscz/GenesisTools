@@ -18,7 +18,7 @@ public struct FlowWidget: View {
     }
 
     public static func module(runtime: FlowFocusRuntime) -> WidgetModuleDescriptor {
-        WidgetModuleDescriptor(id: "focus", title: "Flow", symbol: "waveform", tint: .jarvisTeal,
+        WidgetModuleDescriptor(id: "focus", title: "Flow", symbol: "mic.fill", tint: .jarvisTeal,
                                expandedSize: CGSize(width: 432, height: 480),
                                summary: { runtime.flow.phase == .listening ? "Listening" : "Dictation & Focus" }) { presentation in
             FlowWidget(runtime: runtime, presentation: presentation)
@@ -155,7 +155,7 @@ public struct FlowWidget: View {
 
     private var recentDictation: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("RECENT DICTATION").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            Text("Recent dictation").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             ForEach(flow.history.prefix(3)) { entry in
                 Button { flow.copyEntry(entry) } label: {
                     HStack(alignment: .top, spacing: 10) {

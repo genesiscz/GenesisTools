@@ -324,10 +324,6 @@ enum HubPaletteEngine {
 
 // MARK: - View
 
-private struct PaletteListHeight: PreferenceKey {
-    static let defaultValue: CGFloat = 60
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
 
 struct HubPaletteView: View {
     @Binding var isPresented: Bool
@@ -338,8 +334,7 @@ struct HubPaletteView: View {
     @State private var query = ""
     @State private var rows: [HubPaletteSuggestion] = []
     @State private var active = 0
-    /// The rows' own height: a fixed 380 pt box left most of the panel empty under one hint row.
-    @State private var listHeight: CGFloat = 60
+
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -353,34 +348,35 @@ struct HubPaletteView: View {
                     Text(verbatim: "⌘K")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Color.jarvisTeal.opacity(0.85))
-                    TextField("gt pr 424 · session hub · grep FocusBridge · history resize", text: $query)
+                    // Short enough to fit beside the key hint: the long example ran under it ("history re").
+                    TextField("A command, or a project and a command", text: $query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(.settingsText)
                         .focused($focused)
                         .onSubmit { runActive() }
                         .accessibilityIdentifier("hub-palette-input")
-                    Text(verbatim: "tab completes · esc")
+                        .layoutPriority(-1)
+                    Text(verbatim: "tab completes · esc closes")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.settingsTextMuted)
+                        .fixedSize()
+                        .padding(.leading, 8)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 Divider().background(Color.jarvisBorder)
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    // As tall as the rows: the old height preference never left the scroll view, so an empty
+                    // query showed only its first command ("pr") of thirteen (H17).
+                    FittedScroll(maxHeight: 380, minHeight: 44) {
                         LazyVStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                                 paletteRow(row, index: index).id(row.id)
                             }
                         }
                         .padding(6)
-                        .background(GeometryReader { proxy in
-                            Color.clear.preference(key: PaletteListHeight.self, value: proxy.size.height)
-                        })
                     }
-                    .frame(height: min(380, max(44, listHeight)))
-                    .onPreferenceChange(PaletteListHeight.self) { listHeight = $0 }
                     .onChange(of: active) { _, index in
                         if rows.indices.contains(index) { proxy.scrollTo(rows[index].id) }
                     }

@@ -262,3 +262,7 @@ showing the compact notch was consistent with that delayed action, not evidence 
 Choose an output canvas large enough for the expanded target's Retina pixels. Metadata distinguishes
 capture scale from interpolation; enlarging a compact 44-point rail does not create additional detail.
 Keep the exact plan/result, raw movie, build identity and failed attempts beside the unannotated alpha grid.
+
+
+## From the widget motion stream (2026-10-10, 417458101)
+per-window capture is not evidence for a resizing window. Use `scripts/native/outline-frames.swift` (display capture filtered to the app's windows, run through the GenesisTools.app launcher), and read its `frames.txt` bounding boxes as the visible outline per frame.

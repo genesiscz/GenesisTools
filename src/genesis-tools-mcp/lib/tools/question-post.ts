@@ -9,6 +9,7 @@ import {
 } from "@app/question/lib/decisions/items";
 import { currentHarnessSession, decisionFiles, sessionAnswers } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, type PostDecisionDeps, readDecisions } from "@app/question/lib/decisions/store";
+import { decisionNudge } from "@app/question/lib/inbox-guidance";
 import {
     type AskDeps,
     answerAskForm,
@@ -22,11 +23,13 @@ import {
 import { summarizeForm } from "@app/question/lib/pending/render";
 import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/types";
 import { DEFAULT_WAIT_BUDGET_MS, MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
-import { questionTokenRegistry, transcludeItems, transclusionReport } from "@app/question/lib/transclude";
+import { prepareQuestionItems, questionTokenRegistry, transclusionReport } from "@app/question/lib/transclude";
 import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { IMAGE_ATTACHMENT_INPUT_SCHEMA } from "@genesiscz/utils/image/attachments";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { NativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import {
     describeTransclusions,
     formatTransclusionHelp,
@@ -60,10 +63,11 @@ export interface DecisionLogDeps {
     decisionLog?: { file: string; events: string; deps?: PostDecisionDeps; session?: string | null };
 }
 
-/** `askViaQuestionTool` overrides the question config's opt-in (tests); unset reads the config. */
+/** `askViaQuestionTool` and `inboxState` override the opt-in and this Mac's native inbox (tests); unset reads them. */
 export type QuestionDeps = AskDeps &
     DecisionLogDeps & {
         askViaQuestionTool?: boolean;
+        inboxState?: NativeInboxState;
         /** Test seams for inline-token resolution (a fake runner, fetch or asset folder). */
         transclude?: Partial<Omit<TranscludeOptions, "cwd" | "label">>;
     };
@@ -141,15 +145,16 @@ function describeDecisions(decisions: DecisionRecord[], markdown: string): strin
 
 export async function handleQuestionPost(args: QuestionPostArgs, deps: QuestionDeps = {}): Promise<string> {
     const text = await postQuestionItems(args, deps);
-    return `${text}\n\n${agentNote(deps.askViaQuestionTool)}`;
+    return `${text}\n\n${agentNote({ askViaQuestionTool: deps.askViaQuestionTool, state: deps.inboxState })}`;
 }
 
 async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Promise<string> {
-    const items = itemsFrom(args);
-    const transcluded =
-        args.transclude === false
-            ? { items, tokens: [] }
-            : await transcludeItems({ items, cwd: args.projectPath, options: deps.transclude });
+    const transcluded = await prepareQuestionItems({
+        items: itemsFrom(args),
+        cwd: args.projectPath,
+        transclude: args.transclude !== false,
+        options: deps.transclude,
+    });
     const report = transclusionReport(transcluded.tokens);
     const reportText = report.length > 0 ? `\n\n${report.join("\n")}` : "";
     const { questions, decisions } = splitItems(transcluded.items);
@@ -335,6 +340,12 @@ const ITEM_SCHEMA = {
             },
         },
         blocking: { type: "boolean", description: "decision: true when you cannot continue without the answer" },
+        attachments: {
+            ...IMAGE_ATTACHMENT_INPUT_SCHEMA,
+            description:
+                "screenshots for this item (any type): copied into the question store and appended to " +
+                "promptMarkdown as images, so the card shows previews",
+        },
         supersedes: {
             type: "string",
             description:
@@ -454,30 +465,40 @@ export const QUESTION_CANCEL_INPUT_SCHEMA = {
 } as const;
 
 /**
- * The question_post description. The "post every ❓ DECISION" nudge is there only when the user opted
- * in (`tools question config --ask-via-question-tool on`); without it the text sends the agent to its
- * native question tool. Either way the inbox is a copy and the question also goes in the reply.
+ * The question_post description: the ❓ DECISION sentence and every inbox mention follow the native inbox state and
+ * the opt-in, with the precedence in src/question/lib/inbox-guidance.ts. Without the native app (`none`) the text
+ * never names the inbox, the widget or the hub.
  */
-export function questionPostDescription(askViaQuestionTool: boolean): string {
-    const nudge = askViaQuestionTool
-        ? "Post every ❓ DECISION you ask this way, several per call. "
-        : "The user has NOT opted in to agents asking through this tool: ask decisive questions with your " +
-          "native question tool (for example AskUserQuestion) and in your reply; a post here only adds a copy " +
-          "to the inbox. ";
+export function questionPostDescription({
+    askViaQuestionTool,
+    inboxState,
+}: {
+    askViaQuestionTool: boolean;
+    inboxState: NativeInboxState;
+}): string {
+    const nudge = decisionNudge({ state: inboxState, askViaQuestionTool });
+    const native = inboxState !== "none";
+    const where = native
+        ? "The form appears in the GenesisTools widget and hub inbox and on the dev-dashboard /qa Pending section"
+        : "The form appears on the dev-dashboard /qa Pending section";
+    const answeredIn = native
+        ? "The inbox is a copy: the question must also be written in your own reply. The user answers them in the " +
+          "GenesisTools widget or hub; answers"
+        : "The question must also be written in your own reply. Answers";
 
     return (
         "ASK the user a question and leave it PENDING until they answer it: a choice between approaches, a " +
-        "go/no-go, a missing value only they know. The form appears in the GenesisTools hub Inbox and on the " +
-        "dev-dashboard /qa Pending section, and raises a notification. Default is " +
+        `go/no-go, a missing value only they know. ${where}, and raises a notification. Default is ` +
         "NON-BLOCKING: you get a form id back immediately, and you collect the answer with question_wait or " +
         "question_poll. Pass wait: true only when you truly cannot proceed without it. This is the opposite of " +
         "question_answer, which LOGS a question you have already answered yourself.\n" +
         'Items with type "decision" or "todo" are NOT a form: they are numbered in this session\'s decision log ' +
         "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
-        `paste into your reply. ${nudge}The inbox is a copy: the question must also be written in your own ` +
-        "reply. The user answers them in the GenesisTools hub; answers reach you in a later prompt or through " +
+        `paste into your reply. ${nudge}${answeredIn} reach you in a later prompt or through ` +
         "question_poll, and you record progress with question_update. To correct an item nobody answered yet, " +
         "post it again with supersedes: <its id>; it keeps its number and the old text is kept as a version.\n" +
+        'SCREENSHOTS: any item may carry attachments: [{type: "image", path: "/abs/shot.png", label?}]; they are ' +
+        `copied into the question store and ${native ? "shown as image previews on the inbox card" : "embedded in the item text"}.\n` +
         'INLINE TOKENS: promptMarkdown, reasoning, proposal and choices may carry {{kind key="value"}} tokens, ' +
         "resolved when the item is saved into real content (code lines, a diff, a PR thread) that never goes " +
         "stale. The result lists every failed token with its reason; a failed token stays visible in the text. " +

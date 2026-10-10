@@ -13,18 +13,23 @@ public final class WidgetModel: ObservableObject {
 
     @Published public private(set) var snapshot: WidgetSnapshot? {
         didSet {
+            sessionIndex = Dictionary(
+                (snapshot?.sessions ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
             sessionRoster.update(snapshot?.sessions ?? [])
             updateInbox(snapshot?.notifications ?? .empty)
         }
     }
     private var sessionRoster = WidgetSessionRoster()
+    /// Every snapshot session by key. `selected` is read many times per body; a linear search over ~1000 sessions
+    /// there was a measurable part of building the expanded panel.
+    private var sessionIndex: [String: WidgetSession] = [:]
+    /// The height the agents pane needs to show everything without scrolling (LiveWidgetView measures it), or nil
+    /// before it was laid out. The expanded panel fits it, up to its maximum (W3).
+    public private(set) var agentFitHeight: CGFloat?
     public var railSessions: [WidgetSession] { sessionRoster.rail }
-    public var railActivitySessions: [WidgetSession] {
-        railSessions.filter { session in
-            let inbox = inboxFor(session.key)
-            return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
-        }
-    }
+    /// Rail sessions that are working or hold unread items. Stored, because every layout pass of every edge panel reads
+    /// it: filtering ~1000 sessions there cost a quarter of the main thread while panels animated.
+    public private(set) var railActivitySessions: [WidgetSession] = []
     @Published public private(set) var inbox = WidgetInboxSummary.empty
     @Published public private(set) var inboxPulse = 0
     private var inboxSessions: [String: WidgetInboxSession] = [:]
@@ -92,6 +97,8 @@ public final class WidgetModel: ObservableObject {
     @Published public var dialogOpen = false
     private var mediaPicker: NSOpenPanel?
     public var presentationChanged: (() -> Void)?
+    /// The pointer entered or left an edge panel, before any hover delay.
+    public var pointerChanged: ((WidgetSurfaceID, Bool) -> Void)?
     public var showSettings: (() -> Void)?
     public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
@@ -110,9 +117,17 @@ public final class WidgetModel: ObservableObject {
     private var appearanceSubscription: AnyCancellable?
     private var settingsOnly = false
     private var settingsTask: Task<Void, Never>?
+    private var settingsRefreshAgain = false
+    /// Bumped when a preference write starts and when it lands. A settings snapshot read across either holds the
+    /// preferences from before the write; applied, it undid the optimistic change, and the next toggle built its
+    /// patch on that stale layout, so two quick module toggles lost one (settings V2 pass, 2026-10-10).
+    private var preferenceWriteEpoch = 0
+    private var preferenceWritesInFlight = 0
+    private var settingsWatcher: DirectoryWatcher?
     private let stateRoot: String?
     private let journal: URL
     private var watcher: ToolsLineStream?
+    private let snapshotDecoder = WidgetSnapshotDecoder()
     private var voice: ToolsLineStream?
     private var tail: TranscriptLiveTail?
     private var transcriptTask: Task<Void, Never>?
@@ -177,13 +192,35 @@ public final class WidgetModel: ObservableObject {
     public var sessions: [WidgetSession] { sessionRoster.visible }
     public var previewSessions: [WidgetSession] { sessionRoster.preview }
     public var waitingSessionCount: Int { sessionRoster.waiting }
+    /// Top-level sessions working now or waiting for an answer; subagents and quiet sessions do not count.
+    public var activeSessionCount: Int { sessionRoster.active }
+    /// The agents preview's measured height. The old estimate (100 + 54 per row) was 11 pt plus 2 pt per row short,
+    /// so the centred content lost its header and the top of its first row (2026-10-10, Martin's screenshot).
+    public private(set) var previewFitHeight: CGFloat?
     public var previewHeight: CGFloat {
-        sessionRoster.preview.isEmpty ? 180 : 100 + CGFloat(sessionRoster.preview.count) * 54
+        if let previewFitHeight { return previewFitHeight }
+        return sessionRoster.preview.isEmpty ? 180 : 112 + CGFloat(sessionRoster.preview.count) * 56
+    }
+
+    /// Whole points and a 2 pt hysteresis, as `reportAgentFit`, so the measurement cannot chase its own resize.
+    func reportPreviewFit(_ height: CGFloat) {
+        let rounded = ceil(height)
+        if let current = previewFitHeight, abs(rounded - current) < 2 { return }
+        previewFitHeight = rounded
+        presentationChanged?()
     }
 
     public var selected: WidgetSession? {
-        snapshot?.sessions.first { $0.key == selectedKey }
-            ?? (lastSelected?.key == selectedKey ? lastSelected : nil)
+        sessionIndex[selectedKey] ?? (lastSelected?.key == selectedKey ? lastSelected : nil)
+    }
+
+    /// Whole points, and only a change of 2 pt or more, so a measurement cannot chase its own resize.
+    func reportAgentFit(_ height: CGFloat?) {
+        let rounded = height.map { ceil($0) }
+        if let rounded, let current = agentFitHeight, abs(rounded - current) < 2 { return }
+        guard rounded != agentFitHeight else { return }
+        agentFitHeight = rounded
+        presentationChanged?()
     }
     public var cards: [WidgetCard] { snapshot?.cards.filter { $0.sessionKey == selectedKey } ?? [] }
     public var inboxLoading: Bool {
@@ -228,27 +265,71 @@ public final class WidgetModel: ObservableObject {
 
     private var widgetArgs: [String] { ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) }
 
+    /// The settings-only face: one snapshot now, and another whenever the widget state file changes, so a
+    /// preference the widget face, the CLI or another window writes shows here without reopening the page.
     public func startSettings() {
         settingsOnly = true
         do {
             try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
             refreshSettings()
+            watchSettingsState()
         } catch { report(error) }
     }
 
+    /// Whether the settings pages have the stored preferences to show. Until then they show a loading state, never
+    /// the defaults as if they were the stored values ("Show the widget" read off while the widget was on screen).
+    public var settingsLoaded: Bool { snapshot != nil }
+
+    /// Loads a fresh snapshot for the settings pages. A load already running is never cancelled and restarted:
+    /// one `hub widget snapshot` takes seconds, and every page change used to kill it and start again, so the first
+    /// load could miss its window entirely. A request made meanwhile runs once more after the current one.
     public func refreshSettings() {
-        settingsTask?.cancel()
+        guard settingsTask == nil else {
+            settingsRefreshAgain = true
+            return
+        }
+        settingsRefreshAgain = false
+        let epoch = preferenceWriteEpoch
+        let clean = preferenceWritesInFlight == 0
         settingsTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await self.bridge.run(
                     subcommand: "hub", args: self.widgetArgs + ["snapshot", "--json"], timeoutSeconds: 30)
                 guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
-                guard !Task.isCancelled else { return }
-                self.receive([result.stdout])
+                let current = clean && epoch == self.preferenceWriteEpoch
+                if !Task.isCancelled, current || self.snapshot == nil {
+                    self.receive([result.stdout])
+                } else if !current {
+                    self.settingsRefreshAgain = true
+                }
             } catch {
                 if !Task.isCancelled { self.report(error) }
             }
+            guard !Task.isCancelled else { return }
+            self.settingsTask = nil
+            if self.settingsRefreshAgain { self.refreshSettings() }
+        }
+    }
+
+    /// `state.json` of this model's widget root, the file `hub widget` reads preferences from
+    /// (`src/hub/lib/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
+    nonisolated static func widgetStateFile(stateRoot: String?,
+                                            environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let stateRoot {
+            return URL(fileURLWithPath: stateRoot).standardizedFileURL.appendingPathComponent("state.json").path
+        }
+        let home = environment["GENESIS_TOOLS_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/hub/widget/state.json").path
+    }
+
+    private func watchSettingsState() {
+        guard settingsWatcher == nil else { return }
+        let file = URL(fileURLWithPath: Self.widgetStateFile(stateRoot: stateRoot)).resolvingSymlinksInPath().path
+        settingsWatcher = DirectoryWatcher(
+            paths: [(file as NSString).deletingLastPathComponent], latency: 0.2, accepts: { $0 == file }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSettings() }
         }
     }
 
@@ -257,9 +338,15 @@ public final class WidgetModel: ObservableObject {
         stopping = false
         do {
             try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+            snapshotDecoder.reset()
+            let decoder = snapshotDecoder
             watcher = try ToolsLineStream(
                 bridge: bridge, subcommand: "hub", args: widgetArgs + ["watch", "--stop-on-stdin"],
-                onLines: { [weak self] lines in self?.receive(lines) },
+                onLines: { [weak self] lines in
+                    // A snapshot is about 1 MB of JSON with ~1000 sessions: decoding it on the main thread
+                    // stalled panel transitions. Decode on a queue, apply here.
+                    decoder.decode(lines) { results in self?.receiveDecoded(results) }
+                },
                 onExit: { [weak self] exit in
                     guard let self, !self.stopping, !exit.stopped else { return }
                     self.watcher = nil
@@ -279,6 +366,10 @@ public final class WidgetModel: ObservableObject {
         preferenceTask?.cancel()
         flushPreferences()
         settingsTask?.cancel()
+        settingsTask = nil
+        settingsRefreshAgain = false
+        settingsWatcher?.stop()
+        settingsWatcher = nil
         followedTranscript = nil
         stopping = true
         cancelHoverPrewarm()
@@ -309,56 +400,72 @@ public final class WidgetModel: ObservableObject {
     func receive(_ lines: [String]) {
         for line in lines {
             do {
-                var next = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
-                next.state.preferences = try mergingPreferences(pendingPreferences, into: next.state.preferences)
-                snapshot = next
-                if !draggingSide, let position = draggedSidePosition,
-                    abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
-                {
-                    draggedSidePosition = nil
-                }
-                for message in next.state.outgoing where ["failed", "cancelled"].contains(message.state) {
-                    if case .object(let fields) = message.payload,
-                        case .string(let kind) = fields["kind"], case .string(let id) = fields["id"]
-                    {
-                        submittedCards.remove(kind + ":" + id)
-                    }
-                }
-                for (key, value) in next.state.drafts where !dirtyDrafts.contains(key) {
-                    drafts[key] = value
-                }
-                for key in dirtyDrafts {
-                    if let incoming = next.state.drafts[key] {
-                        drafts[key]?.assetIds = incoming.assetIds.filter { !submittedAssets.contains($0) }
-                    }
-                }
-                if let session = next.sessions.first(where: { $0.key == selectedKey }) {
-                    lastSelected = session
-                }
-                // A cold roster holds only the sessions synthesized from Decisions and forms; choosing
-                // and persisting one of those would orphan the selection once the roster arrives.
-                if selectedKey.isEmpty && next.rosterLoading != true {
-                    selectedKey = WidgetSelection.initial(
-                        persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
-                    selectedCardID = nil
-                    if !selectedKey.isEmpty && !settingsOnly {
-                        action(["action": "selection", "key": .string(selectedKey)])
-                        resumeTranscript()
-                    }
-                }
-                if !selectedKey.isEmpty,
-                    let recovered = defaults.string(
-                        forKey: "widget.recovered-draft." + selectedKey)
-                {
-                    defaults.removeObject(forKey: "widget.recovered-draft." + selectedKey)
-                    setText(recovered)
-                }
-                resumeTranscript()
-                acknowledgeOpenedInbox()
-                scheduleQuietReduction()
-                presentationChanged?()
+                apply(try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8)))
             } catch { report(error) }
         }
+    }
+
+    private func receiveDecoded(_ results: [Result<WidgetSnapshot, Error>]) {
+        guard !stopping else { return }
+        for result in results {
+            switch result {
+            case .success(let snapshot): apply(snapshot)
+            case .failure(let error): report(error)
+            }
+        }
+    }
+
+    private func apply(_ decoded: WidgetSnapshot) {
+        do {
+            var next = decoded
+            next.state.preferences = try mergingPreferences(pendingPreferences, into: next.state.preferences)
+            snapshot = next
+            if !draggingSide, let position = draggedSidePosition,
+                abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
+            {
+                draggedSidePosition = nil
+            }
+            for message in next.state.outgoing where ["failed", "cancelled"].contains(message.state) {
+                if case .object(let fields) = message.payload,
+                    case .string(let kind) = fields["kind"], case .string(let id) = fields["id"]
+                {
+                    submittedCards.remove(kind + ":" + id)
+                }
+            }
+            for (key, value) in next.state.drafts where !dirtyDrafts.contains(key) {
+                drafts[key] = value
+            }
+            for key in dirtyDrafts {
+                if let incoming = next.state.drafts[key] {
+                    drafts[key]?.assetIds = incoming.assetIds.filter { !submittedAssets.contains($0) }
+                }
+            }
+            if let session = sessionIndex[selectedKey] {
+                lastSelected = session
+            }
+            // A cold roster holds only the sessions synthesized from Decisions and forms; choosing
+            // and persisting one of those would orphan the selection once the roster arrives.
+            if selectedKey.isEmpty && next.rosterLoading != true {
+                selectedKey = WidgetSelection.initial(
+                    persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
+                selectedCardID = nil
+                if !selectedKey.isEmpty && !settingsOnly {
+                    action(["action": "selection", "key": .string(selectedKey)])
+                    resumeTranscript()
+                }
+            }
+            if !selectedKey.isEmpty,
+                let recovered = defaults.string(
+                    forKey: "widget.recovered-draft." + selectedKey)
+            {
+                defaults.removeObject(forKey: "widget.recovered-draft." + selectedKey)
+                setText(recovered)
+            }
+            resumeTranscript()
+            acknowledgeOpenedInbox()
+            scheduleQuietReduction()
+            presentationChanged?()
+        } catch { report(error) }
     }
 
     public var layout: WidgetLayoutConfiguration {
@@ -424,6 +531,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
+        pointerChanged?(surface, inside)
         guard layout.hoverPreviews, !dialogOpen else { return }
         if draggingSide {
             exitedDuringDrag = inside ? nil : surface
@@ -533,11 +641,38 @@ public final class WidgetModel: ObservableObject {
         inboxSessionPulses = inboxSessionPulses.filter { activeKeys.contains($0.key) }
         inbox = value
         inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
+        railActivitySessions = railSessions.filter { session in
+            let inbox = inboxSessions[session.key]
+            return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
+        }
     }
 
     public func inboxFor(_ key: String) -> WidgetInboxSession? { inboxSessions[key] }
     public func inboxPulseFor(_ key: String) -> Int { inboxSessionPulses[key] ?? 0 }
     public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
+
+    /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
+    /// way opening it from a notification does.
+    public func openCard(_ card: WidgetCard) {
+        selectedCardID = card.id
+        guard !stopping, !card.read, ["answer", "result"].contains(card.kind) else { return }
+        let token = card.sessionKey + "|" + card.id + "|" + String(card.at)
+        guard inboxReadRequests.insert(token).inserted else { return }
+        action(["action": "inbox-read", "key": .string(card.sessionKey), "id": .string(card.id),
+                "kind": .string(card.kind), "at": .number(card.at)], failed: { [weak self] in
+            self?.inboxReadRequests.remove(token)
+        })
+    }
+
+    /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
+    /// the badges. Nothing is deleted or answered; each item stays in its session's inbox.
+    public func markAllRead() {
+        guard !stopping else { return }
+        let at = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+        action(["action": "inbox-clear", "at": .number(at)], completed: { [weak self] in
+            self?.notice = "Inbox marked read. Every item stays in its session."
+        })
+    }
 
     public func openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil) {
         guard !stopping else { return }
@@ -750,7 +885,11 @@ public final class WidgetModel: ObservableObject {
     private func flushPreferences() {
         let patch = pendingPreferences
         guard !patch.isEmpty else { return }
+        preferenceWriteEpoch += 1
+        preferenceWritesInFlight += 1
         func acknowledge() {
+            preferenceWriteEpoch += 1
+            preferenceWritesInFlight -= 1
             for (key, value) in patch where pendingPreferences[key] == value {
                 pendingPreferences.removeValue(forKey: key)
             }
@@ -1093,9 +1232,37 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// Screen Recording for the composer's screenshot: true when it may run, otherwise the permission dialog is up.
+    var screenCaptureGate: @MainActor (PermissionNeed) async -> Bool = { await PermissionCenter.shared.ensure($0) }
+
+    /// The panel steps aside for the selection, then reopens with the new attachment in the draft. Escape returns
+    /// `{cancelled: true, reason: "user"}`, which is not an error and reopens nothing. A missing Screen Recording grant
+    /// (an error whose text starts with `WidgetCaptureError.screenRecordingDenied`) opens the permission dialog.
     public func capture() {
-        collapse()
-        action(["action": "capture", "key": .string(selectedKey)])
+        let key = selectedKey
+        let need = PermissionNeed(
+            .screenRecording,
+            reason: "The camera button takes a screenshot of the area you select and attaches it to this session's draft.",
+            grantWorksInNewProcess: true,
+            onGranted: { [weak self] in self?.capture() })
+        let previous = mutationTask
+        mutationTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            // The screenshot runs in a new process, which reads the grant again: the gate asks one first.
+            guard await self.screenCaptureGate(need) else { return }
+            let returnEdge = self.expanded
+            self.collapse()
+            do {
+                let result = try await self.call(["action": "capture", "key": .string(key)])
+                if case .object(let fields) = result, fields["cancelled"] == .bool(true) { return }
+                if let returnEdge, self.expanded == nil { self.open(returnEdge) }
+            } catch where WidgetCaptureError.isScreenRecordingDenied(error) {
+                PermissionCenter.shared.require(need)
+            } catch {
+                self.report(error)
+            }
+        }
     }
 
     public func toggleVoice() {
@@ -1337,6 +1504,7 @@ struct WidgetSessionRoster {
     private var railOrder = StickyOrder<String>()
     private(set) var preview: [WidgetSession] = []
     private(set) var waiting = 0
+    private(set) var active = 0
 
     @discardableResult
     mutating func update(_ sessions: [WidgetSession]) -> Bool {
@@ -1356,6 +1524,41 @@ struct WidgetSessionRoster {
             return lhs == rhs ? $0.activityAt > $1.activityAt : lhs < rhs
         }.prefix(4))
         waiting = visible.reduce(0) { $0 + ($1.status == "waiting" ? 1 : 0) }
+        active = visible.reduce(0) { count, session in
+            count + (session.parentKey == nil && session.agentId == nil
+                && (session.status == "working" || session.status == "waiting") ? 1 : 0)
+        }
         return true
+    }
+}
+
+/// Decodes watch lines on its own queue, in order. A line equal to the previous one is the same snapshot and is
+/// dropped before decoding, so an unchanged hub costs neither a decode nor a SwiftUI update.
+final class WidgetSnapshotDecoder: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "genesis.widget.snapshot-decode", qos: .userInitiated)
+    /// Confined to `queue`.
+    private var last: String?
+
+    func reset() {
+        queue.async { self.last = nil }
+    }
+
+    func decode(_ lines: [String], deliver: @escaping @MainActor ([Result<WidgetSnapshot, Error>]) -> Void) {
+        queue.async {
+            var results: [Result<WidgetSnapshot, Error>] = []
+            for line in lines where line != self.last {
+                self.last = line
+                let started = CACurrentMediaTime()
+                results.append(Result { try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8)) })
+                let elapsed = (CACurrentMediaTime() - started) * 1000
+                if elapsed >= 16 {
+                    PerfLog.mark(String(format: "widget.snapshot decode off-main bytes=%d ms=%.1f", line.utf8.count, elapsed))
+                }
+            }
+            guard !results.isEmpty else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { deliver(results) }
+            }
+        }
     }
 }

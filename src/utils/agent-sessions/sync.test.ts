@@ -504,3 +504,45 @@ test("clearing metadata invalidates an unchanged physical source so the next syn
         fixture.db.close();
     }
 });
+
+test("a file whose identity another live file holds is not read again while both stay as they were", async () => {
+    const fixture = createFixture();
+    try {
+        const forkPath = join(fixture.root, "fork.jsonl");
+        writeFileSync(forkPath, "forked fixture source\n");
+        const holder = fixture.state.sources[0];
+        const fork = { ...holder, filePath: forkPath, dataPaths: [forkPath] };
+        fixture.state.sources = [holder, fork];
+        const conflict = [{ path: forkPath, message: "Multiple live files claim one native session identity" }];
+
+        const first = await sync(fixture);
+        expect(first.report.issues).toEqual(conflict);
+        expect(fixture.readCount()).toBe(2);
+
+        // Unchanged: no read, and the listing stays on the unchanged path (no new generation is reserved).
+        const generation = fixture.repository.generation(PROVIDER);
+        const second = await sync(fixture);
+        expect(fixture.readCount()).toBe(2);
+        expect(second.report.issues).toEqual(conflict);
+        expect(fixture.repository.generation(PROVIDER)).toBe(generation);
+
+        // The fork changed: it is read again and still conflicts.
+        writeFileSync(forkPath, "forked fixture source, grown\n");
+        const third = await sync(fixture);
+        expect(fixture.readCount()).toBe(3);
+        expect(third.report.issues).toEqual(conflict);
+
+        // The holder is gone: the fork is read and indexed.
+        unlinkSync(fixture.filePath);
+        fixture.state.sources = [fork];
+        const fourth = await sync(fixture);
+        expect(fixture.readCount()).toBe(4);
+        expect(fourth.report.issues).toEqual([]);
+        expect(
+            fixture.repository.metadata.getMetadataBySessionId({ providerId: PROVIDER, sessionId: SESSION_ID })
+                ?.filePath
+        ).toBe(forkPath);
+    } finally {
+        fixture.db.close();
+    }
+});

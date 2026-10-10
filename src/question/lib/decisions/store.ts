@@ -622,28 +622,175 @@ export async function updateTodo({
         events,
         updates: [{ ...patch, id }],
         signal,
-        now: () => {
-            const requested = Date.parse(now());
-            const previous = Date.parse(expected.updatedTs);
-            return new Date(Math.max(requested, Number.isFinite(previous) ? previous + 1 : requested)).toISOString();
-        },
-        beforeUpdate: (current) => {
-            if (
-                kindOf(current) !== "todo" ||
-                current.sessionId !== expected.sessionId ||
-                (providerName(current.provider) ?? "unknown") !== expected.provider
-            ) {
-                throw new Error("This task belongs to a different source or is not a TODO");
-            }
-            if (current.state !== expected.state || current.updatedTs !== expected.updatedTs) {
-                throw new Error("This task changed since it was shown. Refresh before trying again.");
-            }
-        },
+        now: () => laterThan(expected.updatedTs, now),
+        beforeUpdate: (current) => checkShownTodo(current, expected),
     });
     if (!row) {
         throw new Error(`no todo ${id}`);
     }
     return row;
+}
+
+/** A stamp after `previous`, so a change is always newer than the version the user saw. */
+function laterThan(previous: string, now: () => string): string {
+    const requested = Date.parse(now());
+    const shown = Date.parse(previous);
+    return new Date(Math.max(requested, Number.isFinite(shown) ? shown + 1 : requested)).toISOString();
+}
+
+/** Throws unless `current` is still the TODO, source and version the user acted on. */
+function checkShownTodo(current: DecisionRecord, expected: TodoUpdateSnapshot): void {
+    if (
+        kindOf(current) !== "todo" ||
+        current.sessionId !== expected.sessionId ||
+        (providerName(current.provider) ?? "unknown") !== expected.provider
+    ) {
+        throw new Error("This task belongs to a different source or is not a TODO");
+    }
+
+    if (current.state !== expected.state || current.updatedTs !== expected.updatedTs) {
+        throw new Error("This task changed since it was shown. Refresh before trying again.");
+    }
+}
+
+export interface NewTodo {
+    title: string;
+    /** The longer text; the title alone when absent. */
+    details?: string;
+    sessionId: string;
+    provider?: string;
+    sessionTitle?: string;
+    project?: string;
+    cwd?: string;
+}
+
+/**
+ * A TODO the user writes by hand (the widget's Tasks module). Unlike `postDecisions` it never reads the
+ * calling harness: the process that runs it is the app, and the session is the one the user picked.
+ */
+export async function createTodo({
+    file,
+    events,
+    todo,
+    signal,
+    now = () => new Date().toISOString(),
+}: {
+    file: string;
+    events: string;
+    todo: NewTodo;
+    signal?: AbortSignal;
+    now?: () => string;
+}): Promise<DecisionRecord> {
+    const title = todo.title.trim();
+    const details = todo.details?.trim();
+    if (!title || !todo.sessionId.trim()) {
+        throw new Error("A task needs a title and a session");
+    }
+
+    signal?.throwIfAborted();
+    const provider = providerName(todo.provider);
+    return withDecisionsLock(file, () => {
+        signal?.throwIfAborted();
+        const used = sessionNumbers(readDecisions(file), todo.sessionId).todo;
+        const number = used.size === 0 ? 1 : Math.max(...used) + 1;
+        const ts = now();
+        const row: DecisionRecord = {
+            id: `${ID_PREFIX.todo}_${number}_${todo.sessionId}`,
+            sessionId: todo.sessionId,
+            type: "todo",
+            number,
+            prompt: details || title,
+            options: [],
+            ...(details ? { title } : {}),
+            ...(provider ? { provider } : {}),
+            ...(todo.sessionTitle ? { sessionTitle: todo.sessionTitle } : {}),
+            ...(todo.project ? { project: todo.project } : {}),
+            ...(todo.cwd ? { cwd: todo.cwd } : {}),
+            state: "open",
+            revision: 1,
+            createdTs: ts,
+            updatedTs: ts,
+        };
+        append(file, row);
+        appendEvent(events, { ev: "created", id: row.id, ts });
+        return row;
+    });
+}
+
+/**
+ * Changes an open TODO's title and text, keeping the earlier text as a prior version, the same way a
+ * superseding post does. Only an open TODO can change: a taken or finished one keeps what was agreed.
+ */
+export async function reviseTodo({
+    file,
+    events,
+    id,
+    title,
+    details,
+    expected,
+    signal,
+    now = () => new Date().toISOString(),
+    beforeRevise,
+}: {
+    file: string;
+    events: string;
+    id: string;
+    title: string;
+    details?: string;
+    expected: TodoUpdateSnapshot;
+    signal?: AbortSignal;
+    now?: () => string;
+    /** Throws to refuse the edit, seeing the stored row under the ledger lock (a caller's own limits). */
+    beforeRevise?: (row: DecisionRecord) => void;
+}): Promise<DecisionRecord> {
+    const nextTitle = title.trim();
+    const nextDetails = details?.trim();
+    if (!nextTitle) {
+        throw new Error("A task needs a title");
+    }
+
+    signal?.throwIfAborted();
+    return withDecisionsLock(file, () => {
+        signal?.throwIfAborted();
+        const rows = readDecisions(file);
+        const row = rows.find((entry) => entry.id === id);
+        if (!row) {
+            throw new Error(`no todo ${id}`);
+        }
+
+        checkShownTodo(row, expected);
+        if ((row.revision ?? 1) !== expected.revision) {
+            throw new Error("This task changed since it was shown. Refresh before trying again.");
+        }
+
+        if (!SUPERSEDABLE.has(row.state)) {
+            throw new Error(`Only an open task can be edited; reopen ${row.id} first`);
+        }
+
+        beforeRevise?.(row);
+        const ts = laterThan(expected.updatedTs, now);
+        const next: DecisionRecord = {
+            ...row,
+            prompt: nextDetails || nextTitle,
+            revision: (row.revision ?? 1) + 1,
+            versions: [...(row.versions ?? []), versionOf(row, ts)],
+            revisedTs: ts,
+            updatedTs: ts,
+        };
+        if (nextDetails) {
+            next.title = nextTitle;
+        } else {
+            delete next.title;
+        }
+
+        signal?.throwIfAborted();
+        rewrite(
+            file,
+            rows.map((entry) => (entry.id === id ? next : entry))
+        );
+        appendEvent(events, { ev: "superseded", id, ts, revision: next.revision });
+        return next;
+    });
 }
 
 function applyUpdates({

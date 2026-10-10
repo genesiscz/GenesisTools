@@ -299,9 +299,10 @@ final class ReviewModel: ObservableObject {
     @Published var commentCount = 0
     @Published var unsentCount = 0
     @Published var notice: String?
-    @Published var treeMode = true {
-        didSet { MainActor.assumeIsolated { HubMainBusy.measure("review.files.tree") } }
-    }
+    /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
+    /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
+    /// six at a time from parallel snapshot runs, 2026-10-10).
+    @Published var treeMode = true
     @Published var collapsed: Set<String> = []
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?
@@ -697,6 +698,10 @@ final class ReviewModel: ObservableObject {
                 let result: Result<GitWorkingTreeSource.Snapshot, Error>
                 if onlyPrimary && job.repo.path != primary.path {
                     result = .success(GitWorkingTreeSource.Snapshot(branch: "", base: nil, files: []))
+                } else if !FileManager.default.fileExists(atPath: job.repo.path) {
+                    // A session's folder can be deleted under it (a Copilot session-state checkout): no git run per
+                    // refresh, one plain message on the folder row.
+                    result = .failure(MissingReviewFolder(path: job.repo.path))
                 } else {
                     let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
                     let base = job.repo.path == primary.path ? preferredBase : nil
@@ -792,6 +797,8 @@ final class ReviewModel: ObservableObject {
         guard !seeded.isEmpty else { return }
         HubPerf.log("review.cache paint \(files.count) -> \(ReviewRoots.merge(next).count) files, \(scope)")
         HubMainBusy.measure("review.cache.paint")
+        // The paint's own main-thread work; the busy window above also holds whatever else the launch draws.
+        let span = HubPerf.begin("review.cache.apply")
         // No comment re-anchoring here: that writes the comments file, and a list-only snapshot has no lines.
         roots = next
         cachedFolders.formUnion(seeded)
@@ -801,6 +808,7 @@ final class ReviewModel: ObservableObject {
         }
         pushToRenderer()
         resetBlame()
+        span.end("\(files.count) files")
     }
 
     private func applyLayout(_ layout: ReviewRepositoryLayout, to root: inout ReviewRoot) {
@@ -836,7 +844,7 @@ final class ReviewModel: ObservableObject {
                     displayedHead = snapshot.head
                     if !snapshot.compareConflicts.isEmpty {
                         let names = snapshot.compareConflicts.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
-                        notice = "\(snapshot.compareConflicts.count) files changed upstream in the same places (\(names)); their left side is the older push as it was."
+                        notice = "\(Plural.count(snapshot.compareConflicts.count, "file")) changed upstream in the same places (\(names)); their left side is the older push as it was."
                     }
                 }
                 commentStore(for: next[index])?.reanchor(files: snapshot.files)
@@ -844,8 +852,11 @@ final class ReviewModel: ObservableObject {
                 // The cached files stay on screen with the error on their row, but the root no longer
                 // counts as "showing the cache": blame and the header follow the error, not the paint.
                 cachedFolders.remove(next[index].folder)
-                next[index].error = "\(failure)"
-                HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
+                let message = "\(failure)"
+                if next[index].error != message {
+                    HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
+                }
+                next[index].error = message
             }
         }
         if next != roots {
@@ -1118,8 +1129,21 @@ final class ReviewModel: ObservableObject {
         renderer.apply(options)
     }
 
+    /// The reader picked wrap or scroll (header button, menu): from then on the width no longer decides.
+    private var wrapChosen = false
+
     func toggleWrap() {
+        wrapChosen = true
         options.wrap.toggle()
+        renderer.apply(options)
+    }
+
+    /// A narrow diff wraps its long lines until the reader picks: in a 530 pt Changes pane beside the
+    /// transcript and Files, scrolled lines ended at the pane edge with nothing to say they went on (H18).
+    func fitWrap(narrow: Bool) {
+        guard !wrapChosen, options.wrap != narrow else { return }
+        options.wrap = narrow
+        HubPerf.log("review.wrap \(narrow ? "on" : "off") for the pane width")
         renderer.apply(options)
     }
 
@@ -1300,7 +1324,7 @@ final class ReviewModel: ObservableObject {
 
         let line = "Read the review comments in \(written.file.path) and address each one."
         let host = TerminalHosts.current
-        notice = "Sending \(ids.count) comments to \(target.name)…"
+        notice = "Sending \(Plural.count(ids.count, "comment")) to \(target.name)…"
         Task { @MainActor in
             let error = await Task.detached(priority: .userInitiated) {
                 host.send(sessionId: target.sessionId, provider: target.provider, text: line)
@@ -1327,9 +1351,9 @@ final class ReviewModel: ObservableObject {
         for owner in written.owners {
             owner.store.markQueued(owner.ids)
         }
-        PathOpener.copy(written.message, what: "\(ids.count) comments")
+        PathOpener.copy(written.message, what: Plural.count(ids.count, "comment"))
         pushComments()
-        notice = "Copied \(ids.count) comments, not sent. Paste them into an agent."
+        notice = "Copied \(Plural.count(ids.count, "comment")), not sent. Paste them into an agent."
     }
 
     /// One markdown file in the outbox with every comment and its code, one section per repository.
@@ -2018,6 +2042,8 @@ struct ReviewRootView: View {
     @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
     private static let contextFraction: CGFloat = 0.4
     private static let contextMinWidth: CGFloat = 320
+    /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
+    static let wrapBelow: CGFloat = 680
 
     private var showsContext: Bool { !model.embedded }
     private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
@@ -2067,6 +2093,8 @@ struct ReviewRootView: View {
         return SideSplit(panelEdge: .trailing, maxFraction: Self.listFraction) {
             diffColumn
                 .freezesWidthWhileResizing(heavy: false)
+                // The diff's own width decides; only a crossing of the threshold re-renders.
+                .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < Self.wrapBelow }) { model.fitWrap(narrow: $0) }
             if showsFileList {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
@@ -2263,7 +2291,7 @@ private struct ReviewHeader: View {
                     .fixedSize()
             }
             if level <= .noCompare {
-                Text(verbatim: "\(model.files.count) files")
+                Text(verbatim: Plural.count(model.files.count, "file"))
                     .font(.system(size: 12))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()
@@ -2280,15 +2308,16 @@ private struct ReviewHeader: View {
                 }
                 .font(.system(size: 12))
                 .foregroundColor(ReviewPalette.dim)
-                .instantTooltip("\(model.commentCount) comments, \(model.unsentCount) not sent yet")
+                .instantTooltip("\(Plural.count(model.commentCount, "comment")), \(model.unsentCount) not sent yet")
             }
             Button { pickingAgent = true } label: {
-                Label(model.unsentCount > 0 ? "Send \(model.unsentCount)…" : "Send", systemImage: "paperplane")
+                // The noun keeps the count from reading as a cut label ("Send 1…", H19).
+                Label(model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "comment"))…" : "Send", systemImage: "paperplane")
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
             .disabled(model.unsentCount == 0)
-            .instantTooltip("Pick the agent session that gets the \(model.unsentCount) queued comments (AgentSend.swift)")
+            .instantTooltip(model.unsentCount > 0 ? "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))" : "No comments waiting for an agent")
             .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
                 AgentSendForm(model: model) { pickingAgent = false }
             }
@@ -2322,7 +2351,7 @@ private struct ReviewHeader: View {
 
     private var sendButton: some View {
         IconButton(systemName: "paperplane",
-                   tooltip: model.unsentCount > 0 ? "Send \(model.unsentCount) queued comments to an agent…" : "No comments waiting for an agent") {
+                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "No comments waiting for an agent") {
             pickingAgent = true
         }
         .disabled(model.unsentCount == 0)
@@ -2398,7 +2427,7 @@ private struct TurnCountStepper: View {
         }
         .fixedSize()
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(verbatim: "Last \(count) turns"))
+        .accessibilityLabel(Text(verbatim: count == 1 ? "Last turn" : "Last \(count) turns"))
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: change(min(99, count + 1))
@@ -2791,6 +2820,7 @@ struct FileSidebar: View {
                 .frame(height: 30)
                 .background(RoundedRectangle(cornerRadius: 8).stroke(ReviewPalette.hairline))
                 Button {
+                    HubMainBusy.measure("review.files.tree")
                     model.treeMode.toggle()
                 } label: {
                     Image(systemName: model.treeMode ? "list.bullet.indent" : "list.bullet")
@@ -3337,4 +3367,10 @@ enum ReviewSnapshot {
         else { return }
         try? png.write(to: URL(fileURLWithPath: path))
     }
+}
+
+/// The review's folder is gone from disk (deleted checkout or session folder).
+struct MissingReviewFolder: Error, CustomStringConvertible {
+    let path: String
+    var description: String { "This folder no longer exists: \(path)" }
 }

@@ -102,11 +102,11 @@ struct HubDigest: Decodable, Equatable, Sendable {
     /// "7 sessions · 12 commits · 31 files · 2 PRs opened · 3 decisions": the header line.
     var summary: String {
         [
-            "\(sessions.count) sessions",
-            "\(commits.count) commits",
-            "\(files.total) files (+\(files.added) −\(files.removed))",
-            "\(prs.opened.count) PRs opened, \(prs.merged.count) merged",
-            "\(decisions.posted.count) decisions posted, \(decisions.answered.count) answered",
+            Plural.count(sessions.count, "session"),
+            Plural.count(commits.count, "commit"),
+            "\(Plural.count(files.total, "file")) (+\(files.added) −\(files.removed))",
+            "\(Plural.count(prs.opened.count, "PR")) opened, \(prs.merged.count) merged",
+            "\(Plural.count(decisions.posted.count, "decision")) posted, \(decisions.answered.count) answered",
         ].joined(separator: " · ")
     }
 }
@@ -254,7 +254,10 @@ struct HubDigestPanel: View {
                     section("Usage forecast", count: nil) { HubForecastList() }
                 }
                 .padding(14)
+                .scrollOverflowContent()
             }
+            // The last row sat cut at the panel's bottom edge with nothing saying the list goes on (H16).
+            .scrollOverflowHints()
             .frame(maxHeight: 600)
         }
         .onAppear {
@@ -321,7 +324,7 @@ struct HubDigestPanel: View {
                     // The event title is the first prompt, harness tags and all; the session list cleans it the same way.
                     Text(verbatim: TitleFormatter.cleanSessionTitle(session.title) ?? session.title).font(.system(size: 12)).foregroundColor(Color.white.opacity(0.88)).lineLimit(1)
                     Spacer(minLength: 8)
-                    Text(verbatim: [session.provider, session.project, session.commits > 0 ? "\(session.commits) commits" : nil].compactMap { $0 }.joined(separator: " · "))
+                    Text(verbatim: [session.provider, session.project, session.commits > 0 ? Plural.count(session.commits, "commit") : nil].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                 }
                 .instantTooltip("Open this session")

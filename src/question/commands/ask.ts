@@ -29,7 +29,7 @@ import {
 } from "../lib/pending/ask";
 import { summarizeForm } from "../lib/pending/render";
 import { type AskAnswer, type AskForm, DEFAULT_WAIT_BUDGET_MS, type WaiterStatus } from "../lib/pending/types";
-import { questionTokenRegistry, transcludeItems, transclusionReport } from "../lib/transclude";
+import { prepareQuestionItems, questionTokenRegistry, transclusionReport } from "../lib/transclude";
 
 const { log } = logger.scoped("question-ask");
 
@@ -99,6 +99,8 @@ const ASK_JSON_HELP = `
   refs             decision: [{ path, line?, endLine?, sha? }]; the first ref's lines become the excerpt
   supersedes       decision/todo: id of an open or drafted item this one replaces (it keeps its id and
                    number; the old text stays as a version: ${toolCommand("question show", "<id>", "--versions")})
+  attachments      any item: screenshots, [{ "type": "image", "path": "/abs/shot.png", "label"?: "After" }];
+                   copied into the question store and shown as previews on the inbox card
   id, allowMultiple, allowFreeText, allowFileTags, allowImagePaste, required   question items only
 
 Example:
@@ -352,14 +354,20 @@ export function registerAskCommand(program: Command): void {
             }
 
             const projectPath = flag(opts.project) ?? parsed.fields.projectPath;
-            const transcluded =
-                opts.transclude === false
-                    ? { items: parsed.items, tokens: [] }
-                    : await transcludeItems({
-                          items: parsed.items,
-                          cwd: projectPath,
-                          options: { callerReports: true },
-                      });
+            let transcluded: Awaited<ReturnType<typeof prepareQuestionItems>>;
+
+            try {
+                transcluded = await prepareQuestionItems({
+                    items: parsed.items,
+                    cwd: projectPath,
+                    transclude: opts.transclude !== false,
+                    options: { callerReports: true },
+                });
+            } catch (err) {
+                out.error(pc.red(err instanceof Error ? err.message : String(err)));
+                process.exit(1);
+            }
+
             printTransclusionReport(transclusionReport(transcluded.tokens));
             const { questions, decisions } = splitItems(transcluded.items);
             const transclusions = transcluded.tokens.length > 0 ? { transclusions: transcluded.tokens } : {};
@@ -368,7 +376,7 @@ export function registerAskCommand(program: Command): void {
             const hint = { sessionId: sessionHint, cwd: projectPath };
 
             const notify = opts.notify !== false;
-            // The agent reads this: the inbox is a copy, and without the opt-in it should ask natively.
+            // The agent reads this: whether the widget is on screen, and what it still owes in the chat.
             const note = agentNote();
 
             if (questions.length === 0) {

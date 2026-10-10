@@ -268,8 +268,10 @@ enum AgentWatch {
 final class HubAgentsModel: ObservableObject {
     @Published private(set) var parents: [AgentParent] = []
     @Published private(set) var orphans: [AgentNode] = []
-    @Published private(set) var loading = false
-    @Published private(set) var showingCached = false
+    /// Not published: no view shows them, and each refresh flipped `loading` twice, which re-rendered every
+    /// view that observes this model (the list, the detail, its header) for nothing.
+    private(set) var loading = false
+    private(set) var showingCached = false
     @Published private(set) var loaded = false
     @Published private(set) var error: String?
     /// `AgentTree.key(parent:child:)` of the open child.
@@ -308,10 +310,17 @@ final class HubAgentsModel: ObservableObject {
 
     /// A scripted run settles once the first fresh list is on screen (`--mode agents --snapshot`).
     var onLoaded: (() -> Void)?
+    /// `tools hub agents --json [--session <p>]` and the last whole list on disk; tests replace both.
+    var readList: @Sendable (String?) throws -> AgentsEnvelope = { try AgentsSource.list(session: $0) }
+    var cache = AgentsSource.cache
 
     private var index: [String: (parent: AgentParent?, node: AgentNode)] = [:]
     private var pendingRequest: (parent: String?, child: String)?
     private var active = false
+    /// The hub window can be seen (Hub/HubVisibility.swift); while it cannot, no `tools` process starts.
+    private var visible = true
+    /// When the last whole list landed: the window coming back asks again only past the safety interval.
+    private var lastFullList = Date.distantPast
     private var watcher: DirectoryWatcher?
     private var safety: Task<Void, Never>?
     private var inFlight = false
@@ -464,6 +473,11 @@ final class HubAgentsModel: ObservableObject {
 
     // MARK: Activation
 
+    init() {
+        visible = HubVisibility.shared.visible
+        HubVisibility.shared.onChange { [weak self] visible in self?.visibilityChanged(visible) }
+    }
+
     /// The mode came on screen: paint the last list, ask the CLI, watch the open parents.
     func activate() {
         guard !active else { return }
@@ -473,7 +487,7 @@ final class HubAgentsModel: ObservableObject {
         HubPerf.log("agents.activate")
         if !loaded {
             Task {
-                if let data = await AgentsSource.cache.loadData(key: "all"), parents.isEmpty, orphans.isEmpty,
+                if let data = await cache.loadData(key: "all"), parents.isEmpty, orphans.isEmpty,
                    let cached = try? AgentsSource.decode(data) {
                     HubSWR.painted("agents.list", "\(cached.parents.count) parents")
                     showingCached = true
@@ -483,7 +497,34 @@ final class HubAgentsModel: ObservableObject {
         }
         refresh(sessions: nil)
         rewatch()
-        startSafety()
+        if visible {
+            startSafety()
+        }
+    }
+
+    /// The hub window was covered, minimized or hidden, or came back (Hub/HubVisibility.swift). Hidden, no
+    /// `tools` process starts: the FSEvents stream stays (the kernel pushes it, nothing polls) and what it
+    /// reports waits in the queues. Shown again, the queues run once, and a full list is asked for when the
+    /// safety loop would have asked meanwhile (a finished agent writes nothing, so no event says it stopped).
+    private func visibilityChanged(_ now: Bool) {
+        visible = now
+        guard active else { return }
+        if now {
+            if Date().timeIntervalSince(lastFullList) >= safetyInterval {
+                refresh(sessions: nil, urgent: false)
+            }
+            startIfDue()
+            startCountsIfDue()
+            startSafety()
+        } else {
+            safety?.cancel()
+            safety = nil
+        }
+    }
+
+    /// How long a full list stays good with no event: 30 s while an agent runs, else 120 s.
+    private var safetyInterval: TimeInterval {
+        anyRunning ? 30 : 120
     }
 
     /// The mode left the screen: no watcher, no refresh.
@@ -507,8 +548,7 @@ final class HubAgentsModel: ObservableObject {
         safety?.cancel()
         safety = Task { [weak self] in
             while !Task.isCancelled {
-                let running = self?.anyRunning ?? false
-                try? await Task.sleep(for: .seconds(running ? 30 : 120))
+                try? await Task.sleep(for: .seconds(self?.safetyInterval ?? 120))
                 guard !Task.isCancelled else { break }
                 self?.refresh(sessions: nil)
             }
@@ -530,7 +570,7 @@ final class HubAgentsModel: ObservableObject {
     }
 
     private func startIfDue() {
-        guard active, !inFlight, queuedFull || !queuedSessions.isEmpty else { return }
+        guard active, visible, !inFlight, queuedFull || !queuedSessions.isEmpty else { return }
         let wait = (queuedUrgent ? Self.urgentGap : Self.growthGap) - Date().timeIntervalSince(lastStart)
         if wait > 0 {
             guard !scheduled else { return }
@@ -554,7 +594,8 @@ final class HubAgentsModel: ObservableObject {
         loading = true
         Task {
             let span = HubPerf.begin("agents.list", scope.map { "session \($0.prefix(8))" } ?? "all", awaits: true)
-            let result = await Task.detached(priority: .utility) { Result { try AgentsSource.list(session: scope) } }.value
+            let read = readList
+            let result = await Task.detached(priority: .utility) { Result { try read(scope) } }.value
             inFlight = false
             loading = false
             switch result {
@@ -563,8 +604,10 @@ final class HubAgentsModel: ObservableObject {
                 error = nil
                 if scope == nil {
                     showingCached = false
+                    lastFullList = Date()
                     if let data = try? JSONEncoder().encode(envelope) {
-                        Task.detached(priority: .utility) { AgentsSource.cache.writeData(data, key: "all") }
+                        let cache = cache
+                        Task.detached(priority: .utility) { cache.writeData(data, key: "all") }
                     }
                 }
                 apply(envelope, scope: scope)
@@ -618,6 +661,22 @@ final class HubAgentsModel: ObservableObject {
             mailDirty = false
             loadMail()
         }
+    }
+
+    /// HubBench `agents`: the list on screen lands again with one child's tool count and last activity moved,
+    /// as the CLI's answer after a transcript grew. Even rounds move a child of the open parent, odd rounds a
+    /// child of another parent.
+    func benchRefresh(_ round: Int) {
+        let open = selectedParent?.sessionId
+        let candidates = parents.indices.filter { !parents[$0].children.isEmpty }
+        let pick = candidates.first { (parents[$0].sessionId == open) == round.isMultiple(of: 2) } ?? candidates.first
+        guard let slot = pick else { return }
+        var next = parents
+        var child = next[slot].children[0]
+        child.toolCalls = (child.toolCalls ?? 0) + 1
+        child.lastAt = ISO8601DateFormatter().string(from: Date())
+        next[slot].children[0] = child
+        apply(AgentsEnvelope(parents: next, orphans: orphans), scope: nil)
     }
 
     private func rebuildIndex() {
@@ -700,7 +759,7 @@ final class HubAgentsModel: ObservableObject {
     // MARK: Counts of growing transcripts
 
     private func startCountsIfDue() {
-        guard active, !countsInFlight, !countsQueued.isEmpty else { return }
+        guard active, visible, !countsInFlight, !countsQueued.isEmpty else { return }
         let wait = Self.growthGap - Date().timeIntervalSince(countsLastStart)
         if wait > 0 {
             guard !countsScheduled else { return }
@@ -1028,9 +1087,13 @@ struct AgentsListView: View {
         for parent in parents {
             let parentHit = needle.isEmpty || "\(parent.displayTitle) \(parent.project ?? "") \(parent.account ?? "") \(parent.sessionId) \(parent.provider)".lowercased().contains(needle)
             let children = matching(parent.children, parent: parent.sessionId, needle: parentHit ? "" : needle)
-            // With a status filter on, a parent with nothing to show stays out of the list.
-            // The parent and its Main row always show; a text filter still has to match it or a child.
-            guard parentHit || !children.isEmpty else { continue }
+            // With a status filter on, a parent with nothing to show stays out of the list: under Active a
+            // parent shows when it is live itself or has an active agent. With an empty filter text
+            // `parentHit` is always true, so this check alone let every quiet session into Active (H14).
+            // The session being read stays listed whatever the filter, as an open agent does.
+            let parentStatus = status == .all || (status == .active && agents.isLive(parent))
+                || agents.selectedParent?.sessionId == parent.sessionId
+            guard (parentHit && parentStatus) || !children.isEmpty else { continue }
             let open = needle.isEmpty || parentHit ? agents.isOpen(parent) : true
             rows.append(.parent(parent, open: open, running: parent.runningCount, total: parent.totalCount))
             guard open else { continue }
@@ -1077,6 +1140,7 @@ struct AgentsListView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("agents.list.body")
         let sections = sections
         Group {
             if !agents.loaded && agents.parents.isEmpty {
@@ -1247,6 +1311,7 @@ private struct AgentParentRow: View {
     let live: Bool
 
     var body: some View {
+        let _ = RenderProbe.hit("agents.parentRow.body")
         AgentRosterGroupLabel(title: parent.displayTitle, provider: parent.provider, project: parent.project,
                               account: parent.account, total: total, running: running, live: live, lastAt: parent.last)
             .padding(.leading, 2).padding(.trailing, 16).padding(.vertical, 6)
@@ -1259,6 +1324,7 @@ private struct AgentMainRow: View {
     let selected: Bool
 
     var body: some View {
+        let _ = RenderProbe.hit("agents.mainRow.body")
         AgentRosterRow(title: "Main", provider: parent.provider, role: "lead", model: parent.model,
                        account: parent.account, status: live ? "running" : "recent", lastAt: parent.last,
                        selected: selected, showsRunningLabel: true)
@@ -1281,6 +1347,7 @@ private struct AgentChildRow: View {
     let showsProject: Bool
 
     var body: some View {
+        let _ = RenderProbe.hit("agents.childRow.body")
         let account = [node.account, showsProject ? node.team : nil].compactMap { $0 }.joined(separator: " · ")
         AgentRosterRow(title: node.title, provider: node.harness, role: node.kind, model: node.model,
                        account: account.isEmpty ? nil : account,
@@ -1302,6 +1369,7 @@ struct AgentsMain: View {
     @ObservedObject var agents: HubAgentsModel
 
     var body: some View {
+        let _ = RenderProbe.hit("agents.main.body")
         if let selected = agents.selected, let parent = selected.parent {
             AgentLeadScreen(model: model, agents: agents, parent: parent, node: selected.node)
         } else if let selected = agents.selected {
@@ -1314,9 +1382,16 @@ struct AgentsMain: View {
                 TranscriptSkeleton()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                Text("Pick an agent to read its whole transcript")
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // One click to the session that is most likely wanted, instead of a page of dim text (H14).
+                let newest = agents.parents.first(where: agents.isLive) ?? agents.parents.first
+                EmptyState(
+                    symbol: "person.2",
+                    text: "No agent open",
+                    detail: "Pick an agent or a session's Main row in the list to read its whole transcript.",
+                    actionTitle: newest.map { "Open \(TitleFormatter.cleanSessionTitle($0.displayTitle) ?? $0.displayTitle)" },
+                    action: newest.map { parent in { agents.openMain(parent) } }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -1344,11 +1419,14 @@ struct AgentPaneContext {
 /// pane differs, when an agent is open: it shows that agent's own file, and the header carries its facts.
 private struct AgentLeadScreen: View {
     @ObservedObject var model: HubModel
-    @ObservedObject var agents: HubAgentsModel
+    /// Passed on, not observed: this screen reads nothing of it, and observing it re-ran the lead's screen on
+    /// every list refresh of any parent. `parent` and `node` bring the changes that matter.
+    let agents: HubAgentsModel
     let parent: AgentParent
     let node: AgentNode?
 
     var body: some View {
+        let _ = RenderProbe.hit("agents.lead.body")
         Group {
             if let lead = model.selected, lead.sessionId == parent.sessionId {
                 SessionDetailView(model: model, session: lead, agent: AgentPaneContext(agents: agents, parent: parent, node: node))

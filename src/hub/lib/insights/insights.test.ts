@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { code, composeHandoff, HandoffRangeError, selectRange } from "./handoff";
+import { code, composeHandoff, gist, HandoffRangeError, selectRange } from "./handoff";
 import {
     cachedInsightsFit,
     catalogPricer,
@@ -341,6 +341,22 @@ describe("composeHandoff", () => {
         expect(draft.openItems[0]).toBe('Answer the last prompt, which has no reply yet: "and deploy it"');
     });
 });
+describe("handoff gist", () => {
+    test("a dot inside a code span ends no sentence, and nothing before the cut is dropped", () => {
+        const reply =
+            "[92%] The export tile links to `/docs/v1.2/export.html` in `web-app`. It reads `config.json` first. Then it renders.";
+        expect(gist(reply)).toBe(
+            "[92%] The export tile links to `/docs/v1.2/export.html` in `web-app`. It reads `config.json` first."
+        );
+    });
+
+    test("a dot in a file name or a URL outside code is not a sentence end either", () => {
+        expect(gist("See excerpts.ts:50 and https://x.dev/a.b for the cause. Fixed. Also more.")).toBe(
+            "See excerpts.ts:50 and https://x.dev/a.b for the cause. Fixed."
+        );
+    });
+});
+
 describe("handoff inline code", () => {
     test("the fence outgrows every backtick run inside, so transcript text never closes it", () => {
         expect(code("plain")).toBe("`plain`");

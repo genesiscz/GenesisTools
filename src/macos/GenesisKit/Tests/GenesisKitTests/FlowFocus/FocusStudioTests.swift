@@ -603,6 +603,27 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertEqual(gap.endedMs, wake)
     }
 
+    func testDeletingTheLastHourLetsTheRecorderGoOnInANewSegmentAndDropsItsCounts() throws {
+        let recorder = ActivityRecorder(store: store)
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let forgotten = try XCTUnwrap(try store.openSegments().first?.id)
+        recorder.recordKeyForTesting()
+        // What Settings → Focus → "Delete activity" asks for: the period up to one second past now.
+        let from = nowMs() - 3_600_000
+        let to = nowMs() + 1_000
+        try store.forget(from: from, to: to)
+        recorder.ledgerForgot(from: from, to: to)
+
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let reopened = try XCTUnwrap(try store.openSegments().first,
+                                     "the same window keeps recording after its segment was deleted")
+        XCTAssertNotEqual(reopened.id, forgotten)
+        recorder.attach(sessionId: nil)
+        XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
+                      "a key counted inside the deleted period is not written back afterwards")
+    }
+
     func testResumingAPauseDoesNotCloseTheCaptureOffGap() throws {
         let recorder = ActivityRecorder(store: store, liveServices: false)
         recorder.start()

@@ -188,7 +188,7 @@ public enum MainStackSampler {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
-            PerfLog.mark(String(format: "main-stall stacks (%d samples, %.0f ms) → %@", total, stallMs, url.lastPathComponent))
+            PerfLog.mark(String(format: "main-stall stacks (%d samples, %.0f ms) → %@", total, stallMs, url.lastPathComponent) + PerfContext.runTag)
         } catch {
             PerfLog.mark("main-stall stacks not written: \(error.localizedDescription)")
         }

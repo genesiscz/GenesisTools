@@ -29,12 +29,13 @@ struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
     /// A window whose reset already passed says nothing about now.
     var isCurrent: Bool { !resetSinceSample }
 
-    /// "42% · out 16:20" / "42% · lasts" / "42%": the chip's words.
+    /// "42% · out 16:20" / "42% · lasts" / "42%": the chip's words. A stale window says how old its number is:
+    /// "100% as of 4 days ago". "100% · 4 days ago" read as "it hit 100% four days ago" (hub inventory H12).
     /// `now` is injectable: against the real clock a fixture's run-out time passed and the test flipped.
     func summary(now: Date = Date(), clock: (Date) -> String = HubForecastFormat.clock) -> String {
         let used = "\(Int(utilization.rounded()))%"
         if stale, let sampled = HubFormat.date(lastSampleAt) {
-            return "\(used) · \(HubFormat.ago(sampled))"
+            return "\(used) as of \(HubFormat.ago(sampled))"
         }
         if let exhaustAt = HubFormat.date(exhaustAt), beforeReset {
             // Projected from the last sample, so the time can already have passed.
@@ -148,26 +149,27 @@ struct HubForecastChip: View {
     var body: some View {
         if let entry = store.account(named: account), let window = entry.headline {
             HStack(spacing: 3) {
-                Image(systemName: window.beforeReset ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.33percent")
+                // A stale number gets a clock, not a gauge: it is an old reading, not a level now.
+                Image(systemName: window.beforeReset ? "exclamationmark.triangle.fill" : window.stale ? "clock.arrow.circlepath" : "gauge.with.dots.needle.33percent")
                     .font(.system(size: 9.5))
                 HubForecastSummary(window: window)
                     .font(.system(size: 11, design: .monospaced))
                     .lineLimit(1)
             }
-            .foregroundColor(window.beforeReset ? ReviewPalette.modified : ReviewPalette.dim)
+            .foregroundColor(window.beforeReset ? ReviewPalette.modified : window.stale ? ReviewPalette.dim.opacity(0.7) : ReviewPalette.dim)
             .instantTooltip(entry.current.map { $0.detail() }.joined(separator: "\n") + "\nFrom recorded usage snapshots (tools hub forecast)")
         }
     }
 }
 
-/// A window's chip words on screen. A stale window's "5 min. ago" keeps counting (`LiveAgo`);
+/// A window's chip words on screen. A stale window's "as of 4d ago" keeps counting (`LiveAgo`);
 /// `summary()` formats it once, for tests and plain text.
 struct HubForecastSummary: View {
     let window: HubForecastWindow
 
     var body: some View {
         if window.stale, let sampled = HubFormat.date(window.lastSampleAt) {
-            LiveAgo(date: sampled) { "\(window.label) \(Int(window.utilization.rounded()))% · \($0)" }
+            LiveAgo(date: sampled, style: .brief) { "\(window.label) \(Int(window.utilization.rounded()))% as of \($0)" }
         } else {
             Text(verbatim: "\(window.label) \(window.summary())")
         }

@@ -3,7 +3,7 @@ import SwiftUI
 
 public extension WidgetVoiceNotesStore {
     func voiceNotesModule() -> WidgetModuleDescriptor {
-        WidgetModuleDescriptor(id: "voice", title: "Voice Notes", symbol: "waveform", tint: .cyan,
+        WidgetModuleDescriptor(id: "voice", title: "Voice Notes", symbol: "recordingtape", tint: .cyan,
             summary: { self.phase ?? "\(self.notes.count) local notes" },
             visibilityChanged: { self.visibilityChanged($0) }) {
             WidgetVoiceNotesView(store: self, presentation: $0)
@@ -18,12 +18,12 @@ private struct WidgetVoiceNotesView: View {
     var body: some View {
         Group {
             if presentation == .compact {
-                Label(store.phase ?? "Voice Notes", systemImage: "waveform")
+                Label(store.phase ?? "Voice Notes", systemImage: "recordingtape")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(.cyan)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("Voice Notes", systemImage: "waveform").font(.system(size: 15, weight: .semibold))
+                        Label("Voice Notes", systemImage: "recordingtape").font(.system(size: 15, weight: .semibold))
                         Spacer()
                         Text("\(store.notes.count) local").font(.caption2).foregroundStyle(.secondary)
                         Button { store.refresh(force: true) } label: { Image(systemName: "arrow.clockwise") }
@@ -44,12 +44,7 @@ private struct WidgetVoiceNotesView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.refreshMicrophonePermission()
         }
-        .alert("Microphone access needed", isPresented: $store.presentsMicrophoneAlert) {
-            Button("Open Microphone Settings", action: store.openMicrophoneSettings)
-            Button("Not now", role: .cancel) { }
-        } message: {
-            Text(store.microphonePermission.guidance ?? "Microphone access was unavailable to the recorder. Review settings and try again.")
-        }
+
     }
 
     @ViewBuilder private var expanded: some View {
@@ -78,8 +73,8 @@ private struct WidgetVoiceNotesView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label(guidance, systemImage: "mic.slash").font(.system(size: 11))
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Open Microphone Settings", action: store.openMicrophoneSettings)
-                    .font(.caption).buttonStyle(.borderless)
+                Button("Review microphone access", action: store.reviewMicrophoneAccess)
+                    .font(.caption).buttonStyle(.genHoverPlain())
             }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
             .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
@@ -93,7 +88,7 @@ private struct WidgetVoiceNotesView: View {
         if store.notes.isEmpty {
             Spacer(minLength: 0)
             VStack(spacing: 10) {
-                Image(systemName: "waveform").font(.system(size: 34, weight: .light)).foregroundStyle(.cyan)
+                Image(systemName: "recordingtape").font(.system(size: 34, weight: .light)).foregroundStyle(.cyan)
                 Text("A place for a quick thought").font(.system(size: 14, weight: .medium))
                 Text("Record locally, then choose Transcribe to send the clip to your selected speech provider. A session is only needed when you attach the text.")
                     .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)

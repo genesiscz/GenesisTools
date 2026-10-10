@@ -23,6 +23,8 @@ export const PROFILER_SCOPE_NAMES = [
     "video",
     // `tools hub pr *` phases; with spawn, forge-http and cache below, the hub's PR calls end to end.
     "hub-pr",
+    // `tools hub timeline`: the page, each repository's commit read, and the cherry-pick fold with its patch-ids.
+    "hub-timeline",
     // Every child process an Executor runs (git, gh, glab), with its exit code.
     "spawn",
     // Every GitHub (octokit) and GitLab HTTP request: method, URL without credentials, status.

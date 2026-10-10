@@ -149,6 +149,8 @@ final class FlowPreRollTests: XCTestCase {
         store.saveConfig(config)
         let session = FlowSession(store: store)
         session.hotkeyBindingEffect = {}
+        var dialogs: [PermissionKind] = []
+        session.permissionPresenter = { dialogs.append($0.kind) }
         var requests = 0
         let completed = expectation(description: "explicit permission request")
         session.permissionRequestEffect = {
@@ -166,6 +168,7 @@ final class FlowPreRollTests: XCTestCase {
         XCTAssertEqual(requests, 1)
         XCTAssertFalse(session.isRequestingPermissions)
         XCTAssertTrue(session.lastError?.contains("System Settings") == true)
+        XCTAssertEqual(dialogs, [.microphone], "one dialog at a time; Speech Recognition follows the microphone")
         let passive = FlowSession(store: FlowStore(directory: root, writesEnabled: false))
         var forwarded: [String] = []
         passive.remoteCommand = { action, _ in forwarded.append(action) }

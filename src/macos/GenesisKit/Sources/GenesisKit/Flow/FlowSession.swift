@@ -86,6 +86,12 @@ public final class FlowSession: ObservableObject {
     var remoteCommand: ((String, Data) -> Void)?
     var configuration = FlowFocusConfiguration.shared
     private var hotKey: CompanionHotKey?
+    /// A shortcut recorder in Settings is listening (`suspendHotkey`): the chord stays unregistered until it stops.
+    private(set) var hotkeySuspended = false
+    private var hotkeyResume: Task<Void, Never>?
+    var hotkeySuspensionLimit: Duration = .seconds(120)
+    /// Whether Carbon holds the chord in this process right now.
+    var hotkeyRegistered: Bool { hotKey != nil }
     private var startedAt: Date?
     private var target: FlowFocusTarget?
     /// Lowercase tokens the user dismissed, so the learner stops proposing them.
@@ -105,6 +111,8 @@ public final class FlowSession: ObservableObject {
     var injectEffect: ((String) async -> FlowInjectOutcome)?
     var accessibilityTrustEffect: () -> Bool = { FlowInjector.isAccessibilityTrusted }
     var accessibilityRequestEffect: (() -> Void)?
+    /// Where a missing grant goes: the GenesisKit permission dialog, in the process that needs the grant.
+    var permissionPresenter: @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) }
     private var accessibilityObserver: NSObjectProtocol?
     private(set) var externalAudioHeld = false
 
@@ -189,6 +197,29 @@ public final class FlowSession: ObservableObject {
         applyPreRoll()
     }
 
+    /// Lets go of the global shortcut while a recorder in Settings waits for its replacement, and takes it back after.
+    /// Carbon swallows a registered chord system-wide, so pressing the current shortcut would start dictation instead
+    /// of reaching the recorder. A runtime client asks its owner. The owner takes the shortcut back by itself after
+    /// `hotkeySuspensionLimit`, so a recorder whose process died cannot leave dictation without its shortcut.
+    public func suspendHotkey(_ suspended: Bool) {
+        if forward("flow.hotkey.suspend", suspended) { return }
+        hotkeyResume?.cancel()
+        hotkeyResume = nil
+        if suspended {
+            let limit = hotkeySuspensionLimit
+            hotkeyResume = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: limit)
+                guard !Task.isCancelled, let self, self.hotkeySuspended else { return }
+                FlowFocusLog.flow.info("dictation hotkey suspension expired; registering it again")
+                self.suspendHotkey(false)
+            }
+        }
+        guard hotkeySuspended != suspended else { return }
+        hotkeySuspended = suspended
+        FlowFocusLog.flow.info("dictation hotkey \(suspended ? "suspended for a shortcut recorder" : "resumed")")
+        applyHotkeyBinding()
+    }
+
     /// Labs switch. Off drops the hotkey and any turn in flight.
     public func setLabEnabled(_ on: Bool) {
         if forward("flow.lab", on) { return }
@@ -242,6 +273,10 @@ public final class FlowSession: ObservableObject {
                 self.applyPreRoll()
             } else {
                 self.reportFailure("Allow Microphone and Speech Recognition for the dictation app in System Settings.")
+                // One dialog at a time: Speech Recognition follows once the microphone is allowed.
+                self.permissionPresenter(self.dictationNeed(grants.microphone ? .speechRecognition : .microphone) {
+                    [weak self] in self?.requestDictationPermissions()
+                })
             }
         }
     }
@@ -257,10 +292,25 @@ public final class FlowSession: ObservableObject {
         if let accessibilityRequestEffect {
             accessibilityRequestEffect()
         } else {
-            FlowInjector.requestAccessibility()
-            FlowInjector.openAccessibilitySettings()
+            permissionPresenter(pasteNeed(trigger: .userAction))
         }
         refreshAccessibilityTrust()
+    }
+
+    /// Dictation needs both grants; each gets its own dialog in the process that records.
+    func dictationNeed(_ kind: PermissionKind, onGranted: (@MainActor () -> Void)? = nil) -> PermissionNeed {
+        let reason = kind == .microphone
+            ? "Flow records your voice while you hold the dictation key, and only then."
+            : "Flow turns your recorded voice into text with macOS speech recognition."
+        return PermissionNeed(kind, reason: reason, onGranted: onGranted)
+    }
+
+    private func pasteNeed(trigger: PermissionTrigger) -> PermissionNeed {
+        PermissionNeed(
+            .accessibility,
+            reason: "Flow pastes your dictation into the app you were using. Without Accessibility it can only copy the text.",
+            trigger: trigger,
+            onGranted: { [weak self] in self?.refreshAccessibilityTrust() })
     }
 
     func refreshAccessibilityTrust() {
@@ -408,6 +458,13 @@ public final class FlowSession: ObservableObject {
             return
         }
 
+        // Only for the moment a recorder listens: the status keeps naming the shortcut that comes back after.
+        if hotkeySuspended {
+            hotKey?.stop()
+            hotKey = nil
+            return
+        }
+
         let chord = FlowKeyNames.describe(keyCode: config.keyCode, modifiers: config.modifiers)
         if let hotKey {
             let ok = hotKey.rebind(keyCode: config.keyCode, modifiers: config.modifiers)
@@ -520,6 +577,11 @@ public final class FlowSession: ObservableObject {
             lastError = error.localizedDescription
             FlowFocusLog.flow.error("turn begin failed: \(error.localizedDescription)")
             applyPreRoll()
+            switch error as? CompanionSpeechError {
+            case .microphoneNotAuthorized: permissionPresenter(dictationNeed(.microphone))
+            case .speechNotAuthorized: permissionPresenter(dictationNeed(.speechRecognition))
+            default: break
+            }
         }
     }
 
@@ -610,6 +672,8 @@ public final class FlowSession: ObservableObject {
         case .notPermitted:
             refreshAccessibilityTrust()
             lastError = "Text copied — grant Accessibility to paste automatically."
+            // A side effect of a turn, not a request: after "Not now" it stays in the inline message.
+            permissionPresenter(pasteNeed(trigger: .automatic))
         case .targetLost:
             lastError = "The target app closed — text copied to the clipboard."
         case .focusMoved:

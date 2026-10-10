@@ -684,7 +684,7 @@ struct TimelinePRDetailView: View {
             }
             DetailLine(kicker: "Size") {
                 HStack(spacing: 8) {
-                    if let files = pr.changedFiles { Text(verbatim: "\(files) files").font(.system(size: 11)) }
+                    if let files = pr.changedFiles { Text(verbatim: Plural.count(files, "file")).font(.system(size: 11)) }
                     if let add = pr.additions { Text(verbatim: "+\(add)").font(.system(size: 11, design: .monospaced)).foregroundColor(ReviewPalette.added) }
                     if let del = pr.deletions { Text(verbatim: "−\(del)").font(.system(size: 11, design: .monospaced)).foregroundColor(ReviewPalette.removed) }
                     if let mergeable = pr.mergeable {
@@ -791,7 +791,7 @@ struct TimelineThreadDetailView: View {
                             tooltip: detail.viewer == comment.author.username ? "\(comment.author.username) (you)" : "\(comment.author.username)'s profile",
                             findField: "comment-author.\(comment.id)"
                         )
-                        LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+                        LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt, style: .brief)
                             .font(.system(size: 10)).foregroundColor(ReviewPalette.dim)
                     }
                     .frame(width: 110, alignment: .trailing)

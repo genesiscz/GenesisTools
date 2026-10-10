@@ -2,9 +2,11 @@ import { existsSync, statSync } from "node:fs";
 import { canonicalAgent } from "@app/handoff/targeting";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
+    createTodo,
     type DecisionRecord,
     kindOf,
     readDecisions,
+    reviseTodo,
     type TodoUpdateSnapshot,
     updateTodo,
 } from "@app/question/lib/decisions/store";
@@ -25,18 +27,44 @@ export const widgetTaskFiltersSchema = z.object({
     limit: z.number().int().min(1).max(250).default(200),
 });
 export type WidgetTaskFilters = z.infer<typeof widgetTaskFiltersSchema>;
+const shownTaskSchema = z.object({
+    revision: z.number().int().positive(),
+    state: z.enum(WIDGET_TASK_STATES),
+    updatedTs: z.string().datetime(),
+    sessionId: z.string().min(1),
+    provider: z.string().min(1).max(512),
+});
 export const widgetTaskActionSchema = z.object({
     id: z.string().min(1),
     action: z.enum(WIDGET_TASK_ACTIONS),
-    expected: z.object({
-        revision: z.number().int().positive(),
-        state: z.enum(WIDGET_TASK_STATES),
-        updatedTs: z.string().datetime(),
-        sessionId: z.string().min(1),
-        provider: z.string().min(1).max(512),
-    }),
+    expected: shownTaskSchema,
 });
 export type WidgetTaskAction = z.infer<typeof widgetTaskActionSchema>;
+/** The session a task the user writes without choosing one belongs to. */
+export const LOCAL_TASK_SESSION = "local";
+/** The most text the widget shows and writes: a longer task arrives as an excerpt (`truncated`). */
+const TASK_TITLE_CHARS = 180;
+const TASK_DETAILS_CHARS = 2000;
+const taskTextSchema = {
+    title: z.string().trim().min(1, "A task needs a title").max(TASK_TITLE_CHARS),
+    details: z.string().trim().max(TASK_DETAILS_CHARS).optional(),
+};
+export const widgetTaskCreateSchema = z.object({
+    ...taskTextSchema,
+    /** `provider:sessionId`, as `tasks list` reports sessions; absent for a local task. */
+    session: z
+        .string()
+        .regex(/^[^:\s]+:\S+$/, "A session is provider:sessionId")
+        .optional(),
+    sessionTitle: z.string().trim().max(200).optional(),
+    project: z.string().trim().max(512).optional(),
+    cwd: z.string().trim().max(4096).optional(),
+});
+export const widgetTaskEditSchema = z.object({
+    id: z.string().min(1),
+    ...taskTextSchema,
+    expected: shownTaskSchema,
+});
 export interface WidgetTask {
     id: string;
     number: number;
@@ -74,9 +102,9 @@ export function widgetTask(row: DecisionRecord): WidgetTask {
     return {
         id: row.id,
         number: row.number,
-        title: (row.title || row.prompt).slice(0, 180),
-        summary: row.prompt.slice(0, 2000),
-        truncated: row.prompt.length > 2000,
+        title: (row.title || row.prompt).slice(0, TASK_TITLE_CHARS),
+        summary: row.prompt.slice(0, TASK_DETAILS_CHARS),
+        truncated: row.prompt.length > TASK_DETAILS_CHARS || (row.title?.length ?? 0) > TASK_TITLE_CHARS,
         revision: row.revision ?? 1,
         state: row.state,
         updatedTs: row.updatedTs,
@@ -221,6 +249,96 @@ export async function updateWidgetTask({
             id: row.id,
             action: request.action,
             from: expected.state,
+            state: row.state,
+            revision: row.revision ?? 1,
+            at: row.updatedTs,
+            saved: true,
+        },
+    };
+}
+
+/** A task the user writes in the widget: on a session they picked, or on the local task list. */
+export async function createWidgetTask({
+    input,
+    files = decisionFiles(),
+    signal,
+    now,
+}: {
+    input: unknown;
+    files?: { file: string; events: string };
+    signal?: AbortSignal;
+    now?: () => string;
+}) {
+    const request = widgetTaskCreateSchema.parse(input);
+    const separator = request.session?.indexOf(":") ?? -1;
+    const session = request.session
+        ? { provider: request.session.slice(0, separator), sessionId: request.session.slice(separator + 1) }
+        : { provider: undefined, sessionId: LOCAL_TASK_SESSION };
+    const row = await createTodo({
+        ...files,
+        signal,
+        now,
+        todo: {
+            title: request.title,
+            details: request.details,
+            ...session,
+            sessionTitle: request.sessionTitle ?? (request.session ? undefined : "Local tasks"),
+            project: request.project,
+            cwd: request.cwd,
+        },
+    });
+    taskCache.delete(files.file);
+    logger.debug({ id: row.id, session: row.sessionId, provider: row.provider }, "Widget task created");
+    return {
+        task: widgetTask(row),
+        receipt: {
+            id: row.id,
+            action: "create",
+            state: row.state,
+            revision: row.revision ?? 1,
+            at: row.updatedTs,
+            saved: true,
+        },
+    };
+}
+
+/** New title and text for an open task, checked against the version the user edited. */
+export async function editWidgetTask({
+    input,
+    files = decisionFiles(),
+    signal,
+    now,
+}: {
+    input: unknown;
+    files?: { file: string; events: string };
+    signal?: AbortSignal;
+    now?: () => string;
+}) {
+    const request = widgetTaskEditSchema.parse(input);
+    const row = await reviseTodo({
+        ...files,
+        id: request.id,
+        title: request.title,
+        details: request.details,
+        expected: request.expected,
+        signal,
+        now,
+        // The widget shows a long task as an excerpt; saving that excerpt would cut the stored text to it.
+        beforeRevise: (stored) => {
+            if (widgetTask(stored).truncated) {
+                throw new Error(
+                    `This task is longer than the widget shows (${TASK_DETAILS_CHARS} characters), so it cannot be edited here without cutting it. Change it where it was written.`
+                );
+            }
+        },
+    });
+    taskCache.delete(files.file);
+    logger.debug({ id: row.id, revision: row.revision ?? 1 }, "Widget task edited");
+    return {
+        task: widgetTask(row),
+        receipt: {
+            id: row.id,
+            action: "edit",
             state: row.state,
             revision: row.revision ?? 1,
             at: row.updatedTs,

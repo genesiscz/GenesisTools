@@ -166,7 +166,7 @@ final class HubDecisionsSourceTests: XCTestCase {
         // The pane shows the same session shape as the Inbox: a stored note counts as a draft.
         let session = InboxSession(
             sessionId: envelope.sessionId, provider: "claude", title: "s", project: nil, cwd: "/tmp/gt/app", branch: nil,
-            account: nil, lastAt: "", waiting: 1, drafted: nil, queued: nil, reply: nil, items: items
+            account: nil, lastAt: "", waiting: 1, drafted: nil, queued: nil, stale: nil, reply: nil, items: items
         )
         XCTAssertEqual(session.draftedItems.map(\.id), ["d_1_s-alpha"])
     }

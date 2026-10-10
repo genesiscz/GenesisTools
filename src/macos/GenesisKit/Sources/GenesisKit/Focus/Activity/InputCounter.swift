@@ -47,7 +47,7 @@ public final class InputCounter {
     @discardableResult
     public func start() -> Bool {
         guard !isRunning else { return true }
-        guard AXIsProcessTrusted() else { return false }
+        guard PermissionAccess.live.isGranted(.accessibility) else { return false }
 
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
@@ -196,6 +196,16 @@ public final class InputCounter {
         guard crossed else { return }
         guard counts != ActivityStore.InputCounts() else { return }
         onFlush?(bucket, counts)
+    }
+
+    /// Drops what the open bucket counted when its minute overlaps `from..<to`: that activity was forgotten
+    /// (`ActivityStore.forget`), so its counts must not reach the ledger on the next flush.
+    public func discardPending(overlapping from: Int64, to: Int64) {
+        os_unfair_lock_lock(&lock)
+        if bucketMs < to && bucketMs + Self.bucketSeconds * 1_000 > from {
+            pending = ActivityStore.InputCounts()
+        }
+        os_unfair_lock_unlock(&lock)
     }
 
     /// Everything counted in the bucket that is still open. The HUD sparkline reads this.

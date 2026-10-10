@@ -7,6 +7,14 @@ private enum WidgetInk {
     static let blue = Color(red: 0.23, green: 0.62, blue: 1)
 }
 
+/// The values one arrival pulse animates.
+struct WidgetInboxPulse {
+    var scale: CGFloat = 1
+    var glow: Double = 0
+}
+
+/// An inbox count. Each new arrival (`pulse` grows) bumps it once: a 0.45 s scale-and-glow, or under Reduce Motion
+/// only the glow, so the badge still says "something new" without moving. Nothing animates between arrivals.
 struct WidgetInboxCount: View {
     let count: Int
     let needsAnswer: Bool
@@ -16,6 +24,8 @@ struct WidgetInboxCount: View {
     var compact = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     var body: some View {
+        let still = reduceMotion || systemReduceMotion
+        let tint = needsAnswer ? Color.orange : WidgetInk.blue
         Text(verbatim: count > 99 ? "99+" : String(max(0, count)) + (complete ? "" : "+"))
             .font(.system(size: compact ? 9 : 11, weight: .semibold, design: .rounded))
             .monospacedDigit()
@@ -23,7 +33,21 @@ struct WidgetInboxCount: View {
             .padding(.horizontal, compact ? 4 : 6)
             .padding(.vertical, compact ? 2 : 3)
             .fixedSize()
-            .background((needsAnswer ? Color.orange : WidgetInk.blue).opacity(0.16), in: Capsule())
+            .background(tint.opacity(0.16), in: Capsule())
+            .keyframeAnimator(initialValue: WidgetInboxPulse(), trigger: pulse) { content, value in
+                content
+                    .overlay(Capsule().fill(tint.opacity(value.glow)).allowsHitTesting(false))
+                    .scaleEffect(value.scale)
+            } keyframes: { _ in
+                KeyframeTrack(\.scale) {
+                    SpringKeyframe(still ? 1 : 1.22, duration: 0.14, spring: .snappy)
+                    SpringKeyframe(1, duration: 0.31, spring: .smooth)
+                }
+                KeyframeTrack(\.glow) {
+                    LinearKeyframe(0.34, duration: 0.12)
+                    LinearKeyframe(0, duration: 0.33)
+                }
+            }
             .accessibilityLabel((complete ? "" : "At least ") + "\(count) inbox notifications")
     }
 }
@@ -245,7 +269,7 @@ public struct AgentWidgetView: View {
                         count: min(3, items.count), horizontal: true, enabled: expanded && !reduceMotion))
                 if items.count > 3 {
                     Button("+\(items.count - 3)", action: actions.settings)
-                        .font(.system(size: 10)).buttonStyle(.plain).accessibilityLabel("Show all agents")
+                        .font(.system(size: 10)).buttonStyle(.genHoverPlain()).accessibilityLabel("Show all agents")
                 }
             }
         }
@@ -273,7 +297,7 @@ public struct AgentWidgetView: View {
                 && (expanded || items.contains(where: { $0.status == .working || $0.status == .waiting }))
             {
                 Button("+\(items.count - 6)", action: actions.settings)
-                    .font(.system(size: 9)).buttonStyle(.plain).accessibilityLabel("Show all agents")
+                    .font(.system(size: 9)).buttonStyle(.genHoverPlain()).accessibilityLabel("Show all agents")
             }
             Rectangle().fill(.white.opacity(0.08)).frame(width: 15, height: 1)
             IconButton(
@@ -362,8 +386,9 @@ public struct AgentWidgetView: View {
                             }
                         }
                     }
+                    .scrollOverflowContent()
                 }
-                .scrollIndicators(.hidden)
+                .scrollOverflowHints()
                 Spacer(minLength: 12)
 
                 HStack(alignment: .bottom, spacing: 8) {

@@ -1,0 +1,479 @@
+import AVFoundation
+import AppKit
+import ImageIO
+import SwiftUI
+import UniformTypeIdentifiers
+import XCTest
+
+@testable import GenesisKit
+
+final class MediaThumbnailCacheTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("media-thumbnail-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    static func writePNG(_ url: URL, width: Int, height: Int, color: CGColor) throws {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(color)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try XCTUnwrap(context.makeImage())
+        let destination = try XCTUnwrap(
+            CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+    }
+
+    /// ImageIO decodes synchronously and never checks for cancellation; a task group would wait for it.
+    private static func decodeThatIgnoresCancellation(seconds: TimeInterval) -> Int {
+        Thread.sleep(forTimeInterval: seconds)
+        return 1
+    }
+
+    func testTheDecodeDeadlineHoldsEvenWhenTheDecodeIgnoresCancellation() async {
+        let started = ContinuousClock.now
+        let stalled = Task { Self.decodeThatIgnoresCancellation(seconds: 0.8) }
+        let late = await MediaThumbnailCache.firstResult(of: stalled, within: .milliseconds(40))
+        XCTAssertNil(late)
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(500),
+                          "the caller is free at the deadline, not when the decoder gives up")
+        XCTAssertTrue(stalled.isCancelled, "the work is told to stop at the deadline")
+        let quick = await MediaThumbnailCache.firstResult(of: Task { 7 }, within: .seconds(5))
+        XCTAssertEqual(quick, 7)
+    }
+
+    /// Counts the decoders running at once, and the most there ever were.
+    private final class DecoderGauge: @unchecked Sendable {
+        private let lock = NSLock()
+        private var running = 0
+        private(set) var peak = 0
+
+        func enter() {
+            lock.lock()
+            running += 1
+            peak = max(peak, running)
+            lock.unlock()
+        }
+
+        func leave() {
+            lock.lock()
+            running -= 1
+            lock.unlock()
+        }
+    }
+
+    private static func message(_ result: MediaThumbnailResult) -> String? {
+        if case .failed(let message) = result { return message }
+        return nil
+    }
+
+    func testADecoderPastItsDeadlineKeepsItsSlotAndTheQueueBehindItGivesUpInTime() async throws {
+        let paths = try ["stall.png", "queued.png", "later.png"].map { name in
+            let url = directory.appendingPathComponent(name)
+            try Self.writePNG(url, width: 8, height: 8, color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+            return url.path
+        }
+        let gauge = DecoderGauge()
+        let cache = MediaThumbnailCache(concurrency: 1, deadline: .milliseconds(40)) { path, _, _ in
+            gauge.enter()
+            defer { gauge.leave() }
+            if path.hasSuffix("stall.png") { _ = Self.decodeThatIgnoresCancellation(seconds: 0.4) }
+            return .failed("decoded \((path as NSString).lastPathComponent)")
+        }
+        let started = ContinuousClock.now
+        let stalled = await cache.thumbnail(path: paths[0], maxPixels: 64)
+        let queued = await cache.thumbnail(path: paths[1], maxPixels: 64)
+        XCTAssertEqual(Self.message(stalled), MediaThumbnailCache.tooLong)
+        XCTAssertEqual(Self.message(queued), MediaThumbnailCache.tooLong,
+                       "the only slot still belongs to the stalled decoder, so the next request expires in the queue")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(350))
+        XCTAssertEqual(gauge.peak, 1, "a decoder past its deadline still counts against the limit")
+
+        try await Task.sleep(for: .milliseconds(450))
+        let later = await cache.thumbnail(path: paths[2], maxPixels: 64)
+        XCTAssertEqual(Self.message(later), "decoded later.png", "the slot comes back when the stalled decoder exits")
+        XCTAssertEqual(gauge.peak, 1)
+    }
+
+    func testBucketsRoundUpToPowersOfTwoWithinBounds() {
+        XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 1), 64)
+        XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 100), 128)
+        XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 128), 128)
+        XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 129), 256)
+        XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 90_000), 4096)
+    }
+
+    func testImageThumbnailKeepsAspectAndALargerPictureServesASmallerRequest() async throws {
+        let url = directory.appendingPathComponent("wide.png")
+        try Self.writePNG(url, width: 800, height: 400, color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let cache = MediaThumbnailCache()
+        guard case .ready(let large) = await cache.thumbnail(path: url.path, maxPixels: 500) else {
+            return XCTFail("A readable PNG must give a thumbnail")
+        }
+        XCTAssertEqual(large.kind, .image)
+        XCTAssertEqual(large.aspect, 2, accuracy: 0.001)
+        XCTAssertEqual(large.image.width, 512, "Decoded at the 512 px bucket, not at the 800 px source")
+        guard case .ready(let small) = await cache.thumbnail(path: url.path, maxPixels: 100) else {
+            return XCTFail("The cached picture must serve a smaller request")
+        }
+        XCTAssertTrue(small.image === large.image, "A smaller request must reuse the larger decode")
+    }
+
+    func testRewrittenFileIsANewIdentityAndNeverShowsTheOldPicture() async throws {
+        let url = directory.appendingPathComponent("capture.png")
+        try Self.writePNG(url, width: 300, height: 100, color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        let cache = MediaThumbnailCache()
+        guard case .ready(let first) = await cache.thumbnail(path: url.path, maxPixels: 128) else {
+            return XCTFail("First picture")
+        }
+        XCTAssertEqual(first.aspect, 3, accuracy: 0.001)
+        try FileManager.default.removeItem(at: url)
+        try Self.writePNG(url, width: 100, height: 200, color: CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+        guard case .ready(let second) = await cache.thumbnail(path: url.path, maxPixels: 128) else {
+            return XCTFail("Second picture")
+        }
+        XCTAssertEqual(second.aspect, 0.5, accuracy: 0.001)
+    }
+
+    func testMissingAndUnreadableFilesFailWithAReasonAndRetryDecodesAgain() async throws {
+        let cache = MediaThumbnailCache()
+        guard case .failed(let missing) = await cache.thumbnail(path: directory.appendingPathComponent("gone.png").path, maxPixels: 64)
+        else { return XCTFail("A missing file must fail") }
+        XCTAssertTrue(missing.contains("no longer there"))
+
+        let broken = directory.appendingPathComponent("broken.png")
+        try Data("not an image".utf8).write(to: broken)
+        guard case .failed = await cache.thumbnail(path: broken.path, maxPixels: 64) else {
+            return XCTFail("Garbage bytes must fail")
+        }
+        guard case .failed = await cache.thumbnail(path: broken.path, maxPixels: 64, reload: true) else {
+            return XCTFail("A retry decodes again and still fails on garbage")
+        }
+    }
+
+    /// Counts decoder runs across the test's concurrent closures.
+    private final class DecodeCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        var count: Int { lock.withLock { value } }
+        func add() { lock.withLock { value += 1 } }
+    }
+
+    func testRememberedFailuresAreCappedAndAFileWrittenOverReplacesItsOwn() async throws {
+        let decodes = DecodeCounter()
+        let cache = MediaThumbnailCache(failureLimit: 2, concurrency: 1, deadline: .seconds(5)) { _, _, _ in
+            decodes.add()
+            return .failed("fixture failure")
+        }
+        let paths = try (0 ..< 3).map { index in
+            let url = directory.appendingPathComponent("broken-\(index).png")
+            try Data("not an image \(index)".utf8).write(to: url)
+            return url.path
+        }
+        for path in paths { _ = await cache.thumbnail(path: path, maxPixels: 64) }
+        let remembered = await cache.failureCount
+        XCTAssertEqual(remembered, 2, "the oldest failed path makes room")
+        _ = await cache.thumbnail(path: paths[2], maxPixels: 64)
+        XCTAssertEqual(decodes.count, 3, "a remembered failure answers without decoding again")
+        _ = await cache.thumbnail(path: paths[0], maxPixels: 64)
+        XCTAssertEqual(decodes.count, 4, "an evicted failure decodes again")
+
+        // The same path, other bytes: a new identity that replaces the path's entry instead of adding one.
+        try Data("other bytes, longer than before".utf8).write(to: URL(fileURLWithPath: paths[0]))
+        _ = await cache.thumbnail(path: paths[0], maxPixels: 64)
+        XCTAssertEqual(decodes.count, 5, "new bytes are decoded, not answered from the old failure")
+        let afterRewrite = await cache.failureCount
+        XCTAssertEqual(afterRewrite, 2)
+    }
+
+    func testVideoGivesAPosterFrameItsLengthAndAspect() async throws {
+        let url = directory.appendingPathComponent("clip.mov")
+        try await Self.writeVideo(url, width: 64, height: 48, frames: 30, fps: 10)
+        let cache = MediaThumbnailCache()
+        guard case .ready(let poster) = await cache.thumbnail(path: url.path, maxPixels: 128) else {
+            return XCTFail("A readable video must give a poster frame")
+        }
+        XCTAssertEqual(poster.kind, .video)
+        XCTAssertEqual(poster.aspect, 64.0 / 48.0, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(poster.duration), 3, accuracy: 0.15)
+    }
+
+    /// `MEDIA_THUMBNAIL_PERF=1 swift test --filter testDecodeCostOfAFiveKScreenshot`: cold decode per bucket of a
+    /// 5120 × 2880 PNG (a Retina 5K screenshot), the old transcript cache's 256 px decode, and a warm hit.
+    func testDecodeCostOfAFiveKScreenshot() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MEDIA_THUMBNAIL_PERF"] == "1")
+        let url = directory.appendingPathComponent("5k.png")
+        try Self.writePNG(url, width: 5120, height: 2880, color: CGColor(red: 0.2, green: 0.4, blue: 0.9, alpha: 1))
+        let clock = ContinuousClock()
+        var lines: [String] = []
+        for bucket in [256, 512, 1024] {
+            let cache = MediaThumbnailCache()
+            let cold = await clock.measure { _ = await cache.thumbnail(path: url.path, maxPixels: CGFloat(bucket)) }
+            let warm = await clock.measure { _ = await cache.thumbnail(path: url.path, maxPixels: CGFloat(bucket)) }
+            lines.append("bucket \(bucket): cold \(cold), warm \(warm)")
+        }
+        let old = await clock.measure { _ = await TranscriptThumbnailCache().thumbnail(for: url.path) }
+        lines.append("old TranscriptThumbnailCache 256 px: cold \(old)")
+        print("MEDIA_THUMBNAIL_PERF\n" + lines.joined(separator: "\n"))
+    }
+
+    func testDurationAndKindFormatting() {
+        XCTAssertEqual(MediaFormat.duration(7.4), "0:07")
+        XCTAssertEqual(MediaFormat.duration(65), "1:05")
+        XCTAssertEqual(MediaFormat.duration(3729), "1:02:09")
+        XCTAssertEqual(MediaKind.of(path: "/fixture/Screenshot.PNG"), .image)
+        XCTAssertEqual(MediaKind.of(path: "/fixture/recording.mov"), .video)
+        XCTAssertEqual(MediaKind.of(path: "/fixture/clip.mp4"), .video)
+        XCTAssertEqual(MediaKind.of(path: "/fixture/notes.pdf"), .file)
+        XCTAssertEqual(MediaKind.of(path: "/fixture/noextension"), .file)
+    }
+
+    func testFrameFitsTheAspectInsideTheBox() {
+        XCTAssertEqual(MediaThumbnailView.frame(aspect: 2, height: 100, maxWidth: 300), CGSize(width: 200, height: 100))
+        XCTAssertEqual(MediaThumbnailView.frame(aspect: 4, height: 100, maxWidth: 260), CGSize(width: 260, height: 65))
+        XCTAssertEqual(MediaThumbnailView.frame(aspect: 0.5, height: 100, maxWidth: 260, minWidth: 60), CGSize(width: 60, height: 100))
+        XCTAssertEqual(MediaThumbnailView.frame(aspect: nil, height: 60, maxWidth: 200), CGSize(width: 80, height: 60))
+    }
+
+    static func writeVideo(_ url: URL, width: Int, height: Int, frames: Int, fps: Int32) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+        ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+        ])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        for index in 0..<frames {
+            let deadline = Date().addingTimeInterval(5)
+            while !input.isReadyForMoreMediaData {
+                guard Date() < deadline else { throw XCTSkip("The video writer never became ready") }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+            let pixels = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixels, [])
+            memset(CVPixelBufferGetBaseAddress(pixels), Int32(index * 8 % 255), CVPixelBufferGetDataSize(pixels))
+            CVPixelBufferUnlockBaseAddress(pixels, [])
+            XCTAssertTrue(adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: fps)))
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frames), timescale: fps))
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
+    }
+}
+
+@MainActor
+final class MediaPreviewStateTests: XCTestCase {
+    private let items = ["a", "b", "c"].map { MediaPreviewItem(id: $0, path: "/fixture/\($0).png") }
+
+    override func tearDown() {
+        MediaPreviewState.active?.dismiss()
+        super.tearDown()
+    }
+
+    func testPresentSelectsTheClickedItemAndStepsWrapAround() {
+        let state = MediaPreviewState()
+        state.present(items, selectedID: "c")
+        XCTAssertEqual(state.current?.id, "c")
+        state.step(1)
+        XCTAssertEqual(state.current?.id, "a")
+        state.step(-1)
+        XCTAssertEqual(state.current?.id, "c")
+        state.dismiss()
+        XCTAssertFalse(state.isOpen)
+        XCTAssertNil(MediaPreviewState.active)
+    }
+
+    func testOnlyOnePreviewIsOpenAcrossSurfaces() {
+        let inbox = MediaPreviewState()
+        let shelf = MediaPreviewState()
+        inbox.present(items, selectedID: "a")
+        shelf.present(items, selectedID: "b")
+        XCTAssertFalse(inbox.isOpen)
+        XCTAssertTrue(shelf.isOpen)
+        XCTAssertTrue(MediaPreviewState.active === shelf)
+    }
+
+    func testKeyboardClosesWithEscapeAndLeavesSpaceAndArrowsToATextField() {
+        let state = MediaPreviewState()
+        XCTAssertFalse(MediaPreviewKeyboard.handle(keyCode: 53, editingText: false), "Nothing open: Esc belongs to the window")
+        state.present(items, selectedID: "a")
+        XCTAssertFalse(MediaPreviewKeyboard.handle(keyCode: 124, editingText: true))
+        XCTAssertEqual(state.current?.id, "a")
+        XCTAssertTrue(MediaPreviewKeyboard.handle(keyCode: 124, editingText: false))
+        XCTAssertEqual(state.current?.id, "b")
+        XCTAssertFalse(MediaPreviewKeyboard.handle(keyCode: 49, editingText: true))
+        XCTAssertTrue(state.isOpen)
+        XCTAssertTrue(MediaPreviewKeyboard.handle(keyCode: 53, editingText: true), "Esc closes even while typing")
+        XCTAssertFalse(state.isOpen)
+    }
+}
+
+/// The picture really reaches the screen: a red PNG drawn by `MediaThumbnailView` in an off-screen window.
+@MainActor
+final class MediaThumbnailRenderTests: XCTestCase {
+    func testThumbnailDrawsTheImageNotAnIcon() throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("media-render-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("red.png")
+        try MediaThumbnailCacheTests.writePNG(url, width: 400, height: 300, color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+
+        let host = NSHostingView(rootView: MediaThumbnailView(path: url.path).frame(width: 80, height: 60))
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 80, height: 60),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.close() }
+
+        var redness = 0.0
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            host.layoutSubtreeIfNeeded()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { continue }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            if let color = rep.colorAt(x: Int(rep.size.width / 2), y: Int(rep.size.height / 2))?.usingColorSpace(.sRGB) {
+                redness = Double(color.redComponent - max(color.greenComponent, color.blueComponent))
+            }
+            if redness > 0.5 { break }
+        }
+        XCTAssertGreaterThan(redness, 0.5, "The thumbnail's centre must be the image's red, not a placeholder")
+    }
+}
+
+@MainActor
+final class WidgetCaptureFeedbackTests: XCTestCase {
+    private let empty = Data(#"{"revision":0,"items":[],"statePath":"/fixture/widget-shelf/state.json"}"#.utf8)
+    private let staged = Data(#"{"id":"fixture-capture","kind":"capture","name":"Screenshot.png","path":"/fixture/capture.png","sha256":"hash","bytes":1,"createdAt":1,"assetId":"fixture-image"}"#.utf8)
+
+    private func complete(_ store: WidgetShelfStore, action: () -> Void) async {
+        let finished = expectation(description: "Shelf operation finishes")
+        let subscription = store.$isBusy.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
+        action()
+        await fulfillment(of: [finished], timeout: 2)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testOnlyAStagedCaptureReopensTheShelf() async {
+        var reopened = 0
+        var response = staged
+        let store = WidgetShelfStore(request: { args, _ in
+            args.first == "capture" ? response : self.empty
+        }, onCaptureStaged: { reopened += 1 })
+        await complete(store) { store.capture() }
+        XCTAssertEqual(reopened, 1)
+        XCTAssertEqual(store.notice, "Screenshot staged. Choose an inbox when you are ready.")
+
+        response = Data(#"{"cancelled":true,"reason":"user"}"#.utf8)
+        await complete(store) { store.capture() }
+        XCTAssertEqual(reopened, 1, "Escape is not an arrival")
+        XCTAssertEqual(store.notice, "Capture cancelled.")
+        XCTAssertNil(store.error)
+
+        await complete(store) { store.importFiles([URL(fileURLWithPath: "/fixture/report.pdf")]) }
+        XCTAssertEqual(reopened, 1, "An import is not a capture")
+    }
+
+    func testFirstInventoryReadMarksTheShelfLoaded() async {
+        let store = WidgetShelfStore(request: { _, _ in self.empty })
+        XCTAssertFalse(store.loaded)
+        let loaded = expectation(description: "Loaded")
+        let subscription = store.$loaded.filter { $0 }.prefix(1).sink { _ in loaded.fulfill() }
+        store.refresh()
+        await fulfillment(of: [loaded], timeout: 2)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testScreenRecordingDenialIsRecognisedByItsCode() {
+        let denied = ToolsBridgeError.refused(
+            "ERROR: [screen-recording-denied] Screen Recording is not allowed for this app, so macOS returned no image (could not create image from window)\n")
+        XCTAssertTrue(WidgetCaptureError.isScreenRecordingDenied(denied))
+        XCTAssertFalse(WidgetCaptureError.isScreenRecordingDenied(ToolsBridgeError.refused("ERROR: Screenshot capture failed: disk full")))
+    }
+}
+
+/// A tile reloads when its file changes at the same path (eve, PR #487 t27): `MediaFileChange` must fire on an in-place
+/// write, on an atomic replace and when a missing file appears, and return false at once when cancelled.
+final class MediaFileChangeTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("media-change-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    /// Starts the wait, lets the source arm, runs `change`, and returns what the wait answered within 3 s.
+    private func waitAnswer(path: String, change: @escaping () throws -> Void) async throws -> Bool {
+        let wait = Task { await MediaFileChange.next(path: path, debounce: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(150))
+        try change()
+        let deadline = Task {
+            try await Task.sleep(for: .seconds(3))
+            wait.cancel()
+        }
+        let answer = await wait.value
+        deadline.cancel()
+        return answer
+    }
+
+    func testAnInPlaceWriteIsAChange() async throws {
+        let file = directory.appendingPathComponent("a.png")
+        try Data([1]).write(to: file)
+        let answer = try await waitAnswer(path: file.path) {
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data([2]))
+            try handle.close()
+        }
+        XCTAssertTrue(answer)
+    }
+
+    func testAnAtomicReplaceIsAChange() async throws {
+        let file = directory.appendingPathComponent("b.png")
+        try Data([1]).write(to: file)
+        let answer = try await waitAnswer(path: file.path) { try Data([3, 4]).write(to: file, options: .atomic) }
+        XCTAssertTrue(answer)
+    }
+
+    func testAMissingFileThatAppearsIsAChange() async throws {
+        let file = directory.appendingPathComponent("later.png")
+        let answer = try await waitAnswer(path: file.path) { try Data([5]).write(to: file) }
+        XCTAssertTrue(answer)
+    }
+
+    func testCancellationAnswersFalseAtOnce() async throws {
+        let file = directory.appendingPathComponent("c.png")
+        try Data([1]).write(to: file)
+        let wait = Task { await MediaFileChange.next(path: file.path) }
+        try await Task.sleep(for: .milliseconds(100))
+        let start = ContinuousClock.now
+        wait.cancel()
+        let answer = await wait.value
+        XCTAssertFalse(answer)
+        XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(500))
+    }
+}

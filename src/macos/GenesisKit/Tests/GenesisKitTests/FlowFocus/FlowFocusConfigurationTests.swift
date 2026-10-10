@@ -21,8 +21,8 @@ final class FlowFocusConfigurationTests: XCTestCase {
         let config = FlowFocusConfiguration(directory: directory)
         config.allowsWrites = true
         let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)
-        adapter.save(accountID: "acc_work", model: "fixture-writer")
-        await config.flush()
+        let stored = await adapter.save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertTrue(stored)
         var inputURL: URL?
         adapter.runCommand = { args, timeout in
             XCTAssertEqual(Array(args.prefix(2)), ["transforms", "run"])
@@ -56,6 +56,32 @@ final class FlowFocusConfigurationTests: XCTestCase {
             _ = try await adapter.run(.init(systemPrompt: "Rewrite.", text: "Fixture"))
             XCTFail("expected execution failure")
         } catch { XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(inputURL).path)) }
+    }
+
+    @MainActor
+    func testATransformChoiceTheWriterRefusesIsNotReportedAsSaved() async throws {
+        let config = FlowFocusConfiguration(directory: directory)
+        let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)
+        let refused = await adapter.save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertFalse(refused, "a configuration without its runtime owner refuses the write")
+        XCTAssertNotNil(config.lastError)
+        XCTAssertEqual(adapter.modelRef, "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: client.path))
+
+        // A write the owner accepts but the disk refuses (its folder is a file) fails after the optimistic patch.
+        let notAFolder = directory.appendingPathComponent("not-a-folder")
+        try Data("fixture".utf8).write(to: notAFolder)
+        let blocked = FlowFocusConfiguration(directory: notAFolder)
+        blocked.allowsWrites = true
+        let failed = await FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: blocked)
+            .save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertFalse(failed)
+        XCTAssertNotNil(blocked.lastError)
+
+        config.allowsWrites = true
+        let saved = await adapter.save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertTrue(saved)
+        XCTAssertEqual(adapter.modelRef, "@account/acc_work:fixture-writer")
     }
 
     @MainActor
@@ -95,14 +121,14 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: client), corrupt)
     }
 
-    func testNormalWriteMergesFreshUnknownTopLevelAndNestedKeys() throws {
+    func testNormalWriteMergesFreshUnknownTopLevelAndNestedKeys() async throws {
         let original: [String: Any] = [
             "unknown": ["future": "preserved"],
             "app": ["otherFeature": true, "focus": ["custom": 42, "timer": ["futureTimer": "kept", "flowSec": 1500]]],
         ]
         try JSONSerialization.data(withJSONObject: original).write(to: client)
         let patch = try JSONSerialization.data(withJSONObject: ["focus": ["timer": ["flowSec": 1800]]])
-        try FlowFocusConfiguration.persist(patch, directory: directory)
+        try await FlowFocusConfiguration.persist(patch, directory: directory)
         let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: client)) as? [String: Any])
         XCTAssertEqual((result["unknown"] as? [String: String])?["future"], "preserved")
         let app = try XCTUnwrap(result["app"] as? [String: Any])
@@ -114,28 +140,28 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertEqual(timer["flowSec"] as? Int, 1800)
     }
 
-    func testCorruptClientIsPreservedRatherThanReplacedWithLegacyOrEmptyData() throws {
+    func testCorruptClientIsPreservedRatherThanReplacedWithLegacyOrEmptyData() async throws {
         let original = Data("{broken client data\n".utf8)
         try original.write(to: client)
         try Data("{\"app\":{\"legacy\":true}}".utf8)
             .write(to: directory.appendingPathComponent("config.json"))
-        XCTAssertThrowsError(try FlowFocusConfiguration.persist(Data("{\"focus\":{}}".utf8), directory: directory))
+        await assertPersistFails(Data("{\"focus\":{}}".utf8), directory: directory)
         XCTAssertEqual(try Data(contentsOf: client), original)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("client.json.lock").path))
     }
 
-    func testAValidJSONNonObjectIsNotSilentlyReplaced() throws {
+    func testAValidJSONNonObjectIsNotSilentlyReplaced() async throws {
         let original = Data("[1,2,3]".utf8)
         try original.write(to: client)
-        XCTAssertThrowsError(try FlowFocusConfiguration.persist(Data("{}".utf8), directory: directory))
+        await assertPersistFails(Data("{}".utf8), directory: directory)
         XCTAssertEqual(try Data(contentsOf: client), original)
     }
 
-    func testUnreadableClientPathIsPreserved() throws {
+    func testUnreadableClientPathIsPreserved() async throws {
         try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
         let marker = client.appendingPathComponent("keep.txt")
         try Data("preserve".utf8).write(to: marker)
-        XCTAssertThrowsError(try FlowFocusConfiguration.persist(Data("{}".utf8), directory: directory))
+        await assertPersistFails(Data("{}".utf8), directory: directory)
         XCTAssertEqual(try Data(contentsOf: marker), Data("preserve".utf8))
     }
 
@@ -157,6 +183,43 @@ final class FlowFocusConfigurationTests: XCTestCase {
         let focus = try XCTUnwrap(forwarded.first?["focus"] as? [String: Any])
         XCTAssertNotNil(focus["captureEnabled"])
         XCTAssertNil(focus["pauseWhileScreenShared"], "no recorder pauses for screen sharing, so no setting may promise it")
+    }
+
+    @MainActor
+    func testEveryFocusSettingTheSettingsPageEditsIsWrittenAndReadBack() async throws {
+        var settings = FocusSettings()
+        settings.excludedBundles.insert("com.example.fixture-chat")
+        settings.excludedHosts = ["example.com", "fixture.example.org"]
+        settings.projects = [
+            FocusSettings.ProjectRule(name: "Fixture project", cmuxSession: "fixture-"),
+            FocusSettings.ProjectRule(name: "Docs", titleContains: "Fixture docs", host: "docs.example.com"),
+        ]
+        settings.retentionDays = 90
+        settings.interruptionThresholdSec = 120
+        settings.idleThresholdSec = 300
+        var plan = PomodoroPlan()
+        plan.flowSec = 50 * 60
+
+        let forwarding = FlowFocusConfiguration(directory: directory)
+        var forwarded: [[String: Any]] = []
+        forwarding.forwardPatch = { forwarded.append($0) }
+        forwarding.updateFocus(settings: settings, plan: plan)
+        let focus = try XCTUnwrap(forwarded.first?["focus"] as? [String: Any])
+        XCTAssertEqual(focus["excludedBundles"] as? [String], ["com.example.fixture-chat"],
+                       "built-in exclusions always apply, so only the user's additions are stored")
+        XCTAssertEqual(focus["excludedHosts"] as? [String], ["example.com", "fixture.example.org"])
+        XCTAssertEqual((focus["projects"] as? [[String: Any]])?.count, 2)
+
+        // Through the real writer and a fresh reader, the way the recorder sees it after a restart.
+        let config = FlowFocusConfiguration(directory: directory)
+        config.allowsWrites = true
+        config.updateFocus(settings: settings, plan: plan)
+        await config.flush()
+        let reread = FlowFocusConfiguration(directory: directory).app
+        XCTAssertEqual(FocusSettings.from(appConfig: reread), settings)
+        XCTAssertEqual(PomodoroPlan.from(appConfig: reread).flowSec, 50 * 60)
+        XCTAssertFalse(FocusSettings.from(appConfig: reread).records(bundle: "com.example.fixture-chat"))
+        XCTAssertFalse(FocusSettings.from(appConfig: reread).records(host: "www.example.com"))
     }
 
     @MainActor
@@ -189,18 +252,18 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertEqual(forwarded.count, 1, "a JSON value is still forwarded")
     }
 
-    func testClientJSONIsOwnerOnlyAndNoTemporaryFileStays() throws {
-        try FlowFocusConfiguration.persist(Data("{\"fixture\":1}".utf8), directory: directory)
+    func testClientJSONIsOwnerOnlyAndNoTemporaryFileStays() async throws {
+        try await FlowFocusConfiguration.persist(Data("{\"fixture\":1}".utf8), directory: directory)
         let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: client.path)[.posixPermissions] as? NSNumber)
         XCTAssertEqual(mode.intValue & 0o777, 0o600)
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".tmp") }
         XCTAssertEqual(leftovers, [])
     }
 
-    func testMissingClientCanBeCreatedAndLegacyKeysSurvive() throws {
+    func testMissingClientCanBeCreatedAndLegacyKeysSurvive() async throws {
         let legacy = Data("{\"serverSecret\":\"excluded\",\"app\":{\"other\":7},\"auth\":{\"sessionToken\":\"fixture-session\",\"privateKey\":\"excluded\"}}".utf8)
         try legacy.write(to: directory.appendingPathComponent("config.json"))
-        try FlowFocusConfiguration.persist(Data("{\"focus\":{\"captureEnabled\":false}}".utf8), directory: directory)
+        try await FlowFocusConfiguration.persist(Data("{\"focus\":{\"captureEnabled\":false}}".utf8), directory: directory)
         let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: client)) as? [String: Any])
         XCTAssertNil(raw["serverSecret"], "legacy server-owned keys do not enter client.json")
         XCTAssertEqual(raw["auth"] as? [String: String], ["sessionToken": "fixture-session"])
@@ -260,30 +323,60 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertEqual(json["model"] as? String, "work/provider/existing-selection")
     }
 
-    func testALockLeftByADeadWriterOfThisCodeIsReclaimedAndALiveOneIsNot() throws {
+    func testALockLeftByADeadWriterOfThisCodeIsReclaimedAndALiveOneIsNot() async throws {
         let lock = directory.appendingPathComponent("client.json.lock")
         // A pid that cannot be running: past the macOS pid ceiling.
         try Data("\(FlowFocusConfiguration.lockMarkerPrefix)99999999\n".utf8).write(to: lock)
-        try FlowFocusConfiguration.persist(Data("{\"fixture\":true}".utf8), directory: directory, lockTimeout: 0.5)
+        try await FlowFocusConfiguration.persist(Data("{\"fixture\":true}".utf8), directory: directory, lockTimeout: 0.5)
         XCTAssertFalse(FileManager.default.fileExists(atPath: lock.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: client.path))
 
         try Data("\(FlowFocusConfiguration.lockMarkerPrefix)\(getppid())\n".utf8).write(to: lock)
-        XCTAssertThrowsError(try FlowFocusConfiguration.persist(Data("{}".utf8), directory: directory, lockTimeout: 0.1),
-                             "a live owner keeps its lock")
+        await assertPersistFails(Data("{}".utf8), directory: directory, lockTimeout: 0.1, "a live owner keeps its lock")
         try FileManager.default.removeItem(at: lock)
     }
 
-    func testAnOldLockIsNotRemovedBasedOnlyOnItsModificationTime() throws {
+    func testAnOldLockIsNotRemovedBasedOnlyOnItsModificationTime() async throws {
         let lock = directory.appendingPathComponent("client.json.lock")
         let contents = Data("another writer".utf8)
         try contents.write(to: lock)
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: lock.path)
         let before = try FileManager.default.attributesOfItem(atPath: lock.path)[.systemFileNumber] as? NSNumber
-        XCTAssertThrowsError(try FlowFocusConfiguration.persist(Data("{}".utf8), directory: directory, lockTimeout: 0.1))
+        await assertPersistFails(Data("{}".utf8), directory: directory, lockTimeout: 0.1)
         XCTAssertEqual(try Data(contentsOf: lock), contents)
         XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: lock.path)[.systemFileNumber] as? NSNumber, before)
         XCTAssertFalse(FileManager.default.fileExists(atPath: client.path))
+    }
+
+    @MainActor
+    func testAWriteWaitingForAnotherWritersLockLeavesTheMainActorFreeAndLandsInOrderAfterRelease() async throws {
+        let lock = directory.appendingPathComponent("client.json.lock")
+        // Not this code's marker, so it is never reclaimed: the writes must wait for its owner to release it.
+        try Data("another writer".utf8).write(to: lock)
+        let config = FlowFocusConfiguration(directory: directory)
+        config.allowsWrites = true
+        let started = Date()
+        config.setAppValue(1, forKey: "fixtureCount")
+        config.setAppValue(2, forKey: "fixtureCount")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.05, "a setter returns while the lock is held")
+        XCTAssertEqual(config.app["fixtureCount"] as? Int, 2, "the pending value is visible at once")
+        let ticks = Date()
+        for _ in 0 ..< 20 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertLessThan(Date().timeIntervalSince(ticks), 1, "the main actor keeps running while the writes wait")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: client.path), "nothing is written under another writer's lock")
+        try FileManager.default.removeItem(at: lock)
+        await config.flush()
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: client)) as? [String: Any])
+        XCTAssertEqual((saved["app"] as? [String: Any])?["fixtureCount"] as? Int, 2, "the later write lands last")
+        XCTAssertNil(config.lastError)
+    }
+
+    private func assertPersistFails(_ data: Data, directory: URL, lockTimeout: TimeInterval = 5, _ message: String = "",
+                                    file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            try await FlowFocusConfiguration.persist(data, directory: directory, lockTimeout: lockTimeout)
+            XCTFail("persist was expected to fail. \(message)", file: file, line: line)
+        } catch {}
     }
 }
 

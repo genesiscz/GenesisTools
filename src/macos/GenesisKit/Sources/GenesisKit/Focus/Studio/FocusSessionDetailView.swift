@@ -354,10 +354,9 @@ public struct FocusSessionDetailView: View {
     }
 
     private func sectionTitle(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(GenTypography.caption(10, weight: .semibold))
+        Text(text)
+            .font(GenTypography.caption(11, weight: .semibold))
             .foregroundStyle(Color.genTextMuted)
-            .tracking(0.6)
     }
 
     private var missingState: some View {

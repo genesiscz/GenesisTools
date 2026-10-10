@@ -1,32 +1,7 @@
 import AppKit
-import ApplicationServices
-import AVFoundation
-import Contacts
-import EventKit
 import Foundation
-import Speech
 
-enum GrantState: Equatable {
-    case granted
-    case denied
-    case notDetermined
-    case restricted
-    /// a grant that exists but is not enough, e.g. Calendar "Add Only"
-    case partial(String)
-    /// no status API; text explains how to find out
-    case unknown(String)
-
-    var label: String {
-        switch self {
-        case .granted: return "granted"
-        case .denied: return "denied"
-        case .notDetermined: return "not asked yet"
-        case .restricted: return "restricted"
-        case .partial(let what): return what
-        case .unknown(let what): return what
-        }
-    }
-
+extension PermissionStatus {
     var color: NSColor {
         switch self {
         case .granted: return .systemGreen
@@ -47,51 +22,59 @@ enum GrantAction: Equatable {
 }
 
 struct PermissionRow: Identifiable, Equatable {
-    let id: String
-    let title: String
+    let kind: PermissionKind
     /// which tools command needs it, in one line
     let usedBy: String
-    let state: GrantState
-    let action: GrantAction
-    let pane: String
+    let state: PermissionStatus
+
+    var id: String { kind.rawValue }
+    var title: String { kind == .automation ? "Automation (System Events)" : kind.title }
+    var pane: String { kind.settingsAnchor }
+
+    var action: GrantAction {
+        switch kind.requestStyle {
+        case .systemPrompt, .promptThenSettings: return .prompt
+        case .settingsOnly: return .openPane(kind.settingsAnchor)
+        case .probe: return .probe
+        }
+    }
 }
 
-/// Reads and requests every grant GenesisTools can hold. Requests run from this process, so the
-/// prompt names GenesisTools and the answer lands on the same TCC row the CLI checks.
+/// The settings window's list of every grant GenesisTools can hold. Status, requests and panes come from GenesisKit
+/// (`PermissionAccess`, the same module the widget's permission dialogs use); this model adds which `tools`
+/// command needs each grant and remembers probe answers, which macOS has no status for.
 final class PermissionsModel: ObservableObject {
     @Published private(set) var rows: [PermissionRow] = []
     @Published private(set) var busy: String?
     @Published private(set) var lastMessage: String?
 
-    private let eventStore = EKEventStore()
-    private var probeResults: [String: GrantState] = [:]
+    private let access: PermissionAccess
+    private var probeResults: [PermissionKind: PermissionStatus] = [:]
 
-    private static let tccUserDb = NSString(string: "~/Library/Application Support/com.apple.TCC/TCC.db").expandingTildeInPath
+    private static let usedBy: [(PermissionKind, String)] = [
+        (.calendars, "tools macos calendar, tools todo sync"),
+        (.reminders, "tools macos reminders, tools todo"),
+        (.contacts, "tools macos mail / messages (sender names)"),
+        (.speechRecognition, "tools transcribe, voice-memos transcribe, Flow dictation"),
+        (.microphone, "tools ask (voice dictation), Flow, Voice Notes"),
+        (.fullDiskAccess, "tools macos mail, messages, voice-memos"),
+        (.accessibility, "tools macos control, tools control, Flow paste, Focus activity"),
+        (.inputMonitoring, "Clicky keyboard sounds"),
+        (.screenRecording, "tools control record / screenshots, widget Capture"),
+        (.automation, "tools say, tools macos control, AppleScript helpers"),
+        (.desktopFolder, "a file you name there (HAR files, exports)"),
+        (.documentsFolder, "a file you name there (HAR files, exports)"),
+        (.downloadsFolder, "a file you name there (HAR files, exports)"),
+    ]
+
+    init(access: PermissionAccess = .live) {
+        self.access = access
+    }
 
     func refresh() {
-        rows = [
-            PermissionRow(id: "calendar", title: "Calendars", usedBy: "tools macos calendar, tools todo sync",
-                          state: calendarState(), action: .prompt, pane: "Privacy_Calendars"),
-            PermissionRow(id: "reminders", title: "Reminders", usedBy: "tools macos reminders, tools todo",
-                          state: remindersState(), action: .prompt, pane: "Privacy_Reminders"),
-            PermissionRow(id: "contacts", title: "Contacts", usedBy: "tools macos mail / messages (sender names)",
-                          state: contactsState(), action: .prompt, pane: "Privacy_Contacts"),
-            PermissionRow(id: "speech", title: "Speech Recognition", usedBy: "tools transcribe, voice-memos transcribe",
-                          state: speechState(), action: .prompt, pane: "Privacy_SpeechRecognition"),
-            PermissionRow(id: "microphone", title: "Microphone", usedBy: "tools ask (voice dictation)",
-                          state: microphoneState(), action: .prompt, pane: "Privacy_Microphone"),
-            PermissionRow(id: "fda", title: "Full Disk Access", usedBy: "tools macos mail, messages, voice-memos",
-                          state: fullDiskAccessState(), action: .openPane("Privacy_AllFiles"), pane: "Privacy_AllFiles"),
-            PermissionRow(id: "accessibility", title: "Accessibility", usedBy: "tools macos control, tools control",
-                          state: accessibilityState(), action: .prompt, pane: "Privacy_Accessibility"),
-            PermissionRow(id: "screen", title: "Screen Recording", usedBy: "tools control record / screenshots",
-                          state: screenRecordingState(), action: .prompt, pane: "Privacy_ScreenCapture"),
-            PermissionRow(id: "automation", title: "Automation (System Events)", usedBy: "tools say, tools macos control, AppleScript helpers",
-                          state: probeResults["automation"] ?? .unknown("asks on first use"), action: .probe, pane: "Privacy_Automation"),
-            folderRow(id: "desktop", title: "Desktop folder", path: "~/Desktop"),
-            folderRow(id: "documents", title: "Documents folder", path: "~/Documents"),
-            folderRow(id: "downloads", title: "Downloads folder", path: "~/Downloads"),
-        ]
+        rows = Self.usedBy.map { kind, usedBy in
+            PermissionRow(kind: kind, usedBy: usedBy, state: probeResults[kind] ?? access.status(kind))
+        }
     }
 
     // MARK: - Actions
@@ -99,160 +82,28 @@ final class PermissionsModel: ObservableObject {
     func request(_ row: PermissionRow) {
         busy = row.id
         lastMessage = nil
+        let kind = row.kind
+        Task { @MainActor in
+            let result = await access.request(kind)
+            if kind.requestStyle == .probe {
+                probeResults[kind] = result
+                if result == .denied { lastMessage = "\(row.title): macOS refused. Allow it in System Settings." }
+            }
 
-        switch row.id {
-        case "calendar":
-            if #available(macOS 14, *) {
-                eventStore.requestFullAccessToEvents { _, error in self.finish(row, error) }
-            } else {
-                eventStore.requestAccess(to: .event) { _, error in self.finish(row, error) }
-            }
-        case "reminders":
-            if #available(macOS 14, *) {
-                eventStore.requestFullAccessToReminders { _, error in self.finish(row, error) }
-            } else {
-                eventStore.requestAccess(to: .reminder) { _, error in self.finish(row, error) }
-            }
-        case "contacts":
-            CNContactStore().requestAccess(for: .contacts) { _, error in self.finish(row, error) }
-        case "speech":
-            SFSpeechRecognizer.requestAuthorization { _ in self.finish(row, nil) }
-        case "microphone":
-            AVCaptureDevice.requestAccess(for: .audio) { _ in self.finish(row, nil) }
-        case "accessibility":
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
-            finish(row, nil)
-        case "screen":
-            _ = CGRequestScreenCaptureAccess()
-            finish(row, nil)
-        case "automation":
-            probeAutomation(row)
-        case "desktop", "documents", "downloads":
-            probeFolder(row)
-        default:
-            openPane(row.pane)
-            finish(row, nil)
+            busy = nil
+            refresh()
         }
     }
 
     func openPane(_ pane: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
-            NSWorkspace.shared.open(url)
+        if let kind = PermissionKind.allCases.first(where: { $0.settingsAnchor == pane }) {
+            MainActor.assumeIsolated { _ = access.openSettings(kind) }
+        } else {
+            NSWorkspace.shared.open(PermissionKind.settingsURL(anchor: pane))
         }
     }
 
     func revealApp() {
         PathOpener.reveal(Bundle.main.bundlePath)
-    }
-
-    private func finish(_ row: PermissionRow, _ error: Error?) {
-        DispatchQueue.main.async {
-            self.busy = nil
-            if let error {
-                self.lastMessage = "\(row.title): \(error.localizedDescription)"
-            }
-            self.refresh()
-        }
-    }
-
-    private func probeFolder(_ row: PermissionRow) {
-        let path = NSString(string: "~/\(row.title.replacingOccurrences(of: " folder", with: ""))").expandingTildeInPath
-        DispatchQueue.global(qos: .userInitiated).async {
-            let ok = (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil
-            DispatchQueue.main.async {
-                self.probeResults[row.id] = ok ? .granted : .denied
-                self.finish(row, nil)
-            }
-        }
-    }
-
-    private func probeAutomation(_ row: PermissionRow) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            var errorInfo: NSDictionary?
-            let script = NSAppleScript(source: "tell application \"System Events\" to get name")
-            let result = script?.executeAndReturnError(&errorInfo)
-            DispatchQueue.main.async {
-                self.probeResults["automation"] = result != nil ? .granted : .denied
-                if let errorInfo, let message = errorInfo[NSAppleScript.errorMessage] as? String {
-                    self.lastMessage = "Automation: \(message)"
-                }
-                self.finish(row, nil)
-            }
-        }
-    }
-
-    // MARK: - Status readers (never prompt)
-
-    private func calendarState() -> GrantState {
-        eventState(EKEventStore.authorizationStatus(for: .event))
-    }
-
-    private func remindersState() -> GrantState {
-        eventState(EKEventStore.authorizationStatus(for: .reminder))
-    }
-
-    private func eventState(_ status: EKAuthorizationStatus) -> GrantState {
-        if #available(macOS 14, *) {
-            if status == .fullAccess { return .granted }
-            if status == .writeOnly { return .partial("Add Only") }
-        } else if status == .authorized {
-            return .granted
-        }
-
-        switch status {
-        case .denied: return .denied
-        case .restricted: return .restricted
-        case .notDetermined: return .notDetermined
-        default: return .unknown("status \(status.rawValue)")
-        }
-    }
-
-    private func contactsState() -> GrantState {
-        switch CNContactStore.authorizationStatus(for: .contacts) {
-        case .authorized: return .granted
-        case .denied: return .denied
-        case .restricted: return .restricted
-        case .notDetermined: return .notDetermined
-        default: return .partial("limited")
-        }
-    }
-
-    private func speechState() -> GrantState {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized: return .granted
-        case .denied: return .denied
-        case .restricted: return .restricted
-        case .notDetermined: return .notDetermined
-        @unknown default: return .unknown("unknown")
-        }
-    }
-
-    private func microphoneState() -> GrantState {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: return .granted
-        case .denied: return .denied
-        case .restricted: return .restricted
-        case .notDetermined: return .notDetermined
-        @unknown default: return .unknown("unknown")
-        }
-    }
-
-    /// The per-user TCC database is itself behind Full Disk Access: opening it is the probe.
-    private func fullDiskAccessState() -> GrantState {
-        FileHandle(forReadingAtPath: Self.tccUserDb) != nil ? .granted : .denied
-    }
-
-    private func accessibilityState() -> GrantState {
-        AXIsProcessTrusted() ? .granted : .notDetermined
-    }
-
-    private func screenRecordingState() -> GrantState {
-        CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
-    }
-
-    private func folderRow(id: String, title: String, path: String) -> PermissionRow {
-        PermissionRow(id: id, title: title, usedBy: "a file you name there (HAR files, exports)",
-                      state: probeResults[id] ?? .unknown("asks on first use"), action: .probe, pane: "Privacy_FilesAndFolders")
     }
 }

@@ -9,6 +9,7 @@ import { processWidgetOutbox } from "./lib/composer/engine";
 import { performWidgetAction } from "./lib/widget/actions";
 import { readWidgetReceiptContext } from "./lib/widget/context";
 import { readWidgetText } from "./lib/widget/readback";
+import { oneShotWidgetSources } from "./lib/widget/roster-cache";
 import {
     attachShelfItem,
     captureShelfImage,
@@ -35,7 +36,7 @@ widget
     .requiredOption("--provider <provider>")
     .action(async (session: string, options, command) => {
         const root = command.optsWithGlobals().stateRoot;
-        const snapshot = await widgetSnapshot({ root });
+        const snapshot = await widgetSnapshot({ root, sources: await oneShotWidgetSources(root) });
         const candidates = snapshot.sessions.filter(
             (entry) => entry.target.sessionId === session && entry.target.provider === options.provider
         );
@@ -57,7 +58,10 @@ widget
     .option("--selected <key>")
     .option("--json")
     .action(async (options, command) => {
-        out.result(await widgetSnapshot({ root: command.optsWithGlobals().stateRoot, selectedKey: options.selected }));
+        const root = command.optsWithGlobals().stateRoot;
+        out.result(
+            await widgetSnapshot({ root, selectedKey: options.selected, sources: await oneShotWidgetSources(root) })
+        );
     });
 widget
     .command("call")

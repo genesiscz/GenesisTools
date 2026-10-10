@@ -7,8 +7,8 @@ public enum ClickyInputStartResult: Equatable {
 
 @MainActor
 public protocol ClickyInputMonitoring: AnyObject {
+    /// Input Monitoring as this process reads it. Asking for it is the permission dialog's job (PermissionCenter).
     var hasPermission: Bool { get }
-    func requestPermission() -> Bool
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult
     /// Turns a running tap back on after macOS disabled it for a slow callback.
     func reenable()
@@ -20,8 +20,7 @@ final class SystemClickyInputMonitor: ClickyInputMonitoring {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var handler: (@MainActor (CGEventType, CGEvent) -> Void)?
-    var hasPermission: Bool { CGPreflightListenEventAccess() }
-    func requestPermission() -> Bool { CGRequestListenEventAccess() }
+    var hasPermission: Bool { PermissionAccess.live.isGranted(.inputMonitoring) }
 
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult {
         guard hasPermission else { return .permissionRequired }

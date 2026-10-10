@@ -1,23 +1,15 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { type NativeInboxState, nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { loadConfig } from "./config";
+import { postNote } from "./inbox-guidance";
 
 /**
- * The note every question post returns to the agent (CLI `tools question ask` and MCP question_post).
- * The inbox is a copy, so the question must also be in the agent's own reply; and without the opt-in
- * (`tools question config --ask-via-question-tool on`) the agent is told to ask with its native tools.
+ * The note every question post returns to the agent (CLI `tools question ask` and MCP question_post). It reads the
+ * LIVE native inbox state, so an agent learns right after posting whether the widget is on screen. The text and its
+ * precedence over the `tools question config --ask-via-question-tool` opt-in live in ./inbox-guidance.ts.
  */
-export function agentNote(askViaQuestionTool = loadConfig().askViaQuestionTool === true): string {
-    const copy =
-        "The inbox holds a copy only: also write every question and ❓ DECISION in your own chat reply, " +
-        "because the user reads your reply first.";
-
-    if (askViaQuestionTool) {
-        return copy;
-    }
-
-    return (
-        `The user has not opted in to agents asking through ${toolCommand("question")} (${toolCommand("question config")}). ` +
-        "The post was saved to the inbox, but ask decisive questions with your native question tool " +
-        `(for example AskUserQuestion) and in your chat reply. ${copy}`
-    );
+export function agentNote(opts: { askViaQuestionTool?: boolean; state?: NativeInboxState } = {}): string {
+    return postNote({
+        state: opts.state ?? nativeInboxState(),
+        askViaQuestionTool: opts.askViaQuestionTool ?? loadConfig().askViaQuestionTool === true,
+    });
 }

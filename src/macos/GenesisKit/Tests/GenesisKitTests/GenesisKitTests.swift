@@ -833,7 +833,7 @@ final class WidgetTasksStoreTests: XCTestCase {
 
     private func mutated(_ store: WidgetTasksStore, action: () -> Void) async {
         let finished = expectation(description: "Task mutation finishes")
-        let subscription = store.$mutatingID.dropFirst().filter { $0 == nil }.prefix(1).sink { _ in finished.fulfill() }
+        let subscription = store.$mutatingIDs.dropFirst().filter(\.isEmpty).prefix(1).sink { _ in finished.fulfill() }
         action()
         await fulfillment(of: [finished], timeout: 3)
         withExtendedLifetime(subscription) {}
@@ -1241,5 +1241,26 @@ final class WidgetAgentTreeTests: XCTestCase {
         XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(60)), "1m 00s")
         XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(7500)), "2h 05m")
         XCTAssertNil(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(-1)))
+    }
+}
+final class PluralTests: XCTestCase {
+    func testOneIsSingularAndEveryOtherCountIsPlural() {
+        XCTAssertEqual(Plural.count(1, "file"), "1 file")
+        XCTAssertEqual(Plural.count(0, "file"), "0 files")
+        XCTAssertEqual(Plural.count(3, "commit"), "3 commits")
+        XCTAssertEqual(Plural.count(2, "reply"), "2 replies")
+        XCTAssertEqual(Plural.count(2, "key"), "2 keys")
+        XCTAssertEqual(Plural.count(2, "match"), "2 matches")
+        XCTAssertEqual(Plural.count(2, "open item"), "2 open items")
+        XCTAssertEqual(Plural.count(2, "person", "people"), "2 people")
+        XCTAssertEqual(Plural.word(1, "agent"), "agent")
+    }
+}
+
+final class ByteFormatTests: XCTestCase {
+    func testSizesUseADecimalPointWhateverTheRegion() {
+        XCTAssertEqual(ByteFormat.file(3_210_000_000), "3.21 GB")
+        XCTAssertFalse(ByteFormat.file(655_100_000).contains(","), ByteFormat.file(655_100_000))
+        XCTAssertTrue(ByteFormat.memory(1_610_612_736).hasSuffix("GB"), ByteFormat.memory(1_610_612_736))
     }
 }
