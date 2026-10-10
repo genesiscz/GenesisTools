@@ -2,6 +2,7 @@ import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import type { WidgetRoster } from "./roster-index";
 import { realWidgetSources, type WidgetSources } from "./snapshot";
 import { widgetRoot } from "./storage";
@@ -43,14 +44,9 @@ function isRosterCache(value: unknown): value is WidgetRosterCacheFile {
     );
 }
 
+/** The pid comes from the cache file, so it goes through the shared classifier (EPERM counts as alive there too). */
 function processAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        // EPERM: the process exists under another user; ESRCH: it is gone.
-        return error instanceof Error && "code" in error && error.code === "EPERM";
-    }
+    return classifyPid(pid).status !== "dead";
 }
 
 /** Written by the resident watch after each completed roster run: the roster it shows, for one-shot readers. */
