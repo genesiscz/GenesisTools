@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listWidgetTasks, updateWidgetTask, widgetTask } from "@app/hub/lib/widget/tasks";
+import {
+    createWidgetTask,
+    editWidgetTask,
+    LOCAL_TASK_SESSION,
+    listWidgetTasks,
+    updateWidgetTask,
+    widgetTask,
+} from "@app/hub/lib/widget/tasks";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -1832,5 +1839,128 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         const controller = new AbortController();
         controller.abort();
         expect(() => listWidgetTasks({ file: files.file, signal: controller.signal })).toThrow();
+    });
+
+    test("a created task is numbered per session, lists as active and ticks done through the same guards", async () => {
+        const { files, row } = fixture();
+        const now = () => "2026-01-02T09:00:00.000Z";
+        const local = await createWidgetTask({ files, now, input: { title: "  Water the plants  " } });
+        expect(local.task).toMatchObject({
+            id: "t_1_local",
+            title: "Water the plants",
+            summary: "Water the plants",
+            state: "open",
+            revision: 1,
+            sessionId: LOCAL_TASK_SESSION,
+            provider: "unknown",
+            sessionTitle: "Local tasks",
+        });
+        expect(local.receipt).toMatchObject({ action: "create", state: "open", saved: true });
+        const onSession = await createWidgetTask({
+            files,
+            now,
+            input: {
+                title: "Review the draft",
+                details: "Read the summary before sending it.",
+                session: "codex:fixture",
+                project: "Fixture",
+                cwd: "/fixture/worktree",
+            },
+        });
+        // The fixture session already holds TODO 1, so the next number is 2; a number is never reused.
+        expect(onSession.task).toMatchObject({
+            id: "t_2_fixture",
+            number: 2,
+            title: "Review the draft",
+            summary: "Read the summary before sending it.",
+            provider: "codex",
+        });
+        expect(onSession.task.sourceContext).toMatchObject({ project: "Fixture", cwd: "/fixture/worktree" });
+        const listed = listWidgetTasks({ file: files.file, filters: { sessions: ["codex:fixture"] } });
+        expect(listed.tasks.map((task) => task.id).sort()).toEqual([row.id, "t_2_fixture"]);
+        const events = readFileSync(files.events, "utf8")
+            .trim()
+            .split("\n")
+            .map((entry) => SafeJSON.parse(entry));
+        expect(events.map((event) => event.ev)).toEqual(["created", "created"]);
+
+        const done = await updateWidgetTask({
+            files,
+            input: {
+                id: local.task.id,
+                action: "complete",
+                expected: {
+                    revision: local.task.revision,
+                    state: local.task.state,
+                    updatedTs: local.task.updatedTs,
+                    sessionId: local.task.sessionId,
+                    provider: local.task.provider,
+                },
+            },
+        });
+        expect(done.task.state).toBe("implemented");
+        expect(listWidgetTasks({ file: files.file, filters: { scope: "completed" } }).tasks[0]?.id).toBe("t_1_local");
+    });
+
+    test("an invalid create stores nothing", async () => {
+        const { files } = fixture();
+        const before = readFileSync(files.file, "utf8");
+        for (const input of [
+            { title: "   " },
+            { title: "x".repeat(181) },
+            { title: "Fine", session: "no-provider" },
+            { title: "Fine", details: "y".repeat(2001) },
+        ]) {
+            await expect(createWidgetTask({ files, input })).rejects.toThrow();
+        }
+        expect(readFileSync(files.file, "utf8")).toBe(before);
+        expect(existsSync(files.events)).toBe(false);
+    });
+
+    test("editing an open task keeps the earlier text as a version and refuses a stale or finished one", async () => {
+        const { files, row } = fixture();
+        const shown = expected(row);
+        const edited = await editWidgetTask({
+            files,
+            now: () => row.updatedTs,
+            input: { id: row.id, title: "Verify every change", details: "Run the checks twice.", expected: shown },
+        });
+        expect(edited.task).toMatchObject({
+            title: "Verify every change",
+            summary: "Run the checks twice.",
+            revision: 2,
+            state: "open",
+        });
+        expect(Date.parse(edited.task.updatedTs)).toBeGreaterThan(Date.parse(row.updatedTs));
+        const stored = readDecisions(files.file)[0];
+        expect(stored?.versions?.[0]).toMatchObject({
+            prompt: "Run the local checks",
+            title: "Verify changes",
+            revision: 1,
+        });
+        expect(stored?.blocking).toBe(true);
+        expect(stored?.branch).toBe("feat/example");
+
+        const before = readFileSync(files.file, "utf8");
+        await expect(
+            editWidgetTask({ files, input: { id: row.id, title: "Stale edit", expected: shown } })
+        ).rejects.toThrow("changed since");
+        expect(readFileSync(files.file, "utf8")).toBe(before);
+
+        const titleOnly = await editWidgetTask({
+            files,
+            input: { id: row.id, title: "Only a title", expected: expected(stored as DecisionRecord) },
+        });
+        expect(titleOnly.task).toMatchObject({ title: "Only a title", summary: "Only a title", revision: 3 });
+
+        const finished = await updateTodo({
+            ...files,
+            id: row.id,
+            state: "implemented",
+            expected: expected(readDecisions(files.file)[0] as DecisionRecord),
+        });
+        await expect(
+            editWidgetTask({ files, input: { id: row.id, title: "Too late", expected: expected(finished) } })
+        ).rejects.toThrow("Only an open task");
     });
 });

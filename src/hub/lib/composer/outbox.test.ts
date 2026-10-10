@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
-import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
+import { type DecisionRecord, postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
@@ -2247,6 +2247,9 @@ test("shelf attachment descriptors inspect metadata and draft without creating o
 });
 
 describe("widget inbox notifications", () => {
+    // These fixtures date their items near the epoch. With the clock there, none of them is past the stale window;
+    // the age-out has its own test below.
+    const FIXTURE_CLOCK = 0;
     test("global unread counts exceed selected-card limits without durable snapshot writes", async () => {
         const directory = await root();
         await env.testing.withOverrides(
@@ -2270,7 +2273,12 @@ describe("widget inbox notifications", () => {
                     forms: () => [],
                     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
                 };
-                const snapshot = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+                const snapshot = await widgetSnapshot({
+                    root: directory,
+                    now: FIXTURE_CLOCK,
+                    selectedKey: key,
+                    sources,
+                });
                 expect(snapshot.cards).toHaveLength(1);
                 expect(snapshot.notifications?.unread).toBe(151);
                 expect(snapshot.notifications?.complete).toBe(true);
@@ -2281,7 +2289,8 @@ describe("widget inbox notifications", () => {
                     input: { action: "inbox-read", kind: "answer", key, id: "answer:inbox-150", at: 151 },
                 });
                 expect(
-                    (await widgetSnapshot({ root: directory, selectedKey: key, sources })).notifications?.unread
+                    (await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, selectedKey: key, sources }))
+                        .notifications?.unread
                 ).toBe(150);
                 await expect(
                     performWidgetAction({
@@ -2320,7 +2329,7 @@ describe("widget inbox notifications", () => {
                         readAt: null,
                     })}\n`
                 );
-                const fresh = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+                const fresh = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, selectedKey: key, sources });
                 expect(fresh.notifications?.unread).toBe(151);
                 expect(fresh.notifications?.sessions.find((entry) => entry.key === key)?.unreadItem?.id).toBe(
                     "answer:fresh-jsonl"
@@ -2339,7 +2348,8 @@ describe("widget inbox notifications", () => {
                     })
                 ).resolves.toEqual({ read: 1 });
                 expect(
-                    (await widgetSnapshot({ root: directory, selectedKey: key, sources })).notifications?.unread
+                    (await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, selectedKey: key, sources }))
+                        .notifications?.unread
                 ).toBe(150);
             }
         );
@@ -2377,7 +2387,12 @@ describe("widget inbox notifications", () => {
                     forms: () => [],
                     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
                 };
-                const snapshot = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+                const snapshot = await widgetSnapshot({
+                    root: directory,
+                    now: FIXTURE_CLOCK,
+                    selectedKey: key,
+                    sources,
+                });
                 const session = snapshot.notifications?.sessions.find((entry) => entry.key === key);
                 expect(session?.unreadItem?.id).toBe("answer:window-old");
                 expect(snapshot.cards).toHaveLength(101);
@@ -2419,7 +2434,7 @@ describe("widget inbox notifications", () => {
                     forms: () => [],
                     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
                 };
-                const snapshot = await widgetSnapshot({ root: directory, sources });
+                const snapshot = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
                 const indexed = snapshot.sessions.find((session) => session.target.provider === "codex");
                 expect(indexed).toBeDefined();
                 expect(snapshot.sessions.some((session) => session.target.provider === "unknown")).toBe(false);
@@ -2449,7 +2464,7 @@ describe("widget inbox notifications", () => {
                         },
                     })
                 ).rejects.toThrow("different session");
-                const after = await widgetSnapshot({ root: directory, sources });
+                const after = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
                 expect(after.notifications?.sessions.find((entry) => entry.key === indexed?.key)).toBeUndefined();
                 expect(after.notifications?.unread).toBe(1);
             }
@@ -2489,7 +2504,7 @@ describe("widget inbox notifications", () => {
             agents: async () => ({ generatedAt: "", parents: [], orphans: [node, node] }),
             inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
         };
-        const snapshot = await widgetSnapshot({ root: directory, sources });
+        const snapshot = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
         expect(snapshot.notifications?.unread).toBe(1);
         const item = snapshot.notifications!.sessions[0].unreadItem!;
         expect(
@@ -2520,9 +2535,9 @@ describe("widget inbox notifications", () => {
                 sources,
             })
         ).rejects.toThrow("newer than the result");
-        expect((await widgetSnapshot({ root: directory, sources })).notifications?.unread).toBe(0);
+        expect((await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources })).notifications?.unread).toBe(0);
         node.lastAt = "2026-01-01T10:00:01Z";
-        expect((await widgetSnapshot({ root: directory, sources })).notifications?.unread).toBe(1);
+        expect((await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources })).notifications?.unread).toBe(1);
     });
 
     test("a worker mapped onto an indexed session keeps its result card, and an idle agent has none", async () => {
@@ -2572,7 +2587,7 @@ describe("widget inbox notifications", () => {
             agents: async () => ({ generatedAt: "", parents: [], orphans: [worker, idle] }),
             inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
         };
-        const snapshot = await widgetSnapshot({ root: directory, sources });
+        const snapshot = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
         expect(snapshot.notifications?.unread).toBe(1);
         const item = snapshot.notifications!.sessions[0].unreadItem!;
         expect(parseWidgetSessionKey(item.key)?.sessionId).toBe("fixture-indexed-thread");
@@ -2586,7 +2601,7 @@ describe("widget inbox notifications", () => {
                 sources,
             })
         ).toEqual({ saved: true });
-        expect((await widgetSnapshot({ root: directory, sources })).notifications?.unread).toBe(0);
+        expect((await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources })).notifications?.unread).toBe(0);
         const foreign = widgetSessionKey({ ...target, sessionId: "fixture-other-thread", sourceHome: "" });
         await expect(
             performWidgetAction({
@@ -2625,12 +2640,16 @@ describe("widget inbox notifications", () => {
                 truncated: false,
             }),
         };
-        expect((await widgetSnapshot({ root: directory, sources })).notifications?.needsAnswer).toBe(1);
+        expect(
+            (await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources })).notifications?.needsAnswer
+        ).toBe(1);
         await performWidgetAction({
             root: directory,
             input: { action: "inbox-read", kind: "form", key, id: "form:pending-one", at: 1 },
         });
-        expect((await widgetSnapshot({ root: directory, sources })).notifications?.needsAnswer).toBe(1);
+        expect(
+            (await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources })).notifications?.needsAnswer
+        ).toBe(1);
         expect((await readWidgetState(directory)).inboxRead[`${key}|form:pending-one`]).toBe(1);
     });
 
@@ -2651,6 +2670,89 @@ describe("widget inbox notifications", () => {
         expect(history[`${key}|form:old-0`]).toBeUndefined();
         expect(history[`${key}|form:old-4095`]).toBe(4095);
         expect(Object.keys(history).length).toBeLessThan(4096);
+    });
+
+    test("a quiet session's old items stop counting, and Mark all read clears the rest without hiding them", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                const hour = 60 * 60 * 1000;
+                const decision = (sessionId: string, at: number): DecisionRecord => ({
+                    id: `d_1_${sessionId}`,
+                    sessionId,
+                    provider: "codex",
+                    number: 1,
+                    prompt: `Decide for ${sessionId}?`,
+                    options: ["yes", "no"],
+                    state: "open",
+                    updatedTs: new Date(at).toISOString(),
+                });
+                let decisions = [decision("ended-fixture", now - 240 * hour), decision("live-fixture", now - hour)];
+                const group = (sessionId: string, at: number, count: number) => ({
+                    id: `${sessionId}-newest`,
+                    sessionId,
+                    provider: "codex",
+                    title: "Fixture",
+                    project: "Fixture",
+                    cwd: "/fixture",
+                    at,
+                    count,
+                    total: count,
+                });
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => decisions,
+                    forms: () => [],
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: () => ({
+                        answers: [group("answer-fixture", now - 10 * 60 * 1000, 2)],
+                        forms: [group("form-fixture", now - 120 * hour, 3)],
+                        complete: true,
+                        truncated: false,
+                    }),
+                };
+                const ended = widgetSessionKey({ ...target, sessionId: "ended-fixture", sourceHome: "" });
+                const first = await widgetSnapshot({ root: directory, selectedKey: ended, sources, now });
+                expect(first.notifications).toMatchObject({ unread: 2, needsAnswer: 1 });
+                expect(first.notifications?.sessions.map((entry) => entry.key)).not.toContain(ended);
+                // Still reachable: the session and its card stay, the session just no longer looks like it waits.
+                expect(first.sessions.find((session) => session.key === ended)?.status).toBe("recent");
+                expect(first.cards.map((card) => card.id)).toContain("decision:d_1_ended-fixture");
+
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                const insert = db.query(
+                    "INSERT INTO entries (id,ts,session_id,session_title,agent,question,answer_md,refs_json,project,cwd,source,tag) VALUES (?,?,'answer-fixture','Fixture','codex','Question','Answer','[]','Fixture','/fixture','mcp','question')"
+                );
+                insert.run("before-clear", now - 1000);
+                insert.run("after-clear", now + 30_000);
+                db.close();
+                await expect(
+                    performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now + 5 * 60 * 1000 } })
+                ).rejects.toThrow("future");
+                expect(
+                    await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } })
+                ).toEqual({ read: 1, clearedAt: now });
+                const check = openReadModel(toolDataDir("question", "qa.db"));
+                const readAt = (id: string) =>
+                    check
+                        .query<{ read_at: number | null }, [string]>("SELECT read_at FROM entries WHERE id = ?")
+                        .get(id)?.read_at;
+                expect(readAt("before-clear")).not.toBeNull();
+                expect(readAt("after-clear")).toBeNull();
+                check.close();
+
+                const cleared = await widgetSnapshot({ root: directory, sources, now });
+                expect(cleared.notifications).toMatchObject({ unread: 0, needsAnswer: 0 });
+                expect(cleared.sessions.find((session) => session.key.includes("live-fixture"))?.status).toBe(
+                    "waiting"
+                );
+                decisions = [...decisions, decision("new-fixture", now + 1000)];
+                expect((await widgetSnapshot({ root: directory, sources, now })).notifications?.needsAnswer).toBe(1);
+            }
+        );
     });
 });
 

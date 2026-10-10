@@ -833,7 +833,7 @@ final class WidgetTasksStoreTests: XCTestCase {
 
     private func mutated(_ store: WidgetTasksStore, action: () -> Void) async {
         let finished = expectation(description: "Task mutation finishes")
-        let subscription = store.$mutatingID.dropFirst().filter { $0 == nil }.prefix(1).sink { _ in finished.fulfill() }
+        let subscription = store.$mutatingIDs.dropFirst().filter(\.isEmpty).prefix(1).sink { _ in finished.fulfill() }
         action()
         await fulfillment(of: [finished], timeout: 3)
         withExtendedLifetime(subscription) {}

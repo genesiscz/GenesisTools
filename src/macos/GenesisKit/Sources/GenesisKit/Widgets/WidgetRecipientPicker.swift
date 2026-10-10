@@ -23,8 +23,9 @@ public struct WidgetRecipientPicker: View {
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 9))
             }.font(.system(size: 12)).padding(8).nativeGlassControl(radius: 8)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.genHoverPlain())
         .accessibilityLabel("Choose voice note recipient")
         .accessibilityIdentifier("widget.recipient.choose")
         .popover(isPresented: $presented) {
@@ -58,17 +59,17 @@ struct WidgetRecipientChoices: View {
                 .accessibilityIdentifier("widget.recipient.search")
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    Button("No recipient selected") { choose(nil) }.buttonStyle(.borderless)
+                    Button("No recipient selected") { choose(nil) }.buttonStyle(.genHover())
                     if groups.isEmpty { ContentUnavailableView.search(text: query) }
                     ForEach(Array(groups.prefix(limit))) { group in
                         if group.children.isEmpty {
                             row(group.parent, title: group.parent.title, depth: 0)
                         } else {
-                            DisclosureGroup(isExpanded: Binding(get: {
+                            GenDisclosure(isExpanded: Binding(get: {
                                 !query.isEmpty || expanded.contains(group.id)
                             }, set: { value in
                                 if value { expanded.insert(group.id) } else { expanded.remove(group.id) }
-                            })) {
+                            }), minHeight: 34, identifier: "widget.recipient.group." + group.id) {
                                 LazyVStack(alignment: .leading, spacing: 4) {
                                     row(group.parent, title: "Main", depth: 0)
                                     ForEach(group.children) { child in
@@ -89,7 +90,10 @@ struct WidgetRecipientChoices: View {
                             .buttonStyle(.genHover())
                     }
                 }
-            }.frame(height: 350)
+                .scrollOverflowContent()
+            }
+            .scrollOverflowHints()
+            .frame(height: 350)
         }.padding(16).frame(width: 480)
             .onChange(of: query) { _, _ in limit = 40 }
             .onAppear { searching = true }

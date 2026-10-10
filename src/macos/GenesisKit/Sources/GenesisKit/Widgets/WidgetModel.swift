@@ -177,6 +177,8 @@ public final class WidgetModel: ObservableObject {
     public var sessions: [WidgetSession] { sessionRoster.visible }
     public var previewSessions: [WidgetSession] { sessionRoster.preview }
     public var waitingSessionCount: Int { sessionRoster.waiting }
+    /// Top-level sessions working now or waiting for an answer; subagents and quiet sessions do not count.
+    public var activeSessionCount: Int { sessionRoster.active }
     public var previewHeight: CGFloat {
         sessionRoster.preview.isEmpty ? 180 : 100 + CGFloat(sessionRoster.preview.count) * 54
     }
@@ -538,6 +540,29 @@ public final class WidgetModel: ObservableObject {
     public func inboxFor(_ key: String) -> WidgetInboxSession? { inboxSessions[key] }
     public func inboxPulseFor(_ key: String) -> Int { inboxSessionPulses[key] ?? 0 }
     public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
+
+    /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
+    /// way opening it from a notification does.
+    public func openCard(_ card: WidgetCard) {
+        selectedCardID = card.id
+        guard !stopping, !card.read, ["answer", "result"].contains(card.kind) else { return }
+        let token = card.sessionKey + "|" + card.id + "|" + String(card.at)
+        guard inboxReadRequests.insert(token).inserted else { return }
+        action(["action": "inbox-read", "key": .string(card.sessionKey), "id": .string(card.id),
+                "kind": .string(card.kind), "at": .number(card.at)], failed: { [weak self] in
+            self?.inboxReadRequests.remove(token)
+        })
+    }
+
+    /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
+    /// the badges. Nothing is deleted or answered; each item stays in its session's inbox.
+    public func markAllRead() {
+        guard !stopping else { return }
+        let at = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+        action(["action": "inbox-clear", "at": .number(at)], completed: { [weak self] in
+            self?.notice = "Inbox marked read. Every item stays in its session."
+        })
+    }
 
     public func openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil) {
         guard !stopping else { return }
@@ -1365,6 +1390,7 @@ struct WidgetSessionRoster {
     private var railOrder = StickyOrder<String>()
     private(set) var preview: [WidgetSession] = []
     private(set) var waiting = 0
+    private(set) var active = 0
 
     @discardableResult
     mutating func update(_ sessions: [WidgetSession]) -> Bool {
@@ -1384,6 +1410,10 @@ struct WidgetSessionRoster {
             return lhs == rhs ? $0.activityAt > $1.activityAt : lhs < rhs
         }.prefix(4))
         waiting = visible.reduce(0) { $0 + ($1.status == "waiting" ? 1 : 0) }
+        active = visible.reduce(0) { count, session in
+            count + (session.parentKey == nil && session.agentId == nil
+                && (session.status == "working" || session.status == "waiting") ? 1 : 0)
+        }
         return true
     }
 }

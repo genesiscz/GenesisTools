@@ -23,14 +23,14 @@ public struct WidgetSessionBrowser: View {
                     .textFieldStyle(.plain).font(.system(size: 12))
                     .accessibilityIdentifier("widget.sessions.search")
                 if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).accessibilityLabel("Clear session search")
+                    IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the search") { query = "" }
+                        .accessibilityLabel("Clear session search")
                 }
             }.padding(10).nativeGlassControl(radius: 10)
             HStack {
                 projectFilter
                 Spacer()
-                Toggle("Pinned only", isOn: $onlyPinned).toggleStyle(.checkbox)
+                Toggle("Pinned only", isOn: $onlyPinned).toggleStyle(.checkbox).pointerCursor()
             }.font(.system(size: 11))
             if !groups.isEmpty && model.snapshot?.rosterLoading == true {
                 HStack(spacing: 8) {
@@ -47,7 +47,7 @@ public struct WidgetSessionBrowser: View {
                     if group.children.isEmpty {
                         row(group.parent, title: group.parent.title, depth: 0)
                     } else {
-                        DisclosureGroup(isExpanded: Binding(get: {
+                        GenDisclosure(isExpanded: Binding(get: {
                             if !query.isEmpty { return true }
                             if collapsed.contains(group.id) { return false }
                             return expanded.contains(group.id) || group.id == model.selectedKey
@@ -55,7 +55,7 @@ public struct WidgetSessionBrowser: View {
                         }, set: { value in
                             if value { expanded.insert(group.id); collapsed.remove(group.id) }
                             else { expanded.remove(group.id); collapsed.insert(group.id) }
-                        })) {
+                        }), minHeight: 34, identifier: "widget.sessions.group." + group.id) {
                             LazyVStack(spacing: 2) {
                                 row(group.parent, title: "Main", depth: 0)
                                 ForEach(group.children) { child in row(child.session, title: child.session.title, depth: child.depth) }
@@ -66,8 +66,8 @@ public struct WidgetSessionBrowser: View {
                                 total: group.children.count, running: group.running,
                                 live: group.parent.status == "working" || group.running > 0,
                                 lastAt: Date(timeIntervalSince1970: group.parent.activityAt / 1000))
-                                .padding(.vertical, 6)
-                        }.disclosureGroupStyle(.automatic)
+                                .padding(.vertical, 4)
+                        }
                     }
                 }
                 if groups.count > limit {
@@ -81,23 +81,26 @@ public struct WidgetSessionBrowser: View {
     }
 
     private var projectFilter: some View {
-        Menu {
-            Button("Show every project") { setProjects([]) }
-            Divider()
-            ForEach(Array(Set((model.snapshot?.sessions ?? []).map { $0.target.cwd })).sorted(), id: \.self) { cwd in
-                let selected = model.snapshot?.state.preferences.projects.contains(cwd) == true
-                Button {
-                    var projects = model.snapshot?.state.preferences.projects ?? []
-                    if selected { projects.removeAll { $0 == cwd } } else { projects.append(cwd) }
-                    setProjects(projects)
-                } label: {
-                    Label(cwd.isEmpty ? "Unassigned" : URL(fileURLWithPath: cwd).lastPathComponent,
-                          systemImage: selected ? "checkmark" : "folder")
+        // Built at the click: a SwiftUI Menu builds every project's item with each body pass.
+        MenuButton(items: {
+            let chosen = model.snapshot?.state.preferences.projects ?? []
+            let folders = Array(Set((model.snapshot?.sessions ?? []).map { $0.target.cwd })).sorted()
+            return [.action("Show every project", checked: chosen.isEmpty) { setProjects([]) }, .divider]
+                + folders.map { cwd in
+                    let selected = chosen.contains(cwd)
+                    return .action(cwd.isEmpty ? "Unassigned" : URL(fileURLWithPath: cwd).lastPathComponent,
+                                   checked: selected) {
+                        var projects = model.snapshot?.state.preferences.projects ?? []
+                        if selected { projects.removeAll { $0 == cwd } } else { projects.append(cwd) }
+                        setProjects(projects)
+                    }
                 }
-            }
-        } label: {
+        }) {
             Label("Project filters", systemImage: "line.3.horizontal.decrease")
-        }.menuStyle(.borderlessButton).fixedSize()
+                .padding(.horizontal, 6).padding(.vertical, 3)
+        }
+        .instantTooltip("Show only some projects in the widget")
+        .fixedSize()
     }
 
     private func row(_ session: WidgetSession, title: String, depth: Int) -> some View {
