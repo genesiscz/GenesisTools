@@ -154,6 +154,35 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(PermissionSimulation.current(defaults: defaults).modes, [.accessibility: .denied, .microphone: .ask])
     }
 
+    /// The defaults value a running face re-reads on every check; `staging.ts allow|deny|ask` rewrites it.
+    private final class SimulationBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var text: String?
+        func set(_ value: String?) { lock.withLock { text = value } }
+        func read() -> PermissionSimulation { PermissionSimulation.parse(lock.withLock { text }) }
+    }
+
+    func testAnAnsweredSimulatedPromptHoldsOnlyUntilTheSimulationChanges() async {
+        let system = FakePermissionSystem()
+        system.statuses = [.microphone: .granted]
+        let defaults = SimulationBox()
+        defaults.set("microphone:ask")
+        let access = PermissionAccess(system: system, simulation: { defaults.read() })
+        XCTAssertEqual(access.status(.microphone), .notDetermined)
+        let answered = await access.request(.microphone)
+        XCTAssertEqual(answered, .granted)
+        XCTAssertEqual(access.status(.microphone), .granted, "the answered prompt lifts the simulation")
+
+        defaults.set(nil)
+        XCTAssertEqual(access.status(.microphone), .granted, "allow: the real grant")
+        defaults.set("microphone")
+        XCTAssertEqual(access.status(.microphone), .denied, "deny takes effect without a relaunch")
+        XCTAssertEqual(access.simulatedMode(.microphone), .denied)
+        defaults.set("microphone:ask")
+        XCTAssertEqual(access.status(.microphone), .notDetermined, "ask again shows the prompt again")
+        XCTAssertTrue(system.requests.isEmpty, "no simulated request reached the system")
+    }
+
     func testAccessAppliesTheSimulationAndNeverRequestsASimulatedKind() async {
         let system = FakePermissionSystem()
         system.statuses = [.microphone: .granted, .accessibility: .granted, .speechRecognition: .notDetermined]

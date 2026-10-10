@@ -255,11 +255,13 @@ public struct PermissionAccess: Sendable {
 
     /// The simulated mode for `kind`, nil when it reads the real grant.
     public func simulatedMode(_ kind: PermissionKind) -> PermissionSimulation.Mode? {
-        lifted.contains(kind) ? nil : simulation().mode(for: kind)
+        let current = simulation()
+        return lifted.contains(kind, under: current) ? nil : current.mode(for: kind)
     }
 
     public func status(_ kind: PermissionKind) -> PermissionStatus {
-        if !lifted.contains(kind), let simulated = simulation().status(for: kind) { return simulated }
+        let current = simulation()
+        if !lifted.contains(kind, under: current), let simulated = current.status(for: kind) { return simulated }
         return system.status(kind)
     }
 
@@ -269,15 +271,19 @@ public struct PermissionAccess: Sendable {
 
     /// What a new process would read under the simulation; nil when the kind is not simulated.
     public func simulatedFreshStatus(_ kind: PermissionKind) -> PermissionStatus? {
-        lifted.contains(kind) ? nil : simulation().freshStatus(for: kind)
+        let current = simulation()
+        return lifted.contains(kind, under: current) ? nil : current.freshStatus(for: kind)
     }
 
     /// Asks macOS in place where it allows it. A simulated kind never reaches macOS: `:ask` is lifted for this
-    /// process (as if the prompt had been answered) and a denied one stays denied.
+    /// process (as if the prompt had been answered) and a denied one stays denied. A lift holds only under the
+    /// simulation it answered: once the defaults change (`staging.ts allow`, `deny`, `ask`), the kind reads the new
+    /// simulation, the way a running face reads every other change, with no relaunch.
     public func request(_ kind: PermissionKind) async -> PermissionStatus {
-        switch simulatedMode(kind) {
+        let current = simulation()
+        switch lifted.contains(kind, under: current) ? nil : current.mode(for: kind) {
         case .ask:
-            lifted.insert(kind)
+            lifted.insert(kind, under: current)
             GenesisKit.log("permission \(kind.rawValue) simulated prompt answered")
             return system.status(kind)
         case .denied, .stale:
@@ -297,19 +303,24 @@ public struct PermissionAccess: Sendable {
     }
 }
 
+/// Kinds whose simulated prompt was answered, each with the simulation it answered.
 private final class LiftedKinds: @unchecked Sendable {
     private let lock = NSLock()
-    private var kinds: Set<PermissionKind> = []
+    private var kinds: [PermissionKind: PermissionSimulation] = [:]
 
-    func contains(_ kind: PermissionKind) -> Bool {
+    /// True while the simulation is the one the prompt answered; a changed simulation drops the answer.
+    func contains(_ kind: PermissionKind, under simulation: PermissionSimulation) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return kinds.contains(kind)
+        guard let answered = kinds[kind] else { return false }
+        if answered == simulation { return true }
+        kinds[kind] = nil
+        return false
     }
 
-    func insert(_ kind: PermissionKind) {
+    func insert(_ kind: PermissionKind, under simulation: PermissionSimulation) {
         lock.lock()
-        kinds.insert(kind)
+        kinds[kind] = simulation
         lock.unlock()
     }
 }

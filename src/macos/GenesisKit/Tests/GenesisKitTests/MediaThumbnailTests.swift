@@ -159,6 +159,41 @@ final class MediaThumbnailCacheTests: XCTestCase {
         }
     }
 
+    /// Counts decoder runs across the test's concurrent closures.
+    private final class DecodeCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        var count: Int { lock.withLock { value } }
+        func add() { lock.withLock { value += 1 } }
+    }
+
+    func testRememberedFailuresAreCappedAndAFileWrittenOverReplacesItsOwn() async throws {
+        let decodes = DecodeCounter()
+        let cache = MediaThumbnailCache(failureLimit: 2, concurrency: 1, deadline: .seconds(5)) { _, _, _ in
+            decodes.add()
+            return .failed("fixture failure")
+        }
+        let paths = try (0 ..< 3).map { index in
+            let url = directory.appendingPathComponent("broken-\(index).png")
+            try Data("not an image \(index)".utf8).write(to: url)
+            return url.path
+        }
+        for path in paths { _ = await cache.thumbnail(path: path, maxPixels: 64) }
+        let remembered = await cache.failureCount
+        XCTAssertEqual(remembered, 2, "the oldest failed path makes room")
+        _ = await cache.thumbnail(path: paths[2], maxPixels: 64)
+        XCTAssertEqual(decodes.count, 3, "a remembered failure answers without decoding again")
+        _ = await cache.thumbnail(path: paths[0], maxPixels: 64)
+        XCTAssertEqual(decodes.count, 4, "an evicted failure decodes again")
+
+        // The same path, other bytes: a new identity that replaces the path's entry instead of adding one.
+        try Data("other bytes, longer than before".utf8).write(to: URL(fileURLWithPath: paths[0]))
+        _ = await cache.thumbnail(path: paths[0], maxPixels: 64)
+        XCTAssertEqual(decodes.count, 5, "new bytes are decoded, not answered from the old failure")
+        let afterRewrite = await cache.failureCount
+        XCTAssertEqual(afterRewrite, 2)
+    }
+
     func testVideoGivesAPosterFrameItsLengthAndAspect() async throws {
         let url = directory.appendingPathComponent("clip.mov")
         try await Self.writeVideo(url, width: 64, height: 48, frames: 30, fps: 10)

@@ -613,9 +613,14 @@ export async function widgetSnapshot({
 }) {
     const state = await readWidgetState(root);
     selectedKey ??= state.selectedKey ?? undefined;
-    /** An item still matters while it is recent or its session worked lately; a session can be "working" with old items. */
+    /**
+     * Sessions with a running agent, taken from the roster before any question turns a status into "waiting": a
+     * running agent that asks something is still live, and its older items still count.
+     */
+    const live = new Set<string>();
+    /** An item still matters while it is recent or its session worked lately; a live session can have old items. */
     const inboxFresh = (session: WidgetSession, at: number) =>
-        session.status === "working" || Math.max(at, session.activityAt) >= now - INBOX_STALE_MS;
+        live.has(session.key) || Math.max(at, session.activityAt) >= now - INBOX_STALE_MS;
     /** Counted in the badges: fresh, and newer than the user's last "Mark all read". Every item stays in its session. */
     const inboxCounted = (session: WidgetSession, at: number) =>
         at > (state.inboxClearedAt ?? 0) && inboxFresh(session, at);
@@ -831,6 +836,11 @@ export async function widgetSnapshot({
     for (const node of agents.orphans) {
         addWorker(node);
     }
+    for (const session of sessions.values()) {
+        if (session.status === "working") {
+            live.add(session.key);
+        }
+    }
     for (const decision of decisions) {
         const session =
             findSession(decision.sessionId, decision.provider) ??
@@ -921,7 +931,7 @@ export async function widgetSnapshot({
                 );
             // `inboxCounted` per item: a working or lately active session counts every item after the watermark,
             // a quiet one only its recent items.
-            const sessionFresh = session.status === "working" || session.activityAt >= inboxWindow.staleBefore;
+            const sessionFresh = live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
             const items = sessionFresh ? row.afterClear : row.recentAfterClear;
             if (kind === "form" && inboxFresh(session, row.at)) {
                 session.status = "waiting";

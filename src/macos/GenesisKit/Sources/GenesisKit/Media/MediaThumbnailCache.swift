@@ -71,7 +71,10 @@ public actor MediaThumbnailCache {
     }
 
     private var ready: [Key: MediaThumbnail] = [:]
-    private var failures: [MediaFileIdentity: String] = [:]
+    /// The last failure per path, for the bytes the path held then. Keyed by path, so a file written over replaces
+    /// its old entry instead of adding one, and capped at `failureLimit` paths, oldest first out.
+    private var failures: [String: (identity: MediaFileIdentity, message: String)] = [:]
+    private var failureOrder: [String] = []
     private var order: [Key] = []
     private var bytes = 0
     private var inflight: [Key: Task<MediaThumbnailResult, Never>] = [:]
@@ -80,6 +83,7 @@ public actor MediaThumbnailCache {
     private var waiting: [(id: UUID, continuation: CheckedContinuation<Bool, Never>)] = []
 
     private let byteLimit: Int
+    private let failureLimit: Int
     private let concurrency: Int
     /// A decode that has not finished by then, or a request still waiting for a slot by then, reports a failure
     /// instead of holding the tile in a loading state.
@@ -95,8 +99,11 @@ public actor MediaThumbnailCache {
     }
 
     /// Test seam: the same cache around another decoder.
-    init(byteLimit: Int = 96 << 20, concurrency: Int, deadline: Duration, decoder: @escaping Decoder) {
+    init(byteLimit: Int = 96 << 20, failureLimit: Int = 512, concurrency: Int, deadline: Duration,
+         decoder: @escaping Decoder)
+    {
         self.byteLimit = byteLimit
+        self.failureLimit = failureLimit
         self.concurrency = concurrency
         self.deadline = deadline
         self.decoder = decoder
@@ -118,9 +125,9 @@ public actor MediaThumbnailCache {
         }
         let bucket = Self.bucket(forPixels: maxPixels)
         if reload {
-            failures[identity] = nil
-        } else if let failure = failures[identity] {
-            return .failed(failure)
+            forgetFailure(path)
+        } else if let failure = failures[path], failure.identity == identity {
+            return .failed(failure.message)
         }
         if let hit = cached(identity: identity, atLeast: bucket) {
             return .ready(hit)
@@ -146,16 +153,36 @@ public actor MediaThumbnailCache {
         let result = await task.value
         inflight[key] = nil
         switch result {
-        case .ready(let thumbnail): store(thumbnail, for: key)
-        case .failed(let message): failures[identity] = message
+        case .ready(let thumbnail):
+            store(thumbnail, for: key)
+            forgetFailure(path)
+        case .failed(let message): recordFailure(message, for: identity)
         }
         return result
+    }
+
+    /// How many failed paths are remembered; for tests.
+    var failureCount: Int { failures.count }
+
+    private func recordFailure(_ message: String, for identity: MediaFileIdentity) {
+        forgetFailure(identity.path)
+        failures[identity.path] = (identity, message)
+        failureOrder.append(identity.path)
+        while failureOrder.count > failureLimit {
+            failures[failureOrder.removeFirst()] = nil
+        }
+    }
+
+    private func forgetFailure(_ path: String) {
+        guard failures.removeValue(forKey: path) != nil else { return }
+        failureOrder.removeAll { $0 == path }
     }
 
     /// Drops everything; for tests and memory pressure.
     public func removeAll() {
         ready.removeAll()
         failures.removeAll()
+        failureOrder.removeAll()
         order.removeAll()
         bytes = 0
     }

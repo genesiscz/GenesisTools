@@ -2838,6 +2838,53 @@ describe("widget inbox notifications", () => {
             }
         );
     });
+
+    test("a running agent that asks a new question stays live, so its older open questions still count", async () => {
+        const now = Date.now();
+        const hour = 60 * 60 * 1000;
+        const decision = (id: string, number: number, at: number): DecisionRecord => ({
+            id,
+            sessionId: "live-asker",
+            provider: "codex",
+            number,
+            prompt: `Decide ${id}?`,
+            options: ["yes", "no"],
+            state: "open",
+            updatedTs: new Date(at).toISOString(),
+        });
+        const sources: WidgetSources = {
+            sessions: async () => [],
+            // Older than the 72 h cut-off, and one from a minute ago that turns the session "waiting".
+            decisions: () => [decision("d_1_old", 1, now - 100 * hour), decision("d_2_new", 2, now - 60_000)],
+            forms: () => [],
+            answers: () => [],
+            agents: async () => ({
+                generatedAt: "",
+                orphans: [],
+                parents: [
+                    {
+                        sessionId: "live-asker",
+                        provider: "codex",
+                        title: "Asker",
+                        project: "Fixture",
+                        cwd: "/fixture",
+                        filePath: "/fixture/lead.jsonl",
+                        model: null,
+                        account: null,
+                        startedAt: null,
+                        // Its indexed activity is old; it is live because the roster says it runs now.
+                        lastAt: new Date(now - 100 * hour).toISOString(),
+                        live: true,
+                        children: [],
+                    },
+                ],
+            }),
+            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+        };
+        const snapshot = await widgetSnapshot({ root: await root(), sources, now });
+        expect(snapshot.sessions.find((session) => session.target.sessionId === "live-asker")?.status).toBe("waiting");
+        expect(snapshot.notifications?.needsAnswer).toBe(2);
+    });
 });
 
 describe("private Widget voice notes", () => {
