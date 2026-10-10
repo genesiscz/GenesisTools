@@ -5,6 +5,30 @@ import SwiftUI
 /// hub session. Modeled on Genesis's `SessionDetailsPane.swift` (branch
 /// feat/2026-09-24-genesis-session-redesign): same paging, same off-main document build, same
 /// liveness rules, with the hub's data (MonitorSessionRow) and ToolsBridge instead of MonitorModel.
+/// `HubSessionDetailHost` as a pane that renders again only when what it shows changes. Its callbacks are
+/// closures, which SwiftUI cannot compare, so every update of the view around it re-ran the whole transcript
+/// screen: in the Agents mode each list refresh with new counts re-ran the open lead's transcript list
+/// (`hub.agents.refresh.render`, 124 ms of main thread on average, 2026-10-10). The callbacks act on the hub
+/// model and on this session, so comparing the session and the options is enough.
+struct HubTranscriptPane: View, Equatable {
+    let session: HubSession
+    var onShowChange: ((String, Int?) -> Void)?
+    var onOpenSubagent: ((SessionSubagent) -> Void)?
+    var showsSidebar = true
+    var transcriptQuery: String?
+    var agentChild = false
+
+    static func == (left: HubTranscriptPane, right: HubTranscriptPane) -> Bool {
+        left.session == right.session && left.showsSidebar == right.showsSidebar
+            && left.transcriptQuery == right.transcriptQuery && left.agentChild == right.agentChild
+    }
+
+    var body: some View {
+        HubSessionDetailHost(session: session, onShowChange: onShowChange, onOpenSubagent: onOpenSubagent,
+                             showsSidebar: showsSidebar, transcriptQuery: transcriptQuery, agentChild: agentChild)
+    }
+}
+
 struct HubSessionDetailHost: View {
     let session: HubSession
     /// A tool row's "Open diff": absolute path and line of the change.
@@ -81,6 +105,7 @@ struct HubSessionDetailHost: View {
     @State private var subagentsReadAt = Date.distantPast
 
     var body: some View {
+        let _ = RenderProbe.hit("session.host.body")
         SessionDetailScreen(
             info: info,
             digest: shownDigest,
@@ -173,6 +198,8 @@ struct HubSessionDetailHost: View {
             // A working sub-agent writes its own file, not the session's: nothing else wakes the view.
             while !Task.isCancelled, subagents?.contains(where: { $0.state == .running }) == true {
                 try? await Task.sleep(for: .seconds(20))
+                // Behind other windows the list waits: one `tools` read per 20 s for nobody (Hub/HubVisibility.swift).
+                await HubVisibility.shared.untilVisible()
                 await refreshSubagents()
             }
         }

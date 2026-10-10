@@ -46,13 +46,23 @@ public enum PerfContext {
         lock.unlock()
     }
 
-    /// ` area=<area> recent=[a -0.1s; b -0.9s]`, newest first; empty when nothing is known.
+    /// What kind of run this process is when no one watches it (`snapshot`, `bench`), set once at launch. Several
+    /// processes write one log with no pid on its lines: an agent's off-screen `--snapshot` stalled in its own
+    /// title bar audit, and the line read as the user's hidden hub stalling (inventory H25, 2026-10-10).
+    public nonisolated(unsafe) static var run: String?
+
+    /// ` run=<run> pid=<pid>` for a scripted run, else empty. Every stall line carries it.
+    public static var runTag: String {
+        run.map { " run=\($0) pid=\(ProcessInfo.processInfo.processIdentifier)" } ?? ""
+    }
+
+    /// ` run=… area=<area> recent=[a -0.1s; b -0.9s]`, newest first; empty when nothing is known.
     public static func describe(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> String {
         lock.lock()
         let area = currentArea
         let steps = recent
         lock.unlock()
-        var line = ""
+        var line = runTag
         if !area.isEmpty {
             line += " area=\(area)"
         }

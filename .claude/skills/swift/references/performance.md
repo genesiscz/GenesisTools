@@ -171,6 +171,21 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
 ### Polling watchers
 - A safety refresh every 5 s that runs a full snapshot (~1 s CPU) averages ~20% of one core. Refresh on
   the event; keep the safety interval long and the safety check cheap.
+- Gate every poll on whether anyone can see the window: `NSWindow.occlusionState` (one notification covers
+  covered, minimized, hidden and another Space). Hidden, start no process; keep a kernel-pushed watcher and
+  queue what it reports; shown, drain the queue once and re-ask only past the safety interval. A loop calls
+  `await untilVisible()` before each round. **Measured (2026-10-10):** a hub left in its Agents mode ran
+  `tools hub agents --json` ~60×/hour all night (714 runs, 56.5 s of main-thread renders in one day).
+  A scripted off-screen run reads as covered (alpha 0): never gate it.
+
+### A view that takes closures re-renders with its parent
+- SwiftUI cannot compare closures, so a pane built with callbacks (`onShowChange: { … }`) runs its body on
+  every update of the view around it, and everything below it diffs again. Wrap a heavy pane in an
+  `Equatable` view that compares the values it shows (not the callbacks) and apply `.equatable()`. Pass a
+  model a view only hands on as a plain `let`, not `@ObservedObject`: observing it re-runs the view on every
+  publish of that model, including flags no view reads (a `loading` flipped twice per refresh).
+- **Measured (2026-10-10, `GENESIS_RENDER_PROBE=1` + HubBench `agents`):** each Agents list refresh re-ran the
+  open lead's whole transcript list (`list.body`); after, only the changed row and the cheap screen around it.
 
 ## Thumbnails (media stream, 2026-10-10)
 Key the cache by file identity (`stat`: inode, size, mtime), bucket pixel sizes to powers of two of the screen scale, and decode off the main thread with `kCGImageSourceShouldCacheImmediately`, so the first draw never decodes on the main thread. Measured: a 5K screenshot 50–65 ms (was 114–130 ms), a cache hit ~25 µs.

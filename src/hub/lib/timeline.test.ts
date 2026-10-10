@@ -360,6 +360,31 @@ describe("timeline", () => {
         expect(again.cached).toBe(true);
     });
 
+    test("a live page whose process started seconds after its end still shares the live cache", async () => {
+        const storage = await scratchStorage();
+        const minute = Math.floor(SINCE.getTime() / 60_000) * 60_000;
+        const later = (ms: number) => new Date(minute + ms);
+        // The hub sets `--until` to its own clock, then Bun starts: 3 s under load, so `now` is past `until`.
+        const first = new Date(NOW.getTime() + 1_000);
+        await buildTimeline({
+            since: later(1_000),
+            until: first,
+            now: new Date(first.getTime() + 3_000),
+            deps: deps({}),
+            storage,
+        });
+        const second = new Date(NOW.getTime() + 21_000);
+        const again = await buildTimeline({
+            since: later(21_000),
+            until: second,
+            now: new Date(second.getTime() + 3_000),
+            deps: deps({}),
+            storage,
+        });
+
+        expect(again.cached).toBe(true);
+    });
+
     test("a failing repository or PR list is a warning, not an empty feed", async () => {
         const result = await buildTimeline({
             since: SINCE,

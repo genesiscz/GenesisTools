@@ -380,6 +380,8 @@ final class PRsModel: ObservableObject {
                 apply(list, key: key, flash: false)
                 showingCache = true
                 HubSWR.painted("prs.list", "\(list.prs.count) prs")
+                // The rows' and the header's readiness badges from disk too, not after the fresh list.
+                PRReadinessStore.shared.paintCached()
                 if wanted == nil, selectedID == nil || selected == nil, let first = prs.first(where: { $0.isMine == true }) ?? prs.first {
                     select(first)
                 }

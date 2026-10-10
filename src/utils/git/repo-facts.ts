@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { Executor } from "@genesiscz/utils/cli";
@@ -56,6 +57,13 @@ export async function repoFacts({
         branchUrl: null,
         headUrl: null,
     };
+
+    // A deleted folder (a Copilot session-state checkout the hub still lists) is no checkout: no git run.
+    if (!existsSync(path)) {
+        log.debug({ path }, "folder does not exist");
+        return empty;
+    }
+
     const git = new Executor({ prefix: "git", cwd: path });
     const res = await git.exec([
         "rev-parse",

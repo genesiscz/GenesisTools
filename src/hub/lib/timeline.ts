@@ -109,6 +109,9 @@ export interface TimelineResult {
 /** Hard bounds: a busy day still answers in about a second, and a page never exceeds `pageMax`. */
 export const TIMELINE_LIMITS = { repos: 25, pageDefault: 300, pageMax: 1000, prsPerProject: 30, prsInRange: 100 };
 
+/** A page that ends this close to "now" is the live page (its cache key and its 1-minute cap). */
+const TIMELINE_LIVE_SLACK_MS = 15_000;
+
 export const TIMELINE_RANGE_PRESETS = ["hour", "24h", "today", "yesterday", "7d", "30d"] as const;
 export type TimelineRangePreset = (typeof TIMELINE_RANGE_PRESETS)[number];
 /** The range without `--range`: a rolling day, so just after midnight the feed is not nearly empty. */
@@ -1071,7 +1074,10 @@ export async function buildTimeline({
     const size = Math.min(TIMELINE_LIMITS.pageMax, Math.max(1, Math.floor(limit)));
     const end = until ?? now;
     const upper = before && before < end ? before : end;
-    const live = upper.getTime() >= now.getTime() - 1_000;
+    // The caller sets `--until` to its own clock and then starts this process: under load Bun's startup alone
+    // took more than a second, the page read as an old one keyed by its exact end, never hit, and left one cache
+    // file per call (272 in the hub's cache folder, 2026-10-10).
+    const live = upper.getTime() >= now.getTime() - TIMELINE_LIVE_SLACK_MS;
     const shape = [
         filters.author ?? "all",
         filters.needsMe ? "needs-me" : "",

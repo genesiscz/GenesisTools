@@ -199,6 +199,8 @@ func runHub(_ args: [String]) -> Never {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
     }
     if request.isScripted {
+        // Its stall lines say so (`run=snapshot pid=…`), and it spawns no `sample` (GenesisKit PerfContext).
+        PerfContext.run = request.benchPath != nil ? "bench" : "snapshot"
         HubDefaults.isolate()
         // An embedded review re-anchors and saves comments; a scripted run must not touch the user's file.
         ReviewCommentStore.readOnly = true
@@ -291,7 +293,7 @@ func runHub(_ args: [String]) -> Never {
             MainActor.assumeIsolated {
                 // PRs mode shows the PR's own review, not the selected session's.
                 let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
-                HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style) {
+                HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style, showsDiff: { model.snapshotShowsDiff }) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                         let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
                         let showsDiff = model.mode == .prs || model.panes.contains(.changes)
@@ -307,7 +309,7 @@ func runHub(_ args: [String]) -> Never {
                         // has its first row up there with no empty band under it. A modal panel's dim layer
                         // covers the strip on purpose.
                         let titlebar = (covered ? "(a modal panel covers it) " : "")
-                            + WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line
+                            + HubPerf.measure("snapshot.audit") { WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line }
                         PerfLog.mark("hub.snapshot titlebar \(titlebar)")
                         FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
                         ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
@@ -327,6 +329,8 @@ func runHub(_ args: [String]) -> Never {
         if activate {
             app.activate(ignoringOtherApps: true)
         }
+        // Polls pause while nobody can see the window (Hub/HubVisibility.swift); scripted runs never pause.
+        MainActor.assumeIsolated { HubVisibility.shared.watch(window) }
         HubSingleInstance.serve { args in
             let later = HubRequest(args)
             model.apply(later)
@@ -1856,6 +1860,21 @@ struct HubRootView: View {
 }
 
 extension HubModel {
+    /// The screen shows a web diff a `--snapshot` must wait for: PRs mode, a worktree's review, or the Changes pane
+    /// of an open session (Sessions, or a lead session in Agents). Inbox, Activity, the Agents list alone, worktree
+    /// cleanup and a session without Changes have none, and their snapshots used to wait out the whole 30 s for a
+    /// review that never loads (35 to 44 s per run, inventory H24, 2026-10-10).
+    @MainActor
+    var snapshotShowsDiff: Bool {
+        switch mode {
+        case .prs: return true
+        case .inbox, .timeline: return false
+        case .worktrees: return selectedWorktree != WorktreeCleanup.selectionID && review != nil
+        case .agents: return (agents.selectedMain != nil || agents.selected?.parent != nil) && panes.contains(.changes) && review != nil
+        case .sessions: return selected != nil && selectedID != AgentProcs.selectionID && panes.contains(.changes) && review != nil
+        }
+    }
+
     /// The main view on screen has a `TitlebarHeader`, so its first row belongs in the title bar; an
     /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
     @MainActor
@@ -2231,6 +2250,7 @@ struct SessionDetailView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("session.detail.body")
         let visible = model.tabOrder.filter { model.panes.contains($0) }
         let shown = Array(visible.prefix(fitting ?? visible.count))
         let railed = Array(visible.dropFirst(shown.count))
@@ -2294,9 +2314,10 @@ struct SessionDetailView: View {
         case .transcript:
             if let agent, agent.node != nil {
                 if let row = agent.transcriptRow {
-                    HubSessionDetailHost(session: row, onShowChange: { path, line in
+                    HubTranscriptPane(session: row, onShowChange: { path, line in
                         model.showChange(path: path, line: line)
                     }, showsSidebar: model.panes.count == 1, agentChild: true)
+                        .equatable()
                         .id(agent.key)
                 } else {
                     Text("This agent has no transcript file")
@@ -2304,11 +2325,12 @@ struct SessionDetailView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                HubSessionDetailHost(session: session, onShowChange: { path, line in
+                HubTranscriptPane(session: session, onShowChange: { path, line in
                     model.showChange(path: path, line: line)
                 }, onOpenSubagent: { agent in
                     model.openSubagent(sessionId: session.sessionId, agentId: agent.id)
                 }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
+                    .equatable()
                     .id(session.id)
             }
         case .changes:
