@@ -196,6 +196,7 @@ public struct LiveWidgetView: View {
                 if section != "Sessions" { composer }
             }
         }
+        .mediaPreviewHost()
         .padding(18).frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             for provider in providers {
@@ -294,25 +295,7 @@ public struct LiveWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !card.attachments.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack {
-                        ForEach(card.attachments) { image in
-                            Button {
-                                showMedia(.images(card.attachments, image.id))
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    WidgetThumbnail(path: image.path).frame(width: 150, height: 95)
-                                    Text(image.label ?? image.name).font(.caption2).lineLimit(1)
-                                }
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                }
-                if card.attachments.count > 1 {
-                    Button("Compare screenshots") {
-                        showMedia(.images(card.attachments, card.attachments[0].id))
-                    }
-                }
+                WidgetCardAttachments(card: card, height: 110, maxWidth: 260, compare: true, showMedia: showMedia)
             }
             if card.needsAnswer {
                 if card.kind == "form" {
@@ -453,15 +436,7 @@ public struct LiveWidgetView: View {
                             Text(.init(card.body)).font(.system(size: 12)).textSelection(.enabled)
                         }
                         if !card.attachments.isEmpty {
-                            HStack {
-                                ForEach(card.attachments.prefix(3)) { image in
-                                    Button {
-                                        showMedia(.images(card.attachments, image.id))
-                                    } label: {
-                                        WidgetThumbnail(path: image.path).frame(width: 100, height: 65)
-                                    }.buttonStyle(.plain)
-                                }
-                            }
+                            WidgetCardAttachments(card: card, height: 64, maxWidth: 140, compare: false, showMedia: showMedia)
                         }
                         if card.needsAnswer {
                             Button("Answer this question") {
@@ -555,8 +530,8 @@ public struct LiveWidgetView: View {
             if !message.text.isEmpty {
                 Text(message.text).font(.system(size: 12)).textSelection(.enabled)
             }
-            ForEach(message.assetIds, id: \.self) { id in
-                if let asset = model.snapshot?.state.assets[id] { attachment(asset, removable: false) }
+            if !message.assetIds.isEmpty {
+                attachments(message.assetIds, tile: CGSize(width: 120, height: 80), removable: false)
             }
             HStack {
                 if ["preparing", "dispatching", "queued"].contains(message.state) {
@@ -606,8 +581,8 @@ public struct LiveWidgetView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(model.draft.assetIds, id: \.self) { id in
-                if let asset = model.snapshot?.state.assets[id] { attachment(asset, removable: true) }
+            if !model.draft.assetIds.isEmpty {
+                attachments(model.draft.assetIds, tile: CGSize(width: 88, height: 60), removable: true)
             }
             if model.voiceActive {
                 HStack(spacing: 8) {
@@ -668,53 +643,17 @@ public struct LiveWidgetView: View {
         .padding(11).background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 13))
     }
 
-    private func attachment(_ asset: WidgetAsset, removable: Bool) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                if asset.type == "video" {
-                    showMedia(.video(asset.id))
-                } else {
-                    showMedia(.asset(asset.id))
-                }
-            } label: {
-                HStack {
-                    if asset.type == "image" {
-                        WidgetThumbnail(path: asset.path).frame(width: 42, height: 30)
-                    } else {
-                        Image(systemName: "film").frame(width: 30)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(asset.name).font(.caption).lineLimit(1)
-                        if asset.type == "video" {
-                            Text(asset.status == "ready" ? videoSummary(asset) : (asset.status ?? "Preparing"))
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    if ["pending", "preparing"].contains(asset.status ?? "") {
-                        ProgressView().controlSize(.mini)
-                    }
-                }
-            }.buttonStyle(.plain)
-                .accessibilityIdentifier("widget.attachment." + asset.id)
-            Spacer(minLength: 0)
-            if removable {
-                Button {
+    private func attachments(_ ids: [String], tile: CGSize, removable: Bool) -> some View {
+        WidgetAttachmentStrip(
+            assets: ids.compactMap { model.snapshot?.state.assets[$0] },
+            manifests: model.snapshot?.manifests ?? [:], tile: tile,
+            remove: removable
+                ? { asset in
                     model.action([
                         "action": "remove-asset", "key": .string(model.selectedKey), "id": .string(asset.id),
                     ])
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain).accessibilityLabel("Remove " + asset.name)
-            }
-        }
-    }
-
-    private func videoSummary(_ asset: WidgetAsset) -> String {
-        guard let counts = model.snapshot?.manifests[asset.id]?.counts else { return "Ready" }
-        let review =
-            (asset.settings?.minimumDifferencePct ?? 0) > 0 && asset.confirmedRevision != asset.revision
-        return "\(counts.kept) frames · \(counts.images) images" + (review ? " · Review required" : "")
+                } : nil,
+            showMedia: showMedia)
     }
     private func receiptLabel(_ message: WidgetOutgoing) -> String {
         switch message.state {

@@ -1093,9 +1093,25 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// The panel steps aside for the selection, then reopens with the new attachment in the draft. Escape returns
+    /// `{cancelled: true, reason: "user"}`, which is not an error and reopens nothing; a missing Screen Recording
+    /// grant is an error whose text starts with `WidgetCaptureError.screenRecordingDenied`.
     public func capture() {
+        let returnEdge = expanded
         collapse()
-        action(["action": "capture", "key": .string(selectedKey)])
+        let request: WidgetJSON = ["action": "capture", "key": .string(selectedKey)]
+        let previous = mutationTask
+        mutationTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            do {
+                let result = try await self.call(request)
+                if case .object(let fields) = result, fields["cancelled"] == .bool(true) { return }
+                if let returnEdge, self.expanded == nil { self.open(returnEdge) }
+            } catch {
+                self.report(error)
+            }
+        }
     }
 
     public func toggleVoice() {

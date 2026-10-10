@@ -30,6 +30,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// A launch that waits for the first snapshot, because only the snapshot says whether the widget is on.
     private var launchPending = false
     private var pendingSessionKey: String?
+    /// The surface a shelf capture started from; it reopens there when the image is staged.
+    private var captureReturn: WidgetSurfaceID?
     public var settingsPresenter: ((String) -> Void)?
     /// Orders one edge panel front. Tests replace it to prove a hidden widget never shows a panel.
     var orderFront: (EdgePanelController<WidgetHostView>) -> Void = { $0.show() }
@@ -63,7 +65,20 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             binaryPath: binaryPath, stateRoot: stateRoot,
             recipients: { [weak model] in model?.snapshot?.sessions ?? [] },
             didAttach: { [weak self] session in self?.showShelfDraft(for: session) },
-            onCaptureWillBegin: { [weak model] in model?.collapse() },
+            onCaptureWillBegin: { [weak self] in
+                guard let self else { return }
+                // Expanded, or the hover preview the Capture button was pressed in.
+                self.captureReturn = self.model.expanded.map {
+                    WidgetSurfaceID(edge: $0, group: $0 == .top ? 0 : self.model.activeSideGroup)
+                } ?? self.model.hoveredSurface
+                self.model.collapse()
+            },
+            onCaptureStaged: { [weak self] in
+                guard let self, let surface = self.captureReturn else { return }
+                self.captureReturn = nil
+                // The selection overlay is gone; show the new capture arriving in the shelf it was taken from.
+                if self.model.expanded == nil { self.model.openModule("capture", on: surface) }
+            },
             onDialogVisibilityChanged: { [weak self] visible in
                 guard let self else { return }
                 self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
@@ -584,6 +599,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
             return event
+        }
+        let editingText = panel.firstResponder is NSTextView
+            || (panel.firstResponder as? NSControl)?.currentEditor() != nil
+        if MediaPreviewKeyboard.handle(keyCode: event.keyCode, editingText: editingText) {
+            return nil
         }
         if event.keyCode == 53 {
             model.collapse()

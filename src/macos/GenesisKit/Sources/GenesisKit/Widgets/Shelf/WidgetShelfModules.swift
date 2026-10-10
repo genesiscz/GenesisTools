@@ -24,6 +24,12 @@ struct WidgetShelfModuleView: View {
     let presentation: WidgetModulePresentation
 
     @State private var dropTargeted = false
+    /// The ids on screen before the last inventory change; nil until the first read, so a first load never animates.
+    @State private var knownIDs: Set<String>?
+    /// Items that arrived with the last change (a capture, a drop, a paste): flashed once, then faded.
+    @State private var arrived: Set<String> = []
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.widgetReduceMotion) private var widgetReduceMotion
 
     private var title: String { captureOnly ? "Capture" : "File Shelf" }
     private var symbol: String { captureOnly ? "viewfinder" : "tray.full" }
@@ -50,6 +56,7 @@ struct WidgetShelfModuleView: View {
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
+                .mediaPreviewHost()
                 .padding(16)
                 .background(dropTargeted ? tint.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 16))
                 .dropDestination(for: URL.self) { urls, _ in
@@ -91,7 +98,8 @@ struct WidgetShelfModuleView: View {
                 .accessibilityIdentifier("shelf-paste")
             if captureOnly {
                 Button { store.chooseFiles(asImages: true) } label: { Image(systemName: "photo.badge.plus") }
-                    .help("Import images")
+                    .instantTooltip("Import images")
+                    .accessibilityLabel("Import images")
                     .disabled(store.isBusy)
             }
             Spacer(minLength: 0)
@@ -114,7 +122,13 @@ struct WidgetShelfModuleView: View {
     }
 
     private var inventory: some View {
-        ScrollView {
+        let ids = displayedItems.map(\.id)
+        let gallery = displayedItems.map(WidgetShelfRow.preview)
+        // Animate a few arrivals into a list already on screen; a first load or a bulk change just appears.
+        let inserted = knownIDs.map { Set(ids).subtracting($0).count } ?? 0
+        let animates = knownIDs != nil && inserted > 0 && inserted <= 3
+        let reduceMotion = systemReduceMotion || widgetReduceMotion
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
                 if displayedItems.isEmpty {
                     VStack(spacing: 10) {
@@ -129,9 +143,30 @@ struct WidgetShelfModuleView: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 48)
                 }
                 ForEach(displayedItems) { item in
-                    WidgetShelfRow(store: store, item: item, tint: tint)
+                    WidgetShelfRow(
+                        store: store, item: item, tint: tint, gallery: gallery, arrived: arrived.contains(item.id)
+                    )
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .asymmetric(
+                                insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.97, anchor: .top)),
+                                removal: .opacity))
                 }
             }
+            .animation(animates ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.86)) : nil,
+                value: ids)
+        }
+        .scrollIndicators(.automatic)
+        .onAppear { if store.loaded { knownIDs = Set(ids) } }
+        .onChange(of: store.loaded) { _, loaded in if loaded { knownIDs = Set(ids) } }
+        .onChange(of: ids) { _, next in
+            guard let known = knownIDs else { return }
+            let fresh = Set(next).subtracting(known)
+            knownIDs = Set(next)
+            guard !fresh.isEmpty, fresh.count <= 3 else { return }
+            arrived = fresh
+            SWR.fade(fresh, current: { arrived }, clear: { arrived = [] })
         }
     }
 
@@ -147,24 +182,37 @@ private struct WidgetShelfRow: View {
     @ObservedObject var store: WidgetShelfStore
     let item: WidgetShelfItem
     let tint: Color
+    /// Every item of this list, so the preview's ← and → move through them.
+    let gallery: [MediaPreviewItem]
+    let arrived: Bool
     @State private var recipientSelection: WidgetShelfRecipientSelection?
+
+    static func preview(_ item: WidgetShelfItem) -> MediaPreviewItem {
+        MediaPreviewItem(id: item.id, path: item.path, name: item.name, kind: item.kind == .capture ? .image : nil)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: item.kind == .capture ? "photo" : "doc")
-                .font(.system(size: 21)).foregroundStyle(tint)
-                .frame(width: 28)
+            MediaThumbnailView(item: Self.preview(item), gallery: gallery, cornerRadius: 6, emphasis: .compact)
+                .frame(width: 56, height: 42)
+                .accessibilityIdentifier("shelf-thumbnail-" + item.id)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file))
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file))
+                    Text(verbatim: "·")
+                    Text(Date(timeIntervalSince1970: item.createdAt / 1000), style: .time)
+                }
+                .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Button {
+            IconButton(
+                systemName: "tray.and.arrow.down",
+                tooltip: item.kind == .capture ? "Attach image to an inbox draft" : "Add file reference to an inbox draft"
+            ) {
                 recipientSelection = WidgetShelfRecipientSelection(item: item, recipients: store.recipients)
-            } label: { Image(systemName: "tray.and.arrow.down") }
-                .buttonStyle(.borderless).disabled(store.isBusy)
-                .help(item.kind == .capture ? "Attach image to an inbox draft" : "Add file reference to an inbox draft")
+            }
+                .disabled(store.isBusy)
                 .accessibilityLabel("Choose recipient for \(item.name)")
                 .popover(item: $recipientSelection) { selection in
                     WidgetShelfRecipientPicker(store: store, selection: selection) { recipient in
@@ -172,18 +220,23 @@ private struct WidgetShelfRow: View {
                         store.attach(selection.item, to: recipient)
                     }
                 }
-            Menu {
-                Button("Open") { PathOpener.open(item.path) }
-                Button("Reveal in Finder") { PathOpener.reveal(item.path) }
-                Button("Copy path") { PathOpener.copy(item.path, what: "file path") }
-                Divider()
-                Button("Remove from shelf") { store.remove(item) }.disabled(store.isBusy)
-            } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).fixedSize()
+            MenuButton(style: .genHoverIcon()) {
+                [
+                    .action("Open", run: { PathOpener.open(item.path) }),
+                    .action("Reveal in Finder", run: { PathOpener.reveal(item.path) }),
+                    .action("Copy path", run: { PathOpener.copy(item.path, what: "file path") }),
+                    .divider,
+                    .action("Remove from shelf", enabled: !store.isBusy, run: { store.remove(item) }),
+                ]
+            } label: {
+                Image(systemName: "ellipsis").frame(width: 16, height: 16)
+            }
+                .instantTooltip("More actions")
                 .accessibilityLabel("Actions for \(item.name)")
         }
-        .padding(11)
+        .padding(.vertical, 8).padding(.leading, 8).padding(.trailing, 10)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+        .swrFlash(arrived, cornerRadius: 10, color: tint)
         .draggable(URL(fileURLWithPath: item.path))
         .accessibilityElement(children: .contain)
     }

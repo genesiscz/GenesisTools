@@ -37,6 +37,13 @@ import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
 import { WidgetRosterReader, type WidgetRosterReply } from "../widget/roster-reader";
 import {
+    classifyScreenshot,
+    parseUiSoundSetting,
+    SCREEN_RECORDING_DENIED,
+    ScreenRecordingDeniedError,
+    type ScreenshotRunner,
+} from "../widget/screenshot";
+import {
     attachShelfItem,
     captureShelfImage,
     importShelfFile,
@@ -1538,7 +1545,14 @@ test("failed post-copy video checks remove the unreferenced copy while successfu
 test("screenshot staging is removed after import success and partial capture failure", async () => {
     const directory = await root();
     let failed = false;
+    const captures: string[][] = [];
     const run = spyOn(commands, "boundedCommand").mockImplementation(async ({ command }) => {
+        if (command[0] === "/usr/bin/defaults") {
+            // The sound key is absent until the user changes it once.
+            return { status: 1, signal: null, stdout: "", stderr: "" };
+        }
+
+        captures.push(command);
         const file = command.at(-1);
         if (!file) {
             throw new Error("Fixture capture needs an output path");
@@ -1555,9 +1569,11 @@ test("screenshot staging is removed after import success and partial capture fai
         failed = true;
         await expect(
             performWidgetAction({ root: directory, input: { action: "capture", key: widgetSessionKey(target) } })
-        ).rejects.toThrow("cancelled");
+        ).rejects.toThrow("Screenshot capture failed: exit 1");
         expect((await readdir(directory)).filter((name) => name.startsWith("capture-"))).toEqual([]);
         expect(Object.keys((await readWidgetState(directory)).assets)).toHaveLength(1);
+        // Sound effects are on by default, so neither capture passes `-x`.
+        expect(captures.map((command) => command.includes("-x"))).toEqual([false, false]);
     } finally {
         run.mockRestore();
     }
@@ -2915,14 +2931,20 @@ test("native capture exit classification keeps cancellation separate from permis
     const directory = await root();
     expect(await captureShelfImage({ root: directory, capture: async () => ({ status: 0, stderr: "" }) })).toEqual({
         cancelled: true,
+        reason: "user",
     });
     expect((await listWidgetShelf(directory)).items).toEqual([]);
+    const denied = await captureShelfImage({
+        root: directory,
+        capture: async () => ({ status: 1, stderr: "could not create image from window\n" }),
+    }).catch((error: unknown) => error);
+    expect(denied).toBeInstanceOf(ScreenRecordingDeniedError);
+    expect(denied instanceof ScreenRecordingDeniedError && denied.code).toBe(SCREEN_RECORDING_DENIED);
+    expect(denied instanceof Error && denied.message).toStartWith(`[${SCREEN_RECORDING_DENIED}]`);
+    expect(denied instanceof Error && denied.message).toContain("could not create image from window");
     await expect(
-        captureShelfImage({
-            root: directory,
-            capture: async () => ({ status: 1, stderr: "could not create image from window\n" }),
-        })
-    ).rejects.toThrow("Screenshot capture failed: could not create image from window");
+        captureShelfImage({ root: directory, capture: async () => ({ status: 2, stderr: "disk full\n" }) })
+    ).rejects.toThrow("Screenshot capture failed: disk full");
     await expect(
         captureShelfImage({
             root: directory,
@@ -2930,6 +2952,65 @@ test("native capture exit classification keeps cancellation separate from permis
         })
     ).rejects.toThrow("Capture timed out");
     expect((await listWidgetShelf(directory)).items).toEqual([]);
+    expect((await readWidgetState(directory)).drafts).toEqual({});
+});
+
+test("a capture plays the shutter sound unless interface sound effects are off", async () => {
+    const directory = await root();
+    const commands: string[][] = [];
+    const record: ScreenshotRunner = async ({ command }) => {
+        commands.push(command);
+        return { status: 0, stderr: "" };
+    };
+    await captureShelfImage({ root: directory, capture: record, soundEnabled: async () => true });
+    await captureShelfImage({ root: directory, capture: record, soundEnabled: async () => false });
+    expect(commands.map((command) => command.slice(0, -1))).toEqual([
+        ["/usr/sbin/screencapture", "-i"],
+        ["/usr/sbin/screencapture", "-i", "-x"],
+    ]);
+    expect(parseUiSoundSetting({ status: 0, stdout: "0\n" })).toBe(false);
+    expect(parseUiSoundSetting({ status: 0, stdout: "1\n" })).toBe(true);
+    // The key is absent until the user flips the switch once: macOS plays sounds then.
+    expect(parseUiSoundSetting({ status: 1, stdout: "" })).toBe(true);
+});
+
+test("screenshot classification separates Escape, a missing grant and other failures", () => {
+    expect(classifyScreenshot({ status: 0, stderr: "", outputExists: true })).toEqual({ kind: "captured" });
+    expect(classifyScreenshot({ status: 0, stderr: "", outputExists: false })).toEqual({ kind: "cancelled" });
+    expect(classifyScreenshot({ status: 1, stderr: "", outputExists: false })).toEqual({ kind: "cancelled" });
+    expect(
+        classifyScreenshot({ status: 1, stderr: "could not create image from display", outputExists: false })
+    ).toEqual({
+        kind: "denied",
+        detail: "could not create image from display",
+    });
+    expect(classifyScreenshot({ status: null, error: new Error("timed out"), outputExists: false })).toEqual({
+        kind: "failed",
+        detail: "timed out",
+    });
+    expect(classifyScreenshot({ status: 3, stderr: "disk full", outputExists: false })).toEqual({
+        kind: "failed",
+        detail: "disk full",
+    });
+});
+
+test("the composer capture action returns Escape as a typed result and a missing grant as a typed error", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    expect(
+        await performWidgetAction({
+            root: directory,
+            input: { action: "capture", key },
+            capture: async () => ({ status: 0, stderr: "" }),
+        })
+    ).toEqual({ cancelled: true, reason: "user" });
+    await expect(
+        performWidgetAction({
+            root: directory,
+            input: { action: "capture", key },
+            capture: async () => ({ status: 1, stderr: "could not create image from window" }),
+        })
+    ).rejects.toBeInstanceOf(ScreenRecordingDeniedError);
     expect((await readWidgetState(directory)).drafts).toEqual({});
 });
 
