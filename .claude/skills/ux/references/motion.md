@@ -21,3 +21,13 @@
 - Building a large SwiftUI tree on expand delays the first frame; make the content cheap, build it before the
   motion, or keep it alive if that costs nothing at idle (measure idle CPU).
 - Decoding JSON snapshots on the main thread competes with animation frames.
+
+## Edge panels (widget, 2026-10-10, 417458101)
+- Resize the window ONCE per transition and animate a `CAShapeLayer` mask (the outline). A per-frame `setFrame` let
+  the window server fall behind and stalled the main thread; the mask keeps running while the main thread is busy.
+- Closing never shows an empty or scaled card: the content stays at its size inside the shrinking outline. Opening
+  reveals content already laid out at its final position (build the expanded pane before the motion, or keep it).
+- Measured on the real app after the change: expand first callback 34–36 ms (was 250), largest gap 16.7 ms (was 94);
+  collapse largest gap 16.7 ms (was 224).
+- Per-window capture is not evidence for a resizing window; use `scripts/native/outline-frames.swift` (composited
+  display, filtered to the app's windows).

@@ -25,3 +25,10 @@ checklist.md or motion.md as well.
   into the shared hover styles. eb0292629.
 - 2026-10-10 — **Permission failures were grey text or an `.alert` inside a widget panel.** Fix: one
   `PermissionCenter` dialog with a denial simulation for the real app. 1fcecc6b3.
+- 2026-10-10 — **Settings: two quick module toggles lost one.** A snapshot load that started before a preference
+  write landed after it and replaced the optimistic state; the next toggle patched from stale data. Found only by a
+  live pass that presses every switch and reads it back in a new process (`scripts/native/settings-v2.ts`). d5ae82bef.
+- 2026-10-10 — **One accessibility identifier on four switches** (the same module in four edge cards). No test or
+  assistive tool could address one. Identifiers must be unique per window. d5ae82bef.
+- 2026-10-10 — **Expand jumped preview → full in one frame; collapse showed an empty card.** Per-frame window
+  resizes plus a 250 ms content build before the first frame. Fixed with one resize + an animated mask. 417458101.
