@@ -1249,7 +1249,8 @@ final class HubModel: ObservableObject {
             prsLoaded: prRootsRequested != nil && !prs.loading,
             worktrees: worktrees,
             currentPath: paletteCurrentPath,
-            glassAvailable: HubGlassSwitch.available
+            glassAvailable: HubGlassSwitch.available,
+            look: HubLookChoice.currentInHub
         )
     }
 
@@ -1362,6 +1363,8 @@ final class HubModel: ObservableObject {
             }
         case .toggleGlass:
             toggleGlass()
+        case .setLook(let choice):
+            choice.apply(preferences: HubDefaults.preferences, appearance: HubDefaults.appearance)
         }
     }
 

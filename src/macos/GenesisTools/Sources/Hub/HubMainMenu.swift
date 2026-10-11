@@ -59,10 +59,14 @@ enum AppMainMenu {
         bar.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
 
         if let hub {
-            bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("View", HubMenuCommands.view, hub: hub, tail: [
+            let view = HubMenuCommands.menu("View", HubMenuCommands.view, hub: hub, tail: [
                 NSMenuItem.separator(),
                 NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f").withModifiers([.command, .control]),
             ])
+            // View → Look sits under Glass, the other half of how the hub looks.
+            let look = view.items.firstIndex { $0.title == "Glass" }.map { $0 + 1 } ?? view.items.count
+            view.insertItem(HubMenuCommands.lookItem(hub: hub), at: look)
+            bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
             bar.addItem(withTitle: "Go", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("Go", HubMenuCommands.go, hub: hub, tail: [
                 NSMenuItem.separator(),
                 HubMenuCommands.paletteCommandsItem(hub: hub),
@@ -185,10 +189,6 @@ enum HubMenuCommands {
         HubMenuCommand(title: "Glass", key: "g", modifiers: [.command, .shift], run: { $0.runPalette(.toggleGlass, toggleGlass: toggleGlass) },
                        checked: { _ in HubDefaults.preferences.glass && HubGlassSwitch.available },
                        enabled: { _ in HubGlassSwitch.available }, separated: true),
-        HubMenuCommand(title: "Native Style", run: { _ in
-            let preferences = HubDefaults.preferences
-            preferences.style = preferences.style == .native ? .hub : .native
-        }, checked: { _ in HubDefaults.preferences.style == .native }),
         HubMenuCommand(title: "Hub Settings…", run: { _ in ClickyLaunch.openSettings(pageID: HubSettingsPages.appearancePageID) }),
         HubMenuCommand(title: "Split Diff", run: { review(of: $0)?.setStyle(.split) },
                        checked: { review(of: $0)?.options.diffStyle == .split }, enabled: { review(of: $0) != nil }, separated: true),
@@ -241,6 +241,23 @@ enum HubMenuCommands {
             item.representedObject = HubMenuCommandBox(command)
             return command.separated ? [.separator(), item] : [item]
         }
+    }
+
+    /// View → Look: the Hub look and the three Native looks, the current one checked. A Native look also sets
+    /// General → Theme, and its item's tooltip says so.
+    static func lookItem(hub: HubModel) -> NSMenuItem {
+        let item = NSMenuItem(title: "Look", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Look")
+        for choice in HubLookChoice.allCases {
+            let command = HubMenuCommand(title: choice.title, run: { $0.runPalette(.setLook(choice), toggleGlass: toggleGlass) },
+                                         checked: { _ in HubLookChoice.currentInHub == choice }, separated: choice == .nativeGlass)
+            for entry in items([command], hub: hub) {
+                if choice.theme != nil, !entry.isSeparatorItem { entry.toolTip = HubLookChoice.generalNote + "." }
+                submenu.addItem(entry)
+            }
+        }
+        item.submenu = submenu
+        return item
     }
 
     /// Every palette keyword as a menu item: it opens the palette with the keyword typed, so this

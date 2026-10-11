@@ -52,6 +52,63 @@ struct HubLook: Equatable {
     }
 }
 
+/// The four looks View → Look and the palette's "look" switch between: the Hub style, or the Native style with one
+/// of General's themes. A Native look sets General → Theme too, since the Native style follows it, so the settings
+/// window and the widgets change with it.
+enum HubLookChoice: String, CaseIterable, Identifiable, Sendable {
+    case hub
+    case nativeGlass = "native-glass"
+    case nativeSolid = "native-solid"
+    case nativeGradient = "native-gradient"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .hub: return "Hub"
+        case .nativeGlass: return "Native · Glass"
+        case .nativeSolid: return "Native · Solid"
+        case .nativeGradient: return "Native · Gradient"
+        }
+    }
+
+    var style: HubWindowStyle { self == .hub ? .hub : .native }
+
+    /// The General → Theme a Native look sets; nil for the Hub look, which leaves General alone.
+    var theme: NativeSettingsTheme? {
+        switch self {
+        case .hub: return nil
+        case .nativeGlass: return .glass
+        case .nativeSolid: return .solid
+        case .nativeGradient: return .gradient
+        }
+    }
+
+    /// What a Native look's menu item and palette row say.
+    nonisolated static let generalNote = "Also sets General → Theme for every native window: Settings and the widgets too"
+
+    static func current(style: HubWindowStyle, theme: NativeSettingsTheme) -> HubLookChoice {
+        guard style == .native else { return .hub }
+        switch theme {
+        case .glass: return .nativeGlass
+        case .solid: return .nativeSolid
+        case .gradient: return .nativeGradient
+        }
+    }
+
+    /// Writes through the shared models, so a running settings window and other faces follow at once.
+    @MainActor
+    func apply(preferences: HubPreferences, appearance: NativeSettingsAppearance) {
+        if let theme { appearance.theme = theme }
+        preferences.style = style
+    }
+
+    @MainActor
+    static var currentInHub: HubLookChoice {
+        current(style: HubDefaults.preferences.style, theme: HubDefaults.appearance.theme)
+    }
+}
+
 /// ⌘⇧G, the drop button, View → Glass and the palette's "glass": the switch belongs to the Hub style. In the Native
 /// style the window follows General → Theme, so these do nothing there (the button and the menu item show as
 /// unavailable, the palette says why).
