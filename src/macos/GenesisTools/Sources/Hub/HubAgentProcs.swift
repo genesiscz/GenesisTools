@@ -276,6 +276,7 @@ struct AgentProcsView: View {
     @ObservedObject private var store = AgentProcsStore.shared
     @State private var pending: [ProcGroup]?
     @State private var find = PanelFindModel(scope: "procs", title: "the agent processes")
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         let groups = store.report?.groups ?? []
@@ -351,10 +352,14 @@ struct AgentProcsView: View {
     }
 
     private func toggle(_ group: ProcGroup) {
-        if store.expanded.contains(group.id) {
-            store.expanded.remove(group.id)
-        } else {
-            store.expanded.insert(group.id)
+        let opening = !store.expanded.contains(group.id)
+        let rows = group.processes.count
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion || rows > GenMotion.maxAnimatedRows) {
+            if opening {
+                store.expanded.insert(group.id)
+            } else {
+                store.expanded.remove(group.id)
+            }
         }
     }
 
@@ -511,8 +516,10 @@ struct AgentProcsRow: View {
                     processLine(entry)
                 }
                 .padding(.leading, 18)
+                .transition(.genReveal)
             }
         }
+        .clipped()
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.white.opacity(0.04) : Color.clear))

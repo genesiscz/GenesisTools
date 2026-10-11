@@ -2803,6 +2803,19 @@ private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>
 struct FileSidebar: View {
     @ObservedObject var model: ReviewModel
     @FocusState private var filterFocused: Bool
+    @GenReduceMotion private var reduceMotion
+
+    /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move).
+    private func toggleFolder(_ id: String) {
+        let opening = model.collapsed.contains(id)
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
+            if opening {
+                model.collapsed.remove(id)
+            } else {
+                model.collapsed.insert(id)
+            }
+        }
+    }
 
     var body: some View {
         let rows = sidebarRows(model.filteredFiles, tree: model.treeMode && model.filter.isEmpty, collapsed: model.collapsed, roots: model.roots)
@@ -2852,11 +2865,7 @@ struct FileSidebar: View {
                                 let root = model.roots[index]
                                 RootFolderRow(root: root, additions: additions, deletions: deletions,
                                               collapsed: model.collapsed.contains(row.id), actions: model.rootActions) {
-                                    if model.collapsed.contains(row.id) {
-                                        model.collapsed.remove(row.id)
-                                    } else {
-                                        model.collapsed.insert(row.id)
-                                    }
+                                    toggleFolder(row.id)
                                 }
                                 .padding(.horizontal, 6)
                                 .padding(.top, index == 0 ? 0 : 6)
@@ -2871,11 +2880,7 @@ struct FileSidebar: View {
                                     collapsed: model.collapsed.contains(row.id)
                                 )
                                 .rowButton(cornerRadius: 6) {
-                                    if model.collapsed.contains(row.id) {
-                                        model.collapsed.remove(row.id)
-                                    } else {
-                                        model.collapsed.insert(row.id)
-                                    }
+                                    toggleFolder(row.id)
                                 }
                                 // The gap above a flat-list group sits outside the button, so the
                                 // hover box covers the folder name and nothing above it.

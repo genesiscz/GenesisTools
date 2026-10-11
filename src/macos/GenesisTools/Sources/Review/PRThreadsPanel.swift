@@ -392,6 +392,7 @@ struct PRThreadsList: View {
     /// Folded files and threads of this PR (`PRThreadFolds`), read when the PR's threads arrive.
     @State private var folded: Set<String> = []
     @State private var foldedThreads: Set<String> = []
+    @GenReduceMotion private var reduceMotion
     /// The previous visit to this PR's threads: notes by others written after it are marked new.
     @State private var seenSince: Date?
     @State private var seenFor: String?
@@ -585,7 +586,7 @@ struct PRThreadsList: View {
 
     /// Folds or opens one file's threads; kept per PR.
     private func toggle(file path: String) {
-        withAnimation(.snappy(duration: 0.2)) {
+        GenMotion.perform(expanding: folded.contains(path), reduceMotion: reduceMotion) {
             folded = PRThreadFolds.toggled(folded, path)
         }
         if let url = store.pr?.url {
@@ -595,7 +596,7 @@ struct PRThreadsList: View {
 
     /// Folds or opens one thread to its header and first line; kept per PR.
     private func toggle(thread id: String) {
-        withAnimation(.snappy(duration: 0.2)) {
+        GenMotion.perform(expanding: foldedThreads.contains(id), reduceMotion: reduceMotion) {
             foldedThreads = PRThreadFolds.toggled(foldedThreads, id)
         }
         if let url = store.pr?.url {

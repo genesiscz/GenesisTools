@@ -649,6 +649,7 @@ struct ToolAnalyticsSection: View {
     let onSlowest: (InsightTool) -> Void
 
     @State private var showAll = false
+    @GenReduceMotion private var reduceMotion
     private static let limit = 8
 
     var body: some View {
@@ -672,7 +673,13 @@ struct ToolAnalyticsSection: View {
                 row(tool)
             }
             if tools.count > Self.limit {
-                Button(showAll ? "Show fewer" : "Show \(tools.count - Self.limit) more") { showAll.toggle() }
+                Button(showAll ? "Show fewer" : "Show \(tools.count - Self.limit) more") {
+                    let showing = !showAll
+                    let rows = tools.count - Self.limit
+                    GenMotion.perform(expanding: showing, reduceMotion: reduceMotion || rows > GenMotion.maxAnimatedRows) {
+                        showAll = showing
+                    }
+                }
                     .buttonStyle(.genHoverPlain())
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(SessionPalette.blue)

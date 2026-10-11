@@ -102,6 +102,7 @@ struct HubFolderTrees: View {
     @ObservedObject var trees: HubFolderTreeStore
     let changesShown: Bool
     @State private var selected: String?
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -109,7 +110,9 @@ struct HubFolderTrees: View {
                 ForEach(roots, id: \.self) { root in
                     let tree = trees.model(for: root)
                     HubFolderTreeHeader(root: root, folded: trees.folded.contains(root)) {
-                        trees.toggleFold(root)
+                        GenMotion.perform(expanding: trees.folded.contains(root), reduceMotion: reduceMotion) {
+                            trees.toggleFold(root)
+                        }
                     }
                     .padding(.top, root == roots.first ? 4 : 10)
                     if !trees.folded.contains(root) {

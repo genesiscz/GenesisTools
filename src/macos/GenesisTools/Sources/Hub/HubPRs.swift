@@ -1148,6 +1148,7 @@ struct PRListView: View {
     @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
     @ObservedObject private var readiness = PRReadinessStore.shared
+    @GenReduceMotion private var reduceMotion
 
     private var statePicker: some View {
         Picker("", selection: Binding(get: { prs.state }, set: { prs.state = $0; prs.reload() })) {
@@ -1305,7 +1306,10 @@ struct PRListView: View {
                     }
                 }
             } header: {
-                Button { moreOpen.toggle() } label: {
+                Button {
+                    let opening = !moreOpen
+                    GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { moreOpen = opening }
+                } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
@@ -2014,6 +2018,7 @@ struct PRSection<Content: View>: View {
     var flat = false
     var trailing: AnyView?
     @ViewBuilder let content: () -> Content
+    @GenReduceMotion private var reduceMotion
 
     init(title: String, count: Int? = nil, folded: Binding<Bool>, flat: Bool = false, trailing: AnyView? = nil,
          @ViewBuilder content: @escaping () -> Content) {
@@ -2036,9 +2041,10 @@ struct PRSection<Content: View>: View {
             VStack(alignment: .leading, spacing: 8) {
                 header
                 if !folded {
-                    content()
+                    content().transition(.genReveal)
                 }
             }
+            .clipped()
             .padding(.bottom, 16)
         }
     }
@@ -2046,7 +2052,8 @@ struct PRSection<Content: View>: View {
     private var header: some View {
         HStack(spacing: 6) {
             Button {
-                withAnimation(.snappy(duration: 0.18)) { folded.toggle() }
+                let opening = folded
+                GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { folded = !opening }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")

@@ -504,13 +504,17 @@ final class HubTimelineModel: ObservableObject {
 
     func isExpanded(_ event: TimelineEvent) -> Bool { expanded.contains(event.id) }
 
-    /// Folds a row open (loading its detail once) or closed.
+    /// Folds a row open (loading its detail once) or closed, in one `GenMotion` animation.
     func toggle(_ event: TimelineEvent) {
         if expanded.contains(event.id) {
-            expanded.remove(event.id)
+            GenMotion.perform(expanding: false, reduceMotion: GenMotion.systemReduceMotion) {
+                _ = expanded.remove(event.id)
+            }
             return
         }
-        expanded.insert(event.id)
+        GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion) {
+            _ = expanded.insert(event.id)
+        }
         if details[event.id] == nil {
             loadDetail(event)
         }
@@ -551,9 +555,13 @@ final class HubTimelineModel: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.loadingDetails.remove(event.id)
-                    switch result {
-                    case .success(let detail): self.details[event.id] = detail
-                    case .failure(let failure): self.detailErrors[event.id] = "\(failure)"
+                    // The detail replaces its skeleton under an open row: it grows like the click that opened it.
+                    let reduceMotion = GenMotion.systemReduceMotion || !self.expanded.contains(event.id)
+                    GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                        switch result {
+                        case .success(let detail): self.details[event.id] = detail
+                        case .failure(let failure): self.detailErrors[event.id] = "\(failure)"
+                        }
                     }
                 }
             }
@@ -567,7 +575,7 @@ final class HubTimelineModel: ObservableObject {
         guard let sha = event.sha else { return }
         let key = Self.diffKey(sha: sha, path: path)
         if fileDiffs[key] != nil {
-            fileDiffs[key] = nil
+            GenMotion.perform(expanding: false, reduceMotion: GenMotion.systemReduceMotion) { fileDiffs[key] = nil }
             return
         }
         guard !loadingDiffs.contains(key) else { return }
@@ -581,10 +589,12 @@ final class HubTimelineModel: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.loadingDiffs.remove(key)
-                    if case .success(.commit(let detail)) = result, let diff = detail.diff {
-                        self.fileDiffs[key] = diff
-                    } else if case .failure(let failure) = result {
-                        self.fileDiffs[key] = TimelineFileDiff(path: path, text: "\(failure)", truncated: false)
+                    GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion) {
+                        if case .success(.commit(let detail)) = result, let diff = detail.diff {
+                            self.fileDiffs[key] = diff
+                        } else if case .failure(let failure) = result {
+                            self.fileDiffs[key] = TimelineFileDiff(path: path, text: "\(failure)", truncated: false)
+                        }
                     }
                 }
             }
@@ -1510,8 +1520,11 @@ struct TimelineRowView: View {
                     .padding(.trailing, 12)
                     .padding(.top, 2)
                     .padding(.bottom, 8)
+                    .transition(.genReveal)
             }
         }
+        // The row closes over its detail instead of the rows below sliding up over fading text.
+        .clipped()
     }
 
     /// A short detail (a sha, "last turn", "started", "#2 answered: a)") is drawn whole; a long one (a

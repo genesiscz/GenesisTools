@@ -413,6 +413,7 @@ struct WorktreeCleanupView: View {
     @ObservedObject var model: HubModel
     @ObservedObject private var store = WorktreeCleanupStore.shared
     @AppStorage(WorktreeCleanup.showBlockedKey) private var showBlocked = false
+    @GenReduceMotion private var reduceMotion
     @State private var pending: [CleanupRow]?
     @State private var pendingMove: [CleanupRow]?
     @State private var rulesOpen = false
@@ -612,7 +613,8 @@ struct WorktreeCleanupView: View {
                 // Drawn like the rows' checkboxes: the AppKit checkbox drew as a dark box that nearly vanished here.
                 Button {
                     HubMainBusy.measure("worktrees.cleanup.showBlocked")
-                    showBlocked.toggle()
+                    let showing = !showBlocked
+                    GenMotion.perform(expanding: showing, reduceMotion: reduceMotion) { showBlocked = showing }
                 } label: {
                     Label {
                         Text(verbatim: "Show blocked (\(store.rows.count - removable.count))")

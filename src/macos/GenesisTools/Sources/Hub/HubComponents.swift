@@ -677,6 +677,7 @@ struct GroupHeader: View {
     /// Where a header dragged over this one would land (a line on that edge); nil when none is.
     @State private var dropEdge: VerticalEdge?
     @State private var height: CGFloat = 26
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         let key = key ?? title
@@ -685,7 +686,9 @@ struct GroupHeader: View {
         HStack(spacing: 6) {
             // A real button, so the keyboard and VoiceOver can fold the group. The copy button stays
             // outside it: a button inside a button leaves both ambiguous.
-            Button { prefs.toggleCollapsed(key) } label: {
+            Button {
+                GenMotion.perform(expanding: isCollapsed, reduceMotion: reduceMotion) { prefs.toggleCollapsed(key) }
+            } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))

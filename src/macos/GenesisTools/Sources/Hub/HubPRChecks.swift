@@ -138,6 +138,7 @@ struct PRChecksSection: View {
     @ObservedObject private var store = CheckLogStore.shared
     @State private var expanded: Set<String> = []
     @State private var sending: HubPRDetail.Check?
+    @GenReduceMotion private var reduceMotion
 
     private var sorted: [HubPRDetail.Check] { Self.sorted(checks) }
 
@@ -174,7 +175,7 @@ struct PRChecksSection: View {
                 row(check)
                     .findRow("check:\(check.id)", cornerRadius: 6)
                 if expanded.contains(check.id), let url = check.url {
-                    logPanel(check, url: url)
+                    logPanel(check, url: url).transition(.genReveal)
                 }
             }
         }
@@ -216,12 +217,15 @@ struct PRChecksSection: View {
 
     private func toggle(_ check: HubPRDetail.Check) {
         guard let url = check.url else { return }
-        if expanded.contains(check.id) {
-            expanded.remove(check.id)
-        } else {
-            expanded.insert(check.id)
-            store.load(url)
+        let opening = !expanded.contains(check.id)
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
+            if opening {
+                expanded.insert(check.id)
+            } else {
+                expanded.remove(check.id)
+            }
         }
+        if opening { store.load(url) }
     }
 
     @ViewBuilder

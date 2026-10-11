@@ -1259,6 +1259,7 @@ struct InboxSendBar: View {
 /// never shows a green check, and the raw tool output hides behind a Details disclosure.
 struct InboxDeliveryLine: View {
     let delivery: InboxDelivery
+    @State private var showsDetails = false
 
     var body: some View {
         let color = delivery.isError ? ReviewPalette.removed : delivery.isQueued ? ReviewPalette.modified : ReviewPalette.added
@@ -1268,7 +1269,7 @@ struct InboxDeliveryLine: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(delivery.summary).foregroundColor(color)
                 if let raw = delivery.raw, !raw.isEmpty {
-                    DisclosureGroup {
+                    GenDisclosure(isExpanded: $showsDetails, minHeight: 20, spacing: 4, accessibilityTitle: "Details") {
                         Text(verbatim: raw)
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundColor(ReviewPalette.dim)
@@ -1301,9 +1302,11 @@ struct InboxDecisionCard: View {
     private static let contextFold: CGFloat = 150
     @State private var showAsk = false
     @State private var showReply = false
+    @State private var showsDeliveryDetails = false
     @State private var saveTask: Task<Void, Never>?
     /// ⌘F: when the current match is in this card's folded context, the context unfolds by itself.
     @Environment(\.panelFindHighlight) private var highlight
+    @GenReduceMotion private var reduceMotion
 
     private var writing: Bool { inbox.writing.contains(item.id) }
     private var pickable: Bool { item.isOpen && session.sessionId != nil }
@@ -1421,7 +1424,10 @@ struct InboxDecisionCard: View {
 
     private func askRow(_ ask: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Button { showAsk.toggle() } label: {
+            Button {
+                let opening = !showAsk
+                GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { showAsk = opening }
+            } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "quote.opening").font(.system(size: 9))
                     Text(verbatim: showAsk ? "Asked" : "Asked: \(ask)")
@@ -1438,8 +1444,10 @@ struct InboxDecisionCard: View {
                     .foregroundColor(Color.white.opacity(0.7))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.genReveal)
             }
         }
+        .clipped()
     }
 
     private func contextSection(_ context: String) -> some View {
@@ -1448,7 +1456,10 @@ struct InboxDecisionCard: View {
                 Text("Context").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
                 Spacer()
                 if contextOverflows || showContext {
-                    Button(contextRevealed ? "Show less" : "Show all") { withAnimation(.easeInOut(duration: 0.15)) { showContext = !contextRevealed } }
+                    Button(contextRevealed ? "Show less" : "Show all") {
+                        let revealing = !contextRevealed
+                        GenMotion.perform(expanding: revealing, reduceMotion: reduceMotion) { showContext = revealing }
+                    }
                         .buttonStyle(.genHoverPlain())
                         .font(.system(size: 10.5))
                         .foregroundColor(ReviewPalette.renamed)
@@ -1537,7 +1548,8 @@ struct InboxDecisionCard: View {
                         .lineLimit(2)
                         .truncationMode(.middle)
                     if let raw = record.raw, !raw.isEmpty {
-                        DisclosureGroup {
+                        GenDisclosure(isExpanded: $showsDeliveryDetails, minHeight: 20, spacing: 4,
+                                      accessibilityTitle: "Delivery details") {
                             Text(verbatim: raw)
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundColor(ReviewPalette.dim)

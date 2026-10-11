@@ -593,8 +593,10 @@ struct TimelineCommitDetailView: View {
                 }
                 .frame(maxHeight: 260)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.3)))
+                .transition(.genReveal)
             }
         }
+        .clipped()
     }
 }
 

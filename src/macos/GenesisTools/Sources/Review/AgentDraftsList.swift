@@ -7,6 +7,7 @@ import SwiftUI
 struct AgentDraftsList: View {
     @ObservedObject var model: ReviewModel
     @AppStorage("review.agentDrafts.folded", store: HubDefaults.store) private var folded = false
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         if let proposal = model.proposal {
@@ -15,7 +16,10 @@ struct AgentDraftsList: View {
                 let open = drafts.filter { $0.status == "proposed" }.count
                 VStack(alignment: .leading, spacing: 6) {
                     Button {
-                        folded.toggle()
+                        let opening = folded
+                        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion || drafts.count > GenMotion.maxAnimatedRows) {
+                            folded = !opening
+                        }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: folded ? "chevron.right" : "chevron.down")

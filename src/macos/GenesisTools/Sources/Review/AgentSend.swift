@@ -260,7 +260,7 @@ struct AgentSendForm: View {
     @ViewBuilder
     private func preview(_ chosen: [String]) -> some View {
         let open = Binding(get: { showsPreview ?? previewOpen }, set: { showsPreview = $0 })
-        DisclosureGroup(isExpanded: open) {
+        GenDisclosure(isExpanded: open, accessibilityTitle: "Preview message") {
             // Built only while open: the message reads every chosen comment's code.
             if open.wrappedValue {
                 ScrollView {

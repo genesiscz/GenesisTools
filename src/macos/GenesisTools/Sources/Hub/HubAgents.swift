@@ -1050,6 +1050,7 @@ struct AgentsListView: View {
     @State private var expandedAll = Set<String>()
     /// A row click puts the keyboard on the list, for Left, Right and Return.
     @FocusState private var listFocused: Bool
+    @GenReduceMotion private var reduceMotion
     private static let shownPerParent = 40
 
     private var status: AgentStatusFilter { AgentStatusFilter(rawValue: statusRaw) ?? .active }
@@ -1251,7 +1252,7 @@ struct AgentsListView: View {
             // Only the chevron folds; the rest of the row opens the lead session.
             HStack(alignment: .top, spacing: 0) {
                 Button {
-                    withAnimation(.snappy(duration: 0.2)) { agents.toggle(parent) }
+                    GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) { agents.toggle(parent) }
                 } label: {
                     Image(systemName: open ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
@@ -1541,6 +1542,7 @@ struct AgentChildDetails: View {
     /// Remembered, and settable in a snapshot (`--set hub.agents.promptOpen=true`).
     @AppStorage("hub.agents.promptOpen") private var promptOpen = false
     @State private var mailOpen = true
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1595,7 +1597,8 @@ struct AgentChildDetails: View {
     private func spawnPrompt(_ prompt: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.snappy(duration: 0.2)) { promptOpen.toggle() }
+                let opening = !promptOpen
+                GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { promptOpen = opening }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: promptOpen ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
@@ -1621,14 +1624,17 @@ struct AgentChildDetails: View {
                 }
                 .frame(maxHeight: 200)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+                .transition(.genReveal)
             }
         }
+        .clipped()
     }
 
     private var mailStrip: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.snappy(duration: 0.2)) { mailOpen.toggle() }
+                let opening = !mailOpen
+                GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { mailOpen = opening }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: mailOpen ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
@@ -1659,8 +1665,10 @@ struct AgentChildDetails: View {
                 }
                 .frame(maxHeight: 150)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+                .transition(.genReveal)
             }
         }
+        .clipped()
     }
 
     /// Every message in time order, newest last; waiting ones at the end.
