@@ -36,8 +36,6 @@ private struct HubAppearanceSettings: View {
     @Environment(\.accessibilityReduceTransparency) private var systemOpaque
 
     private var native: Bool { preferences.style == .native }
-    /// The theme a Native hub shows: Glass while the glass switch is on, else General → Theme.
-    private var hubTheme: NativeSettingsTheme { preferences.glass ? .glass : appearance.theme }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -50,35 +48,32 @@ private struct HubAppearanceSettings: View {
                 ) { style in
                     switch style {
                     case .hub: Color(nsColor: KitPalette.background)
-                    case .native: NativeSettingsThemePicker.preview(hubTheme)
+                    case .native: NativeSettingsThemePicker.preview(appearance.theme)
                     }
                 }
                 if native {
                     Divider()
-                    NativeSettingsRow(
-                        "Theme: \(hubTheme.title)",
-                        detail: preferences.glass
-                            ? "Glass is on, so the hub uses the Glass theme."
-                            : "The hub follows General → Theme."
-                    ) {
+                    NativeSettingsRow("Theme: \(appearance.theme.title)", detail: "The hub follows General → Theme.") {
                         Button("Open General") { store.select(pageID: "general") }
                             .buttonStyle(.bordered)
                             .nativeSettingsPointer()
                             .accessibilityIdentifier("hub.style.openGeneral")
                     }
+                    if appearance.reduceTransparency || systemOpaque {
+                        Text("Reduce transparency is on, so the hub shows solid surfaces.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
             }
             NativeSettingsCard {
+                // Glass belongs to the Hub style; the Native style takes its look from General → Theme alone.
                 NativeSettingsToggle(
                     "Glass",
                     detail: native
-                        ? "Use the Glass theme in the hub, whatever General → Theme says. ⌘⇧G in the hub does the same."
+                        ? "Native follows General → Theme."
                         : "Let the desktop show through the hub, blurred. ⌘⇧G in the hub does the same.",
                     identifier: "hub.glass", isOn: $preferences.glass)
-                if native && (appearance.reduceTransparency || systemOpaque) {
-                    Text("Reduce transparency is on, so the hub shows solid surfaces.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
+                    .disabled(native)
             }
             Text("Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

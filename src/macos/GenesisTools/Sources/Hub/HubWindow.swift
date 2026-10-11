@@ -1248,7 +1248,8 @@ final class HubModel: ObservableObject {
             prs: prs.prs,
             prsLoaded: prRootsRequested != nil && !prs.loading,
             worktrees: worktrees,
-            currentPath: paletteCurrentPath
+            currentPath: paletteCurrentPath,
+            glassAvailable: HubGlassSwitch.available
         )
     }
 
@@ -1808,7 +1809,7 @@ struct HubRootView: View {
             }
         })
         .background(
-            Button("") { HubDefaults.preferences.glass.toggle() }
+            Button("") { HubGlassSwitch.toggle() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .opacity(0)
                 .accessibilityHidden(true)
@@ -1846,7 +1847,7 @@ struct HubRootView: View {
                 HubFindPanel(hub: model, roots: model.findRoots)
             }
             if paletteOpen {
-                HubPaletteHost(model: model, prs: model.prs, isPresented: $paletteOpen, seed: paletteSeed) { HubDefaults.preferences.glass.toggle() }
+                HubPaletteHost(model: model, prs: model.prs, isPresented: $paletteOpen, seed: paletteSeed) { HubGlassSwitch.toggle() }
             }
         }
         .onChange(of: model.paletteRequest, initial: true) { _, request in

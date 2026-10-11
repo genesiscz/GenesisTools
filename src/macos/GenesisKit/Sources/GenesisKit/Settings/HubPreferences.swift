@@ -35,7 +35,7 @@ public final class HubPreferences: ObservableObject {
     public static let cleanupIdleDaysRange = 0...90
 
     @Published public var style: HubWindowStyle { didSet { if oldValue != style { persist(.style) } } }
-    /// Hub style: the desktop shows through, blurred. Native style: the Glass theme, whatever General says.
+    /// The Hub style only: the desktop shows through, blurred. The Native style follows General → Theme instead.
     @Published public var glass: Bool { didSet { if oldValue != glass { persist(.glass) } } }
     /// The Agent processes pane adds macOS energy impact (one `top` sample of about 1 s per refresh).
     @Published public var processEnergy: Bool {

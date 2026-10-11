@@ -23,11 +23,11 @@ extension HubDefaults {
 /// What the hub window draws, from the window style, the glass switch and General → Theme.
 ///
 /// - Hub style: today's look. Glass lets the desktop show through.
-/// - Native style: the settings window's look for the theme in General. Glass picks the Glass theme for the hub
-///   whatever General says; Reduce transparency shows solid surfaces either way.
+/// - Native style: the settings window's look for General → Theme only (Glass, Solid or Gradient there). The hub's
+///   glass switch does not apply; Reduce transparency shows solid surfaces.
 struct HubLook: Equatable {
     let style: HubWindowStyle
-    /// The theme Native surfaces draw (`NativePaneFill`, `NativeSettingsBackdrop`).
+    /// The theme Native surfaces draw (`NativePaneFill`, `NativeSettingsBackdrop`): General → Theme.
     let theme: NativeSettingsTheme
     /// The window shows the blurred desktop (`HubGlass.apply`).
     let seeThrough: Bool
@@ -37,9 +37,8 @@ struct HubLook: Equatable {
         case .hub:
             return HubLook(style: .hub, theme: general, seeThrough: glass)
         case .native:
-            let theme: NativeSettingsTheme = glass ? .glass : general
-            let effective = theme.effective(reduceTransparency: reduceTransparency, systemReduceTransparency: false)
-            return HubLook(style: .native, theme: theme, seeThrough: effective == .glass)
+            let effective = general.effective(reduceTransparency: reduceTransparency, systemReduceTransparency: false)
+            return HubLook(style: .native, theme: general, seeThrough: effective == .glass)
         }
     }
 
@@ -50,6 +49,21 @@ struct HubLook: Equatable {
         return resolve(
             style: HubDefaults.preferences.style, glass: HubDefaults.preferences.glass, general: appearance.theme,
             reduceTransparency: appearance.reduceTransparency || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
+    }
+}
+
+/// ⌘⇧G, the drop button, View → Glass and the palette's "glass": the switch belongs to the Hub style. In the Native
+/// style the window follows General → Theme, so these do nothing there (the button and the menu item show as
+/// unavailable, the palette says why).
+@MainActor
+enum HubGlassSwitch {
+    nonisolated static let nativeNote = "Native follows General → Theme"
+
+    static var available: Bool { HubDefaults.preferences.style == .hub }
+
+    static func toggle() {
+        guard available else { return }
+        HubDefaults.preferences.glass.toggle()
     }
 }
 

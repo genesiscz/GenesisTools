@@ -631,24 +631,25 @@ enum HubGlass {
     }
 }
 
-/// The glass switch by the mode picker. The same switch as Settings → Hub → Appearance → Glass.
+/// The glass switch by the mode picker. The same switch as Settings → Hub → Appearance → Glass, and like it only for
+/// the Hub style: in the Native style it is unavailable and says why.
 struct GlassToggle: View {
     @ObservedObject private var preferences = HubDefaults.preferences
 
     var body: some View {
-        let glass = preferences.glass
-        IconButton(systemName: glass ? "drop.fill" : "drop", tooltip: tooltip(glass)) {
-            withAnimation(.easeInOut(duration: 0.25)) { preferences.glass.toggle() }
+        let native = preferences.style == .native
+        let glass = preferences.glass && !native
+        IconButton(
+            systemName: glass ? "drop.fill" : "drop",
+            tooltip: native
+                ? "Glass is for the Hub style. \(HubGlassSwitch.nativeNote) (Settings → General)."
+                : glass ? "Glass is on: click for solid (⌘⇧G)" : "Glass: let the desktop show through (⌘⇧G)"
+        ) {
+            withAnimation(.easeInOut(duration: 0.25)) { HubGlassSwitch.toggle() }
         }
         .foregroundColor(glass ? ReviewPalette.renamed : ReviewPalette.dim)
+        .opacity(native ? 0.45 : 1)
         .hubLiquidGlass(glass, in: Circle())
-    }
-
-    private func tooltip(_ glass: Bool) -> String {
-        if preferences.style == .native {
-            return glass ? "Glass is on: click to follow General → Theme (⌘⇧G)" : "Glass: use the Glass theme in the hub (⌘⇧G)"
-        }
-        return glass ? "Glass is on: click for solid (⌘⇧G)" : "Glass: let the desktop show through (⌘⇧G)"
     }
 }
 

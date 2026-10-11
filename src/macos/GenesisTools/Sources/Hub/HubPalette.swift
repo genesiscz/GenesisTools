@@ -57,10 +57,12 @@ struct HubPaletteContext {
     var worktrees: [HubWorktree] = []
     /// The folder the palette acts on when no project is typed (the selected session's project).
     var currentPath: String?
+    /// The hub's Hub style: "glass" is listed and runs. In the Native style it is not listed, and typed it says why.
+    var glassAvailable = true
 
     /// Changes when anything the rows are built from changes.
     var signature: String {
-        "\(projects.count)|\(sessions.count)|\(prs.count)|\(prsLoaded)|\(worktrees.count)|\(currentPath ?? "")"
+        "\(projects.count)|\(sessions.count)|\(prs.count)|\(prsLoaded)|\(worktrees.count)|\(currentPath ?? "")|\(glassAvailable)"
     }
 }
 
@@ -160,8 +162,9 @@ enum HubPaletteEngine {
     static func suggestions(for input: String, context: HubPaletteContext, limit: Int = 12) -> [HubPaletteSuggestion] {
         let tokens = input.split(whereSeparator: \.isWhitespace).map(String.init)
         let endsWithSpace = input.last?.isWhitespace == true
+        let listed = Self.keywords.filter { $0.word != "glass" || context.glassAvailable }
         guard let first = tokens.first else {
-            return keywords.map { keywordRow($0, project: nil, completion: "\($0.word) ") }
+            return listed.map { keywordRow($0, project: nil, completion: "\($0.word) ") }
         }
 
         var project: HubPaletteProject?
@@ -171,7 +174,7 @@ enum HubPaletteEngine {
             // Still typing the first word: projects and commands that start with it.
             if tokens.count == 1 && !endsWithSpace {
                 let projectRows = ranked.prefix(6).map { projectRow($0, completion: "\($0.name) ") }
-                let keywordRows = keywords.filter { $0.word.hasPrefix(first.lowercased()) || $0.aliases.contains { $0.hasPrefix(first.lowercased()) } }
+                let keywordRows = listed.filter { $0.word.hasPrefix(first.lowercased()) || $0.aliases.contains { $0.hasPrefix(first.lowercased()) } }
                     .map { keywordRow($0, project: nil, completion: "\($0.word) ") }
                 return Array((keywordRows + projectRows).prefix(limit))
             }
@@ -195,12 +198,12 @@ enum HubPaletteEngine {
         let projectPrefix = project.map { "\($0.name) " } ?? ""
         guard let word = rest.first else {
             // "gt " : the project's commands.
-            return keywords.filter(\.usesProject).map { keywordRow($0, project: project, completion: "\(projectPrefix)\($0.word) ") }
+            return listed.filter(\.usesProject).map { keywordRow($0, project: project, completion: "\(projectPrefix)\($0.word) ") }
         }
         guard let command = keyword(word) else {
-            let matching = keywords.filter { $0.word.hasPrefix(word.lowercased()) || $0.aliases.contains { $0.hasPrefix(word.lowercased()) } }
+            let matching = listed.filter { $0.word.hasPrefix(word.lowercased()) || $0.aliases.contains { $0.hasPrefix(word.lowercased()) } }
             if matching.isEmpty {
-                return [HubPaletteSuggestion(id: "none", title: "No command “\(word)”", subtitle: "Commands: " + keywords.map(\.word).joined(separator: ", "), symbol: "questionmark.circle")]
+                return [HubPaletteSuggestion(id: "none", title: "No command “\(word)”", subtitle: "Commands: " + listed.map(\.word).joined(separator: ", "), symbol: "questionmark.circle")]
             }
             return matching.map { keywordRow($0, project: project, completion: "\(projectPrefix)\($0.word) ") }
         }
@@ -292,6 +295,9 @@ enum HubPaletteEngine {
                                      completion: "mode \(mode.rawValue)", action: .setMode(mode))
             }
         default:
+            guard context.glassAvailable else {
+                return [HubPaletteSuggestion(id: "glass-native", title: "Glass is for the Hub style", subtitle: "\(HubGlassSwitch.nativeNote) (Settings → General)", symbol: command.symbol)]
+            }
             return [HubPaletteSuggestion(id: "glass", title: "Turn glass on or off", subtitle: nil, symbol: command.symbol, completion: nil, action: .toggleGlass)]
         }
     }

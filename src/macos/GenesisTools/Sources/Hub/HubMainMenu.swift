@@ -183,7 +183,8 @@ enum HubMenuCommands {
                        checked: { $0.panes.contains(pane) }, separated: index == 0)
     } + [
         HubMenuCommand(title: "Glass", key: "g", modifiers: [.command, .shift], run: { $0.runPalette(.toggleGlass, toggleGlass: toggleGlass) },
-                       checked: { _ in HubDefaults.preferences.glass }, separated: true),
+                       checked: { _ in HubDefaults.preferences.glass && HubGlassSwitch.available },
+                       enabled: { _ in HubGlassSwitch.available }, separated: true),
         HubMenuCommand(title: "Native Style", run: { _ in
             let preferences = HubDefaults.preferences
             preferences.style = preferences.style == .native ? .hub : .native
@@ -261,7 +262,7 @@ enum HubMenuCommands {
     }
 
     private static func toggleGlass() {
-        HubDefaults.preferences.glass.toggle()
+        HubGlassSwitch.toggle()
     }
 
     /// The same path as `tools hub --<flag>` handed to a running hub.
