@@ -33,6 +33,7 @@ public struct NativeSettingsDisclosure<Content: View>: View {
             }
             .buttonStyle(.plain)
             .nativeSettingsPointer()
+            .nativeSettingsDisabledLook()
             .accessibilityIdentifier(identifier)
             .accessibilityLabel(title)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
@@ -42,6 +43,12 @@ public struct NativeSettingsDisclosure<Content: View>: View {
 }
 
 extension View {
+    /// A settings control's disabled look: the whole control at 0.4, as the `.genHover*` button styles draw a disabled
+    /// button. AppKit's own disabled switch and stepper differ too little from the enabled ones over the settings
+    /// backdrop (Hub → Appearance → Glass in the Native style read as live). Put it on the control itself; `.disabled`
+    /// from any container above reaches it through the environment.
+    public func nativeSettingsDisabledLook() -> some View { modifier(NativeSettingsDisabledLook()) }
+
     /// The pointing-hand cursor over a clickable settings control, so a row, a recorder or a text-like button reads as
     /// clickable before it is pressed. The shared `pointerCursor()`, which also resets the cursor when the control
     /// disappears under the pointer. A disabled control keeps the arrow; apply `.disabled` after this modifier, since
@@ -53,6 +60,12 @@ private struct NativeSettingsPointer: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
 
     func body(content: Content) -> some View { content.pointerCursor(isEnabled) }
+}
+
+private struct NativeSettingsDisabledLook: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View { content.opacity(isEnabled ? 1 : 0.4) }
 }
 
 public struct NativeSettingsNumberPicker: View {
@@ -93,8 +106,9 @@ public struct NativeSettingsNumberPicker: View {
                     .labelsHidden().fixedSize()
                     .accessibilityIdentifier(identifier + ".stepper")
             }.fixedSize()
+                .nativeSettingsDisabledLook()
         } else {
-            menu
+            menu.nativeSettingsDisabledLook()
         }
     }
 

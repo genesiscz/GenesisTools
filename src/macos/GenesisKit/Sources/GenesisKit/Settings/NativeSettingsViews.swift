@@ -26,6 +26,7 @@ public struct NativeSettingsCard<Content: View>: View {
 }
 
 public struct NativeSettingsRow<Accessory: View>: View {
+    @Environment(\.isEnabled) private var isEnabled
     private let title: String
     private let detail: String?
     private let accessory: Accessory
@@ -39,7 +40,13 @@ public struct NativeSettingsRow<Accessory: View>: View {
     public var body: some View {
         HStack(spacing: 24) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 13, weight: .medium))
+                // A disabled row's title goes secondary; its detail stays readable, since it usually says why. An enabled
+                // title keeps the style it inherits (white on a gradient card).
+                if isEnabled {
+                    Text(title).font(.system(size: 13, weight: .medium))
+                } else {
+                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                }
                 if let detail {
                     Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -67,6 +74,7 @@ public struct NativeSettingsToggle: View {
     public var body: some View {
         NativeSettingsRow(title, detail: detail) {
             Toggle(title, isOn: $value).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .nativeSettingsDisabledLook()
                 .accessibilityIdentifier(identifier ?? "settings.toggle.\(title)")
         }
     }
