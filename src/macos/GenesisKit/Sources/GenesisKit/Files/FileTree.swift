@@ -139,7 +139,9 @@ public final class FileTreeModel: ObservableObject {
                 return
             }
             self.children[path] = listed
-            self.rebuild()
+            // A folder the user opened grows by its rows like the click did; the root's first listing just appears.
+            let opened = self.expanded.contains(path)
+            GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion || !opened) { self.rebuild() }
         }
     }
 
@@ -293,6 +295,7 @@ struct FileTreeRowView: View, Equatable {
     let style: FileTreeStyle
     let model: FileTreeModel
     let actions: FileTreeActions
+    @GenReduceMotion private var reduceMotion
 
     static func == (left: FileTreeRowView, right: FileTreeRowView) -> Bool {
         left.row == right.row && left.selected == right.selected && left.icon == right.icon
@@ -302,7 +305,7 @@ struct FileTreeRowView: View, Equatable {
     var body: some View {
         Button {
             if row.isFolder {
-                model.toggle(row.id)
+                GenMotion.perform(expanding: !row.expanded, reduceMotion: reduceMotion) { model.toggle(row.id) }
             } else {
                 actions.open(row.url)
             }

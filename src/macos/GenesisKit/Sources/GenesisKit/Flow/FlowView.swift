@@ -496,6 +496,7 @@ private struct FlowEntryRow: View {
     let entry: FlowEntry
     @ObservedObject var session: FlowSession
     @State private var hovered = false
+    @GenReduceMotion private var reduceMotion
     /// Show what the recogniser actually heard, before dictionary/snippets.
     ///
     /// Rewriting speech is only tolerable if it stays auditable — the loudest
@@ -530,7 +531,8 @@ private struct FlowEntryRow: View {
 
                 if wasRewritten {
                     Button {
-                        showingRaw.toggle()
+                        let raw = !showingRaw
+                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { showingRaw = raw }
                     } label: {
                         HStack(spacing: GenSpacing.xxs) {
                             Image(systemName: showingRaw ? "arrow.uturn.forward" : "arrow.uturn.backward")

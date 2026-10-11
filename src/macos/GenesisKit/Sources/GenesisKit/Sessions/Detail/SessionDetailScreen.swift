@@ -662,6 +662,7 @@ public struct SessionDetailSidebar<Extra: View>: View {
     @State private var showAllFiles = false
     @State private var showReads = false
     @State private var showAllSubagents = false
+    @GenReduceMotion private var reduceMotion
 
     private static var fileLimit: Int { 10 }
     private static var subagentLimit: Int { 6 }
@@ -900,11 +901,13 @@ public struct SessionDetailSidebar<Extra: View>: View {
                 FileTouchRow(file: file)
             }
             if changed.count > Self.fileLimit {
-                moreButton(showAllFiles ? "Show fewer" : "Show \(changed.count - Self.fileLimit) more") { showAllFiles.toggle() }
+                moreButton(showAllFiles ? "Show fewer" : "Show \(changed.count - Self.fileLimit) more") {
+                    reveal($showAllFiles, rows: changed.count - Self.fileLimit)
+                }
             }
             if !reads.isEmpty {
                 Button {
-                    showReads.toggle()
+                    reveal($showReads, rows: reads.count)
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.right")
@@ -987,7 +990,9 @@ public struct SessionDetailSidebar<Extra: View>: View {
                 }
             }
             if ordered.count > limit {
-                moreButton(showAllSubagents ? "Show fewer" : "Show \(ordered.count - limit) more") { showAllSubagents.toggle() }
+                moreButton(showAllSubagents ? "Show fewer" : "Show \(ordered.count - limit) more") {
+                    reveal($showAllSubagents, rows: ordered.count - limit)
+                }
             }
         }
         .accessibilityIdentifier("session-details-subagents")
@@ -1035,6 +1040,14 @@ public struct SessionDetailSidebar<Extra: View>: View {
             .font(.system(size: 11.5))
             .foregroundStyle(SessionPalette.faint)
             .frame(height: 22)
+    }
+
+    /// Opens or closes one of the sidebar's lists in one `GenMotion` animation; a long list appears at once.
+    private func reveal(_ flag: Binding<Bool>, rows: Int) {
+        let opening = !flag.wrappedValue
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion || rows > GenMotion.maxAnimatedRows) {
+            flag.wrappedValue = opening
+        }
     }
 
     private func moreButton(_ title: String, action: @escaping () -> Void) -> some View {

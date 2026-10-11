@@ -454,6 +454,7 @@ public struct FocusTimelineView: View {
 public struct FocusBreakdownView: View {
     @ObservedObject public var model: FocusStudioModel
     @State private var expanded: Set<String> = []
+    @GenReduceMotion private var reduceMotion
 
     public var body: some View {
         ScrollView {
@@ -542,7 +543,11 @@ public struct FocusBreakdownView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard expandable else { return }
-            if expanded.contains(bucket.key) { expanded.remove(bucket.key) } else { expanded.insert(bucket.key) }
+            let opening = !expanded.contains(bucket.key)
+            let rows = model.childBuckets[bucket.key]?.count ?? 0
+            GenMotion.perform(expanding: opening, reduceMotion: reduceMotion || rows > GenMotion.maxAnimatedRows) {
+                if opening { expanded.insert(bucket.key) } else { expanded.remove(bucket.key) }
+            }
         }
         .instantTooltip(expandable
                         ? "\(expanded.contains(bucket.key) ? "Hide" : "Show") windows and sites for \(bucket.key)"

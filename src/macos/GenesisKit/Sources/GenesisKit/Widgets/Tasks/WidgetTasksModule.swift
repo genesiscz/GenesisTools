@@ -225,6 +225,7 @@ private struct WidgetTaskComposer: View {
     @ObservedObject var store: WidgetTasksStore
     @FocusState private var focused: Bool
     @State private var showsDetails = false
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -247,6 +248,7 @@ private struct WidgetTaskComposer: View {
                 TextField("Details (optional)", text: $store.draft.details, axis: .vertical)
                     .textFieldStyle(.plain).font(.system(size: 11.5)).lineLimit(1...5)
                     .padding(.leading, 22)
+                    .transition(.genReveal)
             }
             HStack(spacing: 10) {
                 MenuButton(items: sessionItems) {
@@ -260,7 +262,10 @@ private struct WidgetTaskComposer: View {
                         .lineLimit(1).padding(.horizontal, 6).padding(.vertical, 3)
                 }
                 .instantTooltip("The project this task files under")
-                Button(showsDetails ? "Hide details" : "Details…") { showsDetails.toggle() }
+                Button(showsDetails ? "Hide details" : "Details…") {
+                    let opening = !showsDetails
+                    GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { showsDetails = opening }
+                }
                     .buttonStyle(.genHoverPlain()).padding(.horizontal, 6).padding(.vertical, 3)
                 Spacer(minLength: 0)
             }

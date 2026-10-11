@@ -29,6 +29,7 @@ public struct CmuxSessionPanel: View {
     let focus: (() -> Void)?
     let open: (CmuxTarget) -> Void
     let reload: () -> Void
+    @GenReduceMotion private var reduceMotion
 
     /// `refs`: the journalled cmux refs ("window:1", "workspace:3", …); `focus` nil hides Focus.
     /// Focus also hides while the loaded tree has no tab for the session.
@@ -101,7 +102,8 @@ public struct CmuxSessionPanel: View {
                     height: 28,
                     identifier: "cmux-targets"
                 ) {
-                    choosing.toggle()
+                    let opening = !choosing
+                    GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { choosing = opening }
                 }
             }
             if let current = notice {
@@ -110,6 +112,7 @@ public struct CmuxSessionPanel: View {
             if choosing {
                 CmuxTargetPicker(tree: tree, loading: loading, highlightSession: sessionId, modeKey: modeKey, modeStore: modeStore, reload: reload, onPick: open)
                     .padding(.top, 2)
+                    .transition(.genReveal)
             }
         }
         .disabled(busy)

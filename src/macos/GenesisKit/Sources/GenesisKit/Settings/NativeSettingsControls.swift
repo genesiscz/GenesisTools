@@ -6,9 +6,7 @@ public struct NativeSettingsDisclosure<Content: View>: View {
     private let identifier: String
     private let content: Content
     @State private var expanded = false
-    @Environment(\.nativeSettingsReduceMotion) private var appReduceMotion
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    private var reduceMotion: Bool { appReduceMotion || systemReduceMotion }
+    @GenReduceMotion private var reduceMotion
 
     public init(_ title: String, identifier: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -19,7 +17,8 @@ public struct NativeSettingsDisclosure<Content: View>: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { expanded.toggle() }
+                let opening = !expanded
+                GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { expanded = opening }
             } label: {
                 HStack(spacing: 9) {
                     Image(systemName: "chevron.right")
@@ -37,8 +36,10 @@ public struct NativeSettingsDisclosure<Content: View>: View {
             .accessibilityIdentifier(identifier)
             .accessibilityLabel(title)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            if expanded { content.padding(.top, 8) }
+            if expanded { content.padding(.top, 8).transition(.genReveal) }
         }
+        // The section closes over its content; a few points of slack keep a control's focus ring.
+        .clipShape(Rectangle().inset(by: -3))
     }
 }
 
