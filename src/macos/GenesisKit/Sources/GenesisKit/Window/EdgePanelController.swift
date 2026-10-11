@@ -91,6 +91,8 @@ public final class EdgePanelController<Content: View> {
         let shrinking: Bool
         /// The same content at another size (`beginReshape`), rather than a change of what the panel shows.
         let reshape: Bool
+        /// Starts the motion at the first display frame (a reshape's outline and content start together there).
+        var pendingStart: (() -> Void)?
         let started: CFTimeInterval
         let duration: CFTimeInterval
         var timing: AnimationTiming
@@ -351,39 +353,49 @@ public final class EdgePanelController<Content: View> {
         root.layoutSubtreeIfNeeded()
         CATransaction.commit()
 
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            MainActor.assumeIsolated { self?.complete(token) }
+        // The outline (render server) and the content (SwiftUI, main thread) start together at the first display frame,
+        // not now: the click that opened or closed something still lays out and draws its own change on the main
+        // thread, and an outline started here ran 30-60 ms ahead of the content, so a shrinking side panel cut off
+        // its own header for the first frames (live check, 2026-10-11).
+        let start = { [weak self] in
+            guard let self else { return }
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self] in
+                MainActor.assumeIsolated { self?.complete(token) }
+            }
+            let animation = CABasicAnimation(keyPath: "path")
+            animation.fromValue = startPath
+            animation.toValue = endPath
+            animation.duration = duration
+            animation.timingFunction = CAMediaTimingFunction(
+                controlPoints: GenMotion.curve.0, GenMotion.curve.1, GenMotion.curve.2, GenMotion.curve.3)
+            root.maskLayer.path = endPath
+            root.maskLayer.add(animation, forKey: "edge.outline")
+            CATransaction.commit()
+            placeContent(plan.endContent, animation: .timingCurve(
+                Double(GenMotion.curve.0), Double(GenMotion.curve.1), Double(GenMotion.curve.2),
+                Double(GenMotion.curve.3), duration: duration))
         }
-        let animation = CABasicAnimation(keyPath: "path")
-        animation.fromValue = startPath
-        animation.toValue = endPath
-        animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(
-            controlPoints: GenMotion.curve.0, GenMotion.curve.1, GenMotion.curve.2, GenMotion.curve.3)
-        root.maskLayer.path = endPath
-        root.maskLayer.add(animation, forKey: "edge.outline")
-        CATransaction.commit()
-        placeContent(plan.endContent, animation: .timingCurve(
-            Double(GenMotion.curve.0), Double(GenMotion.curve.1), Double(GenMotion.curve.2), Double(GenMotion.curve.3),
-            duration: duration))
 
         let ticker = EdgeFrameTicker(view: root) { [weak self] in
             MainActor.assumeIsolated { self?.tick(token) }
         }
         transition = Transition(
             token: token, from: from, to: target, window: plan.window, presentation: presentation,
-            shrinking: !plan.growing, reshape: true, started: started, duration: duration,
+            shrinking: !plan.growing, reshape: true, pendingStart: start, started: started, duration: duration,
             timing: AnimationTiming(at: started), ticker: ticker)
     }
 
     private func tick(_ token: Int) {
         guard var current = transition, current.token == token else { return }
         let start = CACurrentMediaTime()
+        let pending = current.pendingStart
+        current.pendingStart = nil
         // The window server draws the shadow from the window's pixels, so it follows the moving outline only when asked.
         panel.invalidateShadow()
         current.timing.record(startedAt: start, finishedAt: CACurrentMediaTime())
         transition = current
+        pending?()
     }
 
     private func complete(_ token: Int) {

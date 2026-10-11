@@ -157,6 +157,8 @@ final class EdgePanelReshapeTests: XCTestCase {
             CGRect(x: 0, y: 0, width: 340, height: 600),
             nil,
         ], "The content starts where it was on screen, rides the outline to the window's edges, then fills it")
+        XCTAssertGreaterThan(value.lastTransitionTiming?.callbacks ?? 0, 1,
+            "The outline and the content started together at the first display frame and ran to the end")
         XCTAssertEqual(frames.count, 1, "One resize for the whole motion, never one per frame")
         XCTAssertNil(value.motion.contentFrame, "Settled, the content fills the window again")
         XCTAssertEqual(value.panel.frame.midY, before.midY, accuracy: 0.5)
@@ -169,15 +171,20 @@ final class EdgePanelReshapeTests: XCTestCase {
         value.setSideCenterY(500)
         value.setPresentation(.expanded, reduceMotion: true)
         value.show()
+        var placed: [CGRect?] = []
+        let subscription = value.motion.$contentFrame.dropFirst().sink { placed.append($0) }
+        defer { subscription.cancel() }
         let frames = try await resizes(of: value.panel) {
             value.setExpandedSize(CGSize(width: 340, height: 400))
             value.setPresentation(.expanded, reduceMotion: false)
             XCTAssertEqual(value.panel.frame.height, 600, "The window keeps its size while the outline shrinks")
-            let end = try XCTUnwrap(value.motion.contentFrame)
-            XCTAssertEqual(end.height, 400, "The content heads for the smaller outline")
-            XCTAssertEqual(end.minY, 100, accuracy: 0.5)
             try await waitForCompletion(value, height: 400)
         }
+        XCTAssertEqual(placed, [
+            CGRect(x: 0, y: 0, width: 340, height: 600),
+            CGRect(x: 0, y: 100, width: 340, height: 400),
+            nil,
+        ], "The content heads for the smaller outline, then fills the smaller window")
         XCTAssertEqual(frames.count, 1, "One resize, at the end")
         XCTAssertEqual(value.panel.frame.height, 400)
         XCTAssertNil(value.motion.contentFrame)
