@@ -2108,6 +2108,11 @@ private struct SessionListView: View {
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
+                // The palette had only a key (⌘K) and a menu item; this is the one-click way in.
+                IconButton(systemName: "command", tooltip: "Command palette (⌘K)") {
+                    model.paletteRequest = ""
+                }
+                .foregroundColor(ReviewPalette.dim)
                 // A gear is the settings glyph; the shield read as a security warning (H19).
                 IconButton(systemName: "gearshape", tooltip: "Permissions and settings (⌘,)") {
                     AppMenuTarget.shared.openSettings(nil)
