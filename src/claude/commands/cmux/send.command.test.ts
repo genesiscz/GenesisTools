@@ -456,3 +456,37 @@ test("deliverySurfaceId prefers the matched surface over the selected one", () =
         ])
     ).toBe("surface:90");
 });
+
+test("a session in tmux is typed into the tab running its tmux client, and refused while its pane is off screen", async () => {
+    setSnapshot([
+        pane({
+            id: "pane:9",
+            title: "tools tmux session attach dd-045c53d3",
+            surfaces: [surface({ id: "surface:51", selected: true, tty: "ttys001" })],
+        }),
+    ]);
+    const host = { session: "dd-045c53d3", pane: "%200", visible: true, clientTtys: ["/dev/ttys001"] };
+
+    expect(
+        await sendCommand(
+            SESSION_A,
+            "hello",
+            { exactSession: true, enter: false, enterDelay: "0" },
+            { ...deps, tmuxHosts: async () => [host] }
+        )
+    ).toBe(true);
+    expect(events).toContain("send --surface surface:51 -- hello");
+
+    events = [];
+    expect(
+        await sendCommand(
+            SESSION_A,
+            "hello",
+            { first: true, json: true, enter: false, enterDelay: "0" },
+            { ...deps, tmuxHosts: async () => [{ ...host, visible: false }] }
+        )
+    ).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(await capturedResult()).toContain(`"hidden": true`);
+    expect(events.filter((event) => event.startsWith("send"))).toEqual([]);
+});

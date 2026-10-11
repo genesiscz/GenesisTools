@@ -5,6 +5,7 @@ import {
     findFocusTargets,
     matchingSession,
 } from "@app/claude/lib/cmux/focus";
+import { findTmuxHosts, type TmuxHost, tmuxAttachCommand } from "@app/claude/lib/cmux/tmux-host";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import {
     type CmuxLiveSnapshot,
@@ -13,6 +14,7 @@ import {
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { lookupSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 
 const { log } = logger.scoped("claude-cmux-resolve");
 
@@ -22,7 +24,7 @@ export interface CmuxIdentity {
 }
 
 /** Where a resolution came from, cheapest first. */
-export type SessionTargetSource = "recorded" | "titles" | "deep" | "deep-all" | "cwd" | "screen" | "none";
+export type SessionTargetSource = "recorded" | "tmux" | "titles" | "deep" | "deep-all" | "cwd" | "screen" | "none";
 
 /** Sources that do not prove the pane IS the session. Callers that type must not trust these blindly. */
 export const SOFT_SOURCES: ReadonlySet<SessionTargetSource> = new Set<SessionTargetSource>(["cwd", "screen"]);
@@ -35,6 +37,8 @@ export interface SessionTargetsResult {
     snapshot?: CmuxLiveSnapshot;
     /** cmux unreachable: the error text, or false when it was reachable. */
     unavailable: string | false;
+    /** Where the session runs in tmux, when it does and no cmux pane shows it: the reason for an empty result. */
+    tmuxHosts?: TmuxHost[];
 }
 
 export interface ResolveDeps {
@@ -42,6 +46,8 @@ export interface ResolveDeps {
     identify?: () => Promise<CmuxIdentity | undefined>;
     lookupSession?: (query: string) => Promise<{ aliases: string[]; sessionId: string | null; cwd?: string | null }>;
     lookupRefs?: (query: string) => SessionCmuxRefs | null;
+    /** The tmux panes a session runs in (`findTmuxHosts`). */
+    tmuxHosts?: (sessionId: string) => Promise<TmuxHost[]>;
 }
 
 export interface FindSessionTargetsOpts {
@@ -53,6 +59,8 @@ export interface FindSessionTargetsOpts {
 
 /** A session id (or prefix) as `focus`/`send` accept it. */
 export const SESSION_ID_QUERY = /^[0-9a-f-]{8,}$/i;
+
+const FULL_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Match kinds that actually prove "this pane IS the session" for a UUID query.
@@ -72,6 +80,8 @@ const ID_EVIDENCE_KINDS = new Set([
     "id-prefix",
     "session-name",
     "pane-title",
+    "tmux",
+    "tmux-hidden",
 ]);
 
 /**
@@ -88,6 +98,7 @@ const EXACT_SESSION_KINDS: ReadonlySet<FocusMatchKind> = new Set<FocusMatchKind>
     "resume-command",
     "resume-prefix",
     "title-id",
+    "tmux",
 ]);
 
 /** True when exactly one pane is proven to run the session, and it is the top match. */
@@ -125,6 +136,68 @@ function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
     };
 }
 
+/** `/dev/ttys001` (tmux) and `ttys001` (cmux) name the same terminal. */
+function ttyName(tty: string | undefined): string {
+    return (tty ?? "").replace(/^\/dev\//, "");
+}
+
+/**
+ * The cmux panes whose terminal runs a client of a tmux session this session runs in, joined by tty.
+ *
+ * Two clients in two panes give two targets. The match is exact only while the session's tmux pane is the one
+ * on screen: typing into the cmux surface reaches whatever pane the tmux client shows.
+ */
+export function tmuxHostTargets(snapshot: CmuxLiveSnapshot, hosts: TmuxHost[], sessionId: string): FocusTarget[] {
+    const names = new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace.name]));
+    const targets: FocusTarget[] = [];
+
+    for (const host of hosts) {
+        const ttys = new Set(host.clientTtys.map(ttyName).filter((tty) => tty !== ""));
+
+        for (const pane of snapshot.panes) {
+            const surface = pane.surfaces.find((candidate) => ttys.has(ttyName(candidate.tty)));
+
+            if (!surface) {
+                continue;
+            }
+
+            targets.push({
+                workspaceId: pane.workspaceId,
+                workspaceName: names.get(pane.workspaceId) ?? pane.workspaceId,
+                paneId: pane.id,
+                paneTitle: pane.title,
+                cwd: pane.cwd,
+                windowRef: pane.windowRef,
+                surfaceId: surface.id,
+                sessionIds: [sessionId.toLowerCase()],
+                matchedOn: host.visible ? "tmux" : "tmux-hidden",
+                score: host.visible ? 95 : 90,
+                active: pane.active,
+                tmux: { session: host.session, pane: host.pane },
+            });
+        }
+    }
+
+    return targets.sort(
+        (a, b) => b.score - a.score || Number(b.active) - Number(a.active) || a.paneId.localeCompare(b.paneId)
+    );
+}
+
+/** Why no cmux pane matched, when the session runs in tmux and no cmux pane shows its tmux session. */
+export function tmuxMissHint(result: Pick<SessionTargetsResult, "tmuxHosts">): string | null {
+    const host = result.tmuxHosts?.[0];
+
+    if (!host) {
+        return null;
+    }
+
+    const clients =
+        host.clientTtys.length === 0
+            ? "no client is attached to it"
+            : `its client${host.clientTtys.length === 1 ? "" : "s"} (${host.clientTtys.join(", ")}) run in no cmux pane`;
+    return `It runs in tmux session ${host.session} (pane ${host.pane}), and ${clients}. Attach it in a cmux pane: ${tmuxAttachCommand(host)}`;
+}
+
 /**
  * Panes for a session query, staged cheapest-first:
  *
@@ -132,10 +205,18 @@ function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
  *    (SessionStart + UserPromptSubmit), so a fresh untitled session resolves
  *    instantly and without any text matching. Never excludes the caller: the
  *    journal is ground truth and self-sends (keepalive) are legitimate.
- * 2. `titles` — tab-title pass with no pane captures (~0.4 s).
- * 3. `deep` — selected-surface captures (~0.6 s), catches `--resume <id>`
+ * 2. `tmux` — the session's process runs in a tmux pane (Claude's pid registry or a `--resume <id>`
+ *    command line, then its ancestry up to the tmux server), and a cmux pane runs a client of that tmux
+ *    session (joined by tty). Read beside the first snapshot, so it adds no wait. A session in tmux shows
+ *    nothing of itself to cmux: its tab title is `tmux attach`, and it inherits the server's environment,
+ *    so the hook records no surface for it.
+ * 3. `titles` — tab-title pass with no pane captures (~0.4 s).
+ * 4. `deep` — selected-surface captures (~0.6 s), catches `--resume <id>`
  *    still in a visible viewport.
- * 4. `deep-all` — every surface captured, catches background tabs (~1-3 s).
+ * 5. `deep-all` — every surface captured, catches background tabs (~1-3 s).
+ *
+ * A session known to run in tmux with no cmux pane on its tmux session skips the weak `cwd` and `screen`
+ * fallbacks: where it runs is known, and no pane shows it, so a pane in the same folder is not it.
  *
  * Non-id queries keep the single selected-previews pass `focus` always used.
  */
@@ -177,6 +258,15 @@ export async function findSessionTargets(
             };
         });
     const lookupRefs = deps.lookupRefs ?? lookupSessionCmuxRefs;
+    // A test that injects no probe gets none: the real one reads this machine's process table and tmux.
+    const tmuxHostsOf =
+        deps.tmuxHosts ??
+        (isTestProcess() ? async (): Promise<TmuxHost[]> => [] : (sessionId: string) => findTmuxHosts(sessionId));
+    const probeTmux = (sessionId: string): Promise<TmuxHost[]> =>
+        tmuxHostsOf(sessionId).catch((err) => {
+            log.debug({ err, sessionId }, "tmux host lookup failed; matching without it");
+            return [];
+        });
 
     const identityPromise = identify();
 
@@ -189,12 +279,19 @@ export async function findSessionTargets(
         }
     }
 
+    // A full id needs no lookup first, so its tmux probe starts beside the session lookup.
+    const fullId = sessionQuery && FULL_SESSION_ID.test(queryTrim) ? queryTrim.toLowerCase() : null;
+    const earlyTmux = fullId ? probeTmux(fullId) : null;
     const [identity, resolved] = await Promise.all([
         identityPromise,
         sessionQuery
             ? lookupSession(queryTrim)
             : Promise.resolve({ aliases: [], sessionId: null, cwd: null as string | null }),
     ]);
+    const tmuxSessionId = fullId ?? resolved.sessionId?.toLowerCase() ?? null;
+    const tmuxPromise: Promise<TmuxHost[]> =
+        earlyTmux ?? (sessionQuery && tmuxSessionId ? probeTmux(tmuxSessionId) : Promise.resolve([]));
+    let tmuxHosts: TmuxHost[] | undefined;
     // Exclude the caller's own TAB, not its whole pane: sibling tabs in the
     // same pane are legitimate targets, and the query is only echoed on this
     // one surface. Falls back to the pane when cmux reports no surface ref.
@@ -226,6 +323,15 @@ export async function findSessionTargets(
             };
         }
 
+        if (tmuxHosts === undefined) {
+            tmuxHosts = await tmuxPromise;
+            const viaTmux = tmuxSessionId ? tmuxHostTargets(snapshot, tmuxHosts, tmuxSessionId) : [];
+
+            if (viaTmux.length > 0) {
+                return { targets: viaTmux, source: "tmux", identity, snapshot, unavailable: false, tmuxHosts };
+            }
+        }
+
         const found = findFocusTargets(snapshot, queryTrim, {
             excludePaneId,
             excludeSurfaceId,
@@ -247,6 +353,12 @@ export async function findSessionTargets(
     // nowhere: the panes sitting in that session's working directory. Weak by
     // construction — several panes can share one repo — so callers that TYPE
     // into the result must refuse an ambiguous cwd match (see `send`).
+    const inTmux = tmuxHosts !== undefined && tmuxHosts.length > 0;
+
+    if (inTmux) {
+        return { targets: [], source: "none", identity, snapshot, unavailable: false, tmuxHosts };
+    }
+
     if (sessionQuery && snapshot && resolved.cwd) {
         // Only genuine directory hits: searching a path string would otherwise
         // also match any pane that merely printed that path.

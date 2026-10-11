@@ -383,11 +383,68 @@ export interface TmuxPaneInfo {
     visible: boolean;
     /** The session's id (`$3`): unique while the tmux server runs, unlike its name. */
     sessionId?: string;
+    /** The pid of the pane's first process (`#{pane_pid}`): the root of what runs in it. */
+    panePid?: number;
 }
 
 export interface TmuxClientInfo {
     tty: string;
     session: string;
+    /** The `tmux attach` process itself (`#{client_pid}`). */
+    pid?: number;
+}
+
+/**
+ * A tmux server other than the default one: `-L <name>` or `-S <path>`. Absent means the default socket,
+ * which is what every listing here talks to unless it is given one.
+ */
+export interface TmuxSocket {
+    flag: "-L" | "-S";
+    value: string;
+}
+
+function socketArgs(socket: TmuxSocket | undefined): string[] {
+    return socket ? [socket.flag, socket.value] : [];
+}
+
+/** tmux's global options that take a value, so the parser below skips the value instead of reading it as a command. */
+const TMUX_OPTIONS_WITH_VALUE = new Set(["-c", "-f", "-L", "-S", "-T"]);
+
+/**
+ * The socket a tmux SERVER process listens on, from its command line, or undefined for the default socket.
+ *
+ * macOS keeps the argv of the client that started the server (`tmux -L work new-session -d`); Linux retitles it
+ * `tmux: server (/tmp/tmux-1000/work)`, which names the socket path outright.
+ */
+export function tmuxSocketFromCommand(command: string): TmuxSocket | undefined {
+    const retitled = command.match(/^tmux: server \((.+)\)\s*$/);
+
+    if (retitled) {
+        return { flag: "-S", value: retitled[1] };
+    }
+
+    const argv = command.trim().split(/\s+/);
+
+    for (let i = 1; i < argv.length; i++) {
+        const arg = argv[i];
+
+        if (!arg.startsWith("-") || arg === "--") {
+            return undefined;
+        }
+
+        const flag = arg.slice(0, 2);
+
+        if (flag === "-L" || flag === "-S") {
+            const value = arg.length > 2 ? arg.slice(2) : argv[i + 1];
+            return value ? { flag, value } : undefined;
+        }
+
+        if (TMUX_OPTIONS_WITH_VALUE.has(arg)) {
+            i++;
+        }
+    }
+
+    return undefined;
 }
 
 /** A tmux listing, or why tmux did not answer. A server or session that does not exist is an empty listing. */
@@ -400,7 +457,11 @@ export type TmuxListing<T> = { ok: true; items: T[] } | { ok: false; reason: str
 const TMUX_ABSENT = /no server running|can't find session|error connecting to \S+ \(No such file or directory\)/i;
 
 /** Runs one bounded listing (child deadline plus TMUX_SPAWN_GUARD timeout) and parses its RS-framed records. */
-async function tmuxListing<T>(args: string[], parse: (fields: string[]) => T | null): Promise<TmuxListing<T>> {
+async function tmuxListing<T>(
+    args: string[],
+    parse: (fields: string[]) => T | null,
+    socket?: TmuxSocket
+): Promise<TmuxListing<T>> {
     let tmuxBin: string;
 
     try {
@@ -410,7 +471,7 @@ async function tmuxListing<T>(args: string[], parse: (fields: string[]) => T | n
         return { ok: true, items: [] };
     }
 
-    const result = await runTmux([tmuxBin, ...args]);
+    const result = await runTmux([tmuxBin, ...socketArgs(socket), ...args]);
 
     if (result.exitCode === 0) {
         const items: T[] = [];
@@ -436,12 +497,18 @@ async function tmuxListing<T>(args: string[], parse: (fields: string[]) => T | n
         result.exitCode === null
             ? `tmux ${args[0]} did not answer within ${TMUX_SPAWN_GUARD.timeout / 1000} s`
             : `tmux ${args[0]} failed (${result.exitCode})${tmuxErrorDetail(stderr)}`;
-    logger.debug({ args, exitCode: result.exitCode, stderr }, "tmux listing failed");
+    logger.debug({ args, socket, exitCode: result.exitCode, stderr }, "tmux listing failed");
     return { ok: false, reason };
 }
 
-/** Every pane (or the panes of one session, matched exactly) with its session, tty and whether a client shows it. */
-export async function listTmuxPanes(session?: string): Promise<TmuxListing<TmuxPaneInfo>> {
+/**
+ * Every pane (or the panes of one session, matched exactly) with its session, tty, root pid and whether a
+ * client shows it. `socket` reads another tmux server than the default one.
+ */
+export async function listTmuxPanes(
+    session?: string,
+    opts: { socket?: TmuxSocket } = {}
+): Promise<TmuxListing<TmuxPaneInfo>> {
     const scope = session === undefined ? ["-a"] : ["-s", "-t", `=${session}`];
     const format = formatWithRecordSeparator([
         "#{pane_id}",
@@ -451,11 +518,12 @@ export async function listTmuxPanes(session?: string): Promise<TmuxListing<TmuxP
         "#{window_active}",
         "#{pane_active}",
         "#{session_id}",
+        "#{pane_pid}",
     ]);
 
     return tmuxListing(
         ["list-panes", ...scope, "-F", format],
-        ([pane, name, tty, created, windowActive, paneActive, sessionId]) =>
+        ([pane, name, tty, created, windowActive, paneActive, sessionId, panePid]) =>
             pane && name
                 ? {
                       pane,
@@ -464,16 +532,20 @@ export async function listTmuxPanes(session?: string): Promise<TmuxListing<TmuxP
                       sessionCreatedMs: Number(created) * 1000,
                       visible: windowActive === "1" && paneActive === "1",
                       ...(sessionId ? { sessionId } : {}),
+                      ...(Number(panePid) > 0 ? { panePid: Number(panePid) } : {}),
                   }
-                : null
+                : null,
+        opts.socket
     );
 }
 
-/** Every attached client with its tty and the session it shows. */
-export async function listTmuxClients(): Promise<TmuxListing<TmuxClientInfo>> {
+/** Every attached client with its tty, its pid and the session it shows. `socket` reads another tmux server. */
+export async function listTmuxClients(opts: { socket?: TmuxSocket } = {}): Promise<TmuxListing<TmuxClientInfo>> {
     return tmuxListing(
-        ["list-clients", "-F", formatWithRecordSeparator(["#{client_tty}", "#{session_name}"])],
-        ([tty, name]) => (tty && name ? { tty, session: name } : null)
+        ["list-clients", "-F", formatWithRecordSeparator(["#{client_tty}", "#{session_name}", "#{client_pid}"])],
+        ([tty, name, pid]) =>
+            tty && name ? { tty, session: name, ...(Number(pid) > 0 ? { pid: Number(pid) } : {}) } : null,
+        opts.socket
     );
 }
 

@@ -25,6 +25,7 @@ import {
     TMUX_SPAWN_GUARD,
     tmuxPaneArgv,
     tmuxServerBootstrapCwd,
+    tmuxSocketFromCommand,
 } from "@genesiscz/utils/tmux/sessions";
 
 /**
@@ -101,6 +102,66 @@ describe("tmux sessions", () => {
         const unanswered = await listTmuxPanes("cmux-app");
         expect(unanswered.ok).toBe(false);
         expect(unanswered.ok ? "" : unanswered.reason).toContain("did not answer");
+    });
+
+    test("listings carry the pane and client pids, and read another server through its socket", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        let answer = { exitCode: 0, stdout: rec("%200|dd-045c53d3|/dev/ttys040|1760000000|1|1|$7|79917") };
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+            return answer;
+        });
+
+        expect(await listTmuxPanes(undefined, { socket: { flag: "-L", value: "work" } })).toEqual({
+            ok: true,
+            items: [
+                {
+                    pane: "%200",
+                    session: "dd-045c53d3",
+                    tty: "/dev/ttys040",
+                    sessionCreatedMs: 1_760_000_000_000,
+                    visible: true,
+                    sessionId: "$7",
+                    panePid: 79917,
+                },
+            ],
+        });
+        // The socket goes before the command, where tmux reads its global options.
+        expect(calls[0].slice(calls[0].indexOf("/mock/tmux"), calls[0].indexOf("/mock/tmux") + 4)).toEqual([
+            "/mock/tmux",
+            "-L",
+            "work",
+            "list-panes",
+        ]);
+
+        answer = { exitCode: 0, stdout: rec("/dev/ttys001|dd-045c53d3|58543") };
+        expect(await listTmuxClients()).toEqual({
+            ok: true,
+            items: [{ tty: "/dev/ttys001", session: "dd-045c53d3", pid: 58543 }],
+        });
+        // No socket: the default server, with no socket flag at all.
+        expect(calls[1]).not.toContain("-L");
+        expect(calls[1]).not.toContain("-S");
+    });
+
+    test("a tmux server's socket comes from its command line, and none means the default socket", () => {
+        expect(
+            tmuxSocketFromCommand("/opt/homebrew/bin/tmux new-session -d -s dd-1 -c /repo -- /bin/zsh")
+        ).toBeUndefined();
+        expect(tmuxSocketFromCommand("tmux -L work new-session -d")).toEqual({ flag: "-L", value: "work" });
+        expect(tmuxSocketFromCommand("tmux -S /tmp/agents.sock new -d")).toEqual({
+            flag: "-S",
+            value: "/tmp/agents.sock",
+        });
+        expect(tmuxSocketFromCommand("tmux -f /etc/tmux.conf -Lwork new")).toEqual({ flag: "-L", value: "work" });
+        // An -L after the command belongs to the command, not to tmux.
+        expect(tmuxSocketFromCommand("tmux new-session -d -- sh -c 'x -L y'")).toBeUndefined();
+        // Linux retitles the server process with its socket path.
+        expect(tmuxSocketFromCommand("tmux: server (/tmp/tmux-1000/default)")).toEqual({
+            flag: "-S",
+            value: "/tmp/tmux-1000/default",
+        });
     });
 
     test("argvWithChildDeadline prefixes a bounded watchdog, not an unbounded wait", () => {

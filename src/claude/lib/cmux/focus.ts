@@ -100,7 +100,11 @@ export type FocusMatchKind =
     | "pane-title"
     | "workspace"
     | "cwd"
-    | "screen";
+    | "screen"
+    /** The session runs in a tmux pane that is on screen in the tmux session this pane's client shows. */
+    | "tmux"
+    /** As `tmux`, but the session's tmux pane is in another window or pane of that tmux session. */
+    | "tmux-hidden";
 
 export interface FindFocusOptions {
     /** Pane to leave out of the search, normally the one this process runs in. */
@@ -147,6 +151,8 @@ export interface FocusTarget {
     /** Higher wins. Ties break on the pane already being active, then on pane id. */
     score: number;
     active: boolean;
+    /** The tmux session and pane the session runs in, when the pane was found through its tmux client. */
+    tmux?: { session: string; pane: string };
 }
 
 /** One block of text to match against, and the surface it came from when it came from one. */
@@ -498,7 +504,8 @@ function ownsSession(target: FocusTarget): boolean {
         target.matchedOn === "resume-command" ||
         target.matchedOn === "resume-prefix" ||
         target.matchedOn === "title-id" ||
-        target.matchedOn === "session-name"
+        target.matchedOn === "session-name" ||
+        target.matchedOn === "tmux"
     );
 }
 
@@ -526,5 +533,9 @@ export function describeMatch(target: FocusTarget): string {
             return "working directory";
         case "screen":
             return "text on screen";
+        case "tmux":
+            return `via tmux ${target.tmux?.session ?? "session"}`;
+        case "tmux-hidden":
+            return `via tmux ${target.tmux?.session ?? "session"} (its pane ${target.tmux?.pane ?? ""} is not on screen)`;
     }
 }

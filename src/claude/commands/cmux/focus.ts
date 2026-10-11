@@ -1,5 +1,5 @@
 import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs } from "@app/claude/lib/cmux/resolve";
+import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, tmuxMissHint } from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
@@ -222,11 +222,18 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
             // Same failure as the human path below, so it has to carry the same exit code.
             // `{ focused: null }` on exit 0 reads as success to anything scripting this.
             process.exitCode = 1;
-            out.result(SafeJSON.stringify({ query, focused: null, matches: [] }, null, 2));
+            const tmux = result.tmuxHosts?.length ? { tmux: result.tmuxHosts } : {};
+            out.result(SafeJSON.stringify({ query, focused: null, matches: [], ...tmux }, null, 2));
             return;
         }
 
         out.error(pc.red(`No cmux pane matches "${query}".`));
+        const tmuxHint = tmuxMissHint(result);
+
+        if (tmuxHint) {
+            out.printlnErr(pc.dim(`  ${tmuxHint}`));
+        }
+
         if (result.snapshot) {
             out.printlnErr(
                 pc.dim(

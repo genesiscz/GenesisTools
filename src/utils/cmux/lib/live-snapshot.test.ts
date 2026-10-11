@@ -275,7 +275,7 @@ describe("fetchCmuxLiveSnapshot", () => {
         expect(healthy.error).toBe("cmux list-workspaces failed (1): timed out");
     });
 
-    test("surfaces come from one tree call, projected to what list-pane-surfaces reports; an unknown pane still asks", async () => {
+    test("surfaces come from one tree call, projected to what list-pane-surfaces reports plus the tty; an unknown pane still asks", async () => {
         const calls: string[][] = [];
         const runJson = async <T>(args: string[]): Promise<T> => {
             calls.push(args);
@@ -290,8 +290,16 @@ describe("fetchCmuxLiveSnapshot", () => {
 
             if (args[0] === "tree") {
                 const surfaces = [
-                    { ref: "surface:1", index: 0, index_in_pane: 0, title: "one", type: "terminal", selected: true },
-                    { ref: "surface:2", index: 1, title: "two", type: "terminal", active: true, url: null },
+                    {
+                        ref: "surface:1",
+                        index: 0,
+                        index_in_pane: 0,
+                        title: "one",
+                        type: "terminal",
+                        selected: true,
+                        tty: "ttys001",
+                    },
+                    { ref: "surface:2", index: 1, title: "two", type: "terminal", active: true, url: null, tty: "" },
                 ];
                 return {
                     windows: [{ workspaces: [{ ref: "workspace:1", panes: [{ ref: "pane:1", surfaces }] }] }],
@@ -317,10 +325,13 @@ describe("fetchCmuxLiveSnapshot", () => {
             ["list-pane-surfaces", "--workspace", "workspace:1", "--pane", "pane:2"],
         ]);
         const [first, second] = snapshot.panes;
-        expect(first.surfaces.map((surface) => [surface.id, surface.selected, surface.active, surface.url])).toEqual([
-            ["surface:1", true, false, undefined],
-            ["surface:2", false, false, undefined],
+        expect(
+            first.surfaces.map((surface) => [surface.id, surface.selected, surface.active, surface.url, surface.tty])
+        ).toEqual([
+            ["surface:1", true, false, undefined, "ttys001"],
+            ["surface:2", false, false, undefined, undefined],
         ]);
-        expect(second.surfaces.map((surface) => surface.id)).toEqual(["surface:3"]);
+        // `list-pane-surfaces` reports no tty, so a surface from it has none.
+        expect(second.surfaces.map((surface) => [surface.id, surface.tty])).toEqual([["surface:3", undefined]]);
     });
 });

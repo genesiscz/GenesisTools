@@ -1,5 +1,5 @@
 import type { FocusTarget } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs } from "@app/claude/lib/cmux/resolve";
+import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, tmuxMissHint } from "@app/claude/lib/cmux/resolve";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -87,6 +87,12 @@ async function locatePane(query: string, opts: ReadOptions, deps: ResolveDeps): 
     if (result.targets.length === 0) {
         process.exitCode = 1;
         out.error(pc.red(`No cmux pane matches "${queryTrim}".`));
+        const tmuxHint = tmuxMissHint(result);
+
+        if (tmuxHint) {
+            out.printlnErr(pc.dim(`  ${tmuxHint}`));
+        }
+
         const reopen = suggestCommand("tools claude", { replaceCommand: ["cmux", "restore"] });
         out.printlnErr(pc.dim(`  If the session is not open anywhere, reopen it: ${reopen}`));
         return null;

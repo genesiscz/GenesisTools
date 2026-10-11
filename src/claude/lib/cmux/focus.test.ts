@@ -8,7 +8,22 @@ import {
     resumedSessionIdsIn,
     sessionIdsIn,
 } from "@app/claude/lib/cmux/focus";
+import {
+    findSessionTargets,
+    identifiesExactSession,
+    type ResolveDeps,
+    tmuxHostTargets,
+    tmuxMissHint,
+} from "@app/claude/lib/cmux/resolve";
+import {
+    findTmuxHosts,
+    type HostProcess,
+    sessionProcessPids,
+    type TmuxHost,
+    type TmuxHostDeps,
+} from "@app/claude/lib/cmux/tmux-host";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import type { TmuxClientInfo, TmuxPaneInfo, TmuxSocket } from "@genesiscz/utils/tmux/sessions";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const SESSION_B = "f013e93c-a367-46e6-add2-4c026b9cf667";
@@ -611,6 +626,8 @@ describe("describeMatch", () => {
             "workspace",
             "cwd",
             "screen",
+            "tmux",
+            "tmux-hidden",
         ] as const;
 
         for (const kind of kinds) {
@@ -705,5 +722,221 @@ describe("excludeSurfaceId (caller's own tab, not its whole pane)", () => {
         expect(findFocusTargets(snapshot([onlyCaller]), "genesistools", { excludeSurfaceId: "surface:193" })).toEqual(
             []
         );
+    });
+});
+
+/** The chain a `tools tmux session attach` pane really has, from a live `ps` on 2026-10-11 (paths invented). */
+const TMUX_ID = "d2198696-37be-4718-a174-a004d1bbf25b";
+const TMUX_PROCESSES: HostProcess[] = [
+    { pid: 1, ppid: 0, command: "/sbin/launchd" },
+    // The cmux pane: its shell, then the tmux client it runs. Nothing below it is the session.
+    { pid: 55786, ppid: 1, command: "-zsh" },
+    { pid: 58533, ppid: 55786, command: "gt-tmux /repo/src/tmux/index.ts session attach dd-045c53d3" },
+    { pid: 58543, ppid: 58533, command: "/opt/homebrew/bin/tmux attach-session -t dd-045c53d3" },
+    // The tmux server keeps the argv of the client that started it, and every pane is its child.
+    { pid: 44217, ppid: 1, command: "/opt/homebrew/bin/tmux new-session -d -s dd-915d3265 -c /repo -- /bin/zsh" },
+    { pid: 79917, ppid: 44217, command: "/bin/zsh" },
+    { pid: 80001, ppid: 79917, command: "bun run /repo/src/claude/index.ts run work --resume missed-calls" },
+    { pid: 80002, ppid: 80001, command: `zsh -ic exec ccc --resume ${TMUX_ID}` },
+    {
+        pid: 46112,
+        ppid: 80002,
+        command: `/home/dev/.bun/bin/claude --dangerously-skip-permissions --resume ${TMUX_ID}`,
+    },
+    // Another tmux pane where an agent only searches for the id: not the session.
+    { pid: 79918, ppid: 44217, command: "/bin/zsh" },
+    { pid: 90001, ppid: 79918, command: `rg ${TMUX_ID}` },
+    // A session run straight in a cmux pane, under no tmux at all.
+    { pid: 70001, ppid: 55786, command: `claude --resume ${SESSION_A}` },
+];
+
+function tmuxDeps(overrides: {
+    processes?: HostProcess[];
+    registry?: Map<number, string>;
+    panes?: TmuxPaneInfo[];
+    clients?: TmuxClientInfo[];
+    sockets?: (TmuxSocket | undefined)[];
+}): TmuxHostDeps {
+    return {
+        listProcesses: async () => overrides.processes ?? TMUX_PROCESSES,
+        readRegistry: () => overrides.registry ?? new Map([[46112, TMUX_ID]]),
+        listPanes: async (socket) => {
+            overrides.sockets?.push(socket);
+            return {
+                ok: true,
+                items: overrides.panes ?? [
+                    {
+                        pane: "%200",
+                        session: "dd-045c53d3",
+                        tty: "/dev/ttys040",
+                        sessionCreatedMs: 0,
+                        visible: true,
+                        panePid: 79917,
+                    },
+                    {
+                        pane: "%201",
+                        session: "dd-045c53d3",
+                        tty: "/dev/ttys041",
+                        sessionCreatedMs: 0,
+                        visible: false,
+                        panePid: 79918,
+                    },
+                ],
+            };
+        },
+        listClients: async () => ({
+            ok: true,
+            items: overrides.clients ?? [{ tty: "/dev/ttys001", session: "dd-045c53d3", pid: 58543 }],
+        }),
+    };
+}
+
+describe("sessionProcessPids", () => {
+    test("Claude's registry names the session's process, ahead of any command line", () => {
+        expect(sessionProcessPids(TMUX_ID, TMUX_PROCESSES, new Map([[46112, TMUX_ID]]))).toEqual([46112]);
+    });
+
+    test("without a live registry entry a resume command counts, a command that only mentions the id does not", () => {
+        expect(sessionProcessPids(TMUX_ID, TMUX_PROCESSES, new Map())).toEqual([80002, 46112]);
+    });
+
+    test("a registry pid that now runs something else is gone, and a pid the registry gives another session is not this one", () => {
+        const recycled = TMUX_PROCESSES.map((proc) =>
+            proc.pid === 46112 ? { ...proc, command: "/usr/bin/vim" } : proc
+        );
+        expect(sessionProcessPids(TMUX_ID, recycled, new Map([[46112, TMUX_ID]]))).toEqual([80002]);
+        // `/resume` inside the TUI moved pid 46112 to another session; its argv still names the old id.
+        expect(sessionProcessPids(TMUX_ID, TMUX_PROCESSES, new Map([[46112, SESSION_B]]))).toEqual([80002]);
+    });
+});
+
+describe("findTmuxHosts", () => {
+    test("a session under a tmux pane finds that pane and the clients attached to its tmux session", async () => {
+        const sockets: (TmuxSocket | undefined)[] = [];
+        expect(await findTmuxHosts(TMUX_ID, tmuxDeps({ sockets }))).toEqual([
+            { session: "dd-045c53d3", pane: "%200", visible: true, clientTtys: ["/dev/ttys001"] },
+        ]);
+        // The server was started with no socket flag, so the default server is asked.
+        expect(sockets).toEqual([undefined]);
+    });
+
+    test("a session outside tmux asks tmux nothing", async () => {
+        const sockets: (TmuxSocket | undefined)[] = [];
+        expect(await findTmuxHosts(SESSION_A, tmuxDeps({ registry: new Map(), sockets }))).toEqual([]);
+        expect(sockets).toEqual([]);
+    });
+
+    test("a server on its own socket is asked on that socket", async () => {
+        const sockets: (TmuxSocket | undefined)[] = [];
+        const processes = TMUX_PROCESSES.map((proc) =>
+            proc.pid === 44217 ? { ...proc, command: "tmux -L agents new-session -d -s dd-045c53d3" } : proc
+        );
+        const hosts = await findTmuxHosts(TMUX_ID, tmuxDeps({ processes, sockets }));
+
+        expect(sockets).toEqual([{ flag: "-L", value: "agents" }]);
+        expect(hosts[0]?.socket).toEqual({ flag: "-L", value: "agents" });
+    });
+});
+
+describe("findSessionTargets through tmux", () => {
+    const attachedPane = pane({
+        id: "pane:1",
+        workspaceId: "workspace:11",
+        title: "tools tmux session attach dd-045c53d3",
+        cwd: "/repo",
+        surfaces: [
+            surface({ id: "surface:1", title: "notes", selected: true, tty: "ttys009" }),
+            surface({ id: "surface:2", title: "tools tmux session attach dd-045c53d3", tty: "ttys001" }),
+        ],
+    });
+    const secondClientPane = pane({
+        id: "pane:2",
+        workspaceId: "workspace:11",
+        title: "tmux attach -t dd-045c53d3",
+        surfaces: [surface({ id: "surface:3", selected: true, tty: "ttys002" })],
+    });
+    const sameFolderPane = pane({
+        id: "pane:3",
+        workspaceId: "workspace:11",
+        cwd: "/repo",
+        surfaces: [surface({ id: "surface:4", selected: true, tty: "ttys003" })],
+    });
+
+    function deps(view: CmuxLiveSnapshot, hosts: TmuxHost[]): ResolveDeps {
+        return {
+            identify: async () => undefined,
+            fetchSnapshot: async () => view,
+            lookupSession: async () => ({ aliases: [], sessionId: TMUX_ID, cwd: "/repo" }),
+            lookupRefs: () => null,
+            tmuxHosts: async () => hosts,
+        };
+    }
+
+    const onScreen: TmuxHost = { session: "dd-045c53d3", pane: "%200", visible: true, clientTtys: ["/dev/ttys001"] };
+
+    test("a session in tmux resolves to the cmux pane whose tab runs the tmux client", async () => {
+        const result = await findSessionTargets(TMUX_ID, {
+            deps: deps(snapshot([sameFolderPane, attachedPane]), [onScreen]),
+        });
+
+        expect(result.source).toBe("tmux");
+        expect(result.targets.map((target) => [target.paneId, target.surfaceId, target.matchedOn])).toEqual([
+            ["pane:1", "surface:2", "tmux"],
+        ]);
+        expect(result.targets[0]?.sessionIds).toEqual([TMUX_ID]);
+        expect(describeMatch(result.targets[0])).toBe("via tmux dd-045c53d3");
+        expect(identifiesExactSession(result)).toBe(true);
+    });
+
+    test("a session in a plain cmux pane resolves as before", async () => {
+        const direct = pane({
+            id: "pane:4",
+            workspaceId: "workspace:11",
+            surfaces: [surface({ id: "surface:5", title: restoredTitle(SESSION_A), selected: true, tty: "ttys004" })],
+        });
+        const result = await findSessionTargets(SESSION_A, {
+            deps: {
+                ...deps(snapshot([direct]), []),
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A }),
+            },
+        });
+
+        expect(result.source).toBe("titles");
+        expect(result.targets.map((target) => [target.paneId, target.matchedOn])).toEqual([["pane:4", "title-id"]]);
+        expect(result.tmuxHosts).toBeUndefined();
+    });
+
+    test("a tmux session no cmux pane is attached to matches nothing, says why, and skips the folder fallback", async () => {
+        const detached: TmuxHost = { ...onScreen, clientTtys: [] };
+        const result = await findSessionTargets(TMUX_ID, { deps: deps(snapshot([sameFolderPane]), [detached]) });
+
+        expect(result.targets).toEqual([]);
+        expect(result.source).toBe("none");
+        expect(tmuxMissHint(result)).toBe(
+            "It runs in tmux session dd-045c53d3 (pane %200), and no client is attached to it. Attach it in a cmux pane: tools tmux session attach dd-045c53d3"
+        );
+    });
+
+    test("two clients in two cmux panes are two targets, and neither is picked on its own", async () => {
+        const twoClients: TmuxHost = { ...onScreen, clientTtys: ["/dev/ttys001", "/dev/ttys002"] };
+        const result = await findSessionTargets(TMUX_ID, {
+            deps: deps(snapshot([attachedPane, secondClientPane]), [twoClients]),
+        });
+
+        expect(result.targets.map((target) => [target.paneId, target.surfaceId])).toEqual([
+            ["pane:1", "surface:2"],
+            ["pane:2", "surface:3"],
+        ]);
+        expect(isUnambiguous(result.targets)).toBe(false);
+        expect(identifiesExactSession(result)).toBe(false);
+    });
+
+    test("a session whose tmux pane is not on screen is found, but is not an exact match to type into", () => {
+        const offScreen: TmuxHost = { ...onScreen, visible: false };
+        const [target] = tmuxHostTargets(snapshot([attachedPane]), [offScreen], TMUX_ID);
+
+        expect(target?.matchedOn).toBe("tmux-hidden");
+        expect(describeMatch(target)).toBe("via tmux dd-045c53d3 (its pane %200 is not on screen)");
+        expect(identifiesExactSession({ targets: [target], source: "tmux", unavailable: false })).toBe(false);
     });
 });

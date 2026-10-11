@@ -5,6 +5,7 @@ import {
     type ResolveDeps,
     retryAfterStaleRefs,
     SOFT_SOURCES,
+    tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
@@ -148,6 +149,33 @@ export function refuseAmbiguous(
     queryTrim: string,
     opts: SendOptions
 ): boolean {
+    const hidden = result.targets[0]?.matchedOn === "tmux-hidden" ? result.targets[0] : null;
+
+    // The cmux surface shows the tmux session's current pane, and the session runs in another one: what is typed
+    // or read there belongs to that other pane.
+    if (hidden) {
+        process.exitCode = 1;
+
+        if (opts.json) {
+            out.result(
+                SafeJSON.stringify(
+                    { query: queryTrim, sent: false, hidden: true, source: result.source, matches: result.targets },
+                    null,
+                    2
+                )
+            );
+            return true;
+        }
+
+        out.error(
+            pc.red(
+                `"${queryTrim}" runs in tmux pane ${hidden.tmux?.pane} of ${hidden.tmux?.session}, and the tmux client in ${hidden.paneId} shows another pane.`
+            )
+        );
+        out.printlnErr(pc.dim("  Switch that tmux session to the session's pane, then retry."));
+        return true;
+    }
+
     // `--exact-session` checks the evidence each pane matched on, not only the stage that found it:
     // a title or capture stage also returns panes that merely print the id or share a topic title.
     const weak = SOFT_SOURCES.has(result.source) && result.targets.length > 1;
@@ -227,11 +255,18 @@ export async function sendCommand(
         process.exitCode = 1;
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ query: queryTrim, sent: false, matches: [] }, null, 2));
+            const tmux = result.tmuxHosts?.length ? { tmux: result.tmuxHosts } : {};
+            out.result(SafeJSON.stringify({ query: queryTrim, sent: false, matches: [], ...tmux }, null, 2));
             return false;
         }
 
         out.error(pc.red(`No cmux pane matches "${queryTrim}".`));
+        const tmuxHint = tmuxMissHint(result);
+
+        if (tmuxHint) {
+            out.printlnErr(pc.dim(`  ${tmuxHint}`));
+        }
+
         out.printlnErr(
             pc.dim(
                 `  If the session is not open anywhere, reopen it: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "restore"] })}`

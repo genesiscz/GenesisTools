@@ -63,6 +63,11 @@ export interface CmuxLiveSurface {
     active: boolean;
     preview?: string;
     url?: string;
+    /**
+     * The terminal's tty (`ttys001`), from `tree --all`. It is what joins a surface to a process: a
+     * `tmux attach` client running in it reports the same tty as `#{client_tty}`.
+     */
+    tty?: string;
 }
 
 export interface CmuxLiveSnapshot {
@@ -144,6 +149,7 @@ interface SurfaceRpc {
     active?: boolean;
     focused?: boolean;
     url?: string;
+    tty?: string;
 }
 
 interface TreeRpc {
@@ -296,6 +302,7 @@ async function fetchOnePane({
                 selected,
                 active: surface.focused === true || surface.active === true,
                 url: surface.url,
+                ...(surface.tty ? { tty: surface.tty } : {}),
                 preview: shouldCapturePreview(previews, selected)
                     ? await readSurfacePreview({ run, workspace: id, surface: surfaceRef })
                     : undefined,
@@ -368,7 +375,7 @@ async function treeSurfaces(runJson: CmuxJsonRunner): Promise<SurfaceLookup> {
                         continue;
                     }
 
-                    // Only the fields `list-pane-surfaces` reports, so the snapshot stays the same:
+                    // The fields `list-pane-surfaces` reports, so the snapshot stays the same, plus the tty:
                     // the tree's `active` marks every pane's selected surface (that call has no focus
                     // field, so `active` was always false), and its `url` is null for a terminal.
                     const surfaces = pane.surfaces.map((surface) => ({
@@ -379,6 +386,7 @@ async function treeSurfaces(runJson: CmuxJsonRunner): Promise<SurfaceLookup> {
                         type: surface.type,
                         selected: surface.selected_in_pane ?? surface.selected,
                         ...(typeof surface.url === "string" ? { url: surface.url } : {}),
+                        ...(typeof surface.tty === "string" && surface.tty ? { tty: surface.tty } : {}),
                     }));
                     byPane.set(`${workspaceId(workspace)}\n${paneId(pane)}`, surfaces);
                 }
