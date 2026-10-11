@@ -94,7 +94,7 @@ enum HubPaletteEngine {
         Keyword(word: "pane", aliases: ["tab"], summary: "Show or hide a pane: pane transcript|changes|files|decisions", symbol: "rectangle.split.3x1", usesProject: false),
         Keyword(word: "mode", aliases: [], summary: "Switch the list: mode sessions|worktrees|prs", symbol: "sidebar.left", usesProject: false),
         Keyword(word: "glass", aliases: [], summary: "Turn the glass look on or off (⌘⇧G)", symbol: "drop", usesProject: false),
-        Keyword(word: "look", aliases: ["theme", "style"], summary: "Switch the look: look hub, or a theme such as graphite, midnight, smoked, dusk", symbol: "paintpalette", usesProject: false),
+        Keyword(word: "look", aliases: ["theme", "style"], summary: "Switch the look: look hub, or a theme such as glass, graphite, midnight, dusk", symbol: "paintpalette", usesProject: false),
     ]
 
     static func keyword(_ word: String) -> Keyword? {

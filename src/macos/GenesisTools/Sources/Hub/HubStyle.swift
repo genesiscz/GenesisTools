@@ -92,7 +92,7 @@ enum HubLookChoice: Hashable, Identifiable, Sendable {
         }
     }
 
-    /// The palette's "look <word>": a look whose id or title contains the word ("graphite", "smoked", "native-dusk").
+    /// The palette's "look <word>": a look whose id or title contains the word ("graphite", "glass", "native-dusk").
     func matches(_ word: String) -> Bool {
         let word = word.lowercased()
         return word.isEmpty || id.contains(word) || title.lowercased().contains(word)

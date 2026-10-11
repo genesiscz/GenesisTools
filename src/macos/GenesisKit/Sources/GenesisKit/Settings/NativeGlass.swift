@@ -25,16 +25,12 @@ public struct NativeGlassShapeSurface<SurfaceShape: Shape>: ViewModifier {
     @Environment(\.nativeSettingsReduceTransparency) private var requestedOpaque
     @Environment(\.nativeSettingsTheme) private var theme
     private let shape: SurfaceShape
-    private let tint: Color
     private let opaqueColor: Color
     private let opaque: Bool
 
-    public init(
-        shape: SurfaceShape, tint: Color = .white.opacity(0.035),
-        opaqueColor: Color = Color(white: 0.17), opaque: Bool = false
-    ) {
+    /// `opaqueColor` is the card under Solid and Gradient; the darker themes, Glass included, use their own.
+    public init(shape: SurfaceShape, opaqueColor: Color = Color(white: 0.17), opaque: Bool = false) {
         self.shape = shape
-        self.tint = tint
         self.opaqueColor = opaqueColor
         self.opaque = opaque
     }
@@ -42,23 +38,33 @@ public struct NativeGlassShapeSurface<SurfaceShape: Shape>: ViewModifier {
     public func body(content: Content) -> some View {
         let drawn = theme.effective(reduceTransparency: systemOpaque || requestedOpaque, systemReduceTransparency: false)
         switch drawn {
-        case .glass, .solid, .gradient:
-            // The light family, as it has always been drawn.
-            if systemOpaque || requestedOpaque || opaque || theme == .solid {
+        case .solid, .gradient:
+            // Solid and Gradient, as they have always been drawn.
+            if drawn == .solid || opaque {
                 content.background(opaqueColor, in: shape)
                     .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
-            } else if theme == .gradient {
+            } else {
                 content.foregroundStyle(Color.white).background {
                     ZStack {
                         opaqueColor
                         NativeSettingsGradient.tint
                     }.clipShape(shape)
                 }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
+            }
+        case .glass:
+            // Dark glass: the card's own glass under a dark tint; a card that must be opaque is Graphite's.
+            if opaque {
+                content.background(NativeThemePalette.graphiteCard, in: shape)
+                    .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
             } else if #available(macOS 26, *) {
-                content.foregroundStyle(Color.white).glassEffect(.regular.tint(tint), in: shape)
+                content.foregroundStyle(Color.white).glassEffect(.regular.tint(NativeThemePalette.glassCardTint), in: shape)
             } else {
-                content.background(.ultraThinMaterial, in: shape)
-                    .overlay(shape.stroke(.white.opacity(0.10), lineWidth: 1))
+                content.background {
+                    ZStack {
+                        Rectangle().fill(.ultraThinMaterial)
+                        NativeThemePalette.glassCardTint
+                    }.clipShape(shape)
+                }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
             }
         case .graphite:
             content.background(NativeThemePalette.graphiteCard, in: shape)
@@ -73,36 +79,17 @@ public struct NativeGlassShapeSurface<SurfaceShape: Shape>: ViewModifier {
                     NativeSettingsDusk.tint
                 }.clipShape(shape)
             }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
-        case .smoked:
-            if opaque {
-                content.background(NativeThemePalette.graphiteCard, in: shape)
-                    .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
-            } else if #available(macOS 26, *) {
-                content.foregroundStyle(Color.white).glassEffect(.regular.tint(NativeThemePalette.smokedCardTint), in: shape)
-            } else {
-                content.background {
-                    ZStack {
-                        Rectangle().fill(.ultraThinMaterial)
-                        NativeThemePalette.smokedCardTint
-                    }.clipShape(shape)
-                }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
-            }
         }
     }
 }
 
 public struct NativeGlassSurface: ViewModifier {
     private let radius: CGFloat
-    private let tint: Color
     private let opaqueColor: Color
     private let opaque: Bool
 
-    public init(
-        radius: CGFloat = 22, tint: Color = .white.opacity(0.035),
-        opaqueColor: Color = Color(white: 0.17), opaque: Bool = false
-    ) {
+    public init(radius: CGFloat = 22, opaqueColor: Color = Color(white: 0.17), opaque: Bool = false) {
         self.radius = radius
-        self.tint = tint
         self.opaqueColor = opaqueColor
         self.opaque = opaque
     }
@@ -110,8 +97,7 @@ public struct NativeGlassSurface: ViewModifier {
     public func body(content: Content) -> some View {
         content.modifier(
             NativeGlassShapeSurface(
-                shape: RoundedRectangle(cornerRadius: radius),
-                tint: tint, opaqueColor: opaqueColor, opaque: opaque))
+                shape: RoundedRectangle(cornerRadius: radius), opaqueColor: opaqueColor, opaque: opaque))
     }
 }
 
@@ -130,14 +116,14 @@ public struct NativeGlassControl: ViewModifier {
     }
 
     public func body(content: Content) -> some View {
-        // Solid themes (and Reduce transparency) get an opaque control; the others glass, Smoked glass a dark one.
+        // Solid themes (and Reduce transparency) get an opaque control; the others glass, Glass a dark one.
         let opaqueControl: Bool = {
             switch theme.effective(reduceTransparency: systemOpaque || requestedOpaque, systemReduceTransparency: false) {
             case .solid, .graphite, .midnight: return true
-            case .glass, .gradient, .smoked, .dusk: return false
+            case .glass, .gradient, .dusk: return false
             }
         }()
-        let tint = theme == .smoked ? NativeThemePalette.smokedCardTint : self.tint
+        let tint = theme == .glass ? NativeThemePalette.glassCardTint : self.tint
         if opaqueControl {
             content.modifier(NativeGlassSurface(radius: radius, opaque: true))
         } else if #available(macOS 26, *) {
@@ -149,7 +135,7 @@ public struct NativeGlassControl: ViewModifier {
                     .regular.tint(tint).interactive(), in: RoundedRectangle(cornerRadius: radius))
             }
         } else {
-            content.modifier(NativeGlassSurface(radius: radius, tint: tint))
+            content.modifier(NativeGlassSurface(radius: radius))
         }
     }
 }
@@ -161,7 +147,7 @@ public struct NativeSettingsBackdrop: View {
     private let windowMaterial: Bool
 
     /// `windowMaterial: false` for a window whose content view already draws the behind-window material (the
-    /// hub's glass container): the Glass theme then adds only its tint, so the desktop is not blurred twice.
+    /// hub's glass container): the Glass theme then adds only its dark tint, so the desktop is not blurred twice.
     public init(windowMaterial: Bool = true) { self.windowMaterial = windowMaterial }
 
     public var body: some View {
@@ -170,19 +156,13 @@ public struct NativeSettingsBackdrop: View {
         case .gradient: NativeSettingsGradient()
         case .glass:
             if windowMaterial {
-                NativeWindowMaterial().overlay(Color.black.opacity(0.06))
+                NativeWindowMaterial().overlay(NativeThemePalette.glassTint)
             } else {
-                Color.black.opacity(0.06)
+                NativeThemePalette.glassTint
             }
         case .graphite: NativeThemePalette.graphiteBase
         case .midnight: NativeThemePalette.midnightBase
         case .dusk: NativeSettingsDusk()
-        case .smoked:
-            if windowMaterial {
-                NativeWindowMaterial().overlay(NativeThemePalette.smokedTint)
-            } else {
-                NativeThemePalette.smokedTint
-            }
         }
     }
 }
@@ -203,9 +183,9 @@ public enum NativeThemePalette {
     public static let midnightRaised = rgb(18, 23, 37)
     public static let midnightCard = rgb(24, 31, 49)
     public static let midnightHairline = Color(.sRGB, red: 0.55, green: 0.68, blue: 1.0, opacity: 0.16)
-    /// Smoked glass: the dark tint over the window material, and the lighter one over a card's glass.
-    public static let smokedTint = Color.black.opacity(0.5)
-    public static let smokedCardTint = Color.black.opacity(0.35)
+    /// Glass: the dark tint over the window material, and the lighter one over a card's glass.
+    public static let glassTint = Color.black.opacity(0.5)
+    public static let glassCardTint = Color.black.opacity(0.35)
     /// Dusk: a plum base under Gradient's purple and pink, stronger.
     public static let duskBase = rgb(28, 22, 34)
     public static let duskRaised = rgb(34, 27, 41)
@@ -261,14 +241,14 @@ public struct NativePaneFill: View {
         case .bar:
             switch theme.effective(reduceTransparency: requestedOpaque, systemReduceTransparency: systemOpaque) {
             case .solid: Color(nsColor: .windowBackgroundColor)
-            case .glass, .gradient: Rectangle().fill(.regularMaterial)
-            case .graphite: NativeThemePalette.graphiteRaised
-            case .midnight: NativeThemePalette.midnightRaised
-            case .smoked:
+            case .gradient: Rectangle().fill(.regularMaterial)
+            case .glass:
                 ZStack {
                     Rectangle().fill(.regularMaterial)
                     Color.black.opacity(0.45)
                 }
+            case .graphite: NativeThemePalette.graphiteRaised
+            case .midnight: NativeThemePalette.midnightRaised
             case .dusk:
                 // Frosted but dark, so the backdrop's purple still comes through; opaque under Reduce transparency.
                 if requestedOpaque || systemOpaque {
@@ -360,17 +340,15 @@ extension View {
     }
 
     public func nativeGlassSurface<SurfaceShape: Shape>(
-        in shape: SurfaceShape, tint: Color = .white.opacity(0.035),
-        opaqueColor: Color = Color(white: 0.17)
+        in shape: SurfaceShape, opaqueColor: Color = Color(white: 0.17)
     ) -> some View {
-        modifier(NativeGlassShapeSurface(shape: shape, tint: tint, opaqueColor: opaqueColor))
+        modifier(NativeGlassShapeSurface(shape: shape, opaqueColor: opaqueColor))
     }
 
     public func nativeGlassSurface(
-        radius: CGFloat = 22, tint: Color = .white.opacity(0.035),
-        opaqueColor: Color = Color(white: 0.17)
+        radius: CGFloat = 22, opaqueColor: Color = Color(white: 0.17)
     ) -> some View {
-        modifier(NativeGlassSurface(radius: radius, tint: tint, opaqueColor: opaqueColor))
+        modifier(NativeGlassSurface(radius: radius, opaqueColor: opaqueColor))
     }
 
     public func nativeGlassControl(radius: CGFloat = 12, tint: Color = .white.opacity(0.045)) -> some View {

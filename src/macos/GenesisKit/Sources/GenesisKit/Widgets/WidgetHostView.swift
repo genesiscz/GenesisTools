@@ -81,7 +81,7 @@ struct WidgetHostView: View {
             .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
                 if surface.edge == .top { topStrip } else { sideStrip }
             }
-        .nativeGlassSurface(in: shape, tint: .black.opacity(0.30), opaqueColor: Color(white: 0.09))
+        .nativeGlassSurface(in: shape, opaqueColor: Color(white: 0.09))
         .clipShape(shape)
         .overlay(shape.stroke(.white.opacity(0.035), lineWidth: 0.5))
         .foregroundStyle(.white)

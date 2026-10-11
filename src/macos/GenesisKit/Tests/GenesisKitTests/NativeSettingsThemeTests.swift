@@ -10,7 +10,7 @@ final class NativeSettingsThemeTests: XCTestCase {
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         XCTAssertEqual(NativeSettingsTheme.allCases.map(\.rawValue),
-                       ["glass", "solid", "gradient", "graphite", "midnight", "smoked", "dusk"])
+                       ["glass", "solid", "gradient", "graphite", "midnight", "dusk"])
         // Backwards, so each write changes the stored value (Glass, the default, comes last).
         for theme in NativeSettingsTheme.allCases.reversed() {
             let writer = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
@@ -19,6 +19,26 @@ final class NativeSettingsThemeTests: XCTestCase {
             let reader = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
             XCTAssertEqual(reader.theme, theme)
         }
+    }
+
+    func testAStoredSmokedGlassIsReadAsGlassByTheSettingsAndByTheDecoder() throws {
+        let name = "dev.genesis.theme.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("smoked", forKey: "featureSettings.appearance.theme")
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
+        XCTAssertEqual(appearance.theme, .glass)
+        appearance.theme = .midnight
+        defaults.set("smoked", forKey: "featureSettings.appearance.theme")
+        appearance.reloadFromDefaults()
+        XCTAssertEqual(appearance.theme, .glass)
+        // The settings' default is Glass too, so these prove the migration itself: a mapped name, not a fallback.
+        XCTAssertEqual(NativeSettingsTheme(stored: "smoked"), .glass)
+        XCTAssertNil(NativeSettingsTheme(stored: "aurora"), "only a folded theme is migrated")
+        XCTAssertNil(NativeSettingsTheme(rawValue: "smoked"))
+        let decoded = try JSONDecoder().decode([NativeSettingsTheme].self, from: Data(#"["smoked","dusk"]"#.utf8))
+        XCTAssertEqual(decoded, [.glass, .dusk])
+        XCTAssertThrowsError(try JSONDecoder().decode([NativeSettingsTheme].self, from: Data(#"["aurora"]"#.utf8)))
     }
 
     func testAnUnknownStoredThemeStillReadsAsGlass() {
@@ -31,8 +51,8 @@ final class NativeSettingsThemeTests: XCTestCase {
 
     func testReduceTransparencyKeepsTheLightThemesSolidAndTheDarkThemesDark() {
         let expected: [NativeSettingsTheme: NativeSettingsTheme] = [
-            .glass: .solid, .solid: .solid, .gradient: .solid,
-            .graphite: .graphite, .midnight: .midnight, .smoked: .graphite, .dusk: .dusk,
+            .glass: .graphite, .solid: .solid, .gradient: .solid,
+            .graphite: .graphite, .midnight: .midnight, .dusk: .dusk,
         ]
         for theme in NativeSettingsTheme.allCases {
             XCTAssertEqual(theme.effective(reduceTransparency: false, systemReduceTransparency: false), theme)
@@ -40,11 +60,11 @@ final class NativeSettingsThemeTests: XCTestCase {
             XCTAssertEqual(theme.effective(reduceTransparency: false, systemReduceTransparency: true), expected[theme])
             XCTAssertFalse(expected[theme]?.isSeeThrough ?? true, "Reduce transparency never shows the desktop")
         }
-        XCTAssertEqual(NativeSettingsTheme.allCases.filter(\.isSeeThrough), [.glass, .smoked])
+        XCTAssertEqual(NativeSettingsTheme.allCases.filter(\.isSeeThrough), [.glass])
     }
 
     func testThemeNamesAreSentenceCase() {
         XCTAssertEqual(NativeSettingsTheme.allCases.map(\.title),
-                       ["Glass", "Solid", "Gradient", "Graphite", "Midnight", "Smoked glass", "Dusk"])
+                       ["Glass", "Solid", "Gradient", "Graphite", "Midnight", "Dusk"])
     }
 }

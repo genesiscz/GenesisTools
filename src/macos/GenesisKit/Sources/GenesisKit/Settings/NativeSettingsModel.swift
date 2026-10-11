@@ -137,18 +137,40 @@ public final class NativeSettingsStore: ObservableObject {
     }
 }
 
-/// The look of native feature windows and widgets (General → Theme). The first three are the light family the
-/// settings window started with; the last four are darker, for a big window such as the hub.
+/// The look of native feature windows and widgets (General → Theme).
 public enum NativeSettingsTheme: String, CaseIterable, Codable, Identifiable {
-    case glass, solid, gradient
+    /// The glass material under a strong dark tint: translucent, about as dark as the hub's own glass.
+    case glass
+    /// The system's window background.
+    case solid
+    /// The system's window background under a purple-to-pink tint.
+    case gradient
     /// Solid near-black, close to the hub's own surfaces.
     case graphite
     /// Solid deep blue-black with cool hairlines.
     case midnight
-    /// The glass material under a strong dark tint: translucent, about as dark as the hub's own glass.
-    case smoked
     /// Gradient's hues, darker and richer.
     case dusk
+
+    /// A stored value, read with the names of themes that were folded into another: "smoked" (Smoked glass,
+    /// 2026-10-11) became Glass. Nil for anything else unknown, so the caller keeps its own default.
+    public init?(stored raw: String?) {
+        guard let raw else { return nil }
+        if raw == "smoked" {
+            self = .glass
+            return
+        }
+        self.init(rawValue: raw)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let theme = NativeSettingsTheme(stored: raw) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown theme \(raw)"))
+        }
+        self = theme
+    }
 
     public var id: String { rawValue }
 
@@ -159,7 +181,6 @@ public enum NativeSettingsTheme: String, CaseIterable, Codable, Identifiable {
         case .gradient: return "Gradient"
         case .graphite: return "Graphite"
         case .midnight: return "Midnight"
-        case .smoked: return "Smoked glass"
         case .dusk: return "Dusk"
         }
     }
@@ -167,18 +188,18 @@ public enum NativeSettingsTheme: String, CaseIterable, Codable, Identifiable {
     /// The window shows the blurred desktop behind it.
     public var isSeeThrough: Bool {
         switch self {
-        case .glass, .smoked: return true
+        case .glass: return true
         case .solid, .gradient, .graphite, .midnight, .dusk: return false
         }
     }
 
-    /// The theme drawn while Reduce transparency is on: the light family shows Solid, as it always did; the dark
-    /// family stays dark, Smoked glass as Graphite and the opaque ones as themselves.
+    /// The theme drawn while Reduce transparency is on: Glass shows Graphite, Solid and Gradient show Solid, and the
+    /// other opaque themes stay as they are.
     public func effective(reduceTransparency: Bool, systemReduceTransparency: Bool) -> NativeSettingsTheme {
         guard reduceTransparency || systemReduceTransparency else { return self }
         switch self {
-        case .glass, .solid, .gradient: return .solid
-        case .graphite, .smoked: return .graphite
+        case .solid, .gradient: return .solid
+        case .glass, .graphite: return .graphite
         case .midnight: return .midnight
         case .dusk: return .dusk
         }
@@ -214,7 +235,7 @@ public final class NativeSettingsAppearance: ObservableObject {
         log = Logger(subsystem: notificationNamespace, category: "NativeSettings")
         reduceMotion = defaults.bool(forKey: "\(keyPrefix).reduceMotion")
         reduceTransparency = defaults.bool(forKey: "\(keyPrefix).reduceTransparency")
-        theme = NativeSettingsTheme(rawValue: defaults.string(forKey: "\(keyPrefix).theme") ?? "") ?? .glass
+        theme = NativeSettingsTheme(stored: defaults.string(forKey: "\(keyPrefix).theme")) ?? .glass
         if observeExternalChanges {
             observer = DistributedNotificationCenter.default().addObserver(
                 forName: notificationName, object: notificationNamespace, queue: .main
@@ -246,7 +267,7 @@ public final class NativeSettingsAppearance: ObservableObject {
         defaults.synchronize()
         let motion = defaults.bool(forKey: "\(keyPrefix).reduceMotion")
         let transparency = defaults.bool(forKey: "\(keyPrefix).reduceTransparency")
-        let storedTheme = NativeSettingsTheme(rawValue: defaults.string(forKey: "\(keyPrefix).theme") ?? "") ?? .glass
+        let storedTheme = NativeSettingsTheme(stored: defaults.string(forKey: "\(keyPrefix).theme")) ?? .glass
         applyingExternal = true
         if reduceMotion != motion { reduceMotion = motion }
         if reduceTransparency != transparency { reduceTransparency = transparency }

@@ -203,7 +203,7 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   scratch setting first (`--set review.prThreads.open=true` shows the PR threads list, `--set hub.timeline.range=last30`
   the 30-day Activity). `--timeline-open <event id> [--timeline-action <id>]` runs an Activity row's action once the
   feed loads (`diff` on a review comment: the PR's diff at that thread, one click).
-- The Native style in a snapshot: `--set hub.style=native --set featureSettings.appearance.theme=gradient|solid|glass`
+- The Native style in a snapshot: `--set hub.style=native --set featureSettings.appearance.theme=glass|solid|gradient|graphite|midnight|dusk`
   (scratch only; `HubDefaults.isolate()` copies General's `featureSettings.appearance.*` too). A `--snapshot` cannot show
   the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--clicky`; from
   a checkout use `../GenesisClickyPreview` (`swift build`, then `.build/debug/GenesisClickyPreview --page hub.appearance

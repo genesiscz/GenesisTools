@@ -27,18 +27,16 @@ final class HubStyleTests: XCTestCase {
             for theme in NativeSettingsTheme.allCases {
                 let look = HubLook.resolve(style: .native, glass: glass, general: theme, reduceTransparency: false)
                 XCTAssertEqual(look.theme, theme)
-                XCTAssertEqual(look.seeThrough, theme == .glass || theme == .smoked, theme.rawValue)
+                XCTAssertEqual(look.seeThrough, theme == .glass, theme.rawValue)
             }
         }
     }
 
     func testReduceTransparencyMakesTheNativeGlassThemeOpaque() {
         let look = HubLook.resolve(style: .native, glass: false, general: .glass, reduceTransparency: true)
-        XCTAssertEqual(look.theme, .glass, "the chosen theme stays; the surfaces read it as solid")
-        XCTAssertFalse(look.seeThrough)
-        XCTAssertEqual(look.theme.effective(reduceTransparency: true, systemReduceTransparency: false), .solid)
-        let smoked = HubLook.resolve(style: .native, glass: false, general: .smoked, reduceTransparency: true)
-        XCTAssertFalse(smoked.seeThrough, "Smoked glass under Reduce transparency is Graphite: no desktop behind it")
+        XCTAssertEqual(look.theme, .glass, "the chosen theme stays; the surfaces read it as Graphite")
+        XCTAssertFalse(look.seeThrough, "no desktop behind the window under Reduce transparency")
+        XCTAssertEqual(look.theme.effective(reduceTransparency: true, systemReduceTransparency: false), .graphite)
     }
 
     func testThePaletteOffersGlassOnlyInTheHubStyleAndSaysWhyInTheNativeStyle() {
@@ -56,7 +54,7 @@ final class HubStyleTests: XCTestCase {
     func testEachLookMapsToOneStyleAndThemeAndEveryThemeHasALook() {
         XCTAssertEqual(HubLookChoice.allCases.map(\.title), [
             "Hub", "Native · Glass", "Native · Solid", "Native · Gradient", "Native · Graphite", "Native · Midnight",
-            "Native · Smoked glass", "Native · Dusk",
+            "Native · Dusk",
         ])
         XCTAssertEqual(HubLookChoice.allCases.compactMap(\.theme), NativeSettingsTheme.allCases, "a new theme needs no menu edit")
         XCTAssertEqual(HubLookChoice.hub.style, .hub)
@@ -101,7 +99,7 @@ final class HubStyleTests: XCTestCase {
         XCTAssertEqual(ids("look grad"), ["look-native-gradient"])
         XCTAssertEqual(ids("look graphite"), ["look-native-graphite"])
         XCTAssertEqual(ids("look midnight"), ["look-native-midnight"])
-        XCTAssertEqual(ids("look smoked"), ["look-native-smoked"])
+        XCTAssertEqual(ids("look smoked"), [], "Smoked glass is Glass now; the look is gone")
         XCTAssertEqual(ids("look dusk"), ["look-native-dusk"])
         XCTAssertEqual(ids("look native-dusk"), ["look-native-dusk"], "the row's own completion finds it again")
         XCTAssertEqual(ids("theme hub"), ["look-hub"])

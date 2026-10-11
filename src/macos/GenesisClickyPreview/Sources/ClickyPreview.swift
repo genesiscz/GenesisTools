@@ -16,7 +16,7 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--opaque") { model.preferences.reduceTransparency = true }
         if args.contains("--reduce-motion") { model.preferences.reduceMotion = true }
         // `--theme glass|solid|gradient`: General → Theme in the preview's own defaults suite.
-        if let theme = value(after: "--theme", in: args).flatMap(NativeSettingsTheme.init(rawValue:)) {
+        if let theme = NativeSettingsTheme(stored: value(after: "--theme", in: args)) {
             model.appearance.theme = theme
         }
         let requestedPage = value(after: "--page", in: args)

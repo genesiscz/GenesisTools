@@ -75,10 +75,10 @@ public struct NativeSettingsThemePicker: View {
     @Binding private var selection: NativeSettingsTheme
     public init(selection: Binding<NativeSettingsTheme>) { _selection = selection }
     public var body: some View {
-        // Seven themes: four on the first row, three on the second.
+        // Six themes: two rows of three.
         NativeSettingsTilePicker(
             selection: $selection, options: NativeSettingsTheme.allCases, title: \.title,
-            accessibilityLabel: { "Theme: \($0.title)" }, identifier: { "settings.theme.\($0.id)" }, columns: 4
+            accessibilityLabel: { "Theme: \($0.title)" }, identifier: { "settings.theme.\($0.id)" }, columns: 3
         ) { theme in
             Self.preview(theme)
         }
@@ -90,16 +90,12 @@ public struct NativeSettingsThemePicker: View {
         switch theme {
         case .glass:
             LinearGradient(
-                colors: [Color(white: 0.35), Color(white: 0.22)],
+                colors: [Color(white: 0.17), Color(white: 0.09)],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
         case .solid: Color(white: 0.12)
         case .gradient: NativeSettingsGradient()
         case .graphite: NativeThemePalette.graphiteBase
         case .midnight: NativeThemePalette.midnightBase
-        case .smoked:
-            LinearGradient(
-                colors: [Color(white: 0.17), Color(white: 0.09)],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
         case .dusk: NativeSettingsDusk()
         }
     }
