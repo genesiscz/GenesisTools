@@ -20,8 +20,10 @@ thing for real, frame by frame, and comparing it with the checklist**, then fixi
 3. **Walk the checklist** for every view you touch: [references/checklist.md](references/checklist.md).
 4. **Verify motion with instruments**, not with one screenshot: [references/motion.md](references/motion.md).
    Window frames from the window server, transition callbacks from the app, and only then a recording.
-5. **Evidence in pairs**: `…/Widget/Screenshot/<YYYY-MM-DD-HHMM>-<slug>-before.png` and the same stamp with
-   `-after.png`, so before and after sit next to each other.
+5. **Evidence in annotated pairs** ([references/screenshots.md](references/screenshots.md): same size and scale,
+   red marks on real changes, amber on data-only differences, a note per pair):
+   `…/Widget/Screenshot/<YYYY-MM-DD-HHMM>-<slug>-before.png` and the same stamp with `-after.png`, so before and
+   after sit next to each other.
 6. **Write down what was wrong on the first try** in the ledger, generically, with the commit.
 
 ## Design authorities (load before a judgment call)
