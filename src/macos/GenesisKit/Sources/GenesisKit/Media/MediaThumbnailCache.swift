@@ -118,21 +118,27 @@ public actor MediaThumbnailCache {
         self.decoder = decoder
     }
 
-    public static func bucket(forPixels pixels: CGFloat) -> Int {
-        let wanted = max(64, min(4096, Int(pixels.rounded(.up))))
+    /// The largest picture a thumbnail asks for. A caller that shows the real pixels (the image viewer at 100 %)
+    /// passes up to `largestCeiling`; everyone else keeps this bound, so a big tile never decodes a huge picture.
+    public static let defaultCeiling = 4096
+    public static let largestCeiling = 8192
+
+    public static func bucket(forPixels pixels: CGFloat, ceiling: Int = defaultCeiling) -> Int {
+        let wanted = max(64, min(min(ceiling, largestCeiling), Int(pixels.rounded(.up))))
         var bucket = 64
         while bucket < wanted { bucket <<= 1 }
         return bucket
     }
 
     /// `reload` forgets an earlier failure for this file (the retry button) and decodes again.
-    public func thumbnail(path: String, maxPixels: CGFloat, kind: MediaKind? = nil, reload: Bool = false) async
+    public func thumbnail(path: String, maxPixels: CGFloat, kind: MediaKind? = nil, reload: Bool = false,
+                          ceiling: Int = defaultCeiling) async
         -> MediaThumbnailResult
     {
         guard let identity = MediaFileIdentity.current(path) else {
             return .failed("The file is no longer there.")
         }
-        let bucket = Self.bucket(forPixels: maxPixels)
+        let bucket = Self.bucket(forPixels: maxPixels, ceiling: ceiling)
         if reload {
             forgetFailure(path)
         } else if let failure = failures[path], failure.identity == identity {
@@ -318,7 +324,7 @@ public actor MediaThumbnailCache {
 
     private func cached(identity: MediaFileIdentity, atLeast bucket: Int) -> MediaThumbnail? {
         var candidate = bucket
-        while candidate <= 4096 {
+        while candidate <= Self.largestCeiling {
             let key = Key(identity: identity, bucket: candidate)
             if let hit = ready[key] {
                 touch(key)
