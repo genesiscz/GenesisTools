@@ -137,12 +137,51 @@ public final class NativeSettingsStore: ObservableObject {
     }
 }
 
+/// The look of native feature windows and widgets (General → Theme). The first three are the light family the
+/// settings window started with; the last four are darker, for a big window such as the hub.
 public enum NativeSettingsTheme: String, CaseIterable, Codable, Identifiable {
     case glass, solid, gradient
+    /// Solid near-black, close to the hub's own surfaces.
+    case graphite
+    /// Solid deep blue-black with cool hairlines.
+    case midnight
+    /// The glass material under a strong dark tint: translucent, about as dark as the hub's own glass.
+    case smoked
+    /// Gradient's hues, darker and richer.
+    case dusk
+
     public var id: String { rawValue }
-    public var title: String { rawValue.capitalized }
+
+    public var title: String {
+        switch self {
+        case .glass: return "Glass"
+        case .solid: return "Solid"
+        case .gradient: return "Gradient"
+        case .graphite: return "Graphite"
+        case .midnight: return "Midnight"
+        case .smoked: return "Smoked glass"
+        case .dusk: return "Dusk"
+        }
+    }
+
+    /// The window shows the blurred desktop behind it.
+    public var isSeeThrough: Bool {
+        switch self {
+        case .glass, .smoked: return true
+        case .solid, .gradient, .graphite, .midnight, .dusk: return false
+        }
+    }
+
+    /// The theme drawn while Reduce transparency is on: the light family shows Solid, as it always did; the dark
+    /// family stays dark, Smoked glass as Graphite and the opaque ones as themselves.
     public func effective(reduceTransparency: Bool, systemReduceTransparency: Bool) -> NativeSettingsTheme {
-        reduceTransparency || systemReduceTransparency ? .solid : self
+        guard reduceTransparency || systemReduceTransparency else { return self }
+        switch self {
+        case .glass, .solid, .gradient: return .solid
+        case .graphite, .smoked: return .graphite
+        case .midnight: return .midnight
+        case .dusk: return .dusk
+        }
     }
 }
 

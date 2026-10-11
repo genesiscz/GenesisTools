@@ -38,7 +38,7 @@ struct HubLook: Equatable {
             return HubLook(style: .hub, theme: general, seeThrough: glass)
         case .native:
             let effective = general.effective(reduceTransparency: reduceTransparency, systemReduceTransparency: false)
-            return HubLook(style: .native, theme: general, seeThrough: effective == .glass)
+            return HubLook(style: .native, theme: general, seeThrough: effective.isSeeThrough)
         }
     }
 
@@ -52,48 +52,57 @@ struct HubLook: Equatable {
     }
 }
 
-/// The four looks View → Look and the palette's "look" switch between: the Hub style, or the Native style with one
-/// of General's themes. A Native look sets General → Theme too, since the Native style follows it, so the settings
-/// window and the widgets change with it.
-enum HubLookChoice: String, CaseIterable, Identifiable, Sendable {
+/// The looks View → Look and the palette's "look" switch between: the Hub style, or the Native style with one of
+/// General's themes. The Native entries come from `NativeSettingsTheme.allCases`, so a new theme shows up here by
+/// itself. A Native look sets General → Theme too, since the Native style follows it, so the settings window and
+/// the widgets change with it.
+enum HubLookChoice: Hashable, Identifiable, Sendable {
     case hub
-    case nativeGlass = "native-glass"
-    case nativeSolid = "native-solid"
-    case nativeGradient = "native-gradient"
+    case native(NativeSettingsTheme)
 
-    var id: String { rawValue }
+    static var allCases: [HubLookChoice] { [.hub] + NativeSettingsTheme.allCases.map(HubLookChoice.native) }
+
+    /// "hub", "native-<theme>": the palette's completion and the menu's stable name.
+    var id: String {
+        switch self {
+        case .hub: return "hub"
+        case .native(let theme): return "native-\(theme.rawValue)"
+        }
+    }
 
     var title: String {
         switch self {
         case .hub: return "Hub"
-        case .nativeGlass: return "Native · Glass"
-        case .nativeSolid: return "Native · Solid"
-        case .nativeGradient: return "Native · Gradient"
+        case .native(let theme): return "Native · \(theme.title)"
         }
     }
 
-    var style: HubWindowStyle { self == .hub ? .hub : .native }
+    var style: HubWindowStyle {
+        switch self {
+        case .hub: return .hub
+        case .native: return .native
+        }
+    }
 
     /// The General → Theme a Native look sets; nil for the Hub look, which leaves General alone.
     var theme: NativeSettingsTheme? {
         switch self {
         case .hub: return nil
-        case .nativeGlass: return .glass
-        case .nativeSolid: return .solid
-        case .nativeGradient: return .gradient
+        case .native(let theme): return theme
         }
+    }
+
+    /// The palette's "look <word>": a look whose id or title contains the word ("graphite", "smoked", "native-dusk").
+    func matches(_ word: String) -> Bool {
+        let word = word.lowercased()
+        return word.isEmpty || id.contains(word) || title.lowercased().contains(word)
     }
 
     /// What a Native look's menu item and palette row say.
     nonisolated static let generalNote = "Also sets General → Theme for every native window: Settings and the widgets too"
 
     static func current(style: HubWindowStyle, theme: NativeSettingsTheme) -> HubLookChoice {
-        guard style == .native else { return .hub }
-        switch theme {
-        case .glass: return .nativeGlass
-        case .solid: return .nativeSolid
-        case .gradient: return .nativeGradient
-        }
+        style == .native ? .native(theme) : .hub
     }
 
     /// Writes through the shared models, so a running settings window and other faces follow at once.

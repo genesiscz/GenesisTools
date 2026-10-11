@@ -40,21 +40,53 @@ public struct NativeGlassShapeSurface<SurfaceShape: Shape>: ViewModifier {
     }
 
     public func body(content: Content) -> some View {
-        if systemOpaque || requestedOpaque || opaque || theme == .solid {
-            content.background(opaqueColor, in: shape)
+        let drawn = theme.effective(reduceTransparency: systemOpaque || requestedOpaque, systemReduceTransparency: false)
+        switch drawn {
+        case .glass, .solid, .gradient:
+            // The light family, as it has always been drawn.
+            if systemOpaque || requestedOpaque || opaque || theme == .solid {
+                content.background(opaqueColor, in: shape)
+                    .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
+            } else if theme == .gradient {
+                content.foregroundStyle(Color.white).background {
+                    ZStack {
+                        opaqueColor
+                        NativeSettingsGradient.tint
+                    }.clipShape(shape)
+                }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
+            } else if #available(macOS 26, *) {
+                content.foregroundStyle(Color.white).glassEffect(.regular.tint(tint), in: shape)
+            } else {
+                content.background(.ultraThinMaterial, in: shape)
+                    .overlay(shape.stroke(.white.opacity(0.10), lineWidth: 1))
+            }
+        case .graphite:
+            content.background(NativeThemePalette.graphiteCard, in: shape)
                 .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
-        } else if theme == .gradient {
+        case .midnight:
+            content.background(NativeThemePalette.midnightCard, in: shape)
+                .overlay(shape.stroke(NativeThemePalette.midnightHairline, lineWidth: 1))
+        case .dusk:
             content.foregroundStyle(Color.white).background {
                 ZStack {
-                    opaqueColor
-                    NativeSettingsGradient.tint
+                    NativeThemePalette.duskCard
+                    NativeSettingsDusk.tint
                 }.clipShape(shape)
             }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
-        } else if #available(macOS 26, *) {
-            content.foregroundStyle(Color.white).glassEffect(.regular.tint(tint), in: shape)
-        } else {
-            content.background(.ultraThinMaterial, in: shape)
-                .overlay(shape.stroke(.white.opacity(0.10), lineWidth: 1))
+        case .smoked:
+            if opaque {
+                content.background(NativeThemePalette.graphiteCard, in: shape)
+                    .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
+            } else if #available(macOS 26, *) {
+                content.foregroundStyle(Color.white).glassEffect(.regular.tint(NativeThemePalette.smokedCardTint), in: shape)
+            } else {
+                content.background {
+                    ZStack {
+                        Rectangle().fill(.ultraThinMaterial)
+                        NativeThemePalette.smokedCardTint
+                    }.clipShape(shape)
+                }.overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
+            }
         }
     }
 }
@@ -98,7 +130,15 @@ public struct NativeGlassControl: ViewModifier {
     }
 
     public func body(content: Content) -> some View {
-        if systemOpaque || requestedOpaque || theme == .solid {
+        // Solid themes (and Reduce transparency) get an opaque control; the others glass, Smoked glass a dark one.
+        let opaqueControl: Bool = {
+            switch theme.effective(reduceTransparency: systemOpaque || requestedOpaque, systemReduceTransparency: false) {
+            case .solid, .graphite, .midnight: return true
+            case .glass, .gradient, .smoked, .dusk: return false
+            }
+        }()
+        let tint = theme == .smoked ? NativeThemePalette.smokedCardTint : self.tint
+        if opaqueControl {
             content.modifier(NativeGlassSurface(radius: radius, opaque: true))
         } else if #available(macOS 26, *) {
             if systemStill || requestedStill {
@@ -134,6 +174,56 @@ public struct NativeSettingsBackdrop: View {
             } else {
                 Color.black.opacity(0.06)
             }
+        case .graphite: NativeThemePalette.graphiteBase
+        case .midnight: NativeThemePalette.midnightBase
+        case .dusk: NativeSettingsDusk()
+        case .smoked:
+            if windowMaterial {
+                NativeWindowMaterial().overlay(NativeThemePalette.smokedTint)
+            } else {
+                NativeThemePalette.smokedTint
+            }
+        }
+    }
+}
+
+/// The darker themes' colours (sRGB), picked against the hub's own surfaces: background 19,19,20, sidebar 24,24,26,
+/// glass about 30,30,31. Secondary text keeps at least 5.2:1 on every backdrop (HIG checker, 2026-10-11).
+public enum NativeThemePalette {
+    private static func rgb(_ red: Double, _ green: Double, _ blue: Double) -> Color {
+        Color(.sRGB, red: red / 255, green: green / 255, blue: blue / 255, opacity: 1)
+    }
+
+    /// Graphite: the backdrop, the raised bars and drawers, and a card a step lighter so the structure reads.
+    public static let graphiteBase = rgb(22, 22, 24)
+    public static let graphiteRaised = rgb(28, 28, 31)
+    public static let graphiteCard = rgb(34, 34, 38)
+    /// Midnight: blue-black, with blue hairlines instead of white ones.
+    public static let midnightBase = rgb(13, 17, 28)
+    public static let midnightRaised = rgb(18, 23, 37)
+    public static let midnightCard = rgb(24, 31, 49)
+    public static let midnightHairline = Color(.sRGB, red: 0.55, green: 0.68, blue: 1.0, opacity: 0.16)
+    /// Smoked glass: the dark tint over the window material, and the lighter one over a card's glass.
+    public static let smokedTint = Color.black.opacity(0.5)
+    public static let smokedCardTint = Color.black.opacity(0.35)
+    /// Dusk: a plum base under Gradient's purple and pink, stronger.
+    public static let duskBase = rgb(28, 22, 34)
+    public static let duskRaised = rgb(34, 27, 41)
+    public static let duskCard = rgb(40, 31, 48)
+}
+
+/// The Dusk backdrop: `NativeThemePalette.duskBase` under a stronger purple-to-pink tint than Gradient's.
+public struct NativeSettingsDusk: View {
+    public init() {}
+    public static var tint: LinearGradient {
+        LinearGradient(
+            colors: [.purple.opacity(0.22), .clear, .pink.opacity(0.10)],
+            startPoint: .topTrailing, endPoint: .bottomLeading)
+    }
+    public var body: some View {
+        ZStack {
+            NativeThemePalette.duskBase
+            Self.tint
         }
     }
 }
@@ -169,10 +259,26 @@ public struct NativePaneFill: View {
         case .chrome: Color.white.opacity(0.025)
         case .content: Color.clear
         case .bar:
-            if theme.effective(reduceTransparency: requestedOpaque, systemReduceTransparency: systemOpaque) == .solid {
-                Color(nsColor: .windowBackgroundColor)
-            } else {
-                Rectangle().fill(.regularMaterial)
+            switch theme.effective(reduceTransparency: requestedOpaque, systemReduceTransparency: systemOpaque) {
+            case .solid: Color(nsColor: .windowBackgroundColor)
+            case .glass, .gradient: Rectangle().fill(.regularMaterial)
+            case .graphite: NativeThemePalette.graphiteRaised
+            case .midnight: NativeThemePalette.midnightRaised
+            case .smoked:
+                ZStack {
+                    Rectangle().fill(.regularMaterial)
+                    Color.black.opacity(0.45)
+                }
+            case .dusk:
+                // Frosted but dark, so the backdrop's purple still comes through; opaque under Reduce transparency.
+                if requestedOpaque || systemOpaque {
+                    NativeThemePalette.duskRaised
+                } else {
+                    ZStack {
+                        Rectangle().fill(.ultraThinMaterial)
+                        NativeThemePalette.duskBase.opacity(0.6)
+                    }
+                }
             }
         }
     }

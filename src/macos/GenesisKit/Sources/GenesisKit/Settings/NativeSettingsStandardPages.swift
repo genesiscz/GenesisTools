@@ -11,7 +11,9 @@ public struct NativeSettingsGeneralPage: View {
         VStack(spacing: 18) {
             NativeSettingsCard("Theme", subtitle: "Choose the background for native feature windows and widgets.") {
                 NativeSettingsThemePicker(selection: $appearance.theme)
-                if appearance.theme != .solid && (appearance.reduceTransparency || systemOpaque) {
+                if appearance.theme.effective(reduceTransparency: true, systemReduceTransparency: false) != appearance.theme
+                    && (appearance.reduceTransparency || systemOpaque)
+                {
                     Text(
                         "Reduce Transparency is showing solid surfaces. Your selected theme will return when it is turned off."
                     )

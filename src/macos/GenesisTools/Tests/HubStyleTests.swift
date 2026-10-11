@@ -24,6 +24,11 @@ final class HubStyleTests: XCTestCase {
             let generalGlass = HubLook.resolve(style: .native, glass: glass, general: .glass, reduceTransparency: false)
             XCTAssertEqual(generalGlass.theme, .glass)
             XCTAssertTrue(generalGlass.seeThrough)
+            for theme in NativeSettingsTheme.allCases {
+                let look = HubLook.resolve(style: .native, glass: glass, general: theme, reduceTransparency: false)
+                XCTAssertEqual(look.theme, theme)
+                XCTAssertEqual(look.seeThrough, theme == .glass || theme == .smoked, theme.rawValue)
+            }
         }
     }
 
@@ -32,6 +37,8 @@ final class HubStyleTests: XCTestCase {
         XCTAssertEqual(look.theme, .glass, "the chosen theme stays; the surfaces read it as solid")
         XCTAssertFalse(look.seeThrough)
         XCTAssertEqual(look.theme.effective(reduceTransparency: true, systemReduceTransparency: false), .solid)
+        let smoked = HubLook.resolve(style: .native, glass: false, general: .smoked, reduceTransparency: true)
+        XCTAssertFalse(smoked.seeThrough, "Smoked glass under Reduce transparency is Graphite: no desktop behind it")
     }
 
     func testThePaletteOffersGlassOnlyInTheHubStyleAndSaysWhyInTheNativeStyle() {
@@ -46,14 +53,17 @@ final class HubStyleTests: XCTestCase {
         XCTAssertTrue(HubPaletteEngine.suggestions(for: "", context: HubPaletteContext()).map(\.id).contains("kw-glass"))
     }
 
-    func testEachLookMapsToOneStyleAndTheme() {
-        XCTAssertEqual(HubLookChoice.allCases.map(\.title), ["Hub", "Native · Glass", "Native · Solid", "Native · Gradient"])
+    func testEachLookMapsToOneStyleAndThemeAndEveryThemeHasALook() {
+        XCTAssertEqual(HubLookChoice.allCases.map(\.title), [
+            "Hub", "Native · Glass", "Native · Solid", "Native · Gradient", "Native · Graphite", "Native · Midnight",
+            "Native · Smoked glass", "Native · Dusk",
+        ])
+        XCTAssertEqual(HubLookChoice.allCases.compactMap(\.theme), NativeSettingsTheme.allCases, "a new theme needs no menu edit")
         XCTAssertEqual(HubLookChoice.hub.style, .hub)
         XCTAssertNil(HubLookChoice.hub.theme, "the Hub look leaves General → Theme alone")
-        XCTAssertEqual(HubLookChoice.nativeGlass.style, .native)
-        XCTAssertEqual(HubLookChoice.nativeGlass.theme, .glass)
-        XCTAssertEqual(HubLookChoice.nativeSolid.theme, .solid)
-        XCTAssertEqual(HubLookChoice.nativeGradient.theme, .gradient)
+        XCTAssertEqual(HubLookChoice.native(.glass).style, .native)
+        XCTAssertEqual(HubLookChoice.native(.dusk).theme, .dusk)
+        XCTAssertEqual(Set(HubLookChoice.allCases.map(\.id)).count, HubLookChoice.allCases.count)
         for choice in HubLookChoice.allCases where choice != .hub {
             XCTAssertEqual(HubLookChoice.current(style: choice.style, theme: choice.theme ?? .glass), choice)
         }
@@ -70,7 +80,7 @@ final class HubStyleTests: XCTestCase {
         let preferences = HubPreferences(defaults: defaults, notificationNamespace: name, broadcasts: false, observeExternalChanges: false)
         let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
         appearance.theme = .solid
-        HubLookChoice.nativeGradient.apply(preferences: preferences, appearance: appearance)
+        HubLookChoice.native(.gradient).apply(preferences: preferences, appearance: appearance)
         XCTAssertEqual(preferences.style, .native)
         XCTAssertEqual(appearance.theme, .gradient)
         XCTAssertEqual(defaults.string(forKey: "hub.style"), "native")
@@ -80,14 +90,21 @@ final class HubStyleTests: XCTestCase {
         XCTAssertEqual(appearance.theme, .gradient, "the Hub look leaves General → Theme alone")
     }
 
-    func testThePaletteListsTheFourLooksAndChecksTheCurrentOne() {
-        let rows = HubPaletteEngine.suggestions(for: "look ", context: HubPaletteContext(look: .nativeSolid))
-        XCTAssertEqual(rows.map(\.id), ["look-hub", "look-native-glass", "look-native-solid", "look-native-gradient"])
+    func testThePaletteListsEveryLookAndChecksTheCurrentOne() {
+        let rows = HubPaletteEngine.suggestions(for: "look ", context: HubPaletteContext(look: .native(.midnight)))
+        XCTAssertEqual(rows.map(\.id), HubLookChoice.allCases.map { "look-\($0.id)" })
         XCTAssertEqual(rows.map(\.action), HubLookChoice.allCases.map { .setLook($0) })
-        XCTAssertEqual(rows.filter { $0.symbol == "checkmark" }.map(\.id), ["look-native-solid"])
+        XCTAssertEqual(rows.filter { $0.symbol == "checkmark" }.map(\.id), ["look-native-midnight"])
         XCTAssertNil(rows[0].subtitle)
-        XCTAssertEqual(rows[3].subtitle, HubLookChoice.generalNote)
-        XCTAssertEqual(HubPaletteEngine.suggestions(for: "look grad", context: HubPaletteContext()).map(\.id), ["look-native-gradient"])
+        XCTAssertTrue(rows.dropFirst().allSatisfy { $0.subtitle == HubLookChoice.generalNote })
+        func ids(_ input: String) -> [String] { HubPaletteEngine.suggestions(for: input, context: HubPaletteContext()).map(\.id) }
+        XCTAssertEqual(ids("look grad"), ["look-native-gradient"])
+        XCTAssertEqual(ids("look graphite"), ["look-native-graphite"])
+        XCTAssertEqual(ids("look midnight"), ["look-native-midnight"])
+        XCTAssertEqual(ids("look smoked"), ["look-native-smoked"])
+        XCTAssertEqual(ids("look dusk"), ["look-native-dusk"])
+        XCTAssertEqual(ids("look native-dusk"), ["look-native-dusk"], "the row's own completion finds it again")
+        XCTAssertEqual(ids("theme hub"), ["look-hub"])
     }
 
     @MainActor

@@ -250,7 +250,8 @@ enum HubMenuCommands {
         let submenu = NSMenu(title: "Look")
         for choice in HubLookChoice.allCases {
             let command = HubMenuCommand(title: choice.title, run: { $0.runPalette(.setLook(choice), toggleGlass: toggleGlass) },
-                                         checked: { _ in HubLookChoice.currentInHub == choice }, separated: choice == .nativeGlass)
+                                         checked: { _ in HubLookChoice.currentInHub == choice },
+                                         separated: choice == HubLookChoice.allCases.dropFirst().first)
             for entry in items([command], hub: hub) {
                 if choice.theme != nil, !entry.isSeparatorItem { entry.toolTip = HubLookChoice.generalNote + "." }
                 submenu.addItem(entry)

@@ -65,7 +65,7 @@ struct HubPaletteContext {
 
     /// Changes when anything the rows are built from changes.
     var signature: String {
-        "\(projects.count)|\(sessions.count)|\(prs.count)|\(prsLoaded)|\(worktrees.count)|\(currentPath ?? "")|\(glassAvailable)|\(look.rawValue)"
+        "\(projects.count)|\(sessions.count)|\(prs.count)|\(prsLoaded)|\(worktrees.count)|\(currentPath ?? "")|\(glassAvailable)|\(look.id)"
     }
 }
 
@@ -94,7 +94,7 @@ enum HubPaletteEngine {
         Keyword(word: "pane", aliases: ["tab"], summary: "Show or hide a pane: pane transcript|changes|files|decisions", symbol: "rectangle.split.3x1", usesProject: false),
         Keyword(word: "mode", aliases: [], summary: "Switch the list: mode sessions|worktrees|prs", symbol: "sidebar.left", usesProject: false),
         Keyword(word: "glass", aliases: [], summary: "Turn the glass look on or off (⌘⇧G)", symbol: "drop", usesProject: false),
-        Keyword(word: "look", aliases: ["theme", "style"], summary: "Switch the look: look hub|glass|solid|gradient", symbol: "paintpalette", usesProject: false),
+        Keyword(word: "look", aliases: ["theme", "style"], summary: "Switch the look: look hub, or a theme such as graphite, midnight, smoked, dusk", symbol: "paintpalette", usesProject: false),
     ]
 
     static func keyword(_ word: String) -> Keyword? {
@@ -294,12 +294,11 @@ enum HubPaletteEngine {
                                      completion: "pane \(tab.rawValue)", action: .togglePane(tab))
             }
         case "look":
-            let wanted = argument.lowercased()
-            return HubLookChoice.allCases.filter { wanted.isEmpty || $0.title.lowercased().contains(wanted) }.map { choice in
-                HubPaletteSuggestion(id: "look-\(choice.rawValue)", title: choice.title,
+            return HubLookChoice.allCases.filter { $0.matches(argument) }.map { choice in
+                HubPaletteSuggestion(id: "look-\(choice.id)", title: choice.title,
                                      subtitle: choice.theme == nil ? nil : HubLookChoice.generalNote,
                                      symbol: choice == context.look ? "checkmark" : command.symbol,
-                                     completion: "look \(choice.rawValue)", action: .setLook(choice))
+                                     completion: "look \(choice.id)", action: .setLook(choice))
             }
         case "mode":
             return HubMode.allCases.filter { argument.isEmpty || $0.rawValue.hasPrefix(argument.lowercased()) }.map { mode in

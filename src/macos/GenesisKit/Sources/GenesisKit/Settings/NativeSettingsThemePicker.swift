@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// A row of picture choices: each option is a small window drawn over its own `background`, with its title and a
-/// check mark under it (General → Theme, Hub → Window style).
+/// Picture choices: each option is a small window drawn over its own `background`, with its title and a check mark
+/// under it (General → Theme, Hub → Window style). One row, or `columns` per row when there are too many for one.
 public struct NativeSettingsTilePicker<Option: Identifiable & Hashable, Background: View>: View {
     @Binding private var selection: Option
     private let options: [Option]
+    private let columns: Int?
     private let title: (Option) -> String
     private let accessibilityLabel: (Option) -> String
     private let identifier: (Option) -> String
@@ -13,10 +14,11 @@ public struct NativeSettingsTilePicker<Option: Identifiable & Hashable, Backgrou
     public init(
         selection: Binding<Option>, options: [Option], title: @escaping (Option) -> String,
         accessibilityLabel: @escaping (Option) -> String, identifier: @escaping (Option) -> String,
-        @ViewBuilder background: @escaping (Option) -> Background
+        columns: Int? = nil, @ViewBuilder background: @escaping (Option) -> Background
     ) {
         _selection = selection
         self.options = options
+        self.columns = columns
         self.title = title
         self.accessibilityLabel = accessibilityLabel
         self.identifier = identifier
@@ -24,39 +26,48 @@ public struct NativeSettingsTilePicker<Option: Identifiable & Hashable, Backgrou
     }
 
     public var body: some View {
-        HStack(spacing: 14) {
-            ForEach(options) { option in
-                Button {
-                    selection = option
-                } label: {
-                    VStack(spacing: 10) {
-                        ZStack {
-                            background(option)
-                            HStack(spacing: 7) {
-                                RoundedRectangle(cornerRadius: 4).fill(.white.opacity(0.08)).frame(width: 28)
-                                VStack(spacing: 7) {
-                                    RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.12))
-                                    RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.08))
-                                }
-                            }.padding(12)
-                        }.frame(height: 78).clipShape(RoundedRectangle(cornerRadius: 11))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 11)
-                                    .stroke(
-                                        selection == option ? Color.accentColor : .white.opacity(0.12),
-                                        lineWidth: selection == option ? 2 : 1))
-                        HStack(spacing: 6) {
-                            Text(title(option)).font(.system(size: 12, weight: selection == option ? .semibold : .regular))
-                            if selection == option {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
-                            }
-                        }
-                    }.frame(maxWidth: .infinity)
-                }.buttonStyle(.genHoverPlain()).accessibilityLabel(accessibilityLabel(option))
-                    .accessibilityIdentifier(identifier(option))
-                    .accessibilityAddTraits(selection == option ? .isSelected : [])
+        if let columns {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: columns),
+                      spacing: 16) {
+                ForEach(options) { option in tile(option) }
+            }
+        } else {
+            HStack(spacing: 14) {
+                ForEach(options) { option in tile(option) }
             }
         }
+    }
+
+    private func tile(_ option: Option) -> some View {
+        Button {
+            selection = option
+        } label: {
+            VStack(spacing: 10) {
+                ZStack {
+                    background(option)
+                    HStack(spacing: 7) {
+                        RoundedRectangle(cornerRadius: 4).fill(.white.opacity(0.08)).frame(width: 28)
+                        VStack(spacing: 7) {
+                            RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.12))
+                            RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.08))
+                        }
+                    }.padding(12)
+                }.frame(height: 78).clipShape(RoundedRectangle(cornerRadius: 11))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11)
+                            .stroke(
+                                selection == option ? Color.accentColor : .white.opacity(0.12),
+                                lineWidth: selection == option ? 2 : 1))
+                HStack(spacing: 6) {
+                    Text(title(option)).font(.system(size: 12, weight: selection == option ? .semibold : .regular))
+                    if selection == option {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                    }
+                }
+            }.frame(maxWidth: .infinity)
+        }.buttonStyle(.genHoverPlain()).accessibilityLabel(accessibilityLabel(option))
+            .accessibilityIdentifier(identifier(option))
+            .accessibilityAddTraits(selection == option ? .isSelected : [])
     }
 }
 
@@ -64,9 +75,10 @@ public struct NativeSettingsThemePicker: View {
     @Binding private var selection: NativeSettingsTheme
     public init(selection: Binding<NativeSettingsTheme>) { _selection = selection }
     public var body: some View {
+        // Seven themes: four on the first row, three on the second.
         NativeSettingsTilePicker(
             selection: $selection, options: NativeSettingsTheme.allCases, title: \.title,
-            accessibilityLabel: { "Theme: \($0.title)" }, identifier: { "settings.theme.\($0.id)" }
+            accessibilityLabel: { "Theme: \($0.title)" }, identifier: { "settings.theme.\($0.id)" }, columns: 4
         ) { theme in
             Self.preview(theme)
         }
@@ -82,6 +94,13 @@ public struct NativeSettingsThemePicker: View {
                 startPoint: .topLeading, endPoint: .bottomTrailing)
         case .solid: Color(white: 0.12)
         case .gradient: NativeSettingsGradient()
+        case .graphite: NativeThemePalette.graphiteBase
+        case .midnight: NativeThemePalette.midnightBase
+        case .smoked:
+            LinearGradient(
+                colors: [Color(white: 0.17), Color(white: 0.09)],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .dusk: NativeSettingsDusk()
         }
     }
 }
