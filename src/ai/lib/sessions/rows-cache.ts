@@ -2,8 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
+import { type TmuxCmuxLocation, tmuxCmuxLocations } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 
 /**
  * A resident answer for `tools ai usage sessions --json`.
@@ -141,9 +143,38 @@ export async function refreshSessionRowsCache(
 }
 
 /**
+ * Rows with the live cmux tab of each session that runs inside tmux. The journal has no surface for such a
+ * session, so without this the hub says "No cmux pane" for a session that is on screen. Live, so it is applied
+ * to what is served and never written into the cache file.
+ */
+async function withTmuxLocations(
+    rows: AgentSessionRow[],
+    locate: () => Promise<Map<string, TmuxCmuxLocation>>
+): Promise<AgentSessionRow[]> {
+    let locations: Map<string, TmuxCmuxLocation>;
+
+    try {
+        locations = await locate();
+    } catch (err) {
+        logger.debug({ err }, "[ai] tmux-hosted cmux locations unavailable; serving journal locations only");
+        return rows;
+    }
+
+    if (locations.size === 0) {
+        return rows;
+    }
+
+    return rows.map((row) => {
+        const live = locations.get(row.sessionId.toLowerCase());
+        return live ? { ...row, cmux: live } : row;
+    });
+}
+
+/**
  * `ai usage sessions --json`: the daemon's cached answer when it is usable (and the ask stamped, at most
  * twice a minute, so the daemon keeps it warm), else a fresh list, written back for the next ask. The
  * CLI command and the hub server's door both answer through this, so their output is the same bytes.
+ * Either way, a session that runs inside tmux carries the cmux tab its tmux client runs in (`tmuxLocations`).
  */
 export async function sessionRowsJson(
     listing: AgentSessionRowsOptions,
@@ -152,11 +183,14 @@ export async function sessionRowsJson(
         cacheWrite = true,
         path = sessionRowsCachePath(),
         listRows,
+        tmuxLocations = isTestProcess() ? async () => new Map() : () => tmuxCmuxLocations(),
     }: {
         fresh?: boolean;
         cacheWrite?: boolean;
         path?: string;
         listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
+        /** Live cmux tabs of tmux-hosted sessions. A test that injects none gets none. */
+        tmuxLocations?: () => Promise<Map<string, TmuxCmuxLocation>>;
     }
 ): Promise<{ fetchedAt: number; cached: boolean; rows: AgentSessionRow[] }> {
     if (!fresh) {
@@ -175,7 +209,11 @@ export async function sessionRowsJson(
                 }
             }
 
-            return { fetchedAt: cached.fetchedAt, cached: true, rows: cached.rows };
+            return {
+                fetchedAt: cached.fetchedAt,
+                cached: true,
+                rows: await withTmuxLocations(cached.rows, tmuxLocations),
+            };
         }
     }
 
@@ -185,5 +223,5 @@ export async function sessionRowsJson(
         await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows }, path);
     }
 
-    return { fetchedAt: now, cached: false, rows };
+    return { fetchedAt: now, cached: false, rows: await withTmuxLocations(rows, tmuxLocations) };
 }

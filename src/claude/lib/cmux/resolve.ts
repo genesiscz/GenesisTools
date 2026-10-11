@@ -5,7 +5,6 @@ import {
     findFocusTargets,
     matchingSession,
 } from "@app/claude/lib/cmux/focus";
-import { findTmuxHosts, type TmuxHost, tmuxAttachCommand } from "@app/claude/lib/cmux/tmux-host";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import {
     type CmuxLiveSnapshot,
@@ -13,6 +12,7 @@ import {
     type SnapshotPreviewMode,
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { lookupSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { findTmuxHosts, type TmuxHost, tmuxAttachCommand, ttyName } from "@genesiscz/utils/cmux/tmux-host";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
@@ -134,11 +134,6 @@ function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
         score: 100,
         active: false,
     };
-}
-
-/** `/dev/ttys001` (tmux) and `ttys001` (cmux) name the same terminal. */
-function ttyName(tty: string | undefined): string {
-    return (tty ?? "").replace(/^\/dev\//, "");
 }
 
 /**

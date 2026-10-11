@@ -124,6 +124,50 @@ describe("sessionRowsJson", () => {
     });
 });
 
+describe("sessionRowsJson tmux locations", () => {
+    const live = {
+        workspaceId: "WS-UUID",
+        workspaceRef: "workspace:1",
+        paneRef: "pane:1",
+        surfaceId: "S2-UUID",
+        surfaceRef: "surface:2",
+        windowRef: "window:1",
+        at: 42,
+    };
+
+    test("a session that runs in tmux is served with its live cmux tab, and the cache file keeps the journal's answer", async () => {
+        const path = await scratch();
+        const tmuxLocations = async () => new Map([["s-9", live]]);
+        const fresh = await sessionRowsJson(entry().query, {
+            fresh: true,
+            path,
+            listRows: async () => [row(9), row(8)],
+            tmuxLocations,
+        });
+
+        expect(fresh.rows.map((r) => r.cmux ?? null)).toEqual([live, null]);
+        expect((await readSessionRowsCache(path))?.rows.map((r) => r.cmux ?? null)).toEqual([null, null]);
+
+        const cached = await sessionRowsJson(entry().query, { path, listRows: async () => [], tmuxLocations });
+
+        expect(cached.cached).toBe(true);
+        expect(cached.rows.map((r) => r.cmux ?? null)).toEqual([live, null]);
+    });
+
+    test("an unavailable tmux lookup serves the rows unchanged", async () => {
+        const answer = await sessionRowsJson(entry().query, {
+            fresh: true,
+            path: await scratch(),
+            listRows: async () => [row(9)],
+            tmuxLocations: async () => {
+                throw new Error("ps failed");
+            },
+        });
+
+        expect(answer.rows).toEqual([row(9)]);
+    });
+});
+
 describe("refreshSessionRowsCache", () => {
     test("does not walk anything before a query has been asked", async () => {
         let calls = 0;

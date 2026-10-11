@@ -15,14 +15,15 @@ import {
     tmuxHostTargets,
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
+import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import {
     findTmuxHosts,
     type HostProcess,
     sessionProcessPids,
     type TmuxHost,
     type TmuxHostDeps,
-} from "@app/claude/lib/cmux/tmux-host";
-import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
+    tmuxCmuxLocations,
+} from "@genesiscz/utils/cmux/tmux-host";
 import type { TmuxClientInfo, TmuxPaneInfo, TmuxSocket } from "@genesiscz/utils/tmux/sessions";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
@@ -938,5 +939,71 @@ describe("findSessionTargets through tmux", () => {
         expect(target?.matchedOn).toBe("tmux-hidden");
         expect(describeMatch(target)).toBe("via tmux dd-045c53d3 (its pane %200 is not on screen)");
         expect(identifiesExactSession({ targets: [target], source: "tmux", unavailable: false })).toBe(false);
+    });
+});
+
+describe("tmuxCmuxLocations", () => {
+    /** `cmux --id-format both tree --all --json`, trimmed to the fields the join reads. */
+    const tree = {
+        windows: [
+            {
+                ref: "window:1",
+                workspaces: [
+                    {
+                        ref: "workspace:1",
+                        id: "WS-UUID",
+                        panes: [
+                            {
+                                ref: "pane:1",
+                                surfaces: [
+                                    { ref: "surface:1", id: "S1-UUID", type: "terminal", tty: "ttys009" },
+                                    {
+                                        ref: "surface:2",
+                                        id: "S2-UUID",
+                                        type: "terminal",
+                                        tty: "ttys001",
+                                        pane_ref: "pane:1",
+                                    },
+                                    { ref: "surface:3", id: "S3-UUID", type: "browser" },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    };
+
+    test("a tmux-hosted session gets the location of the cmux tab its tmux client runs in", async () => {
+        const locations = await tmuxCmuxLocations({ ...tmuxDeps({}), readTree: async () => tree, now: 42 });
+
+        expect([...locations]).toEqual([
+            [
+                TMUX_ID,
+                {
+                    workspaceId: "WS-UUID",
+                    workspaceRef: "workspace:1",
+                    paneRef: "pane:1",
+                    surfaceId: "S2-UUID",
+                    surfaceRef: "surface:2",
+                    windowRef: "window:1",
+                    at: 42,
+                },
+            ],
+        ]);
+    });
+
+    test("cmux is not asked when no tmux-hosted session has a client", async () => {
+        let asked = 0;
+        const locations = await tmuxCmuxLocations({
+            ...tmuxDeps({ clients: [] }),
+            readTree: async () => {
+                asked++;
+                return tree;
+            },
+        });
+
+        expect(locations.size).toBe(0);
+        expect(asked).toBe(0);
     });
 });
