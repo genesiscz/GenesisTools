@@ -3,6 +3,20 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-11 — **A fitted panel that grew or shrank with "Source and context" dropped frames (largest gaps 37–59
+  ms), and the side panel cut off its own header while it shrank.** Two causes. The outline (a Core Animation
+  mask) started at the click while the content (a SwiftUI animation) started a frame or two later, because the
+  main thread was still drawing the click: fix, both start on the first display frame (40568ffc1). And the
+  composer's AppKit text field moved with the content, so every frame ran a hosting-view layout and rebuilt the key
+  view loop (`FocusBridge.invalidateKeyViewLoop` in a `sample` of the fold); `ReshapeCostProbeTests` isolated it
+  (gap p50 18–26 ms with the field, 8 ms with a drawn stand-in): fix, the composer draws a stand-in while
+  `\.edgePanelMoving` is true (6f3de7867). Real app, one-card codex session, Source and context closed then opened,
+  largest gap before (one run) → after (three runs): side shrink 41.2 → 12.5–18.7 ms, side grow 37.5 → 14.0–18.0
+  ms, top shrink 47.3 → 12.5 and 25.0 ms (one run gave 79 ms; the front app changed during it), top grow 59.2 →
+  12.5–20.8 ms. Gap p50 was 16.7 ms in 3 of 4 reshapes before and 8.3 ms in 10 of 12 after; first callback 13–26
+  ms; one window resize per change; header and composer in every outline frame. The live checks first took the keyboard and lost the panel to the user's clicks elsewhere:
+  passive mode (da23479e8, 69724feaa). `ax.swift` walked accessibility cycles without end: 772e6e2cb.
+
 - 2026-10-11 — **Image viewer: the title row's "1 of 5" sat on top of the window title.** `.titlebarRow()` starts
   after `WindowTitlebar.leadingReserve`, which measures AppKit's title field; it was measured before the field was
   laid out, and a later title change ("A and B" while comparing) is never measured again. Fix: hide the AppKit

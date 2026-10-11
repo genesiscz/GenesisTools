@@ -21,6 +21,9 @@
 - Building a large SwiftUI tree on expand delays the first frame; make the content cheap, build it before the
   motion, or keep it alive if that costs nothing at idle (measure idle CPU).
 - Decoding JSON snapshots on the main thread competes with animation frames.
+- A live AppKit control (a `TextField`) inside content that moves on every frame costs a hosting-view layout and a
+  key-view-loop rebuild per frame: gap p50 18–26 ms against 8 ms without it (`ReshapeCostProbeTests`). Draw a
+  stand-in of the same size while `\.edgePanelMoving` is true, and keep the real field while the user types in it.
 
 ## Edge panels (widget, 2026-10-10, 417458101)
 - Resize the window ONCE per transition and animate a `CAShapeLayer` mask (the outline). A per-frame `setFrame` let
@@ -40,3 +43,6 @@
   reshape, the composer never leaves the bottom edge in a recording, no empty band at the end.
 - The disclosure's own motion starts one run-loop turn earlier (the fit is measured after its layout); both end
   within a frame or two of each other.
+- The mask animation and the content animation start together on the first display-link tick, never at the click:
+  the click's own drawing delays the SwiftUI side, and an outline that leads the content cuts off the header
+  (40568ffc1).
