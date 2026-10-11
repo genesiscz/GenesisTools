@@ -3,6 +3,13 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-11 — **Image viewer: the title row's "1 of 5" sat on top of the window title.** `.titlebarRow()` starts
+  after `WindowTitlebar.leadingReserve`, which measures AppKit's title field; it was measured before the field was
+  laid out, and a later title change ("A and B" while comparing) is never measured again. Fix: hide the AppKit
+  title (`titleVisibility = .hidden`, the title stays set for the Window menu) and draw the name in the row with
+  `.titlebarLabel()`. The title bar audit's "flat band under the strip" rule also fires on any canvas that
+  letterboxes a picture; the viewer's snapshot test checks the zone and the row instead. eb2c0bcc5.
+
 - 2026-10-10 — **Widget opened on a random display.** "Main display" fell back to `NSScreen.main`, which is the
   display with keyboard focus at launch, not the menu-bar display. Fix: `NSScreen.screens.first`. 24fdbb77a.
 - 2026-10-10 — **Empty card on collapse.** The content was removed at once (inert `.transition`), the window
