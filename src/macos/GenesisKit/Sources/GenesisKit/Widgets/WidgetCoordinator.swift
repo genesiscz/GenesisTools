@@ -40,8 +40,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// The surface a shelf capture started from; it reopens there when the image is staged.
     private var captureReturn: WidgetSurfaceID?
     public var settingsPresenter: ((String) -> Void)?
-    /// Expanded panels leave the keyboard where it is (the `passive` test command): a scripted motion check on the
-    /// user's screen opens panels without taking the keyboard from the app they work in.
+    /// Expanded panels leave the keyboard where it is and stay open through clicks elsewhere (the `passive` test
+    /// command): a scripted motion check on the user's screen opens panels without taking the keyboard from the app
+    /// they work in, and their clicks there do not close the panel under test.
     public var passivePanels = false {
         didSet { panels.values.forEach { $0.becomesKeyOnExpand = !passivePanels } }
     }
@@ -593,8 +594,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
     }
 
-    private func collapseIfOutside(_ event: NSEvent) {
-        guard event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
+    /// A click outside every panel collapses the open one, except in passive mode: there the user keeps working in
+    /// another app while a script opens and closes panels, and each of their clicks closed the panel under test
+    /// within a second (2026-10-11).
+    func collapseIfOutside(_ event: NSEvent) {
+        guard !passivePanels, event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
         var window = event.window
         while let candidate = window {
             if panels.values.contains(where: { $0.panel === candidate }) { return }

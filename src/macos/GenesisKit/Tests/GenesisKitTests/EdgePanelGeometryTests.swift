@@ -558,6 +558,35 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertFalse(coordinator.panelMonitorsInstalled)
     }
 
+    @MainActor
+    func testPassivePanelsStayOpenThroughClicksElsewhereAndNormalOnesClose() async throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "Edge panels need a display")
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        coordinator.settingsPresenter = { _ in }
+        coordinator.orderFront = { _ in }
+        coordinator.start(showSettings: true)
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil }
+        coordinator.model.updatePreferences(["showWidget": .bool(true)])
+        func clickFarAway() throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: NSPoint(x: -20_000, y: -20_000), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime + 1, windowNumber: 0, context: nil, eventNumber: 0,
+                clickCount: 1, pressure: 1))
+        }
+
+        coordinator.passivePanels = true
+        coordinator.model.open(.right)
+        coordinator.collapseIfOutside(try clickFarAway())
+        XCTAssertEqual(coordinator.model.expanded, .right, "a scripted check keeps its panel through the user's clicks")
+
+        coordinator.passivePanels = false
+        coordinator.collapseIfOutside(try clickFarAway())
+        XCTAssertNil(coordinator.model.expanded, "outside passive mode a click elsewhere still closes the panel")
+    }
+
     /// The settings face starts the widget face from `preferencesSaved`, so it must fire only once the hub stored
     /// the switch: a launch before that would read the switch as off.
     @MainActor
