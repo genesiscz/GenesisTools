@@ -78,6 +78,8 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         {
             ClickyHost.shared.registerSettingsSection(section)
         }
+        // The hub window's preferences, after Widgets; a running hub follows a change at once.
+        ClickyHost.shared.registerSettingsSection(HubSettingsPages.section())
         // This face only edits the settings. Turning "Show the widget" on must also start the widget face that
         // owns the panels, once the switch is stored, so the face reads it as on.
         model.preferencesSaved = { patch in
