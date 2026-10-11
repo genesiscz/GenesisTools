@@ -384,11 +384,15 @@ public struct LiveWidgetView: View {
         card.id == model.card?.id && !model.foldedCardIDs.contains(card.id)
     }
 
+    /// Opens or folds a row in one `GenMotion` animation; the panel around it grows or shrinks to fit (W3).
     private func toggle(_ card: WidgetCard) {
-        if isOpen(card) {
-            model.foldedCardIDs.insert(card.id)
-        } else {
-            model.openCard(card)
+        let opening = !isOpen(card)
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
+            if opening {
+                model.openCard(card)
+            } else {
+                model.foldedCardIDs.insert(card.id)
+            }
         }
     }
 
@@ -422,7 +426,6 @@ public struct LiveWidgetView: View {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(open ? 90 : 0))
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: open)
                         .padding(.top, 4)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 9)
@@ -435,8 +438,11 @@ public struct LiveWidgetView: View {
             .accessibilityIdentifier("widget.inbox.row." + card.id)
             if open {
                 cardDetail(card).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
+                    .transition(.genReveal)
             }
         }
+        // The card closes over its detail instead of the rows below sliding up over fading text.
+        .clipShape(RoundedRectangle(cornerRadius: 11))
         .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11)
             .strokeBorder(card.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))

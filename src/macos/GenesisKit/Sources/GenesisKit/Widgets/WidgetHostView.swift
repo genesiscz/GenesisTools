@@ -70,16 +70,11 @@ struct WidgetHostView: View {
 
     var body: some View {
         Color.clear
-            .overlay(alignment: edgeAlignment) {
-                if presentation != .compact || keepsExpandedPane {
-                    content
-                        .padding(.top, topPadding)
-                        .padding(surface.edge == .right ? .trailing : .leading,
-                            surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
-                }
-            }
-            .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
-                if surface.edge == .top { topStrip } else { sideStrip }
+            .overlay(alignment: .topLeading) { panelLayers }
+            // The side rail anchors itself to the screen (ScreenAnchoredWidgetRail), so it needs the whole window
+            // rather than the moving content frame; in it the rail never falls back to its scrolling layout mid-motion.
+            .overlay(alignment: surface.edge == .right ? .trailing : .leading) {
+                if surface.edge != .top { sideStrip }
             }
         .nativeGlassSurface(in: shape, opaqueColor: Color(white: 0.09))
         .clipShape(shape)
@@ -104,6 +99,27 @@ struct WidgetHostView: View {
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
             warm = false
         }
+    }
+
+    /// The pane and the top strip. They fill the window, except while the outline changes size around the same
+    /// content (`EdgePanelMotion.contentFrame`): then they follow the outline's edges, so the composer stays at the
+    /// bottom edge and the top strip's wings at the side edges.
+    private var panelLayers: some View {
+        let frame = motion.contentFrame
+        return Color.clear
+            .overlay(alignment: edgeAlignment) {
+                if presentation != .compact || keepsExpandedPane {
+                    content
+                        .padding(.top, topPadding)
+                        .padding(surface.edge == .right ? .trailing : .leading,
+                            surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
+                }
+            }
+            .overlay(alignment: .top) {
+                if surface.edge == .top { topStrip }
+            }
+            .frame(width: frame?.width, height: frame?.height)
+            .offset(x: frame?.minX ?? 0, y: frame?.minY ?? 0)
     }
 
     private var topStrip: some View {

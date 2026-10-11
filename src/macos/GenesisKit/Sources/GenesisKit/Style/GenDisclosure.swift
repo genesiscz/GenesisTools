@@ -4,8 +4,12 @@ import SwiftUI
 ///
 /// SwiftUI's `DisclosureGroup` on macOS reacts to its chevron only, a 10 pt target beside a label that
 /// looks clickable and is not. This header is one `Button` (keyboard, VoiceOver, automation) with a
-/// full-width content shape, the row hover, the pointing-hand cursor and a minimum height, and its
-/// chevron turns in 0.15 s unless Reduce Motion is on (the app's setting, the widget's or the system's).
+/// full-width content shape, the row hover, the pointing-hand cursor and a minimum height.
+///
+/// Opening and closing animate with `GenMotion` (instant under Reduce Motion: the app's setting, the widget's or the
+/// system's): the content fades in while the rows below make room, and the clipped section closes over it. A host
+/// that fits its height to its content (an edge panel, `FittedScroll`) sees the new height in the same transaction
+/// and grows or shrinks with it; `onGenExpansion` tells it which one is coming.
 public struct GenDisclosure<Label: View, Content: View>: View {
     @Binding private var isExpanded: Bool
     private let minHeight: CGFloat
@@ -14,9 +18,8 @@ public struct GenDisclosure<Label: View, Content: View>: View {
     private let accessibilityTitle: String?
     private let label: Label
     private let content: Content
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @Environment(\.nativeSettingsReduceMotion) private var appReduceMotion
-    @Environment(\.widgetReduceMotion) private var widgetReduceMotion
+    @GenReduceMotion private var reduceMotion
+    @Environment(\.genExpansionHost) private var host
 
     public init(
         isExpanded: Binding<Bool>,
@@ -36,19 +39,18 @@ public struct GenDisclosure<Label: View, Content: View>: View {
         self.content = content()
     }
 
-    private var reduceMotion: Bool { systemReduceMotion || appReduceMotion || widgetReduceMotion }
-
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                isExpanded.toggle()
+                let expanding = !isExpanded
+                host?.willChange(expanding)
+                GenMotion.perform(expanding: expanding, reduceMotion: reduceMotion) { isExpanded = expanding }
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isExpanded)
                         .frame(width: 10)
                     label
                     Spacer(minLength: 0)
@@ -63,8 +65,12 @@ public struct GenDisclosure<Label: View, Content: View>: View {
             .modifier(OptionalAccessibility(title: accessibilityTitle, identifier: identifier))
             if isExpanded {
                 content.padding(.top, spacing).padding(.leading, 6)
+                    .transition(.genReveal)
             }
         }
+        // The section closes over its content instead of the rows below sliding up over fading text. A few points of
+        // slack keep a focus ring at the content's edge.
+        .clipShape(Rectangle().inset(by: -3))
     }
 }
 

@@ -47,9 +47,45 @@ public enum EdgePanelGeometry {
     public static func motion(
         to presentation: WidgetModulePresentation, shrinking: Bool
     ) -> (duration: Double, curve: (Float, Float, Float, Float)) {
-        let drawer: (Float, Float, Float, Float) = (0.32, 0.72, 0, 1)
-        if shrinking { return (0.22, drawer) }
-        return (presentation == .expanded ? 0.30 : 0.22, drawer)
+        if shrinking { return (0.22, GenMotion.curve) }
+        return (presentation == .expanded ? 0.30 : 0.22, GenMotion.curve)
+    }
+
+    /// How one size change around the same content runs (a disclosure opened, an answer arrived, the rail gained a
+    /// session). The window changes at most once at each end, never per frame: a growing outline takes its larger
+    /// window at the start and is revealed by the mask; a shrinking one keeps its window until the mask is small.
+    public struct ReshapePlan: Equatable, Sendable {
+        /// The window the motion runs in, in screen coordinates.
+        public let window: CGRect
+        public let resizesAtStart: Bool
+        public let resizesAtEnd: Bool
+        /// Expanding motion (GenMotion's longer opening duration) rather than collapsing.
+        public let growing: Bool
+        /// Where the content sits in `window` (top-left origin, as SwiftUI places it) at the start and the end.
+        public let startContent: CGRect
+        public let endContent: CGRect
+    }
+
+    public static func reshape(from visible: CGRect, to target: CGRect, window current: CGRect) -> ReshapePlan {
+        let window: CGRect
+        if current.insetBy(dx: -0.5, dy: -0.5).contains(target) {
+            window = current
+        } else if target.insetBy(dx: -0.5, dy: -0.5).contains(visible) {
+            window = target
+        } else {
+            window = visible.union(target)
+        }
+        return ReshapePlan(
+            window: window, resizesAtStart: window != current, resizesAtEnd: window != target,
+            growing: target.width * target.height > visible.width * visible.height,
+            startContent: localRect(visible, in: window), endContent: localRect(target, in: window))
+    }
+
+    /// `visible` (screen coordinates, y up) in the coordinates SwiftUI uses inside a window at `window`: top-left
+    /// origin, y down.
+    public static func localRect(_ visible: CGRect, in window: CGRect) -> CGRect {
+        CGRect(
+            x: visible.minX - window.minX, y: window.maxY - visible.maxY, width: visible.width, height: visible.height)
     }
 
     /// The eased progress of a cubic Bézier timing curve at linear time `t` (0…1), as CAMediaTimingFunction computes it.
@@ -71,9 +107,7 @@ public enum EdgePanelGeometry {
     /// The outline at `visible` (screen coordinates) as a path in the y-up coordinates of a window at `window`, drawn
     /// exactly as SwiftUI draws `shape` in that window's top-left-origin space.
     public static func maskPath(shape: EdgePanelShape, visible: CGRect, window: CGRect) -> CGPath {
-        let local = CGRect(
-            x: visible.minX - window.minX, y: window.maxY - visible.maxY, width: visible.width, height: visible.height)
-        let path = shape.path(in: local).cgPath
+        let path = shape.path(in: localRect(visible, in: window)).cgPath
         var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: window.height)
         return path.copy(using: &flip) ?? path
     }

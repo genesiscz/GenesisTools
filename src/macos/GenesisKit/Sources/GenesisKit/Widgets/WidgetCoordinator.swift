@@ -288,14 +288,16 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         surface.edge == .top ? nil : railCenters[surface]
     }
 
-    /// The expanded content height of a surface: the Agents pane fits its measured content up to the detail size
-    /// (W3); other modules keep their declared size.
+    /// The expanded content height of a surface: the Agents pane fits its measured content up to
+    /// `maximumContentHeight` (W3), so opening a card or its Source and context grows the panel; other modules keep
+    /// their declared size.
     private func expandedContentHeight(
         _ surface: WidgetSurfaceID, module: WidgetModuleDescriptor?, visible: CGSize
     ) -> CGFloat {
         guard module?.id == "agents" else { return (module?.expandedSize.height ?? 440) + 40 }
-        let detail = WidgetClusterGeometry.detailSize(visible: visible).height
-        let fitted = min(detail, max(Self.minimumAgentHeight, model.agentFitHeight ?? detail))
+        let fitted = WidgetClusterGeometry.fittedHeight(
+            measured: model.agentFitHeight, minimum: Self.minimumAgentHeight,
+            maximum: WidgetClusterGeometry.maximumContentHeight(visible: visible))
         let row = surface.edge == .top && moduleIDs(for: surface).count > 1 ? WidgetHostView.topModuleRowHeight : 0
         return fitted + row
     }

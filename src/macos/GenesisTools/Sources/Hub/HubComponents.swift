@@ -454,28 +454,6 @@ extension TitlebarHeader where Details == EmptyView {
     }
 }
 
-// MARK: - A scroll area as tall as its rows
-
-/// A scroll area that is as tall as its content, up to `maxHeight`, and fades at a cut edge when it is taller.
-/// The overlays (palette, prompts, find) gave their lists a fixed or greedy height: three prompts sat over 250 pt
-/// of empty panel, and the palette's height preference never left its scroll view, so it showed one row (H17).
-struct FittedScroll<Content: View>: View {
-    var maxHeight: CGFloat
-    var minHeight: CGFloat = 0
-    @ViewBuilder let content: () -> Content
-    @State private var height: CGFloat = 0
-
-    var body: some View {
-        ScrollView {
-            content()
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { height = $0 }
-                .scrollOverflowContent()
-        }
-        .scrollOverflowHints()
-        .frame(height: min(maxHeight, max(minHeight, height)))
-    }
-}
-
 // MARK: - Keep a sidebar's selection in view
 
 /// A grouped sidebar keeps its selected row in view (hub inventory H4, 2026-10-10): a selection set by a link

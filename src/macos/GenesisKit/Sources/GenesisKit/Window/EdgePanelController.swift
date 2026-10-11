@@ -15,6 +15,10 @@ public final class EdgePanelMotion: ObservableObject {
     @Published public internal(set) var presentation: WidgetModulePresentation
     /// The pointer is on the panel. A host may build its larger content ahead of a click while this is true.
     @Published public var pointerInside = false
+    /// Where the content sits in the window (top-left origin) while the outline changes size around the same content,
+    /// or nil when it fills the window. It moves with the outline's edges in one SwiftUI animation on the outline's
+    /// curve, so a composer at the bottom stays at the bottom edge while the window itself changes size only once.
+    @Published public internal(set) var contentFrame: CGRect?
 
     public init(presentation: WidgetModulePresentation = .compact) {
         self.presentation = presentation
@@ -85,6 +89,8 @@ public final class EdgePanelController<Content: View> {
         let window: CGRect
         let presentation: WidgetModulePresentation
         let shrinking: Bool
+        /// The same content at another size (`beginReshape`), rather than a change of what the panel shows.
+        let reshape: Bool
         let started: CFTimeInterval
         let duration: CFTimeInterval
         var timing: AnimationTiming
@@ -108,18 +114,6 @@ public final class EdgePanelController<Content: View> {
     private var lastTarget: CGRect?
     private var lastPresentation: WidgetModulePresentation?
     private var transition: Transition?
-    private struct Resize {
-        let token: Int
-        let from: CGRect
-        let to: CGRect
-        let presentation: WidgetModulePresentation
-        let started: CFTimeInterval
-        let duration: CFTimeInterval
-        let curve: (Float, Float, Float, Float)
-        var timing: AnimationTiming
-        let ticker: EdgeFrameTicker
-    }
-    private var resize: Resize?
     private var generation = 0
     public private(set) var isExpanded = false
     /// Driver callback timing only; neither callback count nor gaps establish compositor frame delivery.
@@ -198,10 +192,10 @@ public final class EdgePanelController<Content: View> {
         lastTarget = nil
         generation += 1
         end(outcome: "interrupted")
-        endResize(outcome: "interrupted")
         if let presentation = lastPresentation, motion.presentation != presentation {
             motion.presentation = presentation
         }
+        placeContent(nil)
         panel.orderOut(nil)
     }
 
@@ -231,15 +225,16 @@ public final class EdgePanelController<Content: View> {
         let fromPath = transition.flatMap { _ in root.maskLayer.presentation()?.path }
         let fromWindow = transition?.window ?? panel.frame
         let wasTransitioning = transition != nil
+        let wasReshaping = transition?.reshape == true
         end(outcome: "interrupted")
-        endResize(outcome: "interrupted")
         isExpanded = expanded
         if reduceMotion || !panel.isVisible || from == target {
             settle(presentation, frame: target)
-        } else if !wasTransitioning, motion.presentation == presentation {
-            // Same content, another size (it was measured, or the rail gained a session): the edges move with the
-            // content, which needs a real resize. These are rare and small; open and close stay layout-free.
-            beginResize(token: token, presentation: presentation, from: panel.frame, to: target)
+        } else if motion.presentation == presentation, !wasTransitioning || wasReshaping {
+            // Same content, another size (a disclosure opened, an answer arrived, the rail gained a session): the
+            // window changes once and the content moves with the outline's edges (`motion.contentFrame`).
+            beginReshape(token: token, presentation: presentation, from: from, fromPath: fromPath,
+                fromWindow: fromWindow, to: target)
         } else {
             // Only a change of content may keep the larger window while it shrinks, so that the old content stays
             // visible until the outline is small. A new size for the same content takes its window at once.
@@ -255,6 +250,8 @@ public final class EdgePanelController<Content: View> {
 
     private func settle(_ presentation: WidgetModulePresentation, frame: CGRect) {
         if motion.presentation != presentation { motion.presentation = presentation }
+        // The content fills the final window again; at the end of a reshape it already sits exactly there.
+        placeContent(nil)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         root.clipping = false
@@ -281,6 +278,7 @@ public final class EdgePanelController<Content: View> {
             startPath = EdgePanelGeometry.maskPath(shape: shape(motion.presentation), visible: visibleFrom, window: window)
         }
         if !shrinking, motion.presentation != presentation { motion.presentation = presentation }
+        placeContent(nil)
         let endPath = EdgePanelGeometry.maskPath(shape: shape(presentation), visible: target, window: window)
         let spec = EdgePanelGeometry.motion(to: presentation, shrinking: shrinking)
         let duration = spec.duration * Self.motionScale
@@ -314,8 +312,66 @@ public final class EdgePanelController<Content: View> {
         }
         transition = Transition(
             token: token, from: visibleFrom, to: target, window: window, presentation: presentation,
-            shrinking: shrinking, started: started, duration: duration, timing: AnimationTiming(at: started),
-            ticker: ticker)
+            shrinking: shrinking, reshape: false, started: started, duration: duration,
+            timing: AnimationTiming(at: started), ticker: ticker)
+    }
+
+    /// The same content at another size. The window changes at most once at each end (`EdgePanelGeometry.reshape`):
+    /// growing, it takes the larger window first and the mask reveals it; shrinking, it keeps its window until the
+    /// mask is small. Meanwhile the content moves with the outline's edges through `motion.contentFrame`, animated by
+    /// SwiftUI on the same curve and duration as the mask, so a composer at the bottom rides the bottom edge.
+    private func beginReshape(
+        token: Int, presentation: WidgetModulePresentation, from: CGRect, fromPath: CGPath?, fromWindow: CGRect,
+        to target: CGRect
+    ) {
+        let started = CACurrentMediaTime()
+        let plan = EdgePanelGeometry.reshape(from: from, to: target, window: fromWindow)
+        let outline = shape(presentation)
+        let startPath: CGPath
+        if let fromPath {
+            var shift = CGAffineTransform(
+                translationX: fromWindow.minX - plan.window.minX, y: fromWindow.minY - plan.window.minY)
+            startPath = fromPath.copy(using: &shift) ?? fromPath
+        } else {
+            startPath = EdgePanelGeometry.maskPath(shape: outline, visible: from, window: plan.window)
+        }
+        let endPath = EdgePanelGeometry.maskPath(shape: outline, visible: target, window: plan.window)
+        let duration = GenMotion.duration(expanding: plan.growing) * Self.motionScale
+
+        // The content takes its start place before the window changes, so the one resize moves nothing on screen.
+        placeContent(plan.startContent)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        root.maskLayer.path = startPath
+        root.clipping = true
+        if panel.frame != plan.window { panel.setFrame(plan.window, display: true) }
+        root.layoutSubtreeIfNeeded()
+        CATransaction.commit()
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated { self?.complete(token) }
+        }
+        let animation = CABasicAnimation(keyPath: "path")
+        animation.fromValue = startPath
+        animation.toValue = endPath
+        animation.duration = duration
+        animation.timingFunction = CAMediaTimingFunction(
+            controlPoints: GenMotion.curve.0, GenMotion.curve.1, GenMotion.curve.2, GenMotion.curve.3)
+        root.maskLayer.path = endPath
+        root.maskLayer.add(animation, forKey: "edge.outline")
+        CATransaction.commit()
+        placeContent(plan.endContent, animation: .timingCurve(
+            Double(GenMotion.curve.0), Double(GenMotion.curve.1), Double(GenMotion.curve.2), Double(GenMotion.curve.3),
+            duration: duration))
+
+        let ticker = EdgeFrameTicker(view: root) { [weak self] in
+            MainActor.assumeIsolated { self?.tick(token) }
+        }
+        transition = Transition(
+            token: token, from: from, to: target, window: plan.window, presentation: presentation,
+            shrinking: !plan.growing, reshape: true, started: started, duration: duration,
+            timing: AnimationTiming(at: started), ticker: ticker)
     }
 
     private func tick(_ token: Int) {
@@ -333,55 +389,24 @@ public final class EdgePanelController<Content: View> {
         settle(current.presentation, frame: current.to)
     }
 
+    /// Moves the content to `frame` (nil: the whole window) with exactly `animation`, whatever transaction the caller
+    /// runs in: a disclosure's toggle runs inside its own animation and reaches here through the host's sync.
+    private func placeContent(_ frame: CGRect?, animation: Animation? = nil) {
+        guard motion.contentFrame != frame else { return }
+        var transaction = Transaction(animation: animation)
+        transaction.disablesAnimations = animation == nil
+        withTransaction(transaction) { motion.contentFrame = frame }
+    }
+
     /// Stops the running transition where it is. The caller decides what the panel shows next.
     private func end(outcome: String) {
         guard let current = transition else { return }
         transition = nil
         current.ticker.stop()
         root.maskLayer.removeAnimation(forKey: "edge.outline")
+        let kind = current.shrinking ? "shrink" : "grow"
         log(current.timing.summary(outcome: outcome), presentation: current.presentation,
-            kind: current.shrinking ? "shrink" : "grow")
-    }
-
-    private func beginResize(token: Int, presentation: WidgetModulePresentation, from: CGRect, to target: CGRect) {
-        let started = CACurrentMediaTime()
-        root.clipping = false
-        let spec = EdgePanelGeometry.motion(to: presentation, shrinking: target.height < from.height)
-        let duration = spec.duration * Self.motionScale
-        let ticker = EdgeFrameTicker(view: root) { [weak self] in
-            MainActor.assumeIsolated { self?.resizeTick(token) }
-        }
-        resize = Resize(
-            token: token, from: from, to: target, presentation: presentation, started: started, duration: duration,
-            curve: spec.curve, timing: AnimationTiming(at: started), ticker: ticker)
-    }
-
-    private func resizeTick(_ token: Int) {
-        guard var current = resize, current.token == token else { return }
-        let start = CACurrentMediaTime()
-        let progress = EdgePanelGeometry.bezier((start - current.started) / current.duration, current.curve)
-        var frame = EdgePanelGeometry.interpolate(from: current.from, to: current.to, progress: CGFloat(progress))
-        // AppKit rounds native frames. Re-anchor every step so an interrupted resize cannot carry that half-point
-        // rounding error into the next one.
-        switch placement {
-        case .top:
-            frame.origin.x = current.to.midX - frame.width / 2
-            frame.origin.y = current.to.maxY - frame.height
-        case .right: frame.origin.x = current.to.maxX - frame.width
-        case .left: frame.origin.x = current.to.minX
-        }
-        let done = start - current.started >= current.duration
-        panel.setFrame(done ? current.to : frame, display: true)
-        current.timing.record(startedAt: start, finishedAt: CACurrentMediaTime())
-        resize = current
-        if done { endResize(outcome: "completed") }
-    }
-
-    private func endResize(outcome: String) {
-        guard let current = resize else { return }
-        resize = nil
-        current.ticker.stop()
-        log(current.timing.summary(outcome: outcome), presentation: current.presentation, kind: "resize")
+            kind: current.reshape ? "reshape." + kind : kind)
     }
 
     private func log(_ summary: AnimationTiming.Summary, presentation: WidgetModulePresentation, kind: String) {

@@ -163,6 +163,21 @@ public enum WidgetClusterGeometry {
                       height: min(max(0, visible.height - 36), height))
     }
 
+    /// The tallest a fitted panel's content grows before it scrolls: the display's visible height less an 18 pt
+    /// margin above and below, and never above 900 pt, the ceiling of the old fixed detail size (875 pt on a
+    /// 1440 pt display). Below it the panel is as tall as its content (W3), so a disclosure opened inside grows the
+    /// panel up to here and only what is beyond scrolls. On a laptop this is the screen less its margins, where the
+    /// old 62 % rule stopped at 580 pt and made a short screen scroll the most.
+    static func maximumContentHeight(visible: CGSize) -> CGFloat {
+        max(0, min(900, visible.height - 36))
+    }
+
+    /// A fitted panel's content height: its measured content, never below `minimum` (a nearly empty inbox still
+    /// reads as a panel) and never above `maximum`. Before the first measurement it takes the maximum.
+    static func fittedHeight(measured: CGFloat?, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
+        min(maximum, max(minimum, measured ?? maximum))
+    }
+
     public static func topWidth(cutout: CGFloat, moduleCount: Int) -> CGFloat {
         let otherButtons = min(4, max(0, moduleCount - 1))
         let titleWidth: CGFloat = cutout > 0 ? 24 : 110

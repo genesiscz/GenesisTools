@@ -10,6 +10,7 @@ struct WidgetReceiptContextView: View {
     @State private var loading = false
     @State private var hasPrewarmed = false
     @State private var loadingID: UUID?
+    @GenReduceMotion private var reduceMotion
 
     private var source: WidgetSourceContext? { context?.sourceContext ?? card.sourceContext }
     private var summary: String {
@@ -89,7 +90,10 @@ struct WidgetReceiptContextView: View {
                 // Opening again consults the model cache; only an expired or missing entry runs the command.
                 let value = try await model.receiptContext(for: card)
                 try Task.checkCancellation()
-                if loadingID == requestID, context != value { context = value }
+                if loadingID == requestID, context != value {
+                    // Nearby messages that arrive while the section is open grow it like the click that opened it.
+                    GenMotion.perform(expanding: true, reduceMotion: reduceMotion || !expanded) { context = value }
+                }
             } catch {
                 if !Task.isCancelled, loadingID == requestID { failure = error.localizedDescription }
             }
