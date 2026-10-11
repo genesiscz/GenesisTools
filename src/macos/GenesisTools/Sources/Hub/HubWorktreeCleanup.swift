@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -13,8 +14,6 @@ enum WorktreeCleanup {
     /// The Worktrees mode's selection that shows this panel instead of one worktree.
     static let selectionID = "::cleanup"
     static let showBlockedKey = "hub.worktreeCleanup.showBlocked"
-    /// `--older-than <days>`: only worktrees idle at least this long are removable; 0 turns the rule off.
-    static let olderThanKey = "hub.worktreeCleanup.olderThanDays"
 
     /// The list's arguments for the repositories and the age rule.
     static func listArgs(repos: [String], olderThanDays: Int) -> [String] {
@@ -137,9 +136,18 @@ final class WorktreeCleanupStore: ObservableObject {
     @Published private(set) var moving: (done: Int, total: Int)?
     /// The last move-aside's outcomes: the bar under the header offers their restore commands.
     @Published var lastMoved: [MoveAsideOutcome] = []
-    // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
-    @Published var olderThanDays = HubDefaults.store.integer(forKey: WorktreeCleanup.olderThanKey) {
-        didSet { HubDefaults.store.set(olderThanDays, forKey: WorktreeCleanup.olderThanKey) }
+    /// `--older-than <days>`: only worktrees idle at least this long are removable; 0 turns the rule off. Settings →
+    /// Hub → Panes edits the same value (`HubPreferences.cleanupIdleDays`); a change there reaches this store's views
+    /// through `preferenceChanges`.
+    var olderThanDays: Int {
+        get { HubDefaults.preferences.cleanupIdleDays }
+        set { HubDefaults.preferences.cleanupIdleDays = newValue }
+    }
+    private var preferenceChanges: AnyCancellable?
+
+    init() {
+        preferenceChanges = HubDefaults.preferences.$cleanupIdleDays.dropFirst().removeDuplicates()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     /// Paths per `size` call: a cold scan of a 3 GB worktree takes about 5 s, so three fit the
@@ -656,7 +664,7 @@ struct WorktreeCleanupView: View {
                         Text(verbatim: "Moving \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
                     }
                     // The label names what the stepper steps; "any age ⌃⌄" alone did not (H15).
-                    Stepper(value: $store.olderThanDays, in: 0...90) {
+                    Stepper(value: $store.olderThanDays, in: HubPreferences.cleanupIdleDaysRange) {
                         Text(verbatim: store.olderThanDays == 0 ? "Idle for: any time" : "Idle for: \(Plural.count(store.olderThanDays, "day"))+")
                             .font(.system(size: 11.5))
                     }

@@ -1317,7 +1317,7 @@ struct PRListView: View {
                     .foregroundColor(ReviewPalette.dim)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
-                    .background(ReviewPalette.sidebar)
+                    .hubSurface(.groupHeader)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())

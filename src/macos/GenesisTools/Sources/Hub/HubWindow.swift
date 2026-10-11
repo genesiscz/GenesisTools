@@ -204,7 +204,7 @@ func runHub(_ args: [String]) -> Never {
         HubDefaults.isolate()
         // An embedded review re-anchors and saves comments; a scripted run must not touch the user's file.
         ReviewCommentStore.readOnly = true
-        if let glass = request.glass { HubDefaults.store.set(glass, forKey: HubGlass.key) }
+        if let glass = request.glass { HubDefaults.store.set(glass, forKey: HubPreferences.Key.glass) }
         for (key, value) in request.settings { HubDefaults.store.set(value, forKey: key) }
         for (key, value) in request.textSettings { HubDefaults.store.set(value, forKey: key) }
     }
@@ -272,7 +272,7 @@ func runHub(_ args: [String]) -> Never {
     }
     delegate.window = window
     MainActor.assumeIsolated {
-        HubGlass.apply(to: window, enabled: HubDefaults.store.bool(forKey: HubGlass.key))
+        HubGlass.apply(to: window, enabled: HubLook.current.seeThrough)
         HubLiveResize.shared.watch(window)
     }
 
@@ -1709,7 +1709,6 @@ struct HubRootView: View {
         }
         return parts.joined(separator: " › ")
     }
-    @AppStorage(HubGlass.key) private var glass = false
     @AppStorage("hub.prs.showDiff") private var prsShowDiff = true
     @State private var width: CGFloat = 0
     @State private var paletteOpen = false
@@ -1794,14 +1793,14 @@ struct HubRootView: View {
             }
         }
         .hubSurface(.content)
-        .environment(\.hubGlass, glass)
+        // The window style, glass and General → Theme, for every surface above (Hub/HubStyle.swift).
+        .modifier(HubStyleHost())
         .preferredColorScheme(.dark)
         // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
         .task(id: perfArea) { PerfContext.area = perfArea }
         .measuredWidth("hub.root", $width)
         .onGeometryChange(for: Int.self, of: { $0.frame(in: .global).minX < -0.5 ? 1 : 0 }) { HubBench.note("hub.root.clipped", $0) }
         .background(HubWindowReader { window in
-            HubGlass.apply(to: window, enabled: glass)
             // The root hosting view no longer derives the window's minimum from SwiftUI (that cost a
             // full layout per pass); the minimum is this, stated once per change.
             if window.contentMinSize.width != windowMinWidth {
@@ -1809,7 +1808,7 @@ struct HubRootView: View {
             }
         })
         .background(
-            Button("") { glass.toggle() }
+            Button("") { HubDefaults.preferences.glass.toggle() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .opacity(0)
                 .accessibilityHidden(true)
@@ -1847,7 +1846,7 @@ struct HubRootView: View {
                 HubFindPanel(hub: model, roots: model.findRoots)
             }
             if paletteOpen {
-                HubPaletteHost(model: model, prs: model.prs, isPresented: $paletteOpen, seed: paletteSeed) { glass.toggle() }
+                HubPaletteHost(model: model, prs: model.prs, isPresented: $paletteOpen, seed: paletteSeed) { HubDefaults.preferences.glass.toggle() }
             }
         }
         .onChange(of: model.paletteRequest, initial: true) { _, request in

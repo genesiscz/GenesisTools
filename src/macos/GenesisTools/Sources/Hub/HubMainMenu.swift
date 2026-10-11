@@ -183,7 +183,12 @@ enum HubMenuCommands {
                        checked: { $0.panes.contains(pane) }, separated: index == 0)
     } + [
         HubMenuCommand(title: "Glass", key: "g", modifiers: [.command, .shift], run: { $0.runPalette(.toggleGlass, toggleGlass: toggleGlass) },
-                       checked: { _ in HubDefaults.store.bool(forKey: HubGlass.key) }, separated: true),
+                       checked: { _ in HubDefaults.preferences.glass }, separated: true),
+        HubMenuCommand(title: "Native Style", run: { _ in
+            let preferences = HubDefaults.preferences
+            preferences.style = preferences.style == .native ? .hub : .native
+        }, checked: { _ in HubDefaults.preferences.style == .native }),
+        HubMenuCommand(title: "Hub Settings…", run: { _ in ClickyLaunch.openSettings(pageID: HubSettingsPages.appearancePageID) }),
         HubMenuCommand(title: "Split Diff", run: { review(of: $0)?.setStyle(.split) },
                        checked: { review(of: $0)?.options.diffStyle == .split }, enabled: { review(of: $0) != nil }, separated: true),
         HubMenuCommand(title: "Unified Diff", run: { review(of: $0)?.setStyle(.unified) },
@@ -256,7 +261,7 @@ enum HubMenuCommands {
     }
 
     private static func toggleGlass() {
-        HubDefaults.store.set(!HubDefaults.store.bool(forKey: HubGlass.key), forKey: HubGlass.key)
+        HubDefaults.preferences.glass.toggle()
     }
 
     /// The same path as `tools hub --<flag>` handed to a running hub.

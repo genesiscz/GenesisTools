@@ -738,7 +738,7 @@ struct GroupHeader: View {
         .foregroundColor(ReviewPalette.dim)
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-        .background(ReviewPalette.sidebar)
+        .hubSurface(.groupHeader)
         .overlay(alignment: dropEdge == .top ? .top : .bottom) {
             if dropEdge != nil {
                 Capsule()

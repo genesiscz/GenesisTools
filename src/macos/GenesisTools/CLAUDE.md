@@ -28,7 +28,7 @@ Hub/HubComponents.swift.
 | A heavy pane (transcript, diff) | `.freezesWidthWhileResizing()`: keeps its size while `HubLiveResize` is active (panel drag, window live resize, pane divider) and reflows once at the end. `heavy: false` for a pane that should follow a pane-divider drag live (everything but the transcript list; frozen, it left a dark gap beside the divider) | letting a `List` re-measure every row per resize step (395 ms/step measured), or ending a divider drag on a local mouse-up monitor (NSSplitView's tracking loop swallows it; `HubLiveResize` polls the button instead) |
 | A pull-down menu in a header or toolbar | `MenuButton(items:label:)` (GenesisKit): a drawn label, the NSMenu is built at the click | a SwiftUI `Menu` (an NSPopUpButton) or any other AppKit control inside a `ViewThatFits`: it builds each option's platform views again for every measurement, a dozen pop-up buttons per step of a divider drag in the review header (bench `split` busy p50 46.7 → 23.5 ms, 2026-09-26) |
 | A list row that acts as a button | `.rowButton(cornerRadius:)` → `RowButtonStyle` (GenesisKit): soft fill in the row's own frame; keep gaps and insets OUTSIDE the button so hover box = selection box | `genHoverRow(accent: .white)` (45 % white outline) or padding inside the button |
-| A background | `.hubSurface(.chrome / .content / .bar)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G) | `ReviewPalette.sidebar` / `.background` directly |
+| A background | `.hubSurface(.chrome / .content / .bar / .groupHeader / .drawer)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G), the settings window's look in the Native style (Hub/HubStyle.swift: `HubPreferences.style`, General → Theme, GenesisKit `NativePaneFill`) | `ReviewPalette.sidebar` / `.background` directly: it stays hub-dark in the Native style |
 | A sidebar group header | `GroupHeader` + `GroupPrefs` (collapse, pin, move up/down, persisted) | an uppercase static label |
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
 | A feature that lacks a privacy grant (Input Monitoring, Accessibility, Microphone, Speech Recognition, Screen Recording, …) | `PermissionCenter.shared.require(PermissionNeed(kind, reason:onGranted:))`, or `await …ensure(…)` when the grant is used by a new process (GenesisKit Permissions/); status through `PermissionAccess.live`. Test it in the real app with `bun scripts/native/staging.ts deny <kinds>` | grey inline text only, a SwiftUI `.alert` inside a widget panel, a hand-built `x-apple.systempreferences:` URL, or a direct `AXIsProcessTrusted` / `CGPreflight…` call (it skips the denial simulation) |
@@ -203,6 +203,11 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   scratch setting first (`--set review.prThreads.open=true` shows the PR threads list, `--set hub.timeline.range=last30`
   the 30-day Activity). `--timeline-open <event id> [--timeline-action <id>]` runs an Activity row's action once the
   feed loads (`diff` on a review comment: the PR's diff at that thread, one click).
+- The Native style in a snapshot: `--set hub.style=native --set featureSettings.appearance.theme=gradient|solid|glass`
+  (scratch only; `HubDefaults.isolate()` copies General's `featureSettings.appearance.*` too). A `--snapshot` cannot show
+  the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--clicky`; from
+  a checkout use `../GenesisClickyPreview` (`swift build`, then `.build/debug/GenesisClickyPreview --page hub.appearance
+  --theme gradient --hub-style native --snapshot x.png`), which writes only its own preview suite and tells no hub.
 - Files → "Add folder" (Hub/HubFolders.swift): more roots per session; Changes picks roots with "Changes in <folder>"
   checkboxes. Stored per session in `HubDefaults` (`hub.extraFolders.<id>`). All ticked roots share ONE review
   (Review/ReviewRoots.swift, `ReviewModel.setRoots`): one toolbar, one diff, one Files tree with one top-level folder

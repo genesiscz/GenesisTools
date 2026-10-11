@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -12,7 +13,6 @@ import SwiftUI
 enum AgentProcs {
     /// The Sessions mode's selection that shows this pane instead of one session.
     static let selectionID = "::procs"
-    static let energyKey = "hub.procs.energy"
     static let refreshSeconds: UInt64 = 10
     /// SIGTERM's head start before SIGKILL, passed to every stop as `--grace`, so the texts that name it are right.
     static let graceSeconds = 5
@@ -161,9 +161,17 @@ final class AgentProcsStore: ObservableObject {
     @Published private(set) var stopping = Set<Int>()
     @Published var expanded = Set<String>()
     @Published var notice: (text: String, isError: Bool)?
-    // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
-    @Published var energy = HubDefaults.store.bool(forKey: AgentProcs.energyKey) {
-        didSet { HubDefaults.store.set(energy, forKey: AgentProcs.energyKey) }
+    /// Settings → Hub → Panes edits the same value (`HubPreferences.processEnergy`); a change there reaches this
+    /// store's views through `preferenceChanges`.
+    var energy: Bool {
+        get { HubDefaults.preferences.processEnergy }
+        set { HubDefaults.preferences.processEnergy = newValue }
+    }
+    private var preferenceChanges: AnyCancellable?
+
+    init() {
+        preferenceChanges = HubDefaults.preferences.$processEnergy.dropFirst().removeDuplicates()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     var orphans: [ProcGroup] {

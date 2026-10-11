@@ -16,7 +16,9 @@ enum HubDefaults {
     static func isolate() {
         guard !isolated, let scratch = UserDefaults(suiteName: scratchSuite) else { return }
         scratch.removePersistentDomain(forName: scratchSuite)
-        let prefixes = ["panel.", "hub.", "groups.", "sessionTranscript."]
+        // `featureSettings.appearance.`: General → Theme, which the hub's Native style follows
+        // (`--set featureSettings.appearance.theme=gradient` renders one theme without changing the live one).
+        let prefixes = ["panel.", "hub.", "groups.", "sessionTranscript.", "featureSettings.appearance."]
         for (key, value) in UserDefaults.standard.dictionaryRepresentation()
         where prefixes.contains(where: key.hasPrefix) {
             scratch.set(value, forKey: key)

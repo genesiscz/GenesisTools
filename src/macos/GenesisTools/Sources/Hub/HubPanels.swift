@@ -356,7 +356,7 @@ struct ResizableSidePanel<Content: View>: View {
             .frame(width: max(minWidth, CGFloat(baseWidth)))
             .frame(maxHeight: .infinity)
             .hubSurface(.chrome)
-            .background(Color(nsColor: ReviewPalette.background))
+            .hubSurface(.drawer)
             .overlay(alignment: edge == .leading ? .trailing : .leading) {
                 Rectangle().fill(ReviewPalette.hairline).frame(width: 1)
             }
@@ -520,6 +520,21 @@ enum HubSurfaceLevel {
     case content
     /// Sticky headers over scrolling rows: frosted, so the rows under it never show through sharp.
     case bar
+    /// A group header pinned over a list's rows (`GroupHeader`): the sidebar's colour in the Hub style, glass or
+    /// not, a bar in the Native style.
+    case groupHeader
+    /// The base under a panel opened over the panes (a side panel's drawer): opaque in the Hub style, a bar in the
+    /// Native style.
+    case drawer
+
+    /// The level's fill in the Native style.
+    var native: NativePaneLevel {
+        switch self {
+        case .chrome: return .chrome
+        case .content: return .content
+        case .bar, .groupHeader, .drawer: return .bar
+        }
+    }
 }
 
 extension View {
@@ -532,27 +547,43 @@ extension View {
 private struct HubSurface: ViewModifier {
     let level: HubSurfaceLevel
     @Environment(\.hubGlass) private var glass
+    /// The hub's Native style (`HubStyleHost`): the settings window's look over its backdrop.
+    @Environment(\.nativePanes) private var native
 
     func body(content: Content) -> some View {
-        // A surface that reaches the window's top edge also paints the transparent title bar above it.
-        // Without this the title bar strip kept the window's own colour, a band of a third grey over the
-        // sidebar (screenshot 2026-09-24 19:41). A surface lower down touches no safe area, so this
-        // changes nothing for it. The strip's clicks stay with `.titlebarZone()` (WindowTitlebar.swift).
-        content.titlebarBackground(fill)
+        switch level {
+        case .groupHeader, .drawer:
+            // Inside a list or over the panes: never at the window's top edge.
+            content.background(fill)
+        default:
+            // A surface that reaches the window's top edge also paints the transparent title bar above it.
+            // Without this the title bar strip kept the window's own colour, a band of a third grey over the
+            // sidebar (screenshot 2026-09-24 19:41). A surface lower down touches no safe area, so this
+            // changes nothing for it. The strip's clicks stay with `.titlebarZone()` (WindowTitlebar.swift).
+            content.titlebarBackground(fill)
+        }
     }
 
     @ViewBuilder
     private var fill: some View {
-        switch level {
-        case .chrome:
-            (glass ? Color.black.opacity(0.18) : ReviewPalette.sidebar)
-        case .content:
-            Color(nsColor: ReviewPalette.background).opacity(glass ? 0.78 : 1)
-        case .bar:
-            if glass {
-                Rectangle().fill(.regularMaterial)
-            } else {
+        if native {
+            NativePaneFill(level.native)
+        } else {
+            switch level {
+            case .chrome:
+                (glass ? Color.black.opacity(0.18) : ReviewPalette.sidebar)
+            case .content:
+                Color(nsColor: ReviewPalette.background).opacity(glass ? 0.78 : 1)
+            case .bar:
+                if glass {
+                    Rectangle().fill(.regularMaterial)
+                } else {
+                    ReviewPalette.sidebar
+                }
+            case .groupHeader:
                 ReviewPalette.sidebar
+            case .drawer:
+                Color(nsColor: ReviewPalette.background)
             }
         }
     }
@@ -564,8 +595,6 @@ private struct HubSurface: ViewModifier {
 /// desktop through, sidebars and headers go translucent, content columns stay nearly opaque for
 /// reading, and on macOS 26 the floating controls get Liquid Glass. Persisted as `hub.glass`.
 enum HubGlass {
-    static let key = "hub.glass"
-
     /// The window's content: the SwiftUI root inside a behind-window blur. The hosting view states
     /// no sizes of its own (`sizingOptions = []`): deriving min, max and intrinsic size re-measured
     /// the whole tree on every layout pass, a third of the main thread while resizing (sampled
@@ -602,17 +631,24 @@ enum HubGlass {
     }
 }
 
-/// The glass switch by the mode picker.
+/// The glass switch by the mode picker. The same switch as Settings → Hub → Appearance → Glass.
 struct GlassToggle: View {
-    @AppStorage(HubGlass.key) private var glass = false
+    @ObservedObject private var preferences = HubDefaults.preferences
 
     var body: some View {
-        IconButton(systemName: glass ? "drop.fill" : "drop",
-                   tooltip: glass ? "Glass is on: click for solid (⌘⇧G)" : "Glass: let the desktop show through (⌘⇧G)") {
-            withAnimation(.easeInOut(duration: 0.25)) { glass.toggle() }
+        let glass = preferences.glass
+        IconButton(systemName: glass ? "drop.fill" : "drop", tooltip: tooltip(glass)) {
+            withAnimation(.easeInOut(duration: 0.25)) { preferences.glass.toggle() }
         }
         .foregroundColor(glass ? ReviewPalette.renamed : ReviewPalette.dim)
         .hubLiquidGlass(glass, in: Circle())
+    }
+
+    private func tooltip(_ glass: Bool) -> String {
+        if preferences.style == .native {
+            return glass ? "Glass is on: click to follow General → Theme (⌘⇧G)" : "Glass: use the Glass theme in the hub (⌘⇧G)"
+        }
+        return glass ? "Glass is on: click for solid (⌘⇧G)" : "Glass: let the desktop show through (⌘⇧G)"
     }
 }
 
