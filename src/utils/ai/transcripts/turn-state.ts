@@ -74,6 +74,39 @@ export interface TurnSnapshot {
     silenceMs: number;
     /** The current turn's tool calls without a result, oldest first. A new prompt or the end of a turn clears them. */
     openTools: OpenToolCall[];
+    /**
+     * Epoch ms the model last got the turn back: the newest tool result, else the prompt. While no call is open the
+     * model has been thinking since then. Null when the tail holds neither.
+     */
+    handedBackAt: number | null;
+}
+
+/** The open calls of the current turn, and when the model last got the turn back. One shape for the three readers. */
+class TurnCalls {
+    readonly open = new Map<string, OpenToolCall>();
+    handedBackAt: number | null = null;
+
+    /** A prompt opened a turn: calls the last one left open are not this turn's. */
+    start(ts: number | null): void {
+        this.open.clear();
+        this.handedBackAt = ts;
+    }
+
+    call(call: OpenToolCall): void {
+        this.open.set(call.id, call);
+    }
+
+    result(id: string, ts: number | null): void {
+        this.open.delete(id);
+
+        if (ts !== null) {
+            this.handedBackAt = ts;
+        }
+    }
+
+    end(): void {
+        this.open.clear();
+    }
 }
 
 export interface TurnStateInput {
@@ -233,7 +266,7 @@ function snapshotOf({
     interrupted = false,
     turnStartedAt,
     turnStartOffset,
-    openTools,
+    calls,
 }: {
     input: TurnStateInput;
     events: ActivityEvent[];
@@ -244,7 +277,7 @@ function snapshotOf({
     interrupted?: boolean;
     turnStartedAt: number | null;
     turnStartOffset?: number;
-    openTools: Iterable<OpenToolCall>;
+    calls: TurnCalls;
 }): TurnSnapshot {
     const lastEventAt = events.at(-1)?.ts ?? null;
     const lastActivityAt = Math.max(lastEventAt ?? 0, input.lastModified);
@@ -268,7 +301,8 @@ function snapshotOf({
         lastActivityAt,
         silenceMs: input.now - lastActivityAt,
         // A turn that ended leaves no call running, whatever result the tail is missing.
-        openTools: endedTurn && !asksQuestion ? [] : [...openTools],
+        openTools: endedTurn && !asksQuestion ? [] : [...calls.open.values()],
+        handedBackAt: calls.handedBackAt,
     };
 }
 
@@ -423,12 +457,14 @@ function claudeIsPrompt(record: JsonRecord): boolean {
 }
 
 /** `tool_use` blocks with no `tool_result` yet, since the newest prompt. */
-function claudeOpenTools(records: ReadonlyArray<JsonRecord>): Map<string, OpenToolCall> {
-    const open = new Map<string, OpenToolCall>();
+function claudeCalls(records: ReadonlyArray<JsonRecord>): TurnCalls {
+    const calls = new TurnCalls();
 
     for (const record of records) {
+        const ts = toEpochMs(record.timestamp) ?? null;
+
         if (claudeIsPrompt(record)) {
-            open.clear();
+            calls.start(ts);
             continue;
         }
 
@@ -444,23 +480,23 @@ function claudeOpenTools(records: ReadonlyArray<JsonRecord>): Map<string, OpenTo
             }
 
             if (record.type === "assistant" && block.type === "tool_use" && typeof block.id === "string") {
-                open.set(block.id, {
+                calls.call({
                     id: block.id,
                     name: typeof block.name === "string" ? block.name : "tool",
                     summary: toolSummaryOf(block.input),
-                    startedAt: toEpochMs(record.timestamp) ?? null,
+                    startedAt: ts,
                 });
             } else if (
                 record.type === "user" &&
                 block.type === "tool_result" &&
                 typeof block.tool_use_id === "string"
             ) {
-                open.delete(block.tool_use_id);
+                calls.result(block.tool_use_id, ts);
             }
         }
     }
 
-    return open;
+    return calls;
 }
 
 export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
@@ -480,7 +516,7 @@ export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
         endedTurn: interrupted || last?.kind === "question" || last?.kind === "exit",
         interrupted,
         turnStartedAt: claudeTurnStartedAt(input.records),
-        openTools: claudeOpenTools(input.records).values(),
+        calls: claudeCalls(input.records),
     });
 }
 
@@ -558,8 +594,8 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let previousKind: string | null = null;
     // toolCallId → question text, until a `tool_call_update` with a terminal status answers it.
     const open = new Map<string, string>();
-    // toolCallId → every call of the turn still running, the same way.
-    const tools = new Map<string, OpenToolCall>();
+    // Every call of the turn still running, closed the same way.
+    const calls = new TurnCalls();
 
     for (const [index, record] of input.records.entries()) {
         const parsed = grokUpdateOf(record);
@@ -574,7 +610,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
             turnStartOffset = input.offsets?.[index];
             // A new prompt starts another turn: a question the last one left open is not this turn's to wait on.
             open.clear();
-            tools.clear();
+            calls.start(parsed.ts);
         }
 
         previousKind = parsed.kind;
@@ -608,17 +644,17 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         }
 
         if (parsed.kind === "turn_completed") {
-            tools.clear();
+            calls.end();
         } else if (parsed.kind === "tool_call" && callId) {
             const name = grokToolName(parsed.update);
             const summary = grokToolSummary(parsed.update);
             // The first record's title is the tool's name; a later update brings "Execute `…`".
-            tools.set(callId, { id: callId, name, summary: summary === name ? "" : summary, startedAt: parsed.ts });
+            calls.call({ id: callId, name, summary: summary === name ? "" : summary, startedAt: parsed.ts });
         } else if (parsed.kind === "tool_call_update" && callId) {
-            const call = tools.get(callId);
+            const call = calls.open.get(callId);
 
             if (typeof parsed.update.status === "string" && GROK_TERMINAL_STATUSES.has(parsed.update.status)) {
-                tools.delete(callId);
+                calls.result(callId, parsed.ts);
             } else if (call && !call.summary) {
                 call.summary = grokToolSummary(parsed.update);
             }
@@ -636,7 +672,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         endedTurn: ended || waiting,
         turnStartedAt,
         turnStartOffset,
-        openTools: tools.values(),
+        calls,
     });
 }
 
@@ -672,8 +708,8 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     // The turn's last tool call was `request_user_input_async`: the turn ends on that question.
     let lastCallAsks = false;
     let turnStartedAt: number | null = null;
-    // call_id → every call of the turn with no `*_output` yet.
-    const tools = new Map<string, OpenToolCall>();
+    // Every call of the turn with no `*_output` yet.
+    const calls = new TurnCalls();
 
     for (const record of input.records) {
         const ts = toEpochMs(record.timestamp);
@@ -686,7 +722,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         if (record.type === "event_msg" && (parsed.type === "task_complete" || parsed.type === "turn_aborted")) {
             ended = true;
             aborted = parsed.type === "turn_aborted";
-            tools.clear();
+            calls.end();
             events.push({ ts, kind: "question" });
 
             if (typeof parsed.payload.last_agent_message === "string") {
@@ -716,7 +752,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
             question = null;
             lastCallAsks = false;
             open.clear();
-            tools.clear();
+            calls.start(ts);
         }
 
         const callId = typeof parsed.payload.call_id === "string" ? parsed.payload.call_id : null;
@@ -729,9 +765,9 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
                     parsed.type === "custom_tool_call"
                         ? codexScriptSummary(script)
                         : toolSummaryOf(parsed.payload.arguments);
-                tools.set(callId, { id: callId, name, summary, startedAt: ts });
+                calls.call({ id: callId, name, summary, startedAt: ts });
             } else if (parsed.type === "function_call_output" || parsed.type === "custom_tool_call_output") {
-                tools.delete(callId);
+                calls.result(callId, ts);
             }
         }
 
@@ -766,7 +802,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         endedTurn: ended || waiting,
         interrupted: aborted,
         turnStartedAt,
-        openTools: tools.values(),
+        calls,
     });
 }
 
@@ -777,7 +813,10 @@ export interface LiveActivity {
     phase: LivePhase;
     /** Epoch ms the current turn's prompt arrived. */
     turnStartedAt: number | null;
-    /** Epoch ms the phase began: the open call's start for `tool`, the newest turn record otherwise. */
+    /**
+     * Epoch ms the phase began: the open call's start for `tool`, the newest tool result or prompt for `thinking`,
+     * the newest turn record otherwise.
+     */
     since: number | null;
     /** The oldest open call (`tool`), or the question tool a `waiting` turn sits on. */
     tool: OpenToolCall | null;
@@ -846,7 +885,9 @@ export function liveActivityOf(snapshot: TurnSnapshot, stallMs = LIVE_STALL_MS):
         };
     }
 
-    return { ...base, phase: "thinking", since: snapshot.lastEventAt ?? snapshot.turnStartedAt, stalled };
+    // One model call writes several records (thinking, text): the phase counts from the result or prompt before them.
+    const since = snapshot.handedBackAt ?? snapshot.lastEventAt ?? snapshot.turnStartedAt;
+    return { ...base, phase: "thinking", since, stalled };
 }
 
 const READERS: Record<TurnProvider, (input: TurnStateInput) => TurnSnapshot> = {

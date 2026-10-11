@@ -389,6 +389,29 @@ describe("open tool calls and the live activity", () => {
         expect(liveActivityOf(answered)).toMatchObject({ phase: "thinking", since: T0 + 9000, tool: null });
     });
 
+    it("thinking counts from the result or prompt that handed the turn back, not from each record the model writes", () => {
+        const call = claudeAssistant(5, [bash("t1", { command: "ls" })], "tool_use");
+        const text = claudeAssistant(14, [{ type: "text", text: "now let me look" }], null, "msg_2");
+        const snap = claudeTurnState(input([claudeUser(0), call, claudeResult(9, "t1"), text], 20, INFINITE));
+        expect(liveActivityOf(snap)).toMatchObject({ phase: "thinking", since: T0 + 9000, lastEventAt: T0 + 14_000 });
+
+        const prompt = claudeTurnState(input([claudeUser(0), text], 20, INFINITE));
+        expect(liveActivityOf(prompt).since).toBe(T0);
+
+        const shell = codexLine(3, "response_item", {
+            type: "function_call",
+            name: "shell",
+            call_id: "f1",
+            arguments: "{}",
+        });
+        const output = codexLine(7, "response_item", { type: "function_call_output", call_id: "f1" });
+        const reasoning = codexLine(12, "response_item", { type: "reasoning" });
+        const codex = codexTurnState(
+            input([codexLine(0, "event_msg", { type: "task_started" }), shell, output, reasoning], 20, INFINITE)
+        );
+        expect(liveActivityOf(codex).since).toBe(T0 + 7000);
+    });
+
     it("Claude: parallel calls count, the oldest is named, and a new prompt forgets calls left open", () => {
         const calls = claudeAssistant(5, [bash("a", { command: "ls" }), bash("b", { command: "pwd" })], "tool_use");
         const both = claudeTurnState(input([claudeUser(0), calls], 20, INFINITE));
