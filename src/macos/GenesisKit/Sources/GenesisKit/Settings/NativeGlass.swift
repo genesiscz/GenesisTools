@@ -118,12 +118,83 @@ public struct NativeSettingsBackdrop: View {
     @Environment(\.accessibilityReduceTransparency) private var systemOpaque
     @Environment(\.nativeSettingsReduceTransparency) private var requestedOpaque
     @Environment(\.nativeSettingsTheme) private var theme
-    public init() {}
+    private let windowMaterial: Bool
+
+    /// `windowMaterial: false` for a window whose content view already draws the behind-window material (the
+    /// hub's glass container): the Glass theme then adds only its tint, so the desktop is not blurred twice.
+    public init(windowMaterial: Bool = true) { self.windowMaterial = windowMaterial }
+
     public var body: some View {
         switch theme.effective(reduceTransparency: requestedOpaque, systemReduceTransparency: systemOpaque) {
         case .solid: Color(nsColor: .windowBackgroundColor)
         case .gradient: NativeSettingsGradient()
-        case .glass: NativeWindowMaterial().overlay(Color.black.opacity(0.06))
+        case .glass:
+            if windowMaterial {
+                NativeWindowMaterial().overlay(Color.black.opacity(0.06))
+            } else {
+                Color.black.opacity(0.06)
+            }
+        }
+    }
+}
+
+/// The parts of a window drawn over a `NativeSettingsBackdrop`, by role.
+public enum NativePaneLevel: Sendable {
+    /// Sidebars, rails and headers: a faint lift over the backdrop, as the settings window's sidebar.
+    case chrome
+    /// Reading columns: the backdrop itself.
+    case content
+    /// Sticky headers over scrolling rows and drawers over other panes: frosted, or solid under Solid and
+    /// Reduce transparency, so the rows under them never show through sharp.
+    case bar
+}
+
+extension EnvironmentValues {
+    /// On in a host that draws its panes in the native settings look over a `NativeSettingsBackdrop` (the hub's
+    /// Native style). GenesisKit panes then draw `NativePaneFill` instead of their own palette.
+    @Entry public var nativePanes = false
+}
+
+/// The fill of one pane in the native settings look, for the theme in the environment.
+public struct NativePaneFill: View {
+    @Environment(\.accessibilityReduceTransparency) private var systemOpaque
+    @Environment(\.nativeSettingsReduceTransparency) private var requestedOpaque
+    @Environment(\.nativeSettingsTheme) private var theme
+    private let level: NativePaneLevel
+
+    public init(_ level: NativePaneLevel) { self.level = level }
+
+    public var body: some View {
+        switch level {
+        case .chrome: Color.white.opacity(0.025)
+        case .content: Color.clear
+        case .bar:
+            if theme.effective(reduceTransparency: requestedOpaque, systemReduceTransparency: systemOpaque) == .solid {
+                Color(nsColor: .windowBackgroundColor)
+            } else {
+                Rectangle().fill(.regularMaterial)
+            }
+        }
+    }
+}
+
+/// A pane's background: its own `standard` fill, or `NativePaneFill` while the host draws native panes
+/// (`nativePanes`).
+public struct NativePaneBackground<Standard: View>: View {
+    @Environment(\.nativePanes) private var native
+    private let level: NativePaneLevel
+    private let standard: Standard
+
+    public init(_ level: NativePaneLevel, @ViewBuilder standard: () -> Standard) {
+        self.level = level
+        self.standard = standard()
+    }
+
+    public var body: some View {
+        if native {
+            NativePaneFill(level)
+        } else {
+            standard
         }
     }
 }

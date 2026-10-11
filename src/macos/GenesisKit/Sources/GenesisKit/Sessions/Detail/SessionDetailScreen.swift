@@ -297,6 +297,10 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
                         SessionDetailSidebar(info: info, digest: digest, actions: actions, extra: sidebarExtra, extraFirst: sidebarExtraFirst)
                             .frame(width: SessionSidebarSplit.sidebarWidth)
                     }
+                    // Over the transcript, a native host's see-through sidebar gets a frosted base under it.
+                    .background {
+                        if sidebarCovers { NativePaneBackground(.bar) { Color.clear } }
+                    }
                     .shadow(color: .black.opacity(sidebarCovers ? 0.45 : 0), radius: 14, x: -4)
                 }
             }
@@ -304,7 +308,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         }
         // No clicks on the fill: in the title bar row they belong to the window's `.titlebarZone()`
         // (Window/WindowTitlebar.swift), which zooms on a double-click and drags.
-        .background { SessionPalette.background.allowsHitTesting(false) }
+        .background { NativePaneBackground(.content) { SessionPalette.background }.allowsHitTesting(false) }
         .onChange(of: showsSidebarRequest) { _, wanted in showSidebar = wanted }
         // The header's first row IS the titlebar row: it draws under the traffic lights.
         .ignoresSafeArea(.container, edges: .top)
@@ -682,7 +686,7 @@ public struct SessionDetailSidebar<Extra: View>: View {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
             actionBar
         }
-        .background(SessionPalette.sidebar)
+        .background(NativePaneBackground(.chrome) { SessionPalette.sidebar })
         .accessibilityIdentifier("session-details-sidebar")
     }
 

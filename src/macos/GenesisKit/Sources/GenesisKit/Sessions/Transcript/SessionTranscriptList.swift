@@ -211,7 +211,7 @@ public struct SessionTranscriptList: View {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
             content
         }
-        .background(SessionPalette.background)
+        .background(NativePaneBackground(.content) { SessionPalette.background })
         .task(id: query) {
             // Debounced: filtering a few thousand rows is cheap, doing it per keystroke is not free.
             if !query.isEmpty {
@@ -1088,7 +1088,7 @@ public struct TranscriptSectionHeader: View {
         // Opaque, and past its own frame: AppKit gives a section header row 36 pt with 4 pt of
         // transparent padding above and below the 28 pt content (measured), and the rows scrolling
         // under a pinned header showed through those strips.
-        .background(SessionPalette.background.padding(.vertical, -4).padding(.trailing, -20))
+        .background(NativePaneBackground(.bar) { SessionPalette.background }.padding(.vertical, -4).padding(.trailing, -20))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("session-transcript-section-header")
     }
