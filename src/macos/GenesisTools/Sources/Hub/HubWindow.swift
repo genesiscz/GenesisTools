@@ -2063,6 +2063,8 @@ private struct SessionListView: View {
     @StateObject private var prefs = GroupPrefs(key: "sessions.groups")
     /// Stuck verdicts of the live sessions (Hub/HubStuck.swift); rows take the value, not the store.
     @ObservedObject private var stuck = HubStuckStore.shared
+    /// Whether the agent of an open, followed transcript works or waits (Hub/HubSessionDetail.swift); the same.
+    @ObservedObject private var live = HubLiveActivityStore.shared
 
     private var mode: SessionGrouping { SessionGrouping(rawValue: grouping) ?? .time }
 
@@ -2202,7 +2204,7 @@ private struct SessionListView: View {
                             Section {
                                 if !(section.managed && prefs.collapsed.contains(section.title)) {
                                     ForEach(section.rows) { session in
-                                        SessionRowView(session: session, selected: session.id == model.selectedID, stuck: stuck.verdicts[session.sessionId])
+                                        SessionRowView(session: session, selected: session.id == model.selectedID, stuck: stuck.verdicts[session.sessionId], work: live.work[session.sessionId])
                                             .rowButton { model.select(session.id) }
                                             .swrFlash(model.changedSessions.contains(session.id), cornerRadius: 6)
                                             .transition(SWR.rowTransition)
@@ -2248,14 +2250,26 @@ private struct SessionRowView: View {
     let session: HubSession
     let selected: Bool
     var stuck: StuckVerdict?
+    /// What the open transcript's live follow says, for the session it follows; nil for every other row.
+    var work: HubLiveActivityStore.Work?
+
+    /// Green while the agent works or the session is live (a warm cache, a recent write), orange while it waits
+    /// for the user: the same activity the open transcript's last row and header show.
+    private var dotColor: Color? {
+        switch work {
+        case .working: return ReviewPalette.added
+        case .waiting: return ReviewPalette.modified
+        case nil: return session.isLive ? ReviewPalette.added : nil
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             ZStack(alignment: .bottomTrailing) {
                 ProviderBadge(provider: session.provider)
-                if session.isLive {
+                if let dotColor {
                     Circle()
-                        .fill(ReviewPalette.added)
+                        .fill(dotColor)
                         .frame(width: 7, height: 7)
                         .overlay(Circle().stroke(ReviewPalette.sidebar, lineWidth: 1.5))
                         .offset(x: 3, y: 3)

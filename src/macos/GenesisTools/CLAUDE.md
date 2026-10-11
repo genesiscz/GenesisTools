@@ -225,7 +225,11 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   `absolutePath(of:)`, `file(atPath:)`; never join `model.repo` with `file.path`.
 - The open transcript follows its session with ONE long-running `tools ai sessions tail <id> --live --offset <n>`
   per open detail (GenesisKit `TranscriptLiveTail` on `ToolsLineStream`, shared with Genesis): each stdout line is a turn with its
-  `index` (a changed turn comes again and replaces its row) or a totals line. It stops when the detail closes, the
+  `index` (a changed turn comes again and replaces its row), a totals line, or an `activity` line when what the agent
+  does changes (thinking, an open tool call, waiting for the user, idle). The activity is the transcript's last row
+  through a `TranscriptActivityFeed` that only that row observes (passed as a value, each change re-ran the list:
+  87 to 372 ms of main thread per second against 20 ms), the header's coarse status (`HeaderState`) and the session
+  list's dot (`HubLiveActivityStore`); never derive "working" from the last write's age again. It stops when the detail closes, the
   session changes, the window hides or minimizes, and when the app quits (the child ends on stdin EOF); one restart
   on an unexpected exit, stderr in `app-perf.log` (`hub.transcript.follow`). Never spawn a `tools` process per file
   growth again. ⌘F searches the whole session (`tools ai sessions grep` + `tail --turns`).

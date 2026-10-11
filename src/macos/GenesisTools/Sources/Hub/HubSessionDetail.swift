@@ -99,6 +99,16 @@ struct HubSessionDetailHost: View {
     /// Live tail: one `tools ai sessions tail --live` process per open detail sends each new or changed
     /// turn (GenesisKit `TranscriptLiveTail`). Stopped while the window is hidden or minimized.
     @State private var tail: TranscriptLiveTail?
+    /// What the agent does now, from the follow's activity line: the transcript's last row. A transcript gets
+    /// nothing while the model thinks or a tool runs; this says so. A reference the host does not observe: only
+    /// the row observes it, so the changes of one turn redraw that row and not this screen.
+    @State private var activityFeed = TranscriptActivityFeed()
+    /// Whether the row shows: flips once when a turn starts and once when it ends.
+    @State private var activityShown = false
+    /// The header's share of the activity (working, waiting, idle), which changes about as rarely.
+    @State private var liveHeader: TranscriptLiveActivity.HeaderState?
+    /// The session this detail last told `HubLiveActivityStore` about, so a session change or a close clears it.
+    @State private var publishedActivityFor: String?
     /// The window this detail is in, for the hide and minimize pauses.
     @State private var host = HostWindow()
     /// Every sub-agent of the session from `tools ai sessions subagents` (its `subagents/` directory),
@@ -124,6 +134,8 @@ struct HubSessionDetailHost: View {
             preset: TranscriptPreset(query: transcriptQuery ?? ""),
             leadingInset: 16,
             services: services,
+            // A search view shows hits only; the running turn belongs to the window's end.
+            activity: activityShown && searchDocument == nil ? activityFeed : nil,
             // `--set hub.session.sidebarFolded=true`: a snapshot of the folded sidebar in a single pane.
             showsSidebar: showsSidebar && !HubDefaults.store.bool(forKey: "hub.session.sidebarFolded"),
             // Cost per prompt and tool analytics sit under the usage grid, above a long sub-agent list.
@@ -149,6 +161,7 @@ struct HubSessionDetailHost: View {
             buildID += 1
             builder.cancel()
             stopTail()
+            publishActivity(nil)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in stopTail() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { note in
@@ -167,6 +180,10 @@ struct HubSessionDetailHost: View {
         .task(id: session.id) {
             tail?.stop()
             tail = nil
+            activityFeed.receive(nil, finishedTools: 0)
+            activityShown = false
+            liveHeader = nil
+            publishActivity(nil)
             envelope = nil
             turns = []
             windowStart = 0
@@ -241,13 +258,16 @@ struct HubSessionDetailHost: View {
         }()
         let cacheCold = session.cacheStatus.map { $0 == .COLD }
         let inPane = session.cmux != nil
-        let liveness = SessionLiveness.resolve(
+        let guessed = SessionLiveness.resolve(
             lastActivity: lastActivity,
             terminated: envelope?.terminated,
             pendingTool: pendingTool,
             cacheCold: cacheCold,
             inPane: inPane
         )
+        // The follow's activity outranks the guess from the last write's age: a long think writes nothing for minutes.
+        let status = liveHeader.map { TranscriptLiveActivity.status($0, over: guessed) }
+        let liveness = status?.liveness ?? guessed
 
         var info = SessionDetailInfo(sessionId: session.sessionId, title: session.displayTitle, provider: AIProviders.meta(for: session.provider))
         info.account = session.account
@@ -259,7 +279,8 @@ struct HubSessionDetailHost: View {
             info.branch = branch
         }
         info.liveness = liveness
-        info.livenessNote = {
+        info.livenessLabel = status?.label
+        info.livenessNote = status?.note ?? {
             switch liveness {
             case .running: return pendingTool ? "A tool call is waiting for its result" : "Activity in the last 2 minutes"
             case .idle: return inPane ? "Waiting in a cmux pane" : "Prompt cache is warm, no activity"
@@ -579,6 +600,19 @@ struct HubSessionDetailHost: View {
         tail = nil
     }
 
+    /// Tells the session list whether this session's agent works or waits; nil clears what this detail said.
+    /// A sub-agent's file is not a session of the list.
+    private func publishActivity(_ live: TranscriptLiveActivity?) {
+        let store = HubLiveActivityStore.shared
+        if let previous = publishedActivityFor, previous != session.sessionId || live == nil {
+            store.set(nil, for: previous)
+            publishedActivityFor = nil
+        }
+        guard let live, !agentChild else { return }
+        store.set(live, for: session.sessionId)
+        publishedActivityFor = session.sessionId
+    }
+
     /// Back from hidden or minimized: the new follow sends everything from the last known turn on.
     private func resumeTail() {
         guard tail == nil, !isPaused else { return }
@@ -635,7 +669,24 @@ struct HubSessionDetailHost: View {
             current.terminated = totals.terminated
             current.turnCount = totals.turnCount
         }
-        guard changed || current != envelope else { return }
+        // The activity row redraws on its own; this screen only when the row comes or goes or the header changes.
+        let activityChanged = batch.activity.map { activityFeed.receive($0, finishedTools: document.finishedToolsInLastSection) } ?? false
+        if activityChanged, let live = batch.activity {
+            if liveHeader != live.headerState {
+                liveHeader = live.headerState
+            }
+            if activityShown != (activityFeed.row != nil) {
+                activityShown = activityFeed.row != nil
+            }
+            publishActivity(live)
+        }
+        guard changed || current != envelope else {
+            if activityChanged {
+                HubPerf.log("transcript.follow activity \(batch.activity?.phase.rawValue ?? "-")")
+                HubMainBusy.measure("transcript.activity.render")
+            }
+            return
+        }
         envelope = current
         HubPerf.log("transcript.follow +\(appended) turns, \(replaced) replaced\(skipped > 0 ? ", \(skipped) outside the window" : "")\(trimmed > 0 ? ", \(trimmed) oldest trimmed" : ""), \(turns.count) in window")
         Task {
@@ -761,10 +812,37 @@ struct HubSessionDetailHost: View {
             }.value
             guard id == buildID, owner == loadID, search == searchID, !Task.isCancelled else { return }
             document = built.0
+            activityFeed.refresh(finishedTools: built.0.finishedToolsInLastSection)
             digest = built.1
             nativeSummary = built.2
             searchDocument = built.3
         }
+    }
+}
+
+/// Whether the agent of each followed transcript works or waits, for the session list's dot. Only an open
+/// transcript has a follow, so most sessions have no entry and keep the list's own live rule. Published only
+/// when a session's coarse state flips (a turn starts or ends), not on every tool call.
+@MainActor
+final class HubLiveActivityStore: ObservableObject {
+    enum Work: Equatable {
+        case working, waiting
+    }
+
+    static let shared = HubLiveActivityStore()
+    @Published private(set) var work: [String: Work] = [:]
+
+    func set(_ activity: TranscriptLiveActivity?, for sessionId: String) {
+        // A stalled think is not work: the row keeps the list's own live rule.
+        let next: Work? = if activity?.isWorking == true {
+            .working
+        } else if activity?.phase == .waiting {
+            .waiting
+        } else {
+            nil
+        }
+        guard work[sessionId] != next else { return }
+        work[sessionId] = next
     }
 }
 
