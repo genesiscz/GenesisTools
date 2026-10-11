@@ -33,6 +33,9 @@ public struct LiveWidgetView: View {
     @FocusState private var editing: Bool
     /// Heights for fitting the panel to its content (W3). A plain reference, so measuring never re-renders.
     @State private var fit = WidgetContentFit()
+    /// The composer field's height, so its stand-in takes exactly its place while the panel moves.
+    @State private var composerFieldHeight: CGFloat = 0
+    @Environment(\.edgePanelMoving) private var panelMoving
 
     public init(
         model: WidgetModel, edge: EdgePanelPlacement, cutout: CGFloat = 0, compactHeight: CGFloat = 36,
@@ -826,13 +829,22 @@ public struct LiveWidgetView: View {
                 ProgressView("Saving attachment…").controlSize(.small).font(.caption)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(
-                    "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…",
-                    text: Binding(get: { model.draft.text }, set: model.setText), axis: .vertical
-                )
-                .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4).focused($editing)
-                .onSubmit { model.send() }
-                .accessibilityLabel("Reply to selected agent")
+                let placeholder = "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
+                if panelMoving, !editing, composerFieldHeight > 0 {
+                    // While the panel's outline moves the composer rides its bottom edge; a drawn stand-in moves for
+                    // free, the AppKit field would lay out and rebuild the key view loop on every frame.
+                    Text(model.draft.text.isEmpty ? placeholder : model.draft.text)
+                        .font(.system(size: 12)).lineLimit(1...4)
+                        .foregroundStyle(model.draft.text.isEmpty ? .tertiary : .primary)
+                        .frame(maxWidth: .infinity, minHeight: composerFieldHeight, maxHeight: composerFieldHeight,
+                               alignment: .topLeading)
+                } else {
+                    TextField(placeholder, text: Binding(get: { model.draft.text }, set: model.setText), axis: .vertical)
+                        .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4).focused($editing)
+                        .onSubmit { model.send() }
+                        .accessibilityLabel("Reply to selected agent")
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { composerFieldHeight = $0 }
+                }
                 Button {
                     model.send()
                 } label: {

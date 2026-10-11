@@ -25,6 +25,22 @@ public final class EdgePanelMotion: ObservableObject {
     }
 }
 
+private struct EdgePanelMovingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+public extension EnvironmentValues {
+    /// The content is moving with the panel's outline (`EdgePanelMotion.contentFrame` is set). An AppKit control that
+    /// moves on every frame costs the main thread a layout and a key-view-loop rebuild per frame: one text field in the
+    /// moving pane cut the reshape to 40-55 frames a second (`ReshapeCostProbeTests`: gap p50 18-26 ms, max 25-44 ms,
+    /// against 8 ms and 12-17 ms without it). Such a control shows a drawn stand-in of the same size while this is
+    /// true, unless the user is typing in it.
+    var edgePanelMoving: Bool {
+        get { self[EdgePanelMovingKey.self] }
+        set { self[EdgePanelMovingKey.self] = newValue }
+    }
+}
+
 /// The panel's root: the hosting view fills it, and while a transition runs a shape layer masks it to the animated
 /// outline. The window itself changes size once per transition, so no frame of the motion re-lays out SwiftUI.
 private final class EdgePanelRootView: NSView {

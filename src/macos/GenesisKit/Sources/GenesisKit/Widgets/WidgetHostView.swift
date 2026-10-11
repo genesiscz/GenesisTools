@@ -113,6 +113,7 @@ struct WidgetHostView: View {
                         .padding(.top, topPadding)
                         .padding(surface.edge == .right ? .trailing : .leading,
                             surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
+                        .environment(\.edgePanelMoving, frame != nil)
                 }
             }
             .overlay(alignment: .top) {
