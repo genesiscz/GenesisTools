@@ -6,9 +6,11 @@ import { genesisAppBundlePath, genesisAppDir } from "@genesiscz/utils/macos/gene
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 /**
- * Window faces that survive a rebuild. `reapStaleAppFaces` kills every face of the replaced bundle, and
- * a review or hub window that was open simply vanished. Before the reap, each window face's exact argv
- * is recorded; after it, the faces start again from the NEW bundle with the same arguments.
+ * Faces that survive a rebuild. `reapStaleAppFaces` kills every face of the replaced bundle, and a review or
+ * hub window that was open simply vanished; the widget did too, after every install, until 2026-10-11.
+ * Before the reap, each long-lived face's exact argv is recorded; after it, exactly those faces start again
+ * from the NEW bundle with the same arguments, behind the app in front. A face that was not running is never
+ * started, and short-lived faces (`--rpc`, `--notify`, link routers, scripted runs) end on their own.
  *
  * The argv comes from the record each window face writes at launch (`~/.genesis-tools/app/faces/<pid>.json`,
  * Sources/App/FaceRecord.swift), because `ps` joins argv with spaces and a path with a space in it
@@ -16,7 +18,8 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
  * record falls back to the `ps` line, with the words after a flag joined back into one value.
  */
 
-export type WindowFaceKind = "hub" | "review" | "settings";
+/** The settings window, the hub, a review, the edge-panel widget and Clicky (the feature settings host). */
+export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "clicky";
 
 export interface WindowFace {
     pid: number;
@@ -39,7 +42,7 @@ interface FaceRecord {
 }
 
 /** Flags that make a face a one-shot scripted run: it ends on its own and must never come back. */
-const SCRIPTED_FLAGS = new Set(["--snapshot", "--bench"]);
+const SCRIPTED_FLAGS = new Set(["--snapshot", "--bench", "--headless"]);
 
 export function facesRecordDir(): string {
     return join(genesisAppDir(), "faces");
@@ -65,7 +68,16 @@ export function windowFaceKind(argv: string[]): WindowFaceKind | null {
         return "review";
     }
 
-    // --rpc, --notify, --mic, --capsule end on their own; a link router must never be kept alive.
+    if (first === "--widget") {
+        return "widget";
+    }
+
+    if (first === "--clicky") {
+        return "clicky";
+    }
+
+    // --rpc, --notify, --mic, --capsule end on their own; a link router must never be kept alive; the link relay
+    // comes back through `RelaunchCapture.relay`.
     return null;
 }
 
@@ -96,6 +108,33 @@ export function argvFromPs(rest: string): string[] {
     return argv;
 }
 
+/** The pids the reap is about to kill, each with the `ps` text after the launcher path. */
+function staleLauncherLines(options: {
+    psStdout: string;
+    launcherPath: string;
+    stalePids: Set<string>;
+}): Array<{ pid: number; rest: string }> {
+    const { psStdout, launcherPath, stalePids } = options;
+    const lines: Array<{ pid: number; rest: string }> = [];
+
+    for (const line of psStdout.split("\n")) {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+
+        if (!match || !stalePids.has(match[1]) || !match[2].startsWith(launcherPath)) {
+            continue;
+        }
+
+        lines.push({ pid: Number(match[1]), rest: match[2].slice(launcherPath.length).trim() });
+    }
+
+    return lines;
+}
+
+/** Whether the reap is about to kill a link relay (`GenesisTools --link-relay`). */
+export function linkRelayAmong(options: { psStdout: string; launcherPath: string; stalePids: Set<string> }): boolean {
+    return staleLauncherLines(options).some((line) => line.rest === "--link-relay");
+}
+
 /**
  * The window faces among the pids the reap is about to kill. `psStdout` is `ps -Ao pid=,args=`; a record
  * is trusted only while its argv still spells the `ps` line, so a reused pid never borrows another
@@ -107,18 +146,10 @@ export function windowFacesFromPs(options: {
     stalePids: Set<string>;
     records: Map<number, string[]>;
 }): WindowFace[] {
-    const { psStdout, launcherPath, stalePids, records } = options;
+    const { records } = options;
     const faces: WindowFace[] = [];
 
-    for (const line of psStdout.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(.*)$/);
-
-        if (!match || !stalePids.has(match[1]) || !match[2].startsWith(launcherPath)) {
-            continue;
-        }
-
-        const pid = Number(match[1]);
-        const rest = match[2].slice(launcherPath.length).trim();
+    for (const { pid, rest } of staleLauncherLines(options)) {
         const recorded = records.get(pid);
         const lossless = recorded !== undefined && recorded.join(" ") === rest;
         const argv = lossless ? recorded : argvFromPs(rest);
@@ -138,32 +169,50 @@ export function parseFrontmostPid(output: string): number | null {
     return match ? Number(match[1]) : null;
 }
 
-/** Hub flags that run something once (Sources/Hub/HubWindow.swift): a value after each, none, or an optional one. */
-const HUB_ONE_SHOT_VALUE = new Set([
-    "--inbox-resume",
-    "--inbox-info",
-    "--decision",
-    "--question",
-    "--timeline-open",
-    "--timeline-action",
-]);
-const HUB_ONE_SHOT_BARE = new Set(["--digest", "--rules", "--prompts", "--handoff"]);
-const HUB_ONE_SHOT_OPTIONAL = new Set(["--palette", "--find", "--session-search"]);
+/** Flags that run something once at a face's launch: a value after each, none, or an optional one. */
+interface OneShotFlags {
+    value: Set<string>;
+    bare: Set<string>;
+    optional: Set<string>;
+}
 
-/** A hub's argv without its one-shot actions, so a rebuild reopens the window and does not run them again. */
-export function withoutHubActions(argv: string[]): string[] {
+/** Sources/Hub/HubWindow.swift. */
+const HUB_ONE_SHOTS: OneShotFlags = {
+    value: new Set([
+        "--inbox-resume",
+        "--inbox-info",
+        "--decision",
+        "--question",
+        "--timeline-open",
+        "--timeline-action",
+    ]),
+    bare: new Set(["--digest", "--rules", "--prompts", "--handoff"]),
+    optional: new Set(["--palette", "--find", "--session-search"]),
+};
+
+/** Sources/WidgetWindow.swift: open the settings, open a session, or only make sure the widget runs. */
+const WIDGET_ONE_SHOTS: OneShotFlags = {
+    value: new Set(["--session-key"]),
+    bare: new Set(["--settings", "--ensure-running"]),
+    optional: new Set(),
+};
+
+/** Sources/ClickyEntry.swift: the settings page to open. */
+const CLICKY_ONE_SHOTS: OneShotFlags = { value: new Set(["--page"]), bare: new Set(), optional: new Set() };
+
+function withoutOneShots(argv: string[], flags: OneShotFlags): string[] {
     const kept: string[] = [];
 
     for (let index = 0; index < argv.length; index++) {
         const arg = argv[index];
         const next = argv[index + 1];
 
-        if (HUB_ONE_SHOT_VALUE.has(arg)) {
+        if (flags.value.has(arg)) {
             index++;
             continue;
         }
 
-        if (HUB_ONE_SHOT_OPTIONAL.has(arg)) {
+        if (flags.optional.has(arg)) {
             if (next !== undefined && !next.startsWith("--")) {
                 index++;
             }
@@ -171,7 +220,7 @@ export function withoutHubActions(argv: string[]): string[] {
             continue;
         }
 
-        if (HUB_ONE_SHOT_BARE.has(arg)) {
+        if (flags.bare.has(arg)) {
             continue;
         }
 
@@ -181,11 +230,19 @@ export function withoutHubActions(argv: string[]): string[] {
     return kept;
 }
 
+/** A hub's argv without its one-shot actions, so a rebuild reopens the window and does not run them again. */
+export function withoutHubActions(argv: string[]): string[] {
+    return withoutOneShots(argv, HUB_ONE_SHOTS);
+}
+
 /**
  * What each face starts with again. Only the face that was frontmost activates, and it goes last so it
  * ends in front; every other one opens behind (`open -g` plus the face's own `--no-activate`). A hub
  * also gets `--resume`: it reopens the mode and selection it last showed (Sources/Hub/HubPlace.swift),
- * and an older hub's record that has none keeps its own arguments.
+ * and an older hub's record that has none keeps its own arguments. The widget and Clicky come back
+ * without the settings page or session they were opened with; the widget also gets `--ensure-running`,
+ * so a copy that finds one already started (by another face) exits instead of opening the settings, and
+ * `--no-activate` keeps a widget that is switched off from opening them on its own.
  */
 export function relaunchPlan(faces: WindowFace[], frontPid: number | null): RelaunchStep[] {
     const steps = faces.map((face): RelaunchStep => {
@@ -197,6 +254,10 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
             argv = ["--window"];
         } else if (face.kind === "hub") {
             argv = [...withoutHubActions(kept), "--resume"];
+        } else if (face.kind === "widget") {
+            argv = [...withoutOneShots(kept, WIDGET_ONE_SHOTS), "--ensure-running"];
+        } else if (face.kind === "clicky") {
+            argv = withoutOneShots(kept, CLICKY_ONE_SHOTS);
         }
 
         if (!activate) {
@@ -288,33 +349,52 @@ function frontmostPid(): number | null {
     return info.code === 0 ? parseFrontmostPid(info.stdout) : null;
 }
 
-/** The window faces of `stalePids` with their argv, and which of them is in front. Call before the reap. */
+/** What a rebuild starts again: the faces it stopped, and whether a link relay comes back before them. */
+export interface RelaunchCapture {
+    steps: RelaunchStep[];
+    /** A link relay was among the stopped faces, or a face that comes back needs one in front of it. */
+    relay: boolean;
+}
+
+/**
+ * The faces among `stalePids` with their argv, in start order. `frontPid` is asked only when a face comes
+ * back. A link relay that was not running starts only for the faces that come back (each window face
+ * starts one first itself), so a reap of nothing but short-lived faces starts nothing.
+ */
+export function planRelaunch(options: {
+    psStdout: string;
+    launcherPath: string;
+    stalePids: Set<string>;
+    records: Map<number, string[]>;
+    frontPid: () => number | null;
+}): RelaunchCapture {
+    const faces = windowFacesFromPs(options);
+    const steps = faces.length > 0 ? relaunchPlan(faces, options.frontPid()) : [];
+    return { steps, relay: steps.length > 0 || linkRelayAmong(options) };
+}
+
+/** The faces of `stalePids` with their argv, and which of them is in front. Call before the reap. */
 export function captureRelaunch(options: {
     psStdout: string;
     launcherPath: string;
     stalePids: string[];
-}): RelaunchStep[] {
-    const faces = windowFacesFromPs({
+}): RelaunchCapture {
+    const capture = planRelaunch({
         psStdout: options.psStdout,
         launcherPath: options.launcherPath,
         stalePids: new Set(options.stalePids),
         records: readFaceRecords(),
+        frontPid: frontmostPid,
     });
-
-    if (faces.length === 0) {
-        return [];
-    }
-
-    const front = frontmostPid();
-    const plan = relaunchPlan(faces, front);
     logger.info(
         {
-            faces: faces.map((face) => ({ pid: face.pid, kind: face.kind, argv: face.argv, lossless: face.lossless })),
-            front,
+            faces: capture.steps.map((entry) => ({ pid: entry.pid, kind: entry.kind, argv: entry.argv })),
+            relay: capture.relay,
+            front: capture.steps.find((entry) => entry.activate)?.pid ?? null,
         },
-        "relaunch: window faces recorded before the reap"
+        "relaunch: faces recorded before the reap"
     );
-    return plan;
+    return capture;
 }
 
 /** The windowless face that takes link deliveries, started in the background before any window face. */
@@ -322,28 +402,40 @@ export function linkRelayOpenArgs(bundle: string): string[] {
     return ["open", "-n", "-g", bundle, "--args", "--link-relay"];
 }
 
+/**
+ * The `open` commands a relaunch runs, in order: the link relay first (the oldest instance gets the links,
+ * LinkRelay.swift), then one per face, behind the front app (`-g`) unless it was the front face.
+ * `step` is null for the relay.
+ */
+export function relaunchCommands(
+    capture: RelaunchCapture,
+    bundle: string
+): Array<{ step: RelaunchStep | null; args: string[] }> {
+    const faces = capture.steps.map((entry) => ({
+        step: entry,
+        args: ["open", "-n", ...(entry.activate ? [] : ["-g"]), bundle, "--args", ...entry.argv],
+    }));
+    return capture.relay ? [{ step: null, args: linkRelayOpenArgs(bundle) }, ...faces] : faces;
+}
+
 /** Starts each recorded face from the installed bundle through Launch Services, as `tools hub` does. */
-export function runRelaunch(plan: RelaunchStep[], step: (message: string) => void): void {
+export function runRelaunch(capture: RelaunchCapture, step: (message: string) => void): void {
     pruneFaceRecords();
-    const bundle = genesisAppBundlePath();
-    // First, so it is the oldest instance: Launch Services hands links to the oldest one (LinkRelay.swift).
-    const relay = spawnText(linkRelayOpenArgs(bundle));
 
-    if (relay.code !== 0) {
-        logger.warn({ stderr: relay.stderr }, "relaunch: link relay did not start");
-    }
+    for (const { step: entry, args } of relaunchCommands(capture, genesisAppBundlePath())) {
+        const result = spawnText(args);
 
-    if (plan.length === 0) {
-        return;
-    }
+        if (!entry) {
+            if (result.code !== 0) {
+                logger.warn({ stderr: result.stderr }, "relaunch: link relay did not start");
+            }
 
-    for (const entry of plan) {
-        const openArgs = ["open", "-n", ...(entry.activate ? [] : ["-g"]), bundle, "--args", ...entry.argv];
-        const result = spawnText(openArgs);
+            continue;
+        }
 
         if (result.code !== 0) {
-            logger.warn({ pid: entry.pid, openArgs, stderr: result.stderr }, "relaunch: open failed");
-            step(`could not reopen the ${entry.kind} window (was pid ${entry.pid}): ${result.stderr.trim()}`);
+            logger.warn({ pid: entry.pid, args, stderr: result.stderr }, "relaunch: open failed");
+            step(`could not reopen the ${entry.kind} face (was pid ${entry.pid}): ${result.stderr.trim()}`);
             continue;
         }
 
@@ -351,6 +443,6 @@ export function runRelaunch(plan: RelaunchStep[], step: (message: string) => voi
             { was: entry.pid, kind: entry.kind, argv: entry.argv, activate: entry.activate },
             "relaunch: reopened"
         );
-        step(`reopened the ${entry.kind} window (was pid ${entry.pid}): ${entry.argv.join(" ")}`);
+        step(`reopened the ${entry.kind} face (was pid ${entry.pid}): ${entry.argv.join(" ")}`);
     }
 }

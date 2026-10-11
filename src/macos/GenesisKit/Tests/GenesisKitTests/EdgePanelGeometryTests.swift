@@ -533,6 +533,28 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertEqual(ordered, 0)
     }
 
+    /// A rebuild's relaunch (`--widget --no-activate`) of a widget that is off must not open the settings over the
+    /// app in front; a session opened afterwards still does.
+    @MainActor
+    func testABackgroundRelaunchOfAWidgetThatIsOffOpensNoSettings() async throws {
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        var pages: [String] = []
+        coordinator.settingsPresenter = { pages.append($0) }
+        coordinator.orderFront = { _ in XCTFail("A widget that is off ordered an edge panel front") }
+        coordinator.start(settingsWhenOff: false)
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil }
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertFalse(coordinator.panelsEnabled)
+        XCTAssertEqual(pages, [], "a background relaunch opened the settings")
+
+        coordinator.openSession("fixture-session")
+        XCTAssertEqual(pages, ["widgets.general"], "opening a session while the widget is off still shows why")
+    }
+
     @MainActor
     func testTurningTheSwitchOnShowsThePanelsAndTurningItOffHidesThem() async throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "Edge panels need a display")

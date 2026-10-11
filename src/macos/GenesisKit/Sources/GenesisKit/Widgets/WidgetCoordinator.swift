@@ -170,8 +170,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     /// Without `showSettings`, a widget that is off opens the settings once the first snapshot arrives,
-    /// so the user sees why no panel appeared.
-    public func start(showSettings: Bool = false) {
+    /// so the user sees why no panel appeared; `settingsWhenOff: false` (a background relaunch) never does.
+    public func start(showSettings: Bool = false, settingsWhenOff: Bool = true) {
         guard !started, !stopped else { return }
         started = true
         runtimeStart = Task { [flowRuntime] in await flowRuntime.start() }
@@ -179,7 +179,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.rebuildPanels() } }
-        launchPending = !showSettings
+        launchPending = !showSettings && settingsWhenOff
         model.start()
         if showSettings { self.showSettings() }
     }

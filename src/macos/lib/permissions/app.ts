@@ -17,7 +17,7 @@ import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
-import { captureRelaunch, type RelaunchStep, runRelaunch } from "./relaunch";
+import { captureRelaunch, type RelaunchCapture, runRelaunch } from "./relaunch";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
 /** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
@@ -336,7 +336,7 @@ export function stampAppToolsPath(template: string, toolsPath: string): string {
  */
 export interface BuildAppOptions {
     onStep?: (message: string) => void;
-    /** false leaves the reaped hub, review and settings windows closed (`--no-relaunch`); default true. */
+    /** false leaves the reaped faces (settings, hub, review, widget, Clicky) closed (`--no-relaunch`); default true. */
     relaunch?: boolean;
 }
 
@@ -556,7 +556,7 @@ interface StageAndInstallOptions {
     plist: string;
     iconPath: string;
     step: (message: string) => void;
-    /** Reopen the window faces the reap kills, from the new bundle (relaunch.ts). */
+    /** Reopen the long-lived faces the reap kills, from the new bundle (relaunch.ts). */
     relaunch: boolean;
 }
 
@@ -959,8 +959,9 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
  *
  * SIGTERM first, then SIGKILL for anyone still alive after {@link STALE_FACE_TERM_GRACE_MS}.
  *
- * The hub, review and settings windows among them start again from the new bundle with the argv they
- * had (relaunch.ts), unless `relaunch` is false (`tools macos permissions build --no-relaunch`).
+ * The settings, hub, review, widget and Clicky faces among them, and the link relay, start again from the
+ * new bundle with the argv they had, behind the front app (relaunch.ts), unless `relaunch` is false
+ * (`tools macos permissions build --no-relaunch`).
  */
 async function reapStaleAppFaces(step: (message: string) => void, relaunch: boolean): Promise<void> {
     const launcher = genesisAppLauncherPath();
@@ -977,18 +978,18 @@ async function reapStaleAppFaces(step: (message: string) => void, relaunch: bool
         return;
     }
 
-    // The window faces among them, with their exact argv, recorded before anything is killed.
-    let reopen: RelaunchStep[] = [];
+    // The long-lived faces among them, with their exact argv, recorded before anything is killed.
+    let reopen: RelaunchCapture = { steps: [], relay: false };
 
     if (relaunch) {
         // A failed capture only costs the reopen; the reap below must still run.
         try {
             reopen = captureRelaunch({ psStdout: listing.stdout, launcherPath: launcher, stalePids: stale });
         } catch (err) {
-            logger.warn({ err }, "relaunch: window faces could not be recorded; they stay closed after the reap");
+            logger.warn({ err }, "relaunch: faces could not be recorded; they stay closed after the reap");
         }
     } else {
-        logger.info("relaunch: off (--no-relaunch); reaped windows stay closed");
+        logger.info("relaunch: off (--no-relaunch); reaped faces stay closed");
     }
 
     try {

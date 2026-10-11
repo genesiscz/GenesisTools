@@ -6,7 +6,9 @@ import {
     argvFromPs,
     linkRelayOpenArgs,
     parseFrontmostPid,
+    planRelaunch,
     readFaceRecords,
+    relaunchCommands,
     relaunchPlan,
     type WindowFace,
     windowFaceKind,
@@ -17,12 +19,14 @@ import {
 const LAUNCHER = "/Users/alice/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
 
 describe("windowFaceKind", () => {
-    it("keeps the hub, review and settings windows", () => {
+    it("keeps the settings window, the hub, a review, the widget and Clicky", () => {
         expect(windowFaceKind([])).toBe("settings");
         expect(windowFaceKind(["--window"])).toBe("settings");
         expect(windowFaceKind(["-psn_0_12345"])).toBe("settings");
         expect(windowFaceKind(["--hub", "--session", "abc"])).toBe("hub");
         expect(windowFaceKind(["--review", "--proposal", "/x/p.json"])).toBe("review");
+        expect(windowFaceKind(["--widget", "--ensure-running"])).toBe("widget");
+        expect(windowFaceKind(["--clicky", "--page", "general"])).toBe("clicky");
     });
 
     it("skips short-lived faces, link routers and scripted runs", () => {
@@ -31,6 +35,7 @@ describe("windowFaceKind", () => {
         expect(windowFaceKind(["https://example.org/"])).toBeNull();
         expect(windowFaceKind(["--review", "--repo", "/x", "--snapshot", "/tmp/a.png"])).toBeNull();
         expect(windowFaceKind(["--hub", "--bench", "/tmp/b.json"])).toBeNull();
+        expect(windowFaceKind(["--clicky", "--page", "general", "--headless"])).toBeNull();
     });
 });
 
@@ -167,5 +172,77 @@ describe("the link relay", () => {
             "--link-relay",
         ]);
         expect(windowFaceKind(["--link-relay"])).toBeNull();
+    });
+});
+
+describe("a rebuild reopens exactly the faces it stopped", () => {
+    const BUNDLE = "/Users/alice/Applications/GenesisTools.app";
+    const ps = (...lines: string[]) => lines.join("\n");
+    const plan = (options: { psStdout: string; stalePids: string[]; frontPid?: number }) =>
+        relaunchCommands(
+            planRelaunch({
+                psStdout: options.psStdout,
+                launcherPath: LAUNCHER,
+                stalePids: new Set(options.stalePids),
+                records: new Map(),
+                frontPid: () => options.frontPid ?? null,
+            }),
+            BUNDLE
+        ).map((command) => command.args);
+
+    it("starts the widget it stopped again, behind the front app, without its one-shot settings or session", () => {
+        const listing = ps(
+            `  301 ${LAUNCHER} --link-relay`,
+            `  302 ${LAUNCHER} --widget --session-key local:codex:abc --settings`,
+            `  303 ${LAUNCHER} --hub --mode sessions --resume --no-activate`
+        );
+
+        expect(plan({ psStdout: listing, stalePids: ["301", "302", "303"], frontPid: 999 })).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+            ["open", "-n", "-g", BUNDLE, "--args", "--widget", "--ensure-running", "--no-activate"],
+            ["open", "-n", "-g", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
+        ]);
+    });
+
+    it("starts Clicky again without its settings page", () => {
+        const listing = ps(`  311 ${LAUNCHER} --clicky --page widgets.general`);
+
+        expect(plan({ psStdout: listing, stalePids: ["311"] })).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+            ["open", "-n", "-g", BUNDLE, "--args", "--clicky", "--no-activate"],
+        ]);
+    });
+
+    it("never starts a face that was not running, nor a relay for short-lived faces alone", () => {
+        const hubOnly = ps(`  321 ${LAUNCHER} --hub --mode sessions`);
+        const commands = plan({ psStdout: hubOnly, stalePids: ["321"] });
+
+        expect(commands.some((args) => args.includes("--widget"))).toBe(false);
+        expect(commands.some((args) => args.includes("--clicky"))).toBe(false);
+        expect(commands).toHaveLength(2);
+
+        const shortLived = ps(`  331 ${LAUNCHER} --rpc {}`, `  332 ${LAUNCHER} --notify`, `  333 ${LAUNCHER} --widget`);
+        expect(plan({ psStdout: shortLived, stalePids: ["331", "332"] })).toEqual([]);
+    });
+
+    it("starts a stopped relay again even when no window face comes back", () => {
+        const listing = ps(`  341 ${LAUNCHER} --link-relay`, `  342 ${LAUNCHER} --rpc {}`);
+
+        expect(plan({ psStdout: listing, stalePids: ["341", "342"] })).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+        ]);
+    });
+
+    it("lets the widget take focus only when it was the front face", () => {
+        const listing = ps(`  351 ${LAUNCHER} --widget`);
+
+        expect(plan({ psStdout: listing, stalePids: ["351"], frontPid: 351 }).at(-1)).toEqual([
+            "open",
+            "-n",
+            BUNDLE,
+            "--args",
+            "--widget",
+            "--ensure-running",
+        ]);
     });
 });

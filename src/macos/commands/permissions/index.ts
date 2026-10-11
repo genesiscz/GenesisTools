@@ -128,7 +128,7 @@ export function registerPermissionsCommand(program: Command): void {
     permissions
         .command("build")
         .description("Build, sign and install ~/Applications/GenesisTools.app (Swift toolchain required)")
-        .option("--no-relaunch", "Leave the hub, review and settings windows closed after the reap")
+        .option("--no-relaunch", "Leave the settings, hub, review, widget and Clicky faces closed after the reap")
         .action(async (options: { relaunch: boolean }) => {
             const result = await buildApp({ onStep: (message) => ui.info(message), relaunch: options.relaunch });
             ui.ok(`${result.bundlePath}`);

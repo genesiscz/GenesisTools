@@ -108,7 +108,11 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(root)
         NSApp.mainMenu = menu
         ClickyHost.shared.start(standalone: true)
-        ClickyHost.shared.showSettings(pageID: initialPageID)
+        // `--no-activate` is a rebuild's relaunch (relaunch.ts): Clicky comes back without the settings window,
+        // which would take the keyboard from the app in front.
+        if !CommandLine.arguments.contains("--no-activate") {
+            ClickyHost.shared.showSettings(pageID: initialPageID)
+        }
     }
 
     private func snapshotArgument(_ flag: String) -> String? {
@@ -188,6 +192,8 @@ func runClicky(_ args: [String] = []) -> Never {
         }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             close(descriptor)
+            // A background relaunch that finds Clicky already running leaves it alone.
+            if args.contains("--no-activate") { exit(0) }
             DistributedNotificationCenter.default().postNotificationName(
                 clickySettingsNotification, object: nil, userInfo: pageID.map { ["page": $0] },
                 deliverImmediately: true)

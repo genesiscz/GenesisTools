@@ -2,8 +2,8 @@ import Foundation
 
 /// A window face's exact argv, written at launch to `~/.genesis-tools/app/faces/<pid>.json`.
 ///
-/// A rebuild kills every face of the replaced bundle and starts the hub, review and settings windows
-/// again with the arguments they had (src/macos/lib/permissions/relaunch.ts). `ps` joins argv with
+/// A rebuild kills every face of the replaced bundle and starts the settings window, the hub, a review, the
+/// widget and Clicky again with the arguments they had (src/macos/lib/permissions/relaunch.ts). `ps` joins argv with
 /// spaces, so a path with a space (`--repo "/x/My Repo"`) cannot be read back from it; this record can.
 /// It goes at a normal exit; one left by a SIGTERM is pruned by the next rebuild.
 enum FaceRecord {
@@ -12,20 +12,14 @@ enum FaceRecord {
         URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
     }
 
-    /// The windows a rebuild reopens: the settings window, the hub and a review, never a scripted run.
+    /// The faces a rebuild reopens (and that keep a link relay in front of them): the settings window, the hub,
+    /// a review, the widget and Clicky, never a scripted run.
     static func isWindowFace(_ argv: [String]) -> Bool {
         if argv.contains("--snapshot") || argv.contains("--bench") {
             return false
         }
         let first = argv.first ?? ""
         return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--clicky"
-    }
-
-    /// The faces whose argv a rebuild reads back. The widget and Clicky faces keep a link relay in front of
-    /// them (`isWindowFace`), but relaunch.ts never reopens them, so a record of theirs is never read.
-    static func isRecorded(_ argv: [String]) -> Bool {
-        let first = argv.first ?? ""
-        return isWindowFace(argv) && first != "--widget" && first != "--clicky"
     }
 
     static func encode(pid: Int32, argv: [String]) -> Data? {
@@ -39,7 +33,7 @@ enum FaceRecord {
 
     /// Call once at launch with the arguments after the executable.
     static func write(_ argv: [String]) {
-        guard isRecorded(argv), let data = encode(pid: getpid(), argv: argv) else { return }
+        guard isWindowFace(argv), let data = encode(pid: getpid(), argv: argv) else { return }
         let url = directory.appendingPathComponent("\(getpid()).json")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

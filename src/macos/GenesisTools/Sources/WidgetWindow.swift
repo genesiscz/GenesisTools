@@ -90,7 +90,9 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         root.submenu = application
         menu.addItem(root)
         NSApp.mainMenu = menu
-        coordinator?.start(showSettings: args.contains("--settings"))
+        // `--no-activate` is a rebuild's relaunch (relaunch.ts): a widget that is off then stays quiet instead of
+        // opening the settings over the app in front.
+        coordinator?.start(showSettings: args.contains("--settings"), settingsWhenOff: !args.contains("--no-activate"))
         if let key = value("--session-key") { openSession(key) }
     }
     /// While "Show the widget" is off, the coordinator opens the settings instead of a panel.
