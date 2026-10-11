@@ -111,7 +111,12 @@ public enum ImageViewer {
             _ = await MediaThumbnailCache.shared.thumbnail(path: path, maxPixels: pixels, kind: .image,
                                                            ceiling: MediaThumbnailCache.largestCeiling)
         }
-        // The window too, after this click's own work: the second click arrives a few hundred ms later.
+        prepare()
+    }
+
+    /// Builds the spare window after this click's own work: the second click arrives a few hundred ms later. For a
+    /// picture with no file to decode yet (an embedded one), the window alone.
+    public static func prepare() {
         DispatchQueue.main.async { makeSpare() }
     }
 
@@ -289,9 +294,7 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
 
     /// A second double-click on the same page: that picture, in this window, no flight.
     func replace(_ next: ImageViewerRequest) {
-        let keepsOrigin = next.currentOrigin
         request = next
-        request.currentOrigin = keepsOrigin
         model.replace(items: next.items, selectedID: next.selectedID)
         window?.makeKeyAndOrderFront(nil)
     }

@@ -272,7 +272,17 @@ public enum ImageViewerKeys {
             case "0": return .fit
             case "1": return .actualSize
             case "c" where !flags.contains(.shift): return .copy
-            default: return nil
+            default:
+                // A layout whose keys print other characters (Czech: the 0 key prints "é") still has the keys in
+                // their US places.
+                switch keyCode {
+                case 24: return .zoomIn
+                case 27: return .zoomOut
+                case 29: return .fit
+                case 18: return .actualSize
+                case 8 where !flags.contains(.shift): return .copy
+                default: return nil
+                }
             }
         }
         if picking {

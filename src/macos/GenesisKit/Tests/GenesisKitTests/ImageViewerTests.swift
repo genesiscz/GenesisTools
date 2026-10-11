@@ -155,6 +155,9 @@ final class ImageViewerKeysTests: XCTestCase {
         XCTAssertEqual(action(29, "0", .command), .fit)
         XCTAssertEqual(action(18, "1", .command), .actualSize)
         XCTAssertEqual(action(8, "c", .command), .copy)
+        // Czech: the 1 key prints "+" (zoom in, as printed), the 0 key prints "é" (fit, by its place).
+        XCTAssertEqual(action(18, "+", .command), .zoomIn)
+        XCTAssertEqual(action(29, "é", .command), .fit)
         XCTAssertNil(action(123, nil, .option), "⌥← moves the divider only while comparing")
         XCTAssertEqual(action(123, nil, .option, comparing: true), .divider(-0.05))
         XCTAssertEqual(action(124, nil, [.option, .shift], comparing: true), .divider(0.01))
