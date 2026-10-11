@@ -18,7 +18,13 @@ Walk it for every view you change. Each line exists because it was missed at lea
 
 ## Layout
 - Equal, intentional insets on all four sides; controls aligned in one column; descriptions under titles.
-- Panels size to their content up to a maximum; no large empty band above a composer.
+- Panels size to their content up to a maximum; no large empty band above a composer. When something opens inside
+  (a card, Source and context, "Show all"), the panel grows with it up to that maximum and only the rest scrolls;
+  closing it shrinks the panel back.
+- Every expand and collapse animates with GenesisKit `GenMotion` (one curve, 0.24 s open, 0.2 s close, instant
+  under Reduce Motion): `GenDisclosure`, or a hand-made row's toggle in `GenMotion.perform` with the revealed view
+  `.transition(.genReveal)` and the row clipped. Exceptions are deliberate: keyboard folds, "Show N more" pages
+  above `GenMotion.maxAnimatedRows`, transcript `List` rows.
 - Nothing is cut off: overflowing content scrolls with an edge cue (`.scrollOverflowContent()` +
   `.scrollOverflowHints()`); `.scrollIndicators(.visible)` does not keep overlay scrollers visible. The last row
   and badges are fully visible at the smallest window size.

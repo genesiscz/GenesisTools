@@ -31,3 +31,12 @@
   collapse largest gap 16.7 ms (was 224).
 - Per-window capture is not evidence for a resizing window; use `scripts/native/outline-frames.swift` (composited
   display, filtered to the app's windows).
+
+## Growing with what opens inside (2026-10-11, reshape)
+- A disclosure that opens inside a fitted panel changes the panel's size, not its content: `beginReshape` resizes the
+  window once (at the start of a grow, the end of a shrink), animates the mask, and moves the content with the
+  outline's edges through `EdgePanelMotion.contentFrame` on the same curve, so the composer rides the bottom edge.
+- The log line says `reshape.grow` / `reshape.shrink`. Healthy: one window resize in window-frames.swift per
+  reshape, the composer never leaves the bottom edge in a recording, no empty band at the end.
+- The disclosure's own motion starts one run-loop turn earlier (the fit is measured after its layout); both end
+  within a frame or two of each other.
