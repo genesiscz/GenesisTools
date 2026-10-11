@@ -166,7 +166,9 @@ Default places (a brief may name others; then the brief wins): annotated copies 
 `<Area>/YYYY-MM-DD-BeforeAfter.annotated.md`. `NN` is the pair's number in the note, 01 for a single pair.
 
 - A header: what the pairs cover, the legend (red, amber with its three uses), why data differs, the known gaps.
-- Per pair:
+- Per pair: the before and the after side by side in one two-column row (each half the reading width in Genesis and
+  Obsidian), then what every id on the pair means, so the reader never looks an id up elsewhere. Take each meaning
+  from the report that defined the id (its heading or ledger line), not from memory:
 
   ```markdown
   ### 03 Hub: Transcript, Changes and Files panes together
@@ -174,11 +176,20 @@ Default places (a brief may name others; then the brief wins): annotated copies 
   Look at the Files pane: it took about 550 pt for three file names and is now capped at 380 pt. The wrap button
   now starts in wrap mode, and the settings button is a gear. The empty Changes pane is data: nothing is uncommitted now.
 
-  ![before](../Hub/Screenshot/annotated/03-hub-sessions-3panes-before.png)
-  ![after](../Hub/Screenshot/annotated/03-hub-sessions-3panes-after.png)
+  | Before | After |
+  | --- | --- |
+  | ![before](../Hub/Screenshot/annotated/03-hub-sessions-3panes-before.png) | ![after](../Hub/Screenshot/annotated/03-hub-sessions-3panes-after.png) |
+
+  **What the ids mean**
+
+  - **H18** Diff panes clip long lines when three panes are open
+  - **H19** Small label and icon problems
+  - **H12** "Weekly 100% · 4 days ago" reads as fresh data
 
   Fixes: H18 and H19 in **501890e78**. Not visible here: H12 (the chip shows another usage window).
   ```
+
+  Never put an Obsidian size suffix (`![a|50](…)`) inside a table row: its `|` splits the cell.
 
 - Embed paths are relative to the note file. Check that every embed resolves: a missing file renders as nothing.
 - A note in the vault: open it in Obsidian and Genesis (`obsidian-cli open "<vault path without .md>"`,
@@ -206,4 +217,5 @@ The same trick shows variants of one screen (Hub, Native Glass, Native Solid, Na
       "not visible here", with the fixed wording.
 - [ ] Marks sized to the image width; no chip on another box or on what it explains.
 - [ ] Every annotated image read back at 1:1; originals unchanged (`shasum`).
-- [ ] Note: header with legend and gaps, per pair "what to look for", embeds resolve, fixes and commits named.
+- [ ] Note: header with legend and gaps, per pair "what to look for", the pair side by side, every id explained under
+      it, embeds resolve, fixes and commits named.
