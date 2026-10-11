@@ -190,6 +190,15 @@ public struct TranscriptNotice: Equatable {
 /// What a running turn does now. The row draws the elapsed time itself, so the document does not
 /// change every second.
 public struct TranscriptActivity: Equatable {
+    public enum Tone: Equatable {
+        /// The agent works: the mark pulses.
+        case working
+        /// It waits for the user: a still mark in orange.
+        case waiting
+        /// It should work but has written nothing for a long time: a still mark, the time in orange.
+        case stalled
+    }
+
     public let startedAt: Date
     /// `Thinking`, `Running bash`, `Writing the reply`.
     public let label: String
@@ -197,17 +206,24 @@ public struct TranscriptActivity: Equatable {
     public let detail: String?
     /// Calls finished so far in this turn.
     public let finishedTools: Int
+    public var tone: Tone = .working
+    /// Other calls running beside the named one (parallel calls).
+    public var moreRunning = 0
 
     public init(
         startedAt: Date,
         label: String,
         detail: String? = nil,
-        finishedTools: Int
+        finishedTools: Int,
+        tone: Tone = .working,
+        moreRunning: Int = 0
     ) {
         self.startedAt = startedAt
         self.label = label
         self.detail = detail
         self.finishedTools = finishedTools
+        self.tone = tone
+        self.moreRunning = moreRunning
     }
 }
 
@@ -303,6 +319,14 @@ public struct TranscriptDocument: Equatable {
         self.errorCount = errorCount
         self.firstAt = firstAt
         self.lastAt = lastAt
+    }
+
+    /// Calls of the latest section that have their result: the live activity row's "N done".
+    public var finishedToolsInLastSection: Int {
+        sections.last?.rows.reduce(0) { count, row in
+            if case .tool(let line) = row.kind, line.status != .pending { return count + 1 }
+            return count
+        } ?? 0
     }
 
     /// Sections with only the rows that pass the chips and contain the query, with the reply

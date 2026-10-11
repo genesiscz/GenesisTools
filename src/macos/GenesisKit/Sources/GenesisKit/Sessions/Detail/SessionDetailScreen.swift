@@ -25,6 +25,8 @@ public struct SessionDetailInfo: Equatable {
     public var branch: String?
     public var liveness: SessionLiveness = .ended
     public var livenessNote = ""
+    /// Shown instead of `liveness.label` when set: "Waiting" for a turn that waits for the user's answer.
+    public var livenessLabel: String?
     /// `58m of cache left`, `cache cold`, or nil for a provider without a cache clock.
     public var cacheNote: String?
     public var cacheCold = false
@@ -48,6 +50,8 @@ public struct SessionDetailInfo: Equatable {
     public var alertIsSevere = false
 
     public var shortId: String { String(sessionId.prefix(8)) }
+
+    public var statusLabel: String { livenessLabel ?? liveness.label }
 
     public var livenessColor: Color {
         switch liveness {
@@ -211,6 +215,8 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
     /// Session file, change log and `showChange`, for the tool rows. Build it once per loaded
     /// session file (rows compare it by identity).
     public var services: TranscriptServices = .none
+    /// What the session's agent does now: the transcript's last row, while the host passes it.
+    public var activity: TranscriptActivityFeed?
     public let actions: SessionDetailActions
     public let sidebarExtra: SidebarExtra
     /// The extra slot right under the usage grid (GenesisTools: cost per prompt and tool analytics,
@@ -239,11 +245,13 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         preset: TranscriptPreset = TranscriptPreset(),
         leadingInset: CGFloat = SessionDetailScreenChrome.leadingInset,
         services: TranscriptServices = .none,
+        activity: TranscriptActivityFeed? = nil,
         showsSidebar: Bool = true,
         sidebarExtraFirst: Bool = false,
         actions: SessionDetailActions,
         @ViewBuilder sidebarExtra: () -> SidebarExtra
     ) {
+        self.activity = activity
         self.sidebarExtraFirst = sidebarExtraFirst
         // A host that places the screen in a narrow pane starts it with the sidebar folded.
         _showSidebar = State(initialValue: showsSidebar)
@@ -288,6 +296,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
                     onLoadEarlier: onLoadEarlier,
                     preset: preset,
                     services: services,
+                    activity: activity,
                     onReaderAtEnd: onReaderAtEnd
                 )
                 .frame(maxWidth: .infinity)
@@ -358,7 +367,7 @@ public struct SessionDetailHeader: View {
                 Button { (actions.openTerminal ?? actions.focus)?() } label: {
                     HStack(spacing: 5) {
                         SessionStatusDot(color: info.livenessColor, size: 7)
-                        Text(verbatim: info.liveness.label)
+                        Text(verbatim: info.statusLabel)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(info.liveness == .ended ? SessionPalette.dim : info.livenessColor)
                     }
@@ -741,7 +750,7 @@ public struct SessionDetailSidebar<Extra: View>: View {
             SessionSectionTitle(title: "Session")
                 .padding(.bottom, 4)
             row(symbol: nil, dot: info.livenessColor) {
-                Text(verbatim: info.liveness.label)
+                Text(verbatim: info.statusLabel)
                     .foregroundStyle(SessionPalette.text)
                 Text(verbatim: info.livenessNote)
                     .foregroundStyle(SessionPalette.dim)

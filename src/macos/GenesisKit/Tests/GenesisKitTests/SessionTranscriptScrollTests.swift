@@ -269,6 +269,29 @@ final class SessionTranscriptScrollTests: XCTestCase {
         XCTAssertEqual(list.contentView.bounds.origin.y, before, accuracy: 0.5, "an arriving row moved a reader who scrolled up")
     }
 
+    // GenesisTools adaptation: Martin, 2026-10-11: a working agent looked idle until its rows landed. The live
+    // activity row is the transcript's last row and changes with every step; the scroll rules hold with it: the
+    // reader at the end stays at the end, one who scrolled up is never moved, and the row never counts as new.
+    func testTheActivityRowKeepsAReaderAtTheEndAndLeavesAScrolledUpOneAlone() throws {
+        let session = try InventedSession.make(sections: 3)
+        let atEnd = Rig(Streaming(session: session, activity: true), size: NSSize(width: 560, height: 700))
+        atEnd.settle(4.5)
+        let followed = try XCTUnwrap(atEnd.transcript, "no transcript scroll view")
+        let followedHeight = followed.documentView?.frame.height ?? 0
+        XCTAssertLessThanOrEqual(followedHeight - followed.contentView.bounds.maxY, 80, "the reader at the end was left behind")
+        atEnd.close()
+
+        let rig = Rig(Streaming(session: session, activity: true), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(0.8)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        rig.notches(at: rig.center(of: list), dx: 0, dy: 10, count: 30)
+        rig.settle(0.3)
+        let before = list.contentView.bounds.origin.y
+        rig.settle(3.5)
+        XCTAssertEqual(list.contentView.bounds.origin.y, before, accuracy: 0.5, "an activity change or an arriving row moved a reader who scrolled up")
+    }
+
     // GenesisTools adaptation: Martin, 2026-09-30: "the Verbose and all other picker items are literally not
     // doing anything". The level is picked while the transcript is on screen, so each pick must re-measure
     // the rows it opens or trims, not only the first draw at a level.
@@ -519,16 +542,41 @@ final class SessionTranscriptScrollTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["SESSION_SCROLL_PERF"] == "1" else {
             throw XCTSkip("set SESSION_SCROLL_PERF=1 to measure")
         }
+        // GenesisTools adaptation: `SESSION_SCROLL_ACTIVITY=1` adds the live activity row, changed on every step.
+        let activity = ProcessInfo.processInfo.environment["SESSION_SCROLL_ACTIVITY"] == "1"
         for level in [TranscriptVerbosity.inputs, .outputs] {
             let session = try InventedSession.make(sections: 12)
-            let rig = Rig(Streaming(session: session, verbosity: level), size: NSSize(width: 900, height: 820))
+            let rig = Rig(Streaming(session: session, verbosity: level, activity: activity), size: NSSize(width: 900, height: 820))
             RenderProbe.enabled = true
             _ = RenderProbe.take()
             let cpu = rig.mainCPU()
             rig.settle(3.5)
             let spent = rig.mainCPU() - cpu
             let counts = RenderProbe.take().sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
-            print("SCROLLPERF streaming-\(level.rawValue) mainCPU=\(String(format: "%.0f", spent))ms over 3.5 s \(counts)")
+            print("SCROLLPERF streaming-\(level.rawValue)\(activity ? "-activity" : "") mainCPU=\(String(format: "%.0f", spent))ms over 3.5 s \(counts)")
+            RenderProbe.enabled = false
+            rig.close()
+        }
+    }
+
+    // GenesisTools adaptation: what the live activity row costs on its own, at the latest turn of a session that
+    // is otherwise still: the label swapped every 500 ms (thinking ↔ a tool, the most a busy agent does), and
+    // the row standing with its clock ticking.
+    func testActivityCost() throws {
+        guard ProcessInfo.processInfo.environment["SESSION_SCROLL_PERF"] == "1" else {
+            throw XCTSkip("set SESSION_SCROLL_PERF=1 to measure")
+        }
+        let session = try InventedSession.make(sections: 12)
+        // The same list with no activity row first: what the rig's list costs standing still on its own.
+        for (label, swaps, shows) in [("activity-none", false, false), ("activity-standing", false, true), ("activity-swap-500ms", true, true)] {
+            let rig = Rig(ActivitySwaps(document: session.document, swaps: swaps, shows: shows), size: NSSize(width: 900, height: 820))
+            rig.settle(2.0)
+            RenderProbe.enabled = true
+            _ = RenderProbe.take()
+            let cpu = rig.mainCPU()
+            let seconds = 10.0
+            rig.settle(seconds)
+            reportIdle(label, RenderProbe.take(), seconds: seconds, cpu: rig.mainCPU() - cpu)
             RenderProbe.enabled = false
             rig.close()
         }
@@ -578,11 +626,64 @@ final class SessionTranscriptScrollTests: XCTestCase {
 
 // GenesisTools adaptation: the last section arrives one row at a time while the list is on screen, each
 // tool call first running and then finished, the way the hub's live tail brings a working session in.
+/// GenesisTools adaptation: a still document whose live activity row swaps between thinking and a running tool
+/// every 500 ms (`swaps`), or stands (`testActivityCost`).
+private struct ActivitySwaps: View {
+    let document: TranscriptDocument
+    let swaps: Bool
+    var shows = true
+    /// Held, not observed (as the hub holds it): a swap must reach the activity row only.
+    @State private var feed = TranscriptActivityFeed()
+    private static let since = Date().timeIntervalSince1970 * 1000
+
+    private static func live(_ step: Int) -> TranscriptLiveActivity {
+        step % 2 == 0
+            ? TranscriptLiveActivity(phase: .thinking, since: since + Double(step) * 500)
+            : TranscriptLiveActivity(phase: .tool, since: since + Double(step) * 500, tool: .init(id: "t\(step)", name: "Bash", summary: "bun test"), openTools: 1)
+    }
+
+    var body: some View {
+        SessionTranscriptList(
+            document: document,
+            provider: AIProviders.meta(for: "claude"),
+            modelName: "opus",
+            loadState: .loaded,
+            hasEarlier: false,
+            loadingEarlier: false,
+            windowNote: nil,
+            onLoadEarlier: {},
+            services: TranscriptServices.none,
+            activity: shows ? feed : nil
+        )
+        .environment(\.colorScheme, .dark)
+        .task {
+            var step = 0
+            feed.receive(Self.live(step), finishedTools: 3)
+            while swaps, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                step += 1
+                feed.receive(Self.live(step), finishedTools: 3)
+            }
+        }
+    }
+}
+
 private struct Streaming: View {
     let session: InventedSession
     // GenesisTools adaptation: the level the rows stream in at (`testStreamingCost`).
     var verbosity: TranscriptVerbosity = .inputs
+    /// The live activity row at the end, changing with every step: "Running …" while the last row runs, "Thinking…"
+    /// once it finished.
+    var activity = false
     @State private var step = 0
+    @State private var feed = TranscriptActivityFeed()
+    private static let since = Date().timeIntervalSince1970 * 1000
+
+    private func live(_ step: Int) -> TranscriptLiveActivity {
+        step % 2 == 0
+            ? TranscriptLiveActivity(phase: .tool, since: Self.since + Double(step) * 120, tool: .init(id: "t\(step)", name: "Bash", summary: "step \(step)"), openTools: 1)
+            : TranscriptLiveActivity(phase: .thinking, since: Self.since + Double(step) * 120)
+    }
 
     private var document: TranscriptDocument {
         var document = session.document
@@ -612,15 +713,18 @@ private struct Streaming: View {
             windowNote: nil,
             onLoadEarlier: {},
             preset: TranscriptPreset(verbosity: verbosity),
-            services: session.services
+            services: session.services,
+            activity: activity ? feed : nil
         )
         .environment(\.colorScheme, .dark)
         .task {
             // Two steps a row (running, then finished), the last one finishing it.
             let total = session.document.sections.last?.rows.count ?? 0
+            if activity { feed.receive(live(step), finishedTools: 0) }
             while !Task.isCancelled, step < total * 2 - 1 {
                 try? await Task.sleep(nanoseconds: 120_000_000)
                 step += 1
+                if activity { feed.receive(live(step), finishedTools: step / 2) }
             }
         }
     }

@@ -117,6 +117,9 @@ public struct SessionTranscriptList: View {
     /// Whether the reader is at the latest turn, each time it flips: a host can trim a live window's oldest turns
     /// only while nobody reads them.
     public var onReaderAtEnd: (Bool) -> Void = { _ in }
+    /// What a running session's agent does now, drawn as the list's last row while a host passes it. A feed,
+    /// not a value: its changes (several per tool call) redraw that row and nothing else (`TranscriptActivityFeed`).
+    public var activity: TranscriptActivityFeed?
 
     public init(
         document: TranscriptDocument,
@@ -131,9 +134,11 @@ public struct SessionTranscriptList: View {
         services: TranscriptServices = .none,
         followsLatest: Bool = false,
         emptyMessage: String = "No turns in this session file.",
+        activity: TranscriptActivityFeed? = nil,
         onReaderAtEnd: @escaping (Bool) -> Void = { _ in }
     ) {
         self.onReaderAtEnd = onReaderAtEnd
+        self.activity = activity
         self.document = document
         self.provider = provider
         self.modelName = modelName
@@ -658,6 +663,17 @@ public struct SessionTranscriptList: View {
                             .listRowInsets(EdgeInsets())
                     }
                 }
+                // The running turn, under its last row. A search shows hits only.
+                if let activity, appliedQuery.isEmpty, !visible.isEmpty {
+                    ForEach([Self.activityRowId], id: \.self) { _ in
+                        ActivitySlot(feed: activity)
+                            // Fades in as a turn starts, like an arriving row; a reader scrolling back to it sees it at once.
+                            .modifier(RowArrival(active: anchor.atEnd))
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
+                }
                 Color.clear.frame(height: 12)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -785,6 +801,9 @@ public struct SessionTranscriptList: View {
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
     }
+
+    /// The id of the live activity row, the last row while a session's agent works.
+    static let activityRowId = "live-activity"
 
     private static func endMarker(_ sectionId: String) -> String { "end-\(sectionId)" }
 
@@ -1542,6 +1561,20 @@ private struct NoticeCard: View {
     }
 }
 
+/// The live activity row of a followed session: it alone observes the feed, so an activity change reaches no
+/// other view. Its height stays the row's 32 pt for the moment the feed has no row yet.
+private struct ActivitySlot: View {
+    @ObservedObject var feed: TranscriptActivityFeed
+
+    var body: some View {
+        if let row = feed.row {
+            ActivityRow(activity: row)
+        } else {
+            Color.clear.frame(height: 32)
+        }
+    }
+}
+
 /// The running turn: a sweeping mark, what it does, and the elapsed time. Only the clock text
 /// redraws each second; the row itself changes only when the activity does.
 private struct ActivityRow: View {
@@ -1549,26 +1582,35 @@ private struct ActivityRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            WorkingMark()
+            WorkingMark(tone: activity.tone)
             Text(verbatim: activity.label)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(SessionPalette.secondary)
+                .foregroundStyle(activity.tone == .waiting ? SessionPalette.orange : SessionPalette.secondary)
+                .layoutPriority(1)
             if let detail = activity.detail, !detail.isEmpty {
                 Text(verbatim: detail)
-                    .font(SessionPalette.mono(11.5))
+                    .font(activity.tone == .waiting ? .system(size: 12) : SessionPalette.mono(11.5))
                     .foregroundStyle(SessionPalette.dim)
                     .lineLimit(1)
                     .truncationMode(.middle)
+            }
+            if activity.moreRunning > 0 {
+                Text(verbatim: "+\(activity.moreRunning)")
+                    .font(SessionPalette.mono(10.5))
+                    .foregroundStyle(SessionPalette.faint)
+                    .fixedSize()
             }
             Spacer(minLength: 8)
             if activity.finishedTools > 0 {
                 Text(verbatim: "\(activity.finishedTools) done")
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.faint)
+                    .fixedSize()
             }
             LiveTime(date: activity.startedAt, style: .elapsed, alignment: .trailing)
                 .font(SessionPalette.mono(10.5))
-                .foregroundStyle(SessionPalette.faint)
+                .foregroundStyle(activity.tone == .stalled ? SessionPalette.orange : SessionPalette.faint)
+                .fixedSize()
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
@@ -1576,16 +1618,36 @@ private struct ActivityRow: View {
         .padding(.trailing, 12)
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
         .accessibilityIdentifier("transcript-activity")
+    }
+
+    private var accessibilityText: String {
+        var parts = [activity.label]
+        if let detail = activity.detail, !detail.isEmpty { parts.append(detail) }
+        if activity.moreRunning > 0 { parts.append("and \(activity.moreRunning) more") }
+        if activity.tone == .stalled { parts.append("no output for over ten minutes") }
+        return parts.joined(separator: ", ")
     }
 }
 
 /// Three dots that rise in turn, as a layer animation that stops with the row: a SwiftUI repeatForever
-/// laid the whole hub window out on every frame while an agent worked.
+/// laid the whole hub window out on every frame while an agent worked. Still under Reduce Motion, while
+/// the agent waits for the user, and when it has written nothing for a long time.
 private struct WorkingMark: View {
+    var tone: TranscriptActivity.Tone = .working
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        PulsingDots(color: SessionPalette.blue, count: 3, diameter: 4.5, spacing: 3, period: 0.55, stagger: 0.18)
-            .frame(width: 22, height: 4.5)
+        PulsingDots(
+            color: tone == .waiting ? SessionPalette.orange : SessionPalette.blue,
+            count: 3,
+            diameter: 4.5,
+            spacing: 3,
+            period: tone == .working && !reduceMotion ? 0.55 : 0,
+            stagger: 0.18
+        )
+        .frame(width: 22, height: 4.5)
     }
 }
 
