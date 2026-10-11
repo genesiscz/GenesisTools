@@ -25,17 +25,36 @@ func text(_ element: AXUIElement, _ name: String) -> String {
     return ""
 }
 
+/// An element's children; an application's windows too, which its children list does not always carry (the widget
+/// face's edge panels are reached only through AXWindows).
 func children(_ element: AXUIElement) -> [AXUIElement] {
-    (attribute(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    let listed = (attribute(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    guard text(element, kAXRoleAttribute) == kAXApplicationRole as String else { return listed }
+    return listed + ((attribute(element, kAXWindowsAttribute) as? [AXUIElement]) ?? [])
 }
 
+/// An element as a set member: AXUIElement is a CF type, equal when it names the same UI object.
+struct ElementKey: Hashable {
+    let element: AXUIElement
+    static func == (left: ElementKey, right: ElementKey) -> Bool { CFEqual(left.element, right.element) }
+    func hash(into hasher: inout Hasher) { hasher.combine(CFHash(element)) }
+}
+
+/// Depth-first, each element once, and never into the menu bar. The widget face lists its application element again
+/// under itself (and under its menu bar items), so a walk without the visited set doubled at every level: 480,000
+/// lines at depth 40 and a press that never finished (2026-10-11).
 func walk(_ element: AXUIElement, depth: Int, maxDepth: Int, visit: (AXUIElement, Int) -> Bool) -> Bool {
-    if visit(element, depth) { return true }
-    guard depth < maxDepth else { return false }
-    for child in children(element) where walk(child, depth: depth + 1, maxDepth: maxDepth, visit: visit) {
-        return true
+    var seen = Set<ElementKey>()
+    func step(_ element: AXUIElement, _ depth: Int) -> Bool {
+        guard seen.insert(ElementKey(element: element)).inserted else { return false }
+        if visit(element, depth) { return true }
+        guard depth < maxDepth, text(element, kAXRoleAttribute) != kAXMenuBarRole as String else { return false }
+        for child in children(element) where step(child, depth + 1) {
+            return true
+        }
+        return false
     }
-    return false
+    return step(element, depth)
 }
 
 func find(pid: pid_t, identifier: String) -> [AXUIElement] {
