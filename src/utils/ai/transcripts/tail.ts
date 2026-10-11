@@ -9,6 +9,8 @@ export interface FollowTranscriptOptions {
     onEnvelope: (envelope: TranscriptEnvelope) => void | Promise<void>;
     slice?: SliceOptions;
     signal?: AbortSignal;
+    /** Every line written to the transcript, before its reparse: a write that changes no turn lands here too. */
+    onGrowth?: () => void;
 }
 
 /**
@@ -91,11 +93,11 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
 
     await emit();
 
-    let tailer = new FileTailer(resolved.filePath, {
-        onLine: () => {
-            schedule();
-        },
-    });
+    const onLine = (): void => {
+        opts.onGrowth?.();
+        schedule();
+    };
+    let tailer = new FileTailer(resolved.filePath, { onLine });
     tailer.start();
 
     // A worker session is a sequence of turn files and the next steer writes a
@@ -116,11 +118,7 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         resolved.filePath = next.filePath;
         resolved.extraFiles = next.extraFiles;
         tailer.stop();
-        tailer = new FileTailer(resolved.filePath, {
-            onLine: () => {
-                schedule();
-            },
-        });
+        tailer = new FileTailer(resolved.filePath, { onLine });
         tailer.start();
         schedule();
     };

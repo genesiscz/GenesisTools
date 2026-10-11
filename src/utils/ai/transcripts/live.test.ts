@@ -1,6 +1,18 @@
 import { describe, expect, it } from "bun:test";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { drainMark, firstOpenTurn, LiveTurnStream } from "./live";
+import {
+    drainMark,
+    envelopeActivity,
+    firstOpenTurn,
+    followTranscriptLive,
+    LiveActivityTracker,
+    LiveTurnStream,
+} from "./live";
+import type { ResolvedTranscript } from "./resolve";
+import type { LiveActivity } from "./turn-state";
 import type { TranscriptEnvelope, TranscriptTurn } from "./types";
 
 function turn(id: string, text: string, pending = false): TranscriptTurn {
@@ -105,5 +117,110 @@ describe("drainMark", () => {
     it("settled pages move the mark to the last turn read", () => {
         const first = drainMark(null, 0, [turn("a", "x"), turn("b", "y")]);
         expect(drainMark(first.open, 2, [turn("c", "z")])).toEqual({ open: null, mark: 2 });
+    });
+});
+
+describe("live activity", () => {
+    it("LiveActivityTracker writes an activity line only when it changed", () => {
+        const lines: string[] = [];
+        const tracker = new LiveActivityTracker((line) => lines.push(line));
+        const thinking: LiveActivity = {
+            phase: "thinking",
+            turnStartedAt: 1,
+            since: 2,
+            tool: null,
+            openTools: 0,
+            question: null,
+            stalled: false,
+            lastEventAt: 2,
+        };
+
+        expect(tracker.offer(thinking)).toBe(true);
+        expect(tracker.offer({ ...thinking })).toBe(false);
+        expect(tracker.offer(null)).toBe(false);
+        expect(tracker.offer({ ...thinking, stalled: true })).toBe(true);
+        expect(lines.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
+            { kind: "activity", ...thinking },
+            { kind: "activity", ...thinking, stalled: true },
+        ]);
+    });
+
+    it("envelopeActivity: a terminal event is idle, an open call in the last turn runs, else thinking", () => {
+        const at = "2026-10-11T10:00:00.000Z";
+        const open = { ...envelope([{ ...turn("a", "x", true), at }], 1) };
+        const now = Date.parse(at) + 1000;
+
+        expect(envelopeActivity(open, now, now)).toMatchObject({
+            phase: "tool",
+            tool: { name: "Bash", summary: "ls", startedAt: Date.parse(at) },
+            openTools: 1,
+        });
+        expect(envelopeActivity(envelope([turn("a", "x")], 1), now, now).phase).toBe("thinking");
+        expect(envelopeActivity({ ...open, terminated: "end" }, now, now).phase).toBe("idle");
+        expect(envelopeActivity(open, now, now + 11 * 60_000).stalled).toBe(true);
+    });
+
+    it("followTranscriptLive sends the activity after the turn lines, and again when the tool's result lands", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-live-activity-"));
+        const file = join(dir, "s.jsonl");
+        const record = (value: Record<string, unknown>): string => `${SafeJSON.stringify(value)}\n`;
+        const at = (sec: number): string => new Date(Date.now() - 60_000 + sec * 1000).toISOString();
+        writeFileSync(
+            file,
+            record({ type: "user", timestamp: at(0), message: { role: "user", content: "go" } }) +
+                record({
+                    type: "assistant",
+                    timestamp: at(1),
+                    message: {
+                        id: "m1",
+                        role: "assistant",
+                        stop_reason: "tool_use",
+                        content: [
+                            {
+                                type: "tool_use",
+                                id: "t1",
+                                name: "Bash",
+                                input: { command: "make", description: "Build" },
+                            },
+                        ],
+                    },
+                })
+        );
+        const resolved: ResolvedTranscript = { provider: "claude", source: "native", sessionId: "s", filePath: file };
+        const lines: Record<string, unknown>[] = [];
+        const ac = new AbortController();
+        const until = async (done: () => boolean): Promise<void> => {
+            const started = Date.now();
+            while (!done() && Date.now() - started < 3000) {
+                await Bun.sleep(20);
+            }
+        };
+        const activities = () => lines.filter((line) => line.kind === "activity");
+        const follow = followTranscriptLive(resolved, {
+            offset: 0,
+            signal: ac.signal,
+            write: (line) => lines.push(SafeJSON.parse(line, { strict: true })),
+        });
+
+        try {
+            await until(() => activities().length > 0);
+            expect(lines.map((line) => line.kind ?? "turn")).toEqual(["turn", "turn", "totals", "activity"]);
+            expect(activities()[0]).toMatchObject({ phase: "tool", tool: { name: "Bash", summary: "Build" } });
+
+            appendFileSync(
+                file,
+                record({
+                    type: "user",
+                    timestamp: at(5),
+                    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+                })
+            );
+            await until(() => activities().length > 1);
+            expect(activities()[1]).toMatchObject({ phase: "thinking", tool: null });
+        } finally {
+            ac.abort();
+            await follow;
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

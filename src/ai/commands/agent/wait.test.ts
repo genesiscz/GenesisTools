@@ -60,6 +60,7 @@ describe("answeredBeforeWatch", () => {
             turnStartedAt,
             lastActivityAt: 0,
             silenceMs: 0,
+            openTools: [],
         };
     }
 

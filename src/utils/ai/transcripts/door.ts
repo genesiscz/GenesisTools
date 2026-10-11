@@ -39,7 +39,8 @@ export interface TranscriptDoorOptions {
     stillRunning?: () => Promise<boolean>;
     /**
      * Follow for a UI (`followTranscriptLive`): every turn from `slice.offset` on as a JSON line with
-     * its `index`, again each time it changes, then a totals line. It never stops by itself: it ends
+     * its `index`, again each time it changes, then a totals line, and an `activity` line each time the
+     * agent's activity changes (`LiveActivity`). It never stops by itself: it ends
      * when stdin closes (the parent app quit or died) or on a signal. `format` is ignored.
      */
     live?: boolean;

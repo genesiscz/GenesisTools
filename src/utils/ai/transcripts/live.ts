@@ -1,8 +1,19 @@
+import { statSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import type { ResolvedTranscript } from "./resolve";
 import { followTranscript } from "./tail";
+import {
+    isTurnProvider,
+    LIVE_STALL_MS,
+    type LiveActivity,
+    liveActivityOf,
+    readTurnState,
+    type TurnProvider,
+    type TurnSnapshot,
+    toolSummaryOf,
+} from "./turn-state";
 import type { TranscriptEnvelope, TranscriptTurn } from "./types";
 
 /**
@@ -23,7 +34,8 @@ export interface LiveFollowOptions {
  * What a UI needs to follow a transcript with one process: every turn from `offset` on, sent again
  * each time it changes, with its session-wide `index` so the reader replaces the row it has; then a
  * `totals` line (the whole transcript's totals, `terminated`, `nextOffset`, `turnCount`) whenever a
- * change was sent. Unlike `--format jsonl -f` nothing is held back, and the follow does not stop when
+ * change was sent. `followTranscriptLive` adds an `activity` line (`LiveActivityTracker`) after them.
+ * Unlike `--format jsonl -f` nothing is held back, and the follow does not stop when
  * the transcript ends: a worker's next steer writes another turn file. The caller stops it.
  */
 export class LiveTurnStream {
@@ -120,8 +132,177 @@ export function drainMark(
     return { open: held, mark: held ?? lastTurn };
 }
 
+/** With no write, the activity is looked at again this often, so a stall shows without one. */
+export const ACTIVITY_TICK_MS = 5000;
+
+/**
+ * A write is read for the activity this long after it, unless the turn lines it causes come first: the activity line
+ * then follows those lines in the same chunk, and the app applies both in one change.
+ */
+const GROWTH_SETTLE_MS = 250;
+
+/**
+ * The `activity` line of a live follow (`{"kind":"activity", …LiveActivity}`), written only when it differs from the
+ * last one, so an unchanged activity costs the reader nothing.
+ */
+export class LiveActivityTracker {
+    private last = "";
+
+    constructor(private readonly write: (line: string) => void) {}
+
+    /** True when the line went out. A null activity (an unreadable transcript) keeps the last one. */
+    offer(activity: LiveActivity | null): boolean {
+        if (!activity) {
+            return false;
+        }
+
+        // One key order, whatever built the object: the line reads phase first and compares as text.
+        const { phase, since, turnStartedAt, tool, openTools, question, stalled, lastEventAt } = activity;
+        const line = SafeJSON.stringify(
+            { kind: "activity", phase, since, turnStartedAt, tool, openTools, question, stalled, lastEventAt },
+            { strict: true }
+        );
+        if (line === this.last) {
+            return false;
+        }
+
+        this.last = line;
+        this.write(line);
+        return true;
+    }
+}
+
+/** Where the activity comes from: the native transcript's turn state, or the envelope of a worker turn file. */
+export interface ActivitySource {
+    read(now: number): LiveActivity | null;
+    /** The latest envelope of the follow, for a source that reads it. */
+    observe?(envelope: TranscriptEnvelope): void;
+}
+
+/**
+ * The turn state of a native transcript. The tail is read again only when the file's size or modification time moved;
+ * otherwise the last snapshot only ages, which can turn a running turn into a stalled one.
+ */
+export class NativeActivitySource implements ActivitySource {
+    private key = "";
+    private snapshot: TurnSnapshot | null = null;
+
+    constructor(
+        private readonly provider: TurnProvider,
+        private readonly filePath: () => string,
+        private readonly stallMs = LIVE_STALL_MS
+    ) {}
+
+    read(now: number): LiveActivity | null {
+        const path = this.filePath();
+        let key: string;
+
+        try {
+            const stat = statSync(path);
+            key = `${path}:${stat.size}:${stat.mtimeMs}`;
+        } catch (err) {
+            logger.debug({ err, path }, "live follow: the transcript cannot be read for its activity");
+            return null;
+        }
+
+        if (key !== this.key || !this.snapshot) {
+            this.snapshot = readTurnState(this.provider, path, { now, stallTimeoutMs: Number.POSITIVE_INFINITY });
+            this.key = key;
+        }
+
+        if (!this.snapshot) {
+            return null;
+        }
+
+        return liveActivityOf({ ...this.snapshot, silenceMs: now - this.snapshot.lastActivityAt }, this.stallMs);
+    }
+}
+
+/**
+ * A worker turn file (codex and grok events the turn-state readers do not parse): a terminal event ends the turn, a
+ * call with no result in the last turn runs, anything else is the model at work.
+ */
+export function envelopeActivity(
+    envelope: TranscriptEnvelope,
+    lastModified: number,
+    now: number,
+    stallMs = LIVE_STALL_MS
+): LiveActivity {
+    const last = envelope.turns.at(-1);
+    const parsed = last?.at ? Date.parse(last.at) : Number.NaN;
+    const lastEventAt = Number.isNaN(parsed) ? null : parsed;
+    const base = { turnStartedAt: null, lastEventAt, tool: null, openTools: 0, question: null, stalled: false };
+
+    if (envelope.terminated) {
+        return { ...base, phase: "idle", since: lastEventAt };
+    }
+
+    const lastWrite = Math.max(lastModified, lastEventAt ?? 0);
+    const stalled = now - lastWrite > stallMs;
+    const open = last?.tools.filter((tool) => tool.result === null) ?? [];
+    const first = open[0];
+
+    if (first) {
+        const tool = {
+            id: first.id,
+            name: first.name,
+            summary: toolSummaryOf(first.inputPreview),
+            startedAt: lastEventAt,
+        };
+        return { ...base, phase: "tool", since: lastEventAt, tool, openTools: open.length, stalled };
+    }
+
+    return { ...base, phase: "thinking", since: lastWrite, stalled };
+}
+
+class EnvelopeActivitySource implements ActivitySource {
+    private envelope: TranscriptEnvelope | null = null;
+
+    constructor(private readonly filePath: () => string) {}
+
+    observe(envelope: TranscriptEnvelope): void {
+        this.envelope = envelope;
+    }
+
+    read(now: number): LiveActivity | null {
+        if (!this.envelope) {
+            return null;
+        }
+
+        try {
+            return envelopeActivity(this.envelope, statSync(this.filePath()).mtimeMs, now);
+        } catch (err) {
+            logger.debug({ err, path: this.filePath() }, "live follow: the worker turn file cannot be read");
+            return null;
+        }
+    }
+}
+
+export function activitySourceFor(resolved: ResolvedTranscript): ActivitySource | null {
+    const filePath = () => resolved.filePath;
+
+    if (resolved.source === "worker") {
+        return new EnvelopeActivitySource(filePath);
+    }
+
+    return isTurnProvider(resolved.provider) ? new NativeActivitySource(resolved.provider, filePath) : null;
+}
+
 export async function followTranscriptLive(resolved: ResolvedTranscript, options: LiveFollowOptions): Promise<void> {
     const stream = new LiveTurnStream(options.offset, options.write);
+    const activity = new LiveActivityTracker(options.write);
+    const source = activitySourceFor(resolved);
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const evaluate = (): void => {
+        clearTimeout(settle);
+        settle = undefined;
+
+        if (source && !options.signal?.aborted) {
+            activity.offer(source.read(Date.now()));
+        }
+    };
+    // Not a poll of the transcript: one `stat` per tick, the tail only after a write the follow did not see.
+    const tick = source ? setInterval(evaluate, ACTIVITY_TICK_MS) : undefined;
     // followTranscript reads this object on every change, so moving `offset` narrows the next read.
     const slice = { offset: options.offset, limit: LIVE_WINDOW };
     let draining: Promise<void> | null = null;
@@ -184,17 +365,30 @@ export async function followTranscriptLive(resolved: ResolvedTranscript, options
         })();
     };
 
-    await followTranscript(resolved, {
-        slice,
-        signal: options.signal,
-        onEnvelope: (envelope) => {
-            stream.envelope(envelope);
-            slice.offset = stream.offset;
+    try {
+        await followTranscript(resolved, {
+            slice,
+            signal: options.signal,
+            onEnvelope: (envelope) => {
+                stream.envelope(envelope);
+                slice.offset = stream.offset;
+                source?.observe?.(envelope);
+                evaluate();
 
-            if (envelope.turns.length > 0 && envelope.nextOffset < (envelope.turnCount ?? envelope.nextOffset)) {
-                requestDrain(envelope.nextOffset);
-            }
-        },
-    });
-    await draining;
+                if (envelope.turns.length > 0 && envelope.nextOffset < (envelope.turnCount ?? envelope.nextOffset)) {
+                    requestDrain(envelope.nextOffset);
+                }
+            },
+            // A write that changes no turn (Grok's `turn_completed`, Claude's bookkeeping) can still end a turn.
+            onGrowth: () => {
+                if (source && settle === undefined) {
+                    settle = setTimeout(evaluate, GROWTH_SETTLE_MS);
+                }
+            },
+        });
+        await draining;
+    } finally {
+        clearInterval(tick);
+        clearTimeout(settle);
+    }
 }

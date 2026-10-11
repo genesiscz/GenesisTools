@@ -67,7 +67,7 @@ export function registerSessionsCommands(program: Command): void {
         .option("--turns <list>", "Exactly these 0-based turns, e.g. 3,17,902 (each gets its `index`)")
         .option(
             "--live",
-            "follow for an app, from --offset: each turn as a JSON line with its `index`, again whenever it changes, then a totals line; runs until stdin closes"
+            "follow for an app, from --offset: each turn as a JSON line with its `index`, again whenever it changes, then a totals line, and an activity line (thinking, tool, waiting, idle, interrupted) whenever that changes; runs until stdin closes"
         )
         .action(
             async (

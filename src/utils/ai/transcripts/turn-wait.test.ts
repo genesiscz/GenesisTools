@@ -19,6 +19,7 @@ function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: n
         turnStartedAt,
         lastActivityAt: 0,
         silenceMs: 0,
+        openTools: [],
     };
 }
 

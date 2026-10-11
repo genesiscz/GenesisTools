@@ -3,7 +3,15 @@ import { appendFileSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { claudeTurnState, codexTurnState, grokTurnState, readTurnState, type TurnStateInput } from "./turn-state";
+import {
+    claudeTurnState,
+    codexTurnState,
+    grokTurnState,
+    liveActivityOf,
+    readTurnState,
+    type TurnStateInput,
+    toolSummaryOf,
+} from "./turn-state";
 
 const T0 = Date.parse("2026-10-08T12:00:00.000Z");
 const iso = (offsetSec: number): string => new Date(T0 + offsetSec * 1000).toISOString();
@@ -345,5 +353,159 @@ describe("readTurnState", () => {
         const before = statSync(file).size;
         appendFileSync(file, `${SafeJSON.stringify(grokLine(1, "user_message_chunk", text("second")))}\n`);
         expect(readTurnState("grok", file, { stallTimeoutMs: 900_000 })?.turnStartOffset).toBe(before);
+    });
+});
+
+const INFINITE = Number.POSITIVE_INFINITY;
+
+function bash(id: string, input: Record<string, unknown>): Record<string, unknown> {
+    return { type: "tool_use", id, name: "Bash", input };
+}
+
+function claudeResult(sec: number, toolUseId: string): Record<string, unknown> {
+    return claudeUser(sec, [{ type: "tool_result", tool_use_id: toolUseId, content: "ok" }]);
+}
+
+describe("open tool calls and the live activity", () => {
+    it("Claude: a call without its result runs, its description first; the result turns it back into thinking", () => {
+        const call = claudeAssistant(
+            5,
+            [bash("t1", { command: "bun test", description: "Run the tests" })],
+            "tool_use"
+        );
+        const running = claudeTurnState(input([claudeUser(0), call], 20, INFINITE));
+
+        expect(running.openTools).toEqual([{ id: "t1", name: "Bash", summary: "Run the tests", startedAt: T0 + 5000 }]);
+        expect(liveActivityOf(running)).toMatchObject({
+            phase: "tool",
+            since: T0 + 5000,
+            turnStartedAt: T0,
+            openTools: 1,
+            stalled: false,
+        });
+
+        const answered = claudeTurnState(input([claudeUser(0), call, claudeResult(9, "t1")], 20, INFINITE));
+        expect(answered.openTools).toEqual([]);
+        expect(liveActivityOf(answered)).toMatchObject({ phase: "thinking", since: T0 + 9000, tool: null });
+    });
+
+    it("Claude: parallel calls count, the oldest is named, and a new prompt forgets calls left open", () => {
+        const calls = claudeAssistant(5, [bash("a", { command: "ls" }), bash("b", { command: "pwd" })], "tool_use");
+        const both = claudeTurnState(input([claudeUser(0), calls], 20, INFINITE));
+        expect(liveActivityOf(both)).toMatchObject({ phase: "tool", openTools: 2, tool: { id: "a", summary: "ls" } });
+
+        const next = claudeTurnState(input([claudeUser(0), calls, claudeUser(30, "new task")], 40, INFINITE));
+        expect(next.openTools).toEqual([]);
+        expect(liveActivityOf(next).phase).toBe("thinking");
+    });
+
+    it("Claude: end_turn is idle, Esc is interrupted, and AskUserQuestion or ExitPlanMode wait for the user", () => {
+        const done = claudeAssistant(6, [{ type: "text", text: "done" }], "end_turn");
+        expect(liveActivityOf(claudeTurnState(input([claudeUser(0), done], 30, INFINITE))).phase).toBe("idle");
+
+        const call = claudeAssistant(5, [bash("t1", { command: "sleep 100" })], "tool_use");
+        const esc = claudeUser(8, [{ type: "text", text: "[Request interrupted by user for tool use]" }]);
+        const stopped = claudeTurnState(input([claudeUser(0), call, esc], 30, INFINITE));
+        expect(liveActivityOf(stopped)).toMatchObject({ phase: "interrupted", openTools: 0, tool: null });
+
+        const ask = claudeAssistant(
+            5,
+            [{ type: "tool_use", id: "q1", name: "AskUserQuestion", input: { questions: [{ question: "Ship it?" }] } }],
+            "tool_use"
+        );
+        expect(liveActivityOf(claudeTurnState(input([claudeUser(0), ask], 30, INFINITE)))).toMatchObject({
+            phase: "waiting",
+            question: "Ship it?",
+            since: T0 + 5000,
+        });
+
+        const plan = claudeAssistant(5, [{ type: "tool_use", id: "p1", name: "ExitPlanMode", input: {} }], "tool_use");
+        expect(liveActivityOf(claudeTurnState(input([claudeUser(0), plan], 30, INFINITE)))).toMatchObject({
+            phase: "waiting",
+            question: "Approve the plan?",
+        });
+    });
+
+    it("marks a running turn stalled only past the live limit", () => {
+        const call = claudeAssistant(5, [bash("t1", { command: "make" })], "tool_use");
+        const snap = claudeTurnState(input([claudeUser(0), call], 5, INFINITE));
+
+        expect(liveActivityOf({ ...snap, silenceMs: 9 * 60_000 }).stalled).toBe(false);
+        expect(liveActivityOf({ ...snap, silenceMs: 11 * 60_000 })).toMatchObject({ phase: "tool", stalled: true });
+    });
+
+    it("Grok: tool_call opens a call named by its tool, a terminal update closes it, turn_completed is idle", () => {
+        const call = grokLine(2, "tool_call", {
+            toolCallId: "c1",
+            title: "run_terminal_command",
+            rawInput: { command: "bun test" },
+            _meta: { "x.ai/tool": { name: "run_terminal_command", kind: "execute" } },
+        });
+        const running = grokTurnState(input([grokLine(0, "user_message_chunk"), call], 10, INFINITE));
+        expect(running.openTools).toEqual([
+            { id: "c1", name: "run_terminal_command", summary: "bun test", startedAt: T0 + 2000 },
+        ]);
+        expect(liveActivityOf(running).phase).toBe("tool");
+
+        const closed = grokLine(5, "tool_call_update", { toolCallId: "c1", status: "completed" });
+        const after = grokTurnState(input([grokLine(0, "user_message_chunk"), call, closed], 10, INFINITE));
+        expect(liveActivityOf(after).phase).toBe("thinking");
+
+        const ended = grokTurnState(
+            input([grokLine(0, "user_message_chunk"), call, closed, grokLine(6, "turn_completed")], 10, INFINITE)
+        );
+        expect(liveActivityOf(ended).phase).toBe("idle");
+    });
+
+    it("Grok: a call whose first record has only its name takes the summary from a later update", () => {
+        const call = grokLine(2, "tool_call", { toolCallId: "c1", title: "read_file" });
+        const update = grokLine(3, "tool_call_update", { toolCallId: "c1", title: "Read `/tmp/a.txt`" });
+        const snap = grokTurnState(input([grokLine(0, "user_message_chunk"), call, update], 10, INFINITE));
+
+        expect(snap.openTools[0]).toMatchObject({ name: "read_file", summary: "Read `/tmp/a.txt`" });
+    });
+
+    it("Codex: an exec script names its command, a function call its argv, and an output closes each", () => {
+        const exec = codexLine(2, "response_item", {
+            type: "custom_tool_call",
+            name: "exec",
+            call_id: "x1",
+            input: 'text(await tools.exec_command({cmd:"git status --short"}))',
+        });
+        const shell = codexLine(3, "response_item", {
+            type: "function_call",
+            name: "shell",
+            call_id: "f1",
+            arguments: SafeJSON.stringify({ command: ["/bin/zsh", "-lc", "ls -la"] }),
+        });
+        const started = codexLine(0, "event_msg", { type: "task_started" });
+        const snap = codexTurnState(input([started, exec, shell], 10, INFINITE));
+
+        expect(snap.openTools.map((call) => [call.name, call.summary])).toEqual([
+            ["exec", "git status --short"],
+            ["shell", "ls -la"],
+        ]);
+        expect(liveActivityOf(snap)).toMatchObject({ phase: "tool", openTools: 2, since: T0 + 2000 });
+
+        const outputs = [
+            codexLine(4, "response_item", { type: "custom_tool_call_output", call_id: "x1" }),
+            codexLine(5, "response_item", { type: "function_call_output", call_id: "f1" }),
+        ];
+        expect(liveActivityOf(codexTurnState(input([started, exec, shell, ...outputs], 10, INFINITE))).phase).toBe(
+            "thinking"
+        );
+
+        const complete = codexLine(6, "event_msg", { type: "task_complete", last_agent_message: "done" });
+        const ended = codexTurnState(input([started, exec, shell, complete], 10, INFINITE));
+        expect(ended.openTools).toEqual([]);
+        expect(liveActivityOf(ended).phase).toBe("idle");
+    });
+
+    it("toolSummaryOf reads an object or its JSON text and keeps one short line", () => {
+        expect(toolSummaryOf({ file_path: "/a/b.ts" })).toBe("/a/b.ts");
+        expect(toolSummaryOf('{"pattern":"TODO"}')).toBe("TODO");
+        expect(toolSummaryOf("plain\nsecond line")).toBe("plain");
+        expect(toolSummaryOf({ command: "x".repeat(300) })).toHaveLength(160);
+        expect(toolSummaryOf({ todos: [] })).toBe("");
     });
 });

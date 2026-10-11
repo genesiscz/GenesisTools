@@ -26,6 +26,16 @@ export const TURN_TAIL_BYTES = 256 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 
+/** A tool call of the current turn that has no result yet. */
+export interface OpenToolCall {
+    id: string;
+    name: string;
+    /** One line that says what the call does: a Bash `description`, else its command, path, pattern or query. */
+    summary: string;
+    /** Epoch ms of the record that made the call; null when it carried no time. */
+    startedAt: number | null;
+}
+
 export interface TurnSnapshot {
     state: ActivityState;
     /** The text of the last assistant message. Empty when the tail holds none. */
@@ -62,6 +72,8 @@ export interface TurnSnapshot {
     lastActivityAt: number;
     /** `now` minus `lastActivityAt`. */
     silenceMs: number;
+    /** The current turn's tool calls without a result, oldest first. A new prompt or the end of a turn clears them. */
+    openTools: OpenToolCall[];
 }
 
 export interface TurnStateInput {
@@ -129,6 +141,82 @@ function questionTextOf(input: unknown): string | null {
     return null;
 }
 
+/** Input keys that say what a call does, best first: a Bash `description` reads better than its command. */
+const SUMMARY_KEYS = [
+    "description",
+    "command",
+    "cmd",
+    "file_path",
+    "target_file",
+    "path",
+    "pattern",
+    "query",
+    "url",
+    "skill",
+    "prompt",
+];
+
+const SUMMARY_CHARS = 160;
+
+function firstLine(text: string): string {
+    const line =
+        text
+            .split("\n")
+            .map((part) => part.trim())
+            .find(Boolean) ?? "";
+
+    return line.length > SUMMARY_CHARS ? `${line.slice(0, SUMMARY_CHARS - 1)}…` : line;
+}
+
+/** One line from a tool call's input (an object, or its JSON text): the first of `SUMMARY_KEYS` it holds. */
+export function toolSummaryOf(input: unknown): string {
+    const value = typeof input === "string" ? parseTranscriptLine(input) : input;
+
+    if (value === null) {
+        return typeof input === "string" ? firstLine(input) : "";
+    }
+
+    if (!isRecord(value)) {
+        return "";
+    }
+
+    for (const key of SUMMARY_KEYS) {
+        const field = value[key];
+
+        if (typeof field === "string" && field.trim()) {
+            return firstLine(field);
+        }
+
+        // Codex writes a command as argv, `["/bin/zsh", "-lc", "git status"]`: the last word is the command.
+        const lastWord: unknown = Array.isArray(field) ? field.at(-1) : undefined;
+
+        if (typeof lastWord === "string" && lastWord.trim()) {
+            return firstLine(lastWord);
+        }
+    }
+
+    return "";
+}
+
+/** A Codex `exec` script calls `tools.exec_command({cmd: "…"})`: the command, else the tool it calls, else its first line. */
+function codexScriptSummary(script: string): string {
+    const command = /\bcmd\s*:\s*("(?:[^"\\]|\\.)*")/.exec(script)?.[1];
+
+    if (command) {
+        try {
+            const text = SafeJSON.parse(command, { strict: true });
+
+            if (typeof text === "string") {
+                return firstLine(text);
+            }
+        } catch (err) {
+            logger.debug({ err }, "[transcripts] a codex exec command is not a JSON string; using the script");
+        }
+    }
+
+    return /\btools\.(\w+)\(/.exec(script)?.[1] ?? firstLine(script);
+}
+
 /** A blocking question still open: the session waits on the user, so the last event becomes a question. */
 function waitingOn(events: ActivityEvent[]): ActivityEvent[] {
     const last = events.at(-1);
@@ -145,6 +233,7 @@ function snapshotOf({
     interrupted = false,
     turnStartedAt,
     turnStartOffset,
+    openTools,
 }: {
     input: TurnStateInput;
     events: ActivityEvent[];
@@ -155,6 +244,7 @@ function snapshotOf({
     interrupted?: boolean;
     turnStartedAt: number | null;
     turnStartOffset?: number;
+    openTools: Iterable<OpenToolCall>;
 }): TurnSnapshot {
     const lastEventAt = events.at(-1)?.ts ?? null;
     const lastActivityAt = Math.max(lastEventAt ?? 0, input.lastModified);
@@ -177,6 +267,8 @@ function snapshotOf({
         ...(turnStartOffset !== undefined ? { turnStartOffset } : {}),
         lastActivityAt,
         silenceMs: input.now - lastActivityAt,
+        // A turn that ended leaves no call running, whatever result the tail is missing.
+        openTools: endedTurn && !asksQuestion ? [] : [...openTools],
     };
 }
 
@@ -311,6 +403,66 @@ function claudeTurnStartedAt(records: ReadonlyArray<JsonRecord>): number | null 
     return null;
 }
 
+/** A user record the person typed: no tool result in it, not a meta record. */
+function claudeIsPrompt(record: JsonRecord): boolean {
+    if (record.type !== "user" || record.isMeta === true) {
+        return false;
+    }
+
+    const content = isRecord(record.message) ? record.message.content : undefined;
+
+    if (typeof content === "string") {
+        return true;
+    }
+
+    return (
+        Array.isArray(content) &&
+        !content.some((block) => isRecord(block) && block.type === "tool_result") &&
+        claudeTextBlocks(record).length > 0
+    );
+}
+
+/** `tool_use` blocks with no `tool_result` yet, since the newest prompt. */
+function claudeOpenTools(records: ReadonlyArray<JsonRecord>): Map<string, OpenToolCall> {
+    const open = new Map<string, OpenToolCall>();
+
+    for (const record of records) {
+        if (claudeIsPrompt(record)) {
+            open.clear();
+            continue;
+        }
+
+        const content = isRecord(record.message) ? record.message.content : undefined;
+
+        if (!Array.isArray(content) || (record.type !== "assistant" && record.type !== "user")) {
+            continue;
+        }
+
+        for (const block of content) {
+            if (!isRecord(block)) {
+                continue;
+            }
+
+            if (record.type === "assistant" && block.type === "tool_use" && typeof block.id === "string") {
+                open.set(block.id, {
+                    id: block.id,
+                    name: typeof block.name === "string" ? block.name : "tool",
+                    summary: toolSummaryOf(block.input),
+                    startedAt: toEpochMs(record.timestamp) ?? null,
+                });
+            } else if (
+                record.type === "user" &&
+                block.type === "tool_result" &&
+                typeof block.tool_use_id === "string"
+            ) {
+                open.delete(block.tool_use_id);
+            }
+        }
+    }
+
+    return open;
+}
+
 export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
     const interrupted = claudeInterrupted(input.records);
     const raw = claudeRecordsToEvents(input.records);
@@ -328,6 +480,7 @@ export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
         endedTurn: interrupted || last?.kind === "question" || last?.kind === "exit",
         interrupted,
         turnStartedAt: claudeTurnStartedAt(input.records),
+        openTools: claudeOpenTools(input.records).values(),
     });
 }
 
@@ -369,10 +522,30 @@ const GROK_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "faile
 /** Grok tools that stop the turn until the user answers: a question, and a plan to approve. */
 const GROK_WAITING_TOOLS: ReadonlySet<string> = new Set(["ask_user", "exit_plan"]);
 
-function grokToolKind(update: JsonRecord): string | null {
+function grokToolMeta(update: JsonRecord): JsonRecord | null {
     const meta = isRecord(update._meta) ? update._meta : null;
-    const tool = meta && isRecord(meta["x.ai/tool"]) ? meta["x.ai/tool"] : null;
+    return meta && isRecord(meta["x.ai/tool"]) ? meta["x.ai/tool"] : null;
+}
+
+function grokToolKind(update: JsonRecord): string | null {
+    const tool = grokToolMeta(update);
     return typeof tool?.kind === "string" ? tool.kind : null;
+}
+
+/** `run_terminal_command`, `read_file`: the tool's own name, else the call's title. */
+function grokToolName(update: JsonRecord): string {
+    const name = grokToolMeta(update)?.name;
+
+    if (typeof name === "string" && name) {
+        return name;
+    }
+
+    return typeof update.title === "string" && update.title ? update.title : "tool";
+}
+
+/** The call's input as one line, else its title ("Execute `bun test`"). */
+function grokToolSummary(update: JsonRecord): string {
+    return toolSummaryOf(update.rawInput) || (typeof update.title === "string" ? firstLine(update.title) : "");
 }
 
 export function grokTurnState(input: TurnStateInput): TurnSnapshot {
@@ -385,6 +558,8 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let previousKind: string | null = null;
     // toolCallId → question text, until a `tool_call_update` with a terminal status answers it.
     const open = new Map<string, string>();
+    // toolCallId → every call of the turn still running, the same way.
+    const tools = new Map<string, OpenToolCall>();
 
     for (const [index, record] of input.records.entries()) {
         const parsed = grokUpdateOf(record);
@@ -399,6 +574,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
             turnStartOffset = input.offsets?.[index];
             // A new prompt starts another turn: a question the last one left open is not this turn's to wait on.
             open.clear();
+            tools.clear();
         }
 
         previousKind = parsed.kind;
@@ -430,6 +606,23 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         ) {
             open.delete(callId);
         }
+
+        if (parsed.kind === "turn_completed") {
+            tools.clear();
+        } else if (parsed.kind === "tool_call" && callId) {
+            const name = grokToolName(parsed.update);
+            const summary = grokToolSummary(parsed.update);
+            // The first record's title is the tool's name; a later update brings "Execute `…`".
+            tools.set(callId, { id: callId, name, summary: summary === name ? "" : summary, startedAt: parsed.ts });
+        } else if (parsed.kind === "tool_call_update" && callId) {
+            const call = tools.get(callId);
+
+            if (typeof parsed.update.status === "string" && GROK_TERMINAL_STATUSES.has(parsed.update.status)) {
+                tools.delete(callId);
+            } else if (call && !call.summary) {
+                call.summary = grokToolSummary(parsed.update);
+            }
+        }
     }
 
     const waiting = open.size > 0;
@@ -443,6 +636,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         endedTurn: ended || waiting,
         turnStartedAt,
         turnStartOffset,
+        openTools: tools.values(),
     });
 }
 
@@ -478,6 +672,8 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     // The turn's last tool call was `request_user_input_async`: the turn ends on that question.
     let lastCallAsks = false;
     let turnStartedAt: number | null = null;
+    // call_id → every call of the turn with no `*_output` yet.
+    const tools = new Map<string, OpenToolCall>();
 
     for (const record of input.records) {
         const ts = toEpochMs(record.timestamp);
@@ -490,6 +686,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         if (record.type === "event_msg" && (parsed.type === "task_complete" || parsed.type === "turn_aborted")) {
             ended = true;
             aborted = parsed.type === "turn_aborted";
+            tools.clear();
             events.push({ ts, kind: "question" });
 
             if (typeof parsed.payload.last_agent_message === "string") {
@@ -519,9 +716,24 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
             question = null;
             lastCallAsks = false;
             open.clear();
+            tools.clear();
         }
 
         const callId = typeof parsed.payload.call_id === "string" ? parsed.payload.call_id : null;
+
+        if (record.type === "response_item" && callId) {
+            if (parsed.type === "function_call" || parsed.type === "custom_tool_call") {
+                const name = typeof parsed.payload.name === "string" ? parsed.payload.name : "tool";
+                const script = typeof parsed.payload.input === "string" ? parsed.payload.input : "";
+                const summary =
+                    parsed.type === "custom_tool_call"
+                        ? codexScriptSummary(script)
+                        : toolSummaryOf(parsed.payload.arguments);
+                tools.set(callId, { id: callId, name, summary, startedAt: ts });
+            } else if (parsed.type === "function_call_output" || parsed.type === "custom_tool_call_output") {
+                tools.delete(callId);
+            }
+        }
 
         if (record.type === "response_item" && parsed.type === "function_call") {
             const name = parsed.payload.name;
@@ -554,7 +766,87 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         endedTurn: ended || waiting,
         interrupted: aborted,
         turnStartedAt,
+        openTools: tools.values(),
     });
+}
+
+/** Where a live transcript's agent is: the one value the hub's activity row and status show. */
+export type LivePhase = "thinking" | "tool" | "waiting" | "idle" | "interrupted";
+
+export interface LiveActivity {
+    phase: LivePhase;
+    /** Epoch ms the current turn's prompt arrived. */
+    turnStartedAt: number | null;
+    /** Epoch ms the phase began: the open call's start for `tool`, the newest turn record otherwise. */
+    since: number | null;
+    /** The oldest open call (`tool`), or the question tool a `waiting` turn sits on. */
+    tool: OpenToolCall | null;
+    /** How many calls are open at once (parallel calls). */
+    openTools: number;
+    /** What a `waiting` turn asks. */
+    question: string | null;
+    /** No transcript write for `LIVE_STALL_MS` while the turn runs: the agent process may be gone. */
+    stalled: boolean;
+    lastEventAt: number | null;
+}
+
+/** Silence that marks a running turn as stalled. Long: a test run or a long think writes nothing for minutes. */
+export const LIVE_STALL_MS = 10 * 60_000;
+
+/** Claude tools that stop the turn until the user answers. Grok and Codex questions arrive as `asksQuestion`. */
+const WAITING_TOOLS: ReadonlySet<string> = new Set(["AskUserQuestion", "ExitPlanMode"]);
+
+/**
+ * The live activity of a snapshot read with no stall limit (`stallTimeoutMs: Infinity`). The order decides:
+ * an interrupt, a question waiting for the user, a finished turn, an open call, and otherwise the model is thinking.
+ */
+export function liveActivityOf(snapshot: TurnSnapshot, stallMs = LIVE_STALL_MS): LiveActivity {
+    const base = {
+        turnStartedAt: snapshot.turnStartedAt,
+        lastEventAt: snapshot.lastEventAt,
+        tool: null,
+        openTools: 0,
+        question: null,
+        stalled: false,
+    };
+
+    if (snapshot.interrupted) {
+        return { ...base, phase: "interrupted", since: snapshot.lastEventAt };
+    }
+
+    const waitingTool = snapshot.openTools.find((call) => WAITING_TOOLS.has(call.name)) ?? null;
+
+    if (snapshot.asksQuestion || waitingTool) {
+        const plan = waitingTool?.name === "ExitPlanMode" ? "Approve the plan?" : null;
+
+        return {
+            ...base,
+            phase: "waiting",
+            since: waitingTool?.startedAt ?? snapshot.lastEventAt,
+            tool: waitingTool,
+            question: snapshot.question ?? plan,
+        };
+    }
+
+    if (snapshot.state === "AWAITING-INPUT" || snapshot.state === "FINISHED") {
+        return { ...base, phase: "idle", since: snapshot.lastEventAt };
+    }
+
+    const stalled = snapshot.silenceMs > stallMs;
+    const tool = snapshot.openTools[0] ?? null;
+
+    if (tool) {
+        return {
+            ...base,
+            phase: "tool",
+            since: tool.startedAt ?? snapshot.lastEventAt,
+            tool,
+            openTools: snapshot.openTools.length,
+            stalled,
+        };
+    }
+
+    return { ...base, phase: "thinking", since: snapshot.lastEventAt ?? snapshot.turnStartedAt, stalled };
 }
 
 const READERS: Record<TurnProvider, (input: TurnStateInput) => TurnSnapshot> = {
