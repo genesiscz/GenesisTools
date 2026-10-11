@@ -40,6 +40,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// The surface a shelf capture started from; it reopens there when the image is staged.
     private var captureReturn: WidgetSurfaceID?
     public var settingsPresenter: ((String) -> Void)?
+    /// Expanded panels leave the keyboard where it is (the `passive` test command): a scripted motion check on the
+    /// user's screen opens panels without taking the keyboard from the app they work in.
+    public var passivePanels = false {
+        didSet { panels.values.forEach { $0.becomesKeyOnExpand = !passivePanels } }
+    }
     /// Orders one edge panel front. Tests replace it to prove a hidden widget never shows a panel.
     var orderFront: (EdgePanelController<WidgetHostView>) -> Void = { $0.show() }
     var panelCount: Int { panels.count }
@@ -403,6 +408,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                         self?.panelShape(surface, presentation)
                             ?? EdgePanelShape(placement: surface.edge, shoulder: 0, corner: 0, joined: false)
                     }, content: content)
+                nextPanels[surface]?.becomesKeyOnExpand = !passivePanels
             }
         }
         panels = nextPanels

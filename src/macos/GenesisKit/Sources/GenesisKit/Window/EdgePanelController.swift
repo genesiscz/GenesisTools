@@ -116,6 +116,9 @@ public final class EdgePanelController<Content: View> {
     private var transition: Transition?
     private var generation = 0
     public private(set) var isExpanded = false
+    /// An expanded panel takes the keyboard (its composer). Off only for scripted motion checks on the user's own
+    /// screen, which must not take the keyboard from the app they are typing in.
+    public var becomesKeyOnExpand = true
     /// Driver callback timing only; neither callback count nor gaps establish compositor frame delivery.
     public private(set) var lastTransitionTiming: AnimationTiming.Summary?
     /// Slows every transition by this factor (`GENESIS_WIDGET_MOTION_SCALE`), for frame-by-frame review.
@@ -243,7 +246,7 @@ public final class EdgePanelController<Content: View> {
             begin(token: token, presentation: presentation, from: from, fromPath: fromPath, fromWindow: fromWindow,
                 to: target, shrinking: shrinking)
         }
-        if becameExpanded {
+        if becameExpanded, becomesKeyOnExpand {
             panel.makeKeyAndOrderFront(nil)
         }
     }

@@ -97,7 +97,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     private func openSession(_ key: String) { coordinator?.openSession(key) }
 
     /// `expand <edge> [group]`, `module <id> <edge> [group]`, `hover <edge> [group]`, `unhover <edge> [group]`,
-    /// `collapse`, `select <session key>`, `settings [page]`. Staging only (NativeStaging); logged for the recording.
+    /// `collapse`, `select <session key>`, `settings [page]`, `passive on|off` (expanded panels leave the keyboard with
+    /// the app in front, for motion checks on the user's screen). Staging only (NativeStaging); logged for the recording.
     private func runTestCommand(_ command: String) {
         guard let coordinator else { return }
         let model = coordinator.model
@@ -121,6 +122,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         case "collapse": model.collapse()
         case "select": if parts.count > 1 { model.select(parts[1]) }
         case "settings": coordinator.showSettings(pageID: parts.count > 1 ? parts[1] : "widgets.general")
+        case "passive": coordinator.passivePanels = parts.count < 2 || parts[1] != "off"
         default: NSLog("widget.test: unknown command %@", command)
         }
     }

@@ -7,7 +7,9 @@
  *   bun scripts/native/widget-drive.ts record --seconds 6 --out <dir> "0.5:hover right 0" "1.5:expand right 0" "4:collapse"
  *
  * Commands (WidgetWindow.swift runTestCommand): `expand <edge> [group]`, `module <id> <edge> [group]`,
- * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `select <session key>`, `settings [page]`.
+ * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `select <session key>`, `settings [page]`,
+ * `passive on|off`. Send `passive on` before `expand` on the user's own screen: an expanded panel otherwise takes the
+ * keyboard from the app in front.
  * Edges: top, right, left. The face honours them only with staging on (`bun scripts/native/staging.ts on`) or in the
  * Preview bundle. `--preview` (first argument) drives GenesisTools Preview.app instead of the normal app. `record` films only the widget's own windows (ScreenCaptureKit via `tools control capture record`)
  * and sends each step at its offset in seconds after the recording's first frame.
