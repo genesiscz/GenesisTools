@@ -22,7 +22,11 @@ Rules, each learned the hard way:
   Widget: `bun scripts/native/widget-drive.ts record …` or `tools control capture` by window id.
 - **One pane alone needs `--panes <name>`.** The hub's session view shows panes side by side; `--tab` only picks the
   focused pane. A pair taken with `--tab changes` on a new build shows the transcript.
-- **Know what a snapshot cannot draw.** An AppKit list (Projects / Sessions) draws blank; the digest is captured while
+- **Know what a snapshot cannot draw.** `cacheDisplay` (the hub and review `--snapshot`) drops Liquid Glass
+  (`.glassEffect`) and everything drawn under it, so a page with glass comes out transparent; settings snapshots
+  capture from the window server instead (`WindowSnapshot`, e8bd413c5), which needs Screen Recording. Before you call
+  a blank area a snapshot limit, prove it: retake with a longer `--snapshot-delay`, then with another theme; a blank
+  that survives both is a capture limit. The digest is captured while
   "Reading the day…" still loads; a long check may still run. Mark those amber, never as a change.
 - **Write the capture command next to the pair** (a `capture.txt` or the note), so the next person can retake it.
 - **Names:** `<YYYY-MM-DD-HHMM>-<area>-<slug>-before.png` and `-after.png` in the area's `Screenshot/` folder of the
