@@ -208,6 +208,15 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--clicky`; from
   a checkout use `../GenesisClickyPreview` (`swift build`, then `.build/debug/GenesisClickyPreview --page hub.appearance
   --theme gradient --hub-style native --snapshot x.png`), which writes only its own preview suite and tells no hub.
+  It shows the Widgets pages with `--sessions <n>` (a made-up roster) or `--widget-snapshot <file.json>` (a saved
+  `tools hub widget snapshot --json`).
+- A Settings snapshot (`--clicky --page <id> --snapshot`, and GenesisClickyPreview) is the window server's own composite
+  (GenesisKit `WindowSnapshot`). `cacheDisplay` skips the backdrop and portal layers Liquid Glass is made of, and SwiftUI
+  draws everything a glass view covers through them, so a page holding glass came out transparent: Projects / Sessions
+  under Gradient, every page under Glass (2026-10-11; the live window was never affected). The capture needs the
+  Screen Recording grant, and the window turns opaque only once it sits under the desktop picture. Without either it
+  falls back to `cacheDisplay`, and the stderr line says `by cacheDisplay (<why>; …)`. The `--hub` and `--review`
+  snapshots still draw with `cacheDisplay`.
 - Files → "Add folder" (Hub/HubFolders.swift): more roots per session; Changes picks roots with "Changes in <folder>"
   checkboxes. Stored per session in `HubDefaults` (`hub.extraFolders.<id>`). All ticked roots share ONE review
   (Review/ReviewRoots.swift, `ReviewModel.setRoots`): one toolbar, one diff, one Files tree with one top-level folder

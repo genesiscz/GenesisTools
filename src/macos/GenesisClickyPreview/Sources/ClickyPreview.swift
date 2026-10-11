@@ -6,6 +6,7 @@ import SwiftUI
 private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
     private var controller: ClickyWindowController?
     private var model: ClickyModel?
+    private var widget: WidgetModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
@@ -31,6 +32,17 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
         hub.style = value(after: "--hub-style", in: args).flatMap(HubWindowStyle.init(rawValue:)) ?? .hub
         hub.glass = value(after: "--hub-glass", in: args) == "on"
         controller.register(section: HubSettingsPages.section(preferences: hub))
+        // `--widget-snapshot <file.json>` (a saved `tools hub widget snapshot --json`) or `--sessions <n>` (a made-up
+        // roster): the Widgets pages, fed by a stand-in `tools`.
+        if let widget = PreviewWidgetRoster.model(arguments: args, defaults: defaults, appearance: model.appearance) {
+            self.widget = widget
+            widget.startSettings()
+            for section in WidgetFeatureSettings.sections(
+                model: widget, modules: WidgetModuleChoice.builtins, openSession: { _ in })
+            {
+                controller.register(section: section)
+            }
+        }
         // `--page <Clicky page>` or any registered page id (`--page hub.appearance`).
         let window = ClickyPage.allCases.contains(where: { $0.rawValue.lowercased() == requestedPage?.lowercased() })
             || requestedPage == nil
@@ -40,26 +52,28 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
             let output = URL(fileURLWithPath: args[snapshotIndex + 1])
             window.alphaValue = 0
             window.orderFrontRegardless()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                MainActor.assumeIsolated {
-                    guard let view = window.contentView,
-                        let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-                    else {
-                        fputs("Clicky snapshot could not allocate a bitmap\n", stderr)
-                        NSApp.terminate(nil)
-                        return
-                    }
-                    print("Clicky titlebar: \(WindowTitlebar.audit(window).line)")
-                    view.cacheDisplay(in: view.bounds, to: bitmap)
-                    do {
-                        guard let data = bitmap.representation(using: .png, properties: [:]) else {
-                            throw CocoaError(.fileWriteUnknown)
-                        }
-                        try data.write(to: output)
-                        print("Clicky snapshot: \(output.path)")
-                    } catch { fputs("Clicky snapshot failed: \(error)\n", stderr) }
-                    NSApp.terminate(nil)
+            let widget = widget
+            Task { @MainActor in
+                // The Widgets pages wait for their roster, as `--clicky --snapshot` does.
+                let deadline = ContinuousClock.now + .seconds(30)
+                while let widget, !widget.settingsLoaded, ContinuousClock.now < deadline {
+                    try? await Task.sleep(for: .milliseconds(100))
                 }
+                try? await Task.sleep(for: .seconds(widget == nil ? 0.8 : 1.5))
+                print("Clicky titlebar: \(WindowTitlebar.audit(window).line)")
+                guard let capture = await WindowSnapshot.capture(window) else {
+                    fputs("Clicky snapshot could not allocate a bitmap\n", stderr)
+                    NSApp.terminate(nil)
+                    return
+                }
+                do {
+                    guard let data = capture.image.representation(using: .png, properties: [:]) else {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+                    try data.write(to: output)
+                    print("Clicky snapshot: \(output.path) (\(capture.method))")
+                } catch { fputs("Clicky snapshot failed: \(error)\n", stderr) }
+                NSApp.terminate(nil)
             }
         } else {
             let menu = NSMenu()

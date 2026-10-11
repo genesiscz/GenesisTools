@@ -37,7 +37,8 @@ final class ClickyHost: NSObject {
     ///
     /// `ready` says the pages have their data (`WidgetModel.settingsLoaded`). The data comes from an asynchronous
     /// `hub widget snapshot`, and a fixed delay alone drew the loading state whenever that took longer. `delay` is the
-    /// time the page then gets to lay out.
+    /// time the page then gets to lay out. The PNG is the window server's own composite (`WindowSnapshot`), because
+    /// `cacheDisplay` leaves Liquid Glass and everything it covers transparent.
     func snapshotSettings(pageID: String?, to path: String, delay: Double, ready: @escaping @MainActor () -> Bool) {
         let window = settings.prepare(pageID: pageID)
         window.orderInForSnapshot()
@@ -51,17 +52,16 @@ final class ClickyHost: NSObject {
                 exit(1)
             }
             try? await Task.sleep(for: .seconds(delay))
-            guard let view = window.contentView,
-                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-            else {
+            guard let capture = await WindowSnapshot.capture(window) else {
                 FileHandle.standardError.write(Data("snapshot: no content view\n".utf8))
                 exit(1)
             }
-            view.cacheDisplay(in: view.bounds, to: rep)
+            let rep = capture.image
             guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
             do {
                 try png.write(to: URL(fileURLWithPath: path))
-                FileHandle.standardError.write(Data("snapshot: \(path) \(rep.pixelsWide)x\(rep.pixelsHigh)\n".utf8))
+                FileHandle.standardError.write(
+                    Data("snapshot: \(path) \(rep.pixelsWide)x\(rep.pixelsHigh) by \(capture.method)\n".utf8))
                 exit(0)
             } catch {
                 FileHandle.standardError.write(Data("snapshot: \(error.localizedDescription)\n".utf8))
