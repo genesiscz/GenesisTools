@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { hubServerSocketPath } from "./paths";
 import { type CallResult, LineBuffer } from "./protocol";
 
@@ -88,5 +89,57 @@ export async function callHubServer({
         });
         socket.once("error", (error) => finish(null, `socket error: ${error.message}`));
         socket.once("close", () => finish(null, "closed before an answer"));
+    });
+}
+
+export type HubServerProbe = { state: "answers"; reply: Record<string, unknown> } | { state: "busy" | "absent" };
+
+/**
+ * One `health` or `drain` request on a fresh connection. `absent` when nothing listens (no socket file, or the
+ * connection is refused: the server is gone), `busy` when the connection opens but no reply comes in time (a
+ * server is there, working). Never starts a server.
+ */
+export async function askHubServer(
+    op: "health" | "drain",
+    { timeoutMs, socketPath = hubServerSocketPath() }: { timeoutMs: number; socketPath?: string }
+): Promise<HubServerProbe> {
+    if (!existsSync(socketPath)) {
+        return { state: "absent" };
+    }
+
+    return new Promise((resolve) => {
+        let connected = false;
+        const socket = createConnection(socketPath);
+        const lines = new LineBuffer();
+        const finish = (probe: HubServerProbe) => {
+            clearTimeout(timer);
+            socket.destroy();
+            resolve(probe);
+        };
+        const timer = setTimeout(() => finish({ state: connected ? "busy" : "absent" }), timeoutMs);
+        socket.setEncoding("utf8");
+        socket.once("connect", () => {
+            connected = true;
+            socket.write(`${SafeJSON.stringify({ id: 1, op }, { strict: true })}\n`);
+        });
+        socket.on("data", (chunk: string) => {
+            const line = lines.push(chunk)?.[0];
+
+            if (line === undefined) {
+                return;
+            }
+
+            try {
+                const reply: unknown = SafeJSON.parse(line, { strict: true });
+                finish(isObject(reply) ? { state: "answers", reply } : { state: "busy" });
+            } catch (err) {
+                logger.debug({ err }, "[hub-server client] unreadable probe reply");
+                finish({ state: "busy" });
+            }
+        });
+        socket.once("error", (err) => {
+            logger.debug({ err, socketPath }, "[hub-server client] probe connection failed");
+            finish({ state: connected ? "busy" : "absent" });
+        });
     });
 }

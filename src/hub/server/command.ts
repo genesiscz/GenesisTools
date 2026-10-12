@@ -1,12 +1,10 @@
-import { createConnection } from "node:net";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { askHubServer } from "./client";
 import { HUB_SERVER_DOORS } from "./doors";
 import { hubServerSocketPath } from "./paths";
-import { LineBuffer } from "./protocol";
 import { startHubServer } from "./server";
 
 const DEFAULT_MAX_MB = 512;
@@ -21,32 +19,6 @@ interface ServeFlags {
     idle?: boolean;
 }
 
-/** One request on a fresh connection; null when nothing answers within the deadline. */
-async function ask(op: "health" | "drain", deadlineMs = 2000): Promise<Record<string, unknown> | null> {
-    return new Promise((resolve) => {
-        const socket = createConnection(hubServerSocketPath());
-        const lines = new LineBuffer();
-        const timer = setTimeout(() => {
-            socket.destroy();
-            resolve(null);
-        }, deadlineMs);
-        socket.setEncoding("utf8");
-        socket.once("connect", () => socket.write(`${SafeJSON.stringify({ id: 1, op }, { strict: true })}\n`));
-        socket.on("data", (chunk: string) => {
-            const line = lines.push(chunk)?.[0];
-            if (line) {
-                clearTimeout(timer);
-                socket.end();
-                resolve(SafeJSON.parse(line, { strict: true }));
-            }
-        });
-        socket.once("error", () => {
-            clearTimeout(timer);
-            resolve(null);
-        });
-    });
-}
-
 function maxFootprintBytes(): number {
     const configured = env.tools.getHubServerMaxMb();
     return (configured > 0 ? configured : DEFAULT_MAX_MB) * 1024 * 1024;
@@ -54,7 +26,8 @@ function maxFootprintBytes(): number {
 
 async function serve(flags: ServeFlags): Promise<void> {
     if (flags.status || flags.drain) {
-        const answer = await ask(flags.drain ? "drain" : "health");
+        const probe = await askHubServer(flags.drain ? "drain" : "health", { timeoutMs: 2000 });
+        const answer = probe.state === "answers" ? probe.reply : null;
         if (!answer) {
             out.printlnErr(`No hub server answers on ${hubServerSocketPath()}`);
             process.exitCode = 1;

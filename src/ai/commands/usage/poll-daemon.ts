@@ -114,7 +114,15 @@ async function refreshSessionRows(): Promise<void> {
 
             // Short: a stalled server must not eat the budget the local walk needs (a cold walk is ~2 s CPU).
             const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(5_000, budgetMs / 4)) });
-            if (answer?.exit !== 0) {
+            if (!answer) {
+                // This tick builds the rows itself. A server that is not running is started for the next tick;
+                // the hub window is not needed for that (238 of 644 refreshes on 2026-10-12 found no server).
+                const { ensureHubServer } = await import("@app/hub/server/ensure");
+                logger.debug({ server: await ensureHubServer() }, "[ai-usage] hub server did not answer");
+                return null;
+            }
+
+            if (answer.exit !== 0) {
                 return null;
             }
 

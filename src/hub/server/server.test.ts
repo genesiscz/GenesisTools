@@ -6,11 +6,12 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
-import { callHubServer } from "./client";
+import { askHubServer, callHubServer } from "./client";
 import { agentsToolChangesDoor } from "./doors/changes";
 import { repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
 import type { CallDoor, StreamDoor } from "./doors/types";
+import { ensureHubServer } from "./ensure";
 import { LineBuffer } from "./protocol";
 import { type HubServerHandle, startHubServer } from "./server";
 
@@ -381,5 +382,38 @@ describe("callHubServer", () => {
         expect(
             await callHubServer({ argv: ["echo", word], timeoutMs: 5000, socketPath, maxReplyChars: 1000 })
         ).toBeNull();
+    });
+});
+
+describe("askHubServer and ensureHubServer", () => {
+    it("tells a running server from a missing one, and starts one only when none listens", async () => {
+        const { socketPath } = await start();
+        const running = await askHubServer("health", { timeoutMs: 2000, socketPath });
+        expect(running.state).toBe("answers");
+
+        const gone = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "hub.sock");
+        expect((await askHubServer("health", { timeoutMs: 500, socketPath: gone })).state).toBe("absent");
+
+        const stampPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "started-at");
+        const starts: number[] = [];
+        const startOne = () => {
+            starts.push(Date.now());
+            return 4242;
+        };
+        const absent = async () => ({ state: "absent" as const });
+
+        expect(await ensureHubServer({ probe: async () => running, start: startOne, stampPath })).toBe("answers");
+        expect(await ensureHubServer({ probe: async () => ({ state: "busy" }), start: startOne, stampPath })).toBe(
+            "busy"
+        );
+        expect(starts).toEqual([]);
+
+        expect(await ensureHubServer({ probe: absent, start: startOne, stampPath })).toBe("started");
+        expect(await ensureHubServer({ probe: absent, start: startOne, stampPath })).toBe("started recently");
+        expect(starts).toHaveLength(1);
+        expect(await ensureHubServer({ probe: absent, start: startOne, stampPath, now: Date.now() + 6 * 60_000 })).toBe(
+            "started"
+        );
+        expect(starts).toHaveLength(2);
     });
 });
