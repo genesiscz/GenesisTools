@@ -64,6 +64,7 @@ Skipping any of these has cost real sessions hours; there are no exceptions.
 `tools git merged` decides merged-ness (by content: squash, rebase and recompose all fool git's own checks); `tools git rebase-cascade` moves a parent with its children; `tools git base` names the base branch and the rule that chose it; `tools git config` reads the per-repo `genesis-tools.config.json`. The `gt:git` plugin skill is the guided workflow on top. Typed git output for any tool: `createGit()` readers and the `porcelain` bundles in `src/utils/git/porcelain.ts`; never re-parse `status` or `for-each-ref` by hand.
 
 - **Commit messages:** a title line only, no per-file breakdown in the body, focused on the why.
+- **Commit scopes follow one vocabulary**: `(GenesisHub, widgets)`, `(GenesisHub, settings)`, `(GenesisKit)`, `(GenesisKit, permissions)`, `(Clicky)`, `(skills, ux)`, `(scripts, native)`, `(ai, history)`, `(dashboards, dev-dashboard)`, `(tools)` for many areas; no PR number in a subject except `fix(<areas>): #485 followup - …`. The rules live in `scripts/git/commit-scopes.ts`; the `commit-msg` hook prints the corrected subject, and `bun scripts/git/check-commits.ts origin/master..HEAD` checks a branch.
 
 ## Installation & Setup
 

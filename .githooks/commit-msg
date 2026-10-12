@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Commit-subject rules: one scope vocabulary and no PR numbers (scripts/git/commit-scopes.ts).
+# Prints each broken rule with the corrected subject. Skip once with `git commit --no-verify`.
+
+# Same reason as pre-commit: with GIT_DIR set from a linked worktree, git finds the wrong root.
+unset GIT_DIR
+
+command -v bun >/dev/null 2>&1 || exit 0
+exec bun "$(git rev-parse --show-toplevel)/scripts/git/check-commits.ts" --message-file "$1"
