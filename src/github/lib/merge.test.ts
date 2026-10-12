@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
     type DependentPull,
+    forcePushBeforeTips,
     type MergeGitHubClient,
     type MergeMethod,
     type MergePullOptions,
@@ -37,6 +38,10 @@ function makeMock(opts: {
     failUnstack?: boolean;
     /** Fail deleteBranch. */
     failDelete?: boolean;
+    /** listBaseForcePushTips answers per PR number; a PR missing here has none. */
+    baseForcePushTips?: Record<number, string[]>;
+    /** Throw from listBaseForcePushTips. */
+    failBaseForcePushTips?: boolean;
     /** Fail fastForwardBase. */
     failFf?: boolean | string;
     /** Mutate dependent state after base update. */
@@ -176,6 +181,15 @@ function makeMock(opts: {
                 throw new Error(`ref heads/${branch} not found`);
             }
         },
+        async listBaseForcePushTips(_owner, _repo, number) {
+            calls.push({ op: "listBaseForcePushTips", args: [number] });
+
+            if (opts.failBaseForcePushTips) {
+                throw new Error("graphql timeline unavailable");
+            }
+
+            return opts.baseForcePushTips?.[number] ?? [];
+        },
     };
 
     return { client, calls };
@@ -238,6 +252,22 @@ function dep(over: Partial<DependentPull> & { number: number }): DependentPull {
         ...over,
     };
 }
+
+describe("forcePushBeforeTips", () => {
+    test("lists each replaced tip once, newest first, skipping events without a commit", () => {
+        const nodes = [
+            { beforeCommit: { oid: "old" } },
+            null,
+            { beforeCommit: null },
+            { beforeCommit: { oid: "new" } },
+        ];
+        expect(forcePushBeforeTips({ repository: { pullRequest: { timelineItems: { nodes } } } })).toEqual([
+            "new",
+            "old",
+        ]);
+        expect(forcePushBeforeTips({ repository: { pullRequest: null } })).toEqual([]);
+    });
+});
 
 describe("resolveMergeMethod", () => {
     test("accepts each single method flag", () => {
@@ -320,6 +350,57 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
 
         expect(logs.some((l) => l.includes("Stack-safe rebase"))).toBe(true);
         expect(logs.some((l) => l.includes("Keeping remote branch"))).toBe(true);
+    });
+
+    test("every restack gets its own PR's earlier base tips, so a child on a replaced parent tip restacks cleanly", async () => {
+        const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const { client } = makeMock({
+            pr: basePr({ headSha }),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+            baseForcePushTips: { 1: ["main-before-push"], 2: ["branch-a-before-restack", "branch-a-older"] },
+        });
+        const { restack, calls: restackCalls } = makeRestackMock();
+
+        await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: false,
+            client,
+            restack,
+        });
+
+        expect(restackCalls.find((c) => c.branch === "branch-a")?.priorBaseShas).toEqual(["main-before-push"]);
+        expect(restackCalls.find((c) => c.branch === "branch-b")).toMatchObject({
+            oldBaseSha: headSha,
+            priorBaseShas: ["branch-a-before-restack", "branch-a-older"],
+        });
+    });
+
+    test("a failed base force-push lookup is logged and the restack still runs without earlier tips", async () => {
+        const logs: string[] = [];
+        const { client } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+            failBaseForcePushTips: true,
+        });
+        const { restack, calls: restackCalls } = makeRestackMock();
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: false,
+            client,
+            restack,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.dependentsRestacked[0].ok).toBe(true);
+        expect(restackCalls.every((c) => c.priorBaseShas?.length === 0)).toBe(true);
+        expect(logs.some((l) => l.includes("could not read the earlier base tips of #2"))).toBe(true);
     });
 
     test("--rebase --no-restack uses GitHub rewrite merge API", async () => {

@@ -32,6 +32,31 @@ export interface RestackBranchInput {
      * When omitted: plain `git rebase newBase` on the branch.
      */
     oldBaseSha?: string;
+    /**
+     * The tips this branch's base had before each force push, newest first. A branch whose base a previous merge
+     * restacked still sits on one of them, not on `oldBaseSha`, so the first of these in its history marks where its
+     * own commits start.
+     */
+    priorBaseShas?: string[];
+}
+
+/**
+ * Where a branch's own commits start: the first candidate in its history (the parent tip at merge time, then the tips
+ * its base had before each force push), or null when it carries none of them. 2026-10-13: merging #486 restacked #482
+ * from 5765bd6 to f5f41a2; #487 still sat on 5765bd6, so merging #482 fell back to the merge-base and replayed both
+ * parents' commits, which conflicted.
+ */
+export async function pickOldBase(
+    candidates: string[],
+    isAncestor: (sha: string) => Promise<boolean>
+): Promise<string | null> {
+    for (const sha of candidates) {
+        if (await isAncestor(sha)) {
+            return sha;
+        }
+    }
+
+    return null;
 }
 
 export interface RestackBranchResult {
@@ -96,7 +121,7 @@ export function createGitStackRestack(options?: { log?: RestackLog }): StackRest
 
     return {
         async restackBranch(input: RestackBranchInput): Promise<RestackBranchResult> {
-            const { owner, repo, branch, expectedHeadSha, newBase, oldBaseSha } = input;
+            const { owner, repo, branch, expectedHeadSha, newBase, oldBaseSha, priorBaseShas } = input;
             const token = writeToken();
             const url = authedCloneUrl(owner, repo, token);
             const tmpRoot = await mkdtemp(join(tmpdir(), "gt-merge-restack-"));
@@ -153,9 +178,18 @@ export function createGitStackRestack(options?: { log?: RestackLog }): StackRest
                 await gitOrThrow(g, ["checkout", "-q", "-B", "restack-work", remoteBranch], "checkout head");
 
                 let actualOldBase = oldBaseSha;
-                if (oldBaseSha) {
-                    const isAnc = await g.exec(["merge-base", "--is-ancestor", oldBaseSha, "HEAD"]);
-                    if (!isAnc.success) {
+                const candidates = [...(oldBaseSha ? [oldBaseSha] : []), ...(priorBaseShas ?? [])];
+                if (candidates.length > 0) {
+                    // A prior tip missing from this clone fails --is-ancestor like a tip outside the history.
+                    const carried = await pickOldBase(
+                        candidates,
+                        async (sha) => (await g.exec(["merge-base", "--is-ancestor", sha, "HEAD"])).success
+                    );
+
+                    if (carried && carried !== oldBaseSha) {
+                        actualOldBase = carried;
+                        log?.(`  restack: ${branch} sits on an earlier base tip ${carried.slice(0, 7)}; dropping ≤ it`);
+                    } else if (!carried && oldBaseSha) {
                         // Parent tip no longer in child history (already rebased) — mirror gh-stack fallback.
                         const mb = await g.exec(["merge-base", remoteBase, "HEAD"]);
                         if (mb.success && mb.stdout) {

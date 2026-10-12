@@ -126,6 +126,34 @@ export interface MergeGitHubClient {
      */
     unstack(owner: string, repo: string, stackNumber: number): Promise<void>;
     deleteBranch(owner: string, repo: string, branch: string): Promise<void>;
+    /**
+     * The tips the PR's base branch had before each force push, newest first (`BaseRefForcePushedEvent`). A PR whose
+     * base a merge restacked still sits on one of them, not on the base's current tip.
+     */
+    listBaseForcePushTips?(owner: string, repo: string, number: number): Promise<string[]>;
+}
+
+const BASE_FORCE_PUSHES_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      timelineItems(last: 100, itemTypes: [BASE_REF_FORCE_PUSHED_EVENT]) {
+        nodes { ... on BaseRefForcePushedEvent { beforeCommit { oid } } }
+      }
+    }
+  }
+}`;
+
+export interface ForcePushesResponse {
+    repository: {
+        pullRequest: { timelineItems: { nodes: Array<{ beforeCommit?: { oid: string } | null } | null> } } | null;
+    } | null;
+}
+
+/** The tips each force push replaced, newest first, once each. */
+export function forcePushBeforeTips(response: ForcePushesResponse): string[] {
+    const nodes = response.repository?.pullRequest?.timelineItems.nodes ?? [];
+    const shas = nodes.flatMap((node) => (node?.beforeCommit?.oid ? [node.beforeCommit.oid] : [])).reverse();
+    return [...new Set(shas)];
 }
 
 export interface SafeMergeOptions {
@@ -242,6 +270,36 @@ function retargetRow(input: {
 /**
  * Create the default Octokit-backed client.
  */
+/**
+ * The PR's earlier base tips (`listBaseForcePushTips`); none when the client has no such call or the query fails.
+ * Without them a branch on a replaced base tip falls back to the merge-base and replays its parents' commits.
+ */
+async function earlierBaseTips({
+    client,
+    owner,
+    repo,
+    number,
+    log,
+}: {
+    client: MergeGitHubClient;
+    owner: string;
+    repo: string;
+    number: number;
+    log?: (message: string) => void;
+}): Promise<string[]> {
+    if (!client.listBaseForcePushTips) {
+        return [];
+    }
+
+    try {
+        return await client.listBaseForcePushTips(owner, repo, number);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logLine(log, `  could not read the earlier base tips of #${number}: ${message}`);
+        return [];
+    }
+}
+
 export function createOctokitMergeClient(): MergeGitHubClient {
     // Write path: prefer gh OAuth over limited env PATs (merge needs contents:write).
     const octokit = getOctokitForWrite();
@@ -484,6 +542,14 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 { label: `DELETE /repos/${owner}/${repo}/git/refs/heads/${branch}` }
             );
         },
+
+        async listBaseForcePushTips(owner, repo, number) {
+            const response = await withRetry(
+                () => octokit.graphql<ForcePushesResponse>(BASE_FORCE_PUSHES_QUERY, { owner, repo, number }),
+                { label: `graphql base force pushes of ${owner}/${repo}#${number}` }
+            );
+            return forcePushBeforeTips(response);
+        },
     };
 
     return client;
@@ -634,6 +700,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
             branch: pr.headRef,
             expectedHeadSha: pr.headSha,
             newBase: pr.baseRef,
+            priorBaseShas: await earlierBaseTips({ client, owner, repo, number, log }),
         });
         effectiveHeadSha = headRestack.headSha;
 
@@ -860,6 +927,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
                     expectedHeadSha: headSha,
                     newBase: pr.baseRef,
                     oldBaseSha: preMergeHeadSha,
+                    priorBaseShas: await earlierBaseTips({ client, owner, repo, number: dep.number, log }),
                 });
                 dependentsRestacked.push({
                     number: dep.number,
