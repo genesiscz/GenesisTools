@@ -1,9 +1,8 @@
-import { FFIType, read } from "bun:ffi";
 import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 import { logger } from "@genesiscz/utils/logger";
+import { cPath, errnoNow, type LibSystem, libSystem, O_CLOEXEC, O_DIRECTORY, O_NONBLOCK } from "./libsystem";
 
 export interface FastWalkOptions {
     /** Absolute roots. A root that is a link is followed; links below a root are returned and not followed. */
@@ -54,9 +53,6 @@ const ATTR_CMN_RETURNED_ATTRS = 0x80000000;
 const ATTR_FILE_DATALENGTH = 0x200;
 const FSOPT_NOFOLLOW = 0x1;
 const FSOPT_PACK_INVAL_ATTRS = 0x8;
-const O_NONBLOCK = 0x4;
-const O_DIRECTORY = 0x100000;
-const O_CLOEXEC = 0x1000000;
 const VREG = 1;
 const VDIR = 2;
 const VLNK = 5;
@@ -64,28 +60,6 @@ const TWO_TO_32 = 4294967296;
 const BULK_BUFFER_BYTES = 256 * 1024;
 /** Directories read between two yields to the event loop, so a resident server keeps answering during a walk. */
 const DIRECTORIES_PER_YIELD = 256;
-
-/** `open`, `getattrlistbulk` and `close` from `libSystem`, or null off macOS (the JS walker answers then). */
-const nativeCalls = defineSystemLibrary({
-    path: "/usr/lib/libSystem.B.dylib",
-    platforms: ["darwin"],
-    symbols: {
-        open: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-        close: { args: [FFIType.i32], returns: FFIType.i32 },
-        getattrlistbulk: {
-            args: [FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.u64],
-            returns: FFIType.i32,
-        },
-        __error: { args: [], returns: FFIType.ptr },
-    },
-});
-
-type LibSystem = NonNullable<ReturnType<typeof nativeCalls>>;
-
-function errnoNow(calls: LibSystem): number {
-    const location = calls.__error();
-    return location ? read.i32(location, 0) : 0;
-}
 
 /** A name to match as bytes: a whole name (`names`) or an ending (`endsWith`). */
 interface BytePattern {
@@ -164,7 +138,7 @@ async function walkNative(
             await Bun.sleep(0);
         }
 
-        const fd = calls.open(Buffer.from(`${next.directory}\0`), O_DIRECTORY | O_NONBLOCK | O_CLOEXEC);
+        const fd = calls.open(cPath(next.directory), O_DIRECTORY | O_NONBLOCK | O_CLOEXEC);
 
         if (fd < 0) {
             errors.push({ path: next.directory, errno: errnoNow(calls) });
@@ -316,7 +290,7 @@ export async function fastWalk(options: FastWalkOptions): Promise<FastWalkResult
         endsWith: options.endsWith ?? [],
         includeDirectories: options.includeDirectories ?? false,
     };
-    const calls = options.engine === "js" ? null : nativeCalls();
+    const calls = options.engine === "js" ? null : libSystem();
 
     if (calls) {
         return walkNative(calls, resolved);

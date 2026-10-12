@@ -330,7 +330,8 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
     return usage;
 }
 
-async function extractTailUsageUncached(filePath: string): Promise<{ usage: TailUsage; read: boolean }> {
+/** The tail usage read and parsed with no cache. Exported for `scripts/benchmarks/fs/read-child.ts`. */
+export async function extractTailUsageUncached(filePath: string): Promise<{ usage: TailUsage; read: boolean }> {
     const fallback = emptyTailUsage();
 
     try {
