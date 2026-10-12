@@ -1,4 +1,5 @@
-import { mkdir, rename, stat } from "node:fs/promises";
+import { statSync } from "node:fs";
+import { mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -15,10 +16,13 @@ export interface FileIdentity {
     ctimeMs: number;
 }
 
-/** The identity of `path`, or null when it cannot be stat'ed (the caller then reads the file and reports why). */
-export async function fileIdentity(path: string): Promise<FileIdentity | null> {
+/**
+ * The identity of `path`, or null when it cannot be stat'ed (the caller then reads the file and reports why).
+ * Synchronous on purpose: an async `stat` costs about 4 times the CPU (`scripts/benchmarks/fs/read-primitives.ts`).
+ */
+export function fileIdentity(path: string): FileIdentity | null {
     try {
-        const status = await stat(path);
+        const status = statSync(path);
         return { ino: status.ino, size: status.size, mtimeMs: status.mtimeMs, ctimeMs: status.ctimeMs };
     } catch (err) {
         logger.debug({ err, path }, "[identity-cache] file not stat'ed");

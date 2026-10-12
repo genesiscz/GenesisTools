@@ -24,17 +24,17 @@ describe("FileIdentityCache", () => {
         const file = join(dir, "grows.jsonl");
         writeFileSync(file, "one\n");
         const cache = new FileIdentityCache<string>({ limit: 10 });
-        const before = await fileIdentity(file);
+        const before = fileIdentity(file);
 
         expect(before).not.toBeNull();
         cache.set(file, before ?? { ino: 0, size: 0, mtimeMs: 0, ctimeMs: 0 }, "parsed one");
 
-        expect(cache.get(file, await fileIdentity(file))).toBe("parsed one");
+        expect(cache.get(file, fileIdentity(file))).toBe("parsed one");
 
         appendFileSync(file, "two\n");
 
-        expect(cache.get(file, await fileIdentity(file))).toBeUndefined();
-        expect(cache.get(join(dir, "never-written"), await fileIdentity(join(dir, "never-written")))).toBeUndefined();
+        expect(cache.get(file, fileIdentity(file))).toBeUndefined();
+        expect(cache.get(join(dir, "never-written"), fileIdentity(join(dir, "never-written")))).toBeUndefined();
     });
 
     it("evicts the least recently used entry, so an entry read again stays", () => {

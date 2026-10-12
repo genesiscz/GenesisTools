@@ -317,7 +317,7 @@ export function __forgetTailCacheForTests(): void {
 
 async function extractTailUsage(filePath: string): Promise<TailUsage> {
     // The identity comes first: a write after it leaves a newer one, and the next call reads the tail again.
-    const identity = await fileIdentity(filePath);
+    const identity = fileIdentity(filePath);
     const cached = tailCache.get(filePath, identity);
     if (cached) {
         return { ...cached };

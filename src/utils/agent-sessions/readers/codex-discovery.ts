@@ -88,7 +88,7 @@ async function readHeader(options: {
     issues: NativeSourceIssue[];
     incompleteRoots: Set<string>;
 }): Promise<CodexDiscoveryHeader | undefined> {
-    const identity = await fileIdentity(options.path);
+    const identity = fileIdentity(options.path);
     const cached = headerCache.get(options.path, identity);
     if (cached) {
         return cached;
