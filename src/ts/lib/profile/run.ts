@@ -10,6 +10,21 @@ const { log } = logger.scoped("ts-profile");
 /** The longest one run is sampled across threads; `sample` stops by itself as soon as the process exits. */
 const THREAD_SAMPLE_SECONDS = 600;
 
+/** How much of a profiled run's stderr the report keeps. */
+const STDERR_TAIL_CHARS = 2000;
+
+/** The last `max` characters of a stream, kept as it arrives: a chatty program's whole stderr is never held. */
+export async function streamTail(stream: ReadableStream<Uint8Array>, max: number): Promise<string> {
+    const decoder = new TextDecoder();
+    let tail = "";
+
+    for await (const chunk of stream) {
+        tail = (tail + decoder.decode(chunk, { stream: true })).slice(-max);
+    }
+
+    return (tail + decoder.decode()).slice(-max);
+}
+
 export interface ProfileRunOptions {
     /** The Bun binary to profile with. */
     bun: string;
@@ -81,7 +96,7 @@ export async function runProfiled(options: ProfileRunOptions): Promise<ProfileRu
                   { stdout: "ignore", stderr: "ignore" }
               )
             : undefined;
-        const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+        const [exitCode, stderr] = await Promise.all([child.exited, streamTail(child.stderr, STDERR_TAIL_CHARS)]);
         const wallMs = performance.now() - started;
         await sampler?.exited;
         let profile: CpuProfile | null = null;
@@ -99,7 +114,7 @@ export async function runProfiled(options: ProfileRunOptions): Promise<ProfileRu
             profilePath,
             profile,
             threadSamplePath,
-            stderrTail: stderr.slice(-2000),
+            stderrTail: stderr,
         });
     }
 

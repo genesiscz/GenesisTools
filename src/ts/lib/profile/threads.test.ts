@@ -1,4 +1,5 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { streamTail } from "./run";
 import { parseThreadSample } from "./threads";
 
 const REPORT = `Call graph:
@@ -27,4 +28,22 @@ it("keeps busy frames, drops waits and merges a stripped binary's addresses", ()
         { symbol: "(no symbols)", library: "bun", samples: 59 },
         { symbol: "stat", library: "libsystem_kernel.dylib", samples: 14 },
     ]);
+});
+
+describe("streamTail", () => {
+    test("keeps only the last characters of a long stream, decoding a character split across chunks", async () => {
+        const encoder = new TextEncoder();
+        const body = `${"x".repeat(5000)}é-end`;
+        const bytes = encoder.encode(body);
+        const split = bytes.length - 6;
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(bytes.slice(0, split));
+                controller.enqueue(bytes.slice(split));
+                controller.close();
+            },
+        });
+
+        expect(await streamTail(stream, 10)).toBe(body.slice(-10));
+    });
 });
