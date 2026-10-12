@@ -190,27 +190,73 @@ export async function listMonitorDaemons(deps: FsmonitorDeps): Promise<MonitorDa
         return daemons;
     }
 
-    // `-a` joins the filters: only these pids, only unix sockets. Exit 1 means none matched.
-    const lsof = await deps.run("lsof", ["-a", "-p", daemons.map((daemon) => daemon.pid).join(","), "-U", "-F", "pn"]);
+    // Every open file of these pids except the working folder (always the home folder). Exit 1 means none matched.
+    const lsof = await deps.run("lsof", [
+        "-a",
+        "-p",
+        daemons.map((daemon) => daemon.pid).join(","),
+        "-d",
+        "^cwd",
+        "-F",
+        "pftn",
+    ]);
+    const worktrees = worktreesFromLsof(lsof.stdout);
+
+    if (worktrees.size < daemons.length) {
+        logger.debug({ daemons: daemons.length, found: worktrees.size, status: lsof.status }, "[git fsmonitor] lsof");
+    }
+
+    return daemons.map((daemon) => ({ ...daemon, worktree: worktrees.get(daemon.pid) ?? null }));
+}
+
+/**
+ * The worktree of each daemon in `lsof -F pftn` output. A daemon holds an open handle on its worktree folder and on
+ * every folder above it, and opens the worktree first, so the folder with the lowest fd number is the worktree. Its
+ * socket is the fallback: a main checkout binds `<worktree>/.git/fsmonitor--daemon.ipc` by its full path, but a
+ * linked worktree binds the bare name `fsmonitor--daemon.ipc`, which names nothing.
+ */
+export function worktreesFromLsof(output: string): Map<number, string> {
+    const firstFolder = new Map<number, { fd: number; path: string }>();
     const sockets = new Map<number, string>();
     let pid = 0;
+    let fd = Number.NaN;
+    let type = "";
 
-    for (const line of lsof.stdout.split("\n")) {
-        if (line.startsWith("p")) {
-            pid = Number(line.slice(1));
-        } else if (line.startsWith("n") && line.endsWith("/fsmonitor--daemon.ipc")) {
-            sockets.set(pid, line.slice(1));
+    for (const line of output.split("\n")) {
+        const field = line[0];
+        const value = line.slice(1);
+
+        if (field === "p") {
+            pid = Number(value);
+        } else if (field === "f") {
+            fd = Number(value);
+            type = "";
+        } else if (field === "t") {
+            type = value;
+        } else if (field === "n" && type === "DIR" && Number.isInteger(fd)) {
+            const known = firstFolder.get(pid);
+
+            if (!known || fd < known.fd) {
+                firstFolder.set(pid, { fd, path: value });
+            }
+        } else if (field === "n" && value.startsWith("/") && value.endsWith("/fsmonitor--daemon.ipc")) {
+            sockets.set(pid, value);
         }
     }
 
-    if (sockets.size < daemons.length) {
-        logger.debug({ daemons: daemons.length, sockets: sockets.size, status: lsof.status }, "[git fsmonitor] lsof");
+    const worktrees = new Map<number, string>();
+
+    for (const [daemonPid, folder] of firstFolder) {
+        worktrees.set(daemonPid, folder.path);
     }
 
-    return daemons.map((daemon) => {
-        const socket = sockets.get(daemon.pid);
-        return { ...daemon, worktree: socket ? worktreeOfSocket(socket) : null };
-    });
+    for (const [daemonPid, socket] of sockets) {
+        if (!worktrees.has(daemonPid)) {
+            worktrees.set(daemonPid, worktreeOfSocket(socket));
+        }
+    }
+
+    return worktrees;
 }
 
 /** Adds every watched worktree to the state file. The daemon task runs this every 10 minutes. */

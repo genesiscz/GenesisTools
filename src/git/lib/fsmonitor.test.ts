@@ -13,6 +13,7 @@ import {
     readFsmonitorState,
     readGlobal,
     recordMonitorDaemons,
+    worktreesFromLsof,
 } from "./fsmonitor";
 
 const DAEMON = "/opt/homebrew/opt/git/libexec/git-core/git fsmonitor--daemon run --detach --ipc-threads=8";
@@ -37,7 +38,24 @@ function fixture({ running = ["repo", "wt1"], stopFails = false }: { running?: s
         ...running.map((name) => `  ${pids[name]}  7920   0:00.25 ${DAEMON}`),
         "  103   100   0:00.00 /bin/zsh -l",
     ].join("\n");
-    const lsof = running.map((name) => `p${pids[name]}\nf17\nn${sockets[name]}`).join("\n");
+    // As `lsof -F pftn` prints it: a folder above the worktree, the worktree folder, and the socket. A linked
+    // worktree binds its socket by the bare name, so only the folder handle names it.
+    const lsof = running
+        .map((name) =>
+            [
+                `p${pids[name]}`,
+                "f5",
+                "tDIR",
+                `n${root}`,
+                "f4",
+                "tDIR",
+                `n${join(root, name)}`,
+                "f17",
+                "tunix",
+                `n${name === "repo" ? sockets.repo : "fsmonitor--daemon.ipc"}`,
+            ].join("\n")
+        )
+        .join("\n");
     const calls: string[][] = [];
     const deps: FsmonitorDeps = {
         statePath: join(root, "state", "fsmonitor.json"),
@@ -79,6 +97,31 @@ describe("git fsmonitor", () => {
             { pid: 101, worktree: worktree("repo"), rssKb: 7920, cpuMs: 250 },
             { pid: 102, worktree: worktree("wt1"), rssKb: 7920, cpuMs: 250 },
         ]);
+    });
+
+    test("without a folder handle the socket names the worktree, also through a linked worktree's gitdir file", () => {
+        const { root, worktree } = fixture();
+        const output = [
+            "p201",
+            "f17",
+            "tunix",
+            `n${join(root, "repo", ".git", "fsmonitor--daemon.ipc")}`,
+            "p202",
+            "f17",
+            "tunix",
+            `n${join(root, "main", ".git", "worktrees", "wt1", "fsmonitor--daemon.ipc")}`,
+            "p203",
+            "f17",
+            "tunix",
+            "nfsmonitor--daemon.ipc",
+        ].join("\n");
+
+        expect(worktreesFromLsof(output)).toEqual(
+            new Map([
+                [201, worktree("repo")],
+                [202, worktree("wt1")],
+            ])
+        );
     });
 
     test("no daemon running: no lsof call and an empty list", async () => {
