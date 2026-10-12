@@ -64,13 +64,14 @@ Do not bind `libSystem` again: `src/utils/fs/native/libsystem.ts` exports one bi
 `lseek`, `getattrlistbulk`, `__error`) plus `errnoNow`, `errnoError`, `cPath` and the flag constants. Add a symbol
 there. Every native fs utility needs a JS fallback for when `calls()` is null.
 
-## 3b. Process data from the kernel instead of `ps`, `lsof` and `top` (2026-10-13)
+## 3b. Process data from the kernel instead of `ps`, `lsof` and `top` (2026-10-12)
 
 Measured CPU per call, spawn against kernel read (`scripts/benchmarks/process/process-primitives.ts`, medians of
 5 to 7 fresh processes): cwd of 30 processes 226 → 1 ms (`proc_pidinfo` vnode path); the dev-dashboard pulse 1,718 →
 16 ms (`host_statistics`, `host_statistics64`, `sysctlbyname`, `statfs`); `tools claude who` 573 → 39 ms and the
-`say` caller chain 154 → 9 ms (`proc_listallpids`, `proc_pidinfo`, `KERN_PROCARGS2`;
-`src/utils/process/libproc-table.ts`); listening TCP ports 271 → 9 ms (`proc_pidfdinfo` socket info).
+`say` caller chain 154 → 9 ms (`sysctl(KERN_PROC_ALL / KERN_PROC_PID)`, `KERN_PROCARGS2`, `proc_pidinfo`;
+`src/utils/process/libproc-table.ts`); listening TCP ports 271 → 9 ms (`proc_listallpids`, `proc_pidfdinfo`
+socket info; `src/utils/process/socket-owner.ts`).
 
 - **libproc reads only your own processes** (1,142 of 1,487 here). `ps` sees the rest because it is setuid root;
   `lsof` is not, so it answers for exactly the same pids as libproc and is no fallback for them. Callers that rank the
