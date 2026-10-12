@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -11,10 +11,16 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
  * The rename lands on the link's TARGET: `~/.claude/settings.json` is often a symlink into a
  * dotfiles repository, and renaming over the link itself would swap it for a plain file.
  *
+ * The file keeps its permission bits. A new file from the rename otherwise gets the umask default,
+ * so a private `0600` `~/.codex/hooks.json` came back world-readable after an install.
+ *
  * Not on the hook hot path: only the installer and the `config` commands write these files.
  */
 export function writeJsonFile(path: string, value: unknown): void {
-    atomicWriteFileSync(writeTarget(path), `${SafeJSON.stringify(value, null, 2)}\n`);
+    const target = writeTarget(path);
+    const mode = existsSync(target) ? statSync(target).mode & 0o777 : undefined;
+
+    atomicWriteFileSync(target, `${SafeJSON.stringify(value, null, 2)}\n`, mode === undefined ? undefined : { mode });
 }
 
 /**

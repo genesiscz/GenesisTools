@@ -1041,6 +1041,20 @@ describe("install moves the machine-wide dist link only once settings.json can t
 });
 
 describe("writeJsonFile edge cases", () => {
+    it("keeps the permission bits of the file it replaces", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-json-mode-"));
+        const path = join(dir, "hooks.json");
+
+        writeFileSync(path, "{}");
+        chmodSync(path, 0o600);
+        writeJsonFile(path, { shadow: false });
+
+        expect(statSync(path).mode & 0o777).toBe(0o600);
+        expect(SafeJSON.parse(readFileSync(path, "utf8"))).toEqual({ shadow: false });
+
+        rmSync(dir, { recursive: true, force: true });
+    });
+
     it("writes through a DANGLING symlink to its target instead of replacing the link", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-json-dangling-"));
         const target = join(dir, "real", "hooks.json");
