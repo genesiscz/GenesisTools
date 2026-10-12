@@ -22,6 +22,7 @@ import {
     sessionProcessPids,
     type TmuxHost,
     type TmuxHostDeps,
+    tmuxAttachCommand,
     tmuxCmuxLocations,
 } from "@genesiscz/utils/cmux/tmux-host";
 import type { TmuxClientInfo, TmuxPaneInfo, TmuxSocket } from "@genesiscz/utils/tmux/sessions";
@@ -836,6 +837,28 @@ describe("findTmuxHosts", () => {
 
         expect(sockets).toEqual([{ flag: "-L", value: "agents" }]);
         expect(hosts[0]?.socket).toEqual({ flag: "-L", value: "agents" });
+    });
+});
+
+describe("tmuxAttachCommand", () => {
+    const host = (session: string, socket?: TmuxSocket): TmuxHost => ({
+        session,
+        pane: "%1",
+        visible: true,
+        clientTtys: [],
+        socket,
+    });
+
+    test("an ordinary name stays bare, with or without a socket", () => {
+        expect(tmuxAttachCommand(host("dd-045c53d3"))).toBe("tools tmux session attach dd-045c53d3");
+        expect(tmuxAttachCommand(host("dd", { flag: "-L", value: "agents" }))).toBe("tmux -L agents attach -t dd");
+    });
+
+    test("a name or socket with a space or shell syntax is quoted, so a pasted command runs only the attach", () => {
+        expect(tmuxAttachCommand(host("my work"))).toBe("tools tmux session attach 'my work'");
+        expect(tmuxAttachCommand(host("a;rm x", { flag: "-S", value: "/tmp/my dir/sock" }))).toBe(
+            "tmux -S '/tmp/my dir/sock' attach -t 'a;rm x'"
+        );
     });
 });
 

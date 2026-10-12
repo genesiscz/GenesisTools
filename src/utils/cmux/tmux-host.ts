@@ -5,6 +5,7 @@ import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { listPsTable, type PsRow, processBasename } from "@genesiscz/utils/process/ps";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import {
     listTmuxClients,
     listTmuxPanes,
@@ -265,11 +266,11 @@ export async function findTmuxHosts(sessionId: string, deps: TmuxHostDeps = {}):
     return (await findAllTmuxHosts(deps, sessionId)).get(sessionId.toLowerCase()) ?? [];
 }
 
-/** The command that attaches a terminal to a host's tmux session. */
+/** The command that attaches a terminal to a host's tmux session, as a person pastes it into a shell. */
 export function tmuxAttachCommand(host: TmuxHost): string {
     return host.socket
-        ? `tmux ${host.socket.flag} ${host.socket.value} attach -t ${host.session}`
-        : `tools tmux session attach ${host.session}`;
+        ? `tmux ${host.socket.flag} ${shellWord(host.socket.value)} attach -t ${shellWord(host.session)}`
+        : `tools tmux session attach ${shellWord(host.session)}`;
 }
 
 /** A cmux terminal tab, from `cmux --id-format both tree --all --json`, keyed by what joins it to tmux: its tty. */
