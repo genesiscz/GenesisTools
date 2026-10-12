@@ -398,7 +398,25 @@ it("vault credential stamps are independent of an old native data directory", as
     const { codexCredentialStamp } = await import("./usage");
     const account = entry("vault", { accessToken: "vault-access", expiresAt: 12345, dataDir: "/obsolete-profile" });
     expect(codexHomeFor(account)).toBeNull();
-    expect(await codexCredentialStamp(account)).toBe(12345);
+    expect(await codexCredentialStamp(account)).toBeUndefined();
+});
+
+/**
+ * `expiresAt` is when the token STOPS working, which for a live token is always after the
+ * failure that blocked it. Used as the stamp, it read as "re-logged in after the failure" on
+ * every round, so the gate never held a vault account: 1,850 handshake timeouts on
+ * 2026-10-05..12, one per account every three minutes, through hours of 100% failure.
+ */
+it("a vault account's future token expiry does not release its poll gate", async () => {
+    const { codexCredentialStamp } = await import("./usage");
+    const { blockedEntry } = await import("@genesiscz/utils/ai/usage-poll/poll-gate");
+    const now = Date.now();
+    const account = entry("vault", { accessToken: "vault-access", expiresAt: now + 10 * 86_400_000 });
+    const gate = {
+        [account.name]: { failures: 0, transportFailures: 1, blockedUntil: now + 300_000, reason: "x", failedAt: now },
+    };
+
+    expect(blockedEntry(gate, account.name, now + 60_000, await codexCredentialStamp(account))).not.toBeNull();
 });
 describe("sweepAbandonedHomes", () => {
     /**

@@ -529,13 +529,15 @@ export async function pollCodexAccount(
  *
  * An account bound to no home has nothing to stat: `codexHomeFor` returns null there rather
  * than falling back to `~/.codex`, and a stamp read from a different login's file would
- * release this account's gate on somebody else's re-login.
+ * release this account's gate on somebody else's re-login. Nor is its `expiresAt` a stamp:
+ * that is when the token stops working, later than any failure while the token lives, so
+ * the gate released the account every round. `tools codex login` clears the gate itself.
  */
 export async function codexCredentialStamp(account: AccountEntry): Promise<number | undefined> {
     const home = codexHomeFor(account);
 
     if (!home) {
-        return account.credentials.expiresAt;
+        return undefined;
     }
 
     return fileMtimeMs(account.credentials.authFile ?? join(home, "auth.json"));
