@@ -7,12 +7,12 @@ paths:
 
 # macOS app, notifications and privacy grants
 
-Loaded by Claude Code when you read, write or edit a file under `src/macos/`, `src/utils/macos/` or `src/notify/`. Window rules for the Swift app are in `src/macos/GenesisTools/CLAUDE.md`.
+Loaded by Claude Code when you read, write or edit a file under `src/macos/`, `src/utils/macos/` or `src/notify/`. Window rules for the Swift app are in `.claude/rules/macos-app.md`.
 
 ## 🛑 Changing Swift under `src/macos/GenesisTools/` — always `bun run app`
 
 **While you work on the app, keep `tools hub dev monitor` running under the Monitor tool** (hangs, stalls,
-layout loops, link-relay trouble and crash reports as events; `src/macos/GenesisTools/CLAUDE.md`).
+layout loops, link-relay trouble and crash reports as events; `.claude/rules/macos-app.md`).
 
 `swift build` alone proves nothing: it writes `.build/`, and the thing answering on your Mac is the
 installed bundle at `~/Applications/GenesisTools.app`. **After ANY edit to `Sources/**` or

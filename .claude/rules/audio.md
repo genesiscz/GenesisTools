@@ -1,4 +1,12 @@
+---
+paths:
+  - "src/utils/audio/**"
+  - "src/transcribe/**"
+---
+
 # Audio transcription gotchas (`tools transcribe`, `ask --sst`)
+
+Loaded by Claude Code when you read, write or edit a file under `src/utils/audio/` or `src/transcribe/`.
 
 Hard-won; do not relearn these by trial:
 

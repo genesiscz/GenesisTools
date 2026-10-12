@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/du/**"
+---
+
 # tools du (src/du/)
 
 Loaded by Claude Code when you read, write or edit a file under `src/du/`.

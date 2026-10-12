@@ -1,4 +1,11 @@
+---
+paths:
+  - "src/utils/claude/**"
+---
+
 # Claude Agent SDK Types Reference
+
+Loaded by Claude Code when you read, write or edit a file under `src/utils/claude/`.
 
 The session/message types in `src/utils/claude/` are aligned with `@anthropic-ai/claude-agent-sdk`. To check for upstream changes:
 

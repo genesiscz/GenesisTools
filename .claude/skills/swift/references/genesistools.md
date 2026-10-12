@@ -8,7 +8,7 @@ GenesisTools checkout.
 - App: `src/macos/GenesisTools/Sources/` (Hub/, Review/, App/); tests `swift test` there.
 - Shared Swift: `src/macos/GenesisKit/Sources/GenesisKit/` (Sessions/, Controls/, Perf/, Window/); tests
   `swift test` there. A generic component belongs here, never as an app-local copy.
-- Rules for the app: `src/macos/GenesisTools/CLAUDE.md` (never block the main thread in a body, measure
+- Rules for the app: `.claude/rules/macos-app.md` (never block the main thread in a body, measure
   every load, accessibility clients, transcript scroll rules, title bars).
 - The data comes from the `tools` CLI (TypeScript, Bun). Data handling and caching belong on the
   TypeScript side, because the CLI serves more than the app (Martin, 2026-10-08).

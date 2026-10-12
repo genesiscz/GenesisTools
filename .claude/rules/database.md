@@ -1,4 +1,12 @@
+---
+paths:
+  - "src/utils/database/**"
+  - "src/utils/storage/**"
+---
+
 # Database Infrastructure
+
+Loaded by Claude Code when you read, write or edit a file under `src/utils/database/` or `src/utils/storage/`.
 
 - **Storage**: `src/utils/storage/storage.ts` owns per-tool config/cache directories under `~/.genesis-tools/<tool>/`; wrap it with tool-specific subclasses such as `IndexerStorage`.
 - **MacDatabase**: `src/utils/macos/MacDatabase.ts` is the read-only base accessor for system SQLite databases (Mail Envelope Index, Messages, etc.) and exposes subclass-owned `getMigrator()`.

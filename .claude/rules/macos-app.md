@@ -1,6 +1,13 @@
+---
+paths:
+  - "src/macos/GenesisTools/**"
+---
+
 # GenesisTools.app (Swift) — rules for every window
 
-Loaded automatically when you work under `src/macos/GenesisTools/`. The root CLAUDE.md rule still
+Loaded by Claude Code when you read, write or edit a file under `src/macos/GenesisTools/`.
+
+The rule in `.claude/rules/macos.md` still
 applies: after ANY edit to `Sources/**`, `web/**` or `Info.plist`, run `bun run app` (build, sign,
 install, reap stale faces). Swift UI you have not seen rendered is not done.
 

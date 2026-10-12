@@ -1,4 +1,11 @@
+---
+paths:
+  - "src/azure-devops/**"
+---
+
 # Azure DevOps — research & API reference
+
+Loaded by Claude Code when you read, write or edit a file under `src/azure-devops/`.
 
 ## Context7 Library IDs for Documentation Lookup
 

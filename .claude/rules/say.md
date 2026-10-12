@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/say/**"
+---
+
 # tools say (src/say/)
 
 Loaded by Claude Code when you read, write or edit a file under `src/say/`.

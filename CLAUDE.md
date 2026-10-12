@@ -13,11 +13,11 @@ The detailed rules live in area files. Claude Code loads an area file by itself 
 - Tests (`*.test.ts`), and before you add a test file: `.claude/rules/tests.md`.
 - AI, accounts, secrets, cost, agent history (`src/utils/ai/`, `src/utils/security/`, `src/utils/agent-sessions/`, `src/ai-proxy/`, `src/ask/`, `src/claude/`, `src/codex/`): `.claude/rules/ai.md`.
 - Web UI (`*.tsx`, `src/*/ui/`, `src/dashboard/`, `src/dev-dashboard/`): `.claude/rules/web-ui.md`.
-- macOS app, notifications, privacy grants (`src/macos/`, `src/utils/macos/`, `src/notify/`): `.claude/rules/macos.md`. Window rules for the Swift app: `src/macos/GenesisTools/CLAUDE.md`.
+- macOS app, notifications, privacy grants (`src/macos/`, `src/utils/macos/`, `src/notify/`): `.claude/rules/macos.md`. Window rules for the Swift app (`src/macos/GenesisTools/`): `.claude/rules/macos-app.md`.
 - The personal-data probe and the git hooks: `.claude/rules/placeholder-check.md`.
-- Folder files, each loaded with its folder: `src/du/CLAUDE.md` (benchmarks before any change), `src/say/CLAUDE.md` (per-app profiles), `src/utils/database/CLAUDE.md` (storage, migrations, metadata schema), `src/utils/claude/CLAUDE.md` (Agent SDK types), `src/utils/audio/CLAUDE.md` (transcription), `src/azure-devops/CLAUDE.md` (ADO API).
+- One folder each: `.claude/rules/du.md` (`src/du/`, benchmarks before any change), `say.md` (`src/say/`, per-app profiles), `database.md` (`src/utils/database/`, `src/utils/storage/`), `claude-sdk.md` (`src/utils/claude/`, Agent SDK types), `audio.md` (`src/utils/audio/`, `src/transcribe/`), `azure-devops.md` (`src/azure-devops/`, ADO API).
 
-A new rule goes into the area file it belongs to. Only a rule that every session needs, whatever it touches, goes into this file.
+A new rule goes into the area file it belongs to, or into a new `.claude/rules/<topic>.md` with a `paths:` list of globs. Do not add a CLAUDE.md to a subfolder: one rule file can cover several folders, and one folder can have several rule files. Only a rule that every session needs, whatever it touches, goes into this file.
 
 ## Running tools
 
