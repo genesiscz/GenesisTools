@@ -45,7 +45,12 @@ function isIdentity(value: Record<string, unknown>): boolean {
 }
 
 export interface FileIdentityCacheOptions<T> {
-    /** Entries kept; the oldest written goes first. */
+    /**
+     * Entries kept; the least recently used goes first. Must exceed the files one pass touches: a pass over more
+     * files than the limit evicts each entry just before it is needed and never hits (the Claude tail cache held
+     * 2,000 entries for 2,404 transcripts, 0 hits per listing, 2026-10-12). Evicting an entry used in this process
+     * logs a warning for that reason.
+     */
     limit: number;
     /**
      * Also keep the cache in a file, so a new process re-reads only the files that changed since another process
@@ -70,8 +75,11 @@ export interface FileIdentityCacheOptions<T> {
  */
 export class FileIdentityCache<T> {
     private readonly entries = new Map<string, { identity: FileIdentity; value: T }>();
+    /** Keys read or written by this process: evicting one of them means the limit is below one pass. */
+    private readonly used = new Set<string>();
     private loaded: Promise<void> | undefined;
     private dirty = false;
+    private warnedSmall = false;
 
     constructor(private readonly options: FileIdentityCacheOptions<T>) {}
 
@@ -83,12 +91,18 @@ export class FileIdentityCache<T> {
             return undefined;
         }
 
+        // Most recent last, so the entries no pass touches (deleted files) are the first to go. Not a change worth
+        // saving by itself.
+        this.entries.delete(path);
+        this.entries.set(path, entry);
+        this.used.add(path);
         return entry.value;
     }
 
     set(path: string, identity: FileIdentity, value: T): void {
         this.entries.delete(path);
         this.entries.set(path, { identity, value });
+        this.used.add(path);
         this.dirty = true;
 
         if (this.entries.size > this.options.limit) {
@@ -96,8 +110,21 @@ export class FileIdentityCache<T> {
 
             if (oldest !== undefined) {
                 this.entries.delete(oldest);
+                this.warnIfTooSmall(oldest);
             }
         }
+    }
+
+    private warnIfTooSmall(evicted: string): void {
+        if (this.warnedSmall || !this.used.has(evicted)) {
+            return;
+        }
+
+        this.warnedSmall = true;
+        logger.warn(
+            { limit: this.options.limit, file: this.options.persist?.path() },
+            "[identity-cache] evicted an entry this process used: the limit is smaller than one pass, so it will miss"
+        );
     }
 
     delete(path: string): void {
@@ -188,6 +215,8 @@ export class FileIdentityCache<T> {
     /** Forgets everything, including that the file was read: the next `load` reads it again. For tests. */
     forget(): void {
         this.entries.clear();
+        this.used.clear();
+        this.warnedSmall = false;
         this.loaded = undefined;
         this.dirty = false;
     }

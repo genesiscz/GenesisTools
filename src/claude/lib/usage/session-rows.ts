@@ -301,7 +301,8 @@ function isTailUsage(usage: unknown): usage is TailUsage {
  * profile`, 2026-10-12). Bump the version whenever `parseTailLines` or `TailUsage` changes what an entry means.
  */
 const tailCache = new FileIdentityCache<TailUsage>({
-    limit: 2000,
+    // Above the transcripts one listing reads (2,404 here on 2026-10-12); about 450 bytes each on disk.
+    limit: 20_000,
     persist: {
         path: () => toolDataDir("claude", "cache", "session-tail-usage.json"),
         version: 2,

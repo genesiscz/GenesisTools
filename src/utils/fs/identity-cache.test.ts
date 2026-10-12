@@ -37,6 +37,21 @@ describe("FileIdentityCache", () => {
         expect(cache.get(join(dir, "never-written"), await fileIdentity(join(dir, "never-written")))).toBeUndefined();
     });
 
+    it("evicts the least recently used entry, so an entry read again stays", () => {
+        const cache = new FileIdentityCache<string>({ limit: 2 });
+        const identity = { ino: 1, size: 1, mtimeMs: 1, ctimeMs: 1 };
+        cache.set("a", identity, "A");
+        cache.set("b", identity, "B");
+        cache.get("a", identity);
+        cache.set("c", identity, "C");
+
+        expect([cache.get("a", identity), cache.get("b", identity), cache.get("c", identity)]).toEqual([
+            "A",
+            undefined,
+            "C",
+        ]);
+    });
+
     it("drops the oldest entry past its limit", () => {
         const cache = new FileIdentityCache<string>({ limit: 2 });
         const identity = { ino: 1, size: 1, mtimeMs: 1, ctimeMs: 1 };
