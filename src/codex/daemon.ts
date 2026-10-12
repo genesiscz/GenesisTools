@@ -67,11 +67,23 @@ async function run(): Promise<void> {
     });
     await store.updateMeta(name, { appServerPid: child.pid, daemonPid: process.pid });
 
+    // An unregistered recipient fails every event the same way (37 identical warnings in 22 s on
+    // 2026-10-07), so each distinct failure warns once and its repeats stay in the file at debug.
+    const reportedPublishFailures = new Set<string>();
     const client = new AppServerClient(child, {
         onNotification: async (notification: RpcNotification) => {
             await runtime?.handleNotification(notification);
             void bridge?.publish(notification).catch((err) => {
-                log.warn({ err, method: notification.method }, "publishing Codex event to agents bus failed");
+                const reason = err instanceof Error ? err.message : String(err);
+                const fields = { err, method: notification.method };
+
+                if (reportedPublishFailures.has(reason)) {
+                    log.debug(fields, "publishing Codex event to agents bus failed again");
+                    return;
+                }
+
+                reportedPublishFailures.add(reason);
+                log.warn(fields, "publishing Codex event to agents bus failed");
             });
         },
         onStderr: (text) => {
