@@ -373,6 +373,11 @@ describe("formatting", () => {
     it("never throws on a line with missing fields", () => {
         expect(formatEvent({})).toBe("--:--:--.--- unknown      pid ?      ?");
         expect(formatEvent({ event_type: 31, event: { signal: {} } })).toContain("signal");
+
+        // The old formatter threw "undefined is not an object (evaluating 'writeEvent.target.path')" on these.
+        for (const event of [{ write: {} }, { close: {} }, { open: { file: null } }, { rename: { source: {} } }]) {
+            expect(formatEvent({ event })).toContain(Object.keys(event)[0] ?? "");
+        }
     });
 
     it("builds one time formatter per zone, not one per event", () => {

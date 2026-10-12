@@ -43,6 +43,8 @@ export function openReadModel(dbPath: string): Database {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
     db.exec("PRAGMA journal_mode = WAL;");
+    // The widget, the hub server and the CLI each catch up this file; without a wait, a second writer fails at once.
+    db.exec("PRAGMA busy_timeout = 5000;");
     initializeReadModel(db);
     return db;
 }

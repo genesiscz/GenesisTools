@@ -68,6 +68,11 @@ describe("read-model", () => {
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(2);
     });
 
+    it("waits for another process's catch-up instead of failing with database is locked", () => {
+        const db = openReadModel(join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db"));
+        expect(db.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+    });
+
     it("indexes the newest active window before materializing answer bodies", () => {
         const root = mkdtempSync(join(tmpdir(), "qa-window-index-"));
         const logBase = join(root, "log");
