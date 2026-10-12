@@ -4,7 +4,15 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { parseInterval } from "./interval";
-import type { DaemonConfig, DaemonTask } from "./types";
+import { timeOnDay } from "./missed-run";
+import {
+    type DaemonConfig,
+    type DaemonTask,
+    MISSED_RUN_MODES,
+    type MissedRunPolicy,
+    TASK_PRIORITIES,
+    type TaskPriority,
+} from "./types";
 
 // Resolved lazily per call — a module-level instance captures the storage
 // base dir at import time, which bypasses GENESIS_TOOLS_HOME overrides set
@@ -107,4 +115,151 @@ export async function setTaskEnabled(name: string, enabled: boolean): Promise<vo
 
         task.enabled = enabled;
     });
+}
+
+/** The task config file (`~/.genesis-tools/daemon/config.json`). */
+export function getConfigPath(): string {
+    return getStorage().getConfigPath();
+}
+
+/** The fields `tools daemon config set` (and the Daemon pane through it) may change. `null` clears a field back to
+ *  its default. */
+export interface TaskPatch {
+    every?: string;
+    timeoutMs?: number | null;
+    retries?: number;
+    enabled?: boolean;
+    notify?: boolean | "failure";
+    priority?: TaskPriority | null;
+    missedRun?: MissedRunPolicy | null;
+    description?: string;
+}
+
+/** Every reason the patch cannot be applied, as sentences; empty when it can. */
+export function validateTaskPatch(patch: TaskPatch): string[] {
+    const errors: string[] = [];
+
+    if (patch.every !== undefined) {
+        try {
+            parseInterval(patch.every);
+        } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
+        }
+    }
+
+    if (patch.timeoutMs !== undefined && patch.timeoutMs !== null) {
+        if (!Number.isInteger(patch.timeoutMs) || patch.timeoutMs < 1_000) {
+            errors.push(`timeoutMs must be a whole number of milliseconds, at least 1000; got ${patch.timeoutMs}`);
+        }
+    }
+
+    if (patch.retries !== undefined && (!Number.isInteger(patch.retries) || patch.retries < 0 || patch.retries > 10)) {
+        errors.push(`retries must be a whole number from 0 to 10; got ${patch.retries}`);
+    }
+
+    if (patch.priority !== undefined && patch.priority !== null && !TASK_PRIORITIES.includes(patch.priority)) {
+        errors.push(`priority must be one of ${TASK_PRIORITIES.join(", ")}; got ${patch.priority}`);
+    }
+
+    const missed = patch.missedRun;
+    if (missed !== undefined && missed !== null) {
+        if (!MISSED_RUN_MODES.includes(missed.mode)) {
+            errors.push(`missedRun.mode must be one of ${MISSED_RUN_MODES.join(", ")}; got ${missed.mode}`);
+        }
+
+        if (missed.mode === "retry-at") {
+            const times = missed.times ?? [];
+            if (times.length === 0) {
+                errors.push("retry-at needs at least one time, such as 10:00,12:00");
+            }
+
+            for (const time of times) {
+                if (timeOnDay(time, new Date()) === null) {
+                    errors.push(`retry-at time must be HH:MM (24 h); got "${time}"`);
+                }
+            }
+        }
+    }
+
+    return errors;
+}
+
+function applyPatch(task: DaemonTask, patch: TaskPatch): void {
+    if (patch.every !== undefined) {
+        task.every = patch.every;
+    }
+
+    if (patch.timeoutMs !== undefined) {
+        if (patch.timeoutMs === null) {
+            delete task.timeoutMs;
+        } else {
+            task.timeoutMs = patch.timeoutMs;
+        }
+    }
+
+    if (patch.retries !== undefined) {
+        task.retries = patch.retries;
+    }
+
+    if (patch.enabled !== undefined) {
+        task.enabled = patch.enabled;
+    }
+
+    if (patch.notify !== undefined) {
+        task.notify = patch.notify;
+    }
+
+    if (patch.priority !== undefined) {
+        if (patch.priority === null || patch.priority === "normal") {
+            delete task.priority;
+        } else {
+            task.priority = patch.priority;
+        }
+    }
+
+    if (patch.missedRun !== undefined) {
+        if (patch.missedRun === null || patch.missedRun.mode === "asap") {
+            delete task.missedRun;
+        } else {
+            task.missedRun =
+                patch.missedRun.mode === "retry-at"
+                    ? { mode: "retry-at", times: (patch.missedRun.times ?? []).map((t) => t.trim()) }
+                    : { mode: patch.missedRun.mode };
+        }
+    }
+
+    if (patch.description !== undefined) {
+        task.description = patch.description;
+    }
+}
+
+/**
+ * Changes one task's fields in one atomic config update, after validating them. The running daemon re-reads the
+ * config every tick, so a change takes effect on its next tick without a restart. Throws on an unknown task or an
+ * invalid field, and then writes nothing.
+ */
+export async function updateTask(name: string, patch: TaskPatch): Promise<DaemonTask> {
+    const errors = validateTaskPatch(patch);
+    if (errors.length > 0) {
+        throw new Error(errors.join("; "));
+    }
+
+    let updated: DaemonTask | undefined;
+    await getStorage().atomicConfigUpdate<DaemonConfig>((config) => {
+        const task = config.tasks?.find((t) => t.name === name);
+
+        if (!task) {
+            throw new Error(`Task "${name}" not found`);
+        }
+
+        applyPatch(task, patch);
+        updated = { ...task };
+    });
+
+    if (!updated) {
+        throw new Error(`Task "${name}" not found`);
+    }
+
+    logger.info({ task: name, patch }, "[daemon] task updated");
+    return updated;
 }

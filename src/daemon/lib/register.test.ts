@@ -31,3 +31,37 @@ describe("isTaskRegistered", () => {
         }
     });
 });
+
+describe("updateTask", () => {
+    test("writes priority and missed-run policy, and null or the default value clears them", async () => {
+        const { registerTask } = await import("./register");
+        const { getTask, updateTask } = await import("./config");
+        await registerTask({ name: "nightly", command: "true", every: "every day at 03:00", overwrite: true });
+
+        await updateTask("nightly", { priority: "low", missedRun: { mode: "retry-at", times: [" 10:00", "12:00"] } });
+        expect(await getTask("nightly")).toMatchObject({
+            priority: "low",
+            missedRun: { mode: "retry-at", times: ["10:00", "12:00"] },
+        });
+
+        await updateTask("nightly", { priority: "normal", missedRun: { mode: "asap" }, timeoutMs: 60_000 });
+        const cleared = await getTask("nightly");
+        expect(cleared?.priority).toBeUndefined();
+        expect(cleared?.missedRun).toBeUndefined();
+        expect(cleared?.timeoutMs).toBe(60_000);
+    });
+
+    test("rejects an invalid field and writes nothing", async () => {
+        const { registerTask } = await import("./register");
+        const { getTask, updateTask } = await import("./config");
+        await registerTask({ name: "hourly", command: "true", every: "every 1 hour", overwrite: true });
+
+        await expect(updateTask("hourly", { every: "sometimes", priority: "low" })).rejects.toThrow(/Invalid interval/);
+        await expect(updateTask("hourly", { missedRun: { mode: "retry-at", times: ["25:00"] } })).rejects.toThrow(
+            /HH:MM/
+        );
+        await expect(updateTask("hourly", { missedRun: { mode: "retry-at" } })).rejects.toThrow(/at least one time/);
+        await expect(updateTask("missing", { priority: "low" })).rejects.toThrow(/not found/);
+        expect((await getTask("hourly"))?.priority).toBeUndefined();
+    });
+});

@@ -5,17 +5,30 @@ import { LAUNCHD_MIGRATION_HINT } from "@genesiscz/utils/macos/genesis-app";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getDaemonPid } from "../daemon";
-import { loadConfig } from "../lib/config";
+import { getConfigPath, getLogsBaseDir, loadConfig } from "../lib/config";
 import { formatInterval } from "../lib/interval";
 import { getDaemonStatus } from "../lib/launchd";
+import { effectiveTask } from "./config";
 
 export function registerStatusCommand(program: Command): void {
     program
         .command("status")
         .description("Show daemon and task status")
-        .action(async () => {
+        .option("--json", "the daemon process and every task with its effective settings, as JSON")
+        .action(async (opts: { json?: boolean }) => {
             const status = await getDaemonStatus();
             const fgPid = getDaemonPid();
+
+            if (opts.json) {
+                const config = await loadConfig();
+                out.result({
+                    daemon: { ...status, foregroundPid: fgPid ?? null },
+                    configPath: getConfigPath(),
+                    logsBaseDir: getLogsBaseDir(),
+                    tasks: config.tasks.map(effectiveTask),
+                });
+                return;
+            }
 
             if (status.running) {
                 p.log.success(`Daemon running (launchd, PID ${status.pid})`);
