@@ -7,7 +7,9 @@ import {
     readMemorySizeBytes,
     readSwapUsage,
     readVmPageCounts,
+    type SwapUsage,
     sampleCpuBusyPercent,
+    type VmPageCounts,
 } from "@genesiscz/utils/macos/host-stats";
 import { parseProcessRows } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
@@ -129,17 +131,44 @@ export async function runShell(cmd: string[]): Promise<string | null> {
     }
 }
 
+/** Where the CPU, memory and swap figures come from: the kernel first, the commands for whatever it could not read. */
+export interface HostSources {
+    kernel: {
+        available: () => boolean;
+        cpuBusyPercent: () => Promise<number | null>;
+        vmPages: () => VmPageCounts | null;
+        memorySizeBytes: () => number | null;
+        memoryFreePercent: () => number | null;
+        swap: () => SwapUsage | null;
+    };
+    shell: (cmd: string[]) => Promise<string | null>;
+}
+
+const HOST_SOURCES: HostSources = {
+    kernel: {
+        available: hostStatsAvailable,
+        cpuBusyPercent: () => sampleCpuBusyPercent(),
+        vmPages: readVmPageCounts,
+        memorySizeBytes: readMemorySizeBytes,
+        memoryFreePercent: readMemoryFreePercent,
+        swap: readSwapUsage,
+    },
+    shell: runShell,
+};
+
 /**
  * Busy CPU percent. On macOS from the kernel's tick counters: the average since the previous pulse (the first pulse
  * of a process waits a second for its second reading, about half of what `top -l 1` took). `top -l 1 -n 0` cost
- * about 2.0 s of CPU per pulse and stays only for a machine where the kernel read is unavailable.
+ * about 2.0 s of CPU per pulse and runs only when the kernel read is unavailable or fails.
  */
-async function collectCpu(): Promise<number | null> {
-    if (hostStatsAvailable()) {
-        return sampleCpuBusyPercent();
+async function collectCpu(sources: HostSources): Promise<number | null> {
+    const busy = sources.kernel.available() ? await sources.kernel.cpuBusyPercent() : null;
+
+    if (busy !== null) {
+        return busy;
     }
 
-    const out = await runShell(["top", "-l", "1", "-n", "0"]);
+    const out = await sources.shell(["top", "-l", "1", "-n", "0"]);
 
     if (out === null) {
         return null;
@@ -148,22 +177,14 @@ async function collectCpu(): Promise<number | null> {
     return parseCpuIdlePct(out);
 }
 
-async function collectMem(): Promise<{ used: number | null; total: number | null; freePct: number | null }> {
-    if (hostStatsAvailable()) {
-        const pages = readVmPageCounts();
+type MemFigures = { used: number | null; total: number | null; freePct: number | null };
 
-        return {
-            used: pages === null ? null : (pages.active + pages.wired + pages.compressed) * pages.pageSize,
-            total: readMemorySizeBytes(),
-            freePct: readMemoryFreePercent(),
-        };
-    }
-
+async function memFromCommands(shell: HostSources["shell"]): Promise<MemFigures> {
     const [vmStat, pageSizeOut, memSizeOut, memoryPressure] = await Promise.all([
-        runShell(["vm_stat"]),
-        runShell(["sysctl", "-n", "hw.pagesize"]),
-        runShell(["sysctl", "-n", "hw.memsize"]),
-        runShell(["memory_pressure"]),
+        shell(["vm_stat"]),
+        shell(["sysctl", "-n", "hw.pagesize"]),
+        shell(["sysctl", "-n", "hw.memsize"]),
+        shell(["memory_pressure"]),
     ]);
 
     const total = memSizeOut === null ? null : Number.parseInt(memSizeOut.trim(), 10);
@@ -178,20 +199,56 @@ async function collectMem(): Promise<{ used: number | null; total: number | null
     return { used: usedBytes, total: total !== null && !Number.isNaN(total) ? total : null, freePct };
 }
 
-async function collectSwap(): Promise<{ used: number | null; total: number | null }> {
-    if (hostStatsAvailable()) {
-        const swap = readSwapUsage();
-        return { used: swap?.usedBytes ?? null, total: swap?.totalBytes ?? null };
+async function collectMem(sources: HostSources): Promise<MemFigures> {
+    if (!sources.kernel.available()) {
+        return memFromCommands(sources.shell);
     }
 
-    const out = await runShell(["sysctl", "vm.swapusage"]);
+    const pages = sources.kernel.vmPages();
+    const kernel: MemFigures = {
+        used: pages === null ? null : (pages.active + pages.wired + pages.compressed) * pages.pageSize,
+        total: sources.kernel.memorySizeBytes(),
+        freePct: sources.kernel.memoryFreePercent(),
+    };
+
+    if (kernel.used !== null && kernel.total !== null && kernel.freePct !== null) {
+        return kernel;
+    }
+
+    // Only the figures the kernel could not give come from the commands.
+    const commands = await memFromCommands(sources.shell);
+    return {
+        used: kernel.used ?? commands.used,
+        total: kernel.total ?? commands.total,
+        freePct: kernel.freePct ?? commands.freePct,
+    };
+}
+
+async function collectSwap(sources: HostSources): Promise<{ used: number | null; total: number | null }> {
+    const swap = sources.kernel.available() ? sources.kernel.swap() : null;
+
+    if (swap) {
+        return { used: swap.usedBytes, total: swap.totalBytes };
+    }
+
+    const out = await sources.shell(["sysctl", "vm.swapusage"]);
 
     if (out === null) {
         return { used: null, total: null };
     }
 
-    const swap = parseSwapUsage(out);
-    return { used: swap.usedBytes, total: swap.totalBytes };
+    const parsed = parseSwapUsage(out);
+    return { used: parsed.usedBytes, total: parsed.totalBytes };
+}
+
+/** CPU, memory and swap, each from the kernel when it answers and from the commands when it does not. */
+export async function collectHostMetrics(sources: HostSources = HOST_SOURCES): Promise<{
+    cpu: number | null;
+    mem: MemFigures;
+    swap: { used: number | null; total: number | null };
+}> {
+    const [cpu, mem, swap] = await Promise.all([collectCpu(sources), collectMem(sources), collectSwap(sources)]);
+    return { cpu, mem, swap };
 }
 
 async function collectBattery(): Promise<{ pct: number | null; state: string | null }> {
@@ -273,10 +330,8 @@ export async function collectTopProcesses(limit = 5): Promise<TopProcess[]> {
 }
 
 export async function collectPulse(): Promise<PulseSnapshot> {
-    const [cpu, mem, swap, battery, disk, wifi, topProcesses] = await Promise.all([
-        collectCpu(),
-        collectMem(),
-        collectSwap(),
+    const [{ cpu, mem, swap }, battery, disk, wifi, topProcesses] = await Promise.all([
+        collectHostMetrics(),
         collectBattery(),
         collectDisk(),
         collectWifi(),

@@ -2,6 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    collectHostMetrics,
+    type HostSources,
     parseBattery,
     parseCpuIdlePct,
     parseDfRoot,
@@ -247,5 +249,75 @@ describe.skipIf(process.platform === "darwin")("collectPulse off macOS", () => {
         expect(pulse.memTotalBytes === null || typeof pulse.memTotalBytes === "number").toBe(true);
         expect(Array.isArray(pulse.topProcesses)).toBe(true);
         expect(Number.isNaN(Date.parse(pulse.capturedAt))).toBe(false);
+    });
+});
+
+describe("collectHostMetrics", () => {
+    const shellOutputs: Record<string, string> = {
+        "top -l 1 -n 0": TOP_OUT,
+        vm_stat: VMSTAT_OUT,
+        "sysctl -n hw.pagesize": "16384\n",
+        "sysctl -n hw.memsize": "68719476736\n",
+        memory_pressure: "System-wide memory free percentage: 65%",
+        "sysctl vm.swapusage": "vm.swapusage: total = 2048.00M  used = 1024.00M  free = 1024.00M  (encrypted)",
+    };
+
+    function sources(kernelWorks: boolean): { sources: HostSources; ran: string[] } {
+        const ran: string[] = [];
+        return {
+            ran,
+            sources: {
+                kernel: {
+                    available: () => true,
+                    cpuBusyPercent: async () => (kernelWorks ? 12.5 : null),
+                    vmPages: () =>
+                        kernelWorks
+                            ? {
+                                  pageSize: 16384,
+                                  free: 0,
+                                  active: 1,
+                                  inactive: 0,
+                                  speculative: 0,
+                                  throttled: 0,
+                                  wired: 1,
+                                  purgeable: 0,
+                                  compressed: 1,
+                              }
+                            : null,
+                    memorySizeBytes: () => (kernelWorks ? 1000 : null),
+                    memoryFreePercent: () => (kernelWorks ? 40 : null),
+                    swap: () => (kernelWorks ? { totalBytes: 10, usedBytes: 5, freeBytes: 5, encrypted: true } : null),
+                },
+                shell: async (cmd) => {
+                    ran.push(cmd.join(" "));
+                    return shellOutputs[cmd.join(" ")] ?? null;
+                },
+            },
+        };
+    }
+
+    test("a loaded library whose reads fail falls back to the commands for each figure", async () => {
+        const { sources: failing } = sources(false);
+
+        const metrics = await collectHostMetrics(failing);
+
+        expect(metrics.cpu).toBe(83.3);
+        expect(metrics.mem).toEqual({
+            used: (2287697 + 781045 + 2818240) * 16384,
+            total: 68719476736,
+            freePct: 65,
+        });
+        expect(metrics.swap.used).toBe(1024 * 1024 * 1024);
+    });
+
+    test("a kernel that answers runs no command", async () => {
+        const { sources: working, ran } = sources(true);
+
+        const metrics = await collectHostMetrics(working);
+
+        expect(metrics.cpu).toBe(12.5);
+        expect(metrics.mem).toEqual({ used: 3 * 16384, total: 1000, freePct: 40 });
+        expect(metrics.swap).toEqual({ used: 5, total: 10 });
+        expect(ran).toEqual([]);
     });
 });
