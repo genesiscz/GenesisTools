@@ -30,7 +30,16 @@ export const WALK_ARMS = ["native", "clang", "tcc", "js", "walkSourceRoots"] as 
 
 /** The ways of doing each file job that `read-child.ts` can run; `read-primitives.ts` runs all of them. */
 export const READ_ARMS = {
-    head: ["stream", "slice", "promises", "sync", "ffi", "readFile"],
-    tail: ["sliceTwice", "slice", "sync", "ffi"],
+    head: ["stream", "slice", "promises", "sync", "ffi", "readFile", "readFirstLines", "readFirstLinesFfi"],
+    tail: [
+        "sliceTwice",
+        "slice",
+        "sync",
+        "ffi",
+        "readLastLines",
+        "readLastLinesFfi",
+        "readLastLinesParse",
+        "tailUsage",
+    ],
     stat: ["statSync", "lstatSync", "promises", "bunFile", "ffi"],
 } as const;

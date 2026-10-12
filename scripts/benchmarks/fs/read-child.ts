@@ -1,5 +1,9 @@
 #!/usr/bin/env bun
 import { FFIType } from "bun:ffi";
+import { closeSync, fstatSync, lstatSync, openSync, readSync, statSync } from "node:fs";
+import { open, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 /**
  * One sample for `read-primitives.ts`: one way of doing one file job over real session files, twice in this fresh
  * process (cold, then warm), printed as `{ coldCpuMs, warmCpuMs, check }`. `check` must agree between the arms of a
@@ -13,12 +17,10 @@ import { FFIType } from "bun:ffi";
  *
  *   bun scripts/benchmarks/fs/read-child.ts <job> <arm>
  */
-import { closeSync, fstatSync, lstatSync, openSync, readSync, statSync } from "node:fs";
-import { open, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { extractTailUsageUncached } from "@app/claude/lib/usage/session-rows";
 import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 import { fastWalk } from "@genesiscz/utils/fs/native/fast-walk";
+import { readFirstLines, readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { READ_ARMS } from "./walk-trees";
 
@@ -103,6 +105,10 @@ const statWords = new Uint32Array(statBuffer.buffer);
 
 async function head(path: string): Promise<number> {
     switch (arm) {
+        case "readFirstLines":
+            return readFirstLines(path, { maxBytes: BYTES }).lines.length;
+        case "readFirstLinesFfi":
+            return readFirstLines(path, { maxBytes: BYTES, method: "ffi" }).lines.length;
         case "stream": {
             const reader = Bun.file(path).stream().getReader();
             const chunk = await reader.read();
@@ -153,8 +159,32 @@ async function head(path: string): Promise<number> {
     }
 }
 
+/** What the tail cache saves: every line of the window parsed, as `parseTailLines` does at most. */
+function parseAll(lines: string[]): number {
+    let parsed = 0;
+
+    for (const line of lines) {
+        try {
+            SafeJSON.parse(line, { strict: true });
+            parsed++;
+        } catch {
+            // A cut or broken line is skipped, as the listing skips it.
+        }
+    }
+
+    return parsed;
+}
+
 async function tail(path: string): Promise<number> {
     switch (arm) {
+        case "readLastLines":
+            return readLastLines(path, { maxBytes: BYTES }).lines.length;
+        case "readLastLinesFfi":
+            return readLastLines(path, { maxBytes: BYTES, method: "ffi" }).lines.length;
+        case "tailUsage":
+            return (await extractTailUsageUncached(path)).usage.model ? 1 : 0;
+        case "readLastLinesParse":
+            return parseAll(readLastLines(path, { maxBytes: BYTES }).lines);
         case "sliceTwice": {
             const file = Bun.file(path);
             const size = file.size;
