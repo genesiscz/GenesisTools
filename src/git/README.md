@@ -263,6 +263,30 @@ Manage regex patterns that extract workitem IDs (e.g. `DEV-1234`, `FEAT-42`) fro
 | `--repo <path>` | Repo to scan for `--suggest` (default: cwd) |
 | _(no flags)_ | Interactive management |
 
+### `fsmonitor`
+
+git's file system monitor, on in the global config, with every worktree it ran in recorded so that turning it off
+cleans all of them.
+
+| Command | What it does |
+|---------|--------------|
+| `status [--json]` | The two global values, every running `git fsmonitor--daemon` with its worktree, memory and CPU, and every recorded worktree. Changes nothing. |
+| `record [--json]` | Adds every worktree a daemon watches to `~/.genesis-tools/git/fsmonitor.json`. The `git-fsmonitor-record` daemon task runs it every 10 minutes. |
+| `enable` | Saves the current global `core.fsmonitor` and `core.untrackedCache`, sets both to `true`, registers the record task, records the running daemons. Safe to run twice: the saved values are kept. |
+| `disable [--keep-cache]` | Puts the saved global values back first, then stops the daemon of every recorded or running worktree, removes the untracked cache from each index (unless `--keep-cache`, or the cache was on before), and removes the task. A worktree that fails stays on the list. |
+
+How it behaves, measured 2026-10-12 (git 2.55, medians of 9 interleaved runs, load average about 25):
+
+- One `git status` in five real repositories (3,065 to 12,213 tracked files): 22 to 279 ms of CPU with the default
+  settings, 6 to 15 ms with the monitor on. The output is the same byte for byte.
+- git starts one daemon per worktree on the first status there. Each uses about 8 MB of memory and close to no CPU
+  while nothing changes. A daemon exits within a second when its worktree folder is moved or deleted, so the
+  throwaway repositories that tests create do not leave daemons behind. `git worktree remove` works while a daemon
+  runs.
+- A daemon's working folder is the home folder. The tool finds its worktree from its open folder handles (it opens
+  the worktree folder first, then each folder above it); a main checkout's socket path is the fallback. A linked
+  worktree binds its socket by the bare name `fsmonitor--daemon.ipc`, which names nothing.
+
 ---
 
 ## Storage
