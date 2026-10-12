@@ -213,6 +213,11 @@ export function codexAgentModel(path: string): string | null {
 interface ScanEntry {
     /** File size when last read; a smaller file starts over. */
     size: number;
+    /**
+     * Inode when last read; another inode starts over. A rollout replaced by a larger file (written aside, renamed
+     * over) would otherwise keep the old file's count, since only a smaller file was treated as new.
+     */
+    ino?: number;
     /** Bytes already counted: the end of the last complete line read. */
     offset: number;
     calls: number;
@@ -308,17 +313,18 @@ function nodeOf(
     cache: ScanCache
 ): { node: AgentNode; changed: boolean } {
     let size = 0;
+    let ino: number | undefined;
 
     try {
-        size = statSync(record.filePath).size;
+        const status = statSync(record.filePath);
+        size = status.size;
+        ino = status.ino;
     } catch (error) {
         logger.debug({ error, path: record.filePath }, "[hub agents] codex agent file vanished");
     }
 
-    const known =
-        cache[record.filePath]?.size !== undefined && cache[record.filePath]!.size <= size
-            ? cache[record.filePath]
-            : undefined;
+    const saved = cache[record.filePath];
+    const known = saved && saved.ino === ino && saved.size <= size ? saved : undefined;
     const scanned = scanCalls(record.filePath, size, known);
     let model = known?.model ?? null;
     let modelFinal = known?.modelFinal ?? false;
@@ -330,6 +336,7 @@ function nodeOf(
 
     const next: ScanEntry = {
         size,
+        ino,
         offset: scanned.offset,
         calls: scanned.calls,
         model,
@@ -338,7 +345,11 @@ function nodeOf(
     };
     const previous = cache[record.filePath];
     const changed =
-        !previous || previous.size !== size || previous.model !== model || previous.modelFinal !== modelFinal;
+        !previous ||
+        previous.size !== size ||
+        previous.ino !== ino ||
+        previous.model !== model ||
+        previous.modelFinal !== modelFinal;
 
     cache[record.filePath] = next;
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -289,6 +289,32 @@ describe("attachCodexAgents", () => {
 
         expect(a?.toolCalls).toBe(3);
         expect(again.get(ROOT)?.[0]?.id).toBe(CHILD_B);
+    });
+
+    test("a rollout replaced by a larger file is counted again from its start, not from the old file's count", () => {
+        const { records, cache } = family();
+        const options = { now: NOW, cachePath: cache, model: null };
+        const path = records[0]?.filePath ?? "";
+
+        expect(
+            (attachCodexAgents(records, options).get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.toolCalls
+        ).toBe(2);
+
+        const replacement = `${path}.new`;
+        writeFileSync(
+            replacement,
+            meta({ id: CHILD_A, parent: ROOT, depth: 1, nickname: "Cicero", role: "worker", path: "/root/a" }) +
+                turnContext("gpt-6.1-sol") +
+                turn("task_started") +
+                call("function_call") +
+                `{"padding":"${"x".repeat(2000)}"}\n` +
+                turn("task_complete")
+        );
+        renameSync(replacement, path);
+
+        const again = attachCodexAgents(records, options);
+
+        expect((again.get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.toolCalls).toBe(1);
     });
 
     test("read-only codex roster reads no memo writes while intentional refreshes still publish them", () => {
