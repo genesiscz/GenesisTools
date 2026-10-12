@@ -74,12 +74,12 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             });
             if (result.replied === 0 && result.failed.length > 0) {
                 throw new Error(
-                    `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
+                    `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.errors.join("; ")}`
                 );
             }
             out.println(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
-                out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+                out.error(chalk.red(`Failed: ${result.errors.join("; ")}`));
             }
         } else if (resolveThreadOpt) {
             const result = await batchResolveThreads(threadIds, {
@@ -87,12 +87,12 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             });
             if (result.resolved === 0 && result.failed.length > 0) {
                 throw new Error(
-                    `Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
+                    `Failed to resolve any of ${result.failed.length} thread(s): ${result.errors.join("; ")}`
                 );
             }
             out.println(chalk.green(`Resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
-                out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+                out.error(chalk.red(`Failed: ${result.errors.join("; ")}`));
             }
         } else {
             const result = await batchReply(threadIds, options.respond ?? "", {
@@ -100,12 +100,12 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             });
             if (result.replied === 0 && result.failed.length > 0) {
                 throw new Error(
-                    `Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
+                    `Failed to reply to any of ${result.failed.length} thread(s): ${result.errors.join("; ")}`
                 );
             }
             out.println(chalk.green(`Replied to ${result.replied} thread(s)`));
             if (result.failed.length) {
-                out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+                out.error(chalk.red(`Failed: ${result.errors.join("; ")}`));
             }
         }
 
@@ -305,11 +305,11 @@ async function respondCommand(
         });
 
         if (result.failed.length) {
-            out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+            out.error(chalk.red(`Failed: ${result.errors.join("; ")}`));
         }
 
         if (result.replied === 0 && result.failed.length > 0) {
-            throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
+            throw new Error(`All thread mutations failed: ${result.errors.join("; ")}`);
         }
 
         out.println(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
@@ -319,11 +319,11 @@ async function respondCommand(
         });
 
         if (result.failed.length) {
-            out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+            out.error(chalk.red(`Failed: ${result.errors.join("; ")}`));
         }
 
         if (result.replied === 0 && result.failed.length > 0) {
-            throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
+            throw new Error(`All thread mutations failed: ${result.errors.join("; ")}`);
         }
 
         out.println(chalk.green(`Replied to ${result.replied} thread(s)`));
@@ -365,7 +365,7 @@ async function resolveCommand(refs: string, options: { session?: string }): Prom
 
     out.println(chalk.green(`Resolved ${result.resolved} thread(s)`));
     if (result.failed.length) {
-        out.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+        out.error(chalk.red(`Failed: ${result.errors.join("; ")}`));
     }
 }
 

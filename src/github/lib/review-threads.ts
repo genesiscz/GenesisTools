@@ -1,7 +1,7 @@
 // Shared review thread library - GraphQL queries, fetching, parsing, mutations
 // Extracted from src/github-pr/index.ts, adapted to use shared octokit
 
-import { getGhCliToken, getOctokit } from "@genesiscz/utils/github/octokit";
+import { getOctokit, getOctokitForWrite } from "@genesiscz/utils/github/octokit";
 import type {
     ParsedReviewThread,
     PRLevelComment,
@@ -9,7 +9,6 @@ import type {
     ReviewThreadComment,
     ReviewThreadStats,
 } from "@genesiscz/utils/github/types";
-import { Octokit } from "octokit";
 
 // =============================================================================
 // GraphQL Queries
@@ -554,10 +553,12 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
 // =============================================================================
 
 /**
- * Reply to a review thread
+ * Reply to a review thread. A write, so it goes through the gh login first: the env token is often a
+ * fine-grained PAT that cannot see the repository (a transferred repo answers NOT_FOUND), and
+ * withGhFallback retries reads only.
  */
 export async function replyToThread(pullRequestReviewThreadId: string, body: string): Promise<string> {
-    const octokit = getOctokit();
+    const octokit = getOctokitForWrite();
 
     const query = `
     mutation($pullRequestReviewThreadId: ID!, $body: String!) {
@@ -590,43 +591,46 @@ const RESOLVE_THREAD_MUTATION = `
 `;
 
 /**
- * Mark a review thread as resolved.
- * Prefers the gh CLI token (classic OAuth with repo scope) since fine-grained
- * PATs don't support the resolveReviewThread GraphQL mutation.
- * Falls back to the primary token if gh CLI is unavailable.
+ * Mark a review thread as resolved. Goes through the gh login first, like every write here:
+ * fine-grained PATs don't support the resolveReviewThread GraphQL mutation.
  */
 export async function markThreadResolved(threadId: string): Promise<boolean> {
-    const ghToken = getGhCliToken();
-    const octokit = ghToken ? new Octokit({ auth: ghToken }) : getOctokit();
-    await octokit.graphql(RESOLVE_THREAD_MUTATION, { threadId });
+    await getOctokitForWrite().graphql(RESOLVE_THREAD_MUTATION, { threadId });
     return true;
+}
+
+/** `<threadId> <step>: <GitHub's message>`, so a failure says why, not only which thread. */
+function failureLine(threadId: string, step: "reply" | "resolve", error: unknown): string {
+    return `${threadId} ${step}: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 /**
  * Resolve multiple review threads with progress reporting.
- * Continues on individual failures, collecting failed IDs.
+ * Continues on individual failures, collecting failed IDs and their reasons in `errors`.
  * Progress reports processed count (success + failure), not just successes.
  */
 export async function batchResolveThreads(
     threadIds: string[],
     options?: { onProgress?: (done: number, total: number) => void }
-): Promise<{ resolved: number; failed: string[] }> {
+): Promise<{ resolved: number; failed: string[]; errors: string[] }> {
     let resolved = 0;
     let processed = 0;
     const failed: string[] = [];
+    const errors: string[] = [];
 
     for (const threadId of threadIds) {
         try {
             await markThreadResolved(threadId);
             resolved++;
-        } catch {
+        } catch (error) {
             failed.push(threadId);
+            errors.push(failureLine(threadId, "resolve", error));
         }
         processed++;
         options?.onProgress?.(processed, threadIds.length);
     }
 
-    return { resolved, failed };
+    return { resolved, failed, errors };
 }
 
 /**
@@ -638,11 +642,12 @@ export async function batchReplyAndResolve(
     threadIds: string[],
     message: string,
     options?: { onProgress?: (done: number, total: number) => void }
-): Promise<{ replied: number; resolved: number; failed: string[] }> {
+): Promise<{ replied: number; resolved: number; failed: string[]; errors: string[] }> {
     let replied = 0;
     let resolved = 0;
     let processed = 0;
     const failed: string[] = [];
+    const errors: string[] = [];
 
     for (const threadId of threadIds) {
         try {
@@ -651,17 +656,19 @@ export async function batchReplyAndResolve(
             try {
                 await markThreadResolved(threadId);
                 resolved++;
-            } catch {
+            } catch (error) {
                 failed.push(threadId);
+                errors.push(failureLine(threadId, "resolve", error));
             }
-        } catch {
+        } catch (error) {
             failed.push(threadId);
+            errors.push(failureLine(threadId, "reply", error));
         }
         processed++;
         options?.onProgress?.(processed, threadIds.length);
     }
 
-    return { replied, resolved, failed };
+    return { replied, resolved, failed, errors };
 }
 
 /**
@@ -672,23 +679,25 @@ export async function batchReply(
     threadIds: string[],
     message: string,
     options?: { onProgress?: (done: number, total: number) => void }
-): Promise<{ replied: number; failed: string[] }> {
+): Promise<{ replied: number; failed: string[]; errors: string[] }> {
     let replied = 0;
     let processed = 0;
     const failed: string[] = [];
+    const errors: string[] = [];
 
     for (const threadId of threadIds) {
         try {
             await replyToThread(threadId, message);
             replied++;
-        } catch {
+        } catch (error) {
             failed.push(threadId);
+            errors.push(failureLine(threadId, "reply", error));
         }
         processed++;
         options?.onProgress?.(processed, threadIds.length);
     }
 
-    return { replied, failed };
+    return { replied, failed, errors };
 }
 
 // =============================================================================
