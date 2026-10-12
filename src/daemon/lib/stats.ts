@@ -272,8 +272,21 @@ function isFailure(status: RunStatus): boolean {
 }
 
 /** The last stderr lines found in the final `STDERR_SCAN_BYTES` of a run log. */
-function readStderrTail(file: string): string[] {
-    const fd = openSync(file, "r");
+export function readStderrTail(file: string): string[] {
+    let fd: number;
+
+    try {
+        fd = openSync(file, "r");
+    } catch (err) {
+        // The daemon prunes run logs on its own schedule, so a log listed a moment ago can be gone now. A missing tail
+        // must not fail the whole report (the `parseLogFile` this replaced returned nothing for a missing file).
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            logger.debug({ file }, "[daemon-stats] run log gone before its stderr read");
+            return [];
+        }
+
+        throw err;
+    }
 
     try {
         const size = fstatSync(fd).size;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
-import { collectDaemonStats, readRunOutput, resolveWindow, summarizeHealthLines } from "./stats";
+import { collectDaemonStats, readRunOutput, readStderrTail, resolveWindow, summarizeHealthLines } from "./stats";
 import type { DaemonTask } from "./types";
 
 const NOW = new Date("2026-10-12T00:00:00.000Z");
@@ -290,6 +290,12 @@ describe("readRunOutput", () => {
             ["stderr", "boom 2"],
         ]);
         expect(readRunOutput({ logsBaseDir: base, runId: "nope" })).toBeNull();
+    });
+});
+
+describe("readStderrTail", () => {
+    test("a run log the daemon pruned after it was listed reads as no stderr, not a failed report", () => {
+        expect(readStderrTail(join(base, "alpha", "pruned-a moment ago.jsonl"))).toEqual([]);
     });
 });
 
