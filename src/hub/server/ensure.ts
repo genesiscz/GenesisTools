@@ -1,14 +1,16 @@
-import { stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { askHubServer, type HubServerProbe } from "./client";
 
 /** A server that dies at start must not be restarted every minute: one start per five minutes at most. */
 const START_EVERY_MS = 5 * 60_000;
 
-export type EnsureHubServerResult = "answers" | "busy" | "started" | "started recently";
+export type EnsureHubServerResult = "answers" | "busy" | "started" | "started recently" | "start failed";
 
 /**
  * Starts the resident hub server (`tools hub serve`, detached, plain TypeScript) when nothing listens on its socket,
@@ -28,26 +30,37 @@ export async function ensureHubServer({
     stampPath?: string;
     now?: number;
 } = {}): Promise<EnsureHubServerResult> {
-    const { state } = await probe();
+    try {
+        const { state } = await probe();
 
-    if (state !== "absent") {
-        return state;
-    }
-
-    const lastStart = await stat(stampPath).then(
-        (status) => status.mtimeMs,
-        (err: unknown) => {
-            logger.debug({ err, stampPath }, "[hub-server] no earlier start recorded");
-            return 0;
+        if (state !== "absent") {
+            return state;
         }
-    );
 
-    if (now - lastStart < START_EVERY_MS) {
-        return "started recently";
+        await mkdir(dirname(stampPath), { recursive: true });
+
+        // The check and the stamp under one lock: two callers that find no server at once start it once.
+        return await withFileLock(`${stampPath}.lock`, async (): Promise<EnsureHubServerResult> => {
+            const lastStart = await stat(stampPath).then(
+                (status) => status.mtimeMs,
+                (err: unknown) => {
+                    logger.debug({ err, stampPath }, "[hub-server] no earlier start recorded");
+                    return 0;
+                }
+            );
+
+            if (now - lastStart < START_EVERY_MS) {
+                return "started recently";
+            }
+
+            await Bun.write(stampPath, `${now}\n`);
+            const pid = start();
+            logger.info({ pid }, `[hub-server] nothing answered on the socket; started ${toolCommand("hub serve")}`);
+            return "started";
+        });
+    } catch (err) {
+        // The server is optional: a caller that asked builds its own answer, so a failed start must never fail it.
+        logger.warn({ err, stampPath }, "[hub-server] could not start the server");
+        return "start failed";
     }
-
-    await Bun.write(stampPath, `${now}\n`);
-    const pid = start();
-    logger.info({ pid }, `[hub-server] nothing answered on the socket; started ${toolCommand("hub serve")}`);
-    return "started";
 }

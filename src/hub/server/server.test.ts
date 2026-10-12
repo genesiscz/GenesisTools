@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -415,5 +415,38 @@ describe("askHubServer and ensureHubServer", () => {
             "started"
         );
         expect(starts).toHaveLength(2);
+    });
+
+    it("two callers that find no server at once start it once", async () => {
+        const stampPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "started-at");
+        const starts: number[] = [];
+        const absent = async () => ({ state: "absent" as const });
+        const startOne = () => {
+            starts.push(Date.now());
+            return 4242;
+        };
+
+        const results = await Promise.all([
+            ensureHubServer({ probe: absent, start: startOne, stampPath }),
+            ensureHubServer({ probe: absent, start: startOne, stampPath }),
+        ]);
+
+        expect(starts).toHaveLength(1);
+        expect(results.sort()).toEqual(["started", "started recently"]);
+    });
+
+    it("a start that fails is reported, never thrown, so the caller still builds its own answer", async () => {
+        const absent = async () => ({ state: "absent" as const });
+        const stampPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "started-at");
+        const failing = () => {
+            throw new Error("spawn failed");
+        };
+        const blocker = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "a-file");
+        writeFileSync(blocker, "not a folder");
+
+        expect(await ensureHubServer({ probe: absent, start: failing, stampPath })).toBe("start failed");
+        expect(
+            await ensureHubServer({ probe: absent, start: () => 4242, stampPath: join(blocker, "started-at") })
+        ).toBe("start failed");
     });
 });
