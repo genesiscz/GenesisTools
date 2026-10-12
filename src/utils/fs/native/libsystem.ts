@@ -32,6 +32,22 @@ export const libSystem = defineSystemLibrary({
             args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64],
             returns: FFIType.i32,
         },
+        /** `int sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen)`. */
+        sysctl: {
+            args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64],
+            returns: FFIType.i32,
+        },
+        /** `int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize)` (libproc). */
+        proc_pidinfo: {
+            args: [FFIType.i32, FFIType.i32, FFIType.u64, FFIType.ptr, FFIType.i32],
+            returns: FFIType.i32,
+        },
+        /** `int proc_pidpath(int pid, void *buffer, uint32_t buffersize)` (libproc). */
+        proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+        /** `kern_return_t mach_timebase_info(mach_timebase_info_t)`: numer and denom of mach time units. */
+        mach_timebase_info: { args: [FFIType.ptr], returns: FFIType.i32 },
+        /** `char *devname(dev_t, mode_t)`: the `/dev` name of a device number, from a static buffer. */
+        devname: { args: [FFIType.i32, FFIType.u16], returns: FFIType.ptr },
     },
 });
 

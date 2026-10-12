@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import {
     type AncestryFrame,
     agentFromAncestry,
     type CallerContext,
+    captureAncestry,
     describeAncestry,
     parsePidCommands,
     parsePidParents,
@@ -115,6 +116,61 @@ describe("process ancestry", () => {
             "zsh ← claude[64911] ← zsh ← src/claude/index.ts run work ← tools cc run work ← cmux"
         );
         expect(describeAncestry([])).toBe("");
+    });
+});
+
+describe.skipIf(process.platform !== "darwin")("captureAncestry on live processes", () => {
+    test("walks a child of ours up through this process, each frame carrying what ps prints for it", async () => {
+        const child = Bun.spawn(["/bin/sh", "-c", "sleep 30; : 'tab\there'", "zero"], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+
+        try {
+            const frames = await captureAncestry(child.pid);
+            const pids = frames.map((frame) => frame.pid);
+            const printed = parsePidCommands(
+                Bun.spawnSync(["ps", "-p", pids.join(","), "-o", "pid=,command="], {
+                    env: process.env,
+                }).stdout.toString()
+            );
+
+            expect(pids.slice(0, 3)).toEqual([child.pid, process.pid, process.ppid]);
+            expect(frames[0]?.command).toBe("/bin/sh -c sleep 30; : 'tab\\011here' zero");
+            expect(pids).not.toContain(1);
+            expect(frames.map((frame) => frame.command)).toEqual(pids.map((pid) => printed.get(pid) ?? ""));
+        } finally {
+            child.kill();
+            await child.exited;
+        }
+    });
+
+    test("walks the chain from the kernel: no ps table, at most one ps for frames of other users", async () => {
+        const spawn = spyOn(Bun, "spawn");
+
+        try {
+            expect((await captureAncestry(process.pid)).length).toBeGreaterThan(1);
+            const psCalls = spawn.mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === "ps");
+
+            expect(psCalls.some((call) => Array.isArray(call[0]) && call[0].includes("-axo"))).toBe(false);
+            expect(psCalls.length).toBeLessThanOrEqual(1);
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
+    test("a pid that is already gone has no ancestry at all", async () => {
+        const done = Bun.spawn(["/usr/bin/true"], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+        await done.exited;
+
+        expect(await captureAncestry(done.pid)).toEqual([]);
     });
 });
 

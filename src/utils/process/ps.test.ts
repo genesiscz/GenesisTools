@@ -4,6 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import {
+    commandOfRow,
+    formatPsCpuTime,
+    listProcessTable,
+    processTableAvailable,
+    readProcessArgs,
+    readProcessPath,
+    readProcessRow,
+    readProcessUsage,
+    readPsCommand,
+} from "@genesiscz/utils/process/libproc-table";
+import {
     batchCwd,
     batchCwdViaLsof,
     capture,
@@ -257,6 +268,104 @@ describe.skipIf(process.platform !== "darwin")("batchCwd on live processes", () 
     test("an empty list answers an empty map, on both paths", () => {
         expect(batchCwd([]).size).toBe(0);
         expect(batchCwdViaLsof([]).size).toBe(0);
+    });
+});
+
+describe("formatPsCpuTime", () => {
+    test("prints minutes past the hour and rounds to the nearest hundredth, as ps -o time= does", () => {
+        expect(formatPsCpuTime(0)).toBe("0:00.00");
+        expect(formatPsCpuTime(4_796_430)).toBe("79:56.43");
+        expect(formatPsCpuTime(64.999)).toBe("0:00.06");
+        expect(formatPsCpuTime(65)).toBe("0:00.07");
+        expect(formatPsCpuTime(59_999)).toBe("1:00.00");
+    });
+});
+
+describe.skipIf(process.platform !== "darwin")("libproc process table against ps", () => {
+    test("rows carry the parent, uid, terminal, start second and command that ps prints", async () => {
+        const fixture = await startLiveFixture();
+
+        try {
+            const pids = [process.pid, fixture.sleeper.pid, fixture.zombiePid, fixture.zombieHolder.pid, 1];
+            const printed = new Map<number, string[]>();
+            const psOut = Bun.spawnSync(["ps", "-o", "pid=,ppid=,uid=,tty=,command=", "-p", pids.join(",")], {
+                env: process.env,
+            });
+
+            for (const line of psOut.stdout.toString().split("\n")) {
+                const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+
+                if (match) {
+                    printed.set(Number(match[1]), [match[2], match[3], match[4], match[5].trim()]);
+                }
+            }
+
+            const table = listProcessTable() ?? [];
+            const euid = process.geteuid?.();
+
+            for (const pid of pids) {
+                const row = table.find((candidate) => candidate.pid === pid);
+                const expected = printed.get(pid);
+
+                expect(row).toBeDefined();
+                expect([String(row?.ppid), String(row?.uid), row?.tty ?? "??"]).toEqual(expected?.slice(0, 3) ?? []);
+
+                // Another user's argv only setuid ps can read; for those the table names the executable instead.
+                if (row && row.uid === euid) {
+                    expect(commandOfRow(row)).toBe(expected?.[3] ?? "no ps row");
+                }
+            }
+
+            expect(table.find((row) => row.pid === fixture.zombiePid)?.zombie).toBe(true);
+            expect(table.some((row) => row.pid === fixture.exitedPid)).toBe(false);
+            expect(readProcessRow(fixture.exitedPid)).toBeNull();
+            expect(Math.abs((readProcessRow(fixture.sleeper.pid)?.startMs ?? 0) - Date.now())).toBeLessThan(10_000);
+        } finally {
+            await stopLiveFixture(fixture);
+        }
+    });
+
+    test("argv and environment come back raw for our own process, and not at all for root's or a zombie", async () => {
+        const fixture = await startLiveFixture();
+        const marker = `ps-test-${crypto.randomUUID()}`;
+        const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)", "a\tb", ""], {
+            env: { ...process.env, LIBPROC_TABLE_MARKER: marker },
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+
+        try {
+            const args = readProcessArgs(child.pid, { env: true });
+
+            expect(args?.argv).toEqual([process.execPath, "-e", "setTimeout(() => {}, 30000)", "a\tb", ""]);
+            expect(args?.env).toContain(`LIBPROC_TABLE_MARKER=${marker}`);
+            expect(readProcessArgs(child.pid)?.env).toEqual([]);
+            expect(readPsCommand(child.pid)).toBe(`${process.execPath} -e setTimeout(() => {}, 30000) a\\011b`);
+            expect(readPsCommand(child.pid, { env: true })).toContain(` LIBPROC_TABLE_MARKER=${marker}`);
+            expect(readProcessArgs(1)).toBeNull();
+            expect(readProcessArgs(fixture.zombiePid)).toBeNull();
+            expect(readProcessPath(1)).toBe("/sbin/launchd");
+            expect(readProcessUsage(1)).toBeNull();
+            expect(readProcessUsage(process.pid)?.rssBytes ?? 0).toBeGreaterThan(0);
+            expect(readProcessUsage(process.pid)?.cpuTimeMs ?? 0).toBeGreaterThan(0);
+            expect(readProcessRow(1)?.uid).toBe(0);
+        } finally {
+            child.kill();
+            await child.exited;
+            await stopLiveFixture(fixture);
+        }
+    });
+});
+
+describe.skipIf(process.platform === "darwin")("libproc process table off macOS", () => {
+    test("answers null everywhere, so every caller keeps ps", () => {
+        expect(processTableAvailable()).toBe(false);
+        expect(listProcessTable()).toBeNull();
+        expect(readProcessRow(process.pid)).toBeNull();
+        expect(readProcessArgs(process.pid)).toBeNull();
+        expect(readPsCommand(process.pid)).toBeNull();
+        expect(readProcessUsage(process.pid)).toBeNull();
     });
 });
 

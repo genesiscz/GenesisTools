@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
     aliasesForSession,
     describeMatch,
@@ -17,6 +17,7 @@ import {
 } from "@app/claude/lib/cmux/resolve";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import {
+    findAllTmuxHosts,
     findTmuxHosts,
     type HostProcess,
     sessionProcessPids,
@@ -864,6 +865,76 @@ describe("findTmuxHosts", () => {
 
         expect(sockets).toEqual([{ flag: "-L", value: "agents" }]);
         expect(hosts[0]?.socket).toEqual({ flag: "-L", value: "agents" });
+    });
+});
+
+describe.skipIf(process.platform !== "darwin")("findAllTmuxHosts on the live process table", () => {
+    test("finds a session whose process runs under a process named tmux, through the default process listing", async () => {
+        // bash forks `claude` (a renamed sleep), prints its pid, then becomes `tmux`: the claude's parent.
+        const server = Bun.spawn(
+            ["/bin/bash", "-c", "(exec -a claude /bin/sleep 30) & echo $!; exec -a tmux /bin/sleep 30"],
+            { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" }
+        );
+        const { value } = await server.stdout.getReader().read();
+        const claudePid = Number(new TextDecoder().decode(value).trim());
+        const sessionId = "0c0ffee0-0000-4000-8000-00000000c1a5";
+
+        try {
+            // bash execs the server after printing; wait until the parent's command line is `tmux`.
+            const deadline = Date.now() + 5_000;
+
+            while (
+                !Bun.spawnSync(["ps", "-o", "command=", "-p", String(server.pid)], { env: process.env })
+                    .stdout.toString()
+                    .startsWith("tmux")
+            ) {
+                if (Date.now() > deadline) {
+                    throw new Error("the fake tmux server never exec'd");
+                }
+
+                await Bun.sleep(20);
+            }
+
+            const spawn = spyOn(Bun, "spawn");
+            let hosts = new Map<string, TmuxHost[]>();
+            let spawned = -1;
+
+            try {
+                hosts = await findAllTmuxHosts({
+                    readRegistry: () => new Map([[claudePid, sessionId]]),
+                    listPanes: async () => ({
+                        ok: true,
+                        items: [
+                            {
+                                pane: "%9",
+                                session: "probe",
+                                tty: "/dev/ttys999",
+                                sessionCreatedMs: 0,
+                                visible: true,
+                                panePid: claudePid,
+                            },
+                        ],
+                    }),
+                    listClients: async () => ({
+                        ok: true,
+                        items: [{ tty: "/dev/ttys998", session: "probe", pid: 1 }],
+                    }),
+                });
+                spawned = spawn.mock.calls.length;
+            } finally {
+                spawn.mockRestore();
+            }
+
+            expect(Object.fromEntries(hosts)).toEqual({
+                [sessionId]: [{ session: "probe", pane: "%9", visible: true, clientTtys: ["/dev/ttys998"] }],
+            });
+            // The process table came from the kernel, not from a `ps` child.
+            expect(spawned).toBe(0);
+        } finally {
+            process.kill(claudePid);
+            server.kill();
+            await server.exited;
+        }
     });
 });
 

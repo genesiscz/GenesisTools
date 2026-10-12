@@ -9,6 +9,7 @@
  */
 import { FFIType } from "bun:ffi";
 import { statfsSync } from "node:fs";
+import { classifyClaudeArgs } from "@app/claude/lib/active-sessions";
 import {
     parseCpuIdlePct,
     parseDfRoot,
@@ -17,7 +18,10 @@ import {
     runShell,
 } from "@app/dev-dashboard/lib/system/collector";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
+import { captureAncestry, parsePidCommands, parsePidParents, walkParents } from "@app/say/lib/caller";
+import { listActiveAgentProcesses, listActiveAgentProcessesViaPs } from "@genesiscz/utils/ai/active-processes";
 import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
+import { listHostProcesses } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     readMemoryFreePercent,
@@ -26,8 +30,9 @@ import {
     readVmPageCounts,
     sampleCpuBusyPercent,
 } from "@genesiscz/utils/macos/host-stats";
-import { batchCwd, batchCwdViaLsof } from "@genesiscz/utils/process/ps";
-import { PROCESS_ARMS, type ProcessJob } from "./process-arms";
+import { batchCwd, batchCwdViaLsof, listPsTable } from "@genesiscz/utils/process/ps";
+import { processStartMs, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { IDENTITY_PIDS, PROCESS_ARMS, type ProcessJob } from "./process-arms";
 
 const [job, arm, pidList = ""] = process.argv.slice(2) as [ProcessJob, string, string?];
 const arms: readonly string[] | undefined = PROCESS_ARMS[job];
@@ -117,6 +122,27 @@ async function pulseViaHost(): Promise<number> {
     ]);
 }
 
+/** What `captureAncestry` ran before the kernel walk: the pid→ppid table, then the chain's commands. */
+async function ancestryViaPs(startPid: number): Promise<number> {
+    const parents = parsePidParents(Bun.spawnSync(["ps", "-axo", "pid=,ppid="]).stdout.toString());
+    const chain = walkParents(parents, startPid);
+    const commands = parsePidCommands(
+        Bun.spawnSync(["ps", "-p", chain.join(","), "-o", "pid=,command="]).stdout.toString()
+    );
+    return chain.filter((pid) => commands.has(pid)).length;
+}
+
+/** What `readProcessCommand` and `processStartMs` ran per pid before the kernel read: `ps -p` twice. */
+function identityViaPs(pid: number): number {
+    const command = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="])
+        .stdout.toString()
+        .trim();
+    const etime = Bun.spawnSync(["ps", "-p", String(pid), "-o", "etime="])
+        .stdout.toString()
+        .trim();
+    return command.length > 0 && etime.length > 0 ? 1 : 0;
+}
+
 async function runOnce(): Promise<number> {
     if (job === "cwd") {
         return (arm === "lsof" ? batchCwdViaLsof(pids) : batchCwd(pids)).size;
@@ -124,6 +150,33 @@ async function runOnce(): Promise<number> {
 
     if (job === "pulse") {
         return arm === "spawn" ? pulseViaSpawn() : pulseViaHost();
+    }
+
+    if (job === "table") {
+        return (arm === "ps" ? await listPsTable() : await listHostProcesses()).length;
+    }
+
+    if (job === "who") {
+        const scan = { alias: "claude" as const, classify: classifyClaudeArgs };
+        return (arm === "ps" ? await listActiveAgentProcessesViaPs(scan) : await listActiveAgentProcesses(scan)).length;
+    }
+
+    if (job === "ancestry") {
+        return arm === "ps" ? ancestryViaPs(process.pid) : (await captureAncestry(process.pid)).length;
+    }
+
+    if (job === "identity") {
+        const checked = pids.slice(0, IDENTITY_PIDS);
+        return checked.reduce(
+            (sum, pid) =>
+                sum +
+                (arm === "ps"
+                    ? identityViaPs(pid)
+                    : readProcessCommand(pid) !== null && processStartMs(pid) !== null
+                      ? 1
+                      : 0),
+            0
+        );
     }
 
     throw new Error(`no job ${job}`);

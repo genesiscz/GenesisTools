@@ -2,6 +2,12 @@ import { basename } from "node:path";
 import { resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    type ProcessTableRow,
+    processTableAvailable,
+    readProcessRow,
+    readPsCommand,
+} from "@genesiscz/utils/process/libproc-table";
 
 const { log } = logger.scoped("say:caller");
 
@@ -126,12 +132,78 @@ export function parsePidCommands(stdout: string): Map<number, string> {
 }
 
 /**
- * The parent chain of `startPid`, nearest first. Two `ps` calls: the pid→ppid
- * table is tiny, and the full argv is then fetched for the chain only.
+ * The chain from the kernel: each parent from `sysctl(KERN_PROC_PID)` (any user) and each command as `ps -o
+ * command=` prints it (this user's processes). A frame of another user (`login`, root's) is the one thing only
+ * setuid `ps` can read, so those few pids still go to ONE `ps -p`. Null when the kernel read is unavailable.
+ */
+async function ancestryFromKernel(startPid: number): Promise<AncestryFrame[] | null> {
+    if (!processTableAvailable()) {
+        return null;
+    }
+
+    const rows = new Map<number, ProcessTableRow>();
+    const parents = new Map<number, number>();
+    let pid = startPid;
+
+    while (pid > 1 && rows.size < MAX_ANCESTRY_DEPTH && !rows.has(pid)) {
+        const row = readProcessRow(pid);
+
+        if (!row) {
+            break;
+        }
+
+        rows.set(pid, row);
+        parents.set(pid, row.ppid);
+        pid = row.ppid;
+    }
+
+    // `ps -p` of a pid that is gone exits 1, which made the old path answer no chain at all.
+    if (!rows.has(startPid)) {
+        return [];
+    }
+
+    const chain = walkParents(parents, startPid);
+    const commands = new Map<number, string>();
+    const unreadable: number[] = [];
+
+    for (const framePid of chain) {
+        const command = rows.get(framePid)?.zombie ? "<defunct>" : readPsCommand(framePid);
+
+        if (command === null) {
+            unreadable.push(framePid);
+        } else {
+            commands.set(framePid, command.slice(0, MAX_COMMAND_CHARS));
+        }
+    }
+
+    if (unreadable.length > 0) {
+        try {
+            for (const [framePid, command] of parsePidCommands(
+                await runPs(["-p", unreadable.join(","), "-o", "pid=,command="])
+            )) {
+                commands.set(framePid, command);
+            }
+        } catch (err) {
+            log.debug({ err, unreadable }, "ps could not name the frames the kernel withheld; they stay blank");
+        }
+    }
+
+    return chain.map((framePid) => ({ pid: framePid, command: commands.get(framePid) ?? "" }));
+}
+
+/**
+ * The parent chain of `startPid`, nearest first, from the kernel (see {@link ancestryFromKernel}). Where that read
+ * is unavailable, two `ps` calls: the pid→ppid table is tiny, and the full argv is then fetched for the chain only.
  * Any failure logs and returns an empty chain, so speech is never blocked.
  */
 export async function captureAncestry(startPid: number): Promise<AncestryFrame[]> {
     try {
+        const fromKernel = await ancestryFromKernel(startPid);
+
+        if (fromKernel !== null) {
+            return fromKernel;
+        }
+
         const parents = parsePidParents(await runPs(["-axo", "pid=,ppid="]));
         const chain = walkParents(parents, startPid);
 
@@ -230,7 +302,7 @@ export function describeAncestry(frames: AncestryFrame[]): string {
     return labels.join(" ← ");
 }
 
-/** Everything about the process that ran `tools say`. One `ps` round-trip; never throws. */
+/** Everything about the process that ran `tools say`. Kernel reads, `ps` only for other users' frames; never throws. */
 export async function captureCallerContext(): Promise<CallerContext> {
     const processEnv = env.getProcessEnv();
     const host = resolveAgentHost(processEnv);

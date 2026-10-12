@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { processTableAvailable, readProcessRow, readPsCommand } from "@genesiscz/utils/process/libproc-table";
 
 /**
  * PID-identity verification for pid files and lock records.
@@ -28,6 +29,35 @@ import { logger } from "@genesiscz/utils/logger";
 let ownCommand: string | null = null;
 let ownStartMs: number | null = null;
 
+/**
+ * The command line from the kernel, byte-identical to `ps -o command=` (identity records store that string, so it
+ * must be). null when the pid is gone; undefined when the kernel cannot say (no libproc, or another user's process,
+ * whose argv only setuid `ps` can read), and `ps` is asked instead. Saves a `ps` spawn (about 20 ms) per lookup.
+ */
+function commandFromKernel(pid: number): string | null | undefined {
+    if (!processTableAvailable()) {
+        return undefined;
+    }
+
+    const row = readProcessRow(pid);
+
+    if (!row) {
+        return null;
+    }
+
+    if (row.zombie) {
+        return "<defunct>";
+    }
+
+    const command = readPsCommand(pid);
+
+    if (command === null) {
+        return undefined;
+    }
+
+    return command.length > 0 ? command : null;
+}
+
 export function readProcessCommand(pid: number): string | null {
     if (process.platform === "win32") {
         return null;
@@ -35,6 +65,16 @@ export function readProcessCommand(pid: number): string | null {
 
     if (pid === process.pid && ownCommand !== null) {
         return ownCommand;
+    }
+
+    const fromKernel = commandFromKernel(pid);
+
+    if (fromKernel !== undefined) {
+        if (pid === process.pid) {
+            ownCommand = fromKernel;
+        }
+
+        return fromKernel;
     }
 
     try {
@@ -64,10 +104,10 @@ export function readProcessCommand(pid: number): string | null {
 /**
  * When the process at `pid` started, in epoch ms, or null if it cannot be read.
  *
- * Derived from `ps -o etime=`, so it carries that command's one-second
- * granularity: two readings for the SAME live process differ by up to about a
- * second, never more. Compare with {@link START_MS_TOLERANCE}, never for
- * equality.
+ * On macOS the kernel's start time (any user's process, to the microsecond). Elsewhere derived from
+ * `ps -o etime=`, so it carries that command's one-second granularity: two readings for the SAME live process
+ * differ by up to about a second, never more, and a record written by one path is read by the other. Compare with
+ * {@link START_MS_TOLERANCE}, never for equality.
  *
  * This is the signal a command-line comparison cannot give you. A pid recycled
  * onto a process with identical argv still has a different start time, so this
@@ -80,6 +120,16 @@ export function processStartMs(pid: number): number | null {
 
     if (pid === process.pid && ownStartMs !== null) {
         return ownStartMs;
+    }
+
+    if (processTableAvailable()) {
+        const startMs = readProcessRow(pid)?.startMs ?? null;
+
+        if (pid === process.pid) {
+            ownStartMs = startMs;
+        }
+
+        return startMs;
     }
 
     try {

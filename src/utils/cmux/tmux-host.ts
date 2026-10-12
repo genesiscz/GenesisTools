@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { commandOfRow, listProcessTable } from "@genesiscz/utils/process/libproc-table";
 import { listPsTable, type PsRow, processBasename } from "@genesiscz/utils/process/ps";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import {
@@ -51,6 +52,24 @@ export interface TmuxHostDeps {
 
 /** A process tree deeper than this is a loop in a stale table, not a real chain of parents. */
 const ANCESTRY_LIMIT = 64;
+
+/**
+ * pid, parent and command line of every process. From the kernel table where it answers (about 15 ms of CPU, where
+ * `ps -axo` cost 68 ms): this user's commands exactly as `ps` prints them, another user's as its executable path,
+ * which is all a tmux server or an agent of this user is matched against. Else one `ps -axo`.
+ */
+export async function listHostProcesses(): Promise<HostProcess[]> {
+    const table = listProcessTable();
+
+    if (table === null) {
+        return listPsTable();
+    }
+
+    // `ps -ax` has no row for the kernel (pid 0).
+    return table
+        .filter((row) => row.pid > 0)
+        .map((row) => ({ pid: row.pid, ppid: row.ppid, command: commandOfRow(row) }));
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
@@ -218,7 +237,7 @@ export function tmuxPaneAncestor(
  * process table; tmux is asked only when a process sits under a tmux server, once per server, on its own socket.
  */
 export async function findAllTmuxHosts(deps: TmuxHostDeps = {}, only?: string): Promise<Map<string, TmuxHost[]>> {
-    const listProcesses = deps.listProcesses ?? (() => listPsTable());
+    const listProcesses = deps.listProcesses ?? listHostProcesses;
     const readRegistry = deps.readRegistry ?? (() => readClaudeSessionRegistry());
     const listPanes = deps.listPanes ?? ((socket) => listTmuxPanes(undefined, { socket }));
     const listClients = deps.listClients ?? ((socket) => listTmuxClients({ socket }));

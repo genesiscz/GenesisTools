@@ -12,7 +12,18 @@ export const PROCESS_ARMS = {
      * fields that got a value (8 of 8).
      */
     pulse: ["spawn", "host"],
+    /** The session list's tmux lookup: `ps -axo` (`listPsTable`) against `listHostProcesses`. `check` = rows. */
+    table: ["ps", "libproc"],
+    /** `tools claude who`: `ps axww`, `ps axeww` and `lsof` against the kernel scan. `check` = Claude processes. */
+    who: ["ps", "libproc"],
+    /** `tools say`'s caller chain from this process: `ps -axo pid=,ppid=` plus `ps -p` against the kernel walk. */
+    ancestry: ["ps", "libproc"],
+    /** Identity checks (`readProcessCommand` + `processStartMs`) for 5 pids: two `ps -p` each against the kernel. */
+    identity: ["ps", "libproc"],
 } as const satisfies Record<string, readonly string[]>;
+
+/** How many pids the `identity` job checks. */
+export const IDENTITY_PIDS = 5;
 
 export type ProcessJob = keyof typeof PROCESS_ARMS;
 

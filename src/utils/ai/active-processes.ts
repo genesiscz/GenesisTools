@@ -1,5 +1,12 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcessCwd } from "@genesiscz/utils/process/cwd";
+import {
+    formatPsCpuTime,
+    listProcessTable,
+    readProcessUsage,
+    readPsCommand,
+} from "@genesiscz/utils/process/libproc-table";
 import { accountFromEnv } from "./account-env";
 
 /**
@@ -9,8 +16,9 @@ import { accountFromEnv } from "./account-env";
  * the launched binary's environment, so reading it back off the process table is the ONLY
  * truthful answer to "which account does this pane bill" — no session file records it.
  *
- * This is the part every agent shares: two `ps` reads (argv, then argv+env), one `lsof` for
- * the working directories, and the account split. Claude's `who` enriches these rows with its
+ * This is the part every agent shares: the process table with argv, environment and working
+ * directories (from the kernel on macOS; elsewhere two `ps` reads and one `lsof`), and the
+ * account split. Claude's `who` enriches these rows with its
  * session index and cmux surfaces; codex and grok print them as they are.
  *
  * A DIAGNOSTIC. It reads and writes nothing.
@@ -108,7 +116,79 @@ export function parseLsofCwd(output: string): Map<number, string> {
     return result;
 }
 
+/**
+ * The scan from the kernel: the table (any user), then argv, environment, CPU time and cwd per process (this
+ * user's, which is where an agent runs; `ps` would also read another user's argv, so such a process can no longer
+ * match). Every field is what the `ps` path prints: argv escaped like `ps` and single-spaced like its parse, the
+ * tty as `ps -o tty=`, the start to the whole second like `lstart`. About 15 ms of CPU, where the two `ps` and the
+ * `lsof` cost about 550 ms. Null when the kernel read is unavailable.
+ */
+function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] | null {
+    const table = listProcessTable();
+
+    if (table === null) {
+        return null;
+    }
+
+    const euid = process.geteuid?.() ?? -1;
+    const found: ActiveAgentProcess[] = [];
+
+    for (const row of table) {
+        if (row.pid <= 0 || row.zombie || (row.uid !== euid && euid !== 0)) {
+            continue;
+        }
+
+        const command = readPsCommand(row.pid);
+        const args = command === null ? "" : command.split(/\s+/).join(" ");
+        const kind = args === "" ? null : scan.classify(args);
+
+        if (!kind) {
+            continue;
+        }
+
+        const usage = readProcessUsage(row.pid);
+
+        // Gone since the table was read.
+        if (!usage) {
+            continue;
+        }
+
+        const { account, proxyTarget } = accountFromEnv(readPsCommand(row.pid, { env: true }) ?? "", scan.alias);
+
+        found.push({
+            pid: row.pid,
+            ppid: row.ppid,
+            tty: row.tty ?? "??",
+            startedAt: Math.floor(row.startMs / 1000) * 1000,
+            cpuTime: formatPsCpuTime(usage.cpuTimeMs),
+            args,
+            kind,
+            account,
+            proxyTarget,
+            cwd: readProcessCwd(row.pid),
+        });
+    }
+
+    // `ps -ax` prints processes without a terminal first, then by terminal, each by pid.
+    return found.sort((a, b) => {
+        if (a.tty === b.tty) {
+            return a.pid - b.pid;
+        }
+
+        if (a.tty === "??" || b.tty === "??") {
+            return a.tty === "??" ? -1 : 1;
+        }
+
+        return a.tty < b.tty ? -1 : 1;
+    });
+}
+
 export async function listActiveAgentProcesses(scan: AgentProcessScan): Promise<ActiveAgentProcess[]> {
+    return scanFromKernel(scan) ?? listActiveAgentProcessesViaPs(scan);
+}
+
+/** {@link listActiveAgentProcesses} through two `ps` reads and one `lsof`, where the kernel read is unavailable. */
+export async function listActiveAgentProcessesViaPs(scan: AgentProcessScan): Promise<ActiveAgentProcess[]> {
     // BSD flag syntax on purpose: the dashless `e` appends the environment, while `-e` merely
     // means "every process" and shows no env at all.
     const [argvOut, envOut] = await Promise.all([
