@@ -251,7 +251,7 @@ async function statAll(paths: string[]): Promise<number> {
         } else {
             const calls = libSystem();
 
-            if (!calls || calls.stat(Buffer.from(`${path}\0`), statBuffer) !== 0) {
+            if (calls?.stat(Buffer.from(`${path}\0`), statBuffer) !== 0) {
                 continue;
             }
 

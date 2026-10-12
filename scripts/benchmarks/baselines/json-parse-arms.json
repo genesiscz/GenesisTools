@@ -1,0 +1,36 @@
+{
+    "name": "json-parse-arms",
+    "capturedAt": "2026-10-12T20:12:21.236Z",
+    "commit": "f0e10b495",
+    "loadAvg": [
+        21.37451171875,
+        31.4609375,
+        32.1494140625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "jsonParse.cold.cpuMs": 112.142,
+        "jsonParse.warm.cpuMs": 109.927,
+        "jsonParse.check": 15909,
+        "lines": 15907,
+        "decodeJsonParse.cold.cpuMs": 148.28,
+        "decodeJsonParse.warm.cpuMs": 144.455,
+        "decodeJsonParse.check": 15910,
+        "safeJson.cold.cpuMs": 114.983,
+        "safeJson.warm.cpuMs": 110.987,
+        "safeJson.check": 15910,
+        "commentJson.cold.cpuMs": 1260.81,
+        "commentJson.warm.cpuMs": 1026.045,
+        "commentJson.check": 15910,
+        "bunJsonl.cold.cpuMs": 110.125,
+        "bunJsonl.warm.cpuMs": 108.758,
+        "bunJsonl.check": 15905,
+        "simdjsonFullParse.cold.cpuMs": 35.493,
+        "simdjsonFullParse.warm.cpuMs": 33.09,
+        "simdjsonFullParse.check": 15905,
+        "simdjsonPick.cold.cpuMs": 25.918,
+        "simdjsonPick.warm.cpuMs": 23.052,
+        "simdjsonPick.check": 15907
+    },
+    "notes": "live transcript tails, read-only; each sample is a fresh process (cold pass, then warm pass) | commit f0e10b495 | uptime 22:12  up  9:29, 23 users, load averages: 21.37 31.46 32.15"
+}
