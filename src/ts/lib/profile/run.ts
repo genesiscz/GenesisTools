@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { asCpuProfile, type CpuProfile } from "./cpuprofile";
@@ -59,7 +60,7 @@ export async function runProfiled(options: ProfileRunOptions): Promise<ProfileRu
         const started = performance.now();
         const child = Bun.spawn(argv, {
             cwd: options.cwd,
-            env: process.env,
+            env: env.getProcessEnv(),
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
