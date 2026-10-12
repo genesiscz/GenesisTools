@@ -18,7 +18,7 @@ tools ts profile ai --focus listAgentSessionRows -- usage sessions --json --fres
 
 - `<entry>` is a `.ts` file or a tool name (`src/<name>/index.ts`). Arguments for the entry go after `--`.
 - `--runs N` profiles N fresh processes and adds them up (per-run averages in the report). Use 3 or more.
-- `--interval <µs>` sampling interval, default 250. Overhead is about 3 to 4% at 250 µs.
+- `--interval <µs>` sampling interval, default 250. Overhead: +3.0% at 1000 µs, +4.4% at 250 µs, +9.9% at 100 µs.
 - `--top`, `--depth`, `--min-pct` shape the tables; `--focus <name>` shows the subtree under functions whose name
   contains it; `--json` prints the summary as data; `--bun <path>` picks another Bun binary.
 - `--threads` also runs `/usr/bin/sample` on the process for its whole life (every thread, see section 4).
@@ -53,9 +53,14 @@ Example that found a real win (2026-10-12, cold row build, 321 ms sampled): `rea
   than 8 sampling intervals (and 8 ms) as one interval of work and reports the rest as "waiting, cut".
 - **Other threads do not appear.** Bun's pool threads (async fs, file opens) and JSC's GC threads are invisible
   to `--cpu-prof`. When "CPU (all threads)" is far above the sampled JS time, use `--threads`.
-- **`bun test` ignores `--cpu-prof`.** Profile a scratch script that calls the code instead.
-- **Child processes:** `BUN_OPTIONS="--cpu-prof --cpu-prof-dir=/abs/dir"` reaches every Bun child. Workers need
-  `startCpuProfile` from `node:inspector`.
+- **`bun test` ignores every profiling flag.** Profile a scratch script that calls the code, or use a preload
+  that starts a `node:inspector/promises` `Session` profiler and stops it in `afterAll`.
+- **A default SIGINT, SIGTERM or SIGKILL exit writes NO profile** (Bun 1.4.2, 1.4.3). `process.exit(n)` and an uncaught
+  throw do write it; a signal handler that calls `process.exit(0)` flushes it.
+- **Child processes:** `BUN_OPTIONS="--cpu-prof --cpu-prof-dir=/abs/dir"` reaches every Bun child (each writes its own
+  file). Workers need `worker.startCpuProfile()` (Bun 1.4). `BUN_CPU_PROFILE=1` from the Bun 1.4 blog is not honored.
+- **Few samples are noise.** Shares under 10% from fewer than 300 samples; use `--runs 3` or more. `positionTicks`
+  (line data) covers only 0.4% to 14% of samples, so trust functions, not lines.
 - **Flags need the `=` form** (`--cpu-prof-dir=/x`, not `--cpu-prof-dir /x`) on Bun 1.3.13 and 1.4.2.
 
 ## 4. Every thread: `/usr/bin/sample`
