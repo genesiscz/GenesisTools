@@ -59,7 +59,10 @@ export function registerProfileCommands(parent: Command): void {
         .description(
             "CPU-profile an entry point with no timers added: pprof-style hot functions, the repository's own functions and their call tree, and optionally every thread"
         )
-        .argument("<entry>", "A .ts file, or a tool name (`ai` profiles src/ai/index.ts)")
+        .argument(
+            "<entry>",
+            "Any .ts/.js file of any project (run in the current folder), or a GenesisTools tool name (`ai` is src/ai/index.ts)"
+        )
         .argument("[args...]", "Arguments for the entry; put them after `--` so their flags reach it")
         .option("--runs <n>", "Runs to add together (default 1)", numberArg({ min: 1, integer: true }), 1)
         .option(

@@ -204,7 +204,11 @@ and prints three views, like `pprof top` and `pprof tree` do for Go:
   repository frame, so it includes the library and native calls it makes but not the repository functions it calls.
 - **Repository call tree:** stacks reduced to repository frames, with their share and milliseconds per run.
 
-`<entry>` is a `.ts` file or a tool name (`ai` is `src/ai/index.ts`). Put the entry's own arguments after `--`.
+`<entry>` is any `.ts` or `.js` file of any project, resolved from the current folder, and the run happens in the
+current folder, so the project's own `tsconfig.json`, `bunfig.toml` and relative paths apply. Frames under the nearest
+folder holding `.git` count as repository code. A bare name is a GenesisTools shortcut: `ai` is `src/ai/index.ts`
+of GenesisTools. Put the entry's own arguments after `--`. Example on another codebase:
+`cd ~/notes/.scripts && tools ts profile src/index.ts -- vault-lint --help`.
 
 ```bash
 tools ts profile ai --runs 3 --threads -- usage sessions --json --hours 24 --min 10 --fresh --no-cache-write
