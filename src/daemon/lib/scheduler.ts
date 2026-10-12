@@ -20,7 +20,7 @@ export const HARD_EXIT_GRACE_MS = 20_000;
 export const WATCHDOG_INTERVAL_MS = 60_000;
 /** Loop silence beyond this = wedged (the loop must tick at least every 60s by design). */
 export const WEDGE_THRESHOLD_MS = 5 * 60_000;
-/** Bound on config loading so a stuck Storage lock surfaces as a loop failure, not an eternal await. */
+/** Bound on config loading so a stalled read surfaces as a loop failure, not an eternal await. */
 export const LOAD_CONFIG_TIMEOUT_MS = 15_000;
 /** A task that keeps failing gets one banner, then a reminder this often while the streak lasts. */
 export const FAILURE_REMINDER_MS = 6 * 3_600_000;
@@ -86,6 +86,16 @@ export function logSchedulerLoopFailure(err: unknown, consecutiveFailures: numbe
     );
 }
 
+/**
+ * `Storage.getConfig` reads the file without a lock, so a timeout here is a stalled read or a starved
+ * process (the daemon runs as a Background job; on 2026-10-10 its timers fired 15-80 s late under load).
+ */
+function loadConfigTimeoutError(timeoutMs: number): Error {
+    return new Error(
+        `loadConfig timed out after ${timeoutMs}ms (the read takes no lock: it stalled, or the daemon was starved of CPU or I/O)`
+    );
+}
+
 export async function runSchedulerLoop(
     logsBaseDir: string,
     resilience: SchedulerResilienceOptions = {}
@@ -141,13 +151,33 @@ export async function runSchedulerLoop(
     // while the process stayed "running"). The loop must tick at least every
     // 60s by construction; sustained silence means a body await hung — exit
     // with a distinct code and let launchd's KeepAlive respawn a fresh daemon.
+    //
+    // Silence only counts while the process could run. During macOS sleep (and between the short
+    // DarkWakes of Maintenance Sleep) neither the loop nor this timer runs, yet the wall clock moves
+    // on, so the first sample after a wake read 8-14 min of "silence" and killed a healthy daemon
+    // (2026-10-06 15:30 and 20:03, 2026-10-11 21:32 UTC, each in the first seconds of a DarkWake).
+    // A sample that arrives more than one interval late measures that gap; it is credited to the
+    // loop, so a real hang still trips after `wedgeThresholdMs` of time the process was running.
     let lastTickAt = Date.now();
+    let lastSampleAt = lastTickAt;
     const watchdog = setInterval(() => {
+        const sampledAt = Date.now();
+        const lateMs = sampledAt - lastSampleAt - watchdogIntervalMs;
+        lastSampleAt = sampledAt;
+
         if (!running) {
             return;
         }
 
-        const silentMs = Date.now() - lastTickAt;
+        if (lateMs > watchdogIntervalMs) {
+            lastTickAt = Math.min(sampledAt, lastTickAt + lateMs);
+            log.info(
+                { suspendedMs: lateMs, watchdogIntervalMs },
+                "[daemon] watchdog sampled late (process suspended); the gap is not counted as scheduler silence"
+            );
+        }
+
+        const silentMs = sampledAt - lastTickAt;
 
         if (silentMs > wedgeThresholdMs) {
             log.error(
@@ -181,7 +211,7 @@ export async function runSchedulerLoop(
                 const config = await withTimeout(
                     loadConfigImpl(),
                     loadConfigTimeoutMs,
-                    new Error(`loadConfig timed out after ${loadConfigTimeoutMs}ms (stuck config lock?)`)
+                    loadConfigTimeoutError(loadConfigTimeoutMs)
                 );
                 const now = new Date();
 
@@ -434,7 +464,7 @@ async function initializeTaskStates(
     const config = await withTimeout(
         loadConfigImpl(),
         loadConfigTimeoutMs,
-        new Error(`loadConfig timed out after ${loadConfigTimeoutMs}ms (stuck config lock?)`)
+        loadConfigTimeoutError(loadConfigTimeoutMs)
     );
 
     for (const task of config.tasks) {

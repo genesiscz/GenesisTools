@@ -285,6 +285,105 @@ describe("runSchedulerLoop resilience (Jul 3/6 incident class)", () => {
         expect(codes[0]).toBe(EXIT_WEDGED);
     });
 
+    // 2026-10-06 15:30, 20:03 and 2026-10-11 21:32 (UTC): each "wedged" exit fired in the first seconds of a
+    // macOS DarkWake, after 8 to 14 minutes of Maintenance Sleep (pmset log). The loop was not hung; the
+    // watchdog woke first and counted the sleep as silence. These tests suspend the whole process the same
+    // way: the wall clock jumps while the loop is parked in an await and the watchdog sees the jump late.
+    function suspendableClock(): { suspend: (ms: number) => void; restore: () => void } {
+        const realNow = Date.now.bind(Date);
+        let suspendedMs = 0;
+        const clock = spyOn(Date, "now").mockImplementation(() => realNow() + suspendedMs);
+
+        return {
+            suspend: (ms) => {
+                suspendedMs += ms;
+            },
+            restore: () => clock.mockRestore(),
+        };
+    }
+
+    function parkedConfig(): { load: () => Promise<{ tasks: DaemonTask[] }>; release: () => void } {
+        const { promise, resolve } = Promise.withResolvers<{ tasks: DaemonTask[] }>();
+
+        return { load: () => promise, release: () => resolve({ tasks: [] }) };
+    }
+
+    test("a system sleep is not a wedge: time the whole process was suspended is not scheduler silence", async () => {
+        const codes: number[] = [];
+        const clock = suspendableClock();
+        const config = parkedConfig();
+
+        try {
+            const loop = runSchedulerLoop(logsBaseDir, {
+                verifyOwnership: () => true,
+                watchdogIntervalMs: 25,
+                wedgeThresholdMs: 5_000,
+                wakefulTickMs: 20,
+                loadConfig: config.load,
+                exit: (code) => {
+                    codes.push(code);
+                },
+                notify: noopNotify,
+            });
+
+            await Bun.sleep(60);
+            clock.suspend(10 * 60_000);
+            await Bun.sleep(80);
+
+            process.emit("SIGINT");
+            config.release();
+            await loop;
+        } finally {
+            clock.restore();
+        }
+
+        expect(codes).toEqual([]);
+    });
+
+    test("after a suspension the watchdog still trips on real silence and reports only the awake part", async () => {
+        const codes: number[] = [];
+        const silences: number[] = [];
+        const clock = suspendableClock();
+        const config = parkedConfig();
+        const { daemonLog } = await import("./scheduler");
+        const errorSpy = spyOn(daemonLog, "error").mockImplementation((fields: unknown) => {
+            if (typeof fields === "object" && fields !== null && "silentMs" in fields) {
+                silences.push(Number(fields.silentMs));
+            }
+        });
+        const { promise: tripped, resolve: onTrip } = Promise.withResolvers<void>();
+
+        try {
+            const loop = runSchedulerLoop(logsBaseDir, {
+                verifyOwnership: () => true,
+                watchdogIntervalMs: 25,
+                wedgeThresholdMs: 150,
+                wakefulTickMs: 20,
+                loadConfig: config.load,
+                exit: (code) => {
+                    codes.push(code);
+                    onTrip();
+                },
+                notify: noopNotify,
+            });
+
+            await Bun.sleep(40);
+            clock.suspend(10 * 60_000);
+            await tripped;
+
+            process.emit("SIGINT");
+            config.release();
+            await loop;
+        } finally {
+            errorSpy.mockRestore();
+            clock.restore();
+        }
+
+        expect(codes[0]).toBe(EXIT_WEDGED);
+        expect(silences[0]).toBeGreaterThan(150);
+        expect(silences[0]).toBeLessThan(60_000);
+    });
+
     test("a second shutdown signal force-exits immediately (no more unkillable daemons)", async () => {
         const codes: number[] = [];
 
