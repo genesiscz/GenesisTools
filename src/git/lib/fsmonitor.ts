@@ -307,7 +307,7 @@ export async function enableFsmonitor(
         await writeGlobal(deps, key, "true");
     }
 
-    logger.info({ previous, alreadyEnabled }, "[git fsmonitor] enabled globally");
+    logger.debug({ previous, alreadyEnabled }, "[git fsmonitor] enabled globally");
     return { previous, alreadyEnabled };
 }
 
@@ -371,7 +371,7 @@ export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false 
     const failedWorktrees = new Set(report.failed.map((failure) => failure.worktree));
     const kept = Object.fromEntries(Object.entries(state.worktrees).filter(([path]) => failedWorktrees.has(path)));
     await writeState(deps.statePath, { version: 1, enabledAt: null, previous: null, worktrees: kept });
-    logger.info(
+    logger.debug(
         { stopped: report.stopped.length, cacheRemoved: report.cacheRemoved.length, failed: report.failed },
         "[git fsmonitor] disabled"
     );

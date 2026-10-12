@@ -18,6 +18,11 @@ import pc from "picocolors";
 
 const RECORD_TASK = "git-fsmonitor-record";
 
+/** An ISO time as local "YYYY-MM-DD HH:MM", the way every time is shown to the user. */
+function localMinute(iso: string): string {
+    return new Date(iso).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
+}
+
 function shown(value: string | null): string {
     return value === null ? pc.dim("not set") : value;
 }
@@ -61,7 +66,7 @@ async function statusAction(options: { json?: boolean }): Promise<void> {
     out.println(`  core.fsmonitor       ${shown(fsmonitor)}`);
     out.println(`  core.untrackedCache  ${shown(untrackedCache)}`);
     out.println(
-        `  turned on by ${toolCommand("git fsmonitor")}: ${state.enabledAt ?? pc.dim("no")}   record task: ${taskRegistered ? "registered" : pc.dim("not registered")}`
+        `  turned on by ${toolCommand("git fsmonitor")}: ${state.enabledAt ? localMinute(state.enabledAt) : pc.dim("no")}   record task: ${taskRegistered ? "registered" : pc.dim("not registered")}`
     );
 
     const table = createBoxTable(["WORKTREE", "DAEMON", "MEMORY", "CPU", "RECORDED SINCE"]);
@@ -74,7 +79,7 @@ async function statusAction(options: { json?: boolean }): Promise<void> {
             daemon ? formatDotStatus("ok", `pid ${daemon.pid}`) : formatDotStatus("dim", "none"),
             daemon ? formatBytes(daemon.rssKb * 1024) : "",
             daemon?.cpuMs != null ? formatDuration(daemon.cpuMs) : "",
-            recorded ? recorded.firstSeen.slice(0, 16).replace("T", " ") : pc.yellow("not recorded yet"),
+            recorded ? localMinute(recorded.firstSeen) : pc.yellow("not recorded yet"),
         ]);
     }
 
