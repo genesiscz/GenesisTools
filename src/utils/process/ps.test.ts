@@ -163,6 +163,14 @@ describe("capture timeout", () => {
         expect(performance.now() - started).toBeLessThan(2000);
         expect(result.status).toBeNull();
         expect(result.stdout).toBe("");
+        expect(result.timedOut).toBe(true);
+    });
+
+    test("a child that exits in time is not marked as timed out", async () => {
+        const result = await capture("/usr/bin/true", [], { timeoutMs: 5_000 });
+
+        expect(result.status).toBe(0);
+        expect(result.timedOut).toBeUndefined();
     });
 });
 

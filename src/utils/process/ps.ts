@@ -49,6 +49,8 @@ export interface CaptureResult {
     stderr: string;
     /** Exit code, or null when the child was killed or never reported one. */
     status: number | null;
+    /** Set by {@link capture} when it killed the child at its deadline; that kill is already logged there. */
+    timedOut?: true;
 }
 
 /** One row of {@link PS_COLUMNS_SPEC}. `rss` is in kilobytes, as `ps` reports it. */
@@ -159,7 +161,7 @@ export async function capture(
         proc.kill("SIGKILL");
         log.warn({ command, args, timeoutMs }, "child was killed on timeout; its output is partial");
 
-        return { stdout: "", stderr: "", status: null };
+        return { stdout: "", stderr: "", status: null, timedOut: true };
     }
 
     const [stdout, stderr] = await streams;
@@ -394,7 +396,7 @@ export async function listPsRows(options?: { timeoutMs?: number }): Promise<PsLi
     try {
         const result = await capture("ps", ["-axo", PS_LIST_COLUMNS_SPEC], options);
 
-        if (result.status !== 0) {
+        if (result.status !== 0 && !result.timedOut) {
             log.warn({ status: result.status, stderr: result.stderr.trim() }, "ps -axo did not exit cleanly");
         }
 
@@ -429,7 +431,7 @@ export async function listPsTable(options?: { timeoutMs?: number }): Promise<PsR
     try {
         const result = await capture("ps", ["-axo", PS_COLUMNS_SPEC], options);
 
-        if (result.status !== 0) {
+        if (result.status !== 0 && !result.timedOut) {
             log.warn({ status: result.status, stderr: result.stderr.trim() }, "ps -axo (table) did not exit cleanly");
         }
 
