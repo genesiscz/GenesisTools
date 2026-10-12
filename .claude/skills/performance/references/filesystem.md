@@ -101,6 +101,9 @@ readLastLines(path, { method: "ffi" });                  // libSystem open/lseek
   busiest, in an actively edited checkout, used 40 ms in 3 minutes). Managed by `tools git fsmonitor`
   (`status`, `record`, `enable`, `disable`; `src/git/lib/fsmonitor.ts`), which records every watched worktree so
   turning it off cleans all of them.
+  The cost (2026-10-13, git 2.55): a daemon can segfault while it shuts down, which happens whenever its worktree is
+  moved or deleted, so every throwaway worktree is a chance of a crash report and a macOS crash dialog. Stopping
+  the daemon first did not prevent it (1 of 3 crashed). See `src/git/README.md`, section `fsmonitor`.
 
 ## 6. Rejected after measuring
 

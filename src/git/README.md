@@ -286,6 +286,13 @@ How it behaves, measured 2026-10-12 (git 2.55, medians of 9 interleaved runs, lo
 - One agent-hook Bash call (the before and after hook processes with their git children): 205 → 113 ms of CPU for an
   editing command, 190 → 90 ms for a read-only one, the same files rendered. The five daemons used 100 ms of CPU
   together in 10 minutes.
+- ⚠️ git 2.55's macOS daemon can crash (SIGSEGV in `fsmonitor_publish`, called from `fsevent_callback`) while it
+  shuts down, when an FSEvents batch arrives during the shutdown. A daemon shuts down when its worktree is moved or
+  deleted and on `git fsmonitor--daemon stop`, so throwaway worktrees (tests, review and restack worktrees) produce
+  crash reports in `~/Library/Logs/DiagnosticReports/git-*.ips`, and macOS can show a crash dialog for each. Seen
+  2026-10-13: 2 crashes in the first 75 minutes with it on globally, and 1 of 3 daemons stopped cleanly before their
+  folder moved still crashed, so stopping first does not avoid it. The 2.56.0 release notes name no fix. Nothing
+  is lost: the daemon only caches what changed, and the next status starts a new one.
 - ⚠️ While a daemon runs, the repository's `.git` holds the socket `fsmonitor--daemon.ipc`. Node's and Bun's
   `fs.cpSync` refuse to copy a socket, so a recursive copy of that repository folder throws "Cannot copy a socket
   file"; macOS `cp -R` skips it with a warning and exits 0. GenesisTools copies repositories through `copyRepoTree`
