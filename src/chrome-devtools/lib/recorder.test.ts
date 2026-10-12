@@ -3,8 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attemptStaleTakeover, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { CdpDeadlineError } from "./cdp.ts";
 import {
     claimRecorderPidfile,
+    enableRecordingDomains,
     extractDataReceived,
     healthIsDead,
     isArmableTarget,
@@ -140,6 +142,42 @@ describe("CDP health", () => {
         ).toBe(false);
         expect(await probeCdp(9222, async () => new Response("{}", { status: 200 }))).toBe(true);
         expect(await probeCdp(9222, async () => new Response("no", { status: 500 }))).toBe(false);
+    });
+});
+
+describe("enableRecordingDomains", () => {
+    const DOMAINS = ["Network.enable", "Page.enable", "Runtime.enable", "Log.enable"];
+
+    test("a tab that misses one deadline gets no further enables and is re-armed later", async () => {
+        const sent: string[] = [];
+        const armed = await enableRecordingDomains({
+            send: async (method) => {
+                sent.push(method);
+                throw new CdpDeadlineError(`${method} did not answer within 30000 ms`);
+            },
+            domains: DOMAINS,
+            url: "https://frozen.example.com/",
+        });
+
+        expect(sent).toEqual(["Network.enable"]);
+        expect(armed).toBe(false);
+    });
+
+    test("a refused domain that is not a deadline still lets the others through", async () => {
+        const sent: string[] = [];
+        const armed = await enableRecordingDomains({
+            send: async (method) => {
+                sent.push(method);
+                if (method === "Log.enable") {
+                    throw new Error("'Log.enable' wasn't found");
+                }
+            },
+            domains: DOMAINS,
+            url: "https://ok.example.com/",
+        });
+
+        expect(sent).toEqual(DOMAINS);
+        expect(armed).toBe(true);
     });
 });
 

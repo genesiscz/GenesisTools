@@ -23,7 +23,7 @@ import {
     serializePidRecord,
 } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { Conn } from "./cdp.ts";
+import { CdpDeadlineError, Conn } from "./cdp.ts";
 import type { CaptureChannel, RecordedEvent } from "./channels.ts";
 import { ensureCaptureDir, metaPath, recorderPidPath } from "./paths.ts";
 import { SegmentWriter } from "./segments.ts";
@@ -230,6 +230,43 @@ export function nextHealthFails(prev: number, ok: boolean): number {
 
 export function healthIsDead(fails: number): boolean {
     return fails >= 3;
+}
+
+/**
+ * Enable the recording domains on one tab session, in order. False means the session must be armed again on
+ * its next target event: Network.enable failed, or a domain missed its deadline. A missed deadline means the
+ * tab answers nothing (a frozen or discarded background tab), so the remaining domains are skipped: each would
+ * wait out the same 30 s deadline and log the same warning (17 tabs gave 68 lines and 2 minutes each).
+ */
+export async function enableRecordingDomains({
+    send,
+    domains,
+    url,
+}: {
+    send: (method: string) => Promise<unknown>;
+    domains: string[];
+    url: string;
+}): Promise<boolean> {
+    let armed = true;
+
+    for (const [index, method] of domains.entries()) {
+        try {
+            await send(method);
+        } catch (err) {
+            if (err instanceof CdpDeadlineError) {
+                log.warn({ err, method, url, skipped: domains.slice(index + 1) }, "domain enable failed");
+                return false;
+            }
+
+            log.warn({ err, method, url }, "domain enable failed");
+
+            if (method === "Network.enable") {
+                armed = false;
+            }
+        }
+    }
+
+    return armed;
 }
 
 export async function probeCdp(
@@ -547,13 +584,14 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
             domains.push("Runtime.enable", "Log.enable");
         }
 
-        for (const method of domains) {
-            await conn.send(method, {}, sessionId).catch((err: unknown) => {
-                log.warn({ err, method, url }, "domain enable failed");
-                if (method === "Network.enable") {
-                    enabled.delete(sessionId);
-                }
-            });
+        const armed = await enableRecordingDomains({
+            send: (method) => conn.send(method, {}, sessionId),
+            domains,
+            url,
+        });
+
+        if (!armed) {
+            enabled.delete(sessionId);
         }
     };
 
