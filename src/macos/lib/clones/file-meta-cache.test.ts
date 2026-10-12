@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatCachePruneReport, runCachePrune } from "./cache-prune-daemon";
 import { FileMetaCache } from "./file-meta-cache";
+import { type DirListing, mapListing, PathPresence } from "./path-presence";
 
 async function withTmpDb<T>(name: string, fn: (dbPath: string, dir: string) => Promise<T> | T): Promise<T> {
     const dir = mkdtempSync(join(tmpdir(), `fmc-${name}-`));
@@ -385,5 +387,306 @@ describe("FileMetaCache.reconcile", () => {
                 cache.close();
             }
         });
+    });
+
+    it("on a real tree removes exactly the rows existsSync calls gone, plus stale rows, with one listing per parent", async () => {
+        await withTmpDb("reconcile-tree", async (dbPath, dir) => {
+            const root = join(dir, "tree");
+            mkdirSync(join(root, "live", "sub"), { recursive: true });
+            mkdirSync(join(root, "locked"));
+            writeFileSync(join(root, "live", "a.bin"), "a");
+            writeFileSync(join(root, "live", "sub", "b.bin"), "b");
+            writeFileSync(join(root, "locked", "c.bin"), "c");
+            symlinkSync(join(root, "live", "a.bin"), join(root, "live", "link.bin"));
+            symlinkSync(join(root, "live", "missing.bin"), join(root, "live", "dangling.bin"));
+            // Listable no more, still searchable: readdir fails, stat of a known name still works.
+            chmodSync(join(root, "locked"), 0o300);
+            const cache = FileMetaCache.resetForTests(dbPath);
+            try {
+                const now = Date.UTC(2026, 9, 12);
+                const old = now - 45 * 24 * 60 * 60 * 1000;
+                const file = { size: 1n, mtimeNs: 1n, sha256: "s", prefixHash: "", cloneId: "", lastSeenAt: 0 };
+                const dirEntry = { dirMtimeNs: 1n, ino: 1n, childNames: [], lastSeenAt: 0 };
+                const fileRows = [
+                    "live/a.bin",
+                    "live/A.BIN",
+                    "live/sub/b.bin",
+                    "live/link.bin",
+                    "live/dangling.bin",
+                    "live/gone.bin",
+                    "locked/c.bin",
+                    "locked/gone.bin",
+                    "gone-dir/x/f.bin",
+                ].map((p) => join(root, p));
+                const dirRows = ["live", "live/sub", "live/gone-sub", "locked", "gone-dir", "gone-dir/x"].map((p) =>
+                    join(root, p)
+                );
+                for (const path of fileRows) {
+                    cache.set(path, { ...file });
+                }
+
+                for (const path of dirRows) {
+                    cache.setDir(path, { ...dirEntry });
+                }
+
+                await cache.flush(now);
+                await cache.flushDir(now);
+                cache.set(join(root, "live", "stale.bin"), { ...file });
+                cache.setDir(join(root, "live", "stale-dir"), { ...dirEntry });
+                await cache.flush(old);
+                await cache.flushDir(old);
+
+                // The oracle: what one existsSync per row says, as the sweep did before it listed directories.
+                const goneFiles = fileRows.filter((p) => !existsSync(p));
+                const goneDirs = dirRows.filter((p) => !existsSync(p));
+                const report = await cache.reconcile({ nowMs: now, vacuumAtFraction: 0 });
+
+                expect(report.staleFiles).toBe(1);
+                expect(report.staleDirs).toBe(1);
+                expect(report.goneFiles).toBe(goneFiles.length);
+                expect(report.goneDirs).toBe(goneDirs.length);
+                expect(goneFiles.map((p) => p.slice(root.length + 1)).sort()).toEqual(
+                    expect.arrayContaining([
+                        "gone-dir/x/f.bin",
+                        "live/dangling.bin",
+                        "live/gone.bin",
+                        "locked/gone.bin",
+                    ])
+                );
+                expect(goneDirs.map((p) => p.slice(root.length + 1)).sort()).toEqual([
+                    "gone-dir",
+                    "gone-dir/x",
+                    "live/gone-sub",
+                ]);
+                expect(report.fileRows + report.dirRows).toBe(fileRows.length + dirRows.length + 2);
+                expect(report.rowsAfter).toBe(fileRows.length + dirRows.length - goneFiles.length - goneDirs.length);
+                expect(report.listings).toBeGreaterThan(0);
+                // Present plain files and dirs are answered by their parent's listing; only the symlinks, the names a
+                // listing misses and the locked folder's rows are probed one by one.
+                expect(report.probes).toBeLessThan(fileRows.length + dirRows.length);
+
+                await cache.loadScope(root);
+                await cache.loadDirScope(root);
+                for (const path of fileRows) {
+                    expect(cache.get(path) !== null).toBe(existsSync(path));
+                }
+
+                for (const path of dirRows) {
+                    expect(cache.getDir(path) !== null).toBe(existsSync(path));
+                }
+
+                expect(cache.get(join(root, "live", "stale.bin"))).toBeNull();
+                expect(cache.getDir(join(root, "live", "stale-dir"))).toBeNull();
+            } finally {
+                cache.close();
+                chmodSync(join(root, "locked"), 0o755);
+            }
+        });
+    });
+
+    it("answers a parent from its stored children while its stat stamp matches, and lists it once the stamp moves", async () => {
+        await withTmpDb("reconcile-stored", async (dbPath, dir) => {
+            const root = join(dir, "tree");
+            mkdirSync(join(root, "keep"), { recursive: true });
+            mkdirSync(join(root, "changed"));
+            for (const name of ["keep/a.bin", "keep/b.bin", "changed/c.bin", "changed/d.bin"]) {
+                writeFileSync(join(root, name), name);
+            }
+
+            const cache = FileMetaCache.resetForTests(dbPath);
+            try {
+                const now = Date.UTC(2026, 9, 12);
+                const stamp = (path: string, children: string[]) => {
+                    const st = statSync(path, { bigint: true });
+                    return {
+                        dirMtimeNs: st.mtimeNs,
+                        ino: st.ino,
+                        childNames: children.map((name) => ({
+                            name,
+                            kind: statSync(join(path, name)).isDirectory() ? ("dir" as const) : ("file" as const),
+                        })),
+                        lastSeenAt: 0,
+                    };
+                };
+                cache.setDir(root, stamp(root, ["changed", "keep"]));
+                // A wrong stored list (b.bin missing) must not remove b.bin: a name the stored children lack is probed.
+                cache.setDir(join(root, "keep"), stamp(join(root, "keep"), ["a.bin"]));
+                cache.setDir(join(root, "changed"), stamp(join(root, "changed"), ["c.bin", "d.bin"]));
+                for (const name of ["keep/a.bin", "keep/b.bin", "changed/c.bin", "changed/d.bin"]) {
+                    cache.set(join(root, name), { size: 1n, mtimeNs: 1n, sha256: "s", cloneId: "", lastSeenAt: 0 });
+                }
+
+                await cache.flush(now);
+                await cache.flushDir(now);
+                // Removing an entry moves the folder's mtime, so its stored children stop being trusted.
+                rmSync(join(root, "changed", "d.bin"));
+
+                const report = await cache.reconcile({ nowMs: now, vacuumAtFraction: 0 });
+
+                expect(report.goneFiles).toBe(1);
+                expect(report.goneDirs).toBe(0);
+                expect(report.samples.goneFiles).toEqual([join(root, "changed", "d.bin")]);
+                // The tree root and keep/ answer from their stored children; changed/ moved and is listed, and so is
+                // the temporary folder above the tree, which has no row.
+                expect(report.stamps).toBe(3);
+                expect(report.storedHits).toBe(2);
+                expect(report.listings).toBe(2);
+                await cache.loadScope(root);
+                expect(cache.get(join(root, "keep", "b.bin"))).not.toBeNull();
+                expect(cache.get(join(root, "changed", "c.bin"))).not.toBeNull();
+                expect(cache.get(join(root, "changed", "d.bin"))).toBeNull();
+            } finally {
+                cache.close();
+            }
+        });
+    });
+
+    it("a windowed run checks the next part of the rows, and a full cycle removes what a full sweep does", async () => {
+        await withTmpDb("reconcile-window", async (dbPath, dir) => {
+            const root = join(dir, "tree");
+            const names = ["a", "b", "c", "d", "e", "f"];
+            for (const name of names) {
+                mkdirSync(join(root, name), { recursive: true });
+                writeFileSync(join(root, name, "keep.bin"), name);
+            }
+
+            const cache = FileMetaCache.resetForTests(dbPath);
+            try {
+                const now = Date.UTC(2026, 9, 12);
+                const file = { size: 1n, mtimeNs: 1n, sha256: "s", cloneId: "", lastSeenAt: 0 };
+                for (const name of names) {
+                    cache.set(join(root, name, "keep.bin"), { ...file });
+                    cache.set(join(root, name, "gone.bin"), { ...file });
+                }
+
+                await cache.flush(now);
+                const cursorPath = join(dir, "cursor.json");
+                const reports = [];
+                for (let run = 0; run < 3; run++) {
+                    reports.push(await cache.reconcile({ nowMs: now, vacuumAtFraction: 0, windowRuns: 3, cursorPath }));
+                }
+
+                expect(reports.map((r) => r.checked)).toEqual([4, 4, 4]);
+                expect(reports.map((r) => r.goneFiles)).toEqual([2, 2, 2]);
+                expect(reports[0]?.window).toEqual({ runs: 3, from: "", to: join(root, "b", "keep.bin") });
+                expect(reports[1]?.window.from).toBe(join(root, "b", "keep.bin"));
+                expect(reports[2]?.window.to).toBeNull();
+
+                await cache.loadScope(root);
+                for (const name of names) {
+                    expect(cache.get(join(root, name, "keep.bin"))).not.toBeNull();
+                    expect(cache.get(join(root, name, "gone.bin"))).toBeNull();
+                }
+
+                // The cycle is over, so the next run starts at the top again.
+                const next = await cache.reconcile({ nowMs: now, vacuumAtFraction: 0, windowRuns: 3, cursorPath });
+                expect(next.window.from).toBe("");
+            } finally {
+                cache.close();
+            }
+        });
+    });
+
+    it("the prune report names what it checked, what it removed and why, the database size and the phases", async () => {
+        await withTmpDb("prune-report", async (dbPath, dir) => {
+            const cache = FileMetaCache.resetForTests(dbPath);
+            const live = join(dir, "live.bin");
+            writeFileSync(live, "x");
+            const now = Date.now();
+            const file = { size: 1n, mtimeNs: 1n, sha256: "s", cloneId: "", lastSeenAt: 0 };
+            cache.set(live, { ...file });
+            cache.set(join(dir, "gone.bin"), { ...file });
+            await cache.flush(now);
+            cache.set(join(dir, "stale.bin"), { ...file });
+            await cache.flush(now - 45 * 24 * 60 * 60 * 1000);
+            cache.close();
+
+            const result = await runCachePrune(dbPath);
+            const report = formatCachePruneReport(result).join("\n");
+
+            expect(report).toContain("rows: 3 (3 files, 0 directories)");
+            // Two rows are left after the stale one goes; a seventh of them, rounded up, is one row.
+            expect(report).toContain("rows checked: 1, this run's 1/7 of the rows: after the first row up to ");
+            expect(report).toContain("rows removed: 2, 1 left");
+            expect(report).toContain("stale, not seen by a scan in 30 days: 1 files, 0 directories");
+            expect(report).toContain("gone, the path no longer exists: 1 files, 0 directories");
+            expect(report).toContain(`    ${join(dir, "gone.bin")}`);
+            expect(report).toContain(`    ${join(dir, "stale.bin")}`);
+            expect(report).toMatch(/database: .+ before, .+ after/);
+            expect(report).toMatch(/vacuum: yes, 2 of 3 rows removed \(66\.67%\), at or over the 10% threshold/);
+            expect(report).toMatch(/phases: count .+, sweep .+ \(row reads .+, existence checks .+, deletes .+\)/);
+            expect(report).toMatch(/total: /);
+        });
+    });
+});
+
+describe("PathPresence", () => {
+    function fakeTree(paths: Record<string, "file" | "dir" | "link">) {
+        const listed: string[] = [];
+        const probed: string[] = [];
+        const listDir = (dir: string): DirListing | null => {
+            listed.push(dir);
+            if (dir !== "/" && paths[dir] !== "dir") {
+                return null;
+            }
+
+            const prefix = dir === "/" ? "/" : `${dir}/`;
+            const entries = new Map<string, boolean>();
+            for (const [path, kind] of Object.entries(paths)) {
+                if (path.startsWith(prefix) && !path.slice(prefix.length).includes("/")) {
+                    entries.set(path.slice(prefix.length), kind !== "link");
+                }
+            }
+
+            return mapListing(entries);
+        };
+        const exists = (path: string): boolean => {
+            probed.push(path);
+            return path === "/" || paths[path] === "file" || paths[path] === "dir";
+        };
+        return { listDir, exists, listed, probed };
+    }
+
+    it("lists each parent once for sorted paths and probes only what a listing cannot settle", () => {
+        const tree = fakeTree({
+            "/r": "dir",
+            "/r/a": "dir",
+            "/r/a/f1": "file",
+            "/r/a/f2": "file",
+            "/r/a/sub": "dir",
+            "/r/a/sub/g": "file",
+            "/r/a/link": "link",
+            "/r/b": "dir",
+        });
+        const presence = new PathPresence({ exists: tree.exists, listDir: tree.listDir });
+
+        expect(presence.dirExists("/r/a")).toBe(true);
+        expect(presence.fileExists("/r/a/f1")).toBe(true);
+        expect(presence.fileExists("/r/a/f2")).toBe(true);
+        expect(presence.dirExists("/r/a/sub")).toBe(true);
+        expect(presence.fileExists("/r/a/sub/g")).toBe(true);
+        expect(presence.fileExists("/r/a/gone")).toBe(false);
+        // A symlink is listed, but existsSync follows it: the listing cannot answer, the probe does.
+        expect(presence.fileExists("/r/a/link")).toBe(false);
+        expect(presence.dirExists("/r/b")).toBe(true);
+        expect(presence.dirExists("/r/gone")).toBe(false);
+        expect(presence.fileExists("/r/gone/deep/x")).toBe(false);
+
+        // "/r/gone/deep" is never listed: its parent is already known gone.
+        expect(tree.listed).toEqual(["/r", "/r/a", "/r/a/sub"]);
+        expect(tree.probed).toEqual(["/r/a/gone", "/r/a/link", "/r/gone"]);
+        expect(presence.listings).toBe(3);
+        expect(presence.probes).toBe(3);
+    });
+
+    it("falls back to the probe chain when nothing can be listed, as the old sweep did", () => {
+        const tree = fakeTree({ "/t": "dir", "/t/live": "dir", "/t/live/a.bin": "file" });
+        const presence = new PathPresence({ exists: tree.exists, listDir: () => null });
+
+        expect(presence.dirExists("/t/gone")).toBe(false);
+        expect(presence.fileExists("/t/gone/b.bin")).toBe(false);
+        expect(presence.dirExists("/t/live")).toBe(true);
+        expect(presence.fileExists("/t/live/a.bin")).toBe(true);
+        expect(tree.probed).toEqual(["/", "/t", "/t/gone", "/t/live", "/t/live/a.bin"]);
     });
 });

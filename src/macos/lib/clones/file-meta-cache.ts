@@ -1,12 +1,22 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { FILE_META_MIGRATION_CONTEXT, FILE_META_MIGRATIONS } from "./file-meta-migrations";
 import type { FileMetaDB } from "./file-meta-schema";
+import {
+    defaultExistsProbe,
+    type ExistsProbe,
+    type ListDir,
+    PathPresence,
+    readDirListing,
+    type StatDir,
+    statDirStamp,
+} from "./path-presence";
 import { clonesProfile } from "./profile";
 
 const log = logger.child({ component: "clones:file-meta-cache" });
@@ -33,7 +43,11 @@ const FLUSH_BATCH_ROWS = 5_000;
  *
  *  30 days is conservative: short enough to GC dev churn, long enough that
  *  someone who scans monthly still sees a hot cache. */
-const PRUNE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const PRUNE_TTL_DAYS = 30;
+const PRUNE_TTL_MS = PRUNE_TTL_DAYS * 24 * 60 * 60 * 1000;
+
+/** Paths kept per removal reason for the run report. */
+const REPORT_SAMPLES = 10;
 
 /** A phase timer that always measures (the report needs the numbers) and also
  *  records into the `clones` profiler scope when `PROFILE=clones` is on. */
@@ -44,6 +58,107 @@ function startPhase(label: string): () => number {
         stopProfile();
         return performance.now() - startedAt;
     };
+}
+
+type MetaTable = "file_meta" | "dir_meta";
+
+/** Address space the sweep maps the cache file into (SQLite caps it at its own compile-time maximum). */
+const SWEEP_MMAP_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** Gone rows deleted per transaction during the sweep. */
+const DELETE_BATCH_ROWS = 5_000;
+
+/** A dir_meta row as the sweep reads it: the stored stamp and children let `PathPresence` answer its children. */
+interface SweepDirRow {
+    path: string;
+    dir_mtime_ns: bigint;
+    ino: bigint;
+    child_names_json: string;
+}
+
+/** One table's rows in path order, read a page at a time with keyset paging. */
+class SortedRowCursor<Row extends { path: string }> {
+    private page: Row[] = [];
+    private index = 0;
+    private exhausted = false;
+
+    constructor(
+        private readonly read: (after: string) => Promise<Row[]>,
+        private readonly pageSize: number,
+        private after: string
+    ) {}
+
+    needsPage(): boolean {
+        return this.index >= this.page.length && !this.exhausted;
+    }
+
+    async fill(): Promise<void> {
+        this.page = await this.read(this.after);
+        this.index = 0;
+        this.exhausted = this.page.length < this.pageSize;
+        this.after = this.page[this.page.length - 1]?.path ?? this.after;
+    }
+
+    head(): Row | undefined {
+        return this.page[this.index];
+    }
+
+    advance(): void {
+        this.index += 1;
+    }
+}
+
+/** Where a windowed reconcile resumes: after the last path the previous run checked ("" for the top), and which run
+ *  of the cycle this is (0-based). */
+interface ReconcileCursor {
+    after: string;
+    run: number;
+}
+
+function readReconcileCursor(path: string): ReconcileCursor {
+    if (!existsSync(path)) {
+        return { after: "", run: 0 };
+    }
+
+    try {
+        const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        if (typeof raw === "object" && raw !== null && "after" in raw && typeof raw.after === "string") {
+            const run = "run" in raw && typeof raw.run === "number" && raw.run >= 0 ? Math.floor(raw.run) : 0;
+            return { after: raw.after, run };
+        }
+    } catch (err) {
+        log.warn({ err, path }, "reconcile cursor unreadable; the window starts at the top");
+    }
+
+    return { after: "", run: 0 };
+}
+
+function writeReconcileCursor(path: string, cursor: ReconcileCursor): void {
+    atomicWriteFileSync(path, `${SafeJSON.stringify({ ...cursor, savedAt: new Date().toISOString() }, null, 2)}\n`);
+}
+
+/** Whether the reconcile VACUUMs, and the sentence that says why, for the run report. */
+export function vacuumDecision(input: { deleted: number; rowsBefore: number; vacuumAtFraction: number }): {
+    run: boolean;
+    reason: string;
+} {
+    if (input.vacuumAtFraction <= 0) {
+        return { run: false, reason: "VACUUM is off for this run" };
+    }
+
+    if (input.rowsBefore === 0) {
+        return { run: false, reason: "the cache was empty" };
+    }
+
+    const fraction = input.deleted / input.rowsBefore;
+    const removed = `${input.deleted} of ${input.rowsBefore} rows removed (${(fraction * 100).toFixed(2)}%)`;
+    const threshold = `${(input.vacuumAtFraction * 100).toFixed(0)}% threshold`;
+
+    if (fraction >= input.vacuumAtFraction) {
+        return { run: true, reason: `${removed}, at or over the ${threshold}` };
+    }
+
+    return { run: false, reason: `${removed}, under the ${threshold}` };
 }
 
 export interface FileMetaEntry {
@@ -79,38 +194,73 @@ export interface DirMetaEntry {
 export interface ReconcileOptions {
     nowMs?: number;
     /** Existence probe, injectable for tests. Default `existsSync`. */
-    exists?: (path: string) => boolean;
+    exists?: ExistsProbe;
+    /** Directory lister, injectable for tests. Default `readdirSync` with entry types. With only `exists`
+     *  injected, nothing is listed and every answer comes from `exists`. */
+    listDir?: ListDir;
+    /** Directory stat for the stored-children check, injectable for tests. Default `statSync` (bigint). With only
+     *  `exists` injected, no stored children are trusted. */
+    statDir?: StatDir;
     /** Rows fetched per page while sweeping for gone paths. */
     pageSize?: number;
     /** VACUUM when at least this fraction of rows was deleted (0 = never). */
     vacuumAtFraction?: number;
+    /** Check only the next 1/`windowRuns` of the rows in path order, starting where the previous run stopped (the
+     *  cursor file), so every row is checked once per `windowRuns` runs. 1 (default) checks every row. */
+    windowRuns?: number;
+    /** Where the window cursor is kept. Default: next to the DB, `<db>.reconcile-cursor.json`. */
+    cursorPath?: string;
 }
 
-/** Milliseconds per reconcile phase. `sweep*` split into the row reads, the
- *  existence checks and the deletes, summed over both tables. */
-export interface ReconcilePhases {
-    countMs: number;
-    ttlMs: number;
-    sweepFilesMs: number;
-    sweepDirsMs: number;
-    vacuumMs: number;
-    readMs: number;
-    probeMs: number;
-    deleteMs: number;
+/** The part of the rows one windowed run checked. */
+export interface ReconcileWindow {
+    runs: number;
+    /** The run started after this path ("" = the first row). */
+    from: string;
+    /** The next run starts after this path; null when this run reached the last row (the next starts at the top). */
+    to: string | null;
 }
+
+/** The reconcile phases, in run order, then the sweep split into its row reads, its existence checks (listings
+ *  and probes) and its deletes. */
+export const RECONCILE_PHASE_KEYS = [
+    "countMs",
+    "ttlMs",
+    "sweepMs",
+    "vacuumMs",
+    "readMs",
+    "probeMs",
+    "deleteMs",
+] as const;
+
+/** Milliseconds per reconcile phase. */
+export type ReconcilePhases = Record<(typeof RECONCILE_PHASE_KEYS)[number], number>;
 
 export interface ReconcileReport {
     rowsBefore: number;
+    rowsAfter: number;
     fileRows: number;
     dirRows: number;
     staleFiles: number;
     staleDirs: number;
     goneFiles: number;
     goneDirs: number;
-    /** Existence probes actually issued (memoised ancestors make this far
-     *  smaller than the row count when whole trees are gone). */
+    /** `existsSync` probes issued: only the rows a parent's listing could not settle. */
     probes: number;
+    /** Directory listings taken: parents with no stored children, or whose stamp changed since the scan. */
+    listings: number;
+    /** Parent directories `stat`ed to compare with their stored stamp. */
+    stamps: number;
+    /** Parents answered from their stored children (the stamp still matched). */
+    storedHits: number;
+    /** Rows whose path this run checked (all rows, or this run's window). */
+    checked: number;
+    window: ReconcileWindow;
+    /** Up to ten removed paths per reason. */
+    samples: { staleFiles: string[]; staleDirs: string[]; goneFiles: string[]; goneDirs: string[] };
     vacuumed: boolean;
+    /** Why the reconcile did or did not VACUUM. */
+    vacuumReason: string;
     elapsedMs: number;
     phases: ReconcilePhases;
 }
@@ -361,17 +511,22 @@ export class FileMetaCache {
         this.dirty.clear();
     }
 
-    /** The daily reconciliation, for the daemon. Two passes over BOTH tables,
+    /** The daily reconciliation, for the daemon. One pass over BOTH tables,
      *  then an optional VACUUM:
      *
      *  1. TTL over the whole table. `pruneScope` / `pruneDirScope` only see the
      *     roots of the scan that ran, so a tree that is never scanned again
      *     keeps its rows forever (1.47M dir_meta rows / 1.37 GB on the first
      *     machine this ran on, all from one day of fleet walks).
-     *  2. Gone paths. Rows are swept in path order and each path is probed
-     *     from its shallowest unknown ancestor down, with the answers
-     *     memoised, so a deleted worktree costs one probe for its whole
-     *     subtree instead of one per row.
+     *  2. Gone paths. The rows of both tables are merged in path order and
+     *     each is answered once per parent directory (`PathPresence`) instead
+     *     of one `stat` per row: 976,810 rows under about 330,000 parents on
+     *     2026-10-12. A parent whose `stat` still shows the mtime and inode its
+     *     dir_meta row stored answers from the stored children, the rule the
+     *     scan itself uses to skip `readdir`; any other parent is listed. A row
+     *     is only removed when `existsSync` calls it gone, or when its parent's
+     *     `stat` finds the parent gone: every case the cheap answer cannot
+     *     settle falls back to the probe the old sweep made.
      *
      *  Stale-but-present rows are harmless for correctness (the size/mtime and
      *  dir mtime/ino checks catch divergence), so this exists only to keep the
@@ -380,22 +535,24 @@ export class FileMetaCache {
         const { kysely } = this.getClient();
         const sw = new Stopwatch();
         const nowMs = opts.nowMs ?? Date.now();
-        const exists = opts.exists ?? existsSync;
+        const exists = opts.exists ?? defaultExistsProbe;
+        // An injected `exists` alone (the tests' fake paths) answers every question: no real directory is listed.
+        const listDir = opts.listDir ?? (opts.exists ? () => null : readDirListing);
+        const statDir = opts.statDir ?? (opts.exists ? undefined : statDirStamp);
         const pageSize = opts.pageSize ?? 5000;
         const vacuumAtFraction = opts.vacuumAtFraction ?? 0.1;
         const cutoff = BigInt(nowMs - PRUNE_TTL_MS);
         const phases: ReconcilePhases = {
             countMs: 0,
             ttlMs: 0,
-            sweepFilesMs: 0,
-            sweepDirsMs: 0,
+            sweepMs: 0,
             vacuumMs: 0,
             readMs: 0,
             probeMs: 0,
             deleteMs: 0,
         };
 
-        const countRows = async (table: "file_meta" | "dir_meta"): Promise<number> => {
+        const countRows = async (table: MetaTable): Promise<number> => {
             const r = await kysely
                 .selectFrom(table)
                 .select((eb) => eb.fn.countAll<number>().as("n"))
@@ -413,6 +570,21 @@ export class FileMetaCache {
         );
 
         const stopTtl = startPhase("reconcile.ttl");
+        const staleSample = async (table: MetaTable): Promise<string[]> => {
+            const rows = await kysely
+                .selectFrom(table)
+                .select("path")
+                .where("last_seen_at", "<", cutoff)
+                .limit(REPORT_SAMPLES)
+                .execute();
+            return rows.map((row) => row.path);
+        };
+        const samples: ReconcileReport["samples"] = {
+            staleFiles: await staleSample("file_meta"),
+            staleDirs: await staleSample("dir_meta"),
+            goneFiles: [],
+            goneDirs: [],
+        };
         const staleFilesRes = await kysely
             .deleteFrom("file_meta")
             .where("last_seen_at", "<", cutoff)
@@ -434,129 +606,195 @@ export class FileMetaCache {
 
         phases.ttlMs = stopTtl();
 
-        // Memoised directory existence. Rows arrive in path order, so the memo
-        // hits on almost every row; it is cleared when it grows past a bound
-        // rather than allowed to mirror the whole table.
-        const dirKnown = new Map<string, boolean>();
-        let probes = 0;
-        const dirExists = (dir: string): boolean => {
-            const known = dirKnown.get(dir);
-            if (known !== undefined) {
-                return known;
+        // Which folders hold rows, from the paths alone (two index-only scans): it lets a chain folder skip its stat.
+        const stopSweep = startPhase("reconcile.sweep");
+        const presence = new PathPresence({ exists, listDir, statDir });
+        // Raw prepared statements: a million rows go through these, so the query builder's per-page work is skipped.
+        const { raw } = this.getClient();
+        // The sweep reads the whole file once; mapped pages skip a read() and a copy per 4 KB page.
+        raw.exec(`PRAGMA mmap_size = ${SWEEP_MMAP_BYTES}`);
+        const filePage = raw.query<{ path: string }, [string, number]>(
+            "SELECT path FROM file_meta WHERE path > ? ORDER BY path LIMIT ?"
+        );
+        const dirPage = raw.query<SweepDirRow, [string, number]>(
+            "SELECT path, dir_mtime_ns, ino, child_names_json FROM dir_meta WHERE path > ? ORDER BY path LIMIT ?"
+        );
+        const readFilePage = async (after: string): Promise<Array<{ path: string }>> => {
+            const mark = performance.now();
+            const page = filePage.all(after, pageSize);
+            phases.readMs += performance.now() - mark;
+            return page;
+        };
+        const readDirPage = async (after: string): Promise<SweepDirRow[]> => {
+            const mark = performance.now();
+            const page = dirPage.all(after, pageSize);
+            phases.readMs += performance.now() - mark;
+            return page;
+        };
+        const deleteGone = async (table: MetaTable, paths: string[]): Promise<void> => {
+            if (paths.length === 0) {
+                return;
             }
 
-            const parent = dirname(dir);
-            let present = true;
-            if (parent !== dir && !dirExists(parent)) {
-                present = false;
+            const mark = performance.now();
+            await kysely.transaction().execute(async (trx) => {
+                for (let i = 0; i < paths.length; i += 500) {
+                    await trx
+                        .deleteFrom(table)
+                        .where("path", "in", paths.slice(i, i + 500))
+                        .execute();
+                }
+            });
+
+            for (const path of paths) {
+                if (table === "dir_meta") {
+                    this.dirMem.delete(path);
+                } else {
+                    this.mem.delete(path);
+                }
+            }
+
+            phases.deleteMs += performance.now() - mark;
+        };
+        const windowRuns = Math.max(1, Math.floor(opts.windowRuns ?? 1));
+        const cursorPath = opts.cursorPath ?? `${this.dbPath}.reconcile-cursor.json`;
+        const cursor = windowRuns > 1 ? readReconcileCursor(cursorPath) : { after: "", run: 0 };
+        const from = cursor.after;
+        // The rows still ahead, shared over the runs left in the cycle; the last run takes whatever is left, so a
+        // cycle is always `windowRuns` runs however many rows the earlier ones removed.
+        const runsLeft = windowRuns - Math.min(cursor.run, windowRuns - 1);
+        const budget = runsLeft > 1 ? Math.ceil(this.countRowsAfter(from) / runsLeft) : Number.POSITIVE_INFINITY;
+        const files = new SortedRowCursor(readFilePage, pageSize, from);
+        const dirs = new SortedRowCursor(readDirPage, pageSize, from);
+        const deadFiles: string[] = [];
+        const deadDirs: string[] = [];
+        let goneFiles = 0;
+        let goneDirs = 0;
+        let checked = 0;
+        let lastChecked = from;
+        let to: string | null = null;
+
+        for (;;) {
+            if (checked >= budget) {
+                to = lastChecked;
+                break;
+            }
+
+            if (files.needsPage()) {
+                await files.fill();
+            }
+
+            if (dirs.needsPage()) {
+                await dirs.fill();
+            }
+
+            const file = files.head()?.path;
+            const dir = dirs.head();
+
+            // Both tables merged in path order, so one answer for a parent serves its files and its subdirectories.
+            if (file !== undefined && (dir === undefined || file < dir.path)) {
+                files.advance();
+                checked += 1;
+                lastChecked = file;
+                if (!presence.fileExists(file)) {
+                    deadFiles.push(file);
+                    if (samples.goneFiles.length < REPORT_SAMPLES) {
+                        samples.goneFiles.push(file);
+                    }
+                }
+            } else if (dir !== undefined) {
+                dirs.advance();
+                checked += 1;
+                lastChecked = dir.path;
+                if (presence.dirExists(dir.path)) {
+                    presence.offerStored(dir.path, {
+                        mtimeNs: dir.dir_mtime_ns,
+                        ino: dir.ino,
+                        childNamesJson: dir.child_names_json,
+                    });
+                } else {
+                    deadDirs.push(dir.path);
+                    if (samples.goneDirs.length < REPORT_SAMPLES) {
+                        samples.goneDirs.push(dir.path);
+                    }
+                }
             } else {
-                probes += 1;
-                present = exists(dir);
+                break;
             }
 
-            if (dirKnown.size >= 200_000) {
-                dirKnown.clear();
+            if (deadFiles.length >= DELETE_BATCH_ROWS) {
+                goneFiles += deadFiles.length;
+                await deleteGone("file_meta", deadFiles.splice(0));
             }
 
-            dirKnown.set(dir, present);
-            return present;
-        };
-
-        const sweep = async (table: "file_meta" | "dir_meta", isDirRow: boolean): Promise<number> => {
-            let gone = 0;
-            let after = "";
-            for (;;) {
-                let mark = performance.now();
-                const page = await kysely
-                    .selectFrom(table)
-                    .select("path")
-                    .where("path", ">", after)
-                    .orderBy("path")
-                    .limit(pageSize)
-                    .execute();
-                phases.readMs += performance.now() - mark;
-                if (page.length === 0) {
-                    break;
-                }
-
-                mark = performance.now();
-                const dead: string[] = [];
-                for (const row of page) {
-                    let present: boolean;
-                    if (isDirRow) {
-                        present = dirExists(row.path);
-                    } else {
-                        present = dirExists(dirname(row.path));
-                        if (present) {
-                            probes += 1;
-                            present = exists(row.path);
-                        }
-                    }
-
-                    if (!present) {
-                        dead.push(row.path);
-                    }
-                }
-
-                phases.probeMs += performance.now() - mark;
-                mark = performance.now();
-                for (let i = 0; i < dead.length; i += 500) {
-                    const chunk = dead.slice(i, i + 500);
-                    await kysely.deleteFrom(table).where("path", "in", chunk).execute();
-                    for (const path of chunk) {
-                        if (isDirRow) {
-                            this.dirMem.delete(path);
-                        } else {
-                            this.mem.delete(path);
-                        }
-                    }
-                }
-
-                phases.deleteMs += performance.now() - mark;
-                gone += dead.length;
-                after = page[page.length - 1]?.path ?? after;
-                if (page.length < pageSize) {
-                    break;
-                }
+            if (deadDirs.length >= DELETE_BATCH_ROWS) {
+                goneDirs += deadDirs.length;
+                await deleteGone("dir_meta", deadDirs.splice(0));
             }
+        }
 
-            return gone;
-        };
-        const stopFiles = startPhase("reconcile.sweep-files");
-        const goneFiles = await sweep("file_meta", false);
-        phases.sweepFilesMs = stopFiles();
-        const stopDirs = startPhase("reconcile.sweep-dirs");
-        const goneDirs = await sweep("dir_meta", true);
-        phases.sweepDirsMs = stopDirs();
+        goneFiles += deadFiles.length;
+        goneDirs += deadDirs.length;
+        await deleteGone("file_meta", deadFiles);
+        await deleteGone("dir_meta", deadDirs);
+        raw.exec("PRAGMA mmap_size = 0");
+        if (windowRuns > 1) {
+            writeReconcileCursor(cursorPath, to === null ? { after: "", run: 0 } : { after: to, run: cursor.run + 1 });
+        }
+
+        phases.sweepMs = stopSweep();
+        phases.probeMs = phases.sweepMs - phases.readMs - phases.deleteMs;
 
         const deleted = staleFiles + staleDirs + goneFiles + goneDirs;
-        let vacuumed = false;
-        if (vacuumAtFraction > 0 && rowsBefore > 0 && deleted / rowsBefore >= vacuumAtFraction) {
+        const vacuum = vacuumDecision({ deleted, rowsBefore, vacuumAtFraction });
+        if (vacuum.run) {
             const stopVacuum = startPhase("reconcile.vacuum");
             this.getClient().raw.exec("VACUUM");
             phases.vacuumMs = stopVacuum();
-            vacuumed = true;
         }
 
-        for (const key of Object.keys(phases) as Array<keyof ReconcilePhases>) {
+        for (const key of RECONCILE_PHASE_KEYS) {
             phases[key] = Math.round(phases[key]);
         }
 
         const report: ReconcileReport = {
             rowsBefore,
+            rowsAfter: rowsBefore - deleted,
             fileRows,
             dirRows,
             staleFiles,
             staleDirs,
             goneFiles,
             goneDirs,
-            probes,
-            vacuumed,
+            probes: presence.probes,
+            listings: presence.listings,
+            stamps: presence.stamps,
+            storedHits: presence.storedHits,
+            checked,
+            window: { runs: windowRuns, from, to },
+            samples,
+            vacuumed: vacuum.run,
+            vacuumReason: vacuum.reason,
             elapsedMs: Math.round(sw.elapsedMs),
             phases,
         };
         log.info({ event: "cache.reconcile.complete", ...report }, "FileMetaCache reconcile complete");
         return report;
+    }
+
+    /** Rows of both tables whose path sorts after `after` (an index-only count). */
+    private countRowsAfter(after: string): number {
+        const { raw } = this.getClient();
+        let total = 0;
+
+        for (const table of ["file_meta", "dir_meta"] as const) {
+            const row = raw
+                .query<{ n: number | bigint }, [string]>(`SELECT count(*) AS n FROM ${table} WHERE path > ?`)
+                .get(after);
+            total += Number(row?.n ?? 0);
+        }
+
+        return total;
     }
 
     /** Garbage-collect cached rows older than PRUNE_TTL_MS within `root`.

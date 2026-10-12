@@ -13,6 +13,11 @@
  * reports wall time, its own CPU time (user + system), the probe count, the rows removed by reason and the
  * phase split from the reconcile report.
  *
+ * `--window-runs N` (default: the daemon's setting) measures what the daemon runs each day: one run checks the next
+ * 1/N of the rows, so one sample is a whole cycle of N runs on one clone with a shared cursor. The sample's wall and
+ * CPU are the WORST run of the cycle (the slowest day); its removed rows are the cycle's total, which must equal a
+ * full sweep's. `--window-runs 1` measures one full sweep per sample.
+ *
  * ```
  * bun scripts/benchmarks/clones/cache-reconcile.ts                      # measure and print
  * bun scripts/benchmarks/clones/cache-reconcile.ts --baseline           # record clones-cache-reconcile
@@ -33,9 +38,11 @@ import {
     readBaseline,
     recordBaseline,
 } from "@app/benchmark/lib";
+import { DAEMON_WINDOW_RUNS } from "@app/macos/lib/clones/cache-prune-daemon";
 import {
     FILE_META_DB_PATH,
     FileMetaCache,
+    RECONCILE_PHASE_KEYS,
     type ReconcilePhases,
     type ReconcileReport,
 } from "@app/macos/lib/clones/file-meta-cache";
@@ -46,22 +53,33 @@ import { Command } from "commander";
 
 const BASELINE_NAME = "clones-cache-reconcile";
 const MODES = ["normal", "background"] as const;
-const PHASE_KEYS: Array<keyof ReconcilePhases> = [
-    "countMs",
-    "ttlMs",
-    "sweepFilesMs",
-    "sweepDirsMs",
-    "vacuumMs",
-    "readMs",
-    "probeMs",
-    "deleteMs",
-];
+
 type Mode = (typeof MODES)[number];
 
 interface ChildResult {
     wallMs: number;
     cpuMs: number;
+    userMs: number;
+    sysMs: number;
     report: ReconcileReport;
+}
+
+/** One sample: a full sweep, or the worst run of a windowed cycle with the cycle's totals. */
+interface Sample {
+    wallMs: number;
+    cpuMs: number;
+    userMs: number;
+    sysMs: number;
+    removed: number;
+    checked: number;
+    probes: number;
+    stamps: number;
+    listings: number;
+    storedHits: number;
+    phases: ReconcilePhases;
+    runs: number;
+    fileRows: number;
+    dirRows: number;
 }
 
 interface Flags {
@@ -69,6 +87,8 @@ interface Flags {
     workDir: string;
     runs: string;
     modes: string;
+    windowRuns: string;
+    cursor?: string;
     baseline?: boolean;
     compare?: boolean;
     targetPct?: string;
@@ -76,17 +96,19 @@ interface Flags {
     child?: string;
 }
 
-async function runChild(dbPath: string): Promise<void> {
-    const cache = FileMetaCache.getInstance(dbPath);
+async function runChild(input: { dbPath: string; windowRuns: number; cursorPath?: string }): Promise<void> {
+    const cache = FileMetaCache.getInstance(input.dbPath);
     const cpuBefore = process.cpuUsage();
     const startedAt = performance.now();
-    const report = await cache.reconcile();
+    const report = await cache.reconcile({ windowRuns: input.windowRuns, cursorPath: input.cursorPath });
     const wallMs = performance.now() - startedAt;
     const cpu = process.cpuUsage(cpuBefore);
     cache.close();
     const result: ChildResult = {
         wallMs: Math.round(wallMs),
         cpuMs: Math.round((cpu.user + cpu.system) / 1000),
+        userMs: Math.round(cpu.user / 1000),
+        sysMs: Math.round(cpu.system / 1000),
         report,
     };
     out.print(`${SafeJSON.stringify(result)}\n`);
@@ -102,7 +124,18 @@ async function spawnText(cmd: string[]): Promise<{ stdout: string; stderr: strin
     return { stdout, stderr, exitCode };
 }
 
-async function measureOnce(input: { source: string; workDir: string; mode: Mode; run: number }): Promise<ChildResult> {
+function removedOf(report: ReconcileReport): number {
+    return report.staleFiles + report.staleDirs + report.goneFiles + report.goneDirs;
+}
+
+/** One sample: a clone of the DB, then `windowRuns` child runs on it sharing one cursor (one run for a full sweep). */
+async function measureSample(input: {
+    source: string;
+    workDir: string;
+    mode: Mode;
+    run: number;
+    windowRuns: number;
+}): Promise<Sample> {
     const runDir = join(input.workDir, `${Date.now()}-${input.mode}-${input.run}`);
     mkdirSync(runDir, { recursive: true });
     const copy = join(runDir, "file-meta.db");
@@ -112,25 +145,54 @@ async function measureOnce(input: { source: string; workDir: string; mode: Mode;
         throw new Error(`cp -c ${input.source} failed: ${cloned.stderr.trim()}`);
     }
 
-    const bunRun = [process.execPath, "run", import.meta.path, "--child", copy];
-    const cmd = input.mode === "background" ? ["taskpolicy", "-b", ...bunRun] : bunRun;
-    const child = await spawnText(cmd);
+    const children: ChildResult[] = [];
 
-    if (child.exitCode !== 0) {
-        throw new Error(`child (${input.mode}) exited ${child.exitCode}: ${child.stderr.trim().slice(-2000)}`);
+    for (let window = 0; window < input.windowRuns; window++) {
+        const bunRun = [
+            process.execPath,
+            "run",
+            import.meta.path,
+            "--child",
+            copy,
+            "--window-runs",
+            String(input.windowRuns),
+            "--cursor",
+            join(runDir, "cursor.json"),
+        ];
+        const cmd = input.mode === "background" ? ["taskpolicy", "-b", ...bunRun] : bunRun;
+        const child = await spawnText(cmd);
+
+        if (child.exitCode !== 0) {
+            throw new Error(`child (${input.mode}) exited ${child.exitCode}: ${child.stderr.trim().slice(-2000)}`);
+        }
+
+        const line = child.stdout.trim().split("\n").pop() ?? "";
+        children.push(SafeJSON.parse(line, { strict: true }) as ChildResult);
     }
 
-    const line = child.stdout.trim().split("\n").pop() ?? "";
-    return SafeJSON.parse(line, { strict: true }) as ChildResult;
+    const worst = children.reduce((a, b) => (b.wallMs > a.wallMs ? b : a));
+    const sum = (pick: (r: ReconcileReport) => number): number => children.reduce((n, c) => n + pick(c.report), 0);
+    return {
+        wallMs: worst.wallMs,
+        cpuMs: Math.max(...children.map((c) => c.cpuMs)),
+        userMs: worst.userMs,
+        sysMs: worst.sysMs,
+        removed: sum(removedOf),
+        checked: sum((r) => r.checked),
+        probes: sum((r) => r.probes),
+        stamps: sum((r) => r.stamps),
+        listings: sum((r) => r.listings),
+        storedHits: sum((r) => r.storedHits),
+        phases: worst.report.phases,
+        runs: children.length,
+        fileRows: worst.report.fileRows,
+        dirRows: worst.report.dirRows,
+    };
 }
 
 function median(values: number[]): number {
     const sorted = [...values].sort((a, b) => a - b);
     return sorted[Math.floor((sorted.length - 1) / 2)] ?? 0;
-}
-
-function removedOf(report: ReconcileReport): number {
-    return report.staleFiles + report.staleDirs + report.goneFiles + report.goneDirs;
 }
 
 async function readUptime(): Promise<string> {
@@ -139,8 +201,10 @@ async function readUptime(): Promise<string> {
 }
 
 async function main(flags: Flags): Promise<void> {
+    const windowRuns = Math.max(1, Number.parseInt(flags.windowRuns, 10) || 1);
+
     if (flags.child) {
-        await runChild(flags.child);
+        await runChild({ dbPath: flags.child, windowRuns, cursorPath: flags.cursor });
         return;
     }
 
@@ -148,12 +212,12 @@ async function main(flags: Flags): Promise<void> {
     const modes = flags.modes.split(",").filter((m): m is Mode => (MODES as readonly string[]).includes(m));
     mkdirSync(flags.workDir, { recursive: true });
     const uptimeBefore = await readUptime();
-    const samples = new Map<Mode, ChildResult[]>(modes.map((m) => [m, []]));
+    const samples = new Map<Mode, Sample[]>(modes.map((m) => [m, []]));
 
     for (let run = 0; run < runCount; run++) {
         for (const mode of run % 2 === 0 ? modes : [...modes].reverse()) {
-            out.log.info(`reconcile ${mode} — run ${run + 1}/${runCount}`);
-            const result = await measureOnce({ source: flags.db, workDir: flags.workDir, mode, run });
+            out.log.info(`reconcile ${mode} — sample ${run + 1}/${runCount} (${windowRuns} run(s) per sample)`);
+            const result = await measureSample({ source: flags.db, workDir: flags.workDir, mode, run, windowRuns });
             samples.get(mode)?.push(result);
         }
     }
@@ -169,31 +233,34 @@ async function main(flags: Flags): Promise<void> {
         const cpus = results.map((r) => r.cpuMs);
         metrics[`${mode}.wallMs`] = median(walls);
         metrics[`${mode}.cpuMs`] = median(cpus);
-        metrics[`${mode}.probes`] = median(results.map((r) => r.report.probes));
-        removed[`${mode}.removed`] = median(results.map((r) => removedOf(r.report)));
+        metrics[`${mode}.probes`] = median(results.map((r) => r.probes));
+        removed[`${mode}.removed`] = median(results.map((r) => r.removed));
         rows.push([`${mode} wall ms`, ...walls.map(String), String(median(walls))]);
         rows.push([`${mode} cpu ms`, ...cpus.map(String), String(median(cpus))]);
-        rows.push([
-            `${mode} probes`,
-            ...results.map((r) => String(r.report.probes)),
-            String(metrics[`${mode}.probes`]),
-        ]);
-
-        for (const key of PHASE_KEYS) {
-            const values = results.map((r) => r.report.phases?.[key] ?? 0);
+        const users = results.map((r) => r.userMs ?? 0);
+        const syss = results.map((r) => r.sysMs ?? 0);
+        rows.push([`${mode}   user ms`, ...users.map(String), String(median(users))]);
+        rows.push([`${mode}   system ms`, ...syss.map(String), String(median(syss))]);
+        for (const key of ["checked", "listings", "stamps", "storedHits", "probes"] as const) {
+            const values = results.map((r) => r[key]);
             rows.push([`${mode} ${key}`, ...values.map(String), String(median(values))]);
         }
 
-        rows.push([
-            `${mode} removed`,
-            ...results.map((r) => String(removedOf(r.report))),
-            String(removed[`${mode}.removed`]),
-        ]);
+        for (const key of RECONCILE_PHASE_KEYS) {
+            const values = results.map((r) => r.phases?.[key] ?? 0);
+            rows.push([`${mode} ${key}`, ...values.map(String), String(median(values))]);
+        }
+
+        rows.push([`${mode} removed`, ...results.map((r) => String(r.removed)), String(removed[`${mode}.removed`])]);
     }
 
-    const first = samples.get(modes[0] ?? "normal")?.[0]?.report;
+    const first = samples.get(modes[0] ?? "normal")?.[0];
+    const shape =
+        windowRuns > 1
+            ? `windows of 1/${windowRuns}: each sample is a full cycle of ${windowRuns} runs, timed by its slowest run`
+            : "one full sweep per sample";
     const setup = first
-        ? `${first.fileRows} file rows + ${first.dirRows} dir rows, ${runCount} runs per arm, interleaved, median`
+        ? `${first.fileRows} file rows + ${first.dirRows} dir rows, ${shape}, ${runCount} samples per arm, interleaved, median`
         : "no runs";
     const headers = ["METRIC", ...Array.from({ length: runCount }, (_, i) => `RUN ${i + 1}`), "MEDIAN"];
     out.println(`\nFileMetaCache.reconcile() on a clone of ${flags.db}`);
@@ -224,8 +291,11 @@ async function main(flags: Flags): Promise<void> {
         }
 
         const cmp = await compareToBaseline({ name: BASELINE_NAME, metrics: gated, tolerancePct });
+        // probes and removed are recorded in the baseline but not gated as timings; removed is checked below.
         const unchecked = cmp.missing.filter((m) => !m.endsWith(".probes") && !m.endsWith(".removed"));
-        out.println(`\n${formatComparison({ ...cmp, missing: unchecked })}`);
+        const timingOk =
+            Object.values(cmp.deltas).every((d) => d.ok) && cmp.baseline !== null && unchecked.length === 0;
+        out.println(`\n${formatComparison({ ...cmp, missing: unchecked, ok: timingOk })}`);
         const base = await readBaseline(BASELINE_NAME);
         const removedMismatch = Object.entries(removed).filter(([key, value]) => base?.metrics[key] !== value);
 
@@ -233,7 +303,6 @@ async function main(flags: Flags): Promise<void> {
             out.println(`removed rows differ: ${key} baseline ${base?.metrics[key] ?? "none"}, now ${value}`);
         }
 
-        const timingOk = Object.values(cmp.deltas).every((d) => d.ok) && cmp.baseline !== null;
         compareOk = timingOk && removedMismatch.length === 0;
         out.println(
             targetPct === undefined
@@ -260,6 +329,12 @@ const program = new Command()
     .option("--work-dir <dir>", "Where the per-run clones go", join(tmpdir(), "gt-bench-clones-reconcile"))
     .option("--runs <n>", "Runs per arm; the median is reported", "3")
     .option("--modes <list>", "Arms to run: normal,background", "normal,background")
+    .option(
+        "--window-runs <n>",
+        "Runs per full cycle, as the daemon runs it; 1 = one full sweep per sample",
+        String(DAEMON_WINDOW_RUNS)
+    )
+    .option("--cursor <path>", "Internal: the window cursor file of a child run")
     .option("--baseline", "Record the medians as the baseline")
     .option("--compare", "Measure again and compare with the baseline")
     .option("--target-pct <n>", "With --compare: pass only when wall and CPU are at most this % of the baseline")

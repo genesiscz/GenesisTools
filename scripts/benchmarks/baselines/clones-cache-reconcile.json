@@ -1,0 +1,22 @@
+{
+    "name": "clones-cache-reconcile",
+    "capturedAt": "2026-10-12T16:22:52.799Z",
+    "commit": "abb4b607d",
+    "loadAvg": [
+        38.36279296875,
+        35.18603515625,
+        34.76025390625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "normal.wallMs": 53378,
+        "normal.cpuMs": 10445,
+        "normal.probes": 1059688,
+        "background.wallMs": 162745,
+        "background.cpuMs": 35028,
+        "background.probes": 1059688,
+        "normal.removed": 1,
+        "background.removed": 1
+    },
+    "notes": "314583 file rows + 662227 dir rows, 3 runs per arm, interleaved, median | before: 18:11  up  5:28, 22 users, load averages: 22.36 27.37 33.01 | after: 18:22  up  5:39, 22 users, load averages: 38.36 35.19 34.76"
+}
