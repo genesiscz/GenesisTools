@@ -80,6 +80,9 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         }
         // The hub window's preferences, after Widgets; a running hub follows a change at once.
         ClickyHost.shared.registerSettingsSection(HubSettingsPages.section())
+        // What the daemon's tasks do: PR activity banners, and every task's schedule, runs and output.
+        ClickyHost.shared.registerSettingsSection(PRActivitySettingsPages.section())
+        ClickyHost.shared.registerSettingsSection(DaemonSettingsPages.section())
         // This face only edits the settings. Turning "Show the widget" on must also start the widget face that
         // owns the panels, once the switch is stored, so the face reads it as on.
         model.preferencesSaved = { patch in

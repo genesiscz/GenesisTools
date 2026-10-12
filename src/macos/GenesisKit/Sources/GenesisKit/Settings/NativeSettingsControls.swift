@@ -1,17 +1,28 @@
 import AppKit
 import SwiftUI
 
+/// Disclosures a settings run opens before it draws: `--expand <identifier>[,<identifier>…]` on the command line. A
+/// `--snapshot` cannot click, so this is how a page's folded content is checked off screen.
+public enum NativeSettingsLaunch {
+    public static let expanded: Set<String> = {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--expand"), args.indices.contains(index + 1) else { return [] }
+        return Set(args[index + 1].split(separator: ",").map { String($0) })
+    }()
+}
+
 public struct NativeSettingsDisclosure<Content: View>: View {
     private let title: String
     private let identifier: String
     private let content: Content
-    @State private var expanded = false
+    @State private var expanded: Bool
     @GenReduceMotion private var reduceMotion
 
     public init(_ title: String, identifier: String, @ViewBuilder content: () -> Content) {
         self.title = title
         self.identifier = identifier
         self.content = content()
+        _expanded = State(initialValue: NativeSettingsLaunch.expanded.contains(identifier))
     }
 
     public var body: some View {

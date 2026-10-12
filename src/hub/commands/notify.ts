@@ -111,7 +111,14 @@ export function registerNotifyCommands(program: Command): void {
             const status = notifyStatus({ configPath: notifyConfigPath(), daemonTask: await daemonRegistered() });
 
             if (opts.json) {
-                out.result(status);
+                // The tick of the daemon task, so the Settings page can say when it still runs at an old cadence.
+                const task = status.daemonTask
+                    ? await getTask(NOTIFY_TASK_NAME).catch((err: unknown) => {
+                          out.log.warn(`daemon config unreadable: ${err instanceof Error ? err.message : String(err)}`);
+                          return undefined;
+                      })
+                    : undefined;
+                out.result({ ...status, daemonTaskEvery: task?.every ?? null, daemonTaskWanted: NOTIFY_TASK_EVERY });
                 return;
             }
 

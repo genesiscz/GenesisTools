@@ -8,12 +8,12 @@ import XCTest
 final class HubNotifyTests: XCTestCase {
     /// A home with no notify.json, no state file and no daemon task.
     private let firstRunJSON = """
-    {"config":{"enabled":true,"intervalMinutes":3,"onlyMine":false,"events":{"thread":true,"ciFailed":true,"ciPassed":false,"botReview":true,"merged":true},"repos":{},"botLogins":[]},"configPath":"/tmp/gt-home/.genesis-tools/hub/notify.json","statePath":"/tmp/gt-home/.genesis-tools/hub/notify-state.json","lastPollAt":null,"nextPollAt":null,"repos":{},"hosts":{},"recent":[],"requestsLastHour":0,"pollsLastHour":0,"daemonTask":false}
+    {"config":{"enabled":true,"intervalMinutes":3,"onlyMine":false,"events":{"thread":true,"reviewRequested":true,"ciFailed":true,"ciPassed":false,"botReview":true,"merged":true},"repos":{},"botLogins":[]},"configPath":"/tmp/gt-home/.genesis-tools/hub/notify.json","statePath":"/tmp/gt-home/.genesis-tools/hub/notify-state.json","lastPollAt":null,"nextPollAt":null,"repos":{},"hosts":{},"recent":[],"requestsLastHour":0,"pollsLastHour":0,"daemonTask":false,"daemonTaskEvery":null,"daemonTaskWanted":"every 1 minute"}
     """
 
     /// After polls: one repo fine, one failing and backing off, per-repo events, recent events.
     private let polledJSON = """
-    {"config":{"enabled":true,"intervalMinutes":3,"onlyMine":false,"events":{"thread":false,"ciFailed":true,"ciPassed":false,"botReview":true,"merged":true},"repos":{"/tmp/gt/web":{"enabled":true,"events":{"ciPassed":true}},"/tmp/gt/shop":{"enabled":true},"/tmp/gt/old":{"enabled":false}},"botLogins":["reviewbot"]},
+    {"config":{"enabled":true,"intervalMinutes":3,"onlyMine":false,"events":{"thread":false,"ciFailed":true,"ciPassed":false,"botReview":true,"merged":true},"repos":{"/tmp/gt/web":{"enabled":true,"events":{"ciPassed":true},"intervalMinutes":5},"/tmp/gt/shop":{"enabled":true},"/tmp/gt/old":{"enabled":false}},"botLogins":["reviewbot"]},
      "configPath":"/tmp/gt-home/.genesis-tools/hub/notify.json","statePath":"/tmp/gt-home/.genesis-tools/hub/notify-state.json",
      "lastPollAt":"2026-09-24T21:42:23.186Z","nextPollAt":"2026-09-24T21:45:23.186Z",
      "repos":{
@@ -32,6 +32,8 @@ final class HubNotifyTests: XCTestCase {
         let status = try HubNotifyStatus.decode(Data(firstRunJSON.utf8))
         XCTAssertNil(status.lastPollAt)
         XCTAssertEqual(status.daemonTask, false)
+        XCTAssertNil(status.daemonTaskEvery)
+        XCTAssertEqual(status.daemonTaskWanted, "every 1 minute")
         XCTAssertTrue(status.config.repos.isEmpty)
         XCTAssertEqual(Set(status.config.events.keys), Set(HubNotifyEvent.allCases.map(\.rawValue)))
     }
@@ -40,6 +42,9 @@ final class HubNotifyTests: XCTestCase {
         let status = try HubNotifyStatus.decode(Data(polledJSON.utf8))
         XCTAssertEqual(status.config.repos["/tmp/gt/web"]?.events?["ciPassed"], true)
         XCTAssertNil(status.config.repos["/tmp/gt/shop"]?.events)
+        // A repo's own cadence (per-project jobs); a repo without one follows the global interval.
+        XCTAssertEqual(status.config.repos["/tmp/gt/web"]?.intervalMinutes, 5)
+        XCTAssertNil(status.config.repos["/tmp/gt/shop"]?.intervalMinutes)
         XCTAssertEqual(status.config.botLogins, ["reviewbot"])
         let failing = status.repos.values.first { $0.path == "/tmp/gt/shop" }
         XCTAssertEqual(failing?.failures, 2)

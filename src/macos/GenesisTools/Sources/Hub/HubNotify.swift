@@ -10,6 +10,8 @@ struct HubNotifyStatus: Decodable, Equatable {
     struct Repo: Decodable, Equatable {
         let enabled: Bool
         let events: [String: Bool]?
+        /// This repo's own cadence; nil follows `Config.intervalMinutes`.
+        let intervalMinutes: Int?
     }
 
     struct Config: Decodable, Equatable {
@@ -27,6 +29,7 @@ struct HubNotifyStatus: Decodable, Equatable {
         let nextAt: String?
         let lastOkAt: String?
         let lastError: String?
+        let lastAttemptAt: String?
     }
 
     struct Event: Decodable, Equatable, Identifiable {
@@ -51,6 +54,9 @@ struct HubNotifyStatus: Decodable, Equatable {
     let requestsLastHour: Int
     let pollsLastHour: Int
     let daemonTask: Bool?
+    /// The daemon task's schedule, and the one-minute tick it should have (`tools hub notify install`).
+    let daemonTaskEvery: String?
+    let daemonTaskWanted: String?
 
     /// `tools hub notify status --json` (src/hub/lib/notify-poll.ts `notifyStatus`).
     static func decode(_ data: Data) throws -> HubNotifyStatus {
@@ -59,11 +65,12 @@ struct HubNotifyStatus: Decodable, Equatable {
 }
 
 enum HubNotifyEvent: String, CaseIterable, Identifiable {
-    case thread, ciFailed, ciPassed, botReview, merged
+    case thread, reviewRequested, ciFailed, ciPassed, botReview, merged
     var id: String { rawValue }
     var title: String {
         switch self {
         case .thread: return "New review threads"
+        case .reviewRequested: return "My review was requested"
         case .ciFailed: return "CI failed"
         case .ciPassed: return "CI passed"
         case .botReview: return "A review bot finished"
@@ -109,6 +116,11 @@ final class HubNotifyStore: ObservableObject {
         let requests = report["requests"] as? Int ?? 0
         if let skipped = report["skipped"] as? String { return "Poll skipped: \(skipped)" }
         return "Polled: \(items) events, \(posted) posted, \(requests) requests"
+    }
+
+    /// `tools hub notify install`: the one `hub-pr-notify` daemon task, ticking every minute.
+    func installDaemonTask() {
+        run(["hub", "notify", "install"], label: "notify.install", reload: true) { _ in "The daemon task is installed; it ticks every minute" }
     }
 
     func sendTest(pr: String?) {
@@ -252,7 +264,7 @@ struct HubNotifySettings: View {
             Stepper(value: Binding(get: { config.intervalMinutes }, set: { store.set(["--interval", String($0)]) }), in: 1...60) {
                 Text(verbatim: "Every \(config.intervalMinutes) min").font(.system(size: 12, design: .monospaced))
             }
-            .instantTooltip("Minutes between polls of each repo; a failing repo backs off up to an hour")
+            .instantTooltip("Minutes between polls of a repo without its own cadence (Settings → Notifications → PR activity); a failing repo backs off up to an hour")
         }
         .font(.system(size: 12))
 
