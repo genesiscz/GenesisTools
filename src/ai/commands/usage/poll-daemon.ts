@@ -75,8 +75,9 @@ export function anthropicRows(snapshots: readonly AccountUsageSnapshot[]) {
 const prof = profiler.scope("ai-usage");
 
 /**
- * Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a cold answer walks 3,796
- * directories and stats 12k files for 1.83 s of CPU. This tick is already awake, so it recomputes the last query
+ * Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a fresh answer costs about 1.1 s of
+ * CPU (1,130 ms median on 2026-10-12, `scripts/benchmarks/agent-sessions/session-listing.ts`): process start, every
+ * provider's session discovery, and the row build. This tick is already awake, so it recomputes the last query
  * the CLI asked for and the CLI reads the file. It does nothing until something has asked once, and stops an hour
  * after the last ask, so an idle machine pays nothing.
  *
