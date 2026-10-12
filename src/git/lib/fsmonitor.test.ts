@@ -22,7 +22,15 @@ const DAEMON = "/opt/homebrew/opt/git/libexec/git-core/git fsmonitor--daemon run
  * A main checkout `repo`, a linked worktree `wt1` of `main`, and canned `ps` / `lsof` output for their daemons.
  * git config runs for real against a global file inside the fixture; stop and update-index are only recorded.
  */
-function fixture({ running = ["repo", "wt1"], stopFails = false }: { running?: string[]; stopFails?: boolean } = {}) {
+function fixture({
+    running = ["repo", "wt1"],
+    stopFails = false,
+    lsofFails = false,
+}: {
+    running?: string[];
+    stopFails?: boolean;
+    lsofFails?: boolean;
+} = {}) {
     const root = mkdtempSync(join(tmpdir(), "gt-fsmonitor-"));
     mkdirSync(join(root, "repo", ".git"), { recursive: true });
     mkdirSync(join(root, "main", ".git", "worktrees", "wt1"), { recursive: true });
@@ -69,7 +77,9 @@ function fixture({ running = ["repo", "wt1"], stopFails = false }: { running?: s
             }
 
             if (command === "lsof") {
-                return { stdout: lsof, stderr: "", status: lsof ? 0 : 1 };
+                return lsofFails || !lsof
+                    ? { stdout: "", stderr: lsofFails ? "lsof: permission denied" : "", status: 1 }
+                    : { stdout: lsof, stderr: "", status: 0 };
             }
 
             if (args.includes("fsmonitor--daemon")) {
@@ -265,5 +275,57 @@ describe("git fsmonitor", () => {
         expect(again.restored).toBeNull();
         expect(await readGlobal(deps, "core.untrackedCache")).toBe("keep");
         expect(await readGlobal(deps, "core.fsmonitor")).toBeNull();
+    });
+
+    test("a daemon whose worktree cannot be read is not counted as cleaned up, so the saved values stay", async () => {
+        const { deps } = fixture({ running: ["repo"], lsofFails: true });
+        await enableFsmonitor(deps);
+
+        const report = await disableFsmonitor(deps);
+
+        expect(report.unidentified).toEqual([101]);
+        expect(readFsmonitorState(deps.statePath).previous).toEqual({
+            "core.fsmonitor": null,
+            "core.untrackedCache": null,
+        });
+    });
+
+    test("a recorder started while disable runs waits for it, so it cannot write back what disable cleared", async () => {
+        const { deps, calls } = fixture({ running: ["repo"] });
+        await enableFsmonitor(deps);
+        let reachedStop!: () => void;
+        let releaseStop!: () => void;
+        const atStop = new Promise<void>((resolve) => {
+            reachedStop = resolve;
+        });
+        const stopReleased = new Promise<void>((resolve) => {
+            releaseStop = resolve;
+        });
+        const slowStop: FsmonitorDeps = {
+            ...deps,
+            run: async (command, args, options) => {
+                if (args.includes("fsmonitor--daemon")) {
+                    reachedStop();
+                    await stopReleased;
+                }
+
+                return deps.run(command, args, options);
+            },
+        };
+        const psCalls = () => calls.filter(([command]) => command === "ps").length;
+
+        const disabling = disableFsmonitor(slowStop);
+        await atStop;
+        const psBefore = psCalls();
+        const recording = recordMonitorDaemons(deps);
+        // Long enough for an unlocked recorder to reach its ps call.
+        await Bun.sleep(50);
+        const psWhileDisabling = psCalls();
+        releaseStop();
+        await Promise.all([disabling, recording]);
+
+        expect(psWhileDisabling).toBe(psBefore);
+        expect(psCalls()).toBe(psBefore + 1);
+        expect(readFsmonitorState(deps.statePath).previous).toBeNull();
     });
 });

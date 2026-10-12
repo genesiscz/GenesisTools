@@ -5,6 +5,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type CaptureResult, capture, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -259,8 +260,7 @@ export function worktreesFromLsof(output: string): Map<number, string> {
     return worktrees;
 }
 
-/** Adds every watched worktree to the state file. The daemon task runs this every 10 minutes. */
-export async function recordMonitorDaemons(
+async function recordUnlocked(
     deps: FsmonitorDeps
 ): Promise<{ daemons: MonitorDaemon[]; added: string[]; recorded: number }> {
     const daemons = await listMonitorDaemons(deps);
@@ -289,8 +289,7 @@ export async function recordMonitorDaemons(
     return { daemons, added, recorded: Object.keys(state.worktrees).length };
 }
 
-/** Turns both settings on globally, keeping the earlier values for `disable`. Safe to run twice. */
-export async function enableFsmonitor(
+async function enableUnlocked(
     deps: FsmonitorDeps
 ): Promise<{ previous: Record<FsmonitorKey, string | null>; alreadyEnabled: boolean }> {
     const state = readFsmonitorState(deps.statePath);
@@ -318,6 +317,8 @@ export interface DisableReport {
     cacheRemoved: string[];
     missing: string[];
     failed: Array<{ worktree: string; step: string; error: string }>;
+    /** Daemons whose worktree could not be read (lsof failed or saw no folder): not stopped, so not done. */
+    unidentified: number[];
 }
 
 /**
@@ -327,7 +328,7 @@ export interface DisableReport {
  * Without a saved `enable` (never enabled here, or already disabled) it changes nothing: the global config is then the
  * user's own. When a step fails, the saved values and the failed worktrees stay, so running it again retries them.
  */
-export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false } = {}): Promise<DisableReport> {
+async function disableUnlocked(deps: FsmonitorDeps, keepCache: boolean): Promise<DisableReport> {
     const state = readFsmonitorState(deps.statePath);
     const restored = state.previous;
 
@@ -336,7 +337,7 @@ export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false 
             { statePath: deps.statePath },
             "[git fsmonitor] disable: nothing saved by enable, nothing changed"
         );
-        return { restored: null, stopped: [], cacheRemoved: [], missing: [], failed: [] };
+        return { restored: null, stopped: [], cacheRemoved: [], missing: [], failed: [], unidentified: [] };
     }
 
     for (const key of FSMONITOR_KEYS) {
@@ -349,7 +350,14 @@ export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false 
         ...daemons.flatMap((daemon) => (daemon.worktree ? [daemon.worktree] : [])),
     ]);
     const running = new Set(daemons.map((daemon) => daemon.worktree));
-    const report: DisableReport = { restored, stopped: [], cacheRemoved: [], missing: [], failed: [] };
+    const report: DisableReport = {
+        restored,
+        stopped: [],
+        cacheRemoved: [],
+        missing: [],
+        failed: [],
+        unidentified: daemons.flatMap((daemon) => (daemon.worktree ? [] : [daemon.pid])),
+    };
     // A cache the user had turned on before stays; only one this tool added is removed.
     const removeCache = !keepCache && restored["core.untrackedCache"] !== "true";
 
@@ -387,7 +395,7 @@ export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false 
             state.worktrees[worktree] ?? { firstSeen: now, lastSeen: now },
         ])
     );
-    const done = report.failed.length === 0;
+    const done = report.failed.length === 0 && report.unidentified.length === 0;
     await writeState(deps.statePath, {
         version: 1,
         enabledAt: null,
@@ -395,9 +403,46 @@ export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false 
         worktrees: kept,
     });
     logger.debug(
-        { stopped: report.stopped.length, cacheRemoved: report.cacheRemoved.length, failed: report.failed },
+        {
+            stopped: report.stopped.length,
+            cacheRemoved: report.cacheRemoved.length,
+            failed: report.failed,
+            unidentified: report.unidentified,
+        },
         "[git fsmonitor] disabled"
     );
 
     return report;
+}
+
+/** disable stops one daemon per worktree under the lock, so a waiting recorder gets far longer than the default. */
+const STATE_LOCK_WAIT_MS = 60_000;
+
+/**
+ * Every read-modify-write of the state file and the global config runs under one lock, so the 10-minute recorder
+ * and enable or disable never interleave: a recorder writing after disable would bring back the saved values, and
+ * a later disable would then overwrite settings the user changed meanwhile.
+ */
+async function withStateLock<T>(deps: FsmonitorDeps, fn: () => Promise<T>): Promise<T> {
+    await mkdir(dirname(deps.statePath), { recursive: true });
+    return withFileLock(`${deps.statePath}.lock`, fn, STATE_LOCK_WAIT_MS);
+}
+
+/** Adds every watched worktree to the state file. The daemon task runs this every 10 minutes. */
+export function recordMonitorDaemons(
+    deps: FsmonitorDeps
+): Promise<{ daemons: MonitorDaemon[]; added: string[]; recorded: number }> {
+    return withStateLock(deps, () => recordUnlocked(deps));
+}
+
+/** Turns both settings on globally, keeping the earlier values for `disable`. Safe to run twice. */
+export function enableFsmonitor(
+    deps: FsmonitorDeps
+): Promise<{ previous: Record<FsmonitorKey, string | null>; alreadyEnabled: boolean }> {
+    return withStateLock(deps, () => enableUnlocked(deps));
+}
+
+/** Restores the global values and cleans up every worktree; see `disableUnlocked` for what is kept on failure. */
+export function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false } = {}): Promise<DisableReport> {
+    return withStateLock(deps, () => disableUnlocked(deps, keepCache));
 }

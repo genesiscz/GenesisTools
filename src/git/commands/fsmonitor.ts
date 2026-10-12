@@ -175,7 +175,9 @@ export function registerFsmonitorCommand(parent: Command): void {
             const report = await disableFsmonitor(defaultFsmonitorDeps(), { keepCache: Boolean(options.keepCache) });
             const taskRemoved = report.restored ? await unregisterTask(RECORD_TASK) : false;
 
-            if (report.failed.length > 0) {
+            const incomplete = report.failed.length > 0 || report.unidentified.length > 0;
+
+            if (incomplete) {
                 process.exitCode = 1;
             }
 
@@ -203,7 +205,15 @@ export function registerFsmonitorCommand(parent: Command): void {
                 out.println(pc.red(`  ${failure.step} failed in ${failure.worktree}: ${failure.error}`));
             }
 
-            if (report.failed.length > 0) {
+            if (report.unidentified.length > 0) {
+                out.println(
+                    pc.red(
+                        `  ${report.unidentified.length} daemon(s) whose worktree could not be read were not stopped: pid ${report.unidentified.join(", ")}`
+                    )
+                );
+            }
+
+            if (incomplete) {
                 out.println(`  Run ${toolCommand("git fsmonitor disable")} again to retry; the saved values are kept.`);
             }
         });
