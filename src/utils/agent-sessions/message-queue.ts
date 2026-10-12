@@ -26,6 +26,35 @@ const messageSchema = z.object({
 });
 export type SessionMessage = z.infer<typeof messageSchema>;
 export type SessionMessageState = SessionMessage["state"];
+/** The largest text one queued message may carry; every read parses the whole queue file. */
+export const MAX_SESSION_MESSAGE_BYTES = 64 * 1024;
+
+/** The queue refused a message for its size alone: nothing was written, so the message was not sent. */
+export class SessionMessageTooLargeError extends Error {
+    constructor(readonly bytes: number) {
+        super(`A queued message is limited to ${MAX_SESSION_MESSAGE_BYTES} bytes of text.`);
+        this.name = "SessionMessageTooLargeError";
+    }
+}
+
+/** How long a received or cancelled message stays in its queue before the next write drops it. */
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** Dropped messages leave a text-free receipt; this many newest receipts are kept per queue. */
+const MAX_RECEIPTS = 1000;
+const receiptSchema = z.object({
+    id: z.string().min(1),
+    state: z.enum(["received", "cancelled"]),
+    updatedAt: z.string(),
+    consumer: z.string().optional(),
+    textHash: z.string(),
+});
+/**
+ * A message's final state without its text. The prune keeps one for every message it drops, so a producer that
+ * was away longer than the retention can still confirm the delivery instead of reading the absence as "not sent".
+ */
+export type SessionMessageReceipt = z.infer<typeof receiptSchema>;
+/** What a producer needs to reconcile a message: its state, consumer and the hash of the text it carried. */
+export type SessionMessageOutcome = Omit<SessionMessageReceipt, "state"> & { state: SessionMessageState };
 interface QueueAddress {
     target: SessionMessageTarget;
     root?: string;
@@ -67,6 +96,54 @@ export function listSessionMessages(input: QueueAddress): SessionMessage[] {
     return read(file, target);
 }
 
+function receiptsFile(file: string): string {
+    return file.replace(/\.json$/, ".receipts.jsonl");
+}
+
+function readReceipts(file: string): SessionMessageReceipt[] {
+    const path = receiptsFile(file);
+    if (!existsSync(path)) {
+        return [];
+    }
+    return readFileSync(path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => receiptSchema.parse(SafeJSON.parse(line, { strict: true })));
+}
+
+export function sessionMessageTextHash(text: string): string {
+    return createHash("sha256").update(text).digest("hex");
+}
+
+/** Every message's outcome: the queued ones as they are, then the receipts of messages the prune dropped. */
+export function listSessionMessageOutcomes(input: QueueAddress): SessionMessageOutcome[] {
+    const { file, target } = address(input);
+    const live = read(file, target).map((message) => ({
+        id: message.id,
+        state: message.state,
+        updatedAt: message.updatedAt,
+        ...(message.consumer ? { consumer: message.consumer } : {}),
+        textHash: sessionMessageTextHash(message.text),
+    }));
+    const ids = new Set(live.map((message) => message.id));
+    return [...live, ...readReceipts(file).filter((receipt) => !ids.has(receipt.id))];
+}
+
+function keyedMessageId(idempotencyKey: string): string {
+    return createHash("sha256").update(idempotencyKey).digest("hex");
+}
+
+/**
+ * The outcome of the message an earlier enqueue saved under this delivery key, if any, including one the prune
+ * dropped; read-only like `listSessionMessages`.
+ */
+export function findKeyedSessionMessage(
+    input: QueueAddress & { idempotencyKey: string }
+): SessionMessageOutcome | undefined {
+    const id = keyedMessageId(input.idempotencyKey);
+    return listSessionMessageOutcomes(input).find((message) => message.id === id);
+}
+
 async function mutate(
     input: QueueAddress,
     edit: (messages: SessionMessage[], target: SessionMessageTarget) => SessionMessage
@@ -77,6 +154,35 @@ async function mutate(
         const messages = read(file, target);
         const before = SafeJSON.stringify(messages);
         const result = edit(messages, target);
+        const cutoff = Date.now() - TERMINAL_RETENTION_MS;
+        const kept = messages.filter(
+            (message) =>
+                message === result ||
+                !(message.state === "received" || message.state === "cancelled") ||
+                Date.parse(message.updatedAt) >= cutoff
+        );
+        const dropped = messages.filter((message) => !kept.includes(message));
+        if (dropped.length > 0) {
+            // Written before the queue: a crash in between leaves a receipt for a message still queued, never neither.
+            const receipts = [
+                ...readReceipts(file),
+                ...dropped.map((message) =>
+                    receiptSchema.parse({
+                        id: message.id,
+                        state: message.state,
+                        updatedAt: message.updatedAt,
+                        consumer: message.consumer,
+                        textHash: sessionMessageTextHash(message.text),
+                    })
+                ),
+            ].slice(-MAX_RECEIPTS);
+            atomicWriteFileSync(
+                receiptsFile(file),
+                `${receipts.map((receipt) => SafeJSON.stringify(receipt)).join("\n")}\n`,
+                { mode: 0o600 }
+            );
+        }
+        messages.splice(0, messages.length, ...kept);
         const after = SafeJSON.stringify(messages);
         if (before !== after) {
             atomicWriteFileSync(file, after, { mode: 0o600 });
@@ -95,9 +201,22 @@ export async function enqueueSessionMessage(
     if (!input.text.trim()) {
         throw new Error("A queued message must contain text.");
     }
-    const id = input.idempotencyKey ? createHash("sha256").update(input.idempotencyKey).digest("hex") : randomUUID();
+
+    const bytes = Buffer.byteLength(input.text, "utf8");
+    if (bytes > MAX_SESSION_MESSAGE_BYTES) {
+        throw new SessionMessageTooLargeError(bytes);
+    }
+
+    const id = input.idempotencyKey ? keyedMessageId(input.idempotencyKey) : randomUUID();
     return mutate(input, (messages, target) => {
         const existing = messages.find((message) => message.id === id);
+        if (
+            !existing &&
+            input.idempotencyKey &&
+            readReceipts(address(input).file).some((receipt) => receipt.id === id)
+        ) {
+            throw new Error("This delivery key was already received or cancelled; no message was queued again.");
+        }
         if (existing) {
             if (existing.text !== input.text) {
                 throw new Error("This delivery key already belongs to different text; no message was replaced.");

@@ -289,6 +289,23 @@ final class WidgetInteractionTests: XCTestCase {
     }
 
     @MainActor
+    func testSessionChooserHoldsTheWidgetOpenWithoutReleasingOrBeingReleasedByAWindow() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        value.dialogOpen = true
+        value.sessionChooserOpen = true
+        value.sessionChooserOpen = false
+        XCTAssertTrue(value.dialogOpen, "closing the chooser must not release the window that is still open")
+        value.sessionChooserOpen = true
+        value.dialogOpen = false
+        XCTAssertTrue(value.dialogOpen, "closing a window must not release the chooser that is still open")
+        value.stop()
+        XCTAssertFalse(value.dialogOpen)
+    }
+
+    @MainActor
     func testSliderBurstWritesOneMergedPreferenceAction() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "widget-preferences-" + UUID().uuidString)
@@ -371,6 +388,27 @@ final class WidgetInteractionTests: XCTestCase {
         value.collapse()
         XCTAssertNil(value.hoveredSurface)
         XCTAssertNil(value.expanded)
+    }
+
+    @MainActor
+    func testPointerExitDuringSideDragCollapsesHoverOnRelease() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        value.hover(side, inside: true)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(value.hoveredSurface, side)
+        value.moveSide(position: 0.4, finished: false)
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(value.hoveredSurface, side, "the rail keeps its hover height while it is dragged")
+        value.moveSide(position: 0.4, finished: true)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(value.hoveredSurface)
+        XCTAssertEqual(value.presentation(for: side), .compact)
     }
 }
 

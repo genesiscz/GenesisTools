@@ -515,6 +515,12 @@ function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): Decisio
         throw new Error(`cannot move ${row.id} from ${row.state} to ${patch.state}`);
     }
 
+    // A queued answer is matched by revision on ACK, and these fields do not bump it; the ACK must not confirm new text.
+    const content = [patch.answer, patch.option, patch.draft, patch.draftOption].some((value) => value !== undefined);
+    if (row.delivery?.queueId && content) {
+        throw new Error(`${row.id} is reserved by a queued delivery; cancel that message before changing its answer`);
+    }
+
     const { comment, expectedRevision: _expectedRevision, ...fields } = patch;
     const next: DecisionRecord = {
         ...row,
@@ -767,7 +773,9 @@ export async function harvestDecisions(
 
 /**
  * Records where a send took these rows. It never changes a state: the send already moved them
- * (`sent`, or back to `answered` when queued). A later send overwrites the record.
+ * (`sent`, or back to `answered` when queued). A later send overwrites the record, except that a row
+ * reserved by a queued message keeps its `queueId`: dropping it would let the next prompt deliver the
+ * answer a second time while the queue consumer delivers it too.
  */
 export async function recordDelivery(
     file: string,
@@ -785,12 +793,23 @@ export async function recordDelivery(
     await withDecisionsLock(file, () => {
         const ts = now();
         const stamped: DecisionDelivery = { ...delivery, at: ts };
+        const stampedIds: string[] = [];
         rewrite(
             file,
-            readDecisions(file).map((row) => (wanted.has(row.id) ? { ...row, delivery: stamped } : row))
+            readDecisions(file).map((row) => {
+                const reservedElsewhere =
+                    row.delivery?.queueId !== undefined && row.delivery.queueId !== delivery.queueId;
+
+                if (!wanted.has(row.id) || reservedElsewhere) {
+                    return row;
+                }
+
+                stampedIds.push(row.id);
+                return { ...row, delivery: stamped };
+            })
         );
 
-        for (const id of ids) {
+        for (const id of stampedIds) {
             appendEvent(events, { ev: "delivery", id, ts, route: delivery.route });
         }
     });
@@ -925,6 +944,11 @@ export async function reconcileQueuedDecision({
     });
 }
 
+/**
+ * Moves several decisions to one state as ONE transition: one lock, every move validated before
+ * any is written, one rewrite. A send that delivered a batch must mark the whole batch, or none,
+ * so a crash between rows cannot leave answers that the next send delivers again.
+ */
 export async function moveDecisions(
     file: string,
     events: string,

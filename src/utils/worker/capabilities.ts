@@ -32,6 +32,11 @@ export interface WorkerCapabilities {
      * quotes this one string, so the hidden flag's description and the refusal cannot drift.
      */
     accountUnsupported?: string;
+    /**
+     * Set when `steer` cannot compare the previous turn before it delivers, carrying the sentence the refusal
+     * and the hidden `--expect-turn` flag both quote.
+     */
+    turnGuardUnsupported?: string;
     /** Verbs the GenesisTools CLI exposes for this backend. */
     verbs: string[];
     /** Verbs deliberately absent, with the reason. */
@@ -53,6 +58,7 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["app-server JSON-RPC"],
         steering: "mid-turn",
         accountRequired: false,
+        turnGuardUnsupported: "Codex steering has no turn guard; omit --expect-turn.",
         verbs: [
             "spawn",
             "steer",

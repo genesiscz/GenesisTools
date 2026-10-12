@@ -3,14 +3,18 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerSessionQueueCommand } from "@app/ai/commands/agent/queue";
+import { registerWorkerVerbs } from "@app/ai/commands/agent/worker";
+import { deliverToSession } from "@app/question/lib/decisions/deliver";
 import { enqueueSessionMessage, listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import type { WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
 import { Command } from "commander";
 import * as controlChannel from "../lib/control-channel";
 import { codexDriver } from "../lib/driver";
 import { CodexMessageUnknownError, steerCodexMessage } from "../lib/message-delivery";
-import type { CodexSessionMeta } from "../lib/store";
+import { type CodexSessionMeta, CodexSessionStore } from "../lib/store";
 import { registerCodexMessageCommands } from "./queue";
 import { nativeRunInvocation, registerRunCommand } from "./run";
 
@@ -234,6 +238,37 @@ test("exact-session steer checks source home and rejects ambiguous daemons befor
     expect(nativeCalls).toBe(0);
 });
 
+test("a repeated delivery key that was queued while unowned is not steered once a daemon appears", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-codex-repeat-key-"));
+    const target = { provider: "codex" as const, sessionId: "thread-1", sourceHome: "/fixture/codex" };
+    let steered = 0;
+    const steer = async (): Promise<never> => {
+        steered++;
+        throw new Error("A queued delivery must not be steered again");
+    };
+    const first = await steerCodexMessage({
+        target,
+        text: "keyed input",
+        idempotencyKey: "fixture-key",
+        root,
+        deps: { store: { listNames: () => [], readMeta: () => null }, isLive: () => true, steer },
+    });
+    const repeat = await steerCodexMessage({
+        target,
+        text: "keyed input",
+        idempotencyKey: "fixture-key",
+        root,
+        deps: {
+            store: { listNames: () => ["work"], readMeta: () => codexMessageFixture() },
+            isLive: () => true,
+            steer,
+        },
+    });
+    expect(repeat).toMatchObject({ channel: "session-queue", queued: true });
+    expect(repeat.message?.id).toBe(first.message?.id);
+    expect(steered).toBe(0);
+});
+
 test("daemon acceptance and boundary queue are not reported as consumer acknowledgement", async () => {
     for (const result of [{ turnId: "turn-1", queued: false }, { queued: true }]) {
         const receipt = await steerCodexMessage({
@@ -365,6 +400,44 @@ test("Codex driver rejects a reused name before the native control primitive and
     }
 });
 
+test("Codex driver refuses an unsupported turn guard and keeps a daemon-proven refusal typed", async () => {
+    const primitive = spyOn(controlChannel, "sendControlRequest");
+    primitive.mockImplementation(async () => {
+        throw new Error("Native primitive must not be reached");
+    });
+    try {
+        await expect(
+            Promise.resolve().then(() =>
+                codexDriver.steer(codexMessageFixture(), {
+                    prompt: "guarded",
+                    extras: { expectSession: "thread-1", expectHome: "/fixture/codex", expectTurn: "3" },
+                })
+            )
+        ).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+        expect(primitive).not.toHaveBeenCalled();
+
+        primitive.mockImplementation(async () => ({ ok: false, error: "thread changed", code: "rejected" }));
+        await expect(
+            codexDriver.steer(codexMessageFixture(), {
+                prompt: "guarded",
+                extras: { expectSession: "thread-1", expectHome: "/fixture/codex" },
+            })
+        ).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+
+        primitive.mockImplementation(async () => ({ ok: false, error: "daemon failed" }));
+        const failure = await codexDriver
+            .steer(codexMessageFixture(), {
+                prompt: "guarded",
+                extras: { expectSession: "thread-1", expectHome: "/fixture/codex" },
+            })
+            .catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure).not.toBeInstanceOf(WorkerDeliveryRejectedError);
+    } finally {
+        primitive.mockRestore();
+    }
+});
+
 test("the wrapped named steer preserves structured pre-dispatch rejection receipts", async () => {
     const previousExitCode = process.exitCode;
     const program = new Command().exitOverride();
@@ -389,4 +462,71 @@ test("the wrapped named steer preserves structured pre-dispatch rejection receip
     } finally {
         process.exitCode = previousExitCode;
     }
+});
+
+test("a decision answer for a worker whose daemon is gone is queued, because the real steer CLI prints a rejected receipt", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-stale-daemon-"));
+    const queueRoot = mkdtempSync(join(tmpdir(), "gt-codex-stale-queue-"));
+    const sourceHome = join(home, "codex-home");
+    const gone = Bun.spawn(["true"], { env: process.env });
+    await gone.exited;
+    const previousExitCode = process.exitCode;
+
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        new CodexSessionStore().writeMeta(
+            codexMessageFixture({ name: "stale", daemonPid: gone.pid, home: sourceHome, status: "ready" })
+        );
+        const program = new Command().exitOverride();
+        let printed = "";
+        registerWorkerVerbs(program, codexDriver, { tool: "tools codex", subcommand: [] });
+        registerCodexMessageCommands({
+            program,
+            output: (value) => {
+                printed = SafeJSON.stringify(value);
+            },
+        });
+        const calls: string[][] = [];
+        const runTool = async (args: string[]) => {
+            calls.push(args);
+            printed = "";
+            process.exitCode = undefined;
+
+            try {
+                await program.parseAsync(args.slice(1), { from: "user" });
+            } catch (error) {
+                return { success: false, stdout: printed, stderr: String(error) };
+            }
+
+            return { success: process.exitCode !== 1, stdout: printed, stderr: "" };
+        };
+
+        try {
+            const result = await deliverToSession(
+                {
+                    session: "thread-1",
+                    provider: "codex",
+                    sourceHome,
+                    text: "DECISION 1: a) yes",
+                    deliveryKey: "stale-daemon-key",
+                },
+                { runTool, codexWorkerFor: () => "stale", queueRoot }
+            );
+
+            expect(calls).toHaveLength(1);
+            expect(result).toMatchObject({
+                channel: "queued",
+                delivered: false,
+                error: expect.stringContaining("daemon is not running"),
+            });
+            expect(result.queueId).toBeDefined();
+            expect(
+                listSessionMessages({
+                    target: { provider: "codex", sessionId: "thread-1", sourceHome },
+                    root: queueRoot,
+                })
+            ).toHaveLength(1);
+        } finally {
+            process.exitCode = previousExitCode;
+        }
+    });
 });

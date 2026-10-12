@@ -121,6 +121,20 @@ describe("read-model", () => {
         expect(markEntriesRead(db, ["r1"], { logBase })).toBe(0);
     });
 
+    it("close settles ingested rows and read marks into the store file", () => {
+        const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+        const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+        appendEntry(e("c1"), logBase);
+        const db = openReadModel(dbPath);
+        expect(getEntryById(db, "c1", { logBase })?.id).toBe("c1");
+        expect(markEntriesRead(db, ["c1"], { logBase })).toBe(1);
+        db.close();
+
+        // A statement left unfinalized keeps the connection open after close(), so the last write stays in the
+        // WAL and reaches the store file only when garbage collection finalizes it.
+        expect(statSync(`${dbPath}-wal`, { throwIfNoEntry: false })?.size ?? 0).toBe(0);
+    });
+
     it("marks entries unread", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
         const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
@@ -281,6 +295,31 @@ function durableDirectoryBytes(root: string): Record<string, string> {
     // SQLite readers update transient SHM read marks; durable DB, WAL and JSONL bytes must not change.
     return Object.fromEntries(Object.entries(directoryBytes(root)).filter(([path]) => !path.endsWith("-shm")));
 }
+
+it("the newest unread entry joins the window when newer read entries pushed it out", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-newest-unread-"));
+    const dbPath = join(root, "qa.db");
+    const logBase = join(root, "log");
+    appendEntry(e("old-unread", { ts: 1_779_000_000_000 }), logBase);
+    const newer = ["n1", "n2", "n3"];
+    for (const [index, id] of newer.entries()) {
+        appendEntry(e(id, { ts: 1_779_000_001_000 + index }), logBase);
+    }
+
+    const db = openReadModel(dbPath);
+    try {
+        markEntriesRead(db, newer, { logBase });
+        expect(queryEntries(db, { logBase, sessionId: "s", limit: 2 }).map((row) => row.id)).toEqual(["n2", "n3"]);
+        expect(
+            queryEntries(db, { logBase, sessionId: "s", limit: 2, includeNewestUnread: true }).map((row) => row.id)
+        ).toEqual(["old-unread", "n2", "n3"]);
+        expect(
+            queryEntries(db, { logBase, sessionId: "s", limit: 9, includeNewestUnread: true }).map((row) => row.id)
+        ).toEqual(["old-unread", "n1", "n2", "n3"]);
+    } finally {
+        db.close();
+    }
+});
 
 it("snapshot readers ingest fresh JSONL without creating a missing store or directory", () => {
     const root = mkdtempSync(join(tmpdir(), "qa-snapshot-missing-"));

@@ -6,6 +6,7 @@ import { accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
 import { recordingControl, recordingFailure, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
 import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
+import { logger } from "@genesiscz/utils/logger";
 import * as capture from "./capture/pcm-source";
 import { openPcmSource, type PcmSource } from "./capture/pcm-source";
 import { createFixtureStt } from "./fixture";
@@ -443,6 +444,55 @@ test("graceful owner stop retains captured audio while empty recordings stay ret
     const emptyOutput = join(directory, "empty-output.pcm");
     await expect(recordPcmClip({ input: empty, output: emptyOutput })).rejects.toThrow("no audio");
     expect(existsSync(emptyOutput)).toBe(false);
+});
+
+test("a capture error that races with Stop is logged, while the audio captured before it is still kept", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-record-stop-error-"));
+    const output = join(directory, "clip.pcm");
+    const stop = new AbortController();
+    const failure = new Error("fixture device vanished while stopping");
+    const debug = spyOn(logger, "debug");
+
+    try {
+        const clip = await recordPcmClip({
+            input: "-",
+            output,
+            stopSignal: stop.signal,
+            openSource: async () => ({
+                kind: "stdin",
+                label: "stdin",
+                sampleRateHz: 16000,
+                async *frames() {
+                    yield new Uint8Array(3200);
+                    stop.abort();
+                    throw failure;
+                },
+                close: async () => {},
+            }),
+        });
+
+        expect(clip).toMatchObject({ bytes: 3200, endedBy: "stop" });
+        expect(debug).toHaveBeenCalledWith(expect.objectContaining({ error: failure }), expect.any(String));
+    } finally {
+        debug.mockRestore();
+    }
+});
+
+test("a refused explicit microphone launcher keeps the filesystem error as its cause", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-record-launcher-cause-"));
+    const missing = await openPcmSource({ input: "mic", micLauncher: join(directory, "missing-preview") }).catch(
+        (error: unknown) => error
+    );
+
+    expect(missing).toMatchObject({ message: expect.stringContaining("no production fallback") });
+    expect(missing).toMatchObject({ cause: expect.objectContaining({ code: "ENOENT" }) });
+
+    // Control: the unchanged absolute-path refusal has no filesystem error behind it, so it carries no cause.
+    const relative = await openPcmSource({ input: "mic", micLauncher: "relative-launcher" }).catch(
+        (error: unknown) => error
+    );
+    expect(relative).toMatchObject({ message: expect.stringContaining("absolute executable") });
+    expect(relative).not.toHaveProperty("cause");
 });
 
 test("microphone recording requires an explicit available host and never falls back", async () => {

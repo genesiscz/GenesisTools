@@ -174,6 +174,15 @@ public struct TranscriptEnvelope: Equatable, Sendable, Codable {
 
     /// Turn index of the first turn in this window. `nextOffset` is the index after the last one.
     public var windowStart: Int { max(0, nextOffset - turns.count) }
+
+    /// Where a live follow of this (possibly stale) window starts: the oldest turn that can still
+    /// change, one with a tool still waiting for its result, else the last turn. It mirrors
+    /// `firstOpenTurn` in `src/utils/ai/transcripts/live.ts`; a replayed turn replaces its row by id.
+    public var liveFollowOffset: Int {
+        guard !turns.isEmpty else { return nextOffset }
+        let open = turns.firstIndex { turn in turn.tools.contains { $0.result == nil } } ?? turns.count - 1
+        return windowStart + open
+    }
 }
 
 public enum SessionTranscriptClient {

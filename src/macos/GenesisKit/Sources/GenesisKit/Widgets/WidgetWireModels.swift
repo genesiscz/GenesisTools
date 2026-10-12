@@ -300,6 +300,13 @@ public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
     public var error: String?
     public var receipt: Receipt?
     public var dispatchedAt: Double?
+    /// Its attachments are already serialized and must not change in place: dispatching, sent,
+    /// unknown, or waiting for a route behind a session-queue reservation. Mirrors `assertEditable`
+    /// in `src/hub/lib/composer/assets.ts`.
+    public var freezesAssets: Bool {
+        ["dispatching", "sent", "unknown"].contains(state)
+            || (state == "waiting-route" && receipt?.channel == "session-queue")
+    }
     /// The composer text. A form sent without any keeps a "Form answer" label, because its payload stores `text: ""`.
     public var text: String {
         guard case .object(let fields) = payload, case .string(let value) = fields["text"],

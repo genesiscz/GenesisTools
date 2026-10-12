@@ -9,6 +9,8 @@ const log = logger.child({ component: "ai-stt" });
 const MAX_QUEUED_BYTES = 1_000_000;
 const MAX_RECONNECTS = 1;
 const CLOSE_GRACE_MS = 1_500;
+/** How long a socket may stay CONNECTING; a provider that never answers the upgrade would otherwise hang the session. */
+const CONNECT_TIMEOUT_MS = 15_000;
 
 /**
  * What one cloud provider contributes. Everything else (queueing, the event iterator, abort,
@@ -90,6 +92,8 @@ export function openSocketSession(options: {
     spec: SocketSpec;
     accountId: string;
     signal?: AbortSignal;
+    /** Tests shorten it; the default is `CONNECT_TIMEOUT_MS`. */
+    connectTimeoutMs?: number;
 }): Promise<LiveSttSession> {
     const { spec } = options;
     const channel = new EventChannel();
@@ -105,6 +109,11 @@ export function openSocketSession(options: {
     let firstPartialStop: (() => void) | null = null;
     let sessionStop: (() => void) | null = null;
     let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+    // A replacement socket only transcribes its own audio, so its session_final is prefixed with what the
+    // dropped connection already recognized; session_final stays the full transcript for consumers.
+    let carried = "";
+    let connectionFinals: string[] = [];
+    let connectionSessionFinal: string | null = null;
     const host = new URL(spec.url).host;
 
     const send = (message: string | Uint8Array): void => {
@@ -152,10 +161,40 @@ export function openSocketSession(options: {
             socket = ws;
             ready = spec.readyWhen === undefined;
             let settled = false;
+            const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+            const settle = (): void => {
+                settled = true;
+                stopConnect();
+                clearTimeout(timer);
+                options.signal?.removeEventListener("abort", onAbort);
+            };
+            // Abort and timeout end the attempt while CONNECTING; the socket's later close then finishes the channel.
+            const giveUp = (error: Error): void => {
+                if (settled) {
+                    return;
+                }
+
+                settle();
+                closedByUs = true;
+                ws.close();
+                reject(error);
+            };
+            const onAbort = (): void => giveUp(new Error(`${spec.provider} live STT connect aborted`));
+            const timer = setTimeout(
+                () => giveUp(new Error(`${spec.provider} live STT socket did not open within ${connectTimeoutMs} ms`)),
+                connectTimeoutMs
+            );
+            options.signal?.addEventListener("abort", onAbort, { once: true });
+            if (options.signal?.aborted) {
+                onAbort();
+            }
 
             ws.addEventListener("open", () => {
-                stopConnect();
-                settled = true;
+                if (settled) {
+                    return;
+                }
+
+                settle();
                 sessionStop ??= prof.start("session");
                 for (const message of spec.hello?.() ?? []) {
                     send(message);
@@ -203,6 +242,16 @@ export function openSocketSession(options: {
                         log.warn({ provider: spec.provider, error: event.error }, "live STT provider error");
                     }
 
+                    if (event.kind === "final" && event.text.trim()) {
+                        connectionFinals.push(event.text.trim());
+                    }
+
+                    if (event.kind === "session_final" && event.text.trim()) {
+                        connectionSessionFinal = event.text.trim();
+                        channel.push(carried ? { ...event, text: `${carried} ${connectionSessionFinal}` } : event);
+                        continue;
+                    }
+
                     channel.push(event);
                 }
             });
@@ -210,8 +259,7 @@ export function openSocketSession(options: {
             ws.addEventListener("error", (event) => {
                 log.warn({ provider: spec.provider, host, event: String(event) }, "live STT socket error");
                 if (!settled) {
-                    settled = true;
-                    stopConnect();
+                    settle();
                     reject(new Error(`${spec.provider} live STT socket failed to connect to ${host}`));
                 }
             });
@@ -223,8 +271,7 @@ export function openSocketSession(options: {
                     "live STT socket closed"
                 );
                 if (!settled) {
-                    settled = true;
-                    stopConnect();
+                    settle();
                     reject(new Error(`${spec.provider} live STT socket closed before open (${event.code})`));
                     return;
                 }
@@ -236,6 +283,9 @@ export function openSocketSession(options: {
 
                 if (reconnects < MAX_RECONNECTS && audioBytes > 0) {
                     reconnects++;
+                    carried = [carried, connectionSessionFinal ?? connectionFinals.join(" ")].filter(Boolean).join(" ");
+                    connectionFinals = [];
+                    connectionSessionFinal = null;
                     log.warn({ provider: spec.provider, reconnects }, "live STT socket dropped; reconnecting once");
                     connect().catch((error) => {
                         channel.push({

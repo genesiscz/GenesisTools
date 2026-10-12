@@ -14,6 +14,7 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     private var transforms: FlowTransformTools?
     private var runtimeStart: Task<Void, Never>?
     private var terminating = false
+    private var terminationReplied = false
 
     init(descriptor: Int32, pageID: String?) {
         self.descriptor = descriptor
@@ -89,9 +90,21 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
             await runtimeStart?.value
             widgetModel?.stop()
             await flowRuntime?.stop()
-            sender.reply(toApplicationShouldTerminate: true)
+            replyToTermination(sender)
+        }
+        Task { [self] in
+            try? await Task.sleep(for: .seconds(5))
+            replyToTermination(sender, timedOut: true)
         }
         return .terminateLater
+    }
+
+    /// Shutdown awaits child processes and runtimes; a hung one must not leave the app unable to quit.
+    private func replyToTermination(_ sender: NSApplication, timedOut: Bool = false) {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        if timedOut { NSLog("Shutdown did not finish within 5 seconds; quitting anyway") }
+        sender.reply(toApplicationShouldTerminate: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -131,6 +144,8 @@ func runClicky(_ args: [String] = []) -> Never {
         let app = NSApplication.shared
         let delegate = ClickyAppDelegate(descriptor: descriptor, pageID: pageID)
         app.delegate = delegate
+        // A notification click that runs something hands focus back to the app it was clicked over.
+        BrowserURLForwarder.shared.trackOtherApps()
         installNotificationClicksForWindowFace()
         app.setActivationPolicy(.accessory)
         app.run()

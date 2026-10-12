@@ -219,7 +219,7 @@ export function expireDueForms(
         return [];
     }
 
-    const update = db.prepare(
+    const update = db.query(
         `UPDATE qa_pending SET status = 'timeout', resolved_at = ?
          WHERE id = ? AND status = 'pending' AND (claimed_at IS NULL OR claimed_at <= ?)`
     );

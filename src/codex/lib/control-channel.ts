@@ -20,7 +20,8 @@ export interface ControlRequest {
     control: CodexControl;
 }
 
-export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string };
+/** `code: "rejected"` marks a refusal proven before the prompt reached the provider. */
+export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string; code?: "rejected" };
 
 export interface ControlLogReadSample {
     bytes: number;
@@ -192,17 +193,18 @@ export async function sendControlRequest(
     control: CodexControl,
     timeoutMs = 30_000
 ): Promise<ControlResponse> {
+    // These three refusals happen before any request is written, so a caller may treat the message as not sent.
     const meta = await new CodexSessionStore().readMeta(name);
     if (!meta) {
-        throw new Error(`Codex session not found: ${name}`);
+        throw new WorkerDeliveryRejectedError(`Codex session not found: ${name}`);
     }
 
     if (meta.status === "closed" || meta.status === "failed") {
-        throw new Error(`Codex session "${name}" is ${meta.status}`);
+        throw new WorkerDeliveryRejectedError(`Codex session "${name}" is ${meta.status}`);
     }
 
     if (!isProcessAlive(meta.daemonPid)) {
-        throw new Error(`Codex session "${name}" daemon is not running (pid ${meta.daemonPid})`);
+        throw new WorkerDeliveryRejectedError(`Codex session "${name}" daemon is not running (pid ${meta.daemonPid})`);
     }
 
     if (

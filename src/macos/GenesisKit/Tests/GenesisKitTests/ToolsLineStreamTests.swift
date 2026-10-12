@@ -28,7 +28,7 @@ final class WidgetVideoInteractionTests: XCTestCase {
 
     func testDoneImmediatelyAfterChangePersistsLatestExactlyOnce() {
         var committed: [WidgetVideoSettings] = []
-        let editor = WidgetVideoSettingsCommitter(initial: initial) { committed.append($0) }
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { value, _ in committed.append(value) }
         let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25, startUs: 2_100_000, endUs: 3_200_000)
         editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 10))
         editor.update(latest)
@@ -36,10 +36,32 @@ final class WidgetVideoInteractionTests: XCTestCase {
         editor.finish()
         XCTAssertEqual(committed, [latest])
     }
+    func testDoneResendsSettingsTheBackendRefused() {
+        var committed: [WidgetVideoSettings] = []
+        var refusals: [() -> Void] = []
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { value, refused in
+            committed.append(value)
+            refusals.append(refused)
+        }
+        let first = WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 10)
+        let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25)
+        editor.update(first)
+        editor.flush()
+        editor.update(latest)
+        editor.flush()
+        refusals[0]()
+        editor.finish()
+        XCTAssertEqual(committed, [first, latest], "a refusal of an older value leaves the newer one standing")
+        refusals[1]()
+        editor.finish()
+        XCTAssertEqual(committed, [first, latest, latest], "Done resends the value the backend refused")
+        editor.finish()
+        XCTAssertEqual(committed.count, 3, "an accepted resend is not sent again")
+    }
     func testOrdinaryDebounceStillCommitsAndUnchangedCloseDoesNothing() async {
         let saved = expectation(description: "debounced settings")
         var count = 0
-        let editor = WidgetVideoSettingsCommitter(initial: initial) { _ in count += 1; saved.fulfill() }
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { _, _ in count += 1; saved.fulfill() }
         editor.finish()
         XCTAssertEqual(count, 0)
         editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 0))
@@ -88,7 +110,44 @@ final class WidgetVideoInteractionTests: XCTestCase {
         XCTAssertEqual(model.notice, "Message restored as a draft.")
         XCTAssertNil(model.error)
     }
-    func testTypingDuringEditRemainsRecoverableAfterStop() async {
+    func testTypingDuringSlowEditIsJoinedToTheRestoredMessageAndReachesTheHub() async {
+        let defaults = UserDefaults(suiteName: "video-edit-\(UUID())")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let began = expectation(description: "edit begins")
+        let finished = expectation(description: "edit finishes")
+        var release: CheckedContinuation<Void, Never>?
+        var hubDraft = ""
+        model.actionRunner = { value in
+            guard case .object(let fields) = value else { return ["updated": true] }
+            if fields["action"] == .string("edit") {
+                await withCheckedContinuation { continuation in release = continuation; began.fulfill() }
+                hubDraft = "Earlier text"
+            } else if fields["action"] == .string("draft-text"), case .string(let text) = fields["text"] {
+                hubDraft = text
+            }
+            return ["updated": true]
+        }
+        let subscription = model.$notice.compactMap { $0 }.prefix(1).sink { _ in finished.fulfill() }
+        model.editOutgoing(outgoing())
+        await fulfillment(of: [began], timeout: 2)
+        model.setText("Typed during restore")
+        try? await Task.sleep(for: .milliseconds(600))
+        release?.resume()
+        await fulfillment(of: [finished], timeout: 2)
+        let drained = expectation(description: "queue drained")
+        model.action(["action": "fixture-barrier"], completed: { drained.fulfill() })
+        await fulfillment(of: [drained], timeout: 2)
+        let joined = "Earlier text Typed during restore"
+        XCTAssertEqual(hubDraft, joined, "the typed save that waited behind the edit must not replace the restored text")
+        XCTAssertEqual(model.drafts["chosen"]?.text, joined)
+        XCTAssertEqual(model.drafts["chosen"]?.assetIds, ["video"])
+        XCTAssertTrue(model.notice?.contains("added after it") == true, model.notice ?? "no notice")
+        XCTAssertNil(model.error)
+        withExtendedLifetime(subscription) {}
+    }
+    func testJoinedDraftStaysRecoverableWhenTheHubRefusesTheSave() async {
         let defaults = UserDefaults(suiteName: "video-edit-\(UUID())")!
         let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
         model.selectedKey = "chosen"
@@ -99,6 +158,9 @@ final class WidgetVideoInteractionTests: XCTestCase {
             if case .object(let fields) = value, fields["action"] == .string("edit") {
                 await withCheckedContinuation { continuation in release = continuation; began.fulfill() }
             }
+            if case .object(let fields) = value, fields["action"] == .string("draft-text") {
+                throw ToolsBridgeError.refused("fixture hub refused the save")
+            }
             return ["updated": true]
         }
         let subscription = model.$notice.compactMap { $0 }.prefix(1).sink { _ in finished.fulfill() }
@@ -108,8 +170,35 @@ final class WidgetVideoInteractionTests: XCTestCase {
         release?.resume()
         await fulfillment(of: [finished], timeout: 2)
         model.stop()
-        XCTAssertEqual(model.drafts["chosen"]?.text, "Typed during restore")
-        XCTAssertEqual(defaults.string(forKey: "widget.recovered-draft.chosen"), "Typed during restore")
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Earlier text Typed during restore")
+        XCTAssertEqual(defaults.string(forKey: "widget.recovered-draft.chosen"), "Earlier text Typed during restore")
+        withExtendedLifetime(subscription) {}
+    }
+    func testJoinedDraftNeverExceedsTheDraftLimitAndSaysSo() async {
+        let defaults = UserDefaults(suiteName: "video-edit-\(UUID())")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let began = expectation(description: "edit begins")
+        let finished = expectation(description: "edit finishes")
+        var release: CheckedContinuation<Void, Never>?
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("edit") {
+                await withCheckedContinuation { continuation in release = continuation; began.fulfill() }
+            }
+            return ["updated": true]
+        }
+        var message = outgoing()
+        let earlier = String(repeating: "a", count: WidgetModel.draftTextLimit - 3)
+        message.payload = ["kind": "followup", "text": .string(earlier)]
+        let subscription = model.$notice.compactMap { $0 }.prefix(1).sink { _ in finished.fulfill() }
+        model.editOutgoing(message)
+        await fulfillment(of: [began], timeout: 2)
+        model.setText("typed during restore")
+        release?.resume()
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertEqual(model.drafts["chosen"]?.text, earlier + " ty")
+        XCTAssertTrue(model.notice?.contains("did not fit") == true, model.notice ?? "no notice")
         withExtendedLifetime(subscription) {}
     }
     func testQueuedMediaCanCancelUntilDeliveryBoundary() {
@@ -120,6 +209,19 @@ final class WidgetVideoInteractionTests: XCTestCase {
             XCTAssertFalse(WidgetOutgoingControls.canCancel(state), state)
         }
     }
+    func testSessionQueueReservationFreezesItsVideo() {
+        var message = outgoing()
+        message.state = "waiting-route"
+        XCTAssertFalse(message.freezesAssets, "a route wait with no reservation stays editable")
+        message.receipt = .init(channel: "session-queue", delivered: false, at: 1, entryId: "fixture-entry")
+        XCTAssertTrue(message.freezesAssets, "a queued payload is already serialized")
+        message.receipt?.channel = "fixture-other"
+        XCTAssertFalse(message.freezesAssets)
+        for state in ["dispatching", "sent", "unknown"] {
+            message.state = state
+            XCTAssertTrue(message.freezesAssets, state)
+        }
+    }
 }
 
 @MainActor
@@ -127,13 +229,17 @@ private final class FixtureVoiceLease: VoiceRecordingLease {
     var pid: Int32?
     var releases = 0
     var reject = false
+    var onAttach: () async -> Void = {}
+    var onRelease: (Int) async -> Void = { _ in }
     func attachRecorder(pid: Int32) async throws {
         if reject { throw ToolsBridgeError.refused("fixture admission refused") }
+        await onAttach()
         self.pid = pid
     }
     func release() async throws {
         if let pid { XCTAssertEqual(kill(pid, 0), -1, "lease released while recorder was still alive") }
         releases += 1
+        await onRelease(releases)
     }
 }
 
@@ -204,6 +310,35 @@ final class VoiceCommandTransportTests: XCTestCase {
         XCTAssertEqual(lease.releases, 1)
     }
 
+    func testStopBeforeStartGateIsAppliedAfterStartIsSent() async throws {
+        let (binary, directory) = try fixture("echo '{\"kind\":\"ready\",\"pid\":'$$'}'; read gate; [ \"$gate\" = start ] || exit 4; cat >/dev/null; echo '{\"kind\":\"recorded\",\"note\":{}}'\n")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let lease = FixtureVoiceLease()
+        let admitting = expectation(description: "admission started")
+        var admit: CheckedContinuation<Void, Never>?
+        lease.onAttach = { await withCheckedContinuation { admit = $0; admitting.fulfill() } }
+        let transport = VoiceCommandTransport(binaryPath: binary)
+        let task = Task { try await transport.run(args: ["record"], lease: lease) }
+        await fulfillment(of: [admitting], timeout: 5)
+        transport.finishRecording()
+        admit?.resume()
+        let data = try await task.value
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("recorded"))
+        XCTAssertEqual(lease.releases, 1)
+    }
+
+    func testDeadlineEscalatesToKillAndAnswersOnce() async throws {
+        let (binary, directory) = try fixture("case \"$*\" in *fast*) echo '{\"kind\":\"transcribed\"}'; exit 0;; esac; trap '' TERM; echo '{\"kind\":\"recording\"}'; while :; do sleep 1; done\n")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = VoiceCommandTransport(binaryPath: binary, deadline: .milliseconds(300), killGrace: .milliseconds(200))
+        let started = Date()
+        do { _ = try await transport.run(args: ["transcribe"]); XCTFail("must time out") }
+        catch { XCTAssertEqual(error as? VoiceCommandFailure, .timedOut) }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        let data = try await transport.run(args: ["fast"])
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("transcribed"), "a timed-out run must not block the next one")
+    }
+
     func testCancellationStopsRecorderBeforeRelease() async throws {
         let (binary, directory) = try fixture("echo '{\"kind\":\"ready\",\"pid\":'$$'}'; read gate; echo '{\"kind\":\"recording\"}'; cat >/dev/null\n")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -218,6 +353,56 @@ final class VoiceCommandTransportTests: XCTestCase {
         do { _ = try await task.value; XCTFail("must cancel") }
         catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertEqual(lease.releases, 1)
+    }
+
+    func testSlowReleaseOfACancelledRunCannotClobberTheNextRun() async throws {
+        let (binary, directory) = try fixture(#"""
+            case "$*" in *second*) echo '{"kind":"ready","pid":'$$'}'; read gate; cat >/dev/null; echo '{"kind":"recorded","note":{}}'; exit 0;; esac
+            echo '{"kind":"ready","pid":'$$'}'; read gate; echo '{"kind":"recording"}'; cat >/dev/null
+
+            """#)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = FixtureVoiceLease()
+        let releasing = expectation(description: "the exit handler's release of the first lease started")
+        var unblock: CheckedContinuation<Void, Never>?
+        first.onRelease = { number in
+            guard number == 1 else { return }
+            await withCheckedContinuation { continuation in unblock = continuation; releasing.fulfill() }
+        }
+        let transport = VoiceCommandTransport(binaryPath: binary, deadline: .seconds(60), killGrace: .milliseconds(500))
+        let recording = expectation(description: "first run recording")
+        let answered = expectation(description: "cancelled caller answered")
+        let task = Task {
+            do {
+                _ = try await transport.run(args: ["first"], lease: first) { event in
+                    if event.kind == "recording" { recording.fulfill() }
+                }
+                XCTFail("must cancel")
+            } catch {
+                XCTAssertTrue(error is CancellationError)
+            }
+            answered.fulfill()
+        }
+        await fulfillment(of: [recording], timeout: 5)
+        task.cancel()
+        await fulfillment(of: [releasing], timeout: 5)
+        // The store cancels twice (the task and `cancelCommand`). This one finds `deadlineTask` already cleared
+        // by the exit handler, so nothing cancels the terminate it starts.
+        transport.cancel()
+        await fulfillment(of: [answered], timeout: 10)
+        XCTAssertEqual(first.releases, 2, "the exit handler is still releasing while terminate answered the caller")
+
+        let second = FixtureVoiceLease()
+        let admitted = expectation(description: "second run admitted")
+        second.onAttach = { admitted.fulfill() }
+        let next = Task { try await transport.run(args: ["second"], lease: second) }
+        await fulfillment(of: [admitted], timeout: 5)
+        unblock?.resume()
+        try await Task.sleep(for: .milliseconds(300))
+        transport.finishRecording()
+        let data = try await next.value
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("recorded"), "the stale exit must not answer the new run")
+        XCTAssertEqual(second.releases, 1, "the stale exit must not drop the new run's lease")
     }
 }
 
@@ -241,9 +426,10 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
                       activate: @escaping () -> Void = {},
                       acquire: @escaping () async throws -> any VoiceRecordingLease = { FixtureVoiceLease() },
                       openSettings: @escaping () -> Void = {},
-                      recipients: [WidgetSession]? = nil) -> WidgetVoiceNotesStore {
-        WidgetVoiceNotesStore(micLauncher: "/fixture/Preview.app/Contents/MacOS/launcher", request: request,
-            execute: execute, finishCapture: {}, cancelCommand: {}, acquireAudio: acquire,
+                      recipients: [WidgetSession]? = nil, finish: @escaping () -> Void = {},
+                      launcher: String = "/fixture/Preview.app/Contents/MacOS/launcher") -> WidgetVoiceNotesStore {
+        WidgetVoiceNotesStore(micLauncher: launcher, request: request,
+            execute: execute, finishCapture: finish, cancelCommand: {}, acquireAudio: acquire,
             settings: { WidgetVoiceNoteSettings(provider: "fixture", model: "test-model", language: "en") },
             sessions: { recipients ?? [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
             requestMicrophonePermission: prompt, activateForMicrophone: activate, openMicrophoneSettings: openSettings)
@@ -352,6 +538,38 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         permission = .authorized
         store.refreshMicrophonePermission()
         XCTAssertNil(store.microphoneGuidance)
+        store.stop()
+    }
+
+    func testPromptStillOpenWhenTheWaitEndsIsNotADenialAndAllowingItClearsTheMessage() async throws {
+        var permission = VoiceMicrophonePermission.notDetermined
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            permission: { permission }, prompt: { .notDetermined },
+            acquire: { XCTFail("an unanswered prompt must not acquire capture"); return FixtureVoiceLease() })
+        store.record()
+        await store.waitForOperation()
+        await store.waitForRefresh()
+        XCTAssertFalse(store.presentsMicrophoneAlert, "the user has not denied anything")
+        XCTAssertEqual(store.microphonePermission, .notDetermined)
+        XCTAssertEqual(store.error, VoiceCommandFailure.microphonePromptOpen.errorDescription)
+        permission = .authorized
+        store.refreshMicrophonePermission()
+        XCTAssertNil(store.error, "Allow was clicked after the wait ended")
+        XCTAssertNil(store.microphoneGuidance)
+        store.stop()
+    }
+
+    func testDenialAlertClosesWhenAccessIsGrantedLater() async throws {
+        var permission = VoiceMicrophonePermission.denied
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            permission: { permission }, acquire: { XCTFail("a denied microphone must not acquire capture"); return FixtureVoiceLease() })
+        store.record()
+        await store.waitForOperation()
+        await store.waitForRefresh()
+        XCTAssertTrue(store.presentsMicrophoneAlert)
+        permission = .authorized
+        store.refreshMicrophonePermission()
+        XCTAssertFalse(store.presentsMicrophoneAlert, "the alert describes a state that no longer holds")
         store.stop()
     }
 
@@ -508,6 +726,77 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         await store.waitForRefresh()
         XCTAssertEqual(store.notes.count, 1)
         XCTAssertEqual(store.text, "New recording")
+        store.stop()
+    }
+
+    func testStopAndSaveWaitsUntilCaptureStarted() async throws {
+        let acquiring = expectation(description: "acquiring audio")
+        var admit: CheckedContinuation<Void, Never>?
+        var finishes = 0
+        var emit: ((VoiceCommandEvent) -> Void)?
+        let capturing = expectation(description: "capture spawned")
+        var complete: CheckedContinuation<Data, Error>?
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            execute: { _, lease, event in
+                emit = event
+                let data = try await withCheckedThrowingContinuation { complete = $0; capturing.fulfill() }
+                try await lease?.release()
+                return data
+            }, acquire: {
+                await withCheckedContinuation { admit = $0; acquiring.fulfill() }
+                return FixtureVoiceLease()
+            }, finish: { finishes += 1 })
+        store.record()
+        await fulfillment(of: [acquiring], timeout: 2)
+        XCTAssertEqual(store.phase, "Starting recording")
+        store.finishRecording()
+        XCTAssertEqual(finishes, 0, "Stop is not offered until the recorder reports capture")
+        XCTAssertEqual(store.phase, "Starting recording")
+        admit?.resume()
+        await fulfillment(of: [capturing], timeout: 2)
+        XCTAssertEqual(store.phase, "Starting recording")
+        emit?(try JSONDecoder().decode(VoiceCommandEvent.self, from: data(["kind": "recording"])))
+        XCTAssertEqual(store.phase, "Recording")
+        store.finishRecording()
+        XCTAssertEqual(finishes, 1)
+        XCTAssertEqual(store.phase, "Saving recording")
+        complete?.resume(returning: try data(["kind": "recorded", "note": note()]))
+        await store.waitForOperation()
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.notes.count, 1)
+        store.stop()
+    }
+
+    func testMicrophoneRecordWithoutLauncherRefusesBeforePermissionOrCapture() async throws {
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            execute: { _, _, _ in XCTFail("must not spawn capture"); throw CancellationError() },
+            permission: { .notDetermined }, activate: { XCTFail("must not raise the permission prompt") },
+            acquire: { XCTFail("must not acquire audio"); return FixtureVoiceLease() }, launcher: "")
+        store.record()
+        await store.waitForOperation()
+        await store.waitForRefresh()
+        XCTAssertTrue(store.error?.contains("microphone launcher") == true, store.error ?? "nil")
+        store.stop()
+    }
+
+    func testUnchangedDraftDoesNotShadowNewTranscript() async throws {
+        let store = make(request: { args in
+            switch args[0] {
+            case "list": return try self.data(["revision": 1, "notes": [self.note("Saved words")], "statePath": "/fixture/widget/voice-notes/notes.json"])
+            case "show": return try self.data(self.note("Saved words"))
+            default: throw ToolsBridgeError.refused("unexpected command \(args[0])")
+            }
+        }, execute: { _, _, _ in
+            try self.data(["kind": "transcribed", "note": self.note("Fresh transcript", revision: 2)])
+        })
+        store.refresh()
+        await store.waitForRefresh()
+        store.text = "Edited"
+        store.text = "Saved words"
+        store.transcribe()
+        await store.waitForOperation()
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.text, "Fresh transcript")
         store.stop()
     }
 

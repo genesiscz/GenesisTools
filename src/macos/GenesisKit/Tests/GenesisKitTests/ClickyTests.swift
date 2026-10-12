@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import SwiftUI
 import UserNotifications
+import Vision
 import XCTest
 
 @testable import GenesisKit
@@ -121,6 +122,75 @@ final class ClickyTests: XCTestCase {
             window: 600, domain: domain).timeIntervalSince1970, 0)
     }
 
+    @MainActor
+    private final class ChartInput: ObservableObject {
+        @Published var points: [NativeTimePoint]
+        @Published var end: Date
+        init(points: [NativeTimePoint], end: Date) {
+            self.points = points
+            self.end = end
+        }
+    }
+
+    private struct ChartHost: View {
+        @ObservedObject var input: ChartInput
+        var body: some View {
+            NativeTimeSeriesChart(points: input.points, interval: 3600, initialWindow: 86400, end: input.end)
+                .frame(width: 640, height: 320).environment(\.colorScheme, .dark)
+        }
+    }
+
+    @MainActor
+    func testChartMovesIntoAnEarlierPeriodWhenItsDatesChange() throws {
+        func period(_ start: Date) -> [NativeTimePoint] {
+            (0..<72).map { NativeTimePoint(date: start.addingTimeInterval(Double($0) * 3600), value: Double($0 % 7 + 1)) }
+        }
+        let later = try XCTUnwrap(ISO8601DateFormatter().date(from: "2025-03-10T00:00:00Z"))
+        let earlier = try XCTUnwrap(ISO8601DateFormatter().date(from: "2023-06-10T00:00:00Z"))
+        let input = ChartInput(points: period(later), end: later.addingTimeInterval(72 * 3600))
+        let host = NSHostingView(rootView: ChartHost(input: input))
+        host.frame = NSRect(x: 0, y: 0, width: 640, height: 320)
+        host.layoutSubtreeIfNeeded()
+        func footer() throws -> String {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: try XCTUnwrap(bitmap.cgImage)).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        }
+        XCTAssertTrue(try footer().contains("2025"), "the chart opens on its own period")
+        // Custom dates moved to an earlier period: the scroll position from 2025 must not survive.
+        input.points = period(earlier)
+        input.end = earlier.addingTimeInterval(72 * 3600)
+        let seen = try footer()
+        XCTAssertTrue(seen.contains("2023"), "read: \(seen)")
+        XCTAssertFalse(seen.contains("2025"), "read: \(seen)")
+    }
+
+    func testChartReadoutKeepsFractionalValues() {
+        let english = Locale(identifier: "en_US")
+        XCTAssertEqual(NativeChartSampling.valueText(0.8, locale: english), "0.8", "four characters are 0.8 words, not 0")
+        XCTAssertEqual(NativeChartSampling.valueText(12.26, locale: english), "12.3")
+        XCTAssertEqual(NativeChartSampling.valueText(1234, locale: english), "1,234", "a whole count has no decimal")
+    }
+
+    func testCoarsenedBinsStayOnTheIntervalGridWhateverTheFirstPoint() {
+        // 100000 s of one-minute samples coarsen to two-minute bins; the first sample sits at 00:01, off that grid.
+        let points = [60.0, 120, 180].map { NativeTimePoint(date: Date(timeIntervalSince1970: $0), value: 1) }
+        let whole = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 100_000), step: 60)
+        XCTAssertEqual(whole.prefix(2).map(\.date.timeIntervalSince1970), [0, 120])
+        XCTAssertEqual(whole.prefix(2).map(\.value), [1, 2], "00:02 belongs to the 00:02 bin, not to 00:01's")
+        // Panned past the first sample: the same bin keeps the same time and count.
+        let panned = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 130),
+            end: Date(timeIntervalSince1970: 100_130), step: 60)
+        XCTAssertEqual(panned.first?.date.timeIntervalSince1970, 120)
+        XCTAssertEqual(panned.first?.value, 2)
+    }
+
     func testChartBinningBoundsWorkWithoutLosingCounts() {
         let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
         let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
@@ -174,6 +244,22 @@ final class ClickyTests: XCTestCase {
         store.flush(statistics)
         XCTAssertEqual(store.snapshot.presses, 100)
         XCTAssertEqual(store.snapshot.keys[1], 100)
+    }
+
+    @MainActor
+    func testAnalyticsPublishOnlyWhileADashboardIsOpen() {
+        let store = ClickyAnalyticsStore()
+        var statistics = ClickyStatistics()
+        statistics.record(keyCode: 2, release: false, at: date(13), calendar: calendar)
+        store.stage { statistics }
+        XCTAssertEqual(store.revision, 0, "No dashboard is open, so nothing shares the statistics' storage")
+        store.attach()
+        XCTAssertEqual(store.revision, 1)
+        XCTAssertEqual(store.snapshot.keys[2], 1, "The first viewer gets the latest staged statistics at once")
+        store.detach()
+        statistics.record(keyCode: 2, release: false, at: date(13), calendar: calendar)
+        store.stage { statistics }
+        XCTAssertEqual(store.revision, 1)
     }
 
     func testQuietHoursCrossMidnightAndEndIsExclusive() {
@@ -389,6 +475,25 @@ final class ClickyTests: XCTestCase {
             from: XCTUnwrap(defaults.data(forKey: "clicky.statistics.v1")))
         XCTAssertEqual(fresh.sessions, 1, "Explicit reset restores normal collection")
         XCTAssertEqual(fresh.presses, 0)
+    }
+
+    @MainActor
+    func testRepeatedResetsKeepOnlyTheNewestRecoveryCopies() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let prefix = "clicky.statistics.recovery."
+        defaults.set(Data("from an older build".utf8), forKey: prefix + UUID().uuidString)
+        for round in 1...5 {
+            defaults.set(Data("unreadable \(round)".utf8), forKey: "clicky.statistics.v1")
+            let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+            XCTAssertNotNil(model.statisticsLoadError, "round \(round)")
+            model.resetStatistics()
+            model.shutdown()
+        }
+        let copies = defaults.dictionaryRepresentation().filter { $0.key.hasPrefix(prefix) }
+        let kept = copies.compactMap { $0.value as? Data }.map { String(decoding: $0, as: UTF8.self) }.sorted()
+        XCTAssertEqual(kept, ["unreadable 3", "unreadable 4", "unreadable 5"])
     }
 
     @MainActor

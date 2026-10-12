@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import { CodexAccountBinding } from "./lib/account";
 import { AgentsBridge } from "./lib/agents-bridge";
 import { AppServerClient, type RpcNotification, spawnAppServer } from "./lib/app-server-client";
@@ -189,6 +190,7 @@ async function run(): Promise<void> {
                     respondToControl(name, request.id, {
                         ok: false,
                         error: err instanceof Error ? err.message : String(err),
+                        ...(err instanceof WorkerDeliveryRejectedError ? { code: "rejected" as const } : {}),
                     });
                 }
             }

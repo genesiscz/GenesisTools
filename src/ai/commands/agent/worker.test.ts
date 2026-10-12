@@ -261,6 +261,25 @@ test("a backend that cannot pin an account does not advertise --account", () => 
     expect(codexSpawn?.options.filter((option) => !option.hidden).map((option) => option.long)).toContain("--account");
 });
 
+test("a backend with no turn guard does not advertise --expect-turn, but still refuses it by name", () => {
+    const advertised = (backend: WorkerBackend) => {
+        const steer = programFor(fakeDriver({ backend }).driver).commands.find((command) => command.name() === "steer");
+
+        return {
+            shown: steer?.options.filter((option) => !option.hidden).map((option) => option.long),
+            registered: steer?.options.map((option) => option.long),
+        };
+    };
+    const codex = advertised("codex");
+
+    expect(codex.shown).not.toContain("--expect-turn");
+    expect(codex.registered).toContain("--expect-turn");
+
+    // NEGATIVE CONTROL: the backends that compare the previous turn still advertise the flag.
+    expect(advertised("claude").shown).toContain("--expect-turn");
+    expect(advertised("grok").shown).toContain("--expect-turn");
+});
+
 test("every backend gets sessions --json and a --name-less status", () => {
     const { driver } = fakeDriver();
     const program = programFor(driver);

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseDecisionBlocks } from "../decisions/read";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
 import { type DecisionRecord, postDecisions, readDecisions } from "../decisions/store";
 import { dismissDecision, draftDecision, sendDrafts } from "./drafts";
 
@@ -117,7 +118,7 @@ describe("sendDrafts", () => {
             paneTitle: "agent",
             surfaceId: "surface:1",
             sessionIds: ["s"],
-            matchedOn: "session-id",
+            matchedOn: "title-id",
             score: 90,
             active: true,
         };
@@ -137,7 +138,17 @@ describe("sendDrafts", () => {
 
         expect(result.promoted).toEqual([1, 2]);
         expect(result.channel).toBe("cmux");
-        expect(typed[0]).toEqual(["claude", "cmux", "send", "s", "DECISION 1: a) a1 ; DECISION 2: b) note", "--json"]);
+        expect(typed[0]).toEqual([
+            "claude",
+            "cmux",
+            "send",
+            "--json",
+            "--paste",
+            "--exact-session",
+            "--",
+            "s",
+            "DECISION 1: a) a1\nDECISION 2: b) note",
+        ]);
         const rows = readDecisions(file);
         expect(rows.every((row: DecisionRecord) => row.state === "sent")).toBe(true);
         expect(rows.every((row: DecisionRecord) => row.draftOption === undefined)).toBe(true);
@@ -159,7 +170,7 @@ describe("sendDrafts", () => {
             paneTitle: "probe",
             surfaceId: "surface:9",
             sessionIds: ["s"],
-            matchedOn: "session-id",
+            matchedOn: "title-id",
             score: 90,
             active: true,
         };
@@ -185,7 +196,9 @@ describe("sendDrafts", () => {
         );
 
         expect(slept).toEqual([1000, 1000]);
-        expect(typed).toEqual([["claude", "cmux", "send", "s", "DECISION 1: b) b1", "--json"]]);
+        expect(typed).toEqual([
+            ["claude", "cmux", "send", "--json", "--paste", "--exact-session", "--", "s", "DECISION 1: b) b1"],
+        ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · gt-inbox-scratch · probe" });
         expect(readDecisions(file)[0]).toMatchObject({ state: "sent", delivery: { route: "cmux" } });
     });
@@ -211,5 +224,48 @@ describe("sendDrafts", () => {
         expect(result).toMatchObject({ channel: "resume", delivered: true, target: "cmux · new workspace" });
         const [row] = readDecisions(file);
         expect(row).toMatchObject({ state: "answered", delivery: { route: "resume", target: "cmux · new workspace" } });
+    });
+
+    test("the resume stamp keeps a queue reservation, while a row nobody reserved still gets the stamp", async () => {
+        const { file, events } = scratch();
+        const [reserved, open] = await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [
+                { prompt: "One?", options: ["a1", "b1"] },
+                { prompt: "Two?", options: ["a2", "b2"] },
+            ],
+        });
+        const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+        writeFileSync(
+            file,
+            `${[
+                { ...reserved, state: "answered", option: "a", delivery: reservation },
+                { ...open, state: "answered", option: "a" },
+            ]
+                .map((row) => SafeJSON.stringify(row))
+                .join("\n")}\n`
+        );
+
+        await sendDrafts(
+            { session: "s", provider: "claude", recordResumeTarget: "cmux · new workspace" },
+            {
+                file,
+                events,
+                block: async () => null,
+                deliver: {
+                    runTool: async () => {
+                        throw new Error("must not type on resume");
+                    },
+                },
+            }
+        );
+
+        const [first, second] = readDecisions(file);
+        expect(first.delivery).toEqual(reservation);
+        expect(second).toMatchObject({
+            state: "answered",
+            delivery: { route: "resume", target: "cmux · new workspace" },
+        });
+        expect(deliverDecisions(readDecisions(file), () => undefined).numbers).toEqual([2]);
     });
 });

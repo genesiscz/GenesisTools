@@ -237,7 +237,8 @@ public struct LiveWidgetView: View {
                     }.padding(16)
                 }.frame(width: 560, height: 520)
             }
-            .onChange(of: choosingSession) { _, value in model.dialogOpen = value }
+            .onChange(of: choosingSession) { _, value in model.sessionChooserOpen = value }
+            .onDisappear { model.sessionChooserOpen = false }
             Spacer(minLength: 0)
             Button(action: model.unpinSelected) { Image(systemName: "pin.slash") }
                 .help("Unpin this session from the widget").accessibilityLabel("Unpin selected session")

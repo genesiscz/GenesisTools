@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type CodexSessionMeta, CodexSessionStore } from "@app/codex/lib/store";
 import { listWidgetTasks, updateWidgetTask, widgetTask } from "@app/hub/lib/widget/tasks";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import { withTimeout } from "@genesiscz/utils/async";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
@@ -834,11 +836,12 @@ describe("delivery routes", () => {
                 "claude",
                 "cmux",
                 "send",
-                "abc",
-                "DECISION 1: a) yes\nDECISION 2: b) no",
                 "--json",
                 "--paste",
                 "--exact-session",
+                "--",
+                "abc",
+                "DECISION 1: a) yes\nDECISION 2: b) no",
             ],
         ]);
     });
@@ -1085,6 +1088,126 @@ describe("delivery routes", () => {
         }
     });
 
+    test("automatic replies judge the evidence, not the stage: a printed id or a topic title is refused", async () => {
+        for (const matchedOn of ["session-id", "id-prefix", "session-name", "pane-title"] as const) {
+            let sends = 0;
+            const result = await deliverToSession(
+                { session: "original-session", provider: "claude", text: "media reply" },
+                {
+                    findTargets: async (session) => {
+                        const live = await livePaneTargets(session);
+                        return { ...live, targets: live.targets.map((target) => ({ ...target, matchedOn })) };
+                    },
+                    runTool: async () => {
+                        sends++;
+                        return { success: true, stdout: '{"sent":true}', stderr: "" };
+                    },
+                }
+            );
+            expect(result).toMatchObject({
+                delivered: false,
+                error: "the cmux match does not identify the exact recipient session",
+            });
+            expect(sends).toBe(0);
+        }
+
+        // Control: the same lone pane proven by the id `restore` stamps into its tab title still receives the reply.
+        let sends = 0;
+        const proven = await deliverToSession(
+            { session: "original-session", provider: "claude", text: "media reply" },
+            {
+                findTargets: livePaneTargets,
+                runTool: async () => {
+                    sends++;
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+            }
+        );
+        expect(proven).toMatchObject({ channel: "cmux", delivered: true });
+        expect(sends).toBe(1);
+    });
+
+    test("a readable cmux refusal reaches the durable session queue, while unreadable output does not", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "cmux-refusal-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "fixture-key",
+        };
+        const refused = await deliverToSession(request, {
+            runTool: spy({ success: false, stdout: '{"sent":false,"matches":[]}' }).runTool,
+            findTargets: livePaneTargets,
+            queueRoot,
+        });
+        expect(refused).toMatchObject({ channel: "queued", delivered: false });
+        expect(refused.queueId).toBeDefined();
+        const unknown = await deliverToSession(
+            { ...request, deliveryKey: "other-key" },
+            { runTool: spy({ success: false, stdout: "not json" }).runTool, findTargets: livePaneTargets, queueRoot }
+        );
+        expect(unknown).toMatchObject({ channel: "queued", delivered: false });
+        expect(unknown.queueId).toBeUndefined();
+    });
+
+    test("a message over the queue limit is reported as not saved and not sent, yet a live pane still takes it", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "oversized-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "あ".repeat(24_000),
+            sourceHome: "/fixture/claude",
+            deliveryKey: "oversized-key",
+        };
+        const unsaved = await deliverToSession(request, { findTargets: noPaneTargets, queueRoot });
+
+        expect(unsaved).toMatchObject({
+            channel: "queued",
+            delivered: false,
+            error: expect.stringContaining("too large to save"),
+        });
+        expect(unsaved.queueId).toBeUndefined();
+        expect(
+            listSessionMessages({
+                target: { provider: "claude", sessionId: "abc", sourceHome: "/fixture/claude" },
+                root: queueRoot,
+            })
+        ).toEqual([]);
+
+        const live = await deliverToSession(request, {
+            findTargets: livePaneTargets,
+            runTool: spy({ success: true, stdout: '{"sent":true}' }).runTool,
+            queueRoot,
+        });
+        expect(live).toMatchObject({ channel: "cmux", delivered: true });
+    });
+
+    test("a retry of a key an earlier attempt already saved stays in the queue, even when a live pane appears", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "keyed-retry-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "fixture-key",
+        };
+        const first = await deliverToSession(request, { findTargets: noPaneTargets, queueRoot });
+        expect(first.queueId).toBeDefined();
+        const never = async (): Promise<never> => {
+            throw new Error("must not type a message that is already queued");
+        };
+        const retry = await deliverToSession(request, { runTool: never, findTargets: livePaneTargets, queueRoot });
+
+        expect(retry).toMatchObject({ channel: "queued", delivered: false, queueId: first.queueId });
+        expect(
+            listSessionMessages({
+                target: { provider: "claude", sessionId: "abc", sourceHome: "/fixture/claude" },
+                root: queueRoot,
+            })
+        ).toHaveLength(1);
+    });
+
     test("Codex daemon queue acceptance and empty exit-zero output are not provider input receipts", async () => {
         for (const stdout of ["{}", '{"queued":true}', '{"queued":false}', ""]) {
             await expect(
@@ -1127,6 +1250,69 @@ describe("delivery routes", () => {
             { runTool: never, codexWorkerFor: () => null }
         );
         expect(queued.channel).toBe("queued");
+    });
+
+    test("a Codex worker whose daemon is gone is no route and the answer is queued, while a live daemon is still the route", async () => {
+        const home = mkdtempSync(join(tmpdir(), "codex-worker-liveness-"));
+        const queueRoot = mkdtempSync(join(tmpdir(), "codex-worker-liveness-queue-"));
+        const sourceHome = join(home, "codex-home");
+        const gone = Bun.spawn(["true"], { env: process.env });
+        await gone.exited;
+        const alive = Bun.spawn(
+            [process.execPath, "-e", "setTimeout(() => {}, 60000)", "--name", "live-worker", "codex-daemon"],
+            { stdout: "ignore", stderr: "ignore", env: process.env }
+        );
+        const worker = (name: string, daemonPid: number, threadId: string): CodexSessionMeta => ({
+            name,
+            daemonPid,
+            threadId,
+            home: sourceHome,
+            cwd: "/fixture/project",
+            sandbox: "read-only",
+            approvalPolicy: "never",
+            writePolicy: "deny",
+            status: "ready",
+            agentName: name,
+            rendezvousSession: "fixture-parent",
+            agentsEnabled: false,
+            startedAt: "2026-01-01T00:00:00.000Z",
+            lastEventAt: "2026-01-01T00:00:00.000Z",
+            codexVersion: "0.159.2",
+            pendingApprovals: {},
+        });
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const store = new CodexSessionStore();
+                store.writeMeta(worker("stale-worker", gone.pid, "thread-stale"));
+                store.writeMeta(worker("live-worker", alive.pid, "thread-live"));
+
+                expect(
+                    await resolveDeliveryTarget({ session: "thread-stale", provider: "codex", sourceHome })
+                ).toMatchObject({ kind: "none" });
+                expect(
+                    await resolveDeliveryTarget({ session: "thread-live", provider: "codex", sourceHome })
+                ).toMatchObject({ kind: "codex", worker: "live-worker" });
+
+                const never = async (): Promise<never> => {
+                    throw new Error("must not run a tool for a worker whose daemon is gone");
+                };
+                const queued = await deliverToSession(
+                    {
+                        session: "thread-stale",
+                        provider: "codex",
+                        sourceHome,
+                        text: "DECISION 1: a) yes",
+                        deliveryKey: "stale-key",
+                    },
+                    { runTool: never, queueRoot }
+                );
+                expect(queued).toMatchObject({ channel: "queued", delivered: false });
+                expect(queued.queueId).toBeDefined();
+            });
+        } finally {
+            alive.kill();
+        }
     });
 });
 
@@ -1336,6 +1522,60 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     });
     expect(sent.text).toBe(preview.text);
     expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
+});
+
+test("a lost receipt stamps only the decisions this send claimed, never one reserved by another queue", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-claimed-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [reserved, open] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [
+            { prompt: "First?", options: ["yes"] },
+            { prompt: "Second?", options: ["no"] },
+        ],
+    });
+    const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(
+        file,
+        `${[
+            { ...reserved, state: "answered", option: "a", delivery: reservation },
+            { ...open, state: "answered", option: "a" },
+        ]
+            .map((row) => SafeJSON.stringify(row))
+            .join("\n")}\n`
+    );
+    await expect(
+        sendAnsweredDecisions({
+            session: "test-session",
+            files: { file, events },
+            provider: "codex",
+            deps: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async () => ({ success: true, stdout: "not a receipt", stderr: "" }),
+            },
+        })
+    ).rejects.toThrow("acknowledgement");
+    const [first, second] = readDecisions(file);
+    expect(first.delivery).toEqual(reservation);
+    expect(second.delivery?.uncertain).toBe(true);
+});
+
+test("an answer reserved by a queued delivery cannot be changed under its queue message", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-reserved-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [row] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [{ prompt: "Reserved?", options: ["yes", "no"] }],
+    });
+    const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(file, `${SafeJSON.stringify({ ...row, state: "answered", option: "a", delivery: reservation })}\n`);
+    for (const patch of [{ option: "b" }, { answer: "changed" }, { draft: "changed" }, { draftOption: "b" }]) {
+        await expect(updateDecision(file, events, row.id, patch)).rejects.toThrow("reserved by a queued delivery");
+    }
+    expect(readDecisions(file)[0].option).toBe("a");
+    await updateDecision(file, events, row.id, { comment: "a note is still fine" });
 });
 
 test("decision revisions preserve the source turn of each posted version", async () => {

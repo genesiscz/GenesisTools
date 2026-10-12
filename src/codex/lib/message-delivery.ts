@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import {
     enqueueSessionMessage,
+    findKeyedSessionMessage,
     type SessionMessage,
     type SessionMessageTarget,
 } from "@genesiscz/utils/agent-sessions/message-queue";
@@ -87,7 +88,7 @@ export async function queueCodexMessage({
         channel: "session-queue",
         delivered: message.state === "received",
         queued: message.state === "queued",
-        accepted: true,
+        accepted: message.state !== "cancelled",
         message,
     };
 }
@@ -134,6 +135,11 @@ export async function steerCodexMessage({
             throw new Error("--force requires a live owned Codex daemon; no new owner was started.");
         }
 
+        return queueCodexMessage({ target: address, text, idempotencyKey, root, deps });
+    }
+
+    // A repeat of a key that was already queued is the same delivery; steering it too would deliver it twice.
+    if (idempotencyKey && findKeyedSessionMessage({ target: address, root, idempotencyKey })) {
         return queueCodexMessage({ target: address, text, idempotencyKey, root, deps });
     }
 

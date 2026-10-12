@@ -115,6 +115,8 @@ public struct ClickyPerformanceView: View {
                 }
             }.font(.caption).foregroundStyle(.secondary)
         }
+        .onAppear { store.attach() }
+        .onDisappear { store.detach() }
         .task(id: query) {
             preparing = true
             let result = await ClickyPerformanceReport.prepare(statistics: data, filter: filter, grouping: grouping)

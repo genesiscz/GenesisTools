@@ -275,8 +275,11 @@ function micSource(options: { sampleRateHz: number; signal?: AbortSignal; launch
             if (!statSync(options.launcher).isFile()) {
                 throw new Error("Microphone launcher is not a file");
             }
-        } catch {
-            throw new Error("The explicit microphone launcher is unavailable; no production fallback was started");
+        } catch (error) {
+            log.debug({ error, launcher: options.launcher }, "Explicit microphone launcher is unavailable");
+            throw new Error("The explicit microphone launcher is unavailable; no production fallback was started", {
+                cause: error,
+            });
         }
     }
     if (!launcher) {

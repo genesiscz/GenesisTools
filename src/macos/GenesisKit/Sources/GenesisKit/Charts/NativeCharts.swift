@@ -11,8 +11,26 @@ public struct NativeTimePoint: Identifiable, Equatable, Sendable {
 public enum NativeChartSampling {
     public static func pannedPosition(origin: Date, translation: Double, width: Double,
         window: TimeInterval, domain: ClosedRange<Date>) -> Date {
-        let proposed = origin.addingTimeInterval(-translation / max(1, width) * window)
-        return max(domain.lowerBound, min(proposed, domain.upperBound.addingTimeInterval(-window)))
+        clampedPosition(origin.addingTimeInterval(-translation / max(1, width) * window), window: window, domain: domain)
+    }
+
+    /// A chart value as a reader sees it: estimated words and seconds are fractional, so one decimal survives
+    /// (0.8 words stays 0.8, not 0); a whole count prints without one.
+    public static func valueText(_ value: Double, locale: Locale = .current) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)).locale(locale))
+    }
+
+    /// The leading edge of a `window`-wide view that stays inside `domain`.
+    public static func clampedPosition(_ position: Date, window: TimeInterval, domain: ClosedRange<Date>) -> Date {
+        max(domain.lowerBound, min(position, domain.upperBound.addingTimeInterval(-window)))
+    }
+
+    /// X-axis label format: daily bins show the date; a sub-day bin in a window wider than a day
+    /// shows the date too, or ticks on different days would read the same.
+    public static func axisLabelFormat(interval: TimeInterval, window: TimeInterval) -> Date.FormatStyle {
+        if interval >= 86400 { return .dateTime.day().month(.abbreviated) }
+        if window > 86400 { return .dateTime.month(.abbreviated).day().hour().minute() }
+        return .dateTime.hour().minute()
     }
 
     public static func bins(points: [NativeTimePoint], start: Date, end: Date, step: TimeInterval,
@@ -32,7 +50,8 @@ public enum NativeChartSampling {
             return result
         }
         let interval = max(step, ceil(end.timeIntervalSince(start) / (step * 1200)) * step)
-        let lower = max(first.date.timeIntervalSince1970, floor(start.timeIntervalSince1970 / interval) * interval)
+        // Both bounds on the same interval grid, so a bin's time and count do not depend on where the view starts.
+        let lower = max(floor(first.date.timeIntervalSince1970 / interval), floor(start.timeIntervalSince1970 / interval)) * interval
         let upper = end.timeIntervalSince1970
         guard lower < upper else { return [] }
         let count = min(1201, Int(ceil((upper - lower) / interval)))
@@ -111,13 +130,16 @@ public struct NativeTimeSeriesChart: View {
             plot.frame(height: 235)
             HStack {
                 if let point = selectedPoint {
-                    Text("\(point.date.formatted(date: .abbreviated, time: .shortened)) · \(Int(point.value).formatted()) \(valueLabel.lowercased())")
+                    Text("\(point.date.formatted(date: .abbreviated, time: .shortened)) · \(NativeChartSampling.valueText(point.value)) \(valueLabel.lowercased())")
                 } else { Text("Drag or scroll to explore. Hover to inspect a value.") }
                 Spacer()
                 Text(position.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
             }.font(.caption).foregroundStyle(.secondary)
         }
-        .onChange(of: zoom) { _, _ in position = max(domain.lowerBound, min(position, end.addingTimeInterval(-window))) }
+        // A new period (custom dates, a refreshed report) or zoom keeps the view on data: a position left over from
+        // the previous period would query bins outside the new one and draw an empty chart.
+        .onChange(of: zoom) { _, _ in position = NativeChartSampling.clampedPosition(position, window: window, domain: domain) }
+        .onChange(of: domain) { _, value in position = NativeChartSampling.clampedPosition(position, window: window, domain: value) }
     }
     private var plot: some View {
         Chart {
@@ -149,7 +171,14 @@ public struct NativeTimeSeriesChart: View {
         .chartXVisibleDomain(length: window)
         .chartScrollPosition(x: $position)
         .chartXSelection(value: $selected)
-        .onGeometryChange(for: CGFloat.self) { ceil($0.size.width) } action: { plotWidth = $0 }
+        .chartOverlay { proxy in
+            // The pan maps a drag across the plot area, not the whole chart with its Y axis.
+            GeometryReader { geometry in
+                let width = proxy.plotFrame.map { ceil(geometry[$0].size.width) } ?? ceil(geometry.size.width)
+                Color.clear.allowsHitTesting(false)
+                    .onChange(of: width, initial: true) { _, value in plotWidth = value }
+            }
+        }
         .simultaneousGesture(DragGesture(minimumDistance: 4)
             .updating($dragging) { _, state, _ in state = true }
             .onChanged { event in
@@ -164,7 +193,7 @@ public struct NativeTimeSeriesChart: View {
             AxisMarks(values: .automatic(desiredCount: 4)) {
                 AxisGridLine()
                 AxisTick()
-                AxisValueLabel(format: interval >= 86400 ? .dateTime.day().month(.abbreviated) : .dateTime.hour().minute())
+                AxisValueLabel(format: NativeChartSampling.axisLabelFormat(interval: interval, window: window))
             }
         }
         .accessibilityLabel("\(valueLabel) timeline. Scroll horizontally to pan; use the zoom controls to change the visible range.")
@@ -202,7 +231,7 @@ public struct NativeMatrixHeatmap: View {
                     Text(rows[row]).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 32, alignment: .leading)
                     ForEach(columns.indices, id: \.self) { column in
                         let value = values["\(row).\(column)", default: 0]
-                        let label = "\(rows[row]), \(columns[column]):00 · \(Int(value).formatted()) presses"
+                        let label = "\(rows[row]), \(columns[column]):00 · \(NativeChartSampling.valueText(value)) presses"
                         RoundedRectangle(cornerRadius: 3)
                             .fill(.mint.opacity(value == 0 ? 0.06 : 0.15 + 0.85 * pow(value / peak, 0.6)))
                             .frame(maxWidth: .infinity).frame(height: 23)
@@ -228,7 +257,7 @@ public struct NativeCategoryChart: View {
         Chart(values) { point in
             BarMark(x: .value("Presses", point.value), y: .value("Category", point.label), height: .fixed(12))
                 .foregroundStyle(.mint.gradient).cornerRadius(4)
-                .annotation(position: .trailing) { Text(Int(point.value).formatted()).font(.caption2).foregroundStyle(.secondary) }
+                .annotation(position: .trailing) { Text(NativeChartSampling.valueText(point.value)).font(.caption2).foregroundStyle(.secondary) }
         }
         .chartXAxis { AxisMarks(position: .bottom) }
         .frame(height: CGFloat(max(1, values.count)) * 25 + 25)

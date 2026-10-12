@@ -159,8 +159,14 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         .option("--prompt-file <path>", "Read the instruction from a file")
         .option("--json", "Return a machine-readable same-session turn receipt")
         .option("--expect-session <id>", "Refuse delivery if the session identity changed")
-        .option("--expect-home <path>", "Refuse delivery if the source home changed")
-        .option("--expect-turn <n>", "Refuse delivery if the previous turn changed");
+        .option("--expect-home <path>", "Refuse delivery if the source home changed");
+
+    if (caps.turnGuardUnsupported) {
+        // Hidden rather than removed, so a script that passes it still reaches the driver's refusal.
+        steer.addOption(steer.createOption("--expect-turn <n>", `Refused: ${caps.turnGuardUnsupported}`).hideHelp());
+    } else {
+        steer.option("--expect-turn <n>", "Refuse delivery if the previous turn changed");
+    }
 
     driver.extendSteer?.(steer);
     steer.action(async (flags: Record<string, unknown>) => {

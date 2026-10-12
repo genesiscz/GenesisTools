@@ -15,6 +15,7 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
@@ -310,7 +311,8 @@ export const realWidgetSources: WidgetSources = {
     answers: (sessionId) =>
         queryEntriesSnapshot({
             dbPath: toolDataDir("question", "qa.db"),
-            opts: { sessionId, limit: sessionId ? 80 : 100 },
+            // The notified answer can sit behind 80 newer read ones; opening it must still find its card.
+            opts: sessionId ? { sessionId, limit: 80, includeNewestUnread: true } : { limit: 100 },
         }),
     agents: (refresh) => widgetAgents({ refresh }),
     inboxData: readInboxData,
@@ -367,7 +369,7 @@ function hasResult(node: AgentNode): boolean {
 
 /**
  * The finished agent an inbox read names, when it still belongs to that Widget session: either the
- * session is the agent's own (`sessionId === agent id`), or it is the indexed session whose
+ * session is the agent's own (`sessionId` is the agent id or its native session id), or it is the indexed session whose
  * transcript is the agent's file, which is how the snapshot maps a worker onto an indexed row.
  */
 export async function widgetResultNode({
@@ -385,7 +387,10 @@ export async function widgetResultNode({
             (entry) => entry.id === agentId && widgetProvider(entry.harness) === target.provider && hasResult(entry)
         )
         .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
-    if (!node || node.id === target.sessionId) {
+    const ownNative =
+        node?.nativeSessionId === target.sessionId &&
+        (!node.sourceHome || workerSourceHome(node.sourceHome) === workerSourceHome(target.sourceHome));
+    if (!node || node.id === target.sessionId || ownNative) {
         return node;
     }
 
@@ -587,19 +592,30 @@ export async function widgetSnapshot({
             (entry) => entry.agentId === node.id && entry.target.provider === widgetProvider(node.harness)
         ) ?? findSession(node.id, node.harness);
     const addWorker = (node: AgentNode, parent?: WidgetSession) => {
+        // A codex/grok worker's id is its name; replies reach it only through its native session and home.
+        const sessionId = node.nativeSessionId || node.id;
+        // The same session id is indexed once per home; only the copy in the worker's own home is the worker.
+        const home = node.sourceHome ? workerSourceHome(node.sourceHome) : undefined;
         const indexed = [...sessions.values()].filter(
             (entry) =>
                 entry.target.provider === node.harness &&
-                (node.filePath ? entry.transcriptPath === node.filePath : entry.target.sessionId === node.id)
+                (node.nativeSessionId
+                    ? entry.target.sessionId === node.nativeSessionId &&
+                      (!home || workerSourceHome(entry.target.sourceHome) === home)
+                    : node.filePath
+                      ? entry.transcriptPath === node.filePath
+                      : entry.target.sessionId === node.id)
         );
         const target = targetOf(
             {
                 provider: node.harness,
-                sessionId: node.id,
+                sessionId,
                 cwd: parent?.target.cwd,
-                sourceHome: parent?.target.provider === node.harness ? parent.target.sourceHome : undefined,
+                sourceHome:
+                    node.sourceHome ||
+                    (parent?.target.provider === node.harness ? parent.target.sourceHome : undefined),
             },
-            node.id
+            sessionId
         );
         const session =
             indexed.length === 1

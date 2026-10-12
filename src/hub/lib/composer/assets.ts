@@ -97,7 +97,11 @@ export async function importWidgetAsset({
 function assertEditable(state: WidgetState, id: string): void {
     if (
         state.outgoing.some(
-            (message) => message.assetIds.includes(id) && ["dispatching", "sent", "unknown"].includes(message.state)
+            (message) =>
+                message.assetIds.includes(id) &&
+                (["dispatching", "sent", "unknown"].includes(message.state) ||
+                    // A queued payload is already serialized; edit or cancel the message to change its media.
+                    (message.state === "waiting-route" && message.receipt?.channel === "session-queue"))
         )
     ) {
         throw new Error("Dispatched media is immutable; attach it to a new follow-up");

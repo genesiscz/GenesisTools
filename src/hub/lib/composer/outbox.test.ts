@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
@@ -13,10 +13,12 @@ import { postDecisions, readDecisions } from "@app/question/lib/decisions/store"
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import { getForm, listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
+import { MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
 import { openReadModel } from "@app/question/lib/read-model";
 import * as queueModule from "@genesiscz/utils/agent-sessions/message-queue";
 import {
     acknowledgeSessionMessage,
+    enqueueSessionMessage,
     listSessionMessages,
     offerSessionMessage,
 } from "@genesiscz/utils/agent-sessions/message-queue";
@@ -29,6 +31,7 @@ import * as fileLock from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import * as videos from "@genesiscz/utils/video/probe";
 import { createCanvas } from "@napi-rs/canvas";
+import { z } from "zod";
 import type { AgentNode } from "../agents/types";
 import { performWidgetAction } from "../widget/actions";
 import { readWidgetReceiptContext } from "../widget/context";
@@ -50,6 +53,7 @@ import {
     realWidgetSources,
     type WidgetSources,
     widgetForms,
+    widgetResultNode,
     widgetSnapshot,
 } from "../widget/snapshot";
 import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
@@ -638,77 +642,12 @@ describe("widget source and delivery contracts", () => {
                 "claude",
                 "cmux",
                 "send",
-                "original-session",
-                `Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
                 "--json",
                 "--paste",
                 "--exact-session",
-            ],
-        ]);
-        expect(readDecisions(files.file).map((entry) => [entry.sessionId, entry.number, entry.state])).toEqual([
-            ["original-session", 1, "open"],
-            ["original-session", 2, "sent"],
-        ]);
-    });
-
-    test("a media-only reply keeps the original session and card title in one literal message", async () => {
-        const directory = await root();
-        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
-        const destination = { ...target, provider: "claude" as const, sessionId: "original-session", sourceHome: "" };
-        const [, row] = await postDecisions(
-            files.file,
-            files.events,
-            {
-                sessionId: destination.sessionId,
-                provider: destination.provider,
-                decisions: [
-                    { prompt: "Earlier item?", options: ["yes"] },
-                    { title: "Chat DECISION 4: next token kinds", prompt: "Where do they go?", options: ["yes"] },
-                ],
-            },
-            { env: {} }
-        );
-        const calls: string[][] = [];
-        const dispatcher = widgetDispatcher({
-            files,
-            deliver: {
-                findTargets: livePaneTargets,
-                runTool: async (args) => {
-                    calls.push(args);
-                    return { success: true, stdout: '{"sent":true}', stderr: "" };
-                },
-            },
-        });
-        const message = widgetOutgoingSchema.parse({
-            id: randomUUID(),
-            target: destination,
-            assetIds: [],
-            sequence: 1,
-            createdAt: Date.now(),
-            state: "queued",
-            payload: { kind: "decision", id: row.id, number: row.number, expectedRevision: 1, text: "" },
-        });
-        await expect(
-            dispatcher.validate({ ...message, target: { ...destination, sessionId: "different-session" } })
-        ).rejects.toThrow("belongs to another session");
-        expect(calls).toHaveLength(0);
-        await dispatcher.validate(message);
-        const media = [
-            '<fromVideo>\n{\n  "path": "/fixture/video.mov",\n  "frames": ["first", "second"]\n}\n</fromVideo>',
-            '<fromImage>\n{\n  "path": "/fixture/c96d5e67-first.png"\n}\n</fromImage>',
-            '<fromImage>\n{\n  "path": "/fixture/second.png"\n}\n</fromImage>',
-        ].join("\n\n");
-        expect(await dispatcher.dispatch(message, media)).toMatchObject({ delivered: true, channel: "cmux" });
-        expect(calls).toEqual([
-            [
-                "claude",
-                "cmux",
-                "send",
+                "--",
                 "original-session",
                 `Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
-                "--json",
-                "--paste",
-                "--exact-session",
             ],
         ]);
         expect(readDecisions(files.file).map((entry) => [entry.sessionId, entry.number, entry.state])).toEqual([
@@ -846,6 +785,67 @@ describe("widget source and delivery contracts", () => {
         } finally {
             db.close();
         }
+    });
+
+    test("a form answer whose note and media together are too long fails at validation, not after dispatch starts", async () => {
+        const directory = await root();
+        const db = openPendingStore(join(directory, "questions.db"));
+        const ask = { db, eventBase: directory, logBase: directory, notify: false, env: {}, ambient: false };
+        try {
+            const form = await postAskForm(
+                {
+                    projectPath: "/fixture/project",
+                    sessionHint: target.sessionId,
+                    items: [
+                        {
+                            id: "layout",
+                            promptMarkdown: "Which layout?",
+                            choices: [{ id: "compact", label: "Compact" }],
+                        },
+                    ],
+                },
+                ask
+            );
+            const dispatcher = widgetDispatcher({ ask });
+            const message = widgetOutgoingSchema.parse({
+                id: randomUUID(),
+                target,
+                assetIds: [],
+                sequence: 1,
+                createdAt: Date.now(),
+                state: "queued",
+                payload: { kind: "form", id: form.id, answers: [{ itemId: "layout", selectedChoices: ["compact"] }] },
+            });
+
+            await expect(dispatcher.validate(message, [], "x".repeat(MAX_MEDIA_CONTEXT_CHARS + 1))).rejects.toThrow(
+                "media context exceeds"
+            );
+            // Control: a combined text exactly at the limit still passes, and the form is still pending.
+            await dispatcher.validate(message, [], "x".repeat(MAX_MEDIA_CONTEXT_CHARS));
+            expect(getForm(db, form.id)?.status).toBe("pending");
+        } finally {
+            db.close();
+        }
+    });
+
+    test("the dispatcher validates the same serialized text it then dispatches", async () => {
+        const directory = await root();
+        await enqueue(directory, "the note that is also checked");
+        const seen: string[] = [];
+        await processWidgetOutbox({
+            root: directory,
+            dispatcher: {
+                validate: async (_message, _assets, text) => {
+                    seen.push(`validate:${text}`);
+                },
+                dispatch: async (_message, text) => {
+                    seen.push(`dispatch:${text}`);
+                    return { delivered: true, channel: "fixture" };
+                },
+            },
+        });
+
+        expect(seen).toEqual(["validate:the note that is also checked", "dispatch:the note that is also checked"]);
     });
 
     test("an image-only answer satisfies a required image item and is recorded with the image", async () => {
@@ -3082,6 +3082,65 @@ describe("portable session queue delivery", () => {
         expect(transportCalls).toBe(0);
     });
 
+    test("a follow-up too large for the session queue waits for a route with a plain reason, not an unknown outcome", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        const dispatcher = widgetDispatcher({ deliver: { queueRoot, codexWorkerFor: () => null } });
+        const smaller = { ...target, sessionId: "smaller-session" };
+        await enqueue(directory, "あ".repeat(24_000));
+        await enqueue(directory, "x".repeat(60_000), smaller);
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+
+        const [large, fits] = (await readWidgetState(directory)).outgoing;
+        expect(large).toMatchObject({
+            state: "waiting-route",
+            receipt: { delivered: false, channel: "queued" },
+            error: expect.stringContaining("too large to save"),
+        });
+        expect(large.receipt?.entryId).toBeUndefined();
+        expect(listSessionMessages({ target: { ...target, provider: "codex" }, root: queueRoot })).toEqual([]);
+
+        // Control: a message under the limit is still saved for its exact session.
+        expect(fits).toMatchObject({ state: "waiting-route", receipt: { channel: "session-queue" } });
+        expect(listSessionMessages({ target: { ...smaller, provider: "codex" }, root: queueRoot })).toHaveLength(1);
+    });
+
+    test("an acknowledgement the queue pruned while the widget was away still confirms the reply", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        const dispatcher = widgetDispatcher({ deliver: { queueRoot, codexWorkerFor: () => null } });
+        await enqueue(directory, "Payload acknowledged long ago");
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        const queueTarget = { ...target, provider: "codex" as const };
+        const [queued] = listSessionMessages({ target: queueTarget, root: queueRoot });
+        await offerSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+        await acknowledgeSessionMessage({
+            target: queueTarget,
+            root: queueRoot,
+            id: queued.id,
+            consumer: "fixture-agent",
+        });
+        // The widget is away for eight days; another producer's write then prunes the old acknowledgement.
+        const [name] = (await readdir(queueRoot)).filter((entry) => entry.endsWith(".json"));
+        const file = join(queueRoot, name);
+        const longAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+        const aged = z
+            .array(z.object({ updatedAt: z.string() }).passthrough())
+            .parse(SafeJSON.parse(await readFile(file, "utf8"), { strict: true }))
+            .map((message) => ({ ...message, updatedAt: longAgo }));
+        await writeFile(file, SafeJSON.stringify(aged));
+        await enqueueSessionMessage({ target: queueTarget, root: queueRoot, text: "Another producer's message" });
+        expect(listSessionMessages({ target: queueTarget, root: queueRoot }).map((entry) => entry.id)).not.toContain(
+            queued.id
+        );
+
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        expect((await readWidgetState(directory)).outgoing[0]).toMatchObject({
+            state: "sent",
+            receipt: { delivered: true, entryId: queued.id, detail: "Received by fixture-agent" },
+        });
+    });
+
     test("one unreadable session queue does not stop another session's acknowledgement", async () => {
         const directory = await root();
         const queueRoot = join(directory, "session-queue");
@@ -3340,6 +3399,153 @@ test("widget agent tree reuses native identity, metadata and nested parent keys"
     expect(snapshot.sessions.find((entry) => entry.agentId === "cross-provider")?.target.sourceHome).toBe("");
 });
 
+test("a codex or grok worker row targets its native session and its own home, so a reply can reach it", async () => {
+    const worker = (id: string, harness: "codex" | "grok", native: string, home: string): AgentNode => ({
+        id,
+        harness,
+        kind: "worker",
+        name: id,
+        description: null,
+        agentType: null,
+        model: null,
+        account: null,
+        status: "completed",
+        startedAt: null,
+        lastAt: "2026-01-01T10:01:00Z",
+        toolCalls: 0,
+        unreadMail: 0,
+        team: null,
+        backendType: null,
+        filePath: `/fixture/managed/${id}.jsonl`,
+        nativeSessionId: native,
+        sourceHome: home,
+        spawnPrompt: null,
+        spawnPromptPreview: null,
+        toolUseId: null,
+        spawnDepth: 1,
+        children: [],
+    });
+    const codex = worker("codex-name", "codex", "codex-thread-1", "/fixture/codex-home");
+    const grok = worker("grok-name", "grok", "grok-session-1", "/fixture/grok-worker-home");
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({
+            generatedAt: "",
+            orphans: [grok],
+            parents: [
+                {
+                    sessionId: "lead-session",
+                    provider: "codex",
+                    title: "Lead",
+                    project: "Fixture",
+                    cwd: "/fixture",
+                    filePath: "/fixture/lead.jsonl",
+                    model: null,
+                    account: null,
+                    startedAt: null,
+                    lastAt: "2026-01-01T10:00:00Z",
+                    live: true,
+                    children: [codex],
+                },
+            ],
+        }),
+    };
+    const snapshot = await widgetSnapshot({ root: await root(), sources });
+    const codexRow = snapshot.sessions.find((entry) => entry.agentId === "codex-name")!;
+    const grokRow = snapshot.sessions.find((entry) => entry.agentId === "grok-name")!;
+    // Delivery looks a worker up by this pair (deliver.ts codexWorkerFor, nativeWorkers), never by its name.
+    expect(codexRow.target).toMatchObject({ sessionId: "codex-thread-1", sourceHome: "/fixture/codex-home" });
+    expect(grokRow.target).toMatchObject({ sessionId: "grok-session-1", sourceHome: "/fixture/grok-worker-home" });
+    expect(await widgetResultNode({ target: codexRow.target, agentId: "codex-name", sources })).toMatchObject({
+        id: "codex-name",
+    });
+});
+
+test("a worker row adopts only the indexed copy of its native session that lives in its own home", async () => {
+    const worker: AgentNode = {
+        id: "codex-name",
+        harness: "codex",
+        kind: "worker",
+        name: "codex-name",
+        description: null,
+        agentType: null,
+        model: null,
+        account: null,
+        status: "running",
+        startedAt: null,
+        lastAt: "2026-01-01T10:01:00Z",
+        toolCalls: 0,
+        unreadMail: 0,
+        team: null,
+        backendType: null,
+        filePath: "/fixture/managed/codex-name.jsonl",
+        nativeSessionId: "shared-thread",
+        sourceHome: "/fixture/home-a",
+        spawnPrompt: null,
+        spawnPromptPreview: null,
+        toolUseId: null,
+        spawnDepth: 1,
+        children: [],
+    };
+    const indexedIn = (sourceHome: string) => ({
+        ...target,
+        provider: "codex" as const,
+        sessionId: "shared-thread",
+        sourceHome,
+        title: "Indexed copy",
+        project: "Fixture",
+        cwdShort: "Fixture",
+        mtime: 1,
+        model: null,
+        account: null,
+        filePath: `${sourceHome}/sessions/shared-thread.jsonl`,
+    });
+    const snapshotWith = async (rows: ReturnType<typeof indexedIn>[]) =>
+        widgetSnapshot({
+            root: await root(),
+            sources: {
+                sessions: async () => rows,
+                decisions: () => [],
+                forms: () => [],
+                answers: () => [],
+                agents: async () => ({ generatedAt: "", parents: [], orphans: [worker] }),
+            },
+        });
+
+    // The only indexed copy is in another home: the worker keeps its own target instead of adopting it.
+    const foreign = await snapshotWith([indexedIn("/fixture/home-b")]);
+    expect(foreign.sessions.find((entry) => entry.agentId === "codex-name")?.target).toMatchObject({
+        sessionId: "shared-thread",
+        sourceHome: "/fixture/home-a",
+    });
+    expect(foreign.sessions.filter((entry) => entry.target.sessionId === "shared-thread")).toHaveLength(2);
+    const finished = { ...worker, status: "completed" as const };
+    const agents = async () => ({ generatedAt: "", parents: [], orphans: [finished] });
+    const sessions = async () => [indexedIn("/fixture/home-b")];
+    const foreignRow = foreign.sessions.find((entry) => entry.agentId === undefined)!;
+    expect(foreignRow.target.sourceHome).toBe("/fixture/home-b");
+    expect(
+        await widgetResultNode({ target: foreignRow.target, agentId: "codex-name", sources: { agents, sessions } })
+    ).toBeUndefined();
+    expect(
+        await widgetResultNode({
+            target: { ...foreignRow.target, sourceHome: "/fixture/home-a" },
+            agentId: "codex-name",
+            sources: { agents, sessions },
+        })
+    ).toMatchObject({ id: "codex-name" });
+
+    // The copy in the worker's home (spelled differently) is the worker's own row.
+    const own = await snapshotWith([indexedIn("/fixture/home-a/"), indexedIn("/fixture/home-b")]);
+    const rows = own.sessions.filter((entry) => entry.target.sessionId === "shared-thread");
+    expect(rows).toHaveLength(2);
+    expect(rows.find((entry) => entry.agentId === "codex-name")?.title).toBe("codex-name");
+    expect(rows.find((entry) => entry.agentId === "codex-name")?.target.sourceHome).toBe("/fixture/home-a/");
+});
+
 test("incoming answer, Decision and pending-form writes wake the Widget without its safety poll", async () => {
     const directory = await root();
     await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
@@ -3436,6 +3642,60 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
         }
         expect(discoverySignal?.aborted).toBe(true);
         expect(subscriptions.every((subscription) => subscription.closed)).toBe(true);
+    });
+});
+
+test("a session queue directory that cannot be watched leaves the Widget running on its safety refresh", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const queueDirectory = queueModule.sessionMessageQueueRoot();
+        await mkdir(dirname(queueDirectory), { recursive: true });
+        await writeFile(queueDirectory, "not a directory");
+        const controller = new AbortController();
+        let emitted = 0;
+        let ready!: () => void;
+        const started = new Promise<void>((resolve) => {
+            ready = resolve;
+        });
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: () => {
+                emitted++;
+                ready();
+            },
+            dependencies: {
+                discover: async () => {},
+                inboxPaths: {
+                    answerLog: join(directory, "question", "log"),
+                    database: join(directory, "question", "qa.db"),
+                    decisions: join(directory, "question", "decisions", "decisions.jsonl"),
+                },
+                watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                snapshot: async () => ({
+                    version: 1,
+                    state: await readWidgetState(directory),
+                    activity: [],
+                    sessions: [],
+                    cards: [],
+                    manifests: {},
+                    changes: null,
+                    errors: [],
+                    selectedKey: "",
+                }),
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                },
+            },
+        });
+        try {
+            await withTimeout(Promise.race([started, worker]), 3000);
+            expect(emitted).toBeGreaterThan(0);
+        } finally {
+            controller.abort();
+            await withTimeout(worker, 3000);
+        }
     });
 });
 

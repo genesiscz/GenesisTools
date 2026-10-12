@@ -358,6 +358,61 @@ test("an automated exact-session reply refuses even one working-directory match"
     expect(events.some((event) => event.startsWith("paste ") || event.startsWith("send "))).toBe(false);
 });
 
+test("an automated exact-session reply refuses a lone pane that only prints the id or shares the topic title", async () => {
+    const printed = pane({
+        id: "pane:7",
+        selectedSurfaceRef: "surface:1",
+        surfaces: [surface({ id: "surface:1", selected: true, preview: `discussing ${SESSION_A} in another agent` })],
+    });
+    const topical = pane({
+        id: "pane:7",
+        selectedSurfaceRef: "surface:1",
+        surfaces: [surface({ id: "surface:1", selected: true, title: "Pricing rewrite" })],
+    });
+    const aliasDeps = { ...deps, lookupSession: async () => ({ aliases: ["Pricing rewrite"], sessionId: SESSION_A }) };
+
+    for (const [fixture, fixtureDeps, matchedOn] of [
+        [printed, deps, "session-id"],
+        [topical, aliasDeps, "session-name"],
+    ] as const) {
+        events = [];
+        stdout = [];
+        setSnapshot([fixture]);
+        await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true, json: true }, fixtureDeps);
+        const result = SafeJSON.parse(await capturedResult());
+        expect(result.sent).toBe(false);
+        expect(result.source).toBe("titles");
+        expect(result.matches[0].matchedOn).toBe(matchedOn);
+        expect(events.some((event) => event.startsWith("paste ") || event.startsWith("send "))).toBe(false);
+    }
+
+    // Control: without --exact-session an interactive send still takes the printed id.
+    events = [];
+    setSnapshot([printed]);
+    expect(await sendCommand(SESSION_A, "hi", { paste: true }, deps)).toBe(true);
+    expect(events).toContain("paste --surface surface:1 --submit -- hi");
+});
+
+test("an automated exact-session reply still reaches the pane resuming the session", async () => {
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            selectedSurfaceRef: "surface:1",
+            surfaces: [
+                surface({ id: "surface:1", selected: true, preview: `tools claude start -- --resume '${SESSION_A}'` }),
+            ],
+        }),
+        pane({
+            id: "pane:8",
+            selectedSurfaceRef: "surface:2",
+            surfaces: [surface({ id: "surface:2", selected: true, preview: `discussing ${SESSION_A}` })],
+        }),
+    ]);
+    expect(await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true }, deps)).toBe(true);
+    expect(events).toContain("paste --surface surface:1 --submit -- media reply");
+    expect(events.some((event) => event.includes("surface:2"))).toBe(false);
+});
+
 test("a single working-directory match still delivers", async () => {
     setSnapshot([
         pane({

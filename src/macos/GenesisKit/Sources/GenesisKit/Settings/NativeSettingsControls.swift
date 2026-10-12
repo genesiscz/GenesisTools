@@ -6,7 +6,9 @@ public struct NativeSettingsDisclosure<Content: View>: View {
     private let identifier: String
     private let content: Content
     @State private var expanded = false
-    @Environment(\.nativeSettingsReduceMotion) private var reduceMotion
+    @Environment(\.nativeSettingsReduceMotion) private var appReduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    private var reduceMotion: Bool { appReduceMotion || systemReduceMotion }
 
     public init(_ title: String, identifier: String, @ViewBuilder content: () -> Content) {
         self.title = title

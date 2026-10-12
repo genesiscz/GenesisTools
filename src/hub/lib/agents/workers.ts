@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type CodexSessionMeta, CodexSessionStore, deriveSessionStatus } from "@app/codex/lib/store";
+import { type CodexSessionMeta, CodexSessionStore, codexWorkerHome, deriveSessionStatus } from "@app/codex/lib/store";
 import { type GrokSessionMeta, GrokSessionStore } from "@app/grok/lib/store";
 import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
 import { scanCodexWorkerToolCalls, scanGrokToolCalls } from "@genesiscz/utils/ai/transcripts/file-scan";
@@ -95,6 +95,8 @@ export function codexWorkerNode(
             team: null,
             backendType: null,
             filePath: fileMtime === null ? null : filePath,
+            nativeSessionId: meta.threadId ?? null,
+            sourceHome: codexWorkerHome(meta),
             spawnPrompt: prompt,
             spawnPromptPreview: promptPreview(prompt),
             toolUseId: null,
@@ -184,6 +186,8 @@ export function grokWorkerNode(
             team: null,
             backendType: null,
             filePath: lastFile,
+            nativeSessionId: meta.sessionId,
+            sourceHome: meta.workerHome,
             spawnPrompt: null,
             spawnPromptPreview: null,
             toolUseId: null,

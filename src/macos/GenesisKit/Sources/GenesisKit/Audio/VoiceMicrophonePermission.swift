@@ -62,20 +62,24 @@ private final class VoiceMicrophoneRequest {
 
 public enum VoiceCommandFailure: String, Error, LocalizedError, Sendable {
     case microphonePermission = "microphone_permission"
+    case microphonePromptOpen = "microphone_prompt_open"
     case noAudio = "no_audio"
     case interrupted = "capture_interrupted"
     case captureFailed = "capture_failed"
     case cancelled
     case operationFailed = "operation_failed"
+    case timedOut = "timed_out"
 
     public var errorDescription: String? {
         switch self {
         case .microphonePermission: return "Microphone access is not available. Review Microphone settings, then try Record again."
+        case .microphonePromptOpen: return "The microphone prompt is still waiting for your answer. Allow access in it, then press Record again."
         case .noAudio: return "No audio was recorded. Check your input device and try again."
         case .interrupted: return "Recording was interrupted before it could be saved. Try Record again."
         case .captureFailed: return "Audio capture failed. Check your input device and try again."
         case .cancelled: return "Recording cancelled. Existing notes are kept locally."
         case .operationFailed: return "The voice operation failed. Try again. Details are in the diagnostic log."
+        case .timedOut: return "The voice operation took too long and was stopped. Try again."
         }
     }
 }

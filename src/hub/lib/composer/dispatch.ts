@@ -120,6 +120,20 @@ function formAnswersWithImages(form: AskForm, answers: AskAnswer[], assets: Widg
     );
 }
 
+type FormPayload = Extract<WidgetOutgoing["payload"], { kind: "form" }>;
+
+/**
+ * The answers exactly as the form records them: the widget's images attached, and the whole serialized message
+ * (note plus media) as the first answer's media context. Validation and dispatch both build them here, so a
+ * combined text over the limit is refused before anything is attempted.
+ */
+function formAnswersToRecord(form: AskForm, payload: FormPayload, assets: WidgetAsset[], text: string): AskAnswer[] {
+    return formAnswersWithImages(form, payload.answers, assets).map((answer, index) => ({
+        ...answer,
+        ...(index === 0 && text ? { mediaContext: text } : {}),
+    }));
+}
+
 export function widgetDispatcher({
     deliver: supplied,
     signal,
@@ -133,7 +147,7 @@ export function widgetDispatcher({
 } = {}): OutboxDispatcher {
     const deliver = supplied ?? { runTool: (args: string[]) => runWidgetDelivery({ args, signal }) };
     return {
-        async validate(message, assets) {
+        async validate(message, assets, text = message.payload.text) {
             const payload = message.payload;
             if (payload.kind === "decision") {
                 const row = readDecisions(files.file).find((entry) => entry.id === payload.id);
@@ -164,7 +178,7 @@ export function widgetDispatcher({
                 if ((form.sessionHint || form.id) !== message.target.sessionId) {
                     throw new Error("This question belongs to another session.");
                 }
-                const checked = checkAskAnswer(payload.id, formAnswersWithImages(form, payload.answers, assets), ask);
+                const checked = checkAskAnswer(payload.id, formAnswersToRecord(form, payload, assets, text), ask);
                 if (!checked.ok) {
                     const oversized = oversizedAnswerImages(assets).map((asset) => asset.name);
                     const limit = `${(MAX_ANSWER_IMAGE_BYTES / 1_000_000).toFixed(1)} MB`;
@@ -190,11 +204,11 @@ export function widgetDispatcher({
                         detail: "Question was resolved elsewhere; your submitted answer was not recorded.",
                     };
                 }
-                const answers = formAnswersWithImages(existing, payload.answers, assets).map((answer, index) => ({
-                    ...answer,
-                    ...(index === 0 && text ? { mediaContext: text } : {}),
-                }));
-                const result = await answerAskForm(payload.id, answers, ask);
+                const result = await answerAskForm(
+                    payload.id,
+                    formAnswersToRecord(existing, payload, assets, text),
+                    ask
+                );
                 if (!result.ok) {
                     return { delivered: false, certainty: "not-sent", channel: "form", detail: result.error };
                 }

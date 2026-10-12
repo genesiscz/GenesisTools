@@ -146,6 +146,8 @@ export async function recordPcmClip({
             if (!capture.signal.aborted || signal?.aborted) {
                 throw error;
             }
+
+            logger.debug({ error, bytes }, "Capture ended with an error after Stop; keeping the audio recorded so far");
         }
         signal?.throwIfAborted();
         await close();

@@ -47,6 +47,7 @@ public final class ClickyModel: ObservableObject {
     }
     @Published public private(set) var error: String?
     public var stateDidChange: (() -> Void)?
+    private static let recoveryCopiesKept = 3
     private let defaults: UserDefaults
     var settingsDefaults: UserDefaults { defaults }
     private var appearanceSubscription: AnyCancellable?
@@ -284,9 +285,19 @@ public final class ClickyModel: ObservableObject {
         }
     }
 
+    /// Recovery copies are numbered, and a copy with no number (an older build used a UUID) counts as the oldest.
+    private func storeRecoveryCopy(_ original: Data) {
+        let prefix = "clicky.statistics.recovery."
+        let existing = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix(prefix) }
+            .map { (key: $0, number: Int($0.dropFirst(prefix.count)) ?? 0) }
+            .sorted { ($0.number, $0.key) < ($1.number, $1.key) }
+        defaults.set(original, forKey: prefix + String((existing.last?.number ?? 0) + 1))
+        for stale in existing.dropLast(Self.recoveryCopiesKept - 1) { defaults.removeObject(forKey: stale.key) }
+    }
+
     public func resetStatistics() {
         if statisticsLoadError != nil, let original = defaults.data(forKey: "clicky.statistics.v1") {
-            defaults.set(original, forKey: "clicky.statistics.recovery.\(UUID().uuidString)")
+            storeRecoveryCopy(original)
         }
         statisticsLoadError = nil
         statistics = ClickyStatistics()

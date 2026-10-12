@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
 import { claimTurnLog, promptArgs, runSession, steerSession } from "./worker";
@@ -190,6 +191,50 @@ test("guarded Grok delivery refuses changed identity, home, turn, busy and never
             expect(store.readMeta(meta.name)?.turns).toBe(1);
         } finally {
             spawn.mockRestore();
+        }
+    });
+});
+
+test("a turn that starts after the pre-lock check still refuses a guarded delivery as busy", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "grok-delivery-race-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        const store = new GrokSessionStore();
+        const meta = {
+            name: "fixture",
+            sessionId: "native-session",
+            cwd: scratch,
+            workerHome: scratch,
+            readOnly: true,
+            turns: 1,
+            sessionStarted: true,
+            createdAt: new Date(0).toISOString(),
+        };
+        store.createMeta(meta);
+        const read = GrokSessionStore.prototype.readMeta;
+        let reads = 0;
+        const racing = spyOn(GrokSessionStore.prototype, "readMeta").mockImplementation(function (
+            this: GrokSessionStore,
+            name: string
+        ) {
+            const current = read.call(this, name);
+            reads += 1;
+            return reads === 1 || !current
+                ? current
+                : {
+                      ...current,
+                      activeTurn: { turn: 2, ownerPid: -1, childPid: process.pid, startedAt: new Date().toISOString() },
+                  };
+        });
+        try {
+            await expect(
+                steerSession({
+                    name: meta.name,
+                    prompt: "Synthetic",
+                    delivery: { sessionId: meta.sessionId, sourceHome: scratch, afterTurn: 1 },
+                })
+            ).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+        } finally {
+            racing.mockRestore();
         }
     });
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import * as channel from "./control-channel";
 import {
     appendControlRequest,
@@ -14,7 +15,7 @@ import {
     waitForControlResponse,
 } from "./control-channel";
 import { sessionControlPath } from "./paths";
-import { CodexSessionStore } from "./store";
+import { type CodexSessionMeta, CodexSessionStore } from "./store";
 
 describe("codex control channel", () => {
     test("orders requests and round-trips responses", async () => {
@@ -177,7 +178,67 @@ describe("codex control channel", () => {
             );
         });
     });
+
+    test("a refusal before any request is written is a proven not-sent, and nothing is appended", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-control-prewrite-"));
+        const gone = Bun.spawn(["true"], { env: process.env });
+        await gone.exited;
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            store.writeMeta(sessionFixture({ name: "closed", status: "closed", daemonPid: process.pid }));
+            store.writeMeta(sessionFixture({ name: "failed", status: "failed", daemonPid: process.pid }));
+            store.writeMeta(sessionFixture({ name: "stale", status: "ready", daemonPid: gone.pid }));
+            const steer = { op: "steer" as const, body: "answer", force: false };
+
+            for (const name of ["missing", "closed", "failed", "stale"]) {
+                await expect(sendControlRequest(name, steer, 20)).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+                expect(existsSync(sessionControlPath(name))).toBe(false);
+            }
+
+            await expect(sendControlRequest("stale", steer, 20)).rejects.toThrow("daemon is not running");
+        });
+    });
+
+    test("NEGATIVE CONTROL: a live daemon that never answers is a plain timeout, since the request may have landed", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-control-silent-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            new CodexSessionStore().writeMeta(
+                sessionFixture({ name: "silent", status: "ready", daemonPid: process.pid })
+            );
+            const failure = await sendControlRequest("silent", { op: "interrupt" }, 20).catch(
+                (error: unknown) => error
+            );
+
+            expect(failure).toBeInstanceOf(Error);
+            expect(failure).not.toBeInstanceOf(WorkerDeliveryRejectedError);
+            expect(failure).toMatchObject({ message: expect.stringContaining("Timed out") });
+            expect(existsSync(sessionControlPath("silent"))).toBe(true);
+        });
+    });
 });
+
+function sessionFixture(overrides: Partial<CodexSessionMeta> & Pick<CodexSessionMeta, "name">): CodexSessionMeta {
+    const now = new Date().toISOString();
+
+    return {
+        daemonPid: process.pid,
+        cwd: "/repo",
+        sandbox: "read-only",
+        approvalPolicy: "never",
+        writePolicy: "deny",
+        status: "ready",
+        agentName: "codex_fixture",
+        rendezvousSession: "parent",
+        agentsEnabled: false,
+        startedAt: now,
+        lastEventAt: now,
+        codexVersion: "0.144.5",
+        pendingApprovals: {},
+        ...overrides,
+    };
+}
 
 test("the final producer read rejects a reused name before append, including older daemon runtimes", async () => {
     const home = mkdtempSync(join(tmpdir(), "gt-codex-final-identity-"));

@@ -243,11 +243,18 @@ export async function watchWidget({
             }, 5000);
             try {
                 const queueDirectory = sessionMessageQueueRoot();
-                await mkdir(queueDirectory, { recursive: true, mode: 0o700 });
-                queueSubscription = await createWatcher(queueDirectory, requestRefresh, {
-                    debounceMs: 180,
-                    filter: (event) => event.path.endsWith(".json"),
-                });
+                try {
+                    await mkdir(queueDirectory, { recursive: true, mode: 0o700 });
+                    queueSubscription = await createWatcher(queueDirectory, requestRefresh, {
+                        debounceMs: 180,
+                        filter: (event) => event.path.endsWith(".json"),
+                    });
+                } catch (error) {
+                    logger.warn(
+                        { error, directory: queueDirectory },
+                        "Widget session queue events unavailable; using safety refresh"
+                    );
+                }
                 const configured = dependencies.inboxPaths ?? {
                     answerLog: logDir(),
                     database: toolDataDir("question", "qa.db"),

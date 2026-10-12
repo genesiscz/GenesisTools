@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { decisionFiles as defaultDecisionFiles } from "@app/question/lib/decisions/read";
 import { reconcileQueuedDecision } from "@app/question/lib/decisions/store";
-import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
+import {
+    listSessionMessageOutcomes,
+    type SessionMessage,
+    type SessionMessageOutcome,
+} from "@genesiscz/utils/agent-sessions/message-queue";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -20,8 +24,11 @@ export interface DispatchReceipt {
     payloadHash?: string;
 }
 export interface OutboxDispatcher {
-    /** `assets`: the message's attachments, resolved from the widget state it was serialized from. */
-    validate(message: WidgetOutgoing, assets: WidgetAsset[]): Promise<void>;
+    /**
+     * `assets`: the message's attachments, resolved from the widget state it was serialized from.
+     * `text`: the serialized message `dispatch` will receive, so limits on the final text fail here.
+     */
+    validate(message: WidgetOutgoing, assets: WidgetAsset[], text?: string): Promise<void>;
     dispatch(message: WidgetOutgoing, text: string, assets: WidgetAsset[]): Promise<DispatchReceipt>;
 }
 
@@ -55,6 +62,25 @@ async function reconcileSessionQueue({
     decisions: { file: string; events: string };
 }): Promise<void> {
     const state = await readWidgetState(root);
+    // One read per queue per run; an unreadable queue is skipped so the rest of the outbox keeps moving.
+    // Outcomes include the receipts of messages the queue pruned, so a widget away for weeks still reconciles.
+    const queues = new Map<string, SessionMessageOutcome[] | undefined>();
+    const queueOf = (candidate: WidgetOutgoing, provider: SessionMessage["target"]["provider"]) => {
+        const key = widgetSessionKey(candidate.target);
+        if (!queues.has(key)) {
+            try {
+                queues.set(
+                    key,
+                    listSessionMessageOutcomes({ target: { ...candidate.target, provider }, root: queueRoot })
+                );
+            } catch (error) {
+                logger.warn({ error, id: candidate.id, key }, "Widget could not read a session message queue");
+                queues.set(key, undefined);
+            }
+        }
+
+        return queues.get(key);
+    };
     for (const candidate of state.outgoing) {
         if (
             !["waiting-route", "unknown"].includes(candidate.state) ||
@@ -64,16 +90,15 @@ async function reconcileSessionQueue({
         ) {
             continue;
         }
-        const queued = listSessionMessages({
-            target: { ...candidate.target, provider: candidate.target.provider },
-            root: queueRoot,
-        }).find((entry) => entry.id === candidate.receipt?.entryId);
+        const queued = queueOf(candidate, candidate.target.provider)?.find(
+            (entry) => entry.id === candidate.receipt?.entryId
+        );
         if (!queued || !["received", "cancelled"].includes(queued.state)) {
             continue;
         }
         if (
             candidate.payload.kind === "decision" &&
-            candidate.receipt.payloadHash === createHash("sha256").update(queued.text).digest("hex") &&
+            candidate.receipt.payloadHash === queued.textHash &&
             candidate.receipt.payloadRevision === deliveryRevision(candidate, state)
         ) {
             const matched = await reconcileQueuedDecision({
@@ -102,7 +127,7 @@ async function reconcileSessionQueue({
                 return;
             }
             const exactPayload =
-                message.receipt.payloadHash === createHash("sha256").update(queued.text).digest("hex") &&
+                message.receipt.payloadHash === queued.textHash &&
                 message.receipt.payloadRevision === deliveryRevision(message, current);
             if (!exactPayload) {
                 message.state = "unknown";
@@ -170,7 +195,7 @@ export async function processWidgetOutbox({
                     const assets = first.assetIds.flatMap((id) => current.assets[id] ?? []);
                     try {
                         text = await serializeWidgetMessage(first, current);
-                        await dispatcher.validate(first, assets);
+                        await dispatcher.validate(first, assets, text);
                     } catch (error) {
                         // A shutdown during the checks is not a verdict on the message: it stays queued.
                         if (signal?.aborted) {

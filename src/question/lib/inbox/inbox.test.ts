@@ -393,7 +393,7 @@ describe("answerInboxDecision", () => {
 
         const reply = "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\nb) drop it";
         expect(delivered).toEqual([
-            ["claude", "cmux", "send", "s-alpha", reply, "--json", "--paste", "--exact-session"],
+            ["claude", "cmux", "send", "--json", "--paste", "--exact-session", "--", "s-alpha", reply],
         ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true, text: reply });
         expect(readDecisions(file)).toMatchObject([{ id: "d_3_s-alpha", state: "sent", option: "b", harvested: true }]);
@@ -450,7 +450,12 @@ describe("answerInboxDecision", () => {
         };
 
         const preview = await answerInboxDecision({ session: "s-alpha", number: 3, option: "a", dryRun: true }, deps);
-        expect(preview).toMatchObject({ channel: "dry-run", delivered: false, text: "DECISION 3: a) keep it" });
+        // A titled card previews the exact payload a real send delivers (see the transcript-only test above).
+        expect(preview).toMatchObject({
+            channel: "dry-run",
+            delivered: false,
+            text: "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\na) keep it",
+        });
         expect(existsSync(file)).toBe(false);
 
         await expect(answerInboxDecision({ session: "s-alpha", number: 3, option: "c" }, deps)).rejects.toThrow(
@@ -461,7 +466,7 @@ describe("answerInboxDecision", () => {
         );
         await expect(answerInboxDecision({ session: "s-alpha", number: 3 }, deps)).rejects.toThrow("option letter");
 
-        await answerInboxDecision(
+        const sent = await answerInboxDecision(
             { session: "s-alpha", number: 3, option: "a" },
             {
                 ...deps,
@@ -471,6 +476,7 @@ describe("answerInboxDecision", () => {
                 },
             }
         );
+        expect(sent.text).toBe(preview.text);
         await expect(answerInboxDecision({ session: "s-alpha", number: 3, option: "b" }, deps)).rejects.toThrow(
             "already sent"
         );
@@ -530,11 +536,12 @@ describe("answerInboxDecisions", () => {
                 "claude",
                 "cmux",
                 "send",
-                "s-beta",
-                "DECISION 1: b) 4000\nDECISION 2: later",
                 "--json",
                 "--paste",
                 "--exact-session",
+                "--",
+                "s-beta",
+                "DECISION 1: b) 4000\nDECISION 2: later",
             ],
         ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true });

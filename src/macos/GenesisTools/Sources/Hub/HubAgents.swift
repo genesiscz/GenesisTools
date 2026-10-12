@@ -1281,8 +1281,9 @@ private struct AgentChildRow: View {
     let showsProject: Bool
 
     var body: some View {
+        let account = [node.account, showsProject ? node.team : nil].compactMap { $0 }.joined(separator: " · ")
         AgentRosterRow(title: node.title, provider: node.harness, role: node.kind, model: node.model,
-                       account: [node.account, showsProject ? node.team : nil].compactMap { $0 }.joined(separator: " · "),
+                       account: account.isEmpty ? nil : account,
                        status: node.status, startedAt: node.started, lastAt: node.last,
                        toolCalls: node.toolCalls ?? 0, unread: node.unreadMail ?? 0, selected: selected)
             .instantTooltip(AgentTree.started(node.started).map { "Started \($0)" } ?? "Start time unknown")

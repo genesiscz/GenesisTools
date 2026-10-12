@@ -89,7 +89,14 @@ public final class WidgetModel: ObservableObject {
             appearance.reduceTransparency = reduceTransparency
         }
     }
-    @Published public var dialogOpen = false
+    @Published private var hostDialogOpen = false
+    /// Set by the session chooser alone, so closing it (or its view going away) cannot release a window still open.
+    @Published public var sessionChooserOpen = false
+    /// Hover previews and the outside-click collapse stay off while a window, picker or the chooser is open.
+    public var dialogOpen: Bool {
+        get { hostDialogOpen || sessionChooserOpen }
+        set { hostDialogOpen = newValue }
+    }
     private var mediaPicker: NSOpenPanel?
     public var presentationChanged: (() -> Void)?
     public var showSettings: (() -> Void)?
@@ -285,6 +292,7 @@ public final class WidgetModel: ObservableObject {
         mediaPicker?.cancel(nil)
         mediaPicker = nil
         dialogOpen = false
+        sessionChooserOpen = false
         hoverTask?.cancel()
         watcher?.stop()
         watcher = nil
@@ -1032,15 +1040,35 @@ public final class WidgetModel: ObservableObject {
                 let answersBefore = self.formAnswers
                 _ = try await self.call(["action": "edit", "id": .string(message.id)])
                 guard !self.stopping else { return }
-                let newerTyping = self.draftRevisions[key, default: 0] != revision
-                if !newerTyping {
-                    var restored = WidgetDraft(assetIds: message.assetIds)
-                    if case .object(let fields) = message.payload, case .string(let text) = fields["text"] {
-                        restored.text = text
+                var restored = WidgetDraft(assetIds: message.assetIds)
+                if case .object(let fields) = message.payload, case .string(let text) = fields["text"] {
+                    restored.text = text
+                }
+                var notice = "Message restored as a draft."
+                if self.draftRevisions[key, default: 0] != revision {
+                    // The hub now holds the restored text, and the typed save waiting behind this edit would
+                    // replace it, so the restored text and the typing are joined and saved together.
+                    let typed = self.drafts[key]?.text ?? ""
+                    let joined = [restored.text, typed].filter { !$0.isEmpty }.joined(separator: " ")
+                    restored.text = String(joined.prefix(Self.draftTextLimit))
+                    if !typed.isEmpty {
+                        notice = joined.count > Self.draftTextLimit
+                            ? "Earlier message restored. Your newer typing did not fit in the draft and its end was cut. Review the draft before sending."
+                            : "Earlier message restored; your newer typing was added after it. Review the draft before sending."
                     }
-                    self.drafts[key] = restored
+                    self.draftTasks[key]?.cancel()
+                    self.draftTasks[key] = nil
+                    self.draftRevisions[key, default: 0] += 1
+                    self.dirtyDrafts.insert(key)
+                    let saved = restored.text
+                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)]) { [weak self] in
+                        guard let self, self.drafts[key]?.text == saved else { return }
+                        self.dirtyDrafts.remove(key)
+                    }
+                } else {
                     self.dirtyDrafts.remove(key)
                 }
+                self.drafts[key] = restored
                 self.submittedAssets.subtract(message.assetIds)
                 if case .object(let fields) = message.payload, case .string(let id) = fields["id"] {
                     self.selectedCardID = (fields["kind"] == .string("form") ? "form:" : "decision:") + id
@@ -1053,9 +1081,7 @@ public final class WidgetModel: ObservableObject {
                     }
                 }
                 self.selectedKey = key
-                self.notice = newerTyping
-                    ? "Earlier message restored; your newer typing was kept. Review the draft before sending."
-                    : "Message restored as a draft."
+                self.notice = notice
             } catch { self.report(error) }
         }
     }

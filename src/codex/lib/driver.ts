@@ -3,6 +3,7 @@ import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcrip
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
+import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
 import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver, WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
 import { type CodexControl, parseControlTarget } from "./control";
@@ -24,6 +25,10 @@ async function control(name: string, request: CodexControl, fallback: unknown = 
     const response = await sendControlRequest(name, request);
 
     if (!response.ok) {
+        if (response.code === "rejected") {
+            throw new WorkerDeliveryRejectedError(response.error);
+        }
+
         throw new Error(response.error);
     }
 
@@ -129,7 +134,13 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
     },
 
     steer(meta, input) {
-        const { expectSession, expectHome } = input.extras;
+        const { expectSession, expectHome, expectTurn } = input.extras;
+        if (expectTurn !== undefined) {
+            throw new WorkerDeliveryRejectedError(
+                `${WORKER_CAPABILITIES.codex.turnGuardUnsupported} No prompt was sent.`
+            );
+        }
+
         const expectedTarget =
             expectSession === undefined && expectHome === undefined
                 ? undefined

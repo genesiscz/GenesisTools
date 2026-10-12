@@ -1,13 +1,24 @@
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type SessionTargetsResult, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
+import {
+    findSessionTargets,
+    identifiesExactSession,
+    type SessionTargetsResult,
+    SOFT_SOURCES,
+} from "@app/claude/lib/cmux/resolve";
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
-import { CodexSessionStore } from "@app/codex/lib/store";
+import { isCodexDaemonPid } from "@app/codex/lib/spawn";
+import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
-import { enqueueSessionMessage } from "@genesiscz/utils/agent-sessions/message-queue";
+import {
+    enqueueSessionMessage,
+    findKeyedSessionMessage,
+    MAX_SESSION_MESSAGE_BYTES,
+    SessionMessageTooLargeError,
+    sessionMessageTextHash,
+} from "@genesiscz/utils/agent-sessions/message-queue";
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -18,7 +29,6 @@ import {
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
@@ -56,7 +66,9 @@ export interface ToolRun {
 
 function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSession[] {
     const directory = sourceHome ? join(workerSourceHome(sourceHome), "sessions") : claudeSessionsDir();
-    const candidates = listClaudeLiveSessions(directory, () => true).filter((peer) => peer.sessionId === session);
+    const candidates = listClaudeLiveSessions(directory, (pids) => new Set(pids)).filter(
+        (peer) => peer.sessionId === session
+    );
     const processes = batchPsInfo(candidates.map((peer) => peer.pid));
     return candidates.filter((peer) => {
         const process = processes.get(peer.pid);
@@ -182,10 +194,12 @@ function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
             continue;
         }
 
-        const sameHome =
-            !sourceHome ||
-            workerSourceHome(sourceHome) ===
-                workerSourceHome(meta.home ?? env.codex.getHomeOverride() ?? join(env.paths.getHome(), ".codex"));
+        // A meta keeps `ready` after its daemon was killed; steering it is refused, so it is no route.
+        if (!isCodexDaemonPid(meta.daemonPid, name)) {
+            continue;
+        }
+
+        const sameHome = !sourceHome || workerSourceHome(sourceHome) === workerSourceHome(codexWorkerHome(meta));
         if (meta.threadId === sessionId && sameHome) {
             return name;
         }
@@ -337,12 +351,16 @@ export async function resolveDeliveryTarget(
         };
     }
 
-    if (SOFT_SOURCES.has(result.source)) {
-        return { kind: "none", reason: "the cmux match does not identify the exact recipient session" };
-    }
-
-    if (!isUnambiguous(result.targets)) {
-        return { kind: "none", reason: `${result.targets.length} cmux panes match this session; none was picked` };
+    // Judge the evidence each pane matched on, not only the stage: a screen-printed id or a shared
+    // topic title also comes back from the title and capture stages (resolve.ts identifiesExactSession).
+    if (!identifiesExactSession(result) || !isUnambiguous(result.targets)) {
+        const several = !SOFT_SOURCES.has(result.source) && !isUnambiguous(result.targets);
+        return {
+            kind: "none",
+            reason: several
+                ? `${result.targets.length} cmux panes match this session; none was picked`
+                : "the cmux match does not identify the exact recipient session",
+        };
     }
 
     const target = result.targets[0];
@@ -376,29 +394,58 @@ export async function deliverToSession(
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
     const run = deps.runTool ?? runTool;
+    const nativeProvider = provider === "claude-code" ? "claude" : provider;
+    const queueTarget: { provider: "claude" | "codex" | "grok"; sessionId: string; sourceHome: string } | undefined =
+        deliveryKey &&
+        sourceHome &&
+        (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")
+            ? { provider: nativeProvider, sessionId: session, sourceHome }
+            : undefined;
     const undelivered = async (reason: string): Promise<DeliveryResult> => {
-        const nativeProvider = provider === "claude-code" ? "claude" : provider;
-        if (
-            deliveryKey &&
-            sourceHome &&
-            (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")
-        ) {
-            const queued = await enqueueSessionMessage({
-                target: { provider: nativeProvider, sessionId: session, sourceHome },
-                text,
-                idempotencyKey: deliveryKey,
-                root: deps.queueRoot,
-            });
-            return {
-                channel: "queued",
-                delivered: false,
-                queueId: queued.id,
-                queueTextHash: createHash("sha256").update(queued.text).digest("hex"),
-                error: `${reason} Saved for this exact session; awaiting a consumer acknowledgement.`,
-            };
+        if (queueTarget && deliveryKey) {
+            try {
+                const queued = await enqueueSessionMessage({
+                    target: queueTarget,
+                    text,
+                    idempotencyKey: deliveryKey,
+                    root: deps.queueRoot,
+                });
+                return {
+                    channel: "queued",
+                    delivered: false,
+                    queueId: queued.id,
+                    queueTextHash: sessionMessageTextHash(queued.text),
+                    error: `${reason} Saved for this exact session; awaiting a consumer acknowledgement.`,
+                };
+            } catch (error) {
+                if (!(error instanceof SessionMessageTooLargeError)) {
+                    throw error;
+                }
+
+                log.warn(
+                    { session, bytes: error.bytes, limit: MAX_SESSION_MESSAGE_BYTES },
+                    "message too large to queue"
+                );
+                return {
+                    channel: "queued",
+                    delivered: false,
+                    error: `${reason.replace(/\.$/, "")}. This message is too large to save for later (${error.bytes} bytes, limit ${MAX_SESSION_MESSAGE_BYTES}). Nothing was sent.`,
+                };
+            }
         }
         return { channel: "queued", delivered: false, error: reason };
     };
+
+    // A retry of a key that an earlier attempt already saved is that same delivery. The process can exit after
+    // the save and before its receipt is recorded; sending live as well would deliver the message twice.
+    if (
+        queueTarget &&
+        deliveryKey &&
+        findKeyedSessionMessage({ target: queueTarget, root: deps.queueRoot, idempotencyKey: deliveryKey })
+    ) {
+        return undelivered("An earlier attempt already saved this message for this exact session.");
+    }
+
     const target = await resolveDeliveryTarget({ session, provider, sourceHome }, deps);
 
     if (target.kind === "none") {
@@ -443,8 +490,8 @@ export async function deliverToSession(
         const { worker } = target;
         const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
         const promptFile = join(directory, "prompt.txt");
-        writeFileSync(promptFile, text, { mode: 0o600 });
         try {
+            writeFileSync(promptFile, text, { mode: 0o600 });
             const prefix = worker.provider === "claude" ? ["claude", "worker", "steer"] : ["grok", "steer"];
             const result = await run([
                 ...prefix,
@@ -555,6 +602,9 @@ export async function deliverToSession(
                 typeof receipt.turnId === "string" &&
                 receipt.turnId
             ) {
+                // `steerCodexMessage` reports this receipt as `delivered: false`, because there
+                // `delivered` means consumer-acknowledged (run.test.ts). For a Decision answer an
+                // acknowledged provider turn is enough to mark the batch sent, so it maps to true here.
                 return {
                     channel: "codex",
                     delivered: true,
@@ -572,7 +622,18 @@ export async function deliverToSession(
         );
     }
 
-    const sent = await run(["claude", "cmux", "send", session, paneText(text), "--json", "--paste", "--exact-session"]);
+    // After `--`: a message that starts with a hyphen is text, not an option.
+    const sent = await run([
+        "claude",
+        "cmux",
+        "send",
+        "--json",
+        "--paste",
+        "--exact-session",
+        "--",
+        session,
+        paneText(text),
+    ]);
     const outcome = parseSent(sent.stdout);
     log.info(
         { session, provider, ok: sent.success, sent: outcome, stderr: sent.stderr.slice(0, 400) },
@@ -581,6 +642,12 @@ export async function deliverToSession(
 
     if (sent.success && outcome.sent) {
         return { channel: "cmux", delivered: true, target: outcome.pane ?? target.label };
+    }
+
+    // A readable `sent: false` is a refusal before any input, so the durable session queue may take it.
+    // Unreadable output leaves the outcome unknown, and that stays a plain queued result.
+    if (outcome.readable && !outcome.sent) {
+        return { ...(await undelivered(paneMiss(sent.stdout, sent.stderr))), raw: sent.stderr.trim() };
     }
 
     return { channel: "queued", delivered: false, error: paneMiss(sent.stdout, sent.stderr), raw: sent.stderr.trim() };
@@ -610,7 +677,7 @@ export function paneMiss(stdout: string, stderr = ""): string {
 }
 
 /** `cmux send --json`: whether it typed, and the pane it typed into as `cmux · workspace · pane`. */
-function parseSent(stdout: string): { sent: boolean; pane?: string } {
+function parseSent(stdout: string): { sent: boolean; readable: boolean; pane?: string } {
     try {
         const parsed = SafeJSON.parse(stdout, { strict: true }) as {
             sent?: unknown;
@@ -620,10 +687,11 @@ function parseSent(stdout: string): { sent: boolean; pane?: string } {
         const pane = typeof parsed.target?.paneTitle === "string" ? parsed.target.paneTitle : "";
         return {
             sent: parsed.sent === true,
+            readable: typeof parsed.sent === "boolean",
             ...(workspace || pane ? { pane: cmuxLabel(workspace, pane) } : {}),
         };
     } catch (error) {
         log.debug({ error, stdout: stdout.slice(0, 200) }, "cmux send printed no JSON outcome");
-        return { sent: false };
+        return { sent: false, readable: false };
     }
 }

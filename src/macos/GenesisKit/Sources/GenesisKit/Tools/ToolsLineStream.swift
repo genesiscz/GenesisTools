@@ -154,6 +154,15 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
     }
 
+    /// Escalation after `stop()`: SIGKILL for a child that ignored SIGTERM. `onExit` still runs.
+    public func kill() {
+        stop()
+        guard process.isRunning else { return }
+        if Darwin.kill(process.processIdentifier, SIGKILL) != 0 {
+            PerfLog.mark("tools.follow kill \(String(cString: strerror(errno)))")
+        }
+    }
+
     private func receive(_ data: Data) {
         if data.isEmpty {
             output.fileHandleForReading.readabilityHandler = nil
