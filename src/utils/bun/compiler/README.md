@@ -25,7 +25,7 @@ process again):
 - TypeScript over `getattrlistbulk` through `defineSystemLibrary` (`fastWalk`): 169 cold, 148 warm.
 - The same walk in C, built by clang and opened from the cache (`defineNativeLibrary`): 147 cold, 153 warm.
 - The same C compiled by Bun's TinyCC in the process (`defineNativeLibrary`, `compiler: "tcc"`): 190 cold, 151 warm.
-  The cold pass includes the compile, 33 to 64 ms for 200 lines.
+  The cold pass includes the compile: about 14 ms of CPU and 20 ms of wall time for 200 lines, in every process.
 - `readdir` with file types plus an `lstat` per file: 485 cold, 468 warm.
 
 So the system call, not the language, sets the cost. The C version of the walk is kept as a benchmark fixture
@@ -54,12 +54,17 @@ and yields through a generator. The work done per entry in JavaScript decides wh
 
 - The build's file name carries a SHA-256 of the source, every `dependsOn` file, the flags, the platform and the CPU.
   An edit to any of them names a new file, so exactly one rebuild follows an edit, and an unchanged source opens the
-  build an earlier process made (about a millisecond).
+  build an earlier process made (0.4 ms of CPU). The first `dlopen` of a new build waits 130 to 380 ms for the
+  macOS Gatekeeper scan, once per build.
 - Builds live in `~/.genesis-tools/bun-compiler/libraries/` unless `cacheDir` says otherwise. A build goes to a
   temporary name and is renamed into place, so two processes that build at once never load a half-written file.
 - Without `clang` or `cc` on `PATH`, it compiles with Bun's TinyCC (`cc` from `bun:ffi`) in memory. **TinyCC cannot
   be cached between processes:** `cc` has no output option (`source`, `library`, `include`, `symbols`, `define`,
-  `flags`), and `-o` passed in `flags` writes no file. Every process pays the compile once. `compiler: "tcc"` forces
+  `flags`), and `-o` passed in `flags` writes no file. Bun's binding never declares `tcc_output_file` and sets the
+  in-memory output type after the user flags, so `-shared`, `-c` and `-o` are read and then overruled (checked in
+  Bun's source at v1.4.2 and on Bun 1.3.13, with 11 flag variants). Machine code copied out of one process crashes in
+  another at its first relocated address. Every process pays the compile once. `cc` also fails inside a
+  `bun build --compile` executable, where an embedded library opened with `dlopen` works. `compiler: "tcc"` forces
   this path, `compiler: "clang"` forbids it.
 - A source edited while a process runs is loaded by the next process, not this one.
 

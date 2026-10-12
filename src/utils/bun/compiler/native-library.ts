@@ -127,9 +127,9 @@ function loadNativeLibrary<Fns extends Record<string, FFIFunction>>(
 /**
  * A C source loaded through `bun:ffi`, compiled once: the getter loads it on first use and answers the same library
  * after that. With a C compiler installed, a source is built once per version and every later process opens that
- * build (about a millisecond). Without one, Bun's TinyCC compiles it in memory once per process (33 to 64 ms for
- * the 200-line walker in `scripts/benchmarks/fs/fastwalk.c`); Bun's `cc` cannot write its output to a file, so a
- * TinyCC build is never shared between processes. A source edited while a process runs is picked up by the next
+ * build (0.4 ms of CPU). Without one, Bun's TinyCC compiles it in memory once per process (about 14 ms of CPU and
+ * 20 ms of wall time for the 200-line walker in `scripts/benchmarks/fs/fastwalk.c`); Bun's `cc` cannot write its
+ * output to a file, so a TinyCC build is never shared between processes. A source edited while a process runs is picked up by the next
  * process, not this one.
  *
  * Which loader to use, what was measured (clang, TinyCC and pure FFI side by side), and how to measure: `README.md`
