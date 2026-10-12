@@ -108,9 +108,9 @@ final class ImageViewerTransition: NSObject {
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = duration
             panel.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
+        }, completionHandler: { [self] in
             MainActor.assumeIsolated {
-                self?.close()
+                close()
                 then?()
             }
         })

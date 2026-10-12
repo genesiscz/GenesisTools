@@ -230,6 +230,8 @@ private struct ImageViewerCanvasOverlay: View {
         .buttonStyle(.genHoverPlain(scale: 1.06))
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0)
+        .allowsHitTesting(enabled)
+        .accessibilityHidden(!enabled)
         .instantTooltip(tooltip)
         .accessibilityLabel(Text(tooltip))
     }
