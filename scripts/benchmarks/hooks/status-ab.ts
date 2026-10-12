@@ -75,7 +75,12 @@ function git(root: string, gitArgs: string[]): string {
 }
 
 const ROOT = join(SCRATCH, "repo");
-spawnSync("git", ["clone", "-q", "--shared", HERE, ROOT], { encoding: "utf8" });
+try {
+    git(SCRATCH, ["clone", "-q", "--shared", HERE, ROOT]);
+} catch (err) {
+    rmSync(SCRATCH, { recursive: true, force: true });
+    throw err;
+}
 
 const tracked = git(ROOT, ["ls-files"]).split("\n").filter(Boolean);
 const dirty = tracked.filter((file) => file.startsWith("src/agents/lib/hooks/") && file.endsWith(".ts")).slice(0, 5);
