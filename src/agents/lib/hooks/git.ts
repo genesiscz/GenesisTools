@@ -46,9 +46,18 @@ export function gitOut(root: string, args: string[], options: { quiet?: boolean 
  *
  * `--no-renames` is deliberate. Rename detection would make the before-state lookup
  * ambiguous, because the capture is keyed by the path as it was when the command began.
+ *
+ * `core.preloadIndex=false` applies to this one process and is never written anywhere. It only
+ * chooses how git stats the index entries: one thread instead of up to 20. The answer is the same
+ * byte for byte, and the threads cost three times the CPU. Measured 2026-10-12 on a 9,278-file
+ * clone at a load average of about 30, median of 9 interleaved runs: 151 to 163 ms of CPU
+ * (45 ms wall) with the threads, 49 ms (50 ms wall) without. The threads contend in the kernel:
+ * a single-threaded `git ls-files --deleted` stats the same files in 19 ms.
  */
 export function statusOf(root: string): StatusSummary {
-    return parseStatusPorcelainV2Z(gitOut(root, [...STATUS_PORCELAIN_ARGS, "--no-renames"]));
+    return parseStatusPorcelainV2Z(
+        gitOut(root, ["-c", "core.preloadIndex=false", ...STATUS_PORCELAIN_ARGS, "--no-renames"])
+    );
 }
 
 export function statusEntries(root: string): StatusEntry[] {

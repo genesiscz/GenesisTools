@@ -3228,6 +3228,37 @@ describe("characterization: what one call shows, logs and attributes", () => {
         `);
     });
 
+    it("the status never starts git's threaded index preload, which costs three times the CPU for the same answer", () => {
+        const trace = join(tmpdir(), `gt-status-trace-${process.pid}.log`);
+        const saved = { perf: process.env.GIT_TRACE2_PERF, force: process.env.GIT_TEST_PRELOAD_INDEX };
+
+        process.env.GIT_TRACE2_PERF = trace;
+        // git starts preload threads only past 1000 index entries; this starts two for an index of more than one.
+        process.env.GIT_TEST_PRELOAD_INDEX = "1";
+
+        try {
+            statusEntries(main);
+        } finally {
+            for (const [key, value] of [
+                ["GIT_TRACE2_PERF", saved.perf],
+                ["GIT_TEST_PRELOAD_INDEX", saved.force],
+            ] as const) {
+                if (value === undefined) {
+                    delete process.env[key];
+                } else {
+                    process.env[key] = value;
+                }
+            }
+        }
+
+        const text = readFileSync(trace, "utf8");
+
+        rmSync(trace, { force: true });
+        // The positive control: the trace did record this status refreshing the index.
+        expect(text).toContain("label:refresh");
+        expect(text.split("\n").filter((line) => line.includes("label:preload"))).toEqual([]);
+    });
+
     it("a checkout that moves HEAD to another branch", () => {
         const observed = call("git checkout topic", () => run(main, ["checkout", "-q", "topic"]));
 

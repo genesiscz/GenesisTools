@@ -1,0 +1,38 @@
+{
+    "name": "hooks-status-ab",
+    "capturedAt": "2026-10-12T21:31:50.178Z",
+    "commit": "f8cb4f9f1",
+    "loadAvg": [
+        25.10205078125,
+        25.96875,
+        28.73974609375
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "before.edit.gitSpawns": 7,
+        "before.edit.statusSpawns": 2,
+        "before.edit.renderedFiles": 2,
+        "before.read.gitSpawns": 5,
+        "before.read.statusSpawns": 2,
+        "before.read.renderedFiles": 0,
+        "after.edit.gitSpawns": 7,
+        "after.edit.statusSpawns": 2,
+        "after.edit.renderedFiles": 2,
+        "after.read.gitSpawns": 5,
+        "after.read.statusSpawns": 2,
+        "after.read.renderedFiles": 0,
+        "before.edit.cpuMs": 416.6,
+        "before.edit.wallMs": 220.1,
+        "before.edit.printed": 1,
+        "before.read.cpuMs": 397.3,
+        "before.read.wallMs": 192.3,
+        "before.read.printed": 0,
+        "after.edit.cpuMs": 219.5,
+        "after.edit.wallMs": 224.4,
+        "after.edit.printed": 1,
+        "after.read.cpuMs": 193.5,
+        "after.read.wallMs": 198.1,
+        "after.read.printed": 0
+    },
+    "notes": "before /tmp/cc/GenesisTools/d8b/before | 9278 tracked files, 5 dirty, 1 untracked directory | 23:31  up 10:48, 23 users, load averages: 23.28 25.63 28.64 -> 23:31  up 10:48, 23 users, load averages: 25.10 25.97 28.74 | commit f8cb4f9f1 | uptime 23:31  up 10:48, 23 users, load averages: 25.10 25.97 28.74"
+}
