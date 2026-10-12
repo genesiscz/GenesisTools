@@ -14,6 +14,13 @@ import {
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { type AppStatus, appStatus } from "./app";
 import {
+    type LocalNetworkAnswer,
+    localNetworkAnswer,
+    type OldBuild,
+    oldBuildsInUse,
+    readLocalNetworkRules,
+} from "./local-network";
+import {
     isTccGranted,
     readTccRows,
     TCC_SERVICES,
@@ -45,6 +52,10 @@ export interface PermissionsReport {
     app: AppStatus;
     /** grants recorded for the GenesisTools.app bundle id */
     grants: ServiceGrant[];
+    /** macOS's Local Network answer for the installed app; `unknown` when the app is not built */
+    localNetwork: LocalNetworkAnswer;
+    /** retired builds a running process still executes; each asks again for Local Network until answered */
+    oldBuilds: OldBuild[];
     /** com.genesis-tools.* launchd labels whose plist does not go through the launcher */
     launchdJobsOutsideApp: string[];
     /** the settings window's "Route tools through this app" switch is off */
@@ -179,11 +190,14 @@ export function permissionsReport(): PermissionsReport {
     const user = readTccRows({ dbPath: TCC_USER_DB_PATH, services, client: GENESIS_APP_BUNDLE_ID });
     const system = readTccRows({ dbPath: TCC_SYSTEM_DB_PATH, services, client: GENESIS_APP_BUNDLE_ID });
     const app = appStatus();
+    const lanRules = app.built ? readLocalNetworkRules(app.launcherPath) : null;
     const partial = {
         identity: responsibleIdentity(),
         hostBundleId: env.device.getHostBundleIdentifier(),
         app,
         grants: grantsFor(GENESIS_APP_BUNDLE_ID, user, system),
+        localNetwork: app.built ? localNetworkAnswer(lanRules) : ("unknown" as const),
+        oldBuilds: app.built ? oldBuildsInUse(app.launcherPath, lanRules) : [],
         launchdJobsOutsideApp: app.built ? launchdJobsOutsideApp(app.launcherPath) : [],
         disabledByMarker: isGenesisAppDisabledByMarker(),
         userDb: { readable: user.readable, error: user.error },

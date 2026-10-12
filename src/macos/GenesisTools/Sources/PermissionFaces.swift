@@ -1,6 +1,7 @@
 // Permission faces of GenesisTools.app:
 //   GenesisTools --permission-status <kind>                  print what macOS reports for the grant, then exit
 //   GenesisTools --permission-dialog <kind> [--reason <text>] show the GenesisKit permission dialog, exit when it closes
+//   GenesisTools --local-network-rules                       print the Local Network answers macOS keeps for this app
 //
 // --permission-status is the fresh-process probe: macOS caches Input Monitoring and Screen Recording per process, so
 // a running face asks a new one whether a grant given since its launch exists (GenesisKitHostAdapter). It reads the
@@ -49,6 +50,23 @@ func runPermissionDialog(_ args: [String]) -> Never {
 
         app.run()
     }
+    exit(0)
+}
+
+/// One JSON object: whether nehelper's rule store could be read, and every answer it keeps for this app. A copy outside
+/// the installed bundle (an old build a rebuild moved aside) has an answer of its own, keyed by its executable path;
+/// `tools macos permissions` reads them to say which running old builds will ask again.
+func runLocalNetworkRules() -> Never {
+    struct Output: Encodable {
+        let readable: Bool
+        let rules: [LocalNetworkPrivacy.Rule]
+    }
+
+    let rules = LocalNetworkPrivacy.rules(for: Bundle.main.bundleIdentifier ?? "")
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let data = (try? encoder.encode(Output(readable: rules != nil, rules: rules ?? []))) ?? Data("{}".utf8)
+    FileHandle.standardOutput.write(data + Data("\n".utf8))
     exit(0)
 }
 

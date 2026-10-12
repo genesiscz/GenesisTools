@@ -50,6 +50,7 @@ const KINDS = [
     "desktop",
     "documents",
     "downloads",
+    "local-network",
     "all",
     "input",
     "listen",
@@ -66,6 +67,9 @@ const KINDS = [
     "fda",
     "full-disk",
     "all-files",
+    "lan",
+    "network",
+    "local",
 ];
 const MODES = ["denied", "ask", "stale"];
 
@@ -144,7 +148,7 @@ if (verb === "on" || verb === "off") {
     const invalid = invalidEntries(value);
     if (invalid.length > 0) {
         console.error(`Unknown permission entries: ${invalid.join(", ")}`);
-        console.error(`Kinds: ${KINDS.slice(0, 14).join(", ")}. Modes: :ask, :stale.`);
+        console.error(`Kinds: ${KINDS.slice(0, 15).join(", ")}. Modes: :ask, :stale.`);
         process.exit(2);
     }
 

@@ -65,6 +65,7 @@ final class PermissionsModel: ObservableObject {
         (.desktopFolder, "a file you name there (HAR files, exports)"),
         (.documentsFolder, "a file you name there (HAR files, exports)"),
         (.downloadsFolder, "a file you name there (HAR files, exports)"),
+        (.localNetwork, "programs started through tools that reach your network (dev servers, Claude sessions)"),
     ]
 
     init(access: PermissionAccess = .live) {

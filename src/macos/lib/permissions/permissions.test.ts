@@ -14,6 +14,14 @@ import {
     stampInfoPlist,
     timedSteps,
 } from "./app";
+import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
+import {
+    genesisAppProcesses,
+    groupOldBuilds,
+    localNetworkAnswer,
+    parseLocalNetworkRules,
+    txtInodesByPid,
+} from "./local-network";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
@@ -240,6 +248,8 @@ describe("collectProblems", () => {
     const base = {
         identity: { kind: "genesis-app" as const, bundleId: "com.genesiscz.genesistools" },
         grants: [],
+        localNetwork: "allowed" as const,
+        oldBuilds: [],
         launchdJobsOutsideApp: [],
         disabledByMarker: false,
         userDb: { readable: true },
@@ -472,5 +482,101 @@ describe("timedSteps", () => {
 
         expect(reported).toEqual(["swift build -c release", "codesign", "install bundle"]);
         expect(timer.summary()).toBe("build 61.0s: swift build -c release 58.7s, codesign 2.0s, install bundle 0.3s");
+    });
+});
+
+describe("Local Network answers", () => {
+    const retiredBinary =
+        "/Users/example/.genesis-tools/app/retired.noindex/1/GenesisTools.app/Contents/MacOS/GenesisTools";
+    const rules = parseLocalNetworkRules(
+        `{"readable":true,"rules":[{"allowed":true},{"allowed":true,"path":"${retiredBinary}"},{"allowed":false,"path":"/other"}]}\n`
+    );
+
+    it("reads the rules face and answers per executable path", () => {
+        expect(rules?.rules).toEqual([
+            { allowed: true, path: undefined },
+            { allowed: true, path: retiredBinary },
+            { allowed: false, path: "/other" },
+        ]);
+        expect(localNetworkAnswer(rules)).toBe("allowed");
+        expect(localNetworkAnswer(rules, retiredBinary)).toBe("allowed");
+        expect(localNetworkAnswer(rules, "/other")).toBe("denied");
+        expect(localNetworkAnswer(rules, "/never/asked")).toBe("asks");
+    });
+
+    it("knows nothing when the store or the face output could not be read", () => {
+        expect(localNetworkAnswer(parseLocalNetworkRules(`{"readable":false,"rules":[]}`))).toBe("unknown");
+        expect(parseLocalNetworkRules("GenesisTools: unknown face")).toBeNull();
+        expect(parseLocalNetworkRules(`{"rules":[]}`)).toBeNull();
+        expect(localNetworkAnswer(null)).toBe("unknown");
+    });
+});
+
+describe("old builds still running", () => {
+    const launcher = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
+    const ps = [
+        `  101 Mon Oct  5 09:03:04 2026     ${launcher} --link-relay`,
+        `  202 Mon Oct 12 19:06:23 2026     ${launcher} /Users/example/.genesis-tools/bin/gt-claude --preload x.ts run work`,
+        `  303 Mon Oct 12 20:41:21 2026     ${launcher}`,
+        `  404 Mon Oct 12 20:50:00 2026     /usr/bin/ssh-agent -l`,
+        `  505 Mon Oct 12 20:55:00 2026     ${launcher}-helper --hub`,
+    ].join("\n");
+
+    it("lists the app's processes by their program argument, with what each runs", () => {
+        const processes = genesisAppProcesses(ps, launcher);
+        expect(processes.map((p) => [p.pid, p.command])).toEqual([
+            [101, "--link-relay"],
+            [202, "gt-claude --preload x.ts run work"],
+            [303, "(window)"],
+        ]);
+        expect(processes[0].started.getDate()).toBe(5);
+    });
+
+    it("reads each process's mapped files from lsof", () => {
+        const byPid = txtInodesByPid("p101\nfdtxt\ni11\ni99\np202\ni22\np303\n");
+        expect([...byPid.entries()].map(([pid, inodes]) => [pid, [...inodes]])).toEqual([
+            [101, [11, 99]],
+            [202, [22]],
+            [303, []],
+        ]);
+    });
+
+    it("groups the processes per retired build and answers for that build's path", () => {
+        const builds = groupOldBuilds({
+            processes: genesisAppProcesses(ps, launcher),
+            inodesByPid: txtInodesByPid("p101\ni11\np202\ni11\np303\ni33\n"),
+            retired: [
+                { bundle: "/r/2/GenesisTools.app", binary: "/r/2/bin", retiredAt: new Date(2_000), inode: 22 },
+                { bundle: "/r/1/GenesisTools.app", binary: retiredBinaryFor(1), retiredAt: new Date(1_000), inode: 11 },
+            ],
+            rules: parseLocalNetworkRules(`{"readable":true,"rules":[{"allowed":true}]}`),
+        });
+        expect(builds.map((b) => [b.bundle, b.processes.map((p) => p.pid), b.localNetwork])).toEqual([
+            ["/r/1/GenesisTools.app", [101, 202], "asks"],
+        ]);
+    });
+
+    function retiredBinaryFor(ms: number): string {
+        return `/r/${ms}/GenesisTools.app/Contents/MacOS/GenesisTools`;
+    }
+});
+
+describe("permission kinds", () => {
+    it("lists exactly the raw values of GenesisKit's PermissionKind", async () => {
+        const source = await Bun.file(
+            join(import.meta.dir, "../../GenesisKit/Sources/GenesisKit/Permissions/PermissionKind.swift")
+        ).text();
+        const body = source.slice(source.indexOf("public enum PermissionKind"), source.indexOf("public var id"));
+        const swiftKinds = [...body.matchAll(/^\s+case (\w+)(?: = "([\w-]+)")?$/gm)].map((m) => m[2] ?? m[1]);
+        expect(swiftKinds).toEqual([...PERMISSION_KINDS]);
+        expect(isPermissionKind("local-network")).toBe(true);
+        expect(isPermissionKind("lan")).toBe(false);
+    });
+
+    it("reads the status face's wire values", () => {
+        expect(permissionStatusLabel("granted\n")).toBe("granted");
+        expect(permissionStatusLabel("notDetermined")).toBe("not asked yet");
+        expect(permissionStatusLabel("partial:Add Only")).toBe("Add Only");
+        expect(permissionStatusLabel("")).toBe("no answer");
     });
 });

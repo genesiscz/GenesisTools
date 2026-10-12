@@ -68,7 +68,7 @@ final class PermissionTests: XCTestCase {
         let aliases: [String: PermissionKind] = [
             "input": .inputMonitoring, "keyboard": .inputMonitoring, "ax": .accessibility, "mic": .microphone,
             "dictation": .speechRecognition, "screen": .screenRecording, "capture": .screenRecording,
-            "calendars": .calendars, "fda": .fullDiskAccess,
+            "calendars": .calendars, "fda": .fullDiskAccess, "lan": .localNetwork,
         ]
         for (alias, kind) in aliases {
             XCTAssertEqual(PermissionKind(id: alias), kind, alias)
@@ -85,6 +85,7 @@ final class PermissionTests: XCTestCase {
             .reminders: "Privacy_Reminders", .contacts: "Privacy_Contacts", .fullDiskAccess: "Privacy_AllFiles",
             .automation: "Privacy_Automation", .desktopFolder: "Privacy_FilesAndFolders",
             .documentsFolder: "Privacy_FilesAndFolders", .downloadsFolder: "Privacy_FilesAndFolders",
+            .localNetwork: "Privacy_LocalNetwork",
         ]
         XCTAssertEqual(Set(anchors.keys), Set(PermissionKind.allCases), "every kind has an expected pane")
         for kind in PermissionKind.allCases {
@@ -102,6 +103,7 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(PermissionKind.microphone.requestStyle, .systemPrompt)
         XCTAssertEqual(PermissionKind.speechRecognition.requestStyle, .systemPrompt)
         XCTAssertEqual(PermissionKind.calendars.requestStyle, .systemPrompt)
+        XCTAssertEqual(PermissionKind.localNetwork.requestStyle, .systemPrompt)
         XCTAssertEqual(PermissionKind.accessibility.requestStyle, .promptThenSettings)
         XCTAssertEqual(PermissionKind.screenRecording.requestStyle, .promptThenSettings)
         XCTAssertEqual(PermissionKind.inputMonitoring.requestStyle, .promptThenSettings)

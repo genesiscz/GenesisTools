@@ -5,13 +5,80 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
-import { genesisAppBundlePath, genesisAppDisabledMarkerPath } from "@genesiscz/utils/macos/genesis-app";
+import {
+    genesisAppBundlePath,
+    genesisAppDisabledMarkerPath,
+    genesisAppLauncherPath,
+} from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { buildApp, describeSource } from "../../lib/permissions/app";
+import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
+import type { LocalNetworkAnswer, OldBuild } from "../../lib/permissions/local-network";
 import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
 
 const PANES = Object.keys(SETTINGS_PANES);
+
+const LAN_LABELS: Record<LocalNetworkAnswer, string> = {
+    allowed: "allowed",
+    denied: "denied",
+    asks: "not asked yet",
+    unknown: "unknown (the rule store was not read)",
+};
+
+const OLD_BUILD_LAN_LABELS: Record<LocalNetworkAnswer, string> = {
+    allowed: "answered, allowed",
+    denied: "answered, denied",
+    asks: "asks on its first LAN access",
+    unknown: "unknown",
+};
+
+const OLD_BUILD_PROCESSES_SHOWN = 3;
+
+/** "19:27" today, "10-11 21:22" on another day. */
+function clock(date: Date): string {
+    const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+
+    if (date.toDateString() === new Date().toDateString()) {
+        return time;
+    }
+
+    return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${time}`;
+}
+
+function printOldBuilds(builds: OldBuild[]): void {
+    if (builds.length === 0) {
+        return;
+    }
+
+    ui.section("Old builds still running");
+
+    for (const build of builds) {
+        const count = build.processes.length;
+        const head = `retired ${clock(build.retiredAt)} · ${count} process${count === 1 ? "" : "es"} · Local Network: ${OLD_BUILD_LAN_LABELS[build.localNetwork]}`;
+
+        if (build.localNetwork === "asks") {
+            ui.warn(head);
+        } else {
+            ui.info(head);
+        }
+
+        for (const appProcess of build.processes.slice(0, OLD_BUILD_PROCESSES_SHOWN)) {
+            ui.dim(
+                `    pid ${appProcess.pid}  since ${clock(appProcess.started)}  ${truncateDisplay(appProcess.command, 70)}`
+            );
+        }
+
+        if (count > OLD_BUILD_PROCESSES_SHOWN) {
+            ui.dim(`    and ${count - OLD_BUILD_PROCESSES_SHOWN} more`);
+        }
+    }
+
+    ui.dim(
+        "  A process keeps the build it started with. After a rebuild, macOS asks once more for Local Network the first time that build reaches your network. The answer covers that build only."
+    );
+}
 
 function printReport(report: PermissionsReport): void {
     ui.header("GenesisTools.app (TCC identity)");
@@ -77,6 +144,18 @@ function printReport(report: PermissionsReport): void {
         }
     }
 
+    if (report.app.built) {
+        const lanLine = `Local Network: ${LAN_LABELS[report.localNetwork]}`;
+
+        if (report.localNetwork === "allowed") {
+            ui.ok(lanLine);
+        } else if (report.localNetwork === "unknown") {
+            ui.warn(lanLine);
+        } else {
+            ui.dim(`  ${lanLine}`);
+        }
+    }
+
     if (!report.userDb.readable) {
         ui.warn(`user TCC.db not readable: ${report.userDb.error}`);
     }
@@ -85,6 +164,7 @@ function printReport(report: PermissionsReport): void {
         ui.info("system TCC.db (Full Disk Access, Accessibility, Screen Recording) needs Full Disk Access to read");
     }
 
+    printOldBuilds(report.oldBuilds);
     ui.section("Verdict");
 
     if (report.problems.length === 0) {
@@ -141,6 +221,87 @@ export function registerPermissionsCommand(program: Command): void {
             }
 
             ui.raw(`  Next: ${toolCommand("macos permissions")}   (then grant the panes it lists)`);
+        });
+
+    permissions
+        .command("request")
+        .description("Show the GenesisTools dialog for one grant: what it is for, then macOS's own prompt")
+        .argument("[kind]", `one of: ${PERMISSION_KINDS.join(", ")}`)
+        .option("--reason <text>", "What you need the grant for now; the dialog shows it")
+        .action(async (kindArg: string | undefined, options: { reason?: string }) => {
+            let kind = kindArg;
+
+            if (!kind && isInteractive()) {
+                const { select } = await import("@clack/prompts");
+                const picked = await select({
+                    message: "Which grant?",
+                    options: PERMISSION_KINDS.map((value) => ({ value, label: value })),
+                });
+                kind = typeof picked === "string" ? picked : undefined;
+            }
+
+            if (!kind || !isPermissionKind(kind)) {
+                ui.err(kind ? `unknown grant "${kind}"` : "which grant?");
+                ui.raw(`  Grants: ${PERMISSION_KINDS.join(", ")}`);
+                ui.raw(`  Example: ${toolCommand("macos permissions request", "local-network")}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const bundle = genesisAppBundlePath();
+
+            if (!existsSync(bundle)) {
+                ui.info(
+                    `${bundle} is not built, so tools run under the terminal's own identity: macOS asks the terminal app the first time a tool needs ${kind}.`
+                );
+                return;
+            }
+
+            const readStatus = () =>
+                permissionStatusLabel(
+                    new TextDecoder().decode(
+                        Bun.spawnSync([genesisAppLauncherPath(), "--permission-status", kind], {
+                            stdout: "pipe",
+                            stderr: "pipe",
+                            timeout: 10_000,
+                        }).stdout
+                    )
+                );
+
+            // An existing grant needs no dialog, and `open` would take the focus for nothing.
+            if (readStatus() === "granted") {
+                ui.ok(`${kind}: already granted`);
+                return;
+            }
+
+            // Launch Services starts the dialog face, so it is its own responsible process and the prompt names
+            // GenesisTools. -W waits until the dialog closes.
+            const reason = options.reason ? ["--reason", options.reason] : [];
+            ui.info("The GenesisTools dialog is open. It closes when the grant is answered or you close it.");
+            const dialog = Bun.spawn(
+                ["open", "-n", "-W", "-a", bundle, "--args", "--permission-dialog", kind, ...reason],
+                {
+                    stdout: "pipe",
+                    stderr: "pipe",
+                }
+            );
+            const code = await dialog.exited;
+
+            if (code !== 0) {
+                const stderr = await new Response(dialog.stderr).text();
+                ui.err(`the dialog did not start (open exit ${code}): ${stderr.trim()}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const label = readStatus();
+
+            if (label === "granted") {
+                ui.ok(`${kind}: granted`);
+            } else {
+                ui.warn(`${kind}: ${label}`);
+                ui.raw(`  Open its pane: ${toolCommand("macos permissions ui")} (the window lists every grant)`);
+            }
         });
 
     permissions

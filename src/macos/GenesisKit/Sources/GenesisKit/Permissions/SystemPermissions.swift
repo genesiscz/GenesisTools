@@ -79,6 +79,8 @@ public struct SystemPermissions: PermissionSystem {
             return FileHandle(forReadingAtPath: Self.tccUserDb) != nil ? .granted : .denied
         case .automation, .desktopFolder, .documentsFolder, .downloadsFolder:
             return .unknown("asks on first use")
+        case .localNetwork:
+            return LocalNetworkPrivacy.status(for: Bundle.main.bundleIdentifier ?? "")
         }
     }
 
@@ -135,6 +137,15 @@ public struct SystemPermissions: PermissionSystem {
             return await Self.probeAutomation()
         case .desktopFolder, .documentsFolder, .downloadsFolder:
             return await Self.probeFolder(kind.folderPath ?? "")
+        case .localNetwork:
+            guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
+            let identifier = Bundle.main.bundleIdentifier ?? ""
+            _ = await Self.probe("local-network", within: Self.promptDeadline) {
+                let reached = LocalNetworkPrivacy.reach(within: Self.promptDeadline) {
+                    LocalNetworkPrivacy.status(for: identifier) != .notDetermined
+                }
+                return reached ? .granted : .unknown("no local network")
+            }
         }
         return status(kind)
     }

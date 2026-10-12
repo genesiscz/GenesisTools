@@ -16,6 +16,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
     case desktopFolder = "desktop"
     case documentsFolder = "documents"
     case downloadsFolder = "downloads"
+    case localNetwork = "local-network"
 
     public var id: String { rawValue }
 
@@ -35,6 +36,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case "screen", "screen-capture", "capture": self = .screenRecording
         case "calendars": self = .calendars
         case "fda", "full-disk", "all-files": self = .fullDiskAccess
+        case "lan", "network", "local": self = .localNetwork
         default: return nil
         }
     }
@@ -55,6 +57,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .desktopFolder: return "Desktop folder"
         case .documentsFolder: return "Documents folder"
         case .downloadsFolder: return "Downloads folder"
+        case .localNetwork: return "Local Network"
         }
     }
 
@@ -72,6 +75,8 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .fullDiskAccess: return "It lets tools read Mail, Messages and Voice Memos data."
         case .automation: return "It lets tools control System Events for speech and window actions."
         case .desktopFolder, .documentsFolder, .downloadsFolder: return "It lets tools open a file you name in that folder."
+        case .localNetwork:
+            return "It lets tools, and the programs they start, reach devices on your network, such as a dev server."
         }
     }
 
@@ -89,6 +94,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .fullDiskAccess: return "Privacy_AllFiles"
         case .automation: return "Privacy_Automation"
         case .desktopFolder, .documentsFolder, .downloadsFolder: return "Privacy_FilesAndFolders"
+        case .localNetwork: return "Privacy_LocalNetwork"
         }
     }
 
@@ -116,12 +122,13 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .fullDiskAccess: return "internaldrive"
         case .automation: return "gearshape.2"
         case .desktopFolder, .documentsFolder, .downloadsFolder: return "folder"
+        case .localNetwork: return "network"
         }
     }
 
     public var requestStyle: PermissionRequestStyle {
         switch self {
-        case .microphone, .speechRecognition, .calendars, .reminders, .contacts: return .systemPrompt
+        case .microphone, .speechRecognition, .calendars, .reminders, .contacts, .localNetwork: return .systemPrompt
         case .accessibility, .screenRecording, .inputMonitoring: return .promptThenSettings
         case .fullDiskAccess: return .settingsOnly
         case .automation, .desktopFolder, .documentsFolder, .downloadsFolder: return .probe
