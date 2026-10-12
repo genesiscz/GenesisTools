@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DaemonTask, TaskState } from "./types";
+import type { DaemonTask, RunResult, TaskState } from "./types";
 
 const logsBaseDir = mkdtempSync(join(tmpdir(), "scheduler-test-"));
 
@@ -524,5 +524,64 @@ describe("a task that keeps failing", () => {
             "Failed after 1 attempt, retries exhausted",
             "Still failing: 3 runs in a row, retries exhausted",
         ]);
+    });
+});
+
+describe("task isolation", () => {
+    async function settle(activeRuns: Set<string>, name: string): Promise<void> {
+        const deadline = Date.now() + 5_000;
+
+        while (activeRuns.has(name) && Date.now() < deadline) {
+            await Bun.sleep(5);
+        }
+    }
+
+    test("due tasks run side by side: a hung, then failing task neither delays nor fails another", async () => {
+        const taskStates = new Map<string, TaskState>();
+        const activeRuns = new Set<string>();
+        const now = new Date("2026-06-30T12:00:00.000Z");
+        const tasks: DaemonTask[] = [
+            { name: "hung", command: "sleep 600", every: "every 1 minute", retries: 0, enabled: true },
+            { name: "quick", command: "true", every: "every 1 minute", retries: 0, enabled: true },
+        ];
+
+        for (const task of tasks) {
+            taskStates.set(task.name, { nextRunAt: new Date(now.getTime() - 1_000), attemptCount: 0, running: false });
+        }
+
+        const { promise: hungResult, resolve: finishHung } = Promise.withResolvers<RunResult>();
+        const started: string[] = [];
+        const runTask = async (task: DaemonTask): Promise<RunResult> => {
+            started.push(task.name);
+            return task.name === "hung" ? hungResult : { exitCode: 0, duration_ms: 1, logFile: "/tmp/quick.jsonl" };
+        };
+
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now, notify: noopNotify, runTask });
+        await settle(activeRuns, "quick");
+
+        expect(started).toEqual(["hung", "quick"]);
+        expect(activeRuns.has("hung")).toBe(true);
+
+        // A minute later the quick task is due again while the hung one has still not returned.
+        const later = new Date(Date.now() + 120_000);
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now: later, notify: noopNotify, runTask });
+        await settle(activeRuns, "quick");
+
+        expect(started).toEqual(["hung", "quick", "quick"]);
+
+        finishHung({ exitCode: 1, duration_ms: 600_000, logFile: "/tmp/hung.jsonl" });
+        await drainActiveRuns(activeRuns);
+        dispatchDueTasks({
+            tasks,
+            taskStates,
+            activeRuns,
+            logsBaseDir,
+            now: new Date(Date.now() + 240_000),
+            notify: noopNotify,
+            runTask,
+        });
+        await drainActiveRuns(activeRuns);
+
+        expect(started.filter((name) => name === "quick")).toHaveLength(3);
     });
 });
