@@ -342,6 +342,44 @@ describe("createReclaimCommand", () => {
         }
     });
 
+    it("presets auto --on arms a plan with limits, the table shows it, and --off stops it", async () => {
+        const outer = twoTrees();
+        try {
+            await run([
+                "presets",
+                "save",
+                "nightly",
+                "--dir",
+                outer,
+                "--targets",
+                "node_modules",
+                "--min-real",
+                "1024",
+            ]);
+            const armed = await run(["presets", "auto", "nightly", "--on", "--max-bytes", "2GB", "--max-files", "40"]);
+            expect(armed.code ?? 0).toBe(0);
+            expect(getPreset("nightly")?.auto).toEqual({ enabled: true, maxBytes: 2 * 1024 ** 3, maxFiles: 40 });
+
+            const listed = await run(["presets", "list", "--format", "table"]);
+            expect(listed.out).toContain("AUTO");
+            expect(listed.out).toContain("on, dry run next");
+
+            await run(["presets", "auto", "nightly", "--off"]);
+            expect(getPreset("nightly")?.auto?.enabled).toBe(false);
+
+            const bad = await run(["presets", "auto", "nightly", "--max-bytes", "lots"]);
+            expect(bad.code).toBe(1);
+            const unknown = await run(["presets", "auto", "missing", "--on"]);
+            expect(unknown.code).toBe(1);
+        } finally {
+            if (existsSync(presetsPath())) {
+                rmSync(presetsPath());
+            }
+
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("presets list --format table prints an aligned inventory", async () => {
         const outer = twoTrees();
         try {

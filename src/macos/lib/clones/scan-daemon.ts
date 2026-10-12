@@ -1,4 +1,11 @@
 import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
+import {
+    type AutoReclaimDeps,
+    type AutoReclaimOutcome,
+    formatAutoReclaimReport,
+    realAutoReclaimDeps,
+    runAutoReclaims,
+} from "@app/macos/lib/clones/auto-reclaim";
 import { cachePlan, planCacheKey, planCacheParams, stampRoots } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
@@ -15,6 +22,10 @@ export interface DaemonScanArgs {
     notify?: boolean;
     /** Smallest duplicate worth reporting, in bytes. Default: the config's `minReal`, else 10 MiB. */
     minReal?: number;
+    /** The plans marked auto: run them, plan and report only, or leave them alone (default: the daemon's entry point
+     *  passes "apply", so a caller that forgets the flag never clones anything). */
+    autoReclaim?: "apply" | "dry-run" | "off";
+    autoDeps?: AutoReclaimDeps;
 }
 
 /** What one watched folder holds: the bytes its duplicate copies would free, from how many sets. */
@@ -36,6 +47,8 @@ export interface DaemonScanResult {
     minReal: number;
     /** The plan the scan wrote: the cache key of the 60 s plan snapshot `optimize` reuses. */
     planKey?: string;
+    /** One entry per plan marked auto; null when the scan ran with auto reclaim off. */
+    auto: AutoReclaimOutcome[] | null;
     elapsedMs: number;
 }
 
@@ -87,9 +100,22 @@ export function reclaimableByRoot(sets: DuplicateSet[], roots: string[]): Daemon
     return [...byRoot.values()];
 }
 
-/** Unattended dry-run scan (NEVER --apply). Writes the 60 s plan cache + a
- *  dry-run ProcessReport meta line, emits ONE notification. */
+/** The daily scan task: the watched-folder scan, then the plans marked auto. */
 export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonScanResult> {
+    const scan = await scanWatchedDirs(args);
+    const mode = args.autoReclaim ?? "off";
+    const auto =
+        mode === "off"
+            ? null
+            : await runAutoReclaims({ deps: args.autoDeps ?? realAutoReclaimDeps(), dryRun: mode === "dry-run" });
+    return { ...scan, auto, elapsedMs: Math.round(performance.now() - scan.startedAt) };
+}
+
+/** Unattended dry-run scan of the watched folders (NEVER --apply). Writes the 60 s plan cache + a
+ *  dry-run ProcessReport meta line, emits ONE notification. */
+async function scanWatchedDirs(
+    args: DaemonScanArgs
+): Promise<Omit<DaemonScanResult, "auto" | "elapsedMs"> & { startedAt: number }> {
     const startedAt = performance.now();
     const cfg = await loadClonesConfig();
     const roots = args.watchedDirs ?? cfg.watchedDirs;
@@ -104,7 +130,7 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
             roots: [],
             sets: 0,
             minReal,
-            elapsedMs: Math.round(performance.now() - startedAt),
+            startedAt,
         };
     }
 
@@ -151,15 +177,21 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
         sets: sets.length,
         minReal,
         planKey: planCacheKey(params),
-        elapsedMs: Math.round(performance.now() - startedAt),
+        startedAt,
     };
 }
 
 /** The per-run report the daemon keeps in the run log (stdout records): per watched folder what is reclaimable, the
  *  plan written, and the time it took. */
 export function formatScanReport(result: DaemonScanResult): string[] {
+    const auto = result.auto === null ? ["auto reclaim: off for this run"] : formatAutoReclaimReport(result.auto);
+
     if (!result.scanned) {
-        return [`clones scan: nothing scanned, ${result.reason ?? "no reason recorded"}`];
+        return [
+            `clones scan: nothing scanned, ${result.reason ?? "no reason recorded"}`,
+            ...auto,
+            `time: ${formatDuration(result.elapsedMs)}`,
+        ];
     }
 
     return [
@@ -171,12 +203,16 @@ export function formatScanReport(result: DaemonScanResult): string[] {
         ),
         `total: ${formatBytes(result.reclaimable)} reclaimable in ${result.sets} duplicate set${result.sets === 1 ? "" : "s"}`,
         `plan written: dry-run plan snapshot ${result.planKey ?? "?"} (valid 60 s for ${toolCommand("macos clones optimize", "--apply")}), process log ${result.processId ?? "?"}`,
+        ...auto,
         `time: ${formatDuration(result.elapsedMs)}`,
     ];
 }
 
 if (import.meta.main) {
-    runDaemonScan({ notify: true })
+    // `--auto-dry-run`: plan the auto presets and report, clone nothing. `--no-auto`: skip them.
+    const argv = process.argv.slice(2);
+    const autoReclaim = argv.includes("--no-auto") ? "off" : argv.includes("--auto-dry-run") ? "dry-run" : "apply";
+    runDaemonScan({ notify: true, autoReclaim })
         .then((result) => {
             out.println(formatScanReport(result).join("\n"));
             process.exitCode = 0;

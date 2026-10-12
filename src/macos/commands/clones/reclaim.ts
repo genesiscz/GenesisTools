@@ -1,7 +1,14 @@
 import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { createStoresCommand } from "@app/macos/commands/clones/reclaim-stores";
+import {
+    armedAuto,
+    DEFAULT_AUTO_MAX_BYTES,
+    DEFAULT_AUTO_MAX_FILES,
+    parseByteLimit,
+} from "@app/macos/lib/clones/auto-reclaim";
 import { KEEP_PARTNER_IDS, type KeepPartnerId, REWRITABLE_STORE_IDS } from "@app/macos/lib/clones/keep-partners";
+import { parseMinReal } from "@app/macos/lib/clones/min-real";
 import {
     applyReclaimPlan,
     type PlanRunHooks,
@@ -14,7 +21,9 @@ import {
     type Preset,
     removePreset,
     savePreset,
+    selectorFromPreset,
     touchPreset,
+    updatePresetAuto,
 } from "@app/macos/lib/clones/presets";
 import {
     DEFAULT_MIN_REAL,
@@ -205,19 +214,6 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         ...resolved.selector,
         ...(rewriteStores.length > 0 ? { rewriteStores: rewriteStores.filter(isRewritable) } : {}),
         ...(opts.keepUnfreeable === true ? { keepUnfreeable: true } : {}),
-    };
-}
-
-function selectorFromPreset(preset: Preset): ReclaimSelector {
-    return {
-        dirs: preset.dirs,
-        ...(preset.worktreesOf !== undefined ? { worktreesOf: preset.worktreesOf } : {}),
-        targets: preset.targets,
-        exclude: preset.exclude,
-        minReal: preset.minReal,
-        keepPartners: preset.keepPartners,
-        ...(preset.rewriteStores !== undefined ? { rewriteStores: preset.rewriteStores } : {}),
-        ...(preset.keepUnfreeable === true ? { keepUnfreeable: true } : {}),
     };
 }
 
@@ -482,14 +478,25 @@ function createApplyCommand(): Command {
     return cmd;
 }
 
+function autoCell(preset: Preset): string {
+    const auto = preset.auto;
+    if (auto?.enabled !== true) {
+        return "off";
+    }
+
+    const limits = `${formatBytes(auto.maxBytes)}, ${auto.maxFiles} files`;
+    return auto.dryRunAt === undefined ? `on, dry run next (${limits})` : `on (${limits})`;
+}
+
 function renderPresetTable(presets: Preset[]): string {
-    const table = createBoxTable(["ID", "DIRS", "TARGETS", "LAST"]);
+    const table = createBoxTable(["ID", "DIRS", "TARGETS", "LAST", "AUTO"]);
     for (const preset of presets) {
         table.push([
             pc.white(preset.id),
             truncateDisplay(preset.dirs.map(collapsePathForDisplay).join(", "), 48),
             truncateDisplay(preset.targets.join(","), 24),
             preset.lastReclaimable !== undefined ? formatBytes(preset.lastReclaimable) : "—",
+            autoCell(preset),
         ]);
     }
 
@@ -557,6 +564,74 @@ function createPresetsCommand(): Command {
 
             await printLn(`Removed preset ${id}.`);
         });
+
+    group
+        .command("auto")
+        .argument("<id>", "Preset id")
+        .description(
+            "Let the daily scan task run this plan on its own: the first run after --on is a dry run, every later run clones only the duplicate sets that fit the limits"
+        )
+        .option("--on", "mark the plan auto (its next scan-task run is a dry run)")
+        .option("--off", "stop running the plan on its own")
+        .option(
+            "--max-bytes <size>",
+            `most bytes cloned per run, e.g. 5GB (default ${formatBytes(DEFAULT_AUTO_MAX_BYTES)})`
+        )
+        .option("--max-files <n>", `most files cloned per run (default ${DEFAULT_AUTO_MAX_FILES})`)
+        .option("--json", "print the preset as JSON")
+        .action(
+            async (
+                id: string,
+                opts: { on?: boolean; off?: boolean; maxBytes?: string; maxFiles?: string; json?: boolean }
+            ) => {
+                const preset = getPreset(id);
+                if (preset === null) {
+                    const known = listPresets().map((x) => x.id);
+                    console.error(
+                        `Unknown preset "${id}".${known.length > 0 ? ` Known presets: ${known.join(", ")}` : ""}`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (opts.on && opts.off) {
+                    console.error("Pass --on or --off, not both.");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const maxBytes = opts.maxBytes === undefined ? undefined : parseByteLimit(opts.maxBytes);
+                const maxFiles = opts.maxFiles === undefined ? undefined : parseMinReal(opts.maxFiles);
+                if (maxBytes === null || maxFiles === null) {
+                    console.error("--max-bytes takes a size such as 5GB or 500MB; --max-files a whole number above 0.");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const limits = { maxBytes: maxBytes ?? undefined, maxFiles: maxFiles ?? undefined };
+                let next: Preset | null = preset;
+                if (opts.on) {
+                    next = updatePresetAuto(id, armedAuto(preset.auto, limits));
+                } else if (opts.off) {
+                    next = preset.auto
+                        ? updatePresetAuto(id, { ...preset.auto, enabled: false, dryRunAt: undefined })
+                        : preset;
+                } else if (preset.auto && (limits.maxBytes !== undefined || limits.maxFiles !== undefined)) {
+                    next = updatePresetAuto(id, {
+                        ...preset.auto,
+                        maxBytes: limits.maxBytes ?? preset.auto.maxBytes,
+                        maxFiles: limits.maxFiles ?? preset.auto.maxFiles,
+                    });
+                }
+
+                if (opts.json) {
+                    await printLn(SafeJSON.stringify(next, null, 2));
+                    return;
+                }
+
+                await printLn(`${id}: auto ${next ? autoCell(next) : "off"}`);
+            }
+        );
 
     const run = new Command("run")
         .argument("<id>", "Preset id")
