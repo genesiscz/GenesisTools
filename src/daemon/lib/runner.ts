@@ -4,6 +4,7 @@ import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { taskLogDirName } from "./run-log-name";
 import type { DaemonTask, RunResult } from "./types";
 
 /** This checkout's root, where the `tools` entry lives. */
@@ -81,11 +82,6 @@ async function streamLines(
         signal.removeEventListener("abort", onAbort);
         reader.releaseLock();
     }
-}
-
-/** The folder under the logs base dir that holds a task's run logs. */
-export function taskLogDirName(name: string): string {
-    return name.replace(/[/\\]/g, "_") || "unnamed-task";
 }
 
 export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: string): Promise<RunResult> {

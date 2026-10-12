@@ -90,6 +90,19 @@ describe("pruneTaskRunLogs", () => {
         }
     });
 
+    test("prunes the folder the runner writes for a task name with a slash", async () => {
+        const b7 = mkdtempSync(join(tmpdir(), "retention-test7-"));
+        // The runner writes `ai/usage` into `ai_usage`, so its name can never leave the logs folder.
+        mkdirSync(join(b7, "ai_usage"), { recursive: true });
+        writeFileSync(join(b7, "ai_usage", stamp(10, 1)), "{}\n");
+
+        try {
+            expect(await pruneTaskRunLogs(b7, "ai/usage", { maxAgeDays: 3, minRuns: 0 })).toBe(1);
+        } finally {
+            rmSync(b7, { recursive: true, force: true });
+        }
+    });
+
     test("missing task dir returns 0", async () => {
         expect(await pruneTaskRunLogs(base, "nope", { maxAgeDays: 1, minRuns: 1 })).toBe(0);
     });

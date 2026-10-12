@@ -74,3 +74,18 @@ describe("listRunsForTask limit", () => {
         expect(listRunsForTask(baseDir, taskName, 999)).toHaveLength(50);
     });
 });
+
+describe("listRunsForTask folder", () => {
+    test("a task name with a slash reads the folder the runner writes for it", () => {
+        const slashBase = mkdtempSync(join(tmpdir(), "log-reader-slash-"));
+        mkdirSync(join(slashBase, "ai_usage"));
+        const meta = { type: "meta", runId: "s1", attempt: 1, startedAt: "2026-05-15T10:00:00.000Z" };
+        writeFileSync(join(slashBase, "ai_usage", "2026-05-15T10-00-00-s1.jsonl"), `${SafeJSON.stringify(meta)}\n`);
+
+        try {
+            expect(listRunsForTask(slashBase, "ai/usage").map((run) => run.runId)).toEqual(["s1"]);
+        } finally {
+            rmSync(slashBase, { recursive: true, force: true });
+        }
+    });
+});

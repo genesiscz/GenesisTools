@@ -1,6 +1,6 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { formatLocalDate, formatLocalFileTimestamp, parseSince, parseUntil } from "@genesiscz/utils/date";
+import { formatLocalDate, formatLocalFileTimestamp, parseSince, parseUntil, startOfDay } from "@genesiscz/utils/date";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -8,7 +8,7 @@ import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { listTasksWithLogs, parseLogFile } from "./log-reader";
-import { taskLogDirName } from "./runner";
+import { RUN_LOG_RE, taskLogDirName } from "./run-log-name";
 import type { DaemonTask, LogLine } from "./types";
 
 /**
@@ -135,6 +135,8 @@ export interface StatsWindow {
 export const DEFAULT_FAILURE_LIMIT = 20;
 const RECENT_RUN_LIMIT = 20;
 const STDERR_TAIL_LINES = 12;
+/** How much of a failed run's log end is read for its stderr tail; a noisy run costs this, not its whole output. */
+const STDERR_SCAN_BYTES = 64 * 1024;
 const HEALTH_MAX_DAYS = 7;
 const HEALTH_EVENT_LIMIT = 50;
 const HEALTH_SCAN_TIMEOUT_MS = 30_000;
@@ -147,7 +149,6 @@ const TAIL_BYTES = 4096;
  * against the window with this slack, and the meta record's UTC `startedAt` decides.
  */
 const NAME_SLACK_MS = 2 * 3_600_000;
-const RUN_FILE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[A-Za-z0-9_-]+\.jsonl$/;
 
 const HISTOGRAM_EDGES_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000];
 const HISTOGRAM_LABELS = ["<1s", "1-2s", "2-5s", "5-10s", "10-30s", "30s-1m", "1-2m", "2-5m", "5-10m", "≥10m"];
@@ -270,11 +271,27 @@ function isFailure(status: RunStatus): boolean {
     return status === "failed" || status === "timedOut" || status === "killed";
 }
 
+/** The last stderr lines found in the final `STDERR_SCAN_BYTES` of a run log. */
 function readStderrTail(file: string): string[] {
-    return parseLogFile(file)
-        .filter((entry): entry is LogLine => entry.type === "stderr")
-        .slice(-STDERR_TAIL_LINES)
-        .map((entry) => entry.data);
+    const fd = openSync(file, "r");
+
+    try {
+        const size = fstatSync(fd).size;
+        // One byte early, so a read that starts on a line boundary keeps that line whole.
+        const from = Math.max(0, size - STDERR_SCAN_BYTES - 1);
+        const buf = Buffer.alloc(size - from);
+        const text = buf.toString("utf-8", 0, readSync(fd, buf, 0, buf.length, from));
+        const firstBreak = text.indexOf("\n");
+        const whole = from === 0 ? text : firstBreak === -1 ? "" : text.slice(firstBreak + 1);
+
+        return whole
+            .split("\n")
+            .map(parseRecord)
+            .flatMap((record) => (record?.type === "stderr" && typeof record.data === "string" ? [record.data] : []))
+            .slice(-STDERR_TAIL_LINES);
+    } finally {
+        closeSync(fd);
+    }
 }
 
 function inWindow(ms: number, window: StatsWindow): boolean {
@@ -288,8 +305,7 @@ function runFilesInWindow(taskDir: string, window: StatsWindow): string[] {
 
     return readdirSync(taskDir)
         .filter(
-            (name) =>
-                RUN_FILE_RE.test(name) && (lower === null || name >= lower) && name.slice(0, upper.length) <= upper
+            (name) => RUN_LOG_RE.test(name) && (lower === null || name >= lower) && name.slice(0, upper.length) <= upper
         )
         .sort();
 }
@@ -391,7 +407,8 @@ function timelineStarts(window: StatsWindow, firstRunMs: number | null): { unit:
         starts.push(cursor.getTime());
 
         if (unit === "hour") {
-            cursor.setHours(cursor.getHours() + 1);
+            // Elapsed time, not the local clock: the hour that repeats when daylight saving time ends is its own bucket.
+            cursor.setTime(cursor.getTime() + 3_600_000);
         } else {
             cursor.setDate(cursor.getDate() + 1);
         }
@@ -425,6 +442,14 @@ function buildTimeline(runs: StatsRun[], starts: number[]): TimelineBucket[] {
     return buckets;
 }
 
+export function failedRuns(counts: RunCounts): number {
+    return counts.failed + counts.timedOut + counts.killed;
+}
+
+export function finishedRuns(counts: RunCounts): number {
+    return counts.runs - counts.unfinished;
+}
+
 function countRuns(runs: Array<Pick<StatsRun, "status">>): RunCounts {
     const counts: RunCounts = {
         runs: runs.length,
@@ -440,8 +465,8 @@ function countRuns(runs: Array<Pick<StatsRun, "status">>): RunCounts {
         counts[run.status]++;
     }
 
-    const finished = counts.runs - counts.unfinished;
-    counts.failureRate = finished > 0 ? (counts.failed + counts.timedOut + counts.killed) / finished : null;
+    const finished = finishedRuns(counts);
+    counts.failureRate = finished > 0 ? failedRuns(counts) / finished : null;
     return counts;
 }
 
@@ -477,10 +502,8 @@ export function collectDaemonStats(opts: {
         .filter((entry) => entry.config || entry.runs.length > 0)
         .sort((a, b) => a.name.localeCompare(b.name));
 
-    const firstRunMs = perTask.reduce<number | null>((min, entry) => {
-        const first = entry.runs[0] ? Date.parse(entry.runs[0].startedAt) : null;
-        return first === null || (min !== null && min <= first) ? min : first;
-    }, null);
+    const firsts = perTask.flatMap((entry) => (entry.runs[0] ? [Date.parse(entry.runs[0].startedAt)] : []));
+    const firstRunMs = firsts.length > 0 ? Math.min(...firsts) : null;
     const { unit, starts } = timelineStarts(opts.window, firstRunMs);
 
     const tasks = perTask.map(({ name, config, runs }): TaskStats => {
@@ -567,6 +590,10 @@ export function readRunOutput(opts: { logsBaseDir: string; runId: string; task?:
     return null;
 }
 
+function emptyHealth(files: string[]): DaemonHealth {
+    return { files, wedged: 0, sampledLate: 0, taskTimedOut: 0, events: [], error: null };
+}
+
 /** Count the daemon's own health lines among day-log records (pino JSON lines), keeping those inside the window. */
 export function summarizeHealthLines(opts: {
     lines: Iterable<string>;
@@ -574,13 +601,9 @@ export function summarizeHealthLines(opts: {
     files: string[];
 }): DaemonHealth {
     const { lines, window, files } = opts;
-    const health: DaemonHealth = { files, wedged: 0, sampledLate: 0, taskTimedOut: 0, events: [], error: null };
+    const health = emptyHealth(files);
 
     for (const line of lines) {
-        if (!line.trim()) {
-            continue;
-        }
-
         const record = parseRecord(line);
         const msg = typeof record?.msg === "string" ? record.msg : "";
         const kind = HEALTH_MESSAGES.find((entry) => msg.startsWith(entry.prefix))?.kind;
@@ -614,15 +637,10 @@ export function summarizeHealthLines(opts: {
  */
 export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealth> {
     const logsDir = genesisToolsDir("logs");
-    const lastDay = new Date(window.until);
-    lastDay.setHours(0, 0, 0, 0);
-    const firstDay = new Date(lastDay);
-    firstDay.setDate(firstDay.getDate() - (HEALTH_MAX_DAYS - 1));
-
-    if (window.since && window.since.getTime() > firstDay.getTime()) {
-        firstDay.setTime(window.since.getTime());
-        firstDay.setHours(0, 0, 0, 0);
-    }
+    const lastDay = startOfDay(window.until);
+    const weekBack = new Date(lastDay);
+    weekBack.setDate(weekBack.getDate() - (HEALTH_MAX_DAYS - 1));
+    const firstDay = window.since && window.since.getTime() > weekBack.getTime() ? startOfDay(window.since) : weekBack;
 
     const files: string[] = [];
 
@@ -634,7 +652,7 @@ export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealt
         }
     }
 
-    const empty: DaemonHealth = { files, wedged: 0, sampledLate: 0, taskTimedOut: 0, events: [], error: null };
+    const empty = emptyHealth(files);
 
     if (files.length === 0) {
         return empty;

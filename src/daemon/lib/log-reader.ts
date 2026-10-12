@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, s
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { taskLogDirName } from "./run-log-name";
 import type { LogEntry, RunSummary } from "./types";
 
 const VALID_LOG_TYPES = new Set<string>(["meta", "stdout", "stderr", "exit"]);
@@ -60,7 +61,7 @@ export function listTasksWithLogs(logsBaseDir: string): string[] {
 }
 
 export function listRunsForTask(logsBaseDir: string, taskName: string, limit?: number): RunSummary[] {
-    const taskDir = join(logsBaseDir, taskName);
+    const taskDir = join(logsBaseDir, taskLogDirName(taskName));
 
     if (!existsSync(taskDir)) {
         return [];

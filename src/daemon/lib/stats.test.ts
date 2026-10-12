@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { collectDaemonStats, readRunOutput, resolveWindow, summarizeHealthLines } from "./stats";
 import type { DaemonTask } from "./types";
 
@@ -187,6 +188,57 @@ describe("collectDaemonStats", () => {
         expect(one.tasks.map((t) => t.task)).toEqual(["alpha"]);
         expect(one.tasks[0].failures.map((run) => run.runId)).toEqual(["a6"]);
         expect(one.tasks[0].killed + one.tasks[0].timedOut + one.tasks[0].failed).toBe(3);
+    });
+
+    test("a failure's stderr tail comes from the log's last 64 KB, so a noisy run is never read whole", () => {
+        const dir = mkdtempSync(join(tmpdir(), "daemon-stats-tail-"));
+        const noisy = Array.from({ length: 700 }, (_, i) => `noise ${i} ${"y".repeat(100)}`);
+
+        try {
+            // `writeRun` puts stdout before stderr; this run needs stderr, 70 KB of stdout, then stderr again.
+            const at = "2026-10-11T08:00:00.000Z";
+            mkdirSync(join(dir, "noisy"));
+            const file = join(dir, "noisy", `${formatLocalFileTimestamp(new Date(at))}-n1.jsonl`);
+            const records = [
+                { type: "meta", taskName: "noisy", command: "true", runId: "n1", attempt: 1, startedAt: at },
+                { type: "stderr", ts: at, data: "early" },
+                ...noisy.map((data) => ({ type: "stdout", ts: at, data })),
+                ...["late 1", "late 2"].map((data) => ({ type: "stderr", ts: at, data })),
+                { type: "exit", ts: at, code: 1, duration_ms: 10 },
+            ];
+            writeFileSync(file, `${records.map((r) => SafeJSON.stringify(r)).join("\n")}\n`);
+
+            const noisyStats = collectDaemonStats({ logsBaseDir: dir, tasks: [], window: oct11 });
+            expect(noisyStats.tasks[0].failures[0].stderrTail).toEqual(["late 1", "late 2"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("hour buckets keep both repeated hours apart when daylight saving time ends", () => {
+        const dir = mkdtempSync(join(tmpdir(), "daemon-stats-dst-"));
+        const ok = { code: 0, durationMs: 10 };
+
+        try {
+            withTimeZone("America/New_York", () => {
+                // 2026-11-01 in New York: 01:00 EDT is 05:00Z, the clock falls back, and 01:00 EST is 06:00Z.
+                writeRun(dir, { task: "dst", runId: "d1", startedAt: "2026-11-01T05:30:00.000Z", exit: ok });
+                writeRun(dir, { task: "dst", runId: "d2", startedAt: "2026-11-01T06:30:00.000Z", exit: ok });
+                const window = resolveWindow({ since: "2026-11-01T04:00:00Z", until: "2026-11-01T09:00:00Z" });
+                const dst = collectDaemonStats({ logsBaseDir: dir, tasks: [], window }).tasks[0];
+
+                expect(dst.timeline.map((b) => [b.start, b.runs])).toEqual([
+                    ["2026-11-01T04:00:00.000Z", 0],
+                    ["2026-11-01T05:00:00.000Z", 1],
+                    ["2026-11-01T06:00:00.000Z", 1],
+                    ["2026-11-01T07:00:00.000Z", 0],
+                    ["2026-11-01T08:00:00.000Z", 0],
+                    ["2026-11-01T09:00:00.000Z", 0],
+                ]);
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     test("only run logs whose names fall in the window are opened", () => {

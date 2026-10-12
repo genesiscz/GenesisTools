@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createTranscriptAnchor, transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
+import { applyPragmas } from "@genesiscz/utils/database/pragmas";
 import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -75,7 +76,8 @@ export function defaultPendingDbPath(): string {
 export function openPendingStore(dbPath: string = defaultPendingDbPath()): Database {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
-    db.exec("PRAGMA journal_mode = WAL;");
+    // The same qa.db as the read model, so it waits for another writer the same way.
+    applyPragmas(db);
     runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
     log.debug({ dbPath }, "opened the pending ask store");
 

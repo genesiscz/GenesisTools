@@ -15,6 +15,7 @@ import { recordRunOnExit } from "@genesiscz/utils/cli/run-record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 
 const ANTHROPIC_SUB = "anthropic-sub";
@@ -118,7 +119,7 @@ async function refreshSessionRows(): Promise<void> {
 
             try {
                 const parsed: unknown = SafeJSON.parse(answer.stdout, { strict: true });
-                const rows = typeof parsed === "object" && parsed !== null && "rows" in parsed ? parsed.rows : null;
+                const rows = isObject(parsed) ? parsed.rows : null;
                 return Array.isArray(rows) ? rows : null;
             } catch (err) {
                 logger.debug({ err }, "[ai-usage] hub server rows unreadable; computing locally");

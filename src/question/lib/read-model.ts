@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createTranscriptAnchor, transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
+import { applyPragmas } from "@genesiscz/utils/database/pragmas";
 import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonlChunk, readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -42,9 +43,8 @@ function normalizeEntry(raw: QaEntry): QaEntry {
 export function openReadModel(dbPath: string): Database {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
-    db.exec("PRAGMA journal_mode = WAL;");
     // The widget, the hub server and the CLI each catch up this file; without a wait, a second writer fails at once.
-    db.exec("PRAGMA busy_timeout = 5000;");
+    applyPragmas(db);
     initializeReadModel(db);
     return db;
 }

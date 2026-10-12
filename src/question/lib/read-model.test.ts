@@ -68,9 +68,29 @@ describe("read-model", () => {
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(2);
     });
 
-    it("waits for another process's catch-up instead of failing with database is locked", () => {
-        const db = openReadModel(join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db"));
+    it("waits for another process's catch-up instead of failing with database is locked", async () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-busy-"));
+        const logBase = join(root, "log");
+        const dbPath = join(root, "qa.db");
+        const db = openReadModel(dbPath);
         expect(db.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+        expect(openPendingStore(dbPath).query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+        appendEntry(e("waited"), logBase);
+
+        // A second process holds the write lock for 200 ms, as another catch-up does.
+        const holder = Bun.spawn(
+            [
+                process.execPath,
+                "-e",
+                'const db = new (require("bun:sqlite").Database)(process.argv[1]); db.exec("BEGIN IMMEDIATE"); console.log("locked"); await Bun.sleep(200); db.exec("COMMIT");',
+                dbPath,
+            ],
+            { stdout: "pipe", env: process.env }
+        );
+        await holder.stdout.getReader().read();
+
+        expect(queryEntries(db, { logBase }).map((row) => row.id)).toEqual(["waited"]);
+        expect(await holder.exited).toBe(0);
     });
 
     it("indexes the newest active window before materializing answer bodies", () => {

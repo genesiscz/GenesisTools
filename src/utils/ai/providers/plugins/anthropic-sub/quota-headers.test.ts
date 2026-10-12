@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import * as usagePollStorageModule from "@genesiscz/utils/ai/usage-poll/storage";
 import { __resetUsagePollStorage, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
@@ -464,6 +465,25 @@ describe("the probe budget", () => {
             expect(lock.mock.calls.length).toBeLessThanOrEqual(2);
         } finally {
             lock.mockRestore();
+        }
+    });
+
+    it("a commit whose storage fails refuses its spends, and the next spend still commits", async () => {
+        const caps = { [QUOTA_PROBE_MODEL]: 5 };
+        const broken = spyOn(usagePollStorageModule, "usagePollStorage").mockImplementationOnce(() => {
+            throw new Error("storage unavailable");
+        });
+
+        try {
+            const failed = await persistedProbeBudget("shop", caps)
+                .spend(QUOTA_PROBE_MODEL)
+                .catch((err: unknown) => err);
+            expect(failed).toBeInstanceOf(Error);
+            expect(failed).toMatchObject({ message: "storage unavailable" });
+
+            await persistedProbeBudget("shop", caps).spend(QUOTA_PROBE_MODEL);
+        } finally {
+            broken.mockRestore();
         }
     });
 });

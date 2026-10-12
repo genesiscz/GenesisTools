@@ -30,25 +30,32 @@
 /** The zone the process started in, read ONCE and before anything can mutate it. */
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-export function withTimeZone(timeZone: string, run: () => void): void {
+/** Switches to `timeZone` and returns the function that names the previous zone back. */
+function enterTimeZone(timeZone: string): () => void {
     const original = process.env.TZ ?? SYSTEM_TIME_ZONE;
     process.env.TZ = timeZone;
+    return () => {
+        process.env.TZ = original;
+    };
+}
+
+export function withTimeZone(timeZone: string, run: () => void): void {
+    const restore = enterTimeZone(timeZone);
 
     try {
         run();
     } finally {
-        process.env.TZ = original;
+        restore();
     }
 }
 
 /** `withTimeZone` for a block that awaits. Tests in one file run one at a time, so the zone holds until it settles. */
 export async function withTimeZoneAsync(timeZone: string, run: () => Promise<void>): Promise<void> {
-    const original = process.env.TZ ?? SYSTEM_TIME_ZONE;
-    process.env.TZ = timeZone;
+    const restore = enterTimeZone(timeZone);
 
     try {
         await run();
     } finally {
-        process.env.TZ = original;
+        restore();
     }
 }

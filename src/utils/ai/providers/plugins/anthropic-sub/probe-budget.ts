@@ -66,11 +66,10 @@ let commits: Promise<void> = Promise.resolve();
  * A spend resolves only after the write that counts it, so the budget still guards the probe that follows.
  */
 async function commitSpends(batch: PendingSpend[]): Promise<void> {
-    const storage = usagePollStorage();
     const accepted: PendingSpend[] = [];
-    const settled = new Set<PendingSpend>();
 
     try {
+        const storage = usagePollStorage();
         await storage.withFileLock({
             file: usageCacheFilePath(LEDGER_KEY),
             fn: async () => {
@@ -88,7 +87,6 @@ async function commitSpends(batch: PendingSpend[]): Promise<void> {
                             "[usage] quota probe refused: the budget is spent"
                         );
                         spend.reject(new ProbeBudgetExceeded(spend.account, spend.model, spent, spend.cap));
-                        settled.add(spend);
                         continue;
                     }
 
@@ -104,11 +102,9 @@ async function commitSpends(batch: PendingSpend[]): Promise<void> {
             timeout: LOCK_TIMEOUT_MS,
         });
     } catch (error) {
-        // Nothing of this batch was recorded, so every spend not already refused is refused with the cause.
+        // Nothing of this batch was recorded, so every spend is refused with the cause; one already refused stays as it was.
         for (const spend of batch) {
-            if (!settled.has(spend)) {
-                spend.reject(error);
-            }
+            spend.reject(error);
         }
 
         return;

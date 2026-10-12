@@ -201,6 +201,40 @@ test("a filtered windowed listing drops the row of a Grok session whose folder w
     }
 });
 
+test("a filtered windowed listing also drops a deleted session older than the window that its newest top-up showed", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-grok-topup-"));
+    const root = join(home, "sessions");
+    const recent = "aaaaaaaa-bbbb-4ccc-8ddd-000000000081";
+    const old = "aaaaaaaa-bbbb-4ccc-8ddd-000000000082";
+    grokSession(root, recent, HOUR);
+    const oldDirectory = grokSession(root, old, 48 * HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "grok-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: grokHistoryReader,
+        now: () => new Date(NOW),
+    });
+    // The window holds one session; the top-up shows the newest ones whatever their age.
+    const listing = { excludeAgents: true, mtimeFrom: NOW - 24 * HOUR, newest: 5 };
+
+    try {
+        const before = await service.catalog(listing);
+        expect(before.metadata.map((entry) => entry.nativeId).sort()).toEqual([recent, old]);
+
+        rmSync(oldDirectory, { recursive: true, force: true });
+        const after = await service.catalog(listing);
+
+        expect(after.metadata.map((entry) => entry.nativeId)).toEqual([recent]);
+        expect(after.report.removed).toBe(1);
+    } finally {
+        database.close();
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
 test("a filtered windowed listing keeps the rows of a root that is missing", async () => {
     const home = mkdtempSync(join(tmpdir(), "history-catalog-grok-unmounted-"));
     const root = join(home, "sessions");

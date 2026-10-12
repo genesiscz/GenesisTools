@@ -4,6 +4,7 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import pc from "picocolors";
 import type pino from "pino";
@@ -211,14 +212,15 @@ function createDailyFileStream(resolveLogDir: () => string): Writable {
     });
 }
 
-const ERROR_MESSAGE_LOG_CHARS = 2_000;
+const ERROR_FIELD_LOG_CHARS = 2_000;
 const ERROR_STACK_LOG_LINES = 60;
 const ERROR_STACK_LINE_CHARS = 500;
 
 /**
- * pino's error serializer with the message and stack cut to a bounded size. A message can carry a whole file
- * (ENAMETOOLONG names the path it was given, a parse error quotes its input) and the stack repeats it, so one
- * widget warning wrote 8 MB into the day log, 87 times on 2026-10-08. `messageChars` keeps the original length.
+ * pino's error serializer with every string field and the stack cut to a bounded size. A message can carry a whole
+ * file (ENAMETOOLONG names the path it was given, a parse error quotes its input), pino keeps the error's own
+ * fields (`path`, `dest`) whole, and the stack repeats it, so one widget warning wrote 8 MB into the day log,
+ * 87 times on 2026-10-08. `<field>Chars` keeps the original length (`messageChars`, `pathChars`).
  */
 function boundedErrorSerializer(serialize: (err: Error) => unknown): (err: Error) => unknown {
     return (err) => {
@@ -227,12 +229,11 @@ function boundedErrorSerializer(serialize: (err: Error) => unknown): (err: Error
             return serialized;
         }
 
-        if ("message" in serialized && typeof serialized.message === "string") {
-            const message = serialized.message;
-            if (message.length > ERROR_MESSAGE_LOG_CHARS) {
+        for (const [key, value] of Object.entries(serialized)) {
+            if (key !== "stack" && typeof value === "string" && value.length > ERROR_FIELD_LOG_CHARS) {
                 Object.assign(serialized, {
-                    message: `${message.slice(0, ERROR_MESSAGE_LOG_CHARS)}…`,
-                    messageChars: message.length,
+                    [key]: `${value.slice(0, ERROR_FIELD_LOG_CHARS)}…`,
+                    [`${key}Chars`]: value.length,
                 });
             }
         }
@@ -268,20 +269,17 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     // File stream (if enabled) — ALWAYS debug+, independent of the console
     // gate, so the file never starves no matter how high the console threshold.
     if (logToFile) {
-        const resolveLogDir = () => path.join(env.tools.getHome(), ".genesis-tools", "logs");
-        const logDir = resolveLogDir();
-
         try {
             streams.push({
                 level: "debug" as pino.Level,
-                stream: createDailyFileStream(resolveLogDir),
+                stream: createDailyFileStream(() => genesisToolsDir("logs")),
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
 
             if (!fileLogWarningShown && process.stderr && typeof process.stderr.write === "function") {
                 fileLogWarningShown = true;
-                process.stderr.write(`[logger] Failed to open log file in ${logDir}: ${message}\n`);
+                process.stderr.write(`[logger] Failed to open log file in ${genesisToolsDir("logs")}: ${message}\n`);
             }
         }
     }
@@ -346,6 +344,7 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     }
 
     const pinoFn = loadPino();
+    const errorSerializer = boundedErrorSerializer(pinoFn.stdSerializers.err);
     const baseConfig: pino.LoggerOptions = {
         level: "trace",
         // Always stamp records — the file sink needs `time` for forensics;
@@ -355,10 +354,7 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         // serialized to a useless `error: {}` (observed while triaging a failed
         // consolidate vote batch). The house convention is to pass the raw error, so
         // both key spellings get pino's error serializer; non-Errors pass through.
-        serializers: {
-            err: boundedErrorSerializer(pinoFn.stdSerializers.err),
-            error: boundedErrorSerializer(pinoFn.stdSerializers.err),
-        },
+        serializers: { err: errorSerializer, error: errorSerializer },
         ...(showPid && { base: { pid: process.pid } }),
         // GenesisTools.app's per-call id (utils/trace.ts): a day-log record names the app call it served.
         mixin: () => {

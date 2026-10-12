@@ -1,10 +1,8 @@
 import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { RUN_LOG_RE, taskLogDirName } from "./run-log-name";
 import type { RunLogRetention } from "./types";
-
-// Matches `<safeTimestamp>-<runId>.jsonl`, e.g. 2026-05-15T19-02-16-a8a9c339.jsonl
-const RUN_LOG_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-[A-Za-z0-9_-]+\.jsonl$/;
 
 /** One prune per task directory at a time: a later call joins the running one instead of racing its unlinks. */
 const inFlight = new Map<string, Promise<number>>();
@@ -16,7 +14,7 @@ function runLogEpoch(filename: string): number | null {
         return null;
     }
 
-    // Local time without a zone, as the runner writes it (`formatLocalFileTimestamp`); no `Z`.
+    // Local time, so no `Z`.
     const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}`);
     return Number.isFinite(t) ? t : null;
 }
@@ -87,7 +85,7 @@ async function pruneDir(taskDir: string, taskName: string, policy: RunLogRetenti
  * synchronous version held the scheduler for 51 s and 80 s on 2026-10-10 while it deleted five files.
  */
 export function pruneTaskRunLogs(logsBaseDir: string, taskName: string, policy: RunLogRetention): Promise<number> {
-    const taskDir = join(logsBaseDir, taskName);
+    const taskDir = join(logsBaseDir, taskLogDirName(taskName));
     const running = inFlight.get(taskDir);
 
     if (running) {

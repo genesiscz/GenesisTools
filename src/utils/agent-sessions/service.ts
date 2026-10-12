@@ -66,6 +66,11 @@ interface MatchedHistorySource {
     revision: string;
 }
 
+/** Rows the `newest` top-up reads; wider than asked, because the scope filter runs after the read. */
+function topUpReadLimit(newest: number): number {
+    return Math.max(20, newest * 4);
+}
+
 function canonicalRoot(root: string): string {
     try {
         return realpathSync(root);
@@ -395,6 +400,7 @@ export class HistoryService {
             signal: filters.signal,
             metadataSources: new Set(selected.map((candidate) => candidate.source.filePath)),
             pruneFrom: filters.mtimeFrom,
+            pruneNewest: filters.newest ? topUpReadLimit(filters.newest) : undefined,
         });
     }
 
@@ -452,13 +458,13 @@ export class HistoryService {
 
         if (filters.mtimeFrom !== undefined && filters.newest) {
             // The top-up: the newest rows by mtime whatever their age, read with a bound instead
-            // of the whole table. Fetched wider than asked because the scope filter runs after.
+            // of the whole table.
             const seen = new Set(metadata.map((entry) => entry.sourceKey));
             const newest = repository.metadata
                 .listMetadata({
                     providerId,
                     orderBy: "mtime",
-                    limit: Math.max(20, filters.newest * 4),
+                    limit: topUpReadLimit(filters.newest),
                     withUserText: false,
                 })
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))

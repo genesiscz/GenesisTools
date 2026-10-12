@@ -131,10 +131,15 @@ describe("daily file sink", () => {
         expect(readLogs(earlyHome)).not.toContain("FILE_SINK_FOLLOWS_HOME");
     });
 
-    it("writes a bounded copy of an error whose message carries a whole file, and a normal error unchanged", async () => {
+    it("writes a bounded copy of an error whose message and path carry a whole file, and a normal error unchanged", async () => {
         const mod = await import("./logger");
         const home = mkdtempSync(join(tmpdir(), "logger-bounded-error-"));
-        const huge = Object.assign(new Error(`ENAMETOOLONG: open '${"x".repeat(200_000)}'`), { code: "ENAMETOOLONG" });
+        const longPath = `/tmp/${"x".repeat(200_000)}`;
+        // The shape of a real fs error: pino's serializer keeps every enumerable field, and `path` names the input.
+        const huge = Object.assign(new Error(`ENAMETOOLONG: open '${longPath}'`), {
+            code: "ENAMETOOLONG",
+            path: longPath,
+        });
         const small = new Error("small failure");
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
@@ -152,6 +157,7 @@ describe("daily file sink", () => {
         expect(hugeLine.length).toBeLessThan(10_000);
         expect(hugeLine).toContain('"code":"ENAMETOOLONG"');
         expect(hugeLine).toContain('"messageChars":');
+        expect(hugeLine).toContain('"pathChars":200005');
         expect(smallLine).toContain('"message":"small failure"');
         expect(smallLine).not.toContain("messageChars");
     });

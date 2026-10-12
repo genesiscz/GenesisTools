@@ -1,5 +1,5 @@
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
-import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { formatLocalDate, formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -21,16 +21,19 @@ import {
     type DaemonHealth,
     type DaemonStats,
     DEFAULT_FAILURE_LIMIT,
+    failedRuns,
+    finishedRuns,
+    type RunCounts,
     type RunOutput,
+    type RunStatus,
     readDaemonHealth,
     readRunOutput,
     resolveWindow,
     type StatsRun,
+    type StatsWindow,
     type TaskStats,
 } from "../lib/stats";
-
-const VIEWS = ["overview", "task", "durations", "failures", "run"] as const;
-type StatsView = (typeof VIEWS)[number];
+import type { DaemonTask } from "../lib/types";
 
 const TOOL = "tools daemon stats";
 const SUBCOMMAND = ["stats"];
@@ -39,13 +42,25 @@ const TIMELINE_ROWS = 48;
 const BAR_WIDTH = 30;
 const LINE_WIDTH = 110;
 
-const VIEW_OPTIONS: Array<{ value: StatsView; label: string; hint: string }> = [
+const VIEW_OPTIONS = [
     { value: "overview", label: "Overview", hint: "every task: runs, failure rate, durations, daemon health" },
     { value: "task", label: "One task", hint: "counts, duration histogram, runs over time, last failure" },
     { value: "durations", label: "Durations", hint: "percentiles and histogram per task" },
     { value: "failures", label: "Failures", hint: "failed, timed-out and killed runs with their stderr" },
     { value: "run", label: "Output of one run", hint: "the full stdout and stderr" },
-];
+] as const;
+type StatsView = (typeof VIEW_OPTIONS)[number]["value"];
+const VIEWS = VIEW_OPTIONS.map((option) => option.value);
+const KEY_WIDTH = 14;
+const COUNT_HEADERS = ["RUNS", "OK", "FAILED", "TIMEOUT", "KILLED", "OPEN", "FAIL %"];
+const PERCENTILE_HEADERS = ["P50", "P90", "P99", "MAX"];
+const STATUS_KIND: Record<RunStatus, DotStatusKind> = {
+    ok: "ok",
+    failed: "err",
+    timedOut: "warn",
+    killed: "err",
+    unfinished: "dim",
+};
 
 const WINDOW_PRESETS: Array<{ value: string; label: string }> = [
     { value: "1h", label: "Last hour" },
@@ -57,7 +72,7 @@ const WINDOW_PRESETS: Array<{ value: string; label: string }> = [
 interface StatsFlags {
     view?: string | true;
     task?: string;
-    since?: string;
+    since: string;
     until?: string;
     run?: string;
     json?: boolean;
@@ -99,12 +114,11 @@ function failView(given?: string): void {
 }
 
 async function runStats(opts: StatsFlags): Promise<void> {
-    const filters: Filters = { since: opts.since ?? DEFAULT_SINCE, until: opts.until, task: opts.task, run: opts.run };
+    const filters: Filters = { since: opts.since, until: opts.until, task: opts.task, run: opts.run };
+    const error = windowError(filters.since, filters.until);
 
-    try {
-        resolveWindow(filters);
-    } catch (err) {
-        out.error(err instanceof Error ? err.message : String(err));
+    if (error) {
+        out.error(error);
         process.exitCode = 1;
         return;
     }
@@ -164,27 +178,15 @@ async function showView(opts: { view: StatsView; filters: Filters; json: boolean
         return;
     }
 
-    const config = await loadConfig();
-
     if (view === "task" && !filters.task) {
-        const names = taskNames(
-            config.tasks.map((task) => task.name),
-            logsBaseDir
-        );
+        const names = taskNames((await loadConfig()).tasks, logsBaseDir);
         out.error(`--view task needs --task. Tasks: ${names.join(", ")}`);
         out.error(suggestCommand(TOOL, { subcommand: SUBCOMMAND, add: ["--task", names[0] ?? "<name>"] }));
         process.exitCode = 1;
         return;
     }
 
-    const stats = collectDaemonStats({
-        logsBaseDir,
-        tasks: config.tasks,
-        window,
-        task: filters.task,
-        failureLimit: json || view !== "overview" ? DEFAULT_FAILURE_LIMIT : 1,
-        health: view === "overview" ? await readDaemonHealth(window) : null,
-    });
+    const stats = await loadStats({ view, window, task: filters.task, json });
 
     if (filters.task && stats.tasks.length === 0) {
         out.error(`No task "${filters.task}" in the daemon config or with runs in this window.`);
@@ -220,8 +222,28 @@ function renderStatsView(view: Exclude<StatsView, "run">, stats: DaemonStats): v
     }
 }
 
-function taskNames(configured: string[], logsBaseDir: string): string[] {
-    return [...new Set([...configured, ...listTasksWithLogs(logsBaseDir)])].sort();
+/** Overview and task show one failure per task, so they read one stderr tail each unless the JSON report wants them all. */
+async function loadStats(opts: {
+    view: StatsView;
+    window: StatsWindow;
+    task?: string;
+    json: boolean;
+}): Promise<DaemonStats> {
+    // The day-log scan is an rg child process, so it runs while the run logs are read.
+    const health = opts.view === "overview" ? readDaemonHealth(opts.window) : null;
+    const config = await loadConfig();
+    const stats = collectDaemonStats({
+        logsBaseDir: getLogsBaseDir(),
+        tasks: config.tasks,
+        window: opts.window,
+        task: opts.task,
+        failureLimit: !opts.json && (opts.view === "overview" || opts.view === "task") ? 1 : DEFAULT_FAILURE_LIMIT,
+    });
+    return { ...stats, health: health ? await health : null };
+}
+
+function taskNames(tasks: DaemonTask[], logsBaseDir: string): string[] {
+    return [...new Set([...tasks.map((task) => task.name), ...listTasksWithLogs(logsBaseDir)])].sort();
 }
 
 // ---- Interactive loop ----
@@ -309,11 +331,7 @@ async function pickRun(task: TaskStats): Promise<string | undefined> {
 /** The menu comes back after every view with the same window and task, until Done. */
 async function runMenu(initial: Filters): Promise<void> {
     const filters: Filters = { ...initial };
-    const logsBaseDir = getLogsBaseDir();
-    const names = taskNames(
-        (await loadConfig()).tasks.map((task) => task.name),
-        logsBaseDir
-    );
+    const names = taskNames((await loadConfig()).tasks, getLogsBaseDir());
     let last: string = VIEW_OPTIONS[0].value;
 
     p.intro(pc.bgCyan(pc.black(" daemon stats ")));
@@ -366,14 +384,7 @@ async function showMenuView(opts: { view: StatsView; filters: Filters; names: st
     const window = resolveWindow(filters);
     const spinner = p.spinner();
     spinner.start("Reading run logs");
-    const config = await loadConfig();
-    const stats = collectDaemonStats({
-        logsBaseDir: getLogsBaseDir(),
-        tasks: config.tasks,
-        window,
-        task: scope,
-        health: view === "overview" ? await readDaemonHealth(window) : null,
-    });
+    const stats = await loadStats({ view, window, task: scope, json: false });
     spinner.stop(`${stats.totals.runs} runs in ${windowLabel(filters)}`);
 
     if (view !== "run") {
@@ -434,22 +445,29 @@ function statusLabel(run: Pick<StatsRun, "status" | "exitCode">): string {
             return "timed out";
         case "killed":
             return "killed";
-        default:
+        case "unfinished":
             return "unfinished";
     }
 }
 
-function statusKind(run: Pick<StatsRun, "status">): DotStatusKind {
-    switch (run.status) {
-        case "ok":
-            return "ok";
-        case "timedOut":
-            return "warn";
-        case "unfinished":
-            return "dim";
-        default:
-            return "err";
-    }
+function statusDot(run: Pick<StatsRun, "status" | "exitCode">): string {
+    return formatDotStatus(STATUS_KIND[run.status], statusLabel(run));
+}
+
+function countCells(counts: RunCounts): string[] {
+    return [
+        String(counts.runs),
+        formatCount(counts.ok, pc.green),
+        formatCount(counts.failed, pc.red),
+        formatCount(counts.timedOut, pc.yellow),
+        formatCount(counts.killed, pc.red),
+        formatCount(counts.unfinished, pc.dim),
+        formatRate(counts.failureRate),
+    ];
+}
+
+function percentileCells(task: TaskStats): string[] {
+    return [task.p50Ms, task.p90Ms, task.p99Ms, task.maxMs].map(formatMs);
 }
 
 /** Fits the header box, which cuts its subtitle at 31 characters. */
@@ -470,53 +488,36 @@ function renderOverview(stats: DaemonStats): void {
     const { totals } = stats;
     renderCliHeader("Daemon stats", windowRange(stats));
 
-    const table = createBoxTable([
-        "TASK",
-        "RUNS",
-        "OK",
-        "FAILED",
-        "TIMEOUT",
-        "KILLED",
-        "OPEN",
-        "FAIL %",
-        "P50",
-        "P90",
-        "MAX",
-        "LAST RUN",
-    ]);
+    const table = createBoxTable(["TASK", ...COUNT_HEADERS, "P50", "P90", "MAX", "LAST RUN"]);
 
     for (const task of stats.tasks) {
         const name = task.configured && task.enabled !== false ? pc.white(task.task) : pc.dim(task.task);
         table.push([
             name,
-            String(task.runs),
-            formatCount(task.ok, pc.green),
-            formatCount(task.failed, pc.red),
-            formatCount(task.timedOut, pc.yellow),
-            formatCount(task.killed, pc.red),
-            formatCount(task.unfinished, pc.dim),
-            formatRate(task.failureRate),
+            ...countCells(task),
             formatMs(task.p50Ms),
             formatMs(task.p90Ms),
             formatMs(task.maxMs),
-            task.lastRun ? formatDotStatus(statusKind(task.lastRun), shortTime(task.lastRun.startedAt)) : pc.dim("—"),
+            task.lastRun
+                ? formatDotStatus(STATUS_KIND[task.lastRun.status], shortTime(task.lastRun.startedAt))
+                : pc.dim("—"),
         ]);
     }
 
     out.println(table.toString());
     out.println(
-        `  ${totals.runs} runs · ${totals.failed + totals.timedOut + totals.killed} failed (${formatRate(totals.failureRate)}) · ${totals.unfinished} unfinished`
+        `  ${totals.runs} runs · ${failedRuns(totals)} failed (${formatRate(totals.failureRate)}) · ${totals.unfinished} unfinished`
     );
 
-    const failing = stats.tasks.filter((task) => task.lastFailure);
+    const lastFailures = stats.tasks.flatMap((task) => (task.lastFailure ? [task.lastFailure] : []));
 
-    if (failing.length > 0) {
+    if (lastFailures.length > 0) {
         out.println("");
         renderCliSection("Last failure per task");
 
-        for (const task of failing) {
-            renderFailureLine(task.task, task.lastFailure);
-            renderStderr(task.lastFailure?.stderrTail?.slice(-3) ?? []);
+        for (const run of lastFailures) {
+            renderRunLine(run);
+            renderStderr(run.stderrTail?.slice(-3) ?? []);
         }
     }
 
@@ -527,13 +528,9 @@ function renderOverview(stats: DaemonStats): void {
     );
 }
 
-function renderFailureLine(task: string, run: StatsRun | null): void {
-    if (!run) {
-        return;
-    }
-
+function renderRunLine(run: StatsRun): void {
     out.println(
-        `  ${pc.bold(task)}  ${shortTime(run.startedAt)}  ${formatDotStatus(statusKind(run), statusLabel(run))}  ${pc.dim(`${formatMs(run.durationMs)} · run ${run.runId}`)}`
+        `  ${pc.bold(run.task)}  ${shortTime(run.startedAt)}  ${statusDot(run)}  ${pc.dim(`${formatMs(run.durationMs)} · run ${run.runId}`)}`
     );
 }
 
@@ -552,13 +549,13 @@ function renderHealth(health: DaemonHealth | null): void {
     renderCliSection("Daemon health (day logs)");
 
     if (health.error) {
-        renderCliKeyRow("error", pc.yellow(health.error), 14);
+        renderCliKeyRow("error", pc.yellow(health.error), KEY_WIDTH);
     }
 
-    renderCliKeyRow("wedged", formatCount(health.wedged, pc.red), 14);
-    renderCliKeyRow("late watchdog", formatCount(health.sampledLate, pc.yellow), 14);
-    renderCliKeyRow("timeouts", `${formatCount(health.taskTimedOut, pc.yellow)} ${pc.dim("SIGTERM sent")}`, 14);
-    renderCliKeyRow("scanned", pc.dim(`${health.files.length} day log(s)`), 14);
+    renderCliKeyRow("wedged", formatCount(health.wedged, pc.red), KEY_WIDTH);
+    renderCliKeyRow("late watchdog", formatCount(health.sampledLate, pc.yellow), KEY_WIDTH);
+    renderCliKeyRow("timeouts", `${formatCount(health.taskTimedOut, pc.yellow)} ${pc.dim("SIGTERM sent")}`, KEY_WIDTH);
+    renderCliKeyRow("scanned", pc.dim(`${health.files.length} day log(s)`), KEY_WIDTH);
 
     // Timeouts are already counted per task above; the list shows wedges and late samples.
     for (const event of health.events.filter((entry) => entry.kind !== "taskTimedOut").slice(0, 5)) {
@@ -586,7 +583,7 @@ function renderTimeline(task: TaskStats, unit: DaemonStats["bucket"]): void {
     }
 
     for (const bucket of rows) {
-        const label = unit === "hour" ? shortTime(bucket.start) : formatLocalDateTimeStamp(bucket.start).slice(0, 10);
+        const label = unit === "hour" ? shortTime(bucket.start) : formatLocalDate(new Date(bucket.start));
         const cells = bar({ count: bucket.runs, max, failures: bucket.failures, color: pc.green });
         const failures = bucket.failures > 0 ? pc.red(` (${bucket.failures} failed)`) : "";
         out.println(`  ${label.padEnd(11)} ${cells} ${pc.dim(String(bucket.runs))}${failures}`);
@@ -606,32 +603,8 @@ function renderTask(task: TaskStats, stats: DaemonStats): void {
 
     out.println("");
 
-    const table = createBoxTable([
-        "RUNS",
-        "OK",
-        "FAILED",
-        "TIMEOUT",
-        "KILLED",
-        "OPEN",
-        "FAIL %",
-        "P50",
-        "P90",
-        "P99",
-        "MAX",
-    ]);
-    table.push([
-        String(task.runs),
-        formatCount(task.ok, pc.green),
-        formatCount(task.failed, pc.red),
-        formatCount(task.timedOut, pc.yellow),
-        formatCount(task.killed, pc.red),
-        formatCount(task.unfinished, pc.dim),
-        formatRate(task.failureRate),
-        formatMs(task.p50Ms),
-        formatMs(task.p90Ms),
-        formatMs(task.p99Ms),
-        formatMs(task.maxMs),
-    ]);
+    const table = createBoxTable([...COUNT_HEADERS, ...PERCENTILE_HEADERS]);
+    table.push([...countCells(task), ...percentileCells(task)]);
     out.println(table.toString());
 
     if (task.runs === 0) {
@@ -648,13 +621,13 @@ function renderTask(task: TaskStats, stats: DaemonStats): void {
     if (task.lastRun) {
         out.println("");
         renderCliSection("Last run");
-        renderFailureLine(task.task, task.lastRun);
+        renderRunLine(task.lastRun);
     }
 
     if (task.lastFailure) {
         out.println("");
         renderCliSection("Last failure");
-        renderFailureLine(task.task, task.lastFailure);
+        renderRunLine(task.lastFailure);
         renderStderr(task.lastFailure.stderrTail ?? []);
     }
 }
@@ -662,17 +635,10 @@ function renderTask(task: TaskStats, stats: DaemonStats): void {
 function renderDurations(stats: DaemonStats): void {
     renderCliHeader("Run durations", windowRange(stats));
 
-    const table = createBoxTable(["TASK", "FINISHED", "P50", "P90", "P99", "MAX"]);
+    const table = createBoxTable(["TASK", "FINISHED", ...PERCENTILE_HEADERS]);
 
     for (const task of stats.tasks) {
-        table.push([
-            task.task,
-            String(task.runs - task.unfinished),
-            formatMs(task.p50Ms),
-            formatMs(task.p90Ms),
-            formatMs(task.p99Ms),
-            formatMs(task.maxMs),
-        ]);
+        table.push([task.task, String(finishedRuns(task)), ...percentileCells(task)]);
     }
 
     out.println(table.toString());
@@ -694,9 +660,9 @@ function renderFailures(stats: DaemonStats): void {
     }
 
     for (const task of failing) {
-        const total = task.failed + task.timedOut + task.killed;
+        const total = failedRuns(task);
         renderCliSection(
-            `${task.task}: ${total} of ${task.runs - task.unfinished} finished runs (${task.failed} failed, ${task.timedOut} timed out, ${task.killed} killed)`
+            `${task.task}: ${total} of ${finishedRuns(task)} finished runs (${task.failed} failed, ${task.timedOut} timed out, ${task.killed} killed)`
         );
 
         if (task.failures.length < total) {
@@ -710,7 +676,7 @@ function renderFailures(stats: DaemonStats): void {
                 shortTime(run.startedAt),
                 run.runId,
                 String(run.attempt),
-                formatDotStatus(statusKind(run), statusLabel(run)),
+                statusDot(run),
                 formatMs(run.durationMs),
                 pc.dim(truncateDisplay(run.stderrTail?.at(-1), 60)),
             ]);
@@ -730,10 +696,7 @@ function renderRun(output: RunOutput): void {
     renderCliHeader(run.task, `run ${run.runId}`);
     renderCliKeyRow("started", run.startedAt ? formatLocalDateTimeStamp(run.startedAt) : "—");
     renderCliKeyRow("try", String(run.attempt));
-    renderCliKeyRow(
-        "outcome",
-        `${formatDotStatus(statusKind(run), statusLabel(run))} ${pc.dim(formatMs(run.durationMs))}`
-    );
+    renderCliKeyRow("outcome", `${statusDot(run)} ${pc.dim(formatMs(run.durationMs))}`);
     out.println("");
 
     if (lines.length === 0) {

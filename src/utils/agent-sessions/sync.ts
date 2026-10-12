@@ -129,6 +129,8 @@ export async function synchronizeHistory(options: {
      * still exists, is dropped.
      */
     pruneFrom?: number;
+    /** How many of the newest rows by mtime the listing's top-up reads past `pruneFrom`; they get the same check. */
+    pruneNewest?: number;
 }): Promise<{
     report: NativeIndexSyncResult;
     sources: NativeSessionSource<string>[];
@@ -200,10 +202,26 @@ export async function synchronizeHistory(options: {
             return [];
         }
 
-        const unseen = repository.metadata
-            .listMetadata({ providerId, mtimeFrom: options.pruneFrom, withUserText: false })
-            .filter((entry) => Boolean(entry.isSubagent) === windowSide && !seen.has(entry.filePath))
-            .map((entry) => entry.filePath);
+        const listed = repository.metadata.listMetadata({
+            providerId,
+            mtimeFrom: options.pruneFrom,
+            withUserText: false,
+        });
+        const topUp = options.pruneNewest
+            ? repository.metadata.listMetadata({
+                  providerId,
+                  orderBy: "mtime",
+                  limit: options.pruneNewest,
+                  withUserText: false,
+              })
+            : [];
+        const unseen = [
+            ...new Set(
+                [...listed, ...topUp]
+                    .filter((entry) => Boolean(entry.isSubagent) === windowSide && !seen.has(entry.filePath))
+                    .map((entry) => entry.filePath)
+            ),
+        ];
 
         if (unseen.length === 0) {
             return [];
@@ -248,7 +266,6 @@ export async function synchronizeHistory(options: {
     const unchangedSnapshot =
         !options.rebuild &&
         !needsPrune &&
-        vanished(observedPaths).length === 0 &&
         !hasIssues &&
         status.issues.every(
             (issue) => issue.message === IDENTITY_CONFLICT && knownConflict(observedByPath.get(issue.path))
@@ -272,7 +289,9 @@ export async function synchronizeHistory(options: {
             } catch {
                 return false;
             }
-        });
+        }) &&
+        // Last: two index reads, which a session that changed makes moot (the write pass runs anyway).
+        vanished(observedPaths).length === 0;
 
     if (unchangedSnapshot) {
         return {
