@@ -361,6 +361,9 @@ idle.command("install")
             command: `${toolCommand("services reap-idle", "--idle-hours", `${hours}`)}`,
             every: "every 15 minutes",
             retries: 0,
+            // The reap itself takes about 0.2 s; without a bound, a run stalled behind a background-priority
+            // throttle held its slot for up to 20 min.
+            timeoutMs: 10_000,
             // The reaper notifies when it stops a server; a banner per 15-minute run is noise.
             notify: "failure",
             description: "Stop on-demand GenesisTools servers nobody used for a while",
