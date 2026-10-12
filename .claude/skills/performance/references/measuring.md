@@ -64,6 +64,15 @@ asked whether it was a flake. Retested with a fix (one reused buffer) in the ord
 processes per arm: `statSync` 10.1 ms, bulk read for folders with 4 or more asked files 17.2 ms, for every folder
 50.6 ms. Not a flake; the revert stood.
 
+**Shared state can hide the whole effect.** The tail cache limit fix (2,000 → 20,000 entries) first measured 854
+against 853 ms: the new arm filled the shared cache file, and the old arm then loaded all of it and never missed. With
+each arm's own copy of the cache file swapped into place before its run (`copyFileSync` in, run, copy back), the same
+change measured 1,832 against 911 ms. Before an A/B, list every file both arms read AND write, and give each arm its
+own copy when the change alters what is written there. Restore the live file afterwards.
+
+**Test the shape the user runs, not only the one you optimised.** The 24-hour listing (630 rows) was measured all day;
+the bare `ai usage sessions --json --fresh` (all 2,404 transcripts) was not, and it was the one that thrashed.
+
 ## 6. Controls
 
 - **Negative control for a test:** run the new test against the old code (copy the file aside, `git show

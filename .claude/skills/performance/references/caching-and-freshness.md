@@ -1,7 +1,7 @@
 # Caches that never show older data
 
 Contents: 1. the rule · 2. file identity · 3. `FileIdentityCache` · 4. time-derived fields · 5. the session rows
-cache and the daemon · 6. the hub server · 7. what was rejected.
+cache and the daemon · 6. the hub server · 7. incremental scans of append-only files · 8. what was rejected.
 
 ## 1. The rule
 
@@ -37,6 +37,13 @@ await cache.save();                       // temporary file + rename, only when 
 - Bump `version` whenever the meaning of a cached value changes (a parser change, a new field). A file of another
   version is ignored, never half-trusted. `isValue` checks every saved entry; one that fails is dropped.
 - Do not cache failures (a missing header, a read error): read again and report again next time.
+- **The limit must exceed what one pass touches.** A cache smaller than one pass evicts each entry just before the
+  pass needs it and never hits: the tail cache held 2,000 entries for 2,404 transcripts and missed every one on every
+  full listing (1,832 ms against 911 ms once the limit was 20,000). The cache is least-recently-used, and evicting an
+  entry the same process used logs a warning (`[identity-cache] evicted an entry this process used`), so a limit
+  that has become too small shows in the day log instead of silently costing a second.
+- `fileIdentity` is a synchronous `statSync`: the async `stat` cost about 4 times the CPU (cold Codex discovery
+  40 → 27 ms, warm 27 → 14 ms).
 - Users: Codex rollout headers (`codex-discovery.ts`, persisted), Claude tail usage (`session-rows.ts`, persisted).
   The Grok summary cache (`grok-discovery.ts`) is the same idea in memory with a string identity.
 - Effect: a fresh process re-reads only changed files. The usage daemon's row build went from 1,180 to 423 ms of
@@ -66,7 +73,16 @@ doors from warm memory. Every caller works without it. Started by the GenesisToo
 daemon's tick when a health probe finds nothing listening (`ensureHubServer`, at most once per 5 minutes; a busy
 server is left alone). It exits after 10 minutes without a connection, above 512 MB, or when its source changes.
 
-## 7. Rejected
+## 7. Incremental scans of append-only files
+
+A cache that counts what was appended since the last read (the Codex agents' tool-call scan,
+`src/hub/lib/agents/codex-agents.ts`) assumes the file only grows. "The file is at least as large as before" is not
+proof of that: a file replaced by a larger one passes. Keep the inode beside the size and offset, and start over when
+it differs (the old code kept the old file's count for a replaced rollout; fixed with a test that fails on it). An
+in-place rewrite that keeps the inode and grows is still not caught; if that can happen, also keep a few bytes
+before the offset and compare them.
+
+## 8. Rejected
 
 - **Skip the daemon's rebuild when no session file changed.** The rows also depend on the pin journal, cmux
   references, Grok account files, the history index and the clock; a skip check that missed one would serve old

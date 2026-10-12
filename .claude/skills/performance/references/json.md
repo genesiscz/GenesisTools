@@ -67,6 +67,21 @@ usage (`src/claude/lib/usage/session-rows.ts`, `parseTailLines`) is such a reade
   skip silently. Measure it before trusting it.
 - **A reviver does not filter cheaply**: Node issue 60247 reports a 10 to 50% slowdown with a reviver.
 
-## 6. Research
+## 6. Other findings from the research
+
+- **`bun:jsc` `serialize()` / `deserialize()`** restored the same objects 1.1 to 2.6 times faster than `JSON.parse`
+  (15 to 27 ms against 39 ms on one sample). Bun to Bun only, versioned, files 1.0 to 1.4 times the JSON size. A
+  candidate for caches GenesisTools writes and reads itself; not measured on our cache files yet.
+- **`Bun.JSONL.parse(bytes)`** converts the whole buffer to a string when one byte is not ASCII: about 2 times slower
+  than decoding first. Pass a string.
+- **Bun 1.4.3** ships a faster `JSON.parse` (key/value caches, SIMD): 5 to 12% on transcript lines here.
+- msgpackr was 1.2 to 2 times slower than `JSON.parse`; `Bun.JSONC.parse` 2.7 to 3.2 times slower.
+- `SafeJSON` is imported by about 68 browser, extension and UI files that cannot load `bun:ffi`, and a simdjson
+  shim with static parser state crashed Bun under 4 Workers (`thread_local` state fixed it). Another reason a general
+  FFI flag does not fit.
+- simdjson differs from `JSON.parse` on lone surrogates, `1e400`, nesting deeper than 1,024 and a BOM; a drop-in
+  replacement would also change behaviour.
+
+## 7. Research
 
 `<notes vault>/Dev/Bun/2026-10-12-FasterJsonParse/` (docs and internals, GitHub benchmarks, lazy and partial parsing).
