@@ -29,6 +29,7 @@ public final class WidgetTasksStore: ObservableObject {
     private var visible = false
     private var stopped = false
     private var refreshTask: Task<Void, Never>?
+    private var reconcileTask: Task<Void, Never>?
     private var refreshID: UUID?
     private var mutations: [String: (id: UUID, work: Task<Void, Never>)] = [:]
     private var createTask: Task<Void, Never>?
@@ -73,8 +74,11 @@ public final class WidgetTasksStore: ObservableObject {
             refreshID = nil
             refreshTask?.cancel()
             refreshTask = nil
+            reconcileTask?.cancel()
+            reconcileTask = nil
             isLoading = false
             recent = []
+            viewGeneration &+= 1
         }
     }
 
@@ -82,8 +86,13 @@ public final class WidgetTasksStore: ObservableObject {
         guard !stopped else { return }
         error = nil
         recent = []
+        viewGeneration &+= 1
         refresh()
     }
+
+    /// Moves on whenever the shown view changes (a filter, or the module hidden), so a change answering late knows
+    /// whether the view it started in still applies.
+    private var viewGeneration = 0
 
     public func refresh(force: Bool = false) {
         guard !stopped else { return }
@@ -101,9 +110,10 @@ public final class WidgetTasksStore: ObservableObject {
         let identity = UUID()
         refreshID = identity
         isLoading = true
-        var args = ["list", "--json", "--scope", scope, "--limit", "200"]
-        if !project.isEmpty { args += ["--project", project] }
-        if !session.isEmpty { args += ["--session", session] }
+        var filters: [String] = []
+        if !project.isEmpty { filters += ["--project", project] }
+        if !session.isEmpty { filters += ["--session", session] }
+        let args = ["list", "--json", "--scope", scope, "--limit", "200"] + filters
         refreshTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -126,10 +136,45 @@ public final class WidgetTasksStore: ObservableObject {
                 if self.recent.contains(where: { shown.contains($0.id) }) { self.recent.removeAll { shown.contains($0.id) } }
                 self.error = self.mutationFailure
                 self.watch(value.sourcePath)
+                self.reconcileRecent(key: key, filters: filters)
             } catch {
                 if !Task.isCancelled, !self.stopped, self.refreshID == identity { self.report(error) }
             }
         }
+    }
+
+    /// `recent` holds saved copies of tasks outside the current view, which no list reload returns. After each fresh
+    /// read of the ledger they are read again, across every state: a task edited, reopened or dismissed elsewhere
+    /// shows its current version, and one that is gone or back in view leaves, so no row offers an undo against a
+    /// version the ledger no longer has.
+    private func reconcileRecent(key: String, filters: [String]) {
+        reconcileTask?.cancel()
+        reconcileTask = nil
+        guard !recent.isEmpty else { return }
+        reconcileTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let data = try await self.request(["list", "--json", "--scope", "all", "--limit", "200"] + filters)
+                try Task.checkCancellation()
+                guard !self.stopped, self.queryKey == key else { return }
+                self.reconcile(recentWith: try JSONDecoder().decode(WidgetTaskSnapshot.self, from: data))
+            } catch {
+                guard !Task.isCancelled else { return }
+                PerfLog.mark("widget.tasks recent rows not reread: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func reconcile(recentWith ledger: WidgetTaskSnapshot) {
+        let current = Dictionary(ledger.tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // A task past the list's limit is not known to be gone: its saved copy stays.
+        func latest(_ saved: WidgetTask) -> WidgetTask? {
+            guard let now = current[saved.id] else { return ledger.truncated ? saved : nil }
+            return now
+        }
+        let next = recent.compactMap(latest).filter { !matchesScope($0) }
+        if next != recent { recent = next }
+        if let undo, latest(undo.task) != undo.task { self.undo = nil }
     }
 
     private func watch(_ path: String) {
@@ -149,13 +194,32 @@ public final class WidgetTasksStore: ObservableObject {
         if visible { refresh(force: true) }
     }
 
+    /// The row's checkbox: done, or open again. A row under "Just changed" goes back to the state it had before, so a
+    /// task ticked done while in progress returns to in progress, not to open.
+    public func toggle(_ task: WidgetTask) {
+        // Only while the row is still the version this store saved: a later change from another surface (a
+        // dismissal) is not undone as if it were this store's tick.
+        if recent.contains(where: { $0.id == task.id }), let prior = priorStates[task.id],
+           prior.revision == task.revision, prior.updatedTs == task.updatedTs
+        {
+            let back = WidgetTaskAction.returning(to: prior.state)
+            if let first = back.first, task.actions.contains(first) {
+                perform(first, on: task, then: back.dropFirst().first)
+                return
+            }
+        }
+        if let action = task.toggleAction { perform(action, on: task) }
+    }
+
     /// Ticks, unticks, acknowledges or dismisses one task. The row shows the new state at once; the ledger's
-    /// answer confirms it, or the row returns to the saved state with the reason.
-    public func perform(_ action: WidgetTaskAction, on task: WidgetTask) {
+    /// answer confirms it, or the row returns to the saved state with the reason. `next` is a second step (an undo
+    /// back to in progress), run against the version this one returned.
+    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil) {
         guard !stopped, mutations[task.id] == nil, task.actions.contains(action) else { return }
         let args = ["update", task.id, "--action", action.rawValue,
                     "--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                     "--session", task.sessionId, "--provider", task.provider]
+        let view = viewGeneration
         pendingStates[task.id] = action.targetState
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
@@ -169,15 +233,31 @@ public final class WidgetTasksStore: ObservableObject {
                 throw ToolsBridgeError.refused("The task update returned an inconsistent receipt. Refresh to confirm its state.")
             }
             self.receipt = "\(response.task.statusLabel): \(response.task.title) · saved"
-            self.undo = WidgetTaskAction.returning(to: task.state).flatMap { back in
-                response.task.actions.contains(back) ? WidgetTaskUndo(task: response.task, action: back) : nil
+            self.priorStates[task.id] = (task.state, response.task.revision, response.task.updatedTs)
+            if let next {
+                self.undo = nil
+                self.applyLocally(response.task, view: view)
+                // `mutate` lets go of the task right after this returns; the second step starts then.
+                Task { @MainActor [weak self] in self?.perform(next, on: response.task) }
+                return
             }
-            self.applyLocally(response.task)
+            let back = WidgetTaskAction.returning(to: task.state)
+            self.undo = back.first.flatMap { first in
+                response.task.actions.contains(first)
+                    ? WidgetTaskUndo(task: response.task, action: first, then: back.dropFirst().first) : nil
+            }
+            self.applyLocally(response.task, view: view)
         }
     }
 
-    /// New title and text for an open task, against the version the user edited.
-    public func edit(_ task: WidgetTask, title: String, details: String) {
+    /// The state each task had before this store last changed it, and the version that change saved, so a "Just
+    /// changed" row can go back to it while the ledger still holds that version.
+    private var priorStates: [String: (state: String, revision: Int, updatedTs: String)] = [:]
+
+    /// New title and text for an open task, against the version the user edited. `onSaved` runs only once the ledger
+    /// confirmed the edit, with the task as saved, so an editor that waits for it keeps the user's text through a
+    /// refusal or a failure.
+    public func edit(_ task: WidgetTask, title: String, details: String, onSaved: @escaping (WidgetTask) -> Void = { _ in }) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let details = details.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stopped, mutations[task.id] == nil, task.editable, !title.isEmpty else { return }
@@ -185,6 +265,7 @@ public final class WidgetTasksStore: ObservableObject {
         if !details.isEmpty { args += ["--details", details] }
         args += ["--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                  "--session", task.sessionId, "--provider", task.provider]
+        let view = viewGeneration
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
             let response = try JSONDecoder().decode(WidgetTaskSaved.self, from: data)
@@ -193,7 +274,8 @@ public final class WidgetTasksStore: ObservableObject {
             }
             self.receipt = "Saved: \(response.task.title)"
             self.undo = nil
-            self.applyLocally(response.task)
+            self.applyLocally(response.task, view: view)
+            onSaved(response.task)
         }
     }
 
@@ -235,14 +317,21 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     /// Shows the saved task before the reload lands, so a tick never flickers back to its old state. A task that
-    /// left the current view moves to `recent`, where it stays visible with an undo until the filters change.
-    private func applyLocally(_ task: WidgetTask) {
+    /// left the current view moves to `recent`, where it stays visible with an undo until the filters change. `view`
+    /// is the view the change started in: one that answers after the filters changed or the module was hidden
+    /// (both clear `recent`) adds no row to the view shown now, nor does a task the project or session filter hides.
+    private func applyLocally(_ task: WidgetTask, view: Int) {
         let inView = matchesScope(task)
         recent.removeAll { $0.id == task.id }
-        if !inView { recent = Array(([task] + recent).prefix(5)) }
+        if !inView, view == viewGeneration, matchesFilters(task) { recent = Array(([task] + recent).prefix(5)) }
         guard var value = snapshot, let index = value.tasks.firstIndex(where: { $0.id == task.id }) else { return }
         if inView { value.tasks[index] = task } else { value.tasks.remove(at: index) }
         snapshot = value
+    }
+
+    private func matchesFilters(_ task: WidgetTask) -> Bool {
+        (project.isEmpty || project == (task.sourceContext.project ?? task.sourceContext.cwd ?? ""))
+            && (session.isEmpty || session == task.provider + ":" + task.sessionId)
     }
 
     private func matchesScope(_ task: WidgetTask) -> Bool {
@@ -256,6 +345,25 @@ public final class WidgetTasksStore: ObservableObject {
 
     /// The sessions a new task can belong to: the widget's live sessions first (newest activity), then the ones
     /// the ledger already knows. Built when the menu opens, never in a body.
+    /// The project and worktree the last chosen session put in the draft, so the next choice can tell them apart
+    /// from a project the user picked in the Project menu.
+    private var sessionContext = (project: "", cwd: "")
+
+    /// Files the new task under `choice`. Its project and worktree replace the ones the previous session brought,
+    /// even when they are empty (a session only the ledger knows has none), so a task never lands under the last
+    /// session's project; a project the user picked by hand stays when the new session has none.
+    public func chooseSession(_ choice: WidgetTaskSessionChoice) {
+        draft.session = choice.id
+        draft.sessionTitle = choice.title
+        if !choice.project.isEmpty || draft.project == sessionContext.project {
+            draft.project = choice.project
+        }
+        if !choice.cwd.isEmpty || draft.cwd == sessionContext.cwd {
+            draft.cwd = choice.cwd
+        }
+        sessionContext = (choice.project, choice.cwd)
+    }
+
     public func sessionChoices(limit: Int = 30) -> [WidgetTaskSessionChoice] {
         var seen = Set<String>()
         var choices: [WidgetTaskSessionChoice] = []
@@ -353,6 +461,8 @@ public final class WidgetTasksStore: ObservableObject {
         refreshID = nil
         refreshTask?.cancel()
         refreshTask = nil
+        reconcileTask?.cancel()
+        reconcileTask = nil
         for mutation in mutations.values { mutation.work.cancel() }
         mutations = [:]
         createTask?.cancel()

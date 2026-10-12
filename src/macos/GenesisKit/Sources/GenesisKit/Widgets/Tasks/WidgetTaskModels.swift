@@ -68,13 +68,15 @@ public enum WidgetTaskAction: String, CaseIterable, Sendable {
         case .dismiss: return "dismissed"
         }
     }
-    /// The action that moves a task back to `state`, if the ledger allows that move.
-    static func returning(to state: String) -> WidgetTaskAction? {
+    /// The actions that move a task back to `state`, in order; empty when there is no way back. The ledger has no
+    /// move from done straight to in progress, so that one is a reopen and then an acknowledge.
+    static func returning(to state: String) -> [WidgetTaskAction] {
         switch state {
-        case "open": return .reopen
-        case "implemented": return .complete
-        case "dismissed": return .dismiss
-        default: return nil
+        case "open": return [.reopen]
+        case "acknowledged": return [.reopen, .acknowledge]
+        case "implemented": return [.complete]
+        case "dismissed": return [.dismiss]
+        default: return []
         }
     }
 }
@@ -103,6 +105,8 @@ public struct WidgetTaskSessionChoice: Identifiable, Equatable, Sendable {
 public struct WidgetTaskUndo: Equatable, Sendable {
     public var task: WidgetTask
     public var action: WidgetTaskAction
+    /// A second step, run against the version the first one returned (back to in progress: reopen, then acknowledge).
+    public var then: WidgetTaskAction? = nil
 }
 
 struct WidgetTaskSnapshot: Codable, Equatable, Sendable {

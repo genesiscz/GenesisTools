@@ -126,7 +126,7 @@ struct WidgetTasksModuleView: View {
                 Text(receipt).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                 Spacer(minLength: 0)
                 if let undo = store.undo {
-                    Button("Undo") { store.perform(undo.action, on: undo.task) }
+                    Button("Undo") { store.perform(undo.action, on: undo.task, then: undo.then) }
                         .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
                         .disabled(store.mutatingIDs.contains(undo.task.id))
                 }
@@ -185,7 +185,7 @@ struct WidgetTaskCheckbox: View {
         let state = store.shownState(task)
         let busy = store.mutatingIDs.contains(task.id)
         Button {
-            if let action = task.toggleAction { store.perform(action, on: task) }
+            store.toggle(task)
         } label: {
             Image(systemName: symbol(state))
                 .font(.system(size: 15, weight: .regular))
@@ -277,12 +277,7 @@ private struct WidgetTaskComposer: View {
             store.draft.session = ""
             store.draft.sessionTitle = ""
         }, .divider] + (choices.isEmpty ? [.note("No recent sessions")] : choices.map { choice in
-            .action(choice.title, checked: store.draft.session == choice.id) {
-                store.draft.session = choice.id
-                store.draft.sessionTitle = choice.title
-                if !choice.project.isEmpty { store.draft.project = choice.project }
-                if !choice.cwd.isEmpty { store.draft.cwd = choice.cwd }
-            }
+            .action(choice.title, checked: store.draft.session == choice.id) { store.chooseSession(choice) }
         })
     }
 
@@ -303,16 +298,14 @@ private struct WidgetTaskRow: View {
     let task: WidgetTask
     @ObservedObject var store: WidgetTasksStore
     @State private var expanded = false
-    @State private var editing = false
-    @State private var title = ""
-    @State private var details = ""
+    @StateObject private var edit = WidgetTaskEditSession()
 
     var body: some View {
         let state = store.shownState(task)
         HStack(alignment: .top, spacing: 8) {
             WidgetTaskCheckbox(task: task, store: store)
             VStack(alignment: .leading, spacing: 5) {
-                if editing {
+                if edit.isOpen {
                     editor
                 } else {
                     Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(3)
@@ -342,22 +335,21 @@ private struct WidgetTaskRow: View {
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Title", text: $title).textFieldStyle(.roundedBorder).font(.system(size: 12))
+            TextField("Title", text: $edit.title).textFieldStyle(.roundedBorder).font(.system(size: 12))
                 .onSubmit(save)
-            TextField("Details (optional)", text: $details, axis: .vertical).textFieldStyle(.roundedBorder)
+            TextField("Details (optional)", text: $edit.details, axis: .vertical).textFieldStyle(.roundedBorder)
                 .font(.system(size: 11.5)).lineLimit(2...6)
             HStack(spacing: 8) {
                 Button("Save", action: save).buttonStyle(.genHover(accent: .mint)).font(.system(size: 11, weight: .semibold))
-                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Cancel") { editing = false }.buttonStyle(.genHoverPlain()).font(.system(size: 11))
+                    .disabled(edit.title.trimmingCharacters(in: .whitespaces).isEmpty || store.mutatingIDs.contains(task.id))
+                Button("Cancel") { edit.cancel() }.buttonStyle(.genHoverPlain()).font(.system(size: 11))
                     .keyboardShortcut(.cancelAction)
             }
         }
     }
 
     private func save() {
-        store.edit(task, title: title, details: details)
-        editing = false
+        edit.save(in: store)
     }
 
     private func meta(_ state: String) -> String {
@@ -406,11 +398,7 @@ private struct WidgetTaskRow: View {
             .action(action == .acknowledge ? "Start (acknowledge)" : action.title) { store.perform(action, on: task) }
         }
         if task.editable {
-            items += [.divider, .action("Edit…") {
-                title = task.title
-                details = task.summary == task.title ? "" : task.summary
-                editing = true
-            }]
+            items += [.divider, .action("Edit…") { edit.begin(task) }]
         }
         if store.sourceSession(for: task) != nil {
             items += [.divider, .action("Open source session") { store.openSource(task) }]

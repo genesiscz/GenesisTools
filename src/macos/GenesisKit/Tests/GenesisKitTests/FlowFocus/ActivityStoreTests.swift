@@ -234,8 +234,12 @@ final class ActivityStoreTests: XCTestCase {
         let day: Int64 = 86_400_000
         let old = try store.openSegment(segment(now - 40 * day, title: "old"))
         try store.closeSegment(id: old, at: now - 40 * day + 60_000)
-        let recent = try store.openSegment(segment(now - day, title: "recent"))
-        try store.closeSegment(id: recent, at: now - day + 60_000)
+        // Starts 5 s before the one-day mark: the prune's cutoff is `Date() - 1 day`, and when `apply` runs in the same
+        // millisecond as `now` (a warm suite run) a segment starting exactly at `now - day` is not cut, and the test
+        // failed with two equal values.
+        let recentStart = now - day - 5_000
+        let recent = try store.openSegment(segment(recentStart, title: "recent"))
+        try store.closeSegment(id: recent, at: recentStart + 60_000)
         let controller = FocusController()
         controller.ownsRuntime = true
         controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
@@ -249,7 +253,7 @@ final class ActivityStoreTests: XCTestCase {
         // The recent segment crosses the new one-day cutoff: its part before the cutoff goes at once.
         let trimmed = try store.segments(from: 0, to: now + 1)
         XCTAssertEqual(trimmed.map(\.windowTitle), ["recent"])
-        XCTAssertGreaterThan(trimmed.first?.startedMs ?? 0, now - day, "shortening retention prunes at once")
+        XCTAssertGreaterThanOrEqual(trimmed.first?.startedMs ?? 0, now - day, "shortening retention prunes at once")
     }
 
     @MainActor

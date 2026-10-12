@@ -60,7 +60,8 @@ final class WidgetTasksPolishTests: XCTestCase {
                 ledger = ledger.map { $0.id == id ? { var t = $0; t.state = target; t.updatedTs = at; return t }($0) : $0 }
                 return try self.updated(before, to: target, action: args[args.firstIndex(of: "--action")! + 1], at: at)
             }
-            return try self.snapshot(ledger.filter { ["open", "acknowledged"].contains($0.state) })
+            // As the CLI: `--scope all` (the recent rows' reread) returns every state.
+            return try self.snapshot(args.contains("all") ? ledger : ledger.filter { ["open", "acknowledged"].contains($0.state) })
         })
         defer { store.stop() }
         store.visibilityChanged(.expanded)
@@ -87,6 +88,176 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertFalse(store.recent.contains { $0.id == undo.task.id }, "an undone task returns to the list")
         XCTAssertTrue(store.tasks.contains { $0.id == undo.task.id })
         XCTAssertEqual(calls.filter { $0.first == "update" }.count, 3)
+    }
+
+    func testARecentRowFollowsLaterLedgerChangesAndLeavesWhenItIsGone() async throws {
+        let done = "2026-01-01T10:00:01.000Z"
+        var ledger = [task()]
+        let store = WidgetTasksStore(request: { @MainActor args in
+            if args.first == "update", let id = args.dropFirst().first {
+                let before = ledger.first { $0.id == id }!
+                ledger = ledger.map { $0.id == id ? { var t = $0; t.state = "implemented"; t.updatedTs = done; return t }($0) : $0 }
+                return try self.updated(before, to: "implemented", action: "complete", at: done)
+            }
+            return try self.snapshot(args.contains("all") ? ledger : ledger.filter { ["open", "acknowledged"].contains($0.state) })
+        })
+        defer { store.stop() }
+        func until(_ condition: () -> Bool) async throws {
+            for _ in 0 ..< 300 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertTrue(condition(), "condition never became true")
+        }
+        store.visibilityChanged(.expanded)
+        await settled(store)
+        store.perform(.complete, on: ledger[0])
+        await settled(store)
+        XCTAssertEqual(store.recent.map(\.state), ["implemented"], "a ticked task stays on screen to undo")
+        XCTAssertNotNil(store.undo)
+
+        // Another surface dismisses it: the row shows that version, and the undo of the old one goes.
+        ledger[0].state = "dismissed"
+        ledger[0].updatedTs = "2026-01-01T10:05:00.000Z"
+        store.sourceChanged()
+        try await until { store.recent.first?.state == "dismissed" }
+        XCTAssertNil(store.undo, "an undo against the old version would be refused by the ledger")
+
+        // Then it is deleted from the ledger: the row leaves.
+        ledger = []
+        store.sourceChanged()
+        try await until { store.recent.isEmpty }
+    }
+
+    func testAnInProgressTaskTickedDoneGoesBackToInProgressByUndoAndByItsBox() async throws {
+        let first = task(state: "acknowledged")
+        let second = task("t_2_fixture", state: "acknowledged", title: "Feed the cat")
+        var ledger = [first, second]
+        var updates: [(action: String, state: String, updatedAt: String)] = []
+        var clock = 0
+        let targets = ["complete": "implemented", "reopen": "open", "acknowledge": "acknowledged"]
+        let store = WidgetTasksStore(request: { @MainActor args in
+            if args.first == "update", let id = args.dropFirst().first {
+                let value = { (flag: String) in args[args.firstIndex(of: flag)! + 1] }
+                let action = value("--action")
+                updates.append((action, value("--state"), value("--updated-at")))
+                let before = ledger.first { $0.id == id }!
+                let target = targets[action]!
+                clock += 1
+                let at = "2026-01-01T10:00:0\(clock).000Z"
+                ledger = ledger.map { $0.id == id ? { var t = $0; t.state = target; t.updatedTs = at; return t }($0) : $0 }
+                return try self.updated(before, to: target, action: action, at: at)
+            }
+            // As the CLI: `--scope all` (the recent rows' reread) returns every state.
+            return try self.snapshot(args.contains("all") ? ledger : ledger.filter { ["open", "acknowledged"].contains($0.state) })
+        })
+        defer { store.stop() }
+        store.visibilityChanged(.expanded)
+        await settled(store)
+
+        store.perform(.complete, on: first)
+        await settled(store)
+        let undo = try XCTUnwrap(store.undo, "a task done from in progress offers Undo")
+        XCTAssertEqual(undo.action, .reopen)
+        XCTAssertEqual(undo.then, .acknowledge)
+        store.perform(undo.action, on: undo.task, then: undo.then)
+        for _ in 0 ..< 400 where ledger.first?.state != "acknowledged" { try await Task.sleep(for: .milliseconds(5)) }
+        await settled(store)
+        XCTAssertEqual(updates.map(\.action), ["complete", "reopen", "acknowledge"])
+        guard updates.count == 3 else {
+            XCTFail("the undo sent \(updates.count - 1) updates, not 2")
+            return
+        }
+        XCTAssertEqual(updates[2].state, "open")
+        XCTAssertEqual(updates[2].updatedAt, "2026-01-01T10:00:02.000Z",
+                       "the second step goes against the version the first one returned")
+        XCTAssertEqual(store.tasks.first { $0.id == first.id }?.state, "acknowledged", "back in progress, not open")
+
+        // The "Just changed" row's box does the same.
+        store.perform(.complete, on: second)
+        await settled(store)
+        let row = try XCTUnwrap(store.recent.first { $0.id == second.id })
+        store.toggle(row)
+        for _ in 0 ..< 400 where ledger.last?.state != "acknowledged" { try await Task.sleep(for: .milliseconds(5)) }
+        await settled(store)
+        XCTAssertEqual(updates.suffix(3).map(\.action), ["complete", "reopen", "acknowledge"])
+        XCTAssertEqual(store.tasks.first { $0.id == second.id }?.state, "acknowledged")
+    }
+
+    func testARowAnotherSurfaceChangedIsNotUndoneAsThisStoresTick() async throws {
+        var ledger = [task(state: "acknowledged")]
+        var actions: [String] = []
+        let targets = ["complete": "implemented", "reopen": "open", "acknowledge": "acknowledged"]
+        let store = WidgetTasksStore(request: { @MainActor args in
+            if args.first == "update", let id = args.dropFirst().first {
+                let action = args[args.firstIndex(of: "--action")! + 1]
+                actions.append(action)
+                let before = ledger.first { $0.id == id }!
+                let target = targets[action]!
+                let at = "2026-01-01T10:00:0\(actions.count).000Z"
+                ledger = ledger.map { $0.id == id ? { var t = $0; t.state = target; t.updatedTs = at; return t }($0) : $0 }
+                return try self.updated(before, to: target, action: action, at: at)
+            }
+            return try self.snapshot(args.contains("all") ? ledger : ledger.filter { ["open", "acknowledged"].contains($0.state) })
+        })
+        defer { store.stop() }
+        store.visibilityChanged(.expanded)
+        await settled(store)
+        store.perform(.complete, on: ledger[0])
+        await settled(store)
+        XCTAssertEqual(store.recent.map(\.state), ["implemented"])
+
+        // Another surface dismisses it after this store's tick; the row shows that version.
+        ledger[0].state = "dismissed"
+        ledger[0].updatedTs = "2026-01-01T10:05:00.000Z"
+        store.sourceChanged()
+        for _ in 0 ..< 300 where store.recent.first?.state != "dismissed" { try await Task.sleep(for: .milliseconds(10)) }
+        let row = try XCTUnwrap(store.recent.first { $0.state == "dismissed" })
+
+        // Its box reopens the dismissed task like any finished row; it does not undo the tick back to in progress.
+        store.toggle(row)
+        for _ in 0 ..< 400 where ledger[0].state == "dismissed" { try await Task.sleep(for: .milliseconds(5)) }
+        await settled(store)
+        for _ in 0 ..< 60 where actions.count < 3 { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(actions, ["complete", "reopen"])
+        XCTAssertEqual(ledger[0].state, "open")
+    }
+
+    func testAChangeAnsweringAfterTheViewChangedAddsNoRowToTheViewShownNow() async throws {
+        let first = task()
+        let second = task("t_2_fixture", title: "Feed the cat")
+        var ledger = [first, second]
+        var released: [String: CheckedContinuation<Void, Never>] = [:]
+        let store = WidgetTasksStore(request: { @MainActor args in
+            if args.first == "update", let id = args.dropFirst().first {
+                await withCheckedContinuation { released[id] = $0 }
+                let before = ledger.first { $0.id == id }!
+                let at = "2026-01-01T10:00:01.000Z"
+                ledger = ledger.map { $0.id == id ? { var t = $0; t.state = "implemented"; t.updatedTs = at; return t }($0) : $0 }
+                return try self.updated(before, to: "implemented", action: "complete", at: at)
+            }
+            return try self.snapshot(args.contains("all") ? ledger : ledger.filter { ["open", "acknowledged"].contains($0.state) })
+        })
+        defer { store.stop() }
+        store.visibilityChanged(.expanded)
+        await settled(store)
+
+        // Ticked in the Fixture project, answered after the user switched to another project.
+        store.perform(.complete, on: first)
+        for _ in 0 ..< 400 where released[first.id] == nil { try await Task.sleep(for: .milliseconds(5)) }
+        _ = try XCTUnwrap(released[first.id], "the tick reached the ledger")
+        store.project = "Elsewhere"
+        released.removeValue(forKey: first.id)?.resume()
+        await settled(store)
+        XCTAssertFalse(store.recent.contains { $0.id == first.id }, "no row from another project's view")
+
+        // Ticked, answered while the module is hidden.
+        store.project = ""
+        await settled(store)
+        store.perform(.complete, on: second)
+        for _ in 0 ..< 400 where released[second.id] == nil { try await Task.sleep(for: .milliseconds(5)) }
+        _ = try XCTUnwrap(released[second.id], "the tick reached the ledger")
+        store.visibilityChanged(nil)
+        released.removeValue(forKey: second.id)?.resume()
+        await settled(store)
+        XCTAssertTrue(store.recent.isEmpty, "a hidden module gets no rows back")
     }
 
     func testCreateSendsTheDraftClearsItsTextAndWidensFiltersThatWouldHideTheTask() async throws {
@@ -145,7 +316,9 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertFalse(task(state: "acknowledged").editable)
         XCTAssertEqual(task(state: "implemented").toggleAction, .reopen)
         XCTAssertEqual(task(state: "acknowledged").toggleAction, .complete)
-        XCTAssertNil(WidgetTaskAction.returning(to: "acknowledged"))
+        XCTAssertEqual(WidgetTaskAction.returning(to: "acknowledged"), [.reopen, .acknowledge],
+                       "no move goes from done straight to in progress")
+        XCTAssertEqual(WidgetTaskAction.returning(to: "open"), [.reopen])
     }
 
     func testSessionChoicesPutLiveLeadSessionsFirstAndSkipSubagents() async throws {
@@ -162,6 +335,146 @@ final class WidgetTasksPolishTests: XCTestCase {
         await settled(store)
         XCTAssertEqual(store.sessionChoices().map(\.id), ["claude:live", "codex:fixture"])
         XCTAssertEqual(store.sessionChoices().first?.cwd, "/fixture")
+    }
+
+    func testAnEditTheLedgerRefusesLeavesTheEditorOpenAndASavedOneClosesIt() async throws {
+        let original = task()
+        var edited = original
+        edited.title = "Water every plant"
+        edited.revision = 2
+        var refuse = true
+        let store = WidgetTasksStore(request: { @MainActor args in
+            if args.first == "edit" {
+                if refuse { throw ToolsBridgeError.refused("The task changed since it was shown.") }
+                return try self.saved(edited, action: "edit")
+            }
+            return try self.snapshot([refuse ? original : edited])
+        })
+        defer { store.stop() }
+        var closed = 0
+        store.edit(original, title: "Water every plant", details: "") { _ in closed += 1 }
+        await settled(store)
+        XCTAssertEqual(closed, 0, "a refused edit closed the editor, and the user's text went with it")
+        XCTAssertNotNil(store.error)
+
+        refuse = false
+        var savedRevisions: [Int] = []
+        store.edit(original, title: "Water every plant", details: "") { saved in
+            closed += 1
+            savedRevisions.append(saved.revision)
+        }
+        await settled(store)
+        XCTAssertEqual(closed, 1, "a saved edit closes the editor")
+        XCTAssertEqual(savedRevisions, [2], "and hands over the task as the ledger saved it")
+        XCTAssertEqual(store.receipt, "Saved: Water every plant")
+    }
+
+    /// A store whose edit request waits until the test lets it answer, so the editor can be used meanwhile.
+    private final class HeldEdit {
+        var release: CheckedContinuation<Void, Never>?
+    }
+
+    private func storeHoldingEdits(_ held: HeldEdit, saved edited: WidgetTask) -> WidgetTasksStore {
+        WidgetTasksStore(request: { @MainActor args in
+            if args.first == "edit" {
+                await withCheckedContinuation { held.release = $0 }
+                return try self.saved(edited, action: "edit")
+            }
+            return try self.snapshot([edited])
+        })
+    }
+
+    private func untilHeld(_ held: HeldEdit) async {
+        for _ in 0..<400 where held.release == nil {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNotNil(held.release, "the edit request never reached the ledger")
+    }
+
+    func testTextTypedWhileASaveIsInFlightSurvivesItsConfirmation() async throws {
+        let original = task()
+        var edited = original
+        edited.title = "Water every plant"
+        edited.revision = 2
+        let held = HeldEdit()
+        let store = storeHoldingEdits(held, saved: edited)
+        defer { store.stop() }
+        let session = WidgetTaskEditSession()
+        session.begin(original)
+        session.title = "Water every plant"
+        session.save(in: store)
+        await untilHeld(held)
+        session.title = "Water every plant daily"
+        held.release?.resume()
+        await settled(store)
+
+        XCTAssertTrue(session.isOpen, "the confirmation closed an editor that holds text nobody saved")
+        XCTAssertEqual(session.title, "Water every plant daily")
+        XCTAssertEqual(session.opened?.revision, 2, "the next Save carries the version just saved, not a stale one")
+    }
+
+    func testASaveNothingWasTypedDuringClosesTheEditor() async throws {
+        let original = task()
+        var edited = original
+        edited.title = "Water every plant"
+        edited.revision = 2
+        let held = HeldEdit()
+        let store = storeHoldingEdits(held, saved: edited)
+        defer { store.stop() }
+        let session = WidgetTaskEditSession()
+        session.begin(original)
+        session.title = "Water every plant"
+        session.save(in: store)
+        await untilHeld(held)
+        held.release?.resume()
+        await settled(store)
+
+        XCTAssertFalse(session.isOpen)
+    }
+
+    func testAConfirmationNeverClosesAnEditorOpenedAfterTheSaveItAnswers() async throws {
+        let original = task()
+        var edited = original
+        edited.title = "Water every plant"
+        edited.revision = 2
+        let held = HeldEdit()
+        let store = storeHoldingEdits(held, saved: edited)
+        defer { store.stop() }
+        let session = WidgetTaskEditSession()
+        session.begin(original)
+        session.title = "Water every plant"
+        session.save(in: store)
+        await untilHeld(held)
+        session.cancel()
+        session.begin(original)
+        session.title = "Water every plant"
+        held.release?.resume()
+        await settled(store)
+
+        XCTAssertTrue(session.isOpen, "a Cancel and a reopen during the save made the old save close the new editor")
+        XCTAssertEqual(session.opened, original, "and it must not swap the new editor's version either")
+        XCTAssertEqual(session.title, "Water every plant")
+    }
+
+    func testChoosingAnotherSessionDropsTheProjectThePreviousSessionBrought() {
+        let store = WidgetTasksStore(request: { _ in try self.snapshot([]) })
+        defer { store.stop() }
+        let live = WidgetTaskSessionChoice(id: "claude:live", title: "Live lead", project: "Alpha", cwd: "/fixture/alpha")
+        let ledgerOnly = WidgetTaskSessionChoice(id: "codex:old", title: "Old thread", project: "", cwd: "")
+
+        store.chooseSession(live)
+        store.chooseSession(ledgerOnly)
+        XCTAssertEqual(store.draft.session, "codex:old")
+        XCTAssertEqual(store.draft.project, "", "the task would be filed under the previous session's project")
+        XCTAssertEqual(store.draft.cwd, "")
+
+        // A project picked by hand is the user's, and a session without one leaves it.
+        store.draft.project = "Beta"
+        store.chooseSession(ledgerOnly)
+        XCTAssertEqual(store.draft.project, "Beta")
+        store.chooseSession(live)
+        XCTAssertEqual(store.draft.project, "Alpha", "a session's own project replaces it")
+        XCTAssertEqual(store.draft.cwd, "/fixture/alpha")
     }
 }
 
@@ -199,6 +512,15 @@ final class WidgetInboxPolishTests: XCTestCase {
         ])
         XCTAssertEqual(KitMarkdown.parse("```\nunclosed"), [.code(language: "", text: "unclosed")])
         XCTAssertEqual(KitMarkdown.blocks("#notaheading"), [.paragraph("#notaheading")])
+    }
+
+    func testALineOfDashesOrEqualsUnderAParagraphMakesItAHeading() {
+        XCTAssertEqual(KitMarkdown.parse("Title\n---\nBody"), [.heading(level: 2, text: "Title"), .paragraph("Body")])
+        XCTAssertEqual(KitMarkdown.parse("Big\ntitle\n==="), [.heading(level: 1, text: "Big title")])
+        XCTAssertEqual(KitMarkdown.parse("Before\n***\nAfter"), [.paragraph("Before"), .rule, .paragraph("After")],
+                       "a star rule ends the paragraph instead of joining it")
+        XCTAssertEqual(KitMarkdown.parse("Before\n- - -"), [.paragraph("Before"), .rule], "spaced dashes are a rule")
+        XCTAssertEqual(KitMarkdown.parse("---"), [.rule])
     }
 
     func testChoiceTextDropsTheLetterTheBadgeAlreadyShows() {

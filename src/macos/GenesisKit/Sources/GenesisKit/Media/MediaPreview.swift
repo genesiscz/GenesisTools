@@ -127,7 +127,14 @@ private struct MediaPreviewOverlay: View {
     @ObservedObject var state: MediaPreviewState
     @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
     @Environment(\.widgetReduceTransparency) private var widgetReduceTransparency
-    @State private var copied = false
+    @State private var copyFeedback: CopyFeedback?
+    /// True from the click until the feedback has been shown, so a second click cannot start another read.
+    @State private var copying = false
+
+    private enum CopyFeedback: Equatable {
+        case copied
+        case note(String)
+    }
 
     var body: some View {
         ZStack {
@@ -174,12 +181,19 @@ private struct MediaPreviewOverlay: View {
                 }
             }
             Spacer(minLength: 8)
-            if copied {
+            switch copyFeedback {
+            case .copied:
                 Label("Copied", systemImage: "checkmark").font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.green).transition(.opacity)
+            case .note(let text):
+                Text(verbatim: text).font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
+                    .lineLimit(2).multilineTextAlignment(.trailing).transition(.opacity)
+            case nil:
+                EmptyView()
             }
             if item.kind == .image {
                 IconButton(systemName: "doc.on.doc", tooltip: "Copy image") { copy(item) }
+                    .disabled(copying)
             }
             IconButton(systemName: "folder", tooltip: "Show in Finder") { PathOpener.reveal(item.path) }
             IconButton(systemName: "arrow.up.forward.app", tooltip: "Open in its app") { PathOpener.open(item.path) }
@@ -213,16 +227,36 @@ private struct MediaPreviewOverlay: View {
         .accessibilityLabel(Text(tooltip))
     }
 
+    /// The picture is read and encoded off the main thread inside `MediaImageCopy`'s budget. An original past it puts
+    /// only the file on the pasteboard, and says so; one that cannot be read says that.
     private func copy(_ item: MediaPreviewItem) {
+        guard !copying else { return }
+        copying = true
         let path = item.path
         Task {
-            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: URL(fileURLWithPath: path)) }.value
-            guard let data, let image = NSImage(data: data) else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([image, URL(fileURLWithPath: path) as NSURL])
-            withAnimation(.easeOut(duration: 0.15)) { copied = true }
-            try? await Task.sleep(for: .seconds(1.4))
-            withAnimation(.easeOut(duration: 0.3)) { copied = false }
+            let outcome = await Task.detached(priority: .userInitiated) { MediaImageCopy.prepare(path: path) }.value
+            let pasteboard = NSPasteboard.general
+            let file = URL(fileURLWithPath: path) as NSURL
+            let feedback: CopyFeedback
+            switch outcome {
+            case .image(let tiff):
+                let picture = NSPasteboardItem()
+                picture.setData(tiff, forType: .tiff)
+                pasteboard.clearContents()
+                pasteboard.writeObjects([picture, file])
+                feedback = .copied
+            case .fileOnly(let reason):
+                pasteboard.clearContents()
+                pasteboard.writeObjects([file])
+                feedback = .note("Copied the file only. \(reason)")
+            case .failed(let reason):
+                feedback = .note(reason)
+            }
+
+            withAnimation(.easeOut(duration: 0.15)) { copyFeedback = feedback }
+            try? await Task.sleep(for: .seconds(feedback == .copied ? 1.4 : 4))
+            withAnimation(.easeOut(duration: 0.3)) { copyFeedback = nil }
+            copying = false
         }
     }
 }

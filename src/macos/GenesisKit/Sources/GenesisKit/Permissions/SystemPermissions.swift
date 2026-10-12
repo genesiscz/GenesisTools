@@ -21,6 +21,8 @@ public protocol PermissionSystem: Sendable {
 public extension PermissionStatus {
     /// Input Monitoring is on in System Settings, but this process still reads its old answer.
     static let needsRelaunch = PermissionStatus.partial("granted, relaunch to use")
+    /// Calendars may add events but not read them. Full Access is chosen in System Settings.
+    static let addOnly = PermissionStatus.partial("Add Only")
 }
 
 /// The real TCC reads and requests. Requests run from this process, so the prompt names this app and the answer
@@ -88,6 +90,8 @@ public struct SystemPermissions: PermissionSystem {
             guard status(kind) == .notDetermined else { return status(kind) }
             await Self.waitForAnswer { done in SFSpeechRecognizer.requestAuthorization { _ in done() } }
         case .calendars:
+            // Add Only is not asked again: macOS prompts for full access once ("any subsequent instantiations of
+            // EKEventStore uses existing permissions"), so the dialog sends that state to System Settings instead.
             guard status(kind) == .notDetermined else { return status(kind) }
             let store = EKEventStore()
             await Self.waitForAnswer { done in
@@ -153,7 +157,7 @@ public struct SystemPermissions: PermissionSystem {
     private static func status(_ status: EKAuthorizationStatus) -> PermissionStatus {
         switch status {
         case .fullAccess: return .granted
-        case .writeOnly: return .partial("Add Only")
+        case .writeOnly: return .addOnly
         case .denied: return .denied
         case .restricted: return .restricted
         case .notDetermined: return .notDetermined

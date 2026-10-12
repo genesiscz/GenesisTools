@@ -122,7 +122,13 @@ enum KitMarkdown {
                 blocks.append(heading)
                 continue
             }
-            if ["---", "***", "___"].contains(trimmed.replacingOccurrences(of: " ", with: "")) && paragraph.isEmpty {
+            // A line of only `=` or `-` under a paragraph underlines it as a heading (Markdown's setext form).
+            if !paragraph.isEmpty, trimmed.allSatisfy({ $0 == "=" }) || trimmed.allSatisfy({ $0 == "-" }) {
+                blocks.append(.heading(level: trimmed.first == "=" ? 1 : 2, text: paragraph.joined(separator: " ")))
+                paragraph = []
+                continue
+            }
+            if ["---", "***", "___"].contains(trimmed.replacingOccurrences(of: " ", with: "")) {
                 flush()
                 blocks.append(.rule)
                 continue

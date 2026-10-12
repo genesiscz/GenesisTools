@@ -574,6 +574,24 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testReviewingTheInputPermissionNeverTurnsClickyOn() {
+        let monitor = InputMonitorStub()
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer {
+            model.shutdown()
+            defaults.removePersistentDomain(forName: suite)
+        }
+        // "Allow Input Monitoring…" in the privacy note, with Clicky off.
+        model.openInputSettings()
+        XCTAssertEqual(monitor.permissionDialogs, 1)
+        XCTAssertEqual(monitor.lastNeed?.kind, .inputMonitoring)
+        monitor.granted = true
+        monitor.lastNeed?.onGranted?()
+        XCTAssertFalse(model.enabled, "the grant alone does not start key feedback; enabling it is the user's choice")
+        XCTAssertEqual(monitor.starts, 0)
+    }
+
+    @MainActor
     func testTapFailureAndPermissionRevocationNeverClaimListening() {
         for result in [ClickyInputStartResult.unavailable, .permissionRequired] {
             let monitor = InputMonitorStub()

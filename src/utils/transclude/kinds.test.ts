@@ -179,6 +179,18 @@ describe("file kinds", () => {
         );
         expect((await one('{{image path="a.ts"}}', { assetDir })).token.error).toContain("a.ts is not an image");
     });
+
+    test("image encodes parentheses, so no folder name can end the markdown destination early", async () => {
+        writeFileSync(join(repo, "shot.png"), "not really a png");
+        const { text, token } = await one('{{image path="shot.png" alt="Shot"}}', {
+            assetDir: join(repo, ".assets)("),
+        });
+        const destination = text.slice("![Shot](".length, -1);
+
+        expect(text.startsWith("![Shot](")).toBe(true);
+        expect(destination).not.toMatch(/[()]/);
+        expect(decodeURI(destination)).toBe(String(token.meta?.stored));
+    });
 });
 
 describe("cmd", () => {

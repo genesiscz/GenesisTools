@@ -46,8 +46,9 @@ const DENIED_PATTERN =
 
 /**
  * Sorts one `screencapture -i` run. Measured: Escape exits 0 with no stderr and no file; a missing grant exits 1
- * with "could not create image from window" and no file. A non-zero exit with nothing on stderr and no file is the
- * same Escape on macOS releases that report it as exit 1.
+ * with "could not create image from window" and no file. Exit 1 with nothing on stderr and no file is the same Escape
+ * on macOS releases that report it so. Any other silent exit is a failure: the bounded runner's deadline watchdog
+ * exits 124 with nothing on stderr when this event loop runs late, and that is no Escape.
  */
 export function classifyScreenshot(input: {
     status: number | null;
@@ -70,7 +71,7 @@ export function classifyScreenshot(input: {
         return input.outputExists ? { kind: "captured" } : { kind: "cancelled" };
     }
 
-    if (!stderr && !input.outputExists && input.status !== null) {
+    if (!stderr && !input.outputExists && input.status === 1) {
         return { kind: "cancelled" };
     }
 

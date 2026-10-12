@@ -301,6 +301,11 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
                 : "macOS asks next. Choose Allow."
         }
 
+        if status == .addOnly {
+            return "\(appName) can add calendar events but not read them. In System Settings, open Privacy & Security, "
+                + "then Calendars, and choose Full Access for \(appName). This window closes when the grant arrives."
+        }
+
         let location = kind.requestStyle == .probe && kind != .automation
             ? "Privacy & Security, then Files & Folders"
             : "Privacy & Security, then \(kind.title)"

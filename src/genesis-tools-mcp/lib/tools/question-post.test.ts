@@ -611,6 +611,69 @@ describe("question_post item attachments", () => {
         ).rejects.toThrow("item 1: attachment not found");
         expect(existsSync(file)).toBe(false);
     });
+
+    describe("a file that is not a usable image refuses the post, and nothing is stored", () => {
+        function post(dir: string, path: string, assetDir: string) {
+            return handleQuestionPost(
+                {
+                    sessionHint: "sess-1",
+                    items: [
+                        {
+                            type: "decision",
+                            promptMarkdown: "Ship?",
+                            attachments: [{ type: "image", path }],
+                        },
+                    ],
+                },
+                {
+                    ...deps,
+                    transclude: { assetDir },
+                    decisionLog: {
+                        file: join(dir, "decisions.jsonl"),
+                        events: join(dir, "events.jsonl"),
+                        session: "sess-1",
+                    },
+                }
+            );
+        }
+
+        function expectNothingStored(dir: string, assetDir: string) {
+            expect(existsSync(join(dir, "decisions.jsonl"))).toBe(false);
+            expect(existsSync(assetDir) ? readdirSync(assetDir) : []).toEqual([]);
+        }
+
+        test("text bytes under a .png name", async () => {
+            const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-text-"));
+            const fake = join(dir, "after.png");
+            writeFileSync(fake, "this is a note, not a picture");
+
+            await expect(post(dir, fake, join(dir, "assets"))).rejects.toThrow(
+                `item 1: attachment ${fake}: Attachments must contain PNG, JPEG, or WebP image data`
+            );
+            expectNothingStored(dir, join(dir, "assets"));
+        });
+
+        test("a header that claims more pixels than the importer accepts", async () => {
+            const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-huge-"));
+            const huge = join(dir, "huge.png");
+            const bytes = Buffer.from(encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+            bytes.writeUInt32BE(20_000, 16);
+            bytes.writeUInt32BE(20_000, 20);
+            writeFileSync(huge, bytes);
+
+            await expect(post(dir, huge, join(dir, "assets"))).rejects.toThrow("pixel limit");
+            expectNothingStored(dir, join(dir, "assets"));
+        });
+
+        test("a FIFO under a .png name is refused instead of blocking the server", async () => {
+            const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-fifo-"));
+            const fifo = join(dir, "pipe.png");
+            expect(Bun.spawnSync(["mkfifo", fifo], { env: process.env }).exitCode).toBe(0);
+
+            await expect(post(dir, fifo, join(dir, "assets"))).rejects.toThrow("must be a regular file");
+            expectNothingStored(dir, join(dir, "assets"));
+        });
+    });
 });
 
 describe("question_post item validation", () => {

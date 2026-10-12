@@ -250,6 +250,9 @@ public final class WidgetShelfStore: ObservableObject {
     }
 
     private func beginCapture(allowed: Bool) {
+        // The permission gate can take seconds; an import, paste or attach started meanwhile owns the shelf, and a
+        // capture begun now would collapse the widget and show "Cancel capture" for that other operation.
+        guard !stopped, !isBusy else { return }
         isCapturing = true
         onCaptureWillBegin()
         start(success: "Screenshot staged. Choose an inbox when you are ready.") {
@@ -262,11 +265,29 @@ public final class WidgetShelfStore: ObservableObject {
                 guard item.kind == .capture else { throw ToolsBridgeError.refused("Capture returned no image.") }
             } catch {
                 if error is CancellationError || Task.isCancelled { throw error }
+                if WidgetCaptureError.isScreenRecordingDenied(error) { throw CaptureDenied() }
                 let app = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
                     ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "this app"
                 let advice = allowed ? "" : "\nAllow \(app) to record the screen in System Settings → Privacy & Security, then reopen the app."
                 throw ToolsBridgeError.refused(error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines) + advice)
             }
+        }
+    }
+
+    /// The screenshot's own process found no grant: it was revoked after the check, or this process read an old yes.
+    private struct CaptureDenied: Error {}
+
+    /// Opens the permission dialog for a capture macOS refused, as the composer's camera button does; its retry
+    /// captures again once the grant is on. When even the gate reads the grant as on, no dialog can come up, so the
+    /// shelf says where to turn it on instead of retrying into the same refusal.
+    private func recoverScreenRecording() {
+        captureAccessGranted = false
+        notice = "Capture needs Screen Recording. The permission window shows how to allow it."
+        Task { [weak self] in
+            guard let self, await self.permissionGate(self.screenRecordingNeed), !self.stopped else { return }
+            self.notice = nil
+            self.report(ToolsBridgeError.refused(
+                "macOS refused the screenshot: Screen Recording is off for this app. Allow it in System Settings → Privacy & Security, then reopen the app."))
         }
     }
 
@@ -404,6 +425,8 @@ public final class WidgetShelfStore: ObservableObject {
                 guard !self.stopped else { return }
                 if Task.isCancelled || error is CancellationError {
                     self.notice = "Capture cancelled."
+                } else if error is CaptureDenied {
+                    self.recoverScreenRecording()
                 } else {
                     self.report(error)
                 }

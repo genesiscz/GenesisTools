@@ -171,6 +171,73 @@ final class MediaThumbnailCacheTests: XCTestCase {
     }
 }
 
+/// Copy image reads an original the thumbnail pipeline never reads whole, so it answers inside a budget.
+final class MediaImageCopyTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("media-copy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func testAPictureWithinTheBudgetIsPreparedAsTiffAtItsOwnSize() throws {
+        let url = directory.appendingPathComponent("wide.png")
+        try MediaThumbnailCacheTests.writePNG(url, width: 800, height: 400, color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        guard case .image(let tiff) = MediaImageCopy.prepare(path: url.path) else {
+            return XCTFail("A small readable PNG must be prepared")
+        }
+
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiff))
+        XCTAssertEqual(bitmap.pixelsWide, 800)
+        XCTAssertEqual(bitmap.pixelsHigh, 400)
+    }
+
+    func testAFileOverTheByteBudgetIsNeverReadAndTheFileItselfIsOffered() throws {
+        let url = directory.appendingPathComponent("big.png")
+        try MediaThumbnailCacheTests.writePNG(url, width: 64, height: 64, color: CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+        let bytes = try XCTUnwrap(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        guard case .fileOnly(let reason) = MediaImageCopy.prepare(path: url.path, maxBytes: bytes - 1) else {
+            return XCTFail("A file past the byte budget must not become a picture")
+        }
+
+        XCTAssertFalse(reason.isEmpty)
+        guard case .image = MediaImageCopy.prepare(path: url.path, maxBytes: bytes) else {
+            return XCTFail("A file exactly at the budget is still copied")
+        }
+    }
+
+    func testAPictureOverThePixelBudgetIsNeverDecodedAndTheFileItselfIsOffered() throws {
+        let url = directory.appendingPathComponent("many-pixels.png")
+        try MediaThumbnailCacheTests.writePNG(url, width: 800, height: 400, color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        guard case .fileOnly(let reason) = MediaImageCopy.prepare(path: url.path, maxPixels: 319_999) else {
+            return XCTFail("A small file with too many pixels must not be decoded")
+        }
+
+        XCTAssertTrue(reason.contains("800"), reason)
+        guard case .image = MediaImageCopy.prepare(path: url.path, maxPixels: 320_000) else {
+            return XCTFail("A picture exactly at the budget is still copied")
+        }
+    }
+
+    func testWhatIsNotAReadableRegularImageFailsWithAReasonInsteadOfBlockingOrCopying() throws {
+        let text = directory.appendingPathComponent("note.png")
+        try Data("not an image".utf8).write(to: text)
+        let fifo = directory.appendingPathComponent("pipe.png")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        for path in [text.path, fifo.path, directory.path, directory.appendingPathComponent("gone.png").path] {
+            guard case .failed(let reason) = MediaImageCopy.prepare(path: path) else {
+                return XCTFail("\(path) must fail")
+            }
+
+            XCTAssertFalse(reason.isEmpty)
+        }
+    }
+}
+
 @MainActor
 final class MediaPreviewStateTests: XCTestCase {
     private let items = ["a", "b", "c"].map { MediaPreviewItem(id: $0, path: "/fixture/\($0).png") }

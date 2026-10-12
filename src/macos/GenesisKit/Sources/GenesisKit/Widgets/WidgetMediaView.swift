@@ -320,6 +320,16 @@ private struct WidgetVideoPlayer: NSViewRepresentable {
     }
 }
 
+/// Difference mode subtracts pixels, so it needs two images of one size.
+enum WidgetImageDifference {
+    /// Why these two images get no difference picture, or nil when they can be compared.
+    static func notComparedReason(_ first: WidgetImageReference, _ second: WidgetImageReference) -> String? {
+        guard first.width != second.width || first.height != second.height else { return nil }
+        return "These images differ in size (\(first.width) × \(first.height) and \(second.width) × \(second.height)), "
+            + "so they are not compared."
+    }
+}
+
 private struct WidgetImageCompare: View {
     let images: [WidgetImageReference]
     @State var selectedID: String
@@ -332,6 +342,10 @@ private struct WidgetImageCompare: View {
     @State private var failure: String?
     private var first: WidgetImageReference? { images.first { $0.id == selectedID } }
     private var second: WidgetImageReference? { images.first { $0.id == secondID } }
+    private var notCompared: String? {
+        guard let first, let second else { return nil }
+        return WidgetImageDifference.notComparedReason(first, second)
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -366,7 +380,14 @@ private struct WidgetImageCompare: View {
                                 }
                             }
                         } else if mode == "Difference" {
-                            bitmap(difference)
+                            // No difference picture is coming for these two, so a spinner would wait forever.
+                            if let notCompared {
+                                Label(notCompared, systemImage: "rectangle.on.rectangle.slash")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else {
+                                bitmap(difference)
+                            }
                         } else {
                             bitmap(loaded[selectedID])
                         }
@@ -441,7 +462,7 @@ private struct WidgetImageCompare: View {
     }
     private func updateDifference() {
         difference = nil
-        guard let first, let second, first.width == second.width, first.height == second.height,
+        guard let first, let second, notCompared == nil,
             let a = loaded[first.id]?.cgImage(forProposedRect: nil, context: nil, hints: nil),
             let b = loaded[second.id]?.cgImage(forProposedRect: nil, context: nil, hints: nil)
         else { return }

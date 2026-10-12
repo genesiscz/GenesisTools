@@ -195,7 +195,6 @@ public struct FeatureSettingsView: View {
                 Spacer(minLength: 0)
             }.padding(.horizontal, 10).padding(.vertical, 5).contentShape(Rectangle())
         }.buttonStyle(.genHoverRow())
-            .nativeSettingsPointer()
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.09))

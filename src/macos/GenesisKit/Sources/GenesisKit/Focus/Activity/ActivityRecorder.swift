@@ -77,6 +77,9 @@ public final class ActivityRecorder: ObservableObject {
     private let counter = InputCounter()
     /// Where a missing Accessibility grant goes: the GenesisKit permission dialog, once per process after "Not now".
     var permissionPresenter: @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) }
+    /// Starts the input tap; false when it could not. Replaced in tests, because a real tap needs the grants of the
+    /// machine running them.
+    var inputCounterStarter: (InputCounter) -> Bool = { $0.start() }
     private var settings: FocusSettings
     private var segmentId: Int64?
     /// Segments whose close failed (SQLite busy, a write error), with the end they should get. Retried on every
@@ -277,7 +280,7 @@ public final class ActivityRecorder: ObservableObject {
     /// Counting key presses and clicks needs Accessibility. A missing grant opens the permission dialog (an
     /// automatic one: capture starts by itself) instead of leaving the counts silently empty.
     private func startCounter() {
-        if counter.start() { return }
+        if inputCounterStarter(counter) { return }
         guard !PermissionAccess.live.isGranted(.accessibility) else {
             FlowFocusLog.focus.error("input counter tap could not start although Accessibility is granted")
             return
@@ -287,10 +290,14 @@ public final class ActivityRecorder: ObservableObject {
             .accessibility,
             reason: "Focus counts key presses and clicks to measure how active you are. It never records what you type.",
             trigger: .automatic,
-            onGranted: { [weak self] in
-                guard let self, self.isCapturing, self.liveServices, self.pausedUntil == nil else { return }
-                self.startCounter()
-            }))
+            onGranted: { [weak self] in self?.accessibilityWasGranted() }))
+    }
+
+    /// An open gap is a stop on purpose: an excluded app or site counts no input. The probe that closes it starts the
+    /// counter (`applyProbe`), so a grant that arrives meanwhile must not.
+    func accessibilityWasGranted() {
+        guard isCapturing, liveServices, pausedUntil == nil, openGapId == nil else { return }
+        startCounter()
     }
 
     public func resumeCapture() {

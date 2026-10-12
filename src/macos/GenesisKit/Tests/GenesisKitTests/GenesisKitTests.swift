@@ -177,6 +177,19 @@ final class WidgetShelfStoreTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
+    /// Polls until `ready` holds. After 2 s it fails the test and returns false, so a missed step cannot hang the suite.
+    private func pollUntil(_ what: String, _ ready: () -> Bool) async throws -> Bool {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !ready() {
+            guard ContinuousClock.now < deadline else {
+                XCTFail("Timed out after 2 s waiting until \(what)")
+                return false
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        return true
+    }
+
     func testGeneralImportNeverCallsImageOrAttachAndOwnerRejectsConcurrentMutation() async {
         var calls: [[String]] = []
         let store = WidgetShelfStore(request: { args, _ in
@@ -224,6 +237,65 @@ final class WidgetShelfStoreTests: XCTestCase {
         XCTAssertFalse(store.isBusy)
         XCTAssertFalse(store.isCapturing)
         XCTAssertEqual(store.notice, "Capture cancelled.")
+    }
+
+    func testAnImportStartedWhileThePermissionGateRunsKeepsTheShelfAndNoCaptureBegins() async throws {
+        var calls: [[String]] = []
+        var collapses = 0
+        var gate: CheckedContinuation<Bool, Never>?
+        var importing: CheckedContinuation<Void, Never>?
+        let store = WidgetShelfStore(request: { args, _ in
+            calls.append(args)
+            if args.first == "import" { await withCheckedContinuation { importing = $0 } }
+            return self.empty
+        }, screenCaptureAccess: { false }, permissionGate: { _ in
+            await withCheckedContinuation { gate = $0 }
+        }, onCaptureWillBegin: { collapses += 1 })
+        defer { store.stop() }
+
+        store.capture()
+        guard try await pollUntil("the permission gate runs", { gate != nil }) else { return }
+        store.importFiles([URL(fileURLWithPath: "/fixture/report.pdf")])
+        guard try await pollUntil("the import starts", { importing != nil }) else { return }
+        XCTAssertTrue(store.isBusy)
+
+        gate?.resume(returning: true)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(store.isCapturing, "a capture began behind the import and would cancel it")
+        XCTAssertEqual(collapses, 0, "the widget collapsed for a capture that never ran")
+
+        await complete(store) { importing?.resume() }
+        XCTAssertFalse(calls.contains { $0.first == "capture" })
+    }
+
+    func testACaptureMacOSRefusesAfterAPassedCheckOpensThePermissionDialog() async {
+        var needs: [PermissionKind] = []
+        var gateAnswer = false
+        let store = WidgetShelfStore(request: { args, _ in
+            if args.first == "capture" {
+                throw ToolsBridgeError.refused("[screen-recording-denied] Screen Recording is not allowed for this app")
+            }
+            return self.empty
+        }, screenCaptureAccess: { true }, permissionGate: { need in
+            needs.append(need.kind)
+            return gateAnswer
+        })
+        defer { store.stop() }
+
+        // This process read a yes, the screenshot's own process a no: the dialog comes up, not an inline error.
+        await complete(store) { store.capture() }
+        for _ in 0 ..< 100 where needs.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(needs, [.screenRecording], "a refused capture never reached the permission dialog")
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.captureAccessGranted, false)
+        XCTAssertTrue(store.notice?.contains("Screen Recording") == true)
+
+        // The gate reads the grant as on, so no dialog can show: the shelf says where to turn it on, and does not retry.
+        gateAnswer = true
+        await complete(store) { store.capture() }
+        for _ in 0 ..< 100 where store.error == nil { try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(needs, [.screenRecording, .screenRecording])
+        XCTAssertTrue(store.error?.contains("System Settings") == true)
     }
 
     func testWebURLCannotBeMistakenForALocalFilePath() {

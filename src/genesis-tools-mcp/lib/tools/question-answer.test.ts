@@ -194,6 +194,30 @@ describe("inbox_send", () => {
         expect(receipt.warnings[0]).toContain("tools question message");
     });
 
+    it("a relative screenshot through the gateway resolves in the caller's directory, not the gateway's", async () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-images-caller-"));
+        shot(root);
+        const deps = { attachmentsRoot: join(root, "durable"), env: {}, config: quiet };
+        const caller = { agent: "codex" as const, sessionId: "codex-thread", cwd: root };
+
+        const answered = await runAsCaller(caller, () =>
+            handleQuestionAnswer(
+                { question: "Fixed?", answer: "Yes.", tag: "action", images: ["result.png"] },
+                { ...deps, logBase: join(root, "log-answer") }
+            )
+        );
+        const sent = await runAsCaller(caller, () =>
+            handleInboxSend(
+                { text: "Done.", images: ["result.png"] },
+                { ...deps, logBase: join(root, "log-send"), inboxState: "running" }
+            )
+        );
+
+        expect(process.cwd()).not.toBe(root);
+        expect(answered.attachments).toHaveLength(1);
+        expect(sent.attachments).toHaveLength(1);
+    });
+
     it("question_answer takes plain image paths as well", async () => {
         const root = mkdtempSync(join(tmpdir(), "qa-images-shorthand-"));
         const result = await handleQuestionAnswer(

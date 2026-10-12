@@ -195,14 +195,18 @@ public final class ClickyModel: ObservableObject {
         error = "Allow Input Monitoring for \(applicationName) in System Settings, then enable Clicky again."
         stateDidChange?()
         log.notice("Activation needs Input Monitoring permission")
-        presentPermission(inputMonitoringNeed)
+        presentPermission(inputMonitoringNeed(activatesWhenGranted: true))
     }
 
-    private var inputMonitoringNeed: PermissionNeed {
-        PermissionNeed(
+    /// `activatesWhenGranted`: only after the user turned Clicky on. Reviewing the permission from the privacy note
+    /// must not turn it on when the grant arrives; Clicky starts off until the user enables it.
+    private func inputMonitoringNeed(activatesWhenGranted: Bool) -> PermissionNeed {
+        var retry: (@MainActor () -> Void)?
+        if activatesWhenGranted { retry = { [weak self] in self?.activate() } }
+        return PermissionNeed(
             .inputMonitoring,
             reason: "Clicky plays a sound for each key you press. It uses key positions only and never reads what you type.",
-            onGranted: { [weak self] in self?.activate() })
+            onGranted: retry)
     }
 
     public func deactivate() {
@@ -362,7 +366,7 @@ public final class ClickyModel: ObservableObject {
         if inputMonitor.hasPermission {
             PermissionAccess.live.openSettings(.inputMonitoring)
         } else {
-            presentPermission(inputMonitoringNeed)
+            presentPermission(inputMonitoringNeed(activatesWhenGranted: false))
         }
     }
 

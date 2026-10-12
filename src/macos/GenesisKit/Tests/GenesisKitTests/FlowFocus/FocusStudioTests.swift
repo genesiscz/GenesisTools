@@ -732,6 +732,32 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertTrue(try store.gaps(from: 0, to: nowMs() + 1).allSatisfy { $0.endedMs != nil })
     }
 
+    func testAnAccessibilityGrantDuringAnExclusionLeavesTheInputCounterStopped() throws {
+        var settings = FocusSettings()
+        settings.excludedBundles.insert("test.private-app")
+        let recorder = ActivityRecorder(store: store, settings: settings, probeReader: { _, _ in AXFocusProbe.Result() })
+        var starts = 0
+        recorder.inputCounterStarter = { _ in
+            starts += 1
+            return true
+        }
+        recorder.start()
+        defer { recorder.stop() }
+        XCTAssertEqual(starts, 1, "capture starts the counter")
+
+        recorder.applyProbe(.init(title: "Private app fixture", url: nil, displayId: nil),
+                            bundle: "test.private-app", appName: "Private app", settings: settings, idle: false)
+        recorder.accessibilityWasGranted()
+        XCTAssertEqual(starts, 1, "a grant while an excluded app is in front must not count its input")
+
+        recorder.applyProbe(.init(title: "Visible again", url: nil, displayId: nil),
+                            bundle: "test.editor", appName: "Editor", settings: settings, idle: false)
+        XCTAssertEqual(starts, 2, "the allowed probe that ends the exclusion starts the counter again")
+
+        recorder.accessibilityWasGranted()
+        XCTAssertEqual(starts, 3, "with no exclusion open, a grant still restarts the counter")
+    }
+
     func testDelayedProbeCannotReopenCaptureAfterPauseStopOrPrivacyChange() async throws {
         for action in ["pause", "stop", "settings"] {
             let entered = expectation(description: "fixture probe entered for \(action)")

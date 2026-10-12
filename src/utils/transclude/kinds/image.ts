@@ -6,6 +6,11 @@ import { defineTransclusion, TransclusionError } from "../registry";
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".svg", ".bmp", ".tiff"]);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+/** `encodeURI` leaves parentheses alone, and an unbalanced one ends a markdown image destination early. */
+function markdownDestination(path: string): string {
+    return encodeURI(path).replaceAll("(", "%28").replaceAll(")", "%29");
+}
+
 export const imageTransclusion = defineTransclusion({
     name: "image",
     description:
@@ -48,7 +53,7 @@ export const imageTransclusion = defineTransclusion({
 
         if (ctx.preview) {
             return {
-                markdown: `![${alt}](${encodeURI(path)})`,
+                markdown: `![${alt}](${markdownDestination(path)})`,
                 meta: { original: path, stored: null, bytes, preview: true },
             };
         }
@@ -66,7 +71,7 @@ export const imageTransclusion = defineTransclusion({
         }
 
         return {
-            markdown: `![${alt}](${encodeURI(stored)})`,
+            markdown: `![${alt}](${markdownDestination(stored)})`,
             meta: { original: path, stored, bytes, sha256 },
         };
     },

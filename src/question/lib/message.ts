@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import type { SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import type { ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 import { type RecordDeps, recordAnswer } from "./record";
@@ -9,13 +10,15 @@ const MAX_DERIVED_TITLE = 120;
 
 /**
  * Plain image paths (`images`) plus full attachment objects, as one attachment list. A relative path resolves
- * against `cwd` (the agent's worktree for the CLI); the importer then requires it to exist and be PNG/JPEG/WebP.
- * Undefined when neither was given, so the entry keeps `attachments: []` without an import.
+ * against `cwd`, else the caller's directory: the agent's worktree for the CLI, and for a call through a resident
+ * MCP gateway the directory that gateway resolved for this caller, never the gateway process's own. The importer
+ * then requires the file to exist and be PNG/JPEG/WebP. Undefined when neither was given, so the entry keeps
+ * `attachments: []` without an import.
  */
 export function imageInputs({
     images,
     attachments,
-    cwd = process.cwd(),
+    cwd = callerCwd(),
 }: {
     images?: string[];
     attachments?: ImageAttachmentInput[];

@@ -6,6 +6,7 @@ import { type ImageAttachment, MAX_IMAGE_ATTACHMENT_BYTES, MAX_IMAGE_PIXELS } fr
 import { detectImageFormat } from "@genesiscz/utils/image/detect-format";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
 import { logger } from "@genesiscz/utils/logger";
+import { mapOutsideCode } from "@genesiscz/utils/markdown/outside-code";
 import { parseTranscludeText } from "@genesiscz/utils/transclude";
 
 /**
@@ -14,9 +15,15 @@ import { parseTranscludeText } from "@genesiscz/utils/transclude";
  * The widget draws the body with `Text(.init(markdown))`, which shows none of them as a picture, so every one of
  * them becomes a real attachment with the same shape answer cards already carry (`ImageAttachment`), and the
  * markdown image and the token leave the text. A bare path stays in the text: it is usually part of a sentence.
+ * Code spans and fenced blocks are examples, not pictures: nothing in them is lifted or removed.
  */
 
-const MARKDOWN_IMAGE = /!\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+"[^"\n]*")?\s*\)/g;
+/**
+ * The destination is `<…>`, or a run that may hold balanced parentheses (`/tmp/shot(1).png`) down to two levels,
+ * as CommonMark reads it. An unbalanced one needs the `<…>` form or percent-encoding.
+ */
+const MARKDOWN_IMAGE =
+    /!\[([^\]\n]*)\]\(\s*(<[^>\n]+>|(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+)(?:\s+"[^"\n]*")?\s*\)/g;
 const BARE_IMAGE_PATH = /(?<![\w/.:~-])((?:file:\/\/)?\/[^\s"'`<>()[\]{}|]+\.(?:png|jpe?g|webp))(?![\w/])/gi;
 const LIFTABLE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -164,18 +171,23 @@ export function liftCardImages(
             return text;
         }
 
-        let next = liftTokens(text, lift).replace(MARKDOWN_IMAGE, (match, alt: string, target: string) => {
-            const path = localPath(target);
-            return path && lift(path, alt) ? "" : match;
-        });
+        // The token parser skips code on its own; markdown images and bare paths need `mapOutsideCode`.
+        let next = mapOutsideCode(liftTokens(text, lift), (prose) => {
+            const kept = prose.replace(MARKDOWN_IMAGE, (match, alt: string, target: string) => {
+                const path = localPath(target);
+                return path && lift(path, alt) ? "" : match;
+            });
 
-        for (const match of next.matchAll(BARE_IMAGE_PATH)) {
-            const path = localPath(match[1]);
+            for (const match of kept.matchAll(BARE_IMAGE_PATH)) {
+                const path = localPath(match[1]);
 
-            if (path) {
-                lift(path);
+                if (path) {
+                    lift(path);
+                }
             }
-        }
+
+            return kept;
+        });
 
         next = next.replace(/\n{3,}/g, "\n\n").trim();
         return next === text.trim() ? text : next;

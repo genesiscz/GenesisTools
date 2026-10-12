@@ -35,7 +35,8 @@ public struct PermissionSimulation: Equatable, Sendable {
         var ignored: [String] = []
         for raw in (text ?? "").split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" }) {
             let entry = String(raw)
-            let parts = entry.split(separator: ":", maxSplits: 1).map(String.init)
+            // Empty parts stay: dropping them would turn `:` into no parts at all, and `microphone:` into a plain kind.
+            let parts = entry.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
             let mode: Mode
             if parts.count == 2 {
                 guard let parsed = Mode(rawValue: parts[1].lowercased()) else {

@@ -3177,6 +3177,11 @@ test("screenshot classification separates Escape, a missing grant and other fail
     expect(classifyScreenshot({ status: 0, stderr: "", outputExists: true })).toEqual({ kind: "captured" });
     expect(classifyScreenshot({ status: 0, stderr: "", outputExists: false })).toEqual({ kind: "cancelled" });
     expect(classifyScreenshot({ status: 1, stderr: "", outputExists: false })).toEqual({ kind: "cancelled" });
+    // The bounded runner's deadline watchdog exits 124 with nothing on stderr: a failure, not an Escape.
+    expect(classifyScreenshot({ status: 124, stderr: "", outputExists: false })).toEqual({
+        kind: "failed",
+        detail: "exit 124",
+    });
     expect(
         classifyScreenshot({ status: 1, stderr: "could not create image from display", outputExists: false })
     ).toEqual({
@@ -4068,6 +4073,47 @@ describe("inbox card images and agent messages", () => {
         // A path the card already carries (answer attachments) is not added twice.
         const existing = lifted.attachments[0]!;
         expect(liftCardImages([`![again](${embedded})`], [existing]).attachments).toEqual([existing]);
+    });
+
+    test("a markdown image path holding parentheses is lifted whole, however it is written", async () => {
+        const directory = await root();
+        await mkdir(join(directory, "run(2)"));
+        const plain = png(join(directory, "run(2)", "plain(1).png"));
+        const encoded = png(join(directory, "run(2)", "encoded(1).png"));
+        const titled = png(join(directory, "run(2)", "titled(1).png"));
+        const wrapped = png(join(directory, "run(2)", "wrapped(1).png"));
+        const lifted = liftCardImages([
+            `Plain (see below)\n\n![Plain](${plain}) and (more text)`,
+            `![Encoded](${encodeURI(encoded)})`,
+            `![Titled](${titled} "a title")`,
+            `![Wrapped](<${wrapped}>)`,
+        ]);
+
+        expect(lifted.texts).toEqual(["Plain (see below)\n\n and (more text)", "", "", ""]);
+        expect(lifted.attachments.map((image) => [image.path, image.label])).toEqual([
+            [plain, "Plain"],
+            [encoded, "Encoded"],
+            [titled, "Titled"],
+            [wrapped, "Wrapped"],
+        ]);
+    });
+
+    test("image syntax inside code spans and fences stays text, and an image beside it is still lifted", async () => {
+        const directory = await root();
+        const example = png(join(directory, "example.png"));
+        const real = png(join(directory, "real.png"));
+        const literal = [
+            `Write \`![example](${example})\` or \`\`{{image path="${example}"}}\`\` to embed one.`,
+            ["Example:", "", "```md", `![example](${example})`, `{{image path="${example}"}}`, example, "```"].join(
+                "\n"
+            ),
+            ["~~~", `![example](${example})`, "an unclosed fence runs to the end", example].join("\n"),
+        ];
+        const lifted = liftCardImages([...literal, [literal[1], "", `![Real](${real})`].join("\n")]);
+
+        expect(lifted.texts.slice(0, 3)).toEqual(literal);
+        expect(lifted.texts[3]).toBe(literal[1]);
+        expect(lifted.attachments.map((image) => [image.path, image.label])).toEqual([[real, "Real"]]);
     });
 
     test("decision and form cards carry the images of their text as attachments", async () => {

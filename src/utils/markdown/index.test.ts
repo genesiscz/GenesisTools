@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { effectiveLineWidth, renderMarkdownToCli } from "@genesiscz/utils/markdown";
 import { codeLinksToTokens, collapseIncludes, linesToken, resolveIncludes } from "@genesiscz/utils/markdown/includes";
+import { mapOutsideCode } from "@genesiscz/utils/markdown/outside-code";
 
 /**
  * Runs `fn` with `process.stdout.columns` set to `columns`, then puts back exactly what was there:
@@ -270,5 +271,40 @@ describe("markdown includes", () => {
             "a code block already follows the paragraph",
         ]);
         expect(codeLinksToTokens(result.text, { context: 4 }).inserted).toEqual([]);
+    });
+});
+
+describe("mapOutsideCode", () => {
+    it("hands prose over line by line, minus inline code, and leaves fences as written", () => {
+        const seen: string[] = [];
+        const text = [
+            "a `b` c ``d`` e",
+            "```md",
+            "in fence `x`",
+            "```",
+            "~~~",
+            "also fenced",
+            "~~~~",
+            "tail `open",
+        ].join("\n");
+
+        const out = mapOutsideCode(text, (prose) => {
+            seen.push(prose);
+            return prose.toUpperCase();
+        });
+
+        expect(seen).toEqual(["a ", " c ", " e", "tail ", "open"]);
+        expect(out).toBe(
+            ["A `b` C ``d`` E", "```md", "in fence `x`", "```", "~~~", "also fenced", "~~~~", "TAIL `OPEN"].join("\n")
+        );
+    });
+
+    it("a fence closes only on a fence at least as long, and an unclosed one runs to the end", () => {
+        const upper = (prose: string) => prose.toUpperCase();
+
+        expect(mapOutsideCode(["````", "```", "x", "````", "y"].join("\n"), upper)).toBe(
+            ["````", "```", "x", "````", "Y"].join("\n")
+        );
+        expect(mapOutsideCode(["```", "x", "y"].join("\n"), upper)).toBe(["```", "x", "y"].join("\n"));
     });
 });

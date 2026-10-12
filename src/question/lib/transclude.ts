@@ -2,7 +2,11 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { env } from "@genesiscz/utils/env";
-import { parseImageAttachmentInputs } from "@genesiscz/utils/image/attachments";
+import {
+    type ImageAttachmentInput,
+    parseImageAttachmentInputs,
+    readValidatedImage,
+} from "@genesiscz/utils/image/attachments";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
@@ -133,12 +137,32 @@ function quoteParam(value: string): string {
     return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
+async function assertUsableImages(inputs: ImageAttachmentInput[], item: number): Promise<void> {
+    const missing = inputs.filter((input) => !existsSync(input.path)).map((input) => input.path);
+
+    if (missing.length > 0) {
+        throw new Error(`item ${item}: attachment not found: ${missing.join(", ")}`);
+    }
+
+    for (const input of inputs) {
+        try {
+            await readValidatedImage(input.path);
+        } catch (error) {
+            log.debug({ error, path: input.path }, "question attachment refused");
+            throw new Error(
+                `item ${item}: attachment ${input.path}: ${error instanceof Error ? error.message : error}`
+            );
+        }
+    }
+}
+
 /**
  * Turns each item's `attachments` into images at the end of its `promptMarkdown`, through the same `{{image}}` kind
  * an agent can write inline: the file is copied into the question store by content hash and embedded as
  * `![label](stored path)`. The widget lifts those images into the card's preview strip
  * (src/hub/lib/widget/card-images.ts). Runs even with transclusion off, because attachments are explicit, and
- * throws before anything is stored when a file is missing or is not an image.
+ * throws before anything is stored when a file is missing or its bytes are not a PNG, JPEG or WebP image within the
+ * size and pixel limits `question_answer` applies (the `{{image}}` kind itself trusts a file's extension).
  */
 export async function embedItemAttachments({
     items,
@@ -149,21 +173,21 @@ export async function embedItemAttachments({
     cwd: string;
     options?: Partial<Omit<TranscludeOptions, "cwd" | "label">>;
 }): Promise<QuestionItemInput[]> {
+    const parsed = items.map(({ attachments, ...rest }) => ({
+        rest,
+        inputs: attachments?.length ? parseImageAttachmentInputs(attachments) : [],
+    }));
+
+    for (const [index, { inputs }] of parsed.entries()) {
+        await assertUsableImages(inputs, index + 1);
+    }
+
     const out: QuestionItemInput[] = [];
 
-    for (const [index, item] of items.entries()) {
-        const { attachments, ...rest } = item;
-
-        if (!attachments?.length) {
+    for (const [index, { rest, inputs }] of parsed.entries()) {
+        if (inputs.length === 0) {
             out.push(rest);
             continue;
-        }
-
-        const inputs = parseImageAttachmentInputs(attachments);
-        const missing = inputs.filter((input) => !existsSync(input.path)).map((input) => input.path);
-
-        if (missing.length > 0) {
-            throw new Error(`item ${index + 1}: attachment not found: ${missing.join(", ")}`);
         }
 
         const tokens = inputs

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { mkdir, open, unlink } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
@@ -88,7 +89,8 @@ export function parseImageAttachmentInputs(value: unknown): ImageAttachmentInput
 }
 
 async function readBoundedImage(path: string): Promise<Buffer> {
-    const file = await open(path, "r");
+    // O_NONBLOCK: opening a FIFO with no writer would otherwise wait for one forever; a regular file ignores it.
+    const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
         const info = await file.stat();
         if (!info.isFile() || info.size > MAX_IMAGE_ATTACHMENT_BYTES) {
@@ -114,6 +116,30 @@ async function readBoundedImage(path: string): Promise<Buffer> {
     }
 }
 
+type StillFormat = { mime: ImageAttachment["mimeType"]; ext: string };
+
+/** Magic bytes, header preflight and a full decode: a PNG, JPEG or WebP within the pixel limit, whatever its name says. */
+async function validateImageBytes(data: Buffer): Promise<StillFormat & { width: number; height: number }> {
+    const format = detectImageFormat(data);
+    if (!format || (format.mime !== "image/png" && format.mime !== "image/jpeg" && format.mime !== "image/webp")) {
+        throw new Error("Attachments must contain PNG, JPEG, or WebP image data");
+    }
+
+    checkImageDimensions({ data, maxPixels: MAX_IMAGE_PIXELS });
+    const { loadImage } = await import("@napi-rs/canvas");
+    const image = await loadImage(data);
+    if (image.width < 1 || image.height < 1 || image.width * image.height > MAX_IMAGE_PIXELS) {
+        throw new Error("Image attachment must contain between 1 and 48 million pixels");
+    }
+
+    return { mime: format.mime, ext: format.ext, width: image.width, height: image.height };
+}
+
+/** Reads one local file as `importImageAttachments` would, and throws what it would throw, storing nothing. */
+export async function readValidatedImage(path: string): Promise<StillFormat & { width: number; height: number }> {
+    return validateImageBytes(await readBoundedImage(path));
+}
+
 export async function importImageAttachments({
     attachments,
     root = toolDataDir("attachments", "images"),
@@ -130,7 +156,6 @@ export async function importImageAttachments({
         return [];
     }
 
-    const { loadImage } = await import("@napi-rs/canvas");
     const prepared: { attachment: ImageAttachment; data: Buffer }[] = [];
     let totalBytes = 0;
 
@@ -143,17 +168,7 @@ export async function importImageAttachments({
             throw new Error("Image attachments exceed 100 MiB in one message");
         }
 
-        const format = detectImageFormat(data);
-        if (!format || (format.mime !== "image/png" && format.mime !== "image/jpeg" && format.mime !== "image/webp")) {
-            throw new Error("Attachments must contain PNG, JPEG, or WebP image data");
-        }
-
-        checkImageDimensions({ data, maxPixels: MAX_IMAGE_PIXELS });
-        const image = await loadImage(data);
-        if (image.width < 1 || image.height < 1 || image.width * image.height > MAX_IMAGE_PIXELS) {
-            throw new Error("Image attachment must contain between 1 and 48 million pixels");
-        }
-
+        const image = await validateImageBytes(data);
         const id = randomUUID();
         prepared.push({
             data,
@@ -161,8 +176,8 @@ export async function importImageAttachments({
                 ...input,
                 id,
                 name: basename(input.path),
-                path: join(root, `${id}.${format.ext}`),
-                mimeType: format.mime,
+                path: join(root, `${id}.${image.ext}`),
+                mimeType: image.mime,
                 bytes: data.length,
                 width: image.width,
                 height: image.height,

@@ -139,6 +139,18 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(PermissionSimulation.parse("all,accessibility:stale").mode(for: .accessibility), .stale)
     }
 
+    func testSimulationReportsSeparatorOnlyAndHalfWrittenEntriesInsteadOfCrashing() {
+        for entry in [":", "::", ":ask", ":microphone", "microphone:", "all:"] {
+            let simulation = PermissionSimulation.parse(entry)
+            XCTAssertTrue(simulation.isEmpty, "\(entry) must simulate nothing")
+            XCTAssertEqual(simulation.ignored, [entry], "\(entry) must be reported as ignored")
+        }
+
+        let mixed = PermissionSimulation.parse("microphone, :, screen:ask")
+        XCTAssertEqual(mixed.modes, [.microphone: .denied, .screenRecording: .ask])
+        XCTAssertEqual(mixed.ignored, [":"])
+    }
+
     func testSimulationIsReadFromTheDefaultsKey() throws {
         let suite = "dev.genesis.permissions.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -222,6 +234,20 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(center.dialogs[.accessibility]?.primaryAction, .openSettings)
         XCTAssertEqual(center.dialogs[.accessibility]?.title, "Allow Accessibility")
         XCTAssertTrue(center.dialogs[.contacts]?.instructions.contains("administrator") == true)
+    }
+
+    func testAnAddOnlyCalendarSendsTheUserToSettingsWhereFullAccessIsChosen() {
+        let system = FakePermissionSystem()
+        system.statuses[.calendars] = .addOnly
+        let (center, _) = center(system)
+        XCTAssertFalse(center.require(PermissionNeed(.calendars)))
+        let dialog = center.dialogs[.calendars]
+        XCTAssertEqual(dialog?.primaryAction, .openSettings, "macOS asks for full access once; the switch is in Settings")
+        XCTAssertEqual(dialog?.offersCheckAgain, true)
+        let instructions = dialog?.instructions ?? ""
+        XCTAssertTrue(instructions.contains("Full Access"), "turning on an app that is already on changes nothing: \(instructions)")
+        XCTAssertFalse(instructions.contains("turn on"), instructions)
+        XCTAssertTrue(system.requests.isEmpty)
     }
 
     func testContinueAsksInPlaceThenClosesAndRetriesTheFeature() async {
