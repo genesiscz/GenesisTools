@@ -80,7 +80,7 @@ export function renderProfileReport(report: ProfileReport, options: RenderOption
     const runs = report.runs.length;
     out.println(pc.bold(`Profiled: ${report.command.join(" ")}`));
     out.println(
-        `  ${runs} run${runs === 1 ? "" : "s"} · CPU (all threads) median ${median(report.runs.map((run) => run.cpuMs)).toFixed(0)} ms · wall median ${median(report.runs.map((run) => run.wallMs)).toFixed(0)} ms · sampled on the JS thread ${perRunMs(summary.sampledUs, summary.profiles)} ms per run`
+        `  ${runs} run${runs === 1 ? "" : "s"} · CPU (all threads) median ${median(report.runs.map((run) => run.cpuMs)).toFixed(0)} ms · wall median ${median(report.runs.map((run) => run.wallMs)).toFixed(0)} ms · sampled on the JS thread ${perRunMs(summary.sampledUs, summary.profiles)} ms per run (+${perRunMs(summary.idleUs, summary.profiles)} ms waiting, cut)`
     );
 
     const failed = report.runs.filter((run) => run.exitCode !== 0);

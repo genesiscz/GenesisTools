@@ -96,6 +96,8 @@ export interface RepoTreeNode {
 export interface ProfileSummary {
     /** Sampled time of all profiles added together. */
     sampledUs: number;
+    /** Gap time cut from samples because it was an `await` or other time outside JavaScript (see `sampleWeights`). */
+    idleUs: number;
     samples: number;
     profiles: number;
     /** Every function, by self time. */
@@ -124,12 +126,34 @@ function functionOf(frame: CpuProfileCallFrame, repoRoot: string): ProfileFuncti
     return { key: `${name}|${url}|${line}`, name, location, inRepo };
 }
 
-/** How long each sample stands for: the gap to the next sample, and the median gap for the last one. */
-function sampleWeights(profile: CpuProfile): number[] {
+/** Gaps longer than this many sampling intervals (and at least `IDLE_GAP_MIN_US`) are waits, not work. */
+const IDLE_GAP_INTERVALS = 8;
+const IDLE_GAP_MIN_US = 8000;
+
+/**
+ * How long each sample stands for: the gap to the next sample, and the median gap for the last one. Bun records an
+ * `await` as one long gap between two samples, which a plain sum bills to a JavaScript frame as if it worked: on a
+ * script with `await Bun.sleep(500)`, Bun's own markdown report billed 700 ms to a function that worked about
+ * 200 ms (measured 2026-10-12). A gap longer than eight intervals (and 8 ms) counts as one interval of work, and the
+ * rest is reported as idle.
+ */
+function sampleWeights(profile: CpuProfile): { weights: number[]; idleUs: number } {
     const deltas = profile.timeDeltas.map((delta) => Math.max(0, delta));
     const sorted = [...deltas].sort((left, right) => left - right);
     const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-    return deltas.map((_, index) => (index + 1 < deltas.length ? deltas[index + 1] : median));
+    const cap = Math.max(IDLE_GAP_INTERVALS * median, IDLE_GAP_MIN_US);
+    let idleUs = 0;
+    const weights = deltas.map((_, index) => {
+        const gap = index + 1 < deltas.length ? deltas[index + 1] : median;
+
+        if (gap <= cap) {
+            return gap;
+        }
+
+        idleUs += gap - median;
+        return median;
+    });
+    return { weights, idleUs };
 }
 
 /**
@@ -142,6 +166,7 @@ export function summarizeProfiles(profiles: CpuProfile[], repoRoot: string): Pro
     const repoCosts = new Map<string, FunctionCost>();
     const treeRoots: RepoTreeNode[] = [];
     let sampledUs = 0;
+    let idleUs = 0;
     let samples = 0;
 
     const cost = (table: Map<string, FunctionCost>, fn: ProfileFunction) => {
@@ -167,7 +192,8 @@ export function summarizeProfiles(profiles: CpuProfile[], repoRoot: string): Pro
             }
         }
 
-        const weights = sampleWeights(profile);
+        const { weights, idleUs: idle } = sampleWeights(profile);
+        idleUs += idle;
 
         for (const [index, leaf] of profile.samples.entries()) {
             const weight = weights[index] ?? 0;
@@ -238,6 +264,7 @@ export function summarizeProfiles(profiles: CpuProfile[], repoRoot: string): Pro
 
     return {
         sampledUs,
+        idleUs,
         samples,
         profiles: profiles.length,
         functions: [...costs.values()].sort(bySelf),

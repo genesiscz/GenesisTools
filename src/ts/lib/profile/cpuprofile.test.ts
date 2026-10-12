@@ -58,6 +58,25 @@ describe("summarizeProfiles", () => {
     });
 });
 
+describe("await gaps", () => {
+    it("counts a long gap as one interval of work and reports the rest as waiting", () => {
+        const waiting: CpuProfile = {
+            startTime: 0,
+            endTime: 0,
+            nodes: [
+                { id: 1, callFrame: frame("(root)", ""), children: [2] },
+                { id: 2, callFrame: frame("work", `${REPO}/src/work.ts`), children: [] },
+            ],
+            samples: [2, 2, 2, 2, 2],
+            timeDeltas: [0, 1000, 1000, 500_000, 1000],
+        };
+        const summary = summarizeProfiles([waiting], REPO);
+
+        expect(summary.functions[0]).toMatchObject({ selfUs: 5000 });
+        expect(summary.idleUs).toBe(499_000);
+    });
+});
+
 describe("asCpuProfile", () => {
     it("accepts a profile and refuses other JSON", () => {
         expect(asCpuProfile(profile)).not.toBeNull();
