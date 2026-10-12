@@ -21,6 +21,7 @@ import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigCommand } from "@app/git/commands/config";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
+import { registerFsmonitorCommand } from "@app/git/commands/fsmonitor";
 import { registerHealthCommand } from "@app/git/commands/health";
 import { registerMergedCommand } from "@app/git/commands/merged";
 import { registerMonsterCommand } from "@app/git/commands/monster";
@@ -63,6 +64,7 @@ registerConfigCommand(program, storage);
 registerBaseCommand(program, storage);
 registerChangesCommand(program, storage);
 registerWorktreeCommand(program, storage);
+registerFsmonitorCommand(program);
 enhanceHelp(program);
 
 function showHelpFull(): void {
@@ -85,6 +87,7 @@ Commands:
   config                       Per-repo genesis-tools.config.json: show | init | check
   base                         Which branch is this one based on, and which rule decided
   changes                      Uncommitted changes (or the last N commits) grouped by file modification time
+  fsmonitor                    git's file system monitor on globally: status | record | enable | disable
 
 Commits Options:
   --from <YYYY-MM-DD>          Start date (required)
