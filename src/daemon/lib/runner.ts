@@ -1,11 +1,11 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { taskLogDirName } from "./run-log-name";
-import type { DaemonTask, RunResult } from "./types";
+import type { DaemonTask, RunContext, RunResult, TaskPriority } from "./types";
 
 /** This checkout's root, where the `tools` entry lives. */
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
@@ -19,7 +19,8 @@ export function taskPath(inherited: string | undefined): string {
     return [...new Set(parts)].join(delimiter);
 }
 
-const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
+/** A task without `timeoutMs` is killed after this long. */
+export const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 /**
  * The stop contract with a task: on timeout the runner SIGTERMs the task's process group and SIGKILLs it
  * `TASK_SIGTERM_GRACE_MS` later. A task that cleans up on SIGTERM bounds that cleanup by
@@ -84,7 +85,45 @@ async function streamLines(
     }
 }
 
-export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: string): Promise<RunResult> {
+const PERL = "/usr/bin/perl";
+
+/**
+ * Lifts the process out of darwin background (`setpriority(PRIO_DARWIN_PROCESS, 0, 0)`, PRIO_DARWIN_PROCESS = 4),
+ * then execs the task. A process may clear its own background state even when it inherited it, which `taskpolicy -B`
+ * cannot do for another process (measured 2026-10-12: a `taskpolicy -b` child stays at priority 4 after
+ * `taskpolicy -B -p`, and reaches 31 after clearing its own).
+ */
+const RAISE_FROM_BACKGROUND =
+    'setpriority(4, 0, 0) or warn "setpriority: $!\\n"; exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\\n"';
+
+/**
+ * The argv a task runs with, by priority. The launchd job is `ProcessType=Background`, so every child inherits
+ * background QoS (throttled CPU and disk):
+ * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS becomes.
+ * - `normal`: the daemon's QoS, as before priorities existed.
+ * - `high`: the child clears its inherited background state before the command starts, so it is not throttled.
+ *   Without /usr/bin/perl it runs as `normal`.
+ */
+export function taskArgv(command: string, priority: TaskPriority, perlAvailable = existsSync(PERL)): string[] {
+    const shell = ["sh", "-c", command];
+
+    if (priority === "low") {
+        return ["/usr/sbin/taskpolicy", "-b", ...shell];
+    }
+
+    if (priority === "high" && perlAvailable) {
+        return [PERL, "-e", RAISE_FROM_BACKGROUND, ...shell];
+    }
+
+    return shell;
+}
+
+export async function runTask(
+    task: DaemonTask,
+    attempt: number,
+    logsBaseDir: string,
+    context: RunContext = { reason: "scheduled", priority: task.priority ?? "normal" }
+): Promise<RunResult> {
     const runId = crypto.randomUUID().slice(0, 8);
     const taskLogDir = join(logsBaseDir, taskLogDirName(task.name));
     mkdirSync(taskLogDir, { recursive: true });
@@ -102,9 +141,16 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
         attempt,
         startedAt,
         timeoutMs,
+        reason: context.reason,
+        priority: context.priority,
+        ...(context.scheduledFor ? { scheduledFor: context.scheduledFor.toISOString() } : {}),
     });
 
-    logger.info({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] spawning task process");
+    const argv = taskArgv(task.command, context.priority);
+    logger.info(
+        { task: task.name, attempt, timeoutMs, logFile, reason: context.reason, priority: context.priority },
+        "[daemon] spawning task process"
+    );
     logger.debug({ task: task.name, command: task.command }, "[daemon] task command");
 
     // `detached: true` makes the child a process-group leader (POSIX setsid),
@@ -112,7 +158,7 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
     // it, killing the Bun.spawn child only reaps `sh`; a runaway grandchild
     // survives, holds the stdout pipe open, and hangs the result forever.
     const inherited = env.getProcessEnv();
-    const proc = Bun.spawn(["sh", "-c", task.command], {
+    const proc = Bun.spawn(argv, {
         env: { ...inherited, PATH: taskPath(inherited.PATH) },
         stdout: "pipe",
         stderr: "pipe",

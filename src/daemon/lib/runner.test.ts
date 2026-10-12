@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
-import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskPath } from "./runner";
+import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskArgv, taskPath } from "./runner";
 import type { DaemonTask } from "./types";
 
 const tempDirs: string[] = [];
@@ -94,5 +94,61 @@ describe("runTask", () => {
         expect(result.exitCode).toBeNull();
         expect(TASK_SIGTERM_GRACE_MS).toBeGreaterThan(TASK_SIGTERM_CLEANUP_MS);
         expect(elapsedMs).toBeLessThan(timeoutMs + TASK_SIGTERM_GRACE_MS);
+    });
+});
+
+describe("taskArgv", () => {
+    it("runs low under background QoS, normal as the daemon runs, and high out of background", () => {
+        expect(taskArgv("echo hi", "low", true)).toEqual(["/usr/sbin/taskpolicy", "-b", "sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "normal", true)).toEqual(["sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "high", true).slice(0, 2)).toEqual(["/usr/bin/perl", "-e"]);
+        expect(taskArgv("echo hi", "high", true).slice(3)).toEqual(["sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "high", false)).toEqual(["sh", "-c", "echo hi"]);
+    });
+
+    it.skipIf(process.platform !== "darwin")(
+        "a high task started from a background process is not throttled, a low one is",
+        async () => {
+            // The daemon is a launchd Background job; `taskpolicy -b` puts this parent in the same state.
+            const priorityOf = async (priority: "high" | "low"): Promise<number> => {
+                const proc = Bun.spawn(["/usr/sbin/taskpolicy", "-b", ...taskArgv("ps -o pri= -p $$", priority)], {
+                    stdout: "pipe",
+                    stderr: "pipe",
+                });
+                const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+                return Number(stdout.trim());
+            };
+
+            // PRI 4 is darwin background; an unthrottled process sits at the default 31.
+            expect(await priorityOf("low")).toBe(4);
+            expect(await priorityOf("high")).toBeGreaterThan(4);
+        }
+    );
+});
+
+describe("run log meta", () => {
+    it("records why the run happened, its priority and the slot it stands in for", async () => {
+        const logsBaseDir = makeTempDir();
+        const task: DaemonTask = {
+            name: "meta-task",
+            command: "true",
+            every: "every day at 03:00",
+            retries: 0,
+            enabled: true,
+        };
+        const result = await runTask(task, 1, logsBaseDir, {
+            reason: "catch-up",
+            priority: "low",
+            scheduledFor: new Date("2026-10-12T01:00:00.000Z"),
+        });
+        const meta = SafeJSON.parse(readFileSync(result.logFile, "utf8").split("\n")[0] ?? "{}", { strict: true });
+
+        expect(meta).toMatchObject({
+            type: "meta",
+            reason: "catch-up",
+            priority: "low",
+            scheduledFor: "2026-10-12T01:00:00.000Z",
+        });
+        expect(result.exitCode).toBe(0);
     });
 });

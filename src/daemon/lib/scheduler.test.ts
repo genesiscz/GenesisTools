@@ -24,7 +24,9 @@ const runTaskMock = mock(async () => {
     };
 });
 
+import { planAfterRun, planDueRun } from "./missed-run";
 import { dispatchDueTasks, EXIT_OWNERSHIP_LOST, EXIT_WEDGED, jitteredNow, runSchedulerLoop } from "./scheduler";
+import { parseSystemCapabilities } from "./wake";
 
 async function drainActiveRuns(activeRuns: Set<string>): Promise<void> {
     const deadline = Date.now() + 5_000;
@@ -583,5 +585,218 @@ describe("task isolation", () => {
         await drainActiveRuns(activeRuns);
 
         expect(started.filter((name) => name === "quick")).toHaveLength(3);
+    });
+});
+
+describe("missed time-of-day runs", () => {
+    // A fixed local day: the 03:00 slot of 2026-10-12, the Mac asleep until 08:30.
+    const at = (hhmm: string, day = 12) => {
+        const [h, m] = hhmm.split(":").map(Number);
+        return new Date(2026, 9, day, h ?? 0, m ?? 0, 0, 0);
+    };
+    const nightly = (missedRun?: DaemonTask["missedRun"], priority?: DaemonTask["priority"]): DaemonTask => ({
+        name: "nightly",
+        command: "true",
+        every: "every day at 03:00",
+        retries: 0,
+        enabled: true,
+        missedRun,
+        priority,
+    });
+    const asleepSince3 = (): TaskState => ({ nextRunAt: at("03:00"), attemptCount: 0, running: false });
+
+    test("on time it runs as scheduled, whatever the policy", () => {
+        const plan = planDueRun({
+            task: nightly({ mode: "skip" }),
+            state: asleepSince3(),
+            now: at("03:01"),
+            fullWake: false,
+        });
+        expect(plan).toMatchObject({ action: "run", reason: "scheduled", priority: "normal" });
+    });
+
+    test("asap (the default) catches up at the first tick after the wake", () => {
+        const plan = planDueRun({ task: nightly(), state: asleepSince3(), now: at("08:30"), fullWake: false });
+        expect(plan).toMatchObject({ action: "run", reason: "catch-up", priority: "normal" });
+    });
+
+    test("skip waits for the next regular slot", () => {
+        const plan = planDueRun({
+            task: nightly({ mode: "skip" }),
+            state: asleepSince3(),
+            now: at("08:30"),
+            fullWake: true,
+        });
+        expect(plan).toEqual({ action: "skip", next: at("03:00", 13), why: expect.any(String) });
+    });
+
+    test("on-wake does not start in a DarkWake, and runs at low priority at the first full wake", () => {
+        const task = nightly({ mode: "on-wake" }, "high");
+        const dark = planDueRun({ task, state: asleepSince3(), now: at("04:10"), fullWake: false });
+        expect(dark).toMatchObject({
+            action: "defer",
+            reason: "catch-up",
+            until: new Date(at("04:10").getTime() + 60_000),
+        });
+
+        const waiting: TaskState = {
+            ...asleepSince3(),
+            nextRunAt: at("04:11"),
+            reason: "catch-up",
+            slotAt: at("03:00"),
+        };
+        expect(planDueRun({ task, state: waiting, now: at("04:11"), fullWake: false }).action).toBe("defer");
+        expect(planDueRun({ task, state: waiting, now: at("08:30"), fullWake: true })).toMatchObject({
+            action: "run",
+            reason: "catch-up",
+            priority: "low",
+            scheduledFor: at("03:00"),
+        });
+    });
+
+    test("retry-at runs at 10:00, retries at 12:00 after a failure, then waits for the next night", () => {
+        const task = nightly({ mode: "retry-at", times: ["10:00", "12:00"] });
+        const missed = planDueRun({ task, state: asleepSince3(), now: at("08:30"), fullWake: true });
+        expect(missed).toMatchObject({
+            action: "defer",
+            until: at("10:00"),
+            reason: "catch-up",
+            retryQueue: [at("12:00").getTime()],
+        });
+
+        const state: TaskState = {
+            nextRunAt: at("10:00"),
+            attemptCount: 0,
+            running: false,
+            reason: "catch-up",
+            slotAt: at("03:00"),
+            retryQueue: [at("12:00").getTime()],
+        };
+        expect(planDueRun({ task, state, now: at("10:00"), fullWake: true })).toMatchObject({
+            action: "run",
+            reason: "catch-up",
+        });
+
+        const afterFailure = planAfterRun({ task, state, ok: false, now: at("10:02") });
+        expect(afterFailure).toEqual({ nextRunAt: at("12:00"), reason: "retry", slotAt: at("03:00"), retryQueue: [] });
+
+        const retrying: TaskState = { ...state, ...afterFailure };
+        expect(planDueRun({ task, state: retrying, now: at("12:00"), fullWake: true })).toMatchObject({
+            action: "run",
+            reason: "retry",
+            scheduledFor: at("03:00"),
+        });
+        expect(planAfterRun({ task, state: retrying, ok: false, now: at("12:01") })).toEqual({
+            nextRunAt: at("03:00", 13),
+            reason: "scheduled",
+            slotAt: at("03:00", 13),
+        });
+        expect(planAfterRun({ task, state, ok: true, now: at("10:02") }).nextRunAt).toEqual(at("03:00", 13));
+    });
+
+    test("retry-at runs at once when every retry time of the day has passed", () => {
+        const task = nightly({ mode: "retry-at", times: ["10:00", "12:00"] });
+        expect(planDueRun({ task, state: asleepSince3(), now: at("13:00"), fullWake: true })).toMatchObject({
+            action: "run",
+            reason: "catch-up",
+        });
+    });
+
+    test("an interval task is never a catch-up", () => {
+        const task: DaemonTask = { ...nightly({ mode: "skip" }), every: "every 15 minutes" };
+        expect(planDueRun({ task, state: asleepSince3(), now: at("08:30"), fullWake: false })).toMatchObject({
+            action: "run",
+            reason: "scheduled",
+        });
+    });
+
+    test("the full-wake check reads the graphics capability of IOPMrootDomain", () => {
+        expect(parseSystemCapabilities('    "System Capabilities" = 15\n')).toBe(15);
+        expect(parseSystemCapabilities('    "System Capabilities" = 9\n')).toBe(9);
+        expect(parseSystemCapabilities("no such key")).toBeNull();
+    });
+});
+
+describe("dispatch with priorities and missed runs", () => {
+    function capture() {
+        const started: Array<{ name: string; context: unknown }> = [];
+        const run = mock(async (task: DaemonTask, _attempt: number, _logs: string, context?: unknown) => {
+            started.push({ name: task.name, context });
+            return { exitCode: 0, duration_ms: 1, logFile: "/tmp/test.jsonl" } satisfies RunResult;
+        });
+        return { started, run };
+    }
+
+    test("tasks due together start high, then normal, then low", async () => {
+        const { started, run } = capture();
+        const now = new Date();
+        const task = (name: string, priority?: DaemonTask["priority"]): DaemonTask => ({
+            name,
+            command: "true",
+            every: "every 5 minutes",
+            retries: 0,
+            enabled: true,
+            notify: false,
+            priority,
+        });
+        const tasks = [task("bulk", "low"), task("plain"), task("urgent", "high")];
+        const taskStates = new Map(tasks.map((t) => [t.name, { nextRunAt: now, attemptCount: 0, running: false }]));
+        const activeRuns = new Set<string>();
+
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now, notify: noopNotify, runTask: run });
+        await drainActiveRuns(activeRuns);
+
+        expect(started.map((s) => s.name)).toEqual(["urgent", "plain", "bulk"]);
+        expect(started.map((s) => (s.context as { priority: string }).priority)).toEqual(["high", "normal", "low"]);
+    });
+
+    test("a DarkWake does not start an on-wake catch-up; the first full wake runs it at low priority as a catch-up", async () => {
+        const { started, run } = capture();
+        const slot = new Date(Date.now() - 5 * 3_600_000);
+        const task: DaemonTask = {
+            name: "nightly",
+            command: "true",
+            every: `every day at ${String(slot.getHours()).padStart(2, "0")}:${String(slot.getMinutes()).padStart(2, "0")}`,
+            retries: 0,
+            enabled: true,
+            notify: false,
+            missedRun: { mode: "on-wake" },
+        };
+        const state: TaskState = { nextRunAt: new Date(slot.setSeconds(0, 0)), attemptCount: 0, running: false };
+        const taskStates = new Map([[task.name, state]]);
+        const activeRuns = new Set<string>();
+        const now = new Date();
+
+        dispatchDueTasks({
+            tasks: [task],
+            taskStates,
+            activeRuns,
+            logsBaseDir,
+            now,
+            notify: noopNotify,
+            runTask: run,
+            fullWake: false,
+        });
+        expect(started).toHaveLength(0);
+        expect(state.reason).toBe("catch-up");
+
+        const later = new Date(state.nextRunAt.getTime());
+        dispatchDueTasks({
+            tasks: [task],
+            taskStates,
+            activeRuns,
+            logsBaseDir,
+            now: later,
+            notify: noopNotify,
+            runTask: run,
+            fullWake: true,
+        });
+        await drainActiveRuns(activeRuns);
+
+        expect(started).toHaveLength(1);
+        expect(started[0]?.context).toMatchObject({ reason: "catch-up", priority: "low" });
+        // After the catch-up the task waits for its next regular slot, tomorrow.
+        expect(state.reason).toBeUndefined();
+        expect(state.nextRunAt.getTime()).toBeGreaterThan(Date.now());
     });
 });

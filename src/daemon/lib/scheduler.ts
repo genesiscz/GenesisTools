@@ -4,9 +4,11 @@ import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";
+import { latestSlotAtOrBefore, missedRunOf, PRIORITY_RANK, planAfterRun, planDueRun, priorityOf } from "./missed-run";
 import { pruneTaskRunLogs } from "./retention";
 import { runTask } from "./runner";
-import type { DaemonTask, TaskState } from "./types";
+import type { DaemonTask, RunContext, TaskState } from "./types";
+import { isFullWake, WAKE_CHECK_TIMEOUT_MS } from "./wake";
 
 const { log } = logger.scoped("daemon");
 
@@ -57,6 +59,8 @@ export type SchedulerResilienceOptions = {
     runTask?: RunTaskFn;
     /** Test seam for config loading. */
     loadConfig?: LoadConfigFn;
+    /** Test seam for the full-wake check an `on-wake` catch-up waits for. */
+    fullWake?: () => Promise<boolean>;
 };
 
 /** Scheduler's scoped logger — exported for tests that spy on log calls. */
@@ -113,6 +117,7 @@ export async function runSchedulerLoop(
     const notify = resilience.notify ?? dispatchNotification;
     const runTaskImpl = resilience.runTask ?? runTask;
     const loadConfigImpl = resilience.loadConfig ?? loadConfig;
+    const fullWakeImpl = resilience.fullWake ?? isFullWake;
 
     // Jul 6 incident: the old `process.once` handler only flipped `running`,
     // so a loop wedged inside an await made the daemon unkillable by SIGTERM
@@ -217,6 +222,15 @@ export async function runSchedulerLoop(
 
                 syncTaskStates(taskStates, config.tasks);
 
+                // Asked only while an `on-wake` task is due, since the check costs a process spawn.
+                const fullWake = waitsForWake(config.tasks, taskStates, now)
+                    ? await withTimeout(
+                          fullWakeImpl(),
+                          WAKE_CHECK_TIMEOUT_MS,
+                          new Error("the full-wake check timed out")
+                      )
+                    : true;
+
                 dispatchDueTasks({
                     tasks: config.tasks,
                     taskStates,
@@ -225,6 +239,7 @@ export async function runSchedulerLoop(
                     now,
                     notify,
                     runTask: runTaskImpl,
+                    fullWake,
                 });
 
                 const sleepMs = getNextWakeupMs(taskStates, config.tasks);
@@ -275,6 +290,14 @@ export async function runSchedulerLoop(
     }
 }
 
+/** An enabled `on-wake` task is due now, so this tick has to know whether the Mac is fully awake. */
+function waitsForWake(tasks: DaemonTask[], taskStates: Map<string, TaskState>, now: Date): boolean {
+    return tasks.some((task) => {
+        const state = taskStates.get(task.name);
+        return task.enabled && missedRunOf(task).mode === "on-wake" && state !== undefined && now >= state.nextRunAt;
+    });
+}
+
 export function dispatchDueTasks(options: {
     tasks: DaemonTask[];
     taskStates: Map<string, TaskState>;
@@ -285,6 +308,8 @@ export function dispatchDueTasks(options: {
     notify?: NotifyFn;
     /** Task-runner seam — tests inject a stub here instead of a leaking `mock.module`. */
     runTask?: RunTaskFn;
+    /** The Mac is fully awake, not in a DarkWake. Only an `on-wake` catch-up waits for it. Default: true. */
+    fullWake?: boolean;
 }): void {
     const {
         tasks,
@@ -294,28 +319,57 @@ export function dispatchDueTasks(options: {
         now = new Date(),
         notify = dispatchNotification,
         runTask: runTaskImpl = runTask,
+        fullWake = true,
     } = options;
 
-    for (const task of tasks) {
-        if (!task.enabled) {
-            continue;
-        }
+    // Several tasks due in one tick start in priority order (stable within a priority).
+    const due = tasks
+        .filter((task) => {
+            const state = taskStates.get(task.name);
+            return task.enabled && !activeRuns.has(task.name) && state !== undefined && now >= state.nextRunAt;
+        })
+        .sort((a, b) => PRIORITY_RANK[priorityOf(a)] - PRIORITY_RANK[priorityOf(b)]);
 
-        if (activeRuns.has(task.name)) {
-            continue;
-        }
-
+    for (const task of due) {
         const state = taskStates.get(task.name);
 
-        if (!state || now < state.nextRunAt) {
+        if (!state) {
+            continue;
+        }
+
+        const plan = planDueRun({ task, state, now, fullWake });
+
+        if (plan.action === "defer") {
+            state.slotAt = state.slotAt ?? state.nextRunAt;
+            state.nextRunAt = plan.until;
+            state.reason = plan.reason;
+            state.retryQueue = plan.retryQueue ?? state.retryQueue;
+            log.info(
+                { task: task.name, until: plan.until.toISOString(), slot: state.slotAt.toISOString(), why: plan.why },
+                "[daemon] missed run deferred"
+            );
+            continue;
+        }
+
+        if (plan.action === "skip") {
+            log.info({ task: task.name, next: plan.next.toISOString(), why: plan.why }, "[daemon] missed run skipped");
+            state.nextRunAt = plan.next;
+            state.slotAt = plan.next;
+            state.reason = undefined;
+            state.retryQueue = undefined;
             continue;
         }
 
         activeRuns.add(task.name);
         state.running = true;
         const scheduledAt = state.nextRunAt;
+        const context: RunContext = { reason: plan.reason, priority: plan.priority, scheduledFor: plan.scheduledFor };
+        let ok = false;
 
-        executeTask(task, logsBaseDir, notify, runTaskImpl, { state, at: now.getTime() })
+        executeTask(task, logsBaseDir, notify, runTaskImpl, { state, at: now.getTime() }, context)
+            .then((succeeded) => {
+                ok = succeeded;
+            })
             .catch((err) => {
                 log.error({ err, task: task.name }, "[daemon] task execution error");
             })
@@ -328,8 +382,17 @@ export function dispatchDueTasks(options: {
 
                     try {
                         const parsed = parseInterval(task.every);
-                        const next = computeNextRunAt(parsed, scheduledAt);
-                        s.nextRunAt = next < new Date() ? new Date() : next;
+
+                        if (parsed.isTimeOfDay) {
+                            const after = planAfterRun({ task, state: s, ok, now: new Date() });
+                            s.nextRunAt = after.nextRunAt;
+                            s.reason = after.reason === "scheduled" ? undefined : after.reason;
+                            s.slotAt = after.slotAt;
+                            s.retryQueue = after.retryQueue;
+                        } else {
+                            const next = computeNextRunAt(parsed, scheduledAt);
+                            s.nextRunAt = next < new Date() ? new Date() : next;
+                        }
                     } catch (err) {
                         s.nextRunAt = new Date(Date.now() + 60_000);
                         log.error(
@@ -342,15 +405,17 @@ export function dispatchDueTasks(options: {
     }
 }
 
+/** Runs a task with its retries; true when an attempt succeeded. */
 async function executeTask(
     task: DaemonTask,
     logsBaseDir: string,
     notify: NotifyFn,
     runTaskImpl: RunTaskFn,
-    streak: StreakContext
-): Promise<void> {
+    streak: StreakContext,
+    context: RunContext
+): Promise<boolean> {
     try {
-        await runAttempts(task, logsBaseDir, notify, runTaskImpl, streak);
+        return await runAttempts(task, logsBaseDir, notify, runTaskImpl, streak, context);
     } finally {
         // Not awaited: the task stays in `activeRuns` until this function returns, and a prune on a throttled
         // disk took up to 82 s, which would push the task's next run back by as much. Overlapping prunes of one
@@ -374,8 +439,9 @@ async function runAttempts(
     logsBaseDir: string,
     notify: NotifyFn,
     runTaskImpl: RunTaskFn,
-    { state, at }: StreakContext
-): Promise<void> {
+    { state, at }: StreakContext,
+    context: RunContext
+): Promise<boolean> {
     const maxAttempts = task.retries + 1;
 
     const notifyProgress = task.notify === undefined || task.notify === true;
@@ -392,11 +458,19 @@ async function runAttempts(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         log.info(
-            { task: task.name, attempt, maxAttempts, timeoutMs: task.timeoutMs, notify: task.notify ?? true },
+            {
+                task: task.name,
+                attempt,
+                maxAttempts,
+                timeoutMs: task.timeoutMs,
+                notify: task.notify ?? true,
+                reason: context.reason,
+                priority: context.priority,
+            },
             "[daemon] running task"
         );
 
-        const result = await runTaskImpl(task, attempt, logsBaseDir);
+        const result = await runTaskImpl(task, attempt, logsBaseDir, context);
 
         if (result.exitCode === 0) {
             log.info(
@@ -415,7 +489,7 @@ async function runAttempts(
                 });
             }
 
-            return;
+            return true;
         }
 
         log.warn(
@@ -454,6 +528,8 @@ async function runAttempts(
             "[daemon] failure banner skipped, the streak was announced"
         );
     }
+
+    return false;
 }
 
 async function initializeTaskStates(
@@ -471,20 +547,28 @@ async function initializeTaskStates(
     for (const task of config.tasks) {
         const parsed = parseInterval(task.every);
         const runs = listRunsForTask(logsBaseDir, task.name, 1);
+        const now = new Date();
         let nextRunAt: Date;
+        let slotAt: Date | undefined;
 
         if (runs.length > 0) {
             const lastRun = new Date(runs[0].startedAt);
             nextRunAt = computeNextRunAt(parsed, lastRun);
 
-            if (nextRunAt < new Date()) {
-                nextRunAt = new Date();
+            if (nextRunAt < now && parsed.isTimeOfDay) {
+                // A slot passed while the daemon was down: keep the latest one, so the dispatch sees it as missed and
+                // applies the task's missed-run policy (one catch-up, however many slots passed).
+                nextRunAt = latestSlotAtOrBefore(parsed, now);
+            } else if (nextRunAt < now) {
+                nextRunAt = now;
             }
+
+            slotAt = parsed.isTimeOfDay ? nextRunAt : undefined;
         } else {
             nextRunAt = jitteredNow(task.name);
         }
 
-        taskStates.set(task.name, { nextRunAt, attemptCount: 0, running: false });
+        taskStates.set(task.name, { nextRunAt, attemptCount: 0, running: false, slotAt });
         log.debug({ task: task.name, nextRunAt: nextRunAt.toISOString() }, "[daemon] initialized task state");
     }
 }

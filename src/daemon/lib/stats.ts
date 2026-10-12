@@ -9,7 +9,14 @@ import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { listTasksWithLogs, parseLogFile } from "./log-reader";
 import { RUN_LOG_RE, taskLogDirName } from "./run-log-name";
-import type { DaemonTask, LogLine } from "./types";
+import type { DaemonTask, LogLine, RunReason } from "./types";
+
+const RUN_REASONS: readonly RunReason[] = ["scheduled", "catch-up", "retry"];
+
+/** A meta record's `reason`, or null when the log predates reasons or holds something else. */
+function runReason(value: unknown): RunReason | null {
+    return RUN_REASONS.find((reason) => reason === value) ?? null;
+}
 
 /**
  * `tools daemon stats --json` contract (version 1). The GenesisTools settings window's Daemon pane reads it,
@@ -84,6 +91,8 @@ export interface StatsRun {
     logFile: string;
     /** The last stderr lines, oldest first; null when this report did not read the run's output. */
     stderrTail: string[] | null;
+    /** Why the run happened (scheduled, catch-up, retry); null in logs written before reasons existed. */
+    reason: RunReason | null;
 }
 
 export interface DurationBucket {
@@ -358,6 +367,7 @@ function readTaskRuns(opts: { logsBaseDir: string; dir: string; task: string; wi
                 ...classify(exit),
                 logFile,
                 stderrTail: null,
+                reason: runReason(meta.reason),
             });
         } catch (err) {
             unreadable++;
@@ -595,6 +605,7 @@ export function readRunOutput(opts: { logsBaseDir: string; runId: string; task?:
                 ...classify(exit ? { ...exit } : null),
                 logFile,
                 stderrTail: null,
+                reason: runReason(meta?.reason),
             },
             lines,
         };
