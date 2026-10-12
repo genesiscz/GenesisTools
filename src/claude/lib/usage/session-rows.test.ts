@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerUsageCommand } from "@app/claude/commands/usage";
 import type { SessionMetadataRecord } from "@genesiscz/utils/claude/history-cache";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 
 const MIN = 60 * 1000;
@@ -170,6 +171,19 @@ describe("listSessionRows", () => {
         const reads = tailReads.length;
         expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBe("opus");
         expect(tailReads.length).toBe(reads);
+    });
+
+    test("refresh false (a diagnostic) reads tails but never writes the tail cache file", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "rows-dry-")), "dry-run.jsonl");
+        writeFileSync(path, `${OPUS_LINE}\n`);
+        listing.sessions = [record({ filePath: path, sessionId: "dry-run-id", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE]);
+        const cacheFile = toolDataDir("claude", "cache", "session-tail-usage.json");
+
+        const [row] = await listSessionRows({ hours: 6, now: NOW, refresh: false });
+
+        expect(row?.model).toBe("opus");
+        expect(existsSync(cacheFile) ? readFileSync(cacheFile, "utf8").includes(path) : false).toBe(false);
     });
 
     test("withUsage false reads no transcript tail and keeps who and where", async () => {

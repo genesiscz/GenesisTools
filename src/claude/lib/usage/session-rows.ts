@@ -465,7 +465,10 @@ export async function listSessionRowsWithTimings(
             usages.push(...batchUsages);
         }
 
-        await tailCache.save();
+        // `refresh: false` is a diagnostic (a dry run, `hub rules test`): it may read and compute, never write.
+        if (opts.refresh !== false) {
+            await tailCache.save();
+        }
     });
 
     const tailMs = performance.now() - tailStarted;
