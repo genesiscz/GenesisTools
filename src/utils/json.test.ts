@@ -72,6 +72,22 @@ describe("SafeJSON", () => {
         });
         expect(result).toEqual({ a: 1 });
     });
+
+    it("a reviver that throws runs once and its error reaches the caller", () => {
+        let calls = 0;
+        const reviver = (key: string | number, value: unknown) => {
+            calls++;
+
+            if (key === "a") {
+                throw new Error("reviver refused a");
+            }
+
+            return value;
+        };
+
+        expect(() => SafeJSON.parse('{"a":1}', reviver)).toThrow("reviver refused a");
+        expect(calls).toBe(1);
+    });
 });
 
 describe("parseJSON", () => {

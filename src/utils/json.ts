@@ -23,12 +23,18 @@ type StringifyOptions = {
  * A text that neither parser accepts throws comment-json's error, as before.
  */
 function parseTolerant(text: string, reviver: Reviver | null | undefined, noComments?: boolean): unknown {
+    // A reviver keeps the comment-json path: under the native parser, a reviver that throws would be retried there,
+    // running its side effects twice and turning its error into whatever the second run returns.
+    if (reviver) {
+        return parse(text, reviver, noComments);
+    }
+
     try {
         // biome-ignore lint/style/noRestrictedGlobals: the native parser is the fast path for plain JSON
-        return JSON.parse(text, reviver ?? undefined);
+        return JSON.parse(text);
     } catch {
         // Not plain JSON: comment-json either parses it (comments, trailing commas) or throws the error callers see.
-        return parse(text, reviver, noComments);
+        return parse(text, null, noComments);
     }
 }
 
