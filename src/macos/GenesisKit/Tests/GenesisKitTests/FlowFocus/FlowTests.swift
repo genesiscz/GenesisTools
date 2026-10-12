@@ -1,4 +1,5 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FlowTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
+import AppKit
 import AVFoundation
 import XCTest
 @testable import GenesisKit
@@ -396,11 +397,13 @@ final class FlowTests: XCTestCase {
     @MainActor
     func testTrailingGraceOutsideItsRangeIsRefusedBeforeItIsStored() throws {
         func decode(_ grace: String) throws -> FlowConfig {
-            try JSONDecoder().decode(FlowConfig.self, from: Data("{\"trailingGraceMs\": \(grace)}".utf8))
+            try JSONDecoder().decode(FlowConfig.self, from: Data("{\"trailingGraceMs\": \(grace), \"localeIdentifier\": \"cs-CZ\"}".utf8))
         }
-        XCTAssertThrowsError(try decode("18446744073710"), "a value that would trap on key release")
-        XCTAssertThrowsError(try decode("5000"))
-        XCTAssertThrowsError(try decode("-1"))
+        // A configuration saved before the range existed is migrated into it, keeping every other setting.
+        XCTAssertEqual(try decode("18446744073710").trailingGraceMs, 2_000, "a value that would trap on key release")
+        XCTAssertEqual(try decode("5000").trailingGraceMs, 2_000)
+        XCTAssertEqual(try decode("5000").localeIdentifier, "cs-CZ", "the rest of the stored configuration survives")
+        XCTAssertEqual(try decode("-1").trailingGraceMs, 0)
         XCTAssertEqual(try decode("2000").trailingGraceMs, 2_000)
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-grace-\(UUID())")
@@ -409,6 +412,47 @@ final class FlowTests: XCTestCase {
         session.config.trailingGraceMs = 60_000
         XCTAssertEqual(session.config.trailingGraceMs, 350, "the owner's setter keeps the previous value")
         XCTAssertNotNil(session.lastError)
+    }
+
+    @MainActor
+    func testACopyMadeWhileTheTargetActivatesIsNeverPasted() async {
+        let board = NSPasteboard(name: NSPasteboard.Name("flow-test-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        var pasted = 0
+        let target = FlowFocusTarget(bundleIdentifier: "test.target", localizedName: "Target", processIdentifier: 4242)
+        var seams = FlowInjector.Seams()
+        seams.pasteboard = board
+        // Another process copies something while the target is being activated.
+        seams.reactivate = { _ in
+            board.clearContents()
+            board.setString("copied meanwhile", forType: .string)
+            return true
+        }
+        seams.trusted = { true }
+        seams.frontmost = { 4242 }
+        seams.paste = { pasted += 1 }
+        let replaced = await FlowInjector.inject("fixture transcript", into: target, usePaste: true,
+                                                 restoreClipboard: false, seams: seams)
+        XCTAssertEqual(replaced, .clipboardChanged)
+        XCTAssertEqual(pasted, 0, "the copy made during activation is never pasted as the transcript")
+
+        seams.reactivate = { _ in true }
+        let landed = await FlowInjector.inject("fixture transcript", into: target, usePaste: true,
+                                               restoreClipboard: false, seams: seams)
+        XCTAssertEqual(landed, .injected, "an untouched clipboard still pastes")
+        XCTAssertEqual(pasted, 1)
+    }
+
+    @MainActor
+    func testAPasteWithheldForAChangedClipboardIsNotShownAsInserted() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-clipboard-changed-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.injectEffect = { _ in .clipboardChanged }
+        await session.completeTurn(raw: "withheld fixture")
+        XCTAssertNil(session.lastInjected, "nothing was pasted and nothing is on the clipboard")
+        XCTAssertEqual(session.history.first?.text, "withheld fixture", "history keeps the transcript")
+        XCTAssertEqual(session.history.first?.injected, false)
     }
 
     @MainActor

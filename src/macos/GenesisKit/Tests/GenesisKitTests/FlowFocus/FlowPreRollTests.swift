@@ -266,6 +266,55 @@ final class FlowPreRollTests: XCTestCase {
     }
 
     @MainActor
+    func testClearingHistoryWhileAHoldFinalizesKeepsItsWords() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: try filled(0.5)))
+        recognizer.recognizes = false
+        recognizer.retryOnEmpty = false
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        recognizer.recordRecognizedForTesting("words already heard")
+        // Capture has stopped once finish() begins; it then waits for the final result.
+        recognizer.recognizes = true
+        let finishing = Task { await recognizer.finish(timeoutSeconds: 0.3) }
+        for _ in 0..<100 { await Task.yield() }
+        // What clearing history (or deleting the latest entry) does meanwhile.
+        recognizer.clearTranscript()
+        let text = await finishing.value
+        XCTAssertEqual(text, "words already heard", "the finalizing hold keeps the words it already recognized")
+    }
+
+    @MainActor
+    func testAnOlderFinishReturningDoesNotExposeTheNewerHoldsWords() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: try filled(0.5)))
+        recognizer.recognizes = false
+        recognizer.retryOnEmpty = false
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        // The first hold is released with a tail, and cancelled while the tail runs.
+        let older = Task { await recognizer.finish(timeoutSeconds: 0.1, tailMs: 200) }
+        // Cancel only once the older finish is inside its tail; cancelled earlier, it would return at its first guard.
+        for _ in 0..<1_000 where recognizer.finishCallsRunning == 0 { await Task.yield() }
+        XCTAssertEqual(recognizer.finishCallsRunning, 1, "the older finish is in its tail")
+        recognizer.cancel()
+        // The next hold starts and finishes while the older finish is still in its tail.
+        try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        recognizer.recordRecognizedForTesting("the newer hold's words")
+        recognizer.recognizes = true
+        let newer = Task { await recognizer.finish(timeoutSeconds: 0.8) }
+        _ = await older.value
+        // History is cleared after the older finish returned, while the newer one still waits.
+        recognizer.clearTranscript()
+        let text = await newer.value
+        XCTAssertEqual(text, "the newer hold's words")
+    }
+
+    @MainActor
     func testPreRollLeadsTheRetryClipAndACancelledHoldKeepsNoAudio() throws {
         let live = try filled(0.9)
         let preRoll = try filled(0.1)

@@ -24,6 +24,9 @@ public struct FocusSettings: Equatable {
     public var urlMode: URLMode = .host
     public var idleThresholdSec = 120
     public var retentionDays = 365
+    /// Up to a hundred years. A larger stored value is clamped to the top of the range, which keeps more
+    /// history and cannot overflow the cutoff arithmetic.
+    public static let retentionRange = 1...36_500
     public var interruptionThresholdSec = 45
     /// `time` shows the countdown, `dot` only the phase dot, `off` removes the item.
     public var menuBarStyle = "time"
@@ -61,7 +64,7 @@ public struct FocusSettings: Equatable {
         if let raw = focus["titleMode"] as? String, let mode = TitleMode(rawValue: raw) { settings.titleMode = mode }
         if let raw = focus["urlMode"] as? String, let mode = URLMode(rawValue: raw) { settings.urlMode = mode }
         if let value = focus["idleThresholdSec"] as? Int, value > 0 { settings.idleThresholdSec = value }
-        if let value = focus["retentionDays"] as? Int, value > 0 { settings.retentionDays = value }
+        if let raw = focus["retentionDays"] { settings.retentionDays = retentionDays(stored: raw) }
         if let value = focus["interruptionThresholdSec"] as? Int, value > 0 { settings.interruptionThresholdSec = value }
         if let raw = focus["menuBarStyle"] as? String, ["time", "dot", "off"].contains(raw) { settings.menuBarStyle = raw }
         if let list = focus["excludedBundles"] as? [String] {
@@ -78,6 +81,32 @@ public struct FocusSettings: Equatable {
             }
         }
         return settings
+    }
+
+    /// Retention decides what the owner deletes, so the direction of every correction is "keep more": a whole
+    /// number above the range clamps to the top of it, and only a value that names no period at all (zero,
+    /// negative, fractional, not a number) falls back to the default. Each change is logged.
+    static func retentionDays(stored raw: Any) -> Int {
+        let fallback = FocusSettings().retentionDays
+        let upper = retentionRange.upperBound
+        let days: Int
+        if let value = raw as? Int {
+            days = value
+        } else if let value = raw as? Double, value.isFinite, value == value.rounded() {
+            days = value <= 0 ? 0 : value >= Double(Int.max) ? Int.max : Int(value)
+        } else {
+            FlowFocusLog.focus.warning("focus.retentionDays is not a whole number of days, using the default \(fallback)")
+            return fallback
+        }
+        guard days > 0 else {
+            FlowFocusLog.focus.warning("focus.retentionDays \(days) is not positive, using the default \(fallback)")
+            return fallback
+        }
+        guard days <= upper else {
+            FlowFocusLog.focus.warning("focus.retentionDays \(days) is above the \(upper) day limit, using \(upper)")
+            return upper
+        }
+        return days
     }
 
     // MARK: - Policy

@@ -18,6 +18,15 @@ let arguments = suppliedArguments.isEmpty && NativePreview.enabled ? ["--widget"
 let firstArgument = arguments.first ?? ""
 let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
 
+// The widget and Clicky are in staging: only the Preview bundles that scripts/build-widget-preview.ts and
+// GenesisClickyPreview/scripts/install.sh build may run them, so a normal install or `tools update` never does.
+if (firstArgument == "--widget" || firstArgument == "--clicky") && !NativePreview.enabled {
+    FileHandle.standardError.write(Data(
+        "GenesisTools: \(firstArgument) is in staging and runs only in the Preview app (bun scripts/build-widget-preview.ts).\n".utf8
+    ))
+    exit(64)
+}
+
 // Every face except the launcher: Launch Services starts them with launchd's bare environment, and
 // their `tools` children then miss glab, gh, bun and the login shell's CA bundle. The window faces
 // take the login shell's values; the short-lived ones (--rpc, --mic) only the usual PATH directories.

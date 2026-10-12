@@ -13,7 +13,7 @@ import {
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { BoundedCommandResult } from "@genesiscz/utils/process/bounded-command";
+import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import {
     claudeMessageDriver,
     codexMessageDriver,
@@ -132,6 +132,57 @@ test("only a codex queue that finished, or never started, has a known outcome", 
             .unknown
     ).toContain("byte budget");
     expect(codexQueueResultOf(run({ signal: "SIGKILL" })).unknown).toContain("SIGKILL");
+});
+
+test("a real wrapped run killed by a signal or its deadline is an unknown codex queue outcome; a finished one is known", async () => {
+    // The shared runner wraps the command in the child-deadline watchdog, which reports a kill as an exit status.
+    const killed = await boundedCommand({ command: ["/bin/sh", "-c", "kill -9 $$"], timeoutMs: 10_000 });
+    const deadline = await boundedCommand({ command: ["/bin/sleep", "5"], timeoutMs: 300 });
+    const refused = await boundedCommand({
+        command: ["/bin/sh", "-c", "echo 'No active session' >&2; exit 1"],
+        timeoutMs: 10_000,
+    });
+
+    expect(killed.signal).toBeNull();
+    expect(codexQueueResultOf(killed).unknown).toContain("signal 9");
+    expect(codexQueueResultOf(deadline).unknown).not.toBeNull();
+    // The control: a command that finished with its own status is a known refusal.
+    expect(codexQueueResultOf(refused)).toEqual({ code: 1, stderr: "No active session", unknown: null });
+});
+
+test("a codex queue killed after it may have queued never falls back to keystrokes; a known refusal does", async () => {
+    const killedRun = await boundedCommand({ command: ["/bin/sh", "-c", "kill -9 $$"], timeoutMs: 10_000 });
+    const refusedRun = await boundedCommand({ command: ["/bin/sh", "-c", "exit 1"], timeoutMs: 10_000 });
+    const sessionId = "0199aaaa-0000-7000-8000-000000000001";
+    const deliver = (queued: BoundedCommandResult, paste: (input: { sessionId: string }) => Promise<MessageDelivery>) =>
+        deliverMessage({
+            alias: "codex",
+            request: { query: "0199aaaa", text: "x" },
+            allowKeystrokes: true,
+            driver: codexMessageDriver({
+                resolveId: async () => sessionId,
+                queue: async () => codexQueueResultOf(queued),
+            }),
+            paste,
+        });
+
+    // The paste is the irreversible second send: it throws if it is reached.
+    const forbidden = async (): Promise<MessageDelivery> => {
+        throw new Error("the keystroke fallback must not run after a codex queue that may have queued");
+    };
+    const error = await deliver(killedRun, forbidden).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(MessageError);
+    expect(error).not.toBeInstanceOf(NoChannelError);
+    expect(error instanceof Error ? error.message : "").toContain("may or may not be queued");
+
+    // The control: a finished refusal still falls back to the paste.
+    const pasted: string[] = [];
+    const delivered = await deliver(refusedRun, async (input) => {
+        pasted.push(input.sessionId);
+        return { agent: "codex", sessionId: input.sessionId, name: null, via: "cmux-paste", note: "pasted" };
+    });
+    expect(pasted).toEqual([sessionId]);
+    expect(delivered.via).toBe("cmux-paste");
 });
 
 test("a codex queue past its deadline is an unknown send: no keystroke fallback, even when keystrokes are allowed", async () => {

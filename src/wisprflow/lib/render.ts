@@ -2,7 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { firstName } from "./speakers";
 import type { TermSuggestion } from "./terms";
-import type { Meeting, SourceName, TranscriptEntry } from "./types";
+import type { Meeting, SourceName, TranscriptEntry, TranscriptGap } from "./types";
 
 export const TRANSCRIPT_FORMATS = ["md", "txt", "json", "srt", "vtt"] as const;
 export type TranscriptFormat = (typeof TRANSCRIPT_FORMATS)[number];
@@ -86,6 +86,13 @@ export function formatClock(totalSec: number): string {
     const ss = String(s).padStart(2, "0");
 
     return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+export function transcriptGapNote(gap: TranscriptGap): string {
+    return (
+        `Wispr Flow's refined transcript ends at ${formatClock(gap.refinedUntilSec)}, the last live line at ` +
+        `${formatClock(gap.liveUntilSec)}; ${gap.appendedLines} unrefined live lines follow after ${formatClock(gap.refinedUntilSec)}.`
+    );
 }
 
 function pad(n: number, width = 2): string {
@@ -184,6 +191,10 @@ export function renderMarkdown(meeting: Meeting, options: RenderOptions): string
     }
 
     if (meeting.transcript.length > 0) {
+        if (meeting.transcriptGap) {
+            parts.push(`> [!warning] Partly unrefined\n> ${transcriptGapNote(meeting.transcriptGap)}`);
+        }
+
         parts.push(
             "## Transcript",
             transcriptMarkdown(groupTurns(meeting.transcript, options.firstNames), options.timestamps)

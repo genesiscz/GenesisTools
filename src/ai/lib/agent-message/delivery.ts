@@ -13,6 +13,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { childDeadlineTermination } from "@genesiscz/utils/process/child-deadline";
 
 const { log } = logger.scoped("agent-message");
 
@@ -264,12 +265,17 @@ export interface CodexQueueResult {
 /**
  * Reads a bounded `codex queue` run. Only a command that finished (an exit status, no runner error), or one that
  * never started (no such binary), has a known outcome; anything the runner cut short may have queued already.
+ * The runner wraps the command in the child-deadline watchdog, which reports a kill as an exit status
+ * (124, or 128 + signal); those are cut short too.
  */
 export function codexQueueResultOf(result: BoundedCommandResult): CodexQueueResult {
     const neverStarted = result.error?.code === "ENOENT";
-    const finished = result.status !== null && !result.error;
+    const killed = childDeadlineTermination(result.status);
+    const finished = result.status !== null && !result.error && killed === null;
     const unknown =
-        finished || neverStarted ? null : (result.error?.message ?? `ended by ${result.signal ?? "a signal"}`);
+        finished || neverStarted
+            ? null
+            : (result.error?.message ?? killed ?? `ended by ${result.signal ?? "a signal"}`);
 
     return {
         code: result.status ?? 1,

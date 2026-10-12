@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { completeTranscript, parseLive } from "./live";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { groupTurns, renderSrt } from "./render";
@@ -158,5 +159,217 @@ describe("output guard", () => {
         expect(writeGuarded({ path, content: generated, confirm: false, keepFrontmatter: true }).status).toBe(
             "unchanged"
         );
+    });
+});
+
+describe("completeTranscript", () => {
+    const self = { speakerId: 1, name: "Martin Example", isSelf: true };
+    const live = parseLive(
+        [
+            SafeJSON.stringify({ meta: { v: 3 } }),
+            SafeJSON.stringify({
+                id: "a",
+                text: " early",
+                speaker: { id: 1001, source: "system" },
+                startRecordingMs: 5_000,
+                endRecordingMs: 6_000,
+            }),
+            SafeJSON.stringify({
+                id: "c",
+                timestamp: "147:59",
+                text: " from Alex about the hiring budget",
+                speaker: { id: 1001, source: "system", name: "Alex Example" },
+                startRecordingMs: 9_000_000,
+                endRecordingMs: 9_004_000,
+            }),
+            SafeJSON.stringify({
+                id: "b",
+                timestamp: "175:24",
+                text: " from the mic about the quarterly plan",
+                speaker: { id: 1, source: "mic", name: null },
+                startRecordingMs: 8_000_000,
+                endRecordingMs: 8_002_000,
+            }),
+            SafeJSON.stringify({
+                id: "d",
+                text: "   ",
+                speaker: { id: 1, source: "mic" },
+                startRecordingMs: 9_100_000,
+            }),
+        ].join("\n")
+    );
+
+    test("a refined transcript that stops early gets the live lines after its end, ordered by recording time", () => {
+        const refined = [entry("Speaker 1", 6, "refined start"), entry("Speaker 2", 798, "refined end")];
+        const { transcript, gap } = completeTranscript(refined, live, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual([
+            "refined start",
+            "refined end",
+            "from the mic about the quarterly plan",
+            "from Alex about the hiring budget",
+        ]);
+        expect(transcript[2]).toMatchObject({ speaker: "Martin Example", startSec: 8000 });
+        expect(transcript[3]).toMatchObject({ speaker: "Alex Example", startSec: 9000 });
+        expect(gap).toEqual({ refinedUntilSec: 798, liveUntilSec: 9004, appendedLines: 2 });
+    });
+
+    test("a refined transcript that reaches the end of the recording is left alone", () => {
+        const refined = [entry("Speaker 1", 6, "start"), entry("Speaker 2", 8990, "end")];
+        const { transcript, gap } = completeTranscript(refined, live, [self]);
+
+        expect(transcript).toBe(refined);
+        expect(gap).toBeUndefined();
+    });
+
+    test("live lines that repeat the last refined entry's speech are skipped, and the refined end moves past them", () => {
+        const spoken = (id: string, text: string, startMs: number, endMs: number) =>
+            SafeJSON.stringify({ id, text, speaker: { id: 1001 }, startRecordingMs: startMs, endRecordingMs: endMs });
+        const tailLive = parseLive(
+            [
+                spoken("r1", "we ship the release on monday", 101_000, 104_000),
+                spoken("r2", "after the security review", 106_000, 110_000),
+                spoken("n1", "next topic is hiring two engineers for the platform team", 200_000, 203_000),
+            ].join("\n")
+        );
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday, after the security review.")];
+        const { transcript, gap } = completeTranscript(refined, tailLive, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual([
+            refined[0].text,
+            "next topic is hiring two engineers for the platform team",
+        ]);
+        expect(gap).toEqual({ refinedUntilSec: 110, liveUntilSec: 203, appendedLines: 1 });
+    });
+
+    test("later speech that shares most words with the last refined entry is kept", () => {
+        const later = parseLive(
+            `${SafeJSON.stringify({ text: "We ship the release on Friday after the security review is done", speaker: { id: 1001 }, startRecordingMs: 600_000, endRecordingMs: 604_000 })}\n`
+        );
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday after the security review is done")];
+        const { transcript, gap } = completeTranscript(refined, later, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual([
+            "We ship the release on Monday after the security review is done",
+            "We ship the release on Friday after the security review is done",
+        ]);
+        expect(gap).toEqual({ refinedUntilSec: 100, liveUntilSec: 604, appendedLines: 1 });
+    });
+
+    test("words in another order are new speech, even right after the refined entry", () => {
+        const reordered = parseLive(
+            `${SafeJSON.stringify({ text: "done is review security the after Monday on release the ship we", speaker: { id: 1001 }, startRecordingMs: 101_000, endRecordingMs: 140_000 })}\n`
+        );
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday after the security review is done")];
+        const { transcript } = completeTranscript(refined, reordered, [self]);
+
+        expect(transcript).toHaveLength(2);
+    });
+
+    test("with no refined transcript every live line is kept, a short recording included", () => {
+        const { transcript, gap } = completeTranscript([], live, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual([
+            "early",
+            "from the mic about the quarterly plan",
+            "from Alex about the hiring budget",
+        ]);
+        expect(gap).toEqual({ refinedUntilSec: 0, liveUntilSec: 9004, appendedLines: 3 });
+    });
+
+    describe("how much unrefined speech makes a gap", () => {
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday")];
+        const stray = (id: string, text: string, startMs: number) =>
+            SafeJSON.stringify({
+                id,
+                text,
+                speaker: { id: 1001 },
+                startRecordingMs: startMs,
+                endRecordingMs: startMs + 2_000,
+            });
+
+        test("a stray line of trailing silence long after the refined end is not a gap", () => {
+            const { transcript, gap } = completeTranscript(refined, parseLive(stray("s1", "Thank you.", 270_000)), [
+                self,
+            ]);
+
+            expect(transcript).toBe(refined);
+            expect(gap).toBeUndefined();
+        });
+
+        test("a few short stray lines holding four words are not a gap either", () => {
+            const lines = parseLive(
+                [stray("s1", "Thank you", 270_000), stray("s2", "very", 280_000), stray("s3", "much", 290_000)].join(
+                    "\n"
+                )
+            );
+            const { transcript, gap } = completeTranscript(refined, lines, [self]);
+
+            expect(transcript).toBe(refined);
+            expect(gap).toBeUndefined();
+        });
+
+        test("nine unrefined words are below the limit and ten are a gap", () => {
+            const nine = parseLive(stray("s1", "one two three four five six seven eight nine", 270_000));
+            const ten = parseLive(stray("s1", "one two three four five six seven eight nine ten", 270_000));
+
+            expect(completeTranscript(refined, nine, [self]).gap).toBeUndefined();
+            expect(completeTranscript(refined, ten, [self]).gap).toEqual({
+                refinedUntilSec: 100,
+                liveUntilSec: 272,
+                appendedLines: 1,
+            });
+        });
+
+        test("a refined pass that stopped part-way still warns and appends every unrefined line", () => {
+            const lines = parseLive(
+                Array.from({ length: 40 }, (_, index) =>
+                    stray(`g${index}`, `unrefined line number ${index} about the plan`, 300_000 + index * 5_000)
+                ).join("\n")
+            );
+            const { transcript, gap } = completeTranscript(refined, lines, [self]);
+
+            expect(transcript).toHaveLength(41);
+            expect(gap).toEqual({ refinedUntilSec: 100, liveUntilSec: 497, appendedLines: 40 });
+        });
+
+        test("a last refined entry with no start time skips completion instead of repeating the transcript", () => {
+            const unparsed = [entry("Speaker 1", 6, "start"), { speaker: "Speaker 2", text: "refined end" }];
+            const everyUnparsed = [
+                { speaker: "Speaker 1", text: "start" },
+                { speaker: "Speaker 2", text: "refined end" },
+            ];
+            const doneLive = parseLive(
+                Array.from({ length: 10 }, (_, index) =>
+                    stray(`g${index}`, `live line number ${index} about the plan`, 300_000 + index * 5_000)
+                ).join("\n")
+            );
+
+            for (const entries of [unparsed, everyUnparsed]) {
+                const { transcript, gap } = completeTranscript(entries, doneLive, [self]);
+
+                expect(transcript).toBe(entries);
+                expect(gap).toBeUndefined();
+            }
+
+            expect(completeTranscript([entry("Speaker 1", 6, "start")], doneLive, [self]).gap?.appendedLines).toBe(10);
+        });
+    });
+
+    test("a speaker's current assignment wins over the name the live line captured", () => {
+        const renamed = { speakerId: 1001, name: "Renamed Person", isSelf: false };
+        const { transcript } = completeTranscript([entry("Speaker 1", 6, "start")], live, [self, renamed]);
+
+        expect(transcript.at(-1)).toMatchObject({
+            text: "from Alex about the hiring budget",
+            speaker: "Renamed Person",
+        });
+    });
+
+    test("an unfinished last line is skipped while the meeting is still being written; a broken middle line throws", () => {
+        const done = SafeJSON.stringify({ text: "done", startRecordingMs: 1_000 });
+
+        expect(parseLive(`${done}\n{"text":"half`).map((l) => l.text)).toEqual(["done"]);
+        expect(() => parseLive(`{"text":"half\n${done}\n`)).toThrow();
     });
 });

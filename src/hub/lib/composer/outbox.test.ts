@@ -1744,6 +1744,37 @@ test("a staged capture withdrawn after its asset import or while waiting for the
     }
 });
 
+test("a failure after the shelf write committed keeps the staged capture's asset and file", async () => {
+    const directory = await root();
+    const input = join(directory, "capture.png");
+    await writeFile(
+        input,
+        Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9h8AAAAASUVORK5CYII=",
+            "base64"
+        )
+    );
+    const realLock = fileLock.withFileLock;
+    const failing = spyOn(fileLock, "withFileLock").mockImplementation(async (path, fn, timeout) => {
+        const result = await realLock(path, fn, timeout);
+        if (path === join(directory, "shelf", "state.lock")) {
+            throw new Error("lock release failed");
+        }
+
+        return result;
+    });
+    try {
+        await expect(stageShelfImage({ root: directory, input })).rejects.toThrow("lock release failed");
+    } finally {
+        failing.mockRestore();
+    }
+
+    const [item] = (await listWidgetShelf(directory)).items;
+    expect(item.assetId).toBeDefined();
+    expect((await readWidgetState(directory)).assets[item.assetId!]?.path).toBe(item.path);
+    expect(await Bun.file(item.path).exists()).toBe(true);
+});
+
 test("orphan forms retain stored providers and their receipt context accepts the snapshot identity", async () => {
     const directory = await root();
     const forms: ReturnType<WidgetSources["forms"]> = [

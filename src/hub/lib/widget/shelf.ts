@@ -310,9 +310,18 @@ export async function stageShelfImage({
 /**
  * Staging imports the image as a widget asset before the shelf item exists. When the item is never committed
  * (cancelled, a competing capture of the same bytes won), the asset and its private copy go too, unless
- * something already references it.
+ * something already references it: a draft, an outgoing message, or a shelf item. The shelf is read first
+ * because a failure after the shelf write committed (the lock release) also lands here.
  */
 async function discardStagedAsset(root: string | undefined, asset: WidgetAsset): Promise<void> {
+    const onShelf = (await listWidgetShelf(root)).items.some(
+        (item) => item.assetId === asset.id || item.path === asset.path
+    );
+    if (onShelf) {
+        logger.debug({ assetId: asset.id }, "Staged shelf capture asset is on the shelf, kept");
+        return;
+    }
+
     const removed = await mutateWidgetState(root, (state) => {
         const referenced =
             Object.values(state.drafts).some((draft) => draft.assetIds.includes(asset.id)) ||

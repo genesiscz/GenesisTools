@@ -327,4 +327,23 @@ describe("readTurnState", () => {
         expect(secondTurn?.turnStartedAt).toBe(firstTurn?.turnStartedAt ?? -1);
         expect(secondTurn?.turnStartOffset).toBe(before);
     });
+
+    it("keeps a Grok turn's byte offset exact past a line that holds invalid UTF-8", () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-"));
+        const file = join(dir, "grok.jsonl");
+        const text = (value: string) => ({ content: { type: "text", text: value } });
+        const first = [
+            grokLine(0, "user_message_chunk", text("first")),
+            grokLine(0, "agent_message_chunk", text("ok")),
+            grokLine(0, "turn_completed", { stop_reason: "end_turn" }),
+        ]
+            .map((line) => `${SafeJSON.stringify(line)}\n`)
+            .join("");
+        writeFileSync(file, first);
+        // Two bytes that are not UTF-8: decoded, each becomes a three-byte replacement character.
+        appendFileSync(file, Buffer.from([0xff, 0xfe, 0x41, 0x0a]));
+        const before = statSync(file).size;
+        appendFileSync(file, `${SafeJSON.stringify(grokLine(1, "user_message_chunk", text("second")))}\n`);
+        expect(readTurnState("grok", file, { stallTimeoutMs: 900_000 })?.turnStartOffset).toBe(before);
+    });
 });

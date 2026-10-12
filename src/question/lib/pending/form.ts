@@ -228,6 +228,9 @@ export function sanitizeImages(images: AskImage[] | undefined): AskImage[] {
     return out;
 }
 
+/** The largest image file an answer can carry. Base64 turns 3 bytes into 4 characters; `sanitizeImages` drops more. */
+export const MAX_ANSWER_IMAGE_BYTES = Math.floor(MAX_IMAGE_BASE64_CHARS / 4) * 3;
+
 /**
  * Reads image files straight into `AskAnswer.images`, mime sniffed from the bytes rather than
  * trusted from the extension. Shared by the plain `answer <id> --image` flag and the inbox
@@ -235,9 +238,6 @@ export function sanitizeImages(images: AskImage[] | undefined): AskImage[] {
  * `kern.argmax` on this machine is 1MB, and one image alone can carry `MAX_IMAGE_BASE64_CHARS`
  * (2MB) of base64.
  */
-/** The largest image file an answer can carry. Base64 turns 3 bytes into 4 characters; `sanitizeImages` drops more. */
-export const MAX_ANSWER_IMAGE_BYTES = Math.floor(MAX_IMAGE_BASE64_CHARS / 4) * 3;
-
 export function readImageAnswers(paths: string[]): AskImage[] {
     const maxBytes = MAX_ANSWER_IMAGE_BYTES;
     return paths.slice(0, MAX_IMAGES_PER_ANSWER).map((path) => {
