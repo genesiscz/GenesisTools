@@ -10,6 +10,7 @@ import { registerInstallCommand } from "./commands/install";
 import { registerLogsCommand } from "./commands/logs";
 import { registerRestartCommand } from "./commands/restart";
 import { registerStartCommand } from "./commands/start";
+import { registerStatsCommand } from "./commands/stats";
 import { registerStatusCommand } from "./commands/status";
 import { registerStopCommand } from "./commands/stop";
 import { runInteractiveMenu } from "./interactive/menu";
@@ -32,6 +33,7 @@ registerStatusCommand(program);
 registerInstallCommand(program);
 registerConfigCommand(program);
 registerLogsCommand(program);
+registerStatsCommand(program);
 
 async function main(): Promise<void> {
     await ensureStorage();

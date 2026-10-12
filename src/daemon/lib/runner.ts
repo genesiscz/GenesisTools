@@ -83,10 +83,14 @@ async function streamLines(
     }
 }
 
+/** The folder under the logs base dir that holds a task's run logs. */
+export function taskLogDirName(name: string): string {
+    return name.replace(/[/\\]/g, "_") || "unnamed-task";
+}
+
 export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: string): Promise<RunResult> {
     const runId = crypto.randomUUID().slice(0, 8);
-    const safeTaskName = task.name.replace(/[/\\]/g, "_") || "unnamed-task";
-    const taskLogDir = join(logsBaseDir, safeTaskName);
+    const taskLogDir = join(logsBaseDir, taskLogDirName(task.name));
     mkdirSync(taskLogDir, { recursive: true });
 
     const logFile = join(taskLogDir, `${safeTimestamp()}-${runId}.jsonl`);

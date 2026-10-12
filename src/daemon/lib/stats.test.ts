@@ -1,0 +1,283 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { collectDaemonStats, readRunOutput, resolveWindow, summarizeHealthLines } from "./stats";
+import type { DaemonTask } from "./types";
+
+const NOW = new Date("2026-10-12T00:00:00.000Z");
+const base = mkdtempSync(join(tmpdir(), "daemon-stats-test-"));
+
+interface FixtureRun {
+    task: string;
+    runId: string;
+    startedAt: string;
+    exit?: { code: number | null; durationMs: number; timedOut?: boolean };
+    stdout?: string[];
+    stderr?: string[];
+    /** Overrides the file name, which otherwise carries `startedAt` in local time like the runner's. */
+    fileStamp?: string;
+}
+
+function writeRun(dir: string, run: FixtureRun): void {
+    const taskDir = join(dir, run.task);
+    mkdirSync(taskDir, { recursive: true });
+    const lines: Array<Record<string, unknown>> = [
+        { type: "meta", taskName: run.task, command: "true", runId: run.runId, attempt: 1, startedAt: run.startedAt },
+        ...(run.stdout ?? []).map((data) => ({ type: "stdout", ts: run.startedAt, data })),
+        ...(run.stderr ?? []).map((data) => ({ type: "stderr", ts: run.startedAt, data })),
+    ];
+
+    if (run.exit) {
+        lines.push({
+            type: "exit",
+            ts: run.startedAt,
+            code: run.exit.code,
+            duration_ms: run.exit.durationMs,
+            ...(run.exit.timedOut ? { timedOut: true } : {}),
+        });
+    }
+
+    const stamp = run.fileStamp ?? formatLocalFileTimestamp(new Date(run.startedAt));
+    writeFileSync(
+        join(taskDir, `${stamp}-${run.runId}.jsonl`),
+        `${lines.map((l) => SafeJSON.stringify(l)).join("\n")}\n`
+    );
+}
+
+const bigStdout = Array.from({ length: 300 }, (_, i) => `progress ${i} ${"x".repeat(90)}`);
+const betaStderr = Array.from({ length: 15 }, (_, i) => `line ${i + 1}`);
+
+const runs: FixtureRun[] = [
+    { task: "alpha", runId: "a1", startedAt: "2026-10-10T10:00:00.000Z", exit: { code: 0, durationMs: 1000 } },
+    { task: "alpha", runId: "a2", startedAt: "2026-10-10T11:00:00.000Z", exit: { code: 0, durationMs: 2000 } },
+    {
+        task: "alpha",
+        runId: "a3",
+        startedAt: "2026-10-10T12:00:00.000Z",
+        exit: { code: 1, durationMs: 3000 },
+        stdout: ["hello"],
+        stderr: ["boom 1", "boom 2"],
+    },
+    {
+        task: "alpha",
+        runId: "a4",
+        startedAt: "2026-10-10T13:00:00.000Z",
+        exit: { code: null, durationMs: 60_000, timedOut: true },
+    },
+    {
+        task: "alpha",
+        runId: "a5",
+        startedAt: "2026-10-11T10:00:00.000Z",
+        exit: { code: 0, durationMs: 4000 },
+        stdout: bigStdout,
+    },
+    { task: "alpha", runId: "a6", startedAt: "2026-10-11T11:00:00.000Z", exit: { code: null, durationMs: 5000 } },
+    { task: "alpha", runId: "a7", startedAt: "2026-10-11T12:00:00.000Z", stdout: ["still going"] },
+    { task: "beta", runId: "b1", startedAt: "2026-10-10T09:00:00.000Z", exit: { code: 0, durationMs: 500 } },
+    {
+        task: "beta",
+        runId: "b2",
+        startedAt: "2026-10-11T09:00:00.000Z",
+        exit: { code: 2, durationMs: 700 },
+        stderr: betaStderr,
+    },
+    { task: "gamma", runId: "g1", startedAt: "2026-09-01T00:00:00.000Z", exit: { code: 0, durationMs: 100 } },
+];
+
+for (const run of runs) {
+    writeRun(base, run);
+}
+
+const tasks: DaemonTask[] = [
+    { name: "alpha", command: "true", every: "every 1 hour", retries: 0, enabled: true, timeoutMs: 60_000 },
+    { name: "beta", command: "true", every: "every 1 day", retries: 0, enabled: false },
+    { name: "delta", command: "true", every: "every 5 minutes", retries: 0, enabled: true },
+];
+
+const allWindow = resolveWindow({ since: "all", now: NOW });
+const oct11 = resolveWindow({ since: "2026-10-11T00:00:00Z", until: "2026-10-11T23:59:59Z", now: NOW });
+
+afterAll(() => rmSync(base, { recursive: true, force: true }));
+
+function taskOf(stats: ReturnType<typeof collectDaemonStats>, name: string) {
+    const task = stats.tasks.find((t) => t.task === name);
+
+    if (!task) {
+        throw new Error(`no stats for ${name}`);
+    }
+
+    return task;
+}
+
+function sum(values: number[]): number {
+    return values.reduce((a, b) => a + b, 0);
+}
+
+describe("collectDaemonStats", () => {
+    const stats = collectDaemonStats({ logsBaseDir: base, tasks, window: allWindow, now: NOW });
+
+    test("counts every outcome, and the failure rate leaves the unfinished run out", () => {
+        const alpha = taskOf(stats, "alpha");
+
+        expect(alpha).toMatchObject({ runs: 7, ok: 3, failed: 1, timedOut: 1, killed: 1, unfinished: 1 });
+        expect(alpha.failureRate).toBe(0.5);
+        expect(stats.totals).toMatchObject({ runs: 10, ok: 5, failed: 2, timedOut: 1, killed: 1, unfinished: 1 });
+    });
+
+    test("nearest-rank percentiles over finished runs, the exit record found past a 30 KB output", () => {
+        const alpha = taskOf(stats, "alpha");
+
+        expect([alpha.p50Ms, alpha.p90Ms, alpha.p99Ms, alpha.maxMs]).toEqual([3000, 60_000, 60_000, 60_000]);
+        expect(alpha.recentRuns.find((run) => run.runId === "a5")).toMatchObject({ status: "ok", durationMs: 4000 });
+
+        const counts = Object.fromEntries(alpha.histogram.filter((b) => b.count > 0).map((b) => [b.label, b.count]));
+        expect(counts).toEqual({ "1-2s": 1, "2-5s": 3, "5-10s": 1, "1-2m": 1 });
+    });
+
+    test("failures newest first with their stderr tail; the last run is the unfinished one", () => {
+        const alpha = taskOf(stats, "alpha");
+
+        expect(alpha.failures.map((run) => [run.runId, run.status, run.exitCode])).toEqual([
+            ["a6", "killed", null],
+            ["a4", "timedOut", null],
+            ["a3", "failed", 1],
+        ]);
+        expect(alpha.failures[2].stderrTail).toEqual(["boom 1", "boom 2"]);
+        expect(alpha.lastFailure?.runId).toBe("a6");
+        expect(alpha.lastRun).toMatchObject({ runId: "a7", status: "unfinished", durationMs: null });
+
+        const beta = taskOf(stats, "beta");
+        expect(beta.failures[0].stderrTail).toEqual(betaStderr.slice(-12));
+    });
+
+    test("configured tasks without runs stay listed; a run-log folder outside the config is marked", () => {
+        expect(stats.tasks.map((t) => t.task)).toEqual(["alpha", "beta", "delta", "gamma"]);
+        expect(taskOf(stats, "delta")).toMatchObject({ runs: 0, failureRate: null, p50Ms: null, lastRun: null });
+        expect(taskOf(stats, "gamma")).toMatchObject({ configured: false, enabled: null, runs: 1 });
+        expect(taskOf(stats, "beta")).toMatchObject({ configured: true, enabled: false, every: "every 1 day" });
+    });
+
+    test("an open window starts its timeline at the first run, in days once it spans more than 48 hours", () => {
+        const alpha = taskOf(stats, "alpha");
+
+        expect(stats.since).toBeNull();
+        expect(stats.bucket).toBe("day");
+        expect(sum(alpha.timeline.map((b) => b.runs))).toBe(7);
+        expect(sum(alpha.timeline.map((b) => b.failures))).toBe(3);
+        expect(alpha.timeline.length).toBe(taskOf(stats, "gamma").timeline.length);
+    });
+
+    test("the window keeps only runs that started inside it, in hour buckets", () => {
+        const day = collectDaemonStats({ logsBaseDir: base, tasks, window: oct11, now: NOW });
+        const alpha = taskOf(day, "alpha");
+
+        expect(day.tasks.map((t) => t.task)).toEqual(["alpha", "beta", "delta"]);
+        expect(alpha).toMatchObject({ runs: 3, ok: 1, killed: 1, unfinished: 1, failureRate: 0.5 });
+        expect(taskOf(day, "beta")).toMatchObject({ runs: 1, failed: 1 });
+        expect(day.bucket).toBe("hour");
+        expect(sum(alpha.timeline.map((b) => b.runs))).toBe(3);
+    });
+
+    test("a task filter and a failure limit narrow the report", () => {
+        const one = collectDaemonStats({ logsBaseDir: base, tasks, window: allWindow, task: "alpha", failureLimit: 1 });
+
+        expect(one.tasks.map((t) => t.task)).toEqual(["alpha"]);
+        expect(one.tasks[0].failures.map((run) => run.runId)).toEqual(["a6"]);
+        expect(one.tasks[0].killed + one.tasks[0].timedOut + one.tasks[0].failed).toBe(3);
+    });
+
+    test("only run logs whose names fall in the window are opened", () => {
+        const dir = mkdtempSync(join(tmpdir(), "daemon-stats-names-"));
+
+        try {
+            writeRun(dir, {
+                task: "solo",
+                runId: "s1",
+                startedAt: "2026-10-11T08:00:00.000Z",
+                exit: { code: 0, durationMs: 10 },
+                fileStamp: "2026-01-01T00-00-00",
+            });
+
+            expect(collectDaemonStats({ logsBaseDir: dir, tasks: [], window: oct11 }).tasks).toEqual([]);
+            expect(collectDaemonStats({ logsBaseDir: dir, tasks: [], window: allWindow }).totals.runs).toBe(1);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("resolveWindow", () => {
+    test("reads durations, all, ISO times and now", () => {
+        expect(resolveWindow({ since: "24h", now: NOW })).toEqual({
+            since: new Date("2026-10-11T00:00:00.000Z"),
+            until: NOW,
+        });
+        expect(resolveWindow({ since: "7d", until: "now", now: NOW }).since).toEqual(
+            new Date("2026-10-05T00:00:00.000Z")
+        );
+        expect(allWindow.since).toBeNull();
+    });
+
+    test("refuses an unreadable edge and an empty window", () => {
+        expect(() => resolveWindow({ since: "yesterday-ish", now: NOW })).toThrow("--since");
+        expect(() => resolveWindow({ since: "1h", until: "2h", now: NOW })).toThrow("empty");
+    });
+});
+
+describe("readRunOutput", () => {
+    test("finds a run by id and returns its output with its outcome", () => {
+        const output = readRunOutput({ logsBaseDir: base, runId: "a3" });
+
+        expect(output?.run).toMatchObject({ task: "alpha", status: "failed", exitCode: 1, durationMs: 3000 });
+        expect(output?.lines.map((line) => [line.type, line.data])).toEqual([
+            ["stdout", "hello"],
+            ["stderr", "boom 1"],
+            ["stderr", "boom 2"],
+        ]);
+        expect(readRunOutput({ logsBaseDir: base, runId: "nope" })).toBeNull();
+    });
+});
+
+describe("summarizeHealthLines", () => {
+    const window = resolveWindow({ since: "24h", now: NOW });
+    const record = (time: string, msg: string, extra: Record<string, unknown> = {}) =>
+        SafeJSON.stringify({ level: 40, time, msg, ...extra });
+
+    test("counts the daemon's health lines inside the window, newest first", () => {
+        const lines = [
+            record("2026-10-11T05:00:00.000Z", "[daemon] scheduler wedged (no tick within threshold)", {
+                silentMs: 300_000,
+            }),
+            record("2026-10-11T06:00:00.000Z", "[daemon] watchdog sampled late (process suspended)", {
+                suspendedMs: 600_000,
+            }),
+            record("2026-10-11T07:00:00.000Z", "[daemon] task timed out, sending SIGTERM", { task: "alpha" }),
+            record("2026-10-09T07:00:00.000Z", "[daemon] task timed out, sending SIGTERM", { task: "alpha" }),
+            record("2026-10-11T07:00:01.000Z", "[daemon] task process timed out", { task: "alpha" }),
+            "not json [daemon] scheduler wedged",
+        ];
+        const health = summarizeHealthLines({ lines, window, files: ["day.log"] });
+
+        expect(health).toMatchObject({ wedged: 1, sampledLate: 1, taskTimedOut: 1, error: null, files: ["day.log"] });
+        expect(health.events.map((e) => [e.kind, e.task, e.gapMs])).toEqual([
+            ["taskTimedOut", "alpha", null],
+            ["sampledLate", null, 600_000],
+            ["wedged", null, 300_000],
+        ]);
+    });
+
+    test("a burst of newer timeouts does not push an older wedge out of the event list", () => {
+        const timeouts = Array.from({ length: 60 }, (_, i) =>
+            record(new Date(Date.parse("2026-10-11T12:00:00.000Z") + i * 1000).toISOString(), "[daemon] task timed out")
+        );
+        const wedge = record("2026-10-11T01:00:00.000Z", "[daemon] scheduler wedged", { silentMs: 1 });
+        const health = summarizeHealthLines({ lines: [wedge, ...timeouts], window, files: [] });
+
+        expect(health.taskTimedOut).toBe(60);
+        expect(health.events.filter((e) => e.kind === "taskTimedOut")).toHaveLength(50);
+        expect(health.events.at(-1)?.kind).toBe("wedged");
+    });
+});
