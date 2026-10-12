@@ -112,6 +112,7 @@ describe("taskArgv", () => {
             // A daemon from a Background plist (before Standard); `taskpolicy -b` puts this parent in the same state.
             const priorityOf = async (priority: "high" | "low"): Promise<number> => {
                 const proc = Bun.spawn(["/usr/sbin/taskpolicy", "-b", ...taskArgv("ps -o pri= -p $$", priority)], {
+                    env: process.env,
                     stdout: "pipe",
                     stderr: "pipe",
                 });
