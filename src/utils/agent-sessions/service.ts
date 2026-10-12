@@ -394,6 +394,7 @@ export class HistoryService {
             scope,
             signal: filters.signal,
             metadataSources: new Set(selected.map((candidate) => candidate.source.filePath)),
+            pruneFrom: filters.mtimeFrom,
         });
     }
 

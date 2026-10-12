@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { claudeHistoryReader } from "./compact-readers";
+import { claudeHistoryReader, grokHistoryReader } from "./compact-readers";
 import { HistoryDatabase, historyDatabasePath } from "./database";
 import { initializeCompactHistorySchema, initializeHistorySchema } from "./migrations";
 import { catalogHistory, openHistoryService } from "./open-service";
@@ -140,6 +140,95 @@ test("a filtered windowed catalog reads only the rows of the sources it refreshe
     } finally {
         database.close();
         rmSync(root, { recursive: true, force: true });
+    }
+});
+
+function grokSession(root: string, id: string, ageMs: number): string {
+    const directory = join(root, encodeURIComponent("/projects/shop"), id);
+    const at = new Date(NOW - ageMs);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+        join(directory, "chat_history.jsonl"),
+        `${SafeJSON.stringify({ type: "user", timestamp: at.toISOString(), content: `<user_query>session ${id}</user_query>` }, { strict: true })}\n`
+    );
+    writeFileSync(
+        join(directory, "summary.json"),
+        SafeJSON.stringify(
+            {
+                info: { id, cwd: "/projects/shop" },
+                created_at: at.toISOString(),
+                updated_at: at.toISOString(),
+            },
+            { strict: true }
+        )
+    );
+    utimesSync(join(directory, "chat_history.jsonl"), at, at);
+    utimesSync(join(directory, "summary.json"), at, at);
+    return directory;
+}
+
+test("a filtered windowed listing drops the row of a Grok session whose folder was deleted", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-grok-gone-"));
+    const root = join(home, "sessions");
+    const kept = "aaaaaaaa-bbbb-4ccc-8ddd-000000000061";
+    const deleted = "aaaaaaaa-bbbb-4ccc-8ddd-000000000062";
+    grokSession(root, kept, HOUR);
+    const deletedDirectory = grokSession(root, deleted, 2 * HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "grok-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: grokHistoryReader,
+        now: () => new Date(NOW),
+    });
+    // The hub's listing: a filtered scope, so the root prune never runs for it.
+    const listing = { excludeAgents: true, mtimeFrom: NOW - 24 * HOUR };
+
+    try {
+        const before = await service.catalog(listing);
+        expect(before.metadata.map((entry) => entry.nativeId).sort()).toEqual([kept, deleted]);
+
+        rmSync(deletedDirectory, { recursive: true, force: true });
+        const after = await service.catalog(listing);
+
+        expect(after.metadata.map((entry) => entry.nativeId)).toEqual([kept]);
+        expect(after.report.removed).toBe(1);
+    } finally {
+        database.close();
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test("a filtered windowed listing keeps the rows of a root that is missing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-grok-unmounted-"));
+    const root = join(home, "sessions");
+    const id = "aaaaaaaa-bbbb-4ccc-8ddd-000000000071";
+    grokSession(root, id, HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const service = new HistoryService({
+        providerId: "grok-sub",
+        roots: [root],
+        repository,
+        reader: grokHistoryReader,
+        now: () => new Date(NOW),
+    });
+    const listing = { excludeAgents: true, mtimeFrom: NOW - 24 * HOUR };
+
+    try {
+        await service.catalog(listing);
+        // A whole root that vanished is an unmounted volume or a moved home, not a deleted session.
+        rmSync(root, { recursive: true, force: true });
+        const after = await service.catalog(listing);
+
+        expect(after.report.removed).toBe(0);
+        expect(repository.sources("grok-sub").map((source) => source.filePath)).toHaveLength(1);
+    } finally {
+        database.close();
+        rmSync(home, { recursive: true, force: true });
     }
 });
 

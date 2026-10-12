@@ -84,6 +84,25 @@ function sourceExists(path: string): boolean {
     }
 }
 
+/** True when the path is gone or no longer a file; an unreadable path counts as present, so it is never pruned. */
+function sourceGone(path: string): boolean {
+    try {
+        return !sourceExists(path);
+    } catch (error) {
+        logger.debug({ error, path }, "[history] source deletion could not be verified; the row stays");
+        return false;
+    }
+}
+
+function directoryExists(path: string): boolean {
+    try {
+        return statSync(path).isDirectory();
+    } catch (error) {
+        logger.debug({ error, path }, "[history] root unreadable; its rows are not pruned");
+        return false;
+    }
+}
+
 export async function synchronizeHistory(options: {
     providerId: string;
     reader: NativeSessionReader<string>;
@@ -103,6 +122,13 @@ export async function synchronizeHistory(options: {
      */
     discoveryGeneration?: number;
     metadataSources?: ReadonlySet<string>;
+    /**
+     * The oldest mtime a filtered listing shows. A filtered walk sees one side only (sessions or
+     * subagents) and is never complete, so the root prune never runs for it. With this, a row of
+     * that side from this time on that the walk did not see, whose file is gone under a root that
+     * still exists, is dropped.
+     */
+    pruneFrom?: number;
 }): Promise<{
     report: NativeIndexSyncResult;
     sources: NativeSessionSource<string>[];
@@ -162,6 +188,38 @@ export async function synchronizeHistory(options: {
                     (root) => source.root === root || historyPathUnderRoot(source.filePath, root)
                 )
         );
+    // Every periodic listing is filtered (`excludeAgents`), so before this a deleted session stayed in
+    // the index until a full sync: a Grok session deleted on 2026-10-11 was still listed a day later, and
+    // the hub asked for its stuck verdict on every refresh. The listing's window bounds the check.
+    const windowSide =
+        options.pruneFrom === undefined || !filtered || options.scope?.project
+            ? null
+            : options.scope?.agentsOnly === true;
+    const vanished = (seen: ReadonlySet<string>): Array<{ source: HistorySourceSnapshot; root: string }> => {
+        if (windowSide === null) {
+            return [];
+        }
+
+        const unseen = repository.metadata
+            .listMetadata({ providerId, mtimeFrom: options.pruneFrom, withUserText: false })
+            .filter((entry) => Boolean(entry.isSubagent) === windowSide && !seen.has(entry.filePath))
+            .map((entry) => entry.filePath);
+
+        if (unseen.length === 0) {
+            return [];
+        }
+
+        return repository.sourcesForPaths({ providerId, filePaths: unseen }).flatMap((source) => {
+            const root = source.root ?? roots.find((candidate) => historyPathUnderRoot(source.filePath, candidate));
+
+            // A root that is gone is an unmounted volume or a moved home, not a deleted session.
+            if (!root || !roots.includes(root) || !directoryExists(root) || !sourceGone(source.filePath)) {
+                return [];
+            }
+
+            return [{ source, root }];
+        });
+    };
     const hasIssues = observed.issues.some(
         (issue) =>
             issue.code !== "root-missing" ||
@@ -190,6 +248,7 @@ export async function synchronizeHistory(options: {
     const unchangedSnapshot =
         !options.rebuild &&
         !needsPrune &&
+        vanished(observedPaths).length === 0 &&
         !hasIssues &&
         status.issues.every(
             (issue) => issue.message === IDENTITY_CONFLICT && knownConflict(observedByPath.get(issue.path))
@@ -524,6 +583,26 @@ export async function synchronizeHistory(options: {
                     message: "Source deletion could not be verified; metadata retained",
                 });
             }
+        }
+
+        // The same generation and ownership guards as the pass above; `vanished` checks the file again here.
+        let vanishedRemoved = 0;
+
+        for (const { source, root } of vanished(currentPaths)) {
+            if (source.generation > generation || !repository.ownsRoot({ providerId, root, generation })) {
+                continue;
+            }
+
+            repository.remove(source);
+            vanishedRemoved++;
+        }
+
+        if (vanishedRemoved > 0) {
+            removed += vanishedRemoved;
+            logger.info(
+                { providerId, removed: vanishedRemoved, from: options.pruneFrom },
+                "[history] a filtered listing dropped rows whose session files are gone"
+            );
         }
 
         // A copy discovery dropped in favour of another file of the same session still exists on
