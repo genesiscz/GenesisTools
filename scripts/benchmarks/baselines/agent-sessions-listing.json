@@ -1,0 +1,31 @@
+{
+    "name": "agent-sessions-listing",
+    "capturedAt": "2026-10-12T18:40:42.978Z",
+    "commit": "00546fce8",
+    "loadAvg": [
+        43.69970703125,
+        29.1513671875,
+        26.6533203125
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "cli.fresh.cpuMs": 1130.106,
+        "cli.cached.cpuMs": 283.085,
+        "claude.cold.cpuMs": 53.849,
+        "claude.cold.wallMs": 27.935040999999984,
+        "claude.sources": 2027,
+        "grok.cold.cpuMs": 148.26,
+        "grok.cold.wallMs": 52.16633300000001,
+        "grok.sources": 640,
+        "codex.cold.cpuMs": 262.003,
+        "codex.cold.wallMs": 196.543625,
+        "codex.sources": 308,
+        "claude.warm.cpuMs": 30.584,
+        "claude.warm.wallMs": 16.67908299999999,
+        "grok.warm.cpuMs": 91.541,
+        "grok.warm.wallMs": 35.218124999999986,
+        "codex.warm.cpuMs": 88.4,
+        "codex.warm.wallMs": 61.257915999999966
+    },
+    "notes": "live session roots on this Mac, read-only; discover = excludeAgents listing scope | commit 00546fce8 | uptime 20:40  up  7:57, 23 users, load averages: 43.70 29.15 26.65"
+}
