@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { rescanWorkerTurns, resolveTranscript } from "./resolve";
+import { rescanWorkerTurns, resolveTranscript, resolveTranscripts } from "./resolve";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-transcript-"));
@@ -274,5 +274,145 @@ describe("resolveTranscript: sub-agent ids and absolute paths", () => {
             sessionId: "elsewhere",
             filePath: stray,
         });
+    });
+});
+
+/** Every provider and source in one tree, so a lookup change is checked against all of them at once. */
+function mixedTree() {
+    const root = fixtureRoot();
+    const roots = {
+        claudeProjects: join(root, "claude"),
+        claudeWorker: join(root, "claude-worker"),
+        grokHome: join(root, "grok"),
+        grokWorker: join(root, "grok-worker"),
+        codexHome: join(root, "codex"),
+        codexWorker: join(root, "codex-worker"),
+    };
+    const write = (path: string, text = "{}\n", mtimeSec?: number) => {
+        mkdirSync(join(path, ".."), { recursive: true });
+        writeFileSync(path, text);
+        if (mtimeSec !== undefined) {
+            utimesSync(path, mtimeSec, mtimeSec);
+        }
+
+        return path;
+    };
+    const claudeId = "11111111-2222-3333-4444-555555555555";
+    const twinId = "99999999-2222-3333-4444-555555555555";
+    const files = {
+        claude: write(join(roots.claudeProjects, "-proj-a", `${claudeId}.jsonl`)),
+        // The same session id under two projects: the newer file is the answer.
+        twinOld: write(join(roots.claudeProjects, "-proj-a", `${twinId}.jsonl`), "{}\n", 1_000),
+        twinNew: write(join(roots.claudeProjects, "-proj-b", `${twinId}.jsonl`), "{}\n", 2_000),
+        subagent: write(join(roots.claudeProjects, "-proj-a", claudeId, "subagents", "agent-a0564229bc9945515.jsonl")),
+        grok: write(
+            join(
+                roots.grokHome,
+                "sessions",
+                encodeURIComponent("/tmp/p"),
+                "aaaaaaaa-0000-0000-0000-00000000000a",
+                "updates.jsonl"
+            )
+        ),
+        codex: write(
+            join(
+                roots.codexHome,
+                "sessions",
+                "2026",
+                "10",
+                "12",
+                "rollout-2026-10-12T10-00-00-bbbbbbbb-0000-0000-0000-00000000000b.jsonl"
+            )
+        ),
+        codexWorker: write(join(roots.codexWorker, "cw-task.jsonl")),
+        claudeWorkerTurn1: write(join(roots.claudeWorker, "cl-task.turn1.jsonl")),
+        claudeWorkerTurn2: write(join(roots.claudeWorker, "cl-task.turn2.jsonl")),
+    };
+    write(
+        join(roots.codexWorker, "cw-task.meta.json"),
+        SafeJSON.stringify({ threadId: "cccccccc-0000-0000-0000-00000000000c" })
+    );
+    write(
+        join(roots.claudeWorker, "cl-task.meta.json"),
+        SafeJSON.stringify({ sessionId: "dddddddd-0000-0000-0000-00000000000d" })
+    );
+    // A project folder with no transcripts and a stray file at the projects root must not break the walk.
+    mkdirSync(join(roots.claudeProjects, "-proj-empty"), { recursive: true });
+    write(join(roots.claudeProjects, "stray.txt"), "x");
+
+    return { roots, files, claudeId, twinId };
+}
+
+/** The queries the hub sends, each with the file it must find, or null for "no session file". */
+function mixedQueries(tree: ReturnType<typeof mixedTree>): Array<[string, string | null]> {
+    const { files, claudeId, twinId } = tree;
+
+    return [
+        [claudeId, files.claude],
+        [claudeId.slice(0, 8), files.claude],
+        [twinId, files.twinNew],
+        ["a0564229bc9945515", files.subagent],
+        ["agent-a0564229bc9945515", files.subagent],
+        ["aaaaaaaa", files.grok],
+        ["bbbbbbbb-0000-0000-0000-00000000000b", files.codex],
+        ["cccccccc-0000-0000-0000-00000000000c", files.codexWorker],
+        ["cw-task", files.codexWorker],
+        ["dddddddd-0000-0000-0000-00000000000d", files.claudeWorkerTurn2],
+        ["eeeeeeee-0000-0000-0000-00000000000e", null],
+    ];
+}
+
+describe("resolveTranscript: one tree with every provider", () => {
+    test("each id finds its file, the newer of two same-id files wins, and a missing id throws", async () => {
+        const tree = mixedTree();
+
+        for (const [query, expected] of mixedQueries(tree)) {
+            if (expected === null) {
+                await expect(resolveTranscript(query, tree.roots)).rejects.toThrow(
+                    `No session file found for "${query}"`
+                );
+                continue;
+            }
+
+            const hit = await resolveTranscript(query, tree.roots);
+            expect({ query, filePath: hit.filePath }).toEqual({ query, filePath: expected });
+        }
+
+        const worker = await resolveTranscript("cl-task", tree.roots);
+        expect(worker.extraFiles).toEqual([tree.files.claudeWorkerTurn1]);
+    });
+
+    test("a provider filter hides the other providers' files", async () => {
+        const tree = mixedTree();
+
+        await expect(resolveTranscript("aaaaaaaa", tree.roots, "claude")).rejects.toThrow("No session file found");
+        expect((await resolveTranscript("aaaaaaaa", tree.roots, "grok")).provider).toBe("grok");
+    });
+});
+
+describe("resolveTranscripts", () => {
+    test("answers every id exactly as resolveTranscript answers it alone, errors included", async () => {
+        const tree = mixedTree();
+        const queries = mixedQueries(tree).map(([query]) => query);
+        const batch = await resolveTranscripts([...queries, queries[0]], tree.roots);
+
+        expect([...batch.keys()]).toEqual(queries);
+
+        for (const query of queries) {
+            const alone = await resolveTranscript(query, tree.roots).catch((err: Error) => err);
+            expect({ query, answer: batch.get(query) }).toEqual({ query, answer: alone });
+        }
+    });
+
+    test("a provider filter applies to the whole batch", async () => {
+        const tree = mixedTree();
+        const batch = await resolveTranscripts(["aaaaaaaa", tree.claudeId], tree.roots, "grok");
+
+        expect(batch.get("aaaaaaaa")).toMatchObject({ provider: "grok", filePath: tree.files.grok });
+        expect(batch.get(tree.claudeId)).toBeInstanceOf(Error);
+    });
+
+    test("an empty list reads nothing and answers nothing", async () => {
+        expect((await resolveTranscripts([], mixedTree().roots)).size).toBe(0);
     });
 });

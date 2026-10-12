@@ -16,6 +16,7 @@ import {
     allTranscriptTurns,
     type ResolvedTranscript,
     resolveTranscript,
+    resolveTranscripts,
     type TranscriptTurn,
     transcriptEnvelope,
 } from "@genesiscz/utils/ai/transcripts";
@@ -327,8 +328,22 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
     }[] = [];
 
     if (options.sessionIds && options.sessionIds.length > 0) {
-        for (const id of new Set(options.sessionIds)) {
-            targets.push({ id, title: null, provider: null, resolved: () => resolveTranscript(id) });
+        // One read of the session folders for every watched id: each lookup alone reads all of them.
+        const found = await resolveTranscripts(options.sessionIds);
+
+        for (const [id, answer] of found) {
+            targets.push({
+                id,
+                title: null,
+                provider: null,
+                resolved: async () => {
+                    if (answer instanceof Error) {
+                        throw answer;
+                    }
+
+                    return answer;
+                },
+            });
         }
     } else {
         const listRows =

@@ -76,6 +76,54 @@ function isDir(path: string): boolean {
     }
 }
 
+/**
+ * The folder reads one lookup makes. A batch shares one memo, so N ids read each folder once: a single lookup
+ * reads every session folder of every provider (10 to 16 ms of CPU measured), and the stuck check asks for every
+ * watched session at once. The memo lives for one call, so nothing is served from an earlier read.
+ */
+interface FolderReads {
+    listDir(path: string): string[];
+    isDir(path: string): boolean;
+    mtimeOf(path: string): number;
+    exists(path: string): boolean;
+    /** Throws like `readFileSync`. */
+    readText(path: string): string;
+}
+
+const directReads: FolderReads = {
+    listDir,
+    isDir,
+    mtimeOf,
+    exists: existsSync,
+    readText: (path) => readFileSync(path, "utf8"),
+};
+
+function memoized<T>(read: (path: string) => T): (path: string) => T {
+    const seen = new Map<string, T>();
+
+    return (path) => {
+        const known = seen.get(path);
+
+        if (known !== undefined) {
+            return known;
+        }
+
+        const value = read(path);
+        seen.set(path, value);
+        return value;
+    };
+}
+
+function memoReads(): FolderReads {
+    return {
+        listDir: memoized(listDir),
+        isDir: memoized(isDir),
+        mtimeOf: memoized(mtimeOf),
+        exists: memoized(existsSync),
+        readText: memoized(directReads.readText),
+    };
+}
+
 function turnNumber(file: string): number {
     const match = file.match(/\.turn(\d+)\.jsonl$/);
     return match ? Number(match[1]) : 0;
@@ -112,16 +160,16 @@ export function defaultTranscriptRoots(): Required<TranscriptRoots> {
     };
 }
 
-function findClaude(query: string, projectsDir: string): RankedHit[] {
+function findClaude(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];
-    for (const project of listDir(projectsDir)) {
+    for (const project of fs.listDir(projectsDir)) {
         const projectDir = join(projectsDir, project);
-        if (!isDir(projectDir)) {
+        if (!fs.isDir(projectDir)) {
             continue;
         }
         const dirs = [projectDir, join(projectDir, "subagents")];
         for (const dir of dirs) {
-            for (const entry of listDir(dir)) {
+            for (const entry of fs.listDir(dir)) {
                 if (!entry.endsWith(".jsonl")) {
                     continue;
                 }
@@ -135,12 +183,12 @@ function findClaude(query: string, projectsDir: string): RankedHit[] {
                     source: "native",
                     sessionId: id,
                     filePath,
-                    mtime: mtimeOf(filePath),
+                    mtime: fs.mtimeOf(filePath),
                 });
             }
         }
     }
-    return [...hits, ...findClaudeSubagent(query, projectsDir)];
+    return [...hits, ...findClaudeSubagent(query, projectsDir, fs)];
 }
 
 /** `aE-sharedkit-47434100f6deeb1c`, `a0564229bc9945515`, or either with its `agent-` file prefix. */
@@ -151,28 +199,28 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * A sub-agent transcript by its exact id: `<project>/<session>/subagents/agent-<id>.jsonl`.
  * Exact only, since every session directory is probed with one `existsSync`.
  */
-function findClaudeSubagent(query: string, projectsDir: string): RankedHit[] {
+function findClaudeSubagent(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {
     const agentId = query.replace(/^agent-/, "");
     if (!SUBAGENT_ID.test(agentId) || UUID.test(agentId)) {
         return [];
     }
 
     const hits: RankedHit[] = [];
-    for (const project of listDir(projectsDir)) {
+    for (const project of fs.listDir(projectsDir)) {
         const projectDir = join(projectsDir, project);
-        for (const session of listDir(projectDir)) {
+        for (const session of fs.listDir(projectDir)) {
             if (session.endsWith(".jsonl")) {
                 continue;
             }
 
             const filePath = join(projectDir, session, "subagents", `agent-${agentId}.jsonl`);
-            if (existsSync(filePath)) {
+            if (fs.exists(filePath)) {
                 hits.push({
                     provider: "claude",
                     source: "native",
                     sessionId: agentId,
                     filePath,
-                    mtime: mtimeOf(filePath),
+                    mtime: fs.mtimeOf(filePath),
                 });
             }
         }
@@ -248,20 +296,20 @@ function resolvePath(
     return { provider: "claude", source, sessionId: stem.replace(/^agent-/, ""), filePath };
 }
 
-function findGrokNative(query: string, grokHome: string): RankedHit[] {
+function findGrokNative(query: string, grokHome: string, fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];
     const root = join(grokHome, "sessions");
-    for (const cwdEnc of listDir(root)) {
+    for (const cwdEnc of fs.listDir(root)) {
         const cwdDir = join(root, cwdEnc);
-        if (!isDir(cwdDir)) {
+        if (!fs.isDir(cwdDir)) {
             continue;
         }
-        for (const id of listDir(cwdDir)) {
+        for (const id of fs.listDir(cwdDir)) {
             if (!idMatches(query, id)) {
                 continue;
             }
             const filePath = join(cwdDir, id, "updates.jsonl");
-            if (!existsSync(filePath)) {
+            if (!fs.exists(filePath)) {
                 continue;
             }
             hits.push({
@@ -269,7 +317,7 @@ function findGrokNative(query: string, grokHome: string): RankedHit[] {
                 source: "native",
                 sessionId: id,
                 filePath,
-                mtime: mtimeOf(filePath),
+                mtime: fs.mtimeOf(filePath),
             });
         }
     }
@@ -281,9 +329,14 @@ function findGrokNative(query: string, grokHome: string): RankedHit[] {
  * `tools grok` and `tools claude worker` share. Matches the worker name or the
  * session uuid in its meta; the latest turn file is the head, earlier ones the chain.
  */
-function findTurnFileWorker(query: string, workerDir: string, provider: TranscriptProvider): RankedHit[] {
+function findTurnFileWorker(
+    query: string,
+    workerDir: string,
+    provider: TranscriptProvider,
+    fs: FolderReads
+): RankedHit[] {
     const hits: RankedHit[] = [];
-    const entries = listDir(workerDir);
+    const entries = fs.listDir(workerDir);
     for (const entry of entries) {
         if (!entry.endsWith(".meta.json")) {
             continue;
@@ -291,7 +344,7 @@ function findTurnFileWorker(query: string, workerDir: string, provider: Transcri
         const name = entry.slice(0, -".meta.json".length);
         let sessionId = name;
         try {
-            const meta = SafeJSON.parse(readFileSync(join(workerDir, entry), "utf8"));
+            const meta = SafeJSON.parse(fs.readText(join(workerDir, entry)));
             if (isRecord(meta) && typeof meta.sessionId === "string" && meta.sessionId) {
                 sessionId = meta.sessionId;
             }
@@ -316,18 +369,18 @@ function findTurnFileWorker(query: string, workerDir: string, provider: Transcri
             sessionId,
             filePath,
             extraFiles: extraFiles.length > 0 ? extraFiles : undefined,
-            mtime: mtimeOf(filePath),
+            mtime: fs.mtimeOf(filePath),
         });
     }
     return hits;
 }
 
-function findGrokWorker(query: string, workerDir: string): RankedHit[] {
-    return findTurnFileWorker(query, workerDir, "grok");
+function findGrokWorker(query: string, workerDir: string, fs: FolderReads): RankedHit[] {
+    return findTurnFileWorker(query, workerDir, "grok", fs);
 }
 
-function findClaudeWorker(query: string, workerDir: string): RankedHit[] {
-    return findTurnFileWorker(query, workerDir, "claude");
+function findClaudeWorker(query: string, workerDir: string, fs: FolderReads): RankedHit[] {
+    return findTurnFileWorker(query, workerDir, "claude", fs);
 }
 
 /**
@@ -383,28 +436,28 @@ function codexNativeSessionId(entry: string): string {
     return uuid?.[0] ?? stem;
 }
 
-function findCodexNative(query: string, codexHome: string): RankedHit[] {
+function findCodexNative(query: string, codexHome: string, fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];
     const homes = splitCodexHomes(codexHome);
     for (const home of homes) {
         for (const bucket of ["sessions", "archived_sessions"]) {
             const root = join(home, bucket);
-            for (const year of listDir(root)) {
+            for (const year of fs.listDir(root)) {
                 const yearDir = join(root, year);
-                if (!isDir(yearDir)) {
+                if (!fs.isDir(yearDir)) {
                     continue;
                 }
-                for (const month of listDir(yearDir)) {
+                for (const month of fs.listDir(yearDir)) {
                     const monthDir = join(yearDir, month);
-                    if (!isDir(monthDir)) {
+                    if (!fs.isDir(monthDir)) {
                         continue;
                     }
-                    for (const day of listDir(monthDir)) {
+                    for (const day of fs.listDir(monthDir)) {
                         const dayDir = join(monthDir, day);
-                        if (!isDir(dayDir)) {
+                        if (!fs.isDir(dayDir)) {
                             continue;
                         }
-                        for (const entry of listDir(dayDir)) {
+                        for (const entry of fs.listDir(dayDir)) {
                             if (!entry.endsWith(".jsonl") || !idMatches(query, entry)) {
                                 continue;
                             }
@@ -415,7 +468,7 @@ function findCodexNative(query: string, codexHome: string): RankedHit[] {
                                 source: "native",
                                 sessionId: id,
                                 filePath,
-                                mtime: mtimeOf(filePath),
+                                mtime: fs.mtimeOf(filePath),
                             });
                         }
                     }
@@ -426,16 +479,16 @@ function findCodexNative(query: string, codexHome: string): RankedHit[] {
     return hits;
 }
 
-function findCodexWorker(query: string, workerDir: string): RankedHit[] {
+function findCodexWorker(query: string, workerDir: string, fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];
-    for (const entry of listDir(workerDir)) {
+    for (const entry of fs.listDir(workerDir)) {
         if (!entry.endsWith(".meta.json")) {
             continue;
         }
         const name = entry.slice(0, -".meta.json".length);
         let sessionId = name;
         try {
-            const meta = SafeJSON.parse(readFileSync(join(workerDir, entry), "utf8"));
+            const meta = SafeJSON.parse(fs.readText(join(workerDir, entry)));
             if (isRecord(meta)) {
                 if (typeof meta.threadId === "string" && meta.threadId) {
                     sessionId = meta.threadId;
@@ -450,7 +503,7 @@ function findCodexWorker(query: string, workerDir: string): RankedHit[] {
             continue;
         }
         const filePath = join(workerDir, `${name}.jsonl`);
-        if (!existsSync(filePath)) {
+        if (!fs.exists(filePath)) {
             continue;
         }
         hits.push({
@@ -458,7 +511,7 @@ function findCodexWorker(query: string, workerDir: string): RankedHit[] {
             source: "worker",
             sessionId,
             filePath,
-            mtime: mtimeOf(filePath),
+            mtime: fs.mtimeOf(filePath),
         });
     }
     return hits;
@@ -469,6 +522,47 @@ export async function resolveTranscript(
     roots: TranscriptRoots = {},
     provider?: TranscriptProvider
 ): Promise<ResolvedTranscript> {
+    return resolveWith({ query, roots, provider, fs: directReads });
+}
+
+/**
+ * Several ids against one read of the session folders, each answered exactly as `resolveTranscript` would answer
+ * it alone (a missing id maps to the same Error). For callers that hold a list of ids, such as the stuck check.
+ */
+export async function resolveTranscripts(
+    queries: string[],
+    roots: TranscriptRoots = {},
+    provider?: TranscriptProvider
+): Promise<Map<string, ResolvedTranscript | Error>> {
+    const fs = memoReads();
+    const answers = new Map<string, ResolvedTranscript | Error>();
+
+    for (const query of queries) {
+        if (answers.has(query)) {
+            continue;
+        }
+
+        try {
+            answers.set(query, resolveWith({ query, roots, provider, fs }));
+        } catch (err) {
+            answers.set(query, err instanceof Error ? err : new Error(String(err)));
+        }
+    }
+
+    return answers;
+}
+
+function resolveWith({
+    query,
+    roots,
+    provider,
+    fs,
+}: {
+    query: string;
+    roots: TranscriptRoots;
+    provider?: TranscriptProvider;
+    fs: FolderReads;
+}): ResolvedTranscript {
     const resolved = { ...defaultTranscriptRoots(), ...roots };
     // An explicitly injected root is the whole answer; only the default set
     // fans out across every Claude root that nativeSessionRoots knows.
@@ -488,17 +582,17 @@ export async function resolveTranscript(
     const hits: RankedHit[] = [];
     if (!provider || provider === "claude") {
         for (const root of claudeRoots) {
-            hits.push(...findClaude(query, root));
+            hits.push(...findClaude(query, root, fs));
         }
-        hits.push(...findClaudeWorker(query, resolved.claudeWorker));
+        hits.push(...findClaudeWorker(query, resolved.claudeWorker, fs));
     }
     if (!provider || provider === "grok") {
-        hits.push(...findGrokNative(query, resolved.grokHome));
-        hits.push(...findGrokWorker(query, resolved.grokWorker));
+        hits.push(...findGrokNative(query, resolved.grokHome, fs));
+        hits.push(...findGrokWorker(query, resolved.grokWorker, fs));
     }
     if (!provider || provider === "codex") {
-        hits.push(...findCodexNative(query, resolved.codexHome));
-        hits.push(...findCodexWorker(query, resolved.codexWorker));
+        hits.push(...findCodexNative(query, resolved.codexHome, fs));
+        hits.push(...findCodexWorker(query, resolved.codexWorker, fs));
     }
     if (hits.length === 0) {
         throw new Error(`No session file found for "${query}"`);

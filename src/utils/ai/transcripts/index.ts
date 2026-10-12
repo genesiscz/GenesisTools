@@ -16,7 +16,7 @@ export type {
 } from "./prompt-parts";
 export { isHarnessDelivery, isTaskReport, parsePromptParts, structuredPromptParts } from "./prompt-parts";
 export type { ResolvedTranscript, TranscriptRoots, TranscriptSource } from "./resolve";
-export { defaultTranscriptRoots, resolveTranscript } from "./resolve";
+export { defaultTranscriptRoots, resolveTranscript, resolveTranscripts } from "./resolve";
 export type { TranscriptSearchOptions, TranscriptSearchResult } from "./search";
 export { DEFAULT_SEARCH_LIMIT, searchTranscript, turnMatches } from "./search";
 export type { FollowTranscriptOptions } from "./tail";
