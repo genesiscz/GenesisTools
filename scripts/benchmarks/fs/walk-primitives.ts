@@ -3,8 +3,13 @@
  * Walk options for "which session files changed recently", on the real session trees (read-only).
  *
  * ARMS, each in a fresh process per sample (`walk-child.ts`), interleaved arm by arm:
- *   - `native`: `fastWalk` on macOS, one native call that reads each directory with `getattrlistbulk`
- *     (name, type, mtime and size per entry), so no file gets its own stat.
+ *   - `native`: `fastWalk` on macOS. No C of our own: `open`, `getattrlistbulk` and `close` straight from
+ *     `libSystem` through `bun:ffi`, each directory's entries (name, type, mtime, size) read in TypeScript, so no
+ *     file gets its own stat. Its cold pass carries the JIT warm-up of the parse loop.
+ *   - `clang`: the same walk in C (`fastwalk.c`, a fixture kept for this comparison), built once by
+ *     `defineNativeLibrary` into its cache and opened from there.
+ *   - `tcc`: the same C compiled in the process by Bun's built-in TinyCC (`cc` from `bun:ffi`), so no clang. Its
+ *     cold pass includes the compile, which a TinyCC build pays in every process.
  *   - `js`: `fastWalk`'s portable walker, `readdir` with types plus an `lstat` per returned file.
  *   - `walkSourceRoots`: what session discovery uses today, plus the stat per file the listing then needs
  *     for the mtime. Its folder-listing cache makes the warm pass cheaper in a resident process.
@@ -21,10 +26,9 @@ import { join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { finishBench, parseBenchArgs } from "./shared";
-import { WALK_TREES } from "./walk-trees";
+import { WALK_ARMS, WALK_TREES } from "./walk-trees";
 
 const BASELINE_NAME = "fs-walk-primitives";
-const ARMS = ["native", "js", "walkSourceRoots"] as const;
 const REPO = join(import.meta.dir, "..", "..", "..");
 
 interface Sample {
@@ -59,7 +63,7 @@ for (let i = 0; i < args.warmup + args.runs; i++) {
     const metrics: BaselineMetrics = {};
 
     for (const tree of Object.keys(WALK_TREES)) {
-        for (const arm of ARMS) {
+        for (const arm of WALK_ARMS) {
             const { coldCpuMs, warmCpuMs, files } = await sample(arm, tree);
             metrics[`${tree}.${arm}.cold.cpuMs`] = coldCpuMs;
             metrics[`${tree}.${arm}.warm.cpuMs`] = warmCpuMs;
@@ -81,5 +85,5 @@ await finishBench({
     lowerIsBetter: keys.filter((key) => key.endsWith("cpuMs")),
     floor: Object.fromEntries(keys.map((key) => [key, key.endsWith("cpuMs") ? 10 : 50])),
     notes: "live session trees, read-only; each sample is a fresh process (cold pass, then warm pass)",
-    context: { trees: WALK_TREES, arms: ARMS },
+    context: { trees: WALK_TREES, arms: WALK_ARMS },
 });

@@ -80,6 +80,11 @@
             "types": "./bun.ts",
             "default": "./bun.ts"
         },
+        "./bun/compiler": {
+            "bun": "./bun/compiler/index.ts",
+            "types": "./bun/compiler/index.ts",
+            "default": "./bun/compiler/index.ts"
+        },
         "./clarity": {
             "bun": "./clarity/index.ts",
             "types": "./clarity/index.ts",
@@ -179,6 +184,11 @@
             "bun": "./fs/index.ts",
             "types": "./fs/index.ts",
             "default": "./fs/index.ts"
+        },
+        "./fs/fast-walk": {
+            "bun": "./fs/fast-walk.ts",
+            "types": "./fs/fast-walk.ts",
+            "default": "./fs/fast-walk.ts"
         },
         "./fs/file-tailer": {
             "bun": "./fs/file-tailer.ts",

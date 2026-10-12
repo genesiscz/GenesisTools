@@ -18,3 +18,6 @@ export const WALK_TREES = {
 } satisfies Record<string, { roots: string[]; names: string[]; maxDepth: number | undefined }>;
 
 export type WalkTreeName = keyof typeof WALK_TREES;
+
+/** The walkers `walk-child.ts` can run; `walk-primitives.ts` runs each of them on every tree. */
+export const WALK_ARMS = ["native", "clang", "tcc", "js", "walkSourceRoots"] as const;

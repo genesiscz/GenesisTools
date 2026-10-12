@@ -1,8 +1,10 @@
-// fastwalk.c: walk directory trees in one native call on macOS, with getattrlistbulk.
+// fastwalk.c: the C version of fastWalk's macOS walk, kept as a benchmark fixture (walk-primitives.ts, arms
+// clang and tcc). Production walks with src/utils/fs/fast-walk.ts, which makes the same getattrlistbulk calls
+// through bun:ffi with no C: measured equal, so this file is the evidence, not a dependency.
 //
 // One getattrlistbulk call returns the name, type, mtime and size of many entries of a directory, so a walk
-// costs one open, a few bulk reads and one close per directory, and no stat per file. The JS side calls
-// fw_walk once for all roots (bun:ffi) and parses the text it returns; fast-walk.ts holds the contract.
+// costs one open, a few bulk reads and one close per directory, and no stat per file. walk-child.ts calls
+// fw_walk once for all roots and parses the text it returns.
 //
 // Output: one line per entry, "<kind>\t<mtime ms>\t<size>\t<path>\n". kind is f (file), d (directory),
 // l (symbolic link, not followed) or e (a directory that could not be read; the size field holds errno).

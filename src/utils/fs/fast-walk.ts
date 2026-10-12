@@ -1,11 +1,12 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
-import { type Dirent, existsSync, readFileSync, renameSync } from "node:fs";
+import { FFIType, read } from "bun:ffi";
+import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface FastWalkOptions {
-    /** Absolute roots, already resolved (a symbolic link given as a root is listed, not followed below). */
+    /** Absolute roots. A root that is a link is followed; links below a root are returned and not followed. */
     roots: string[];
     /** The root is depth 0; a directory deeper than this is not entered. Unset: no limit. */
     maxDepth?: number;
@@ -38,110 +39,194 @@ export interface FastWalkResult {
 }
 
 const { log } = logger.scoped("fast-walk");
-const SOURCE = join(import.meta.dir, "native", "fastwalk.c");
 
-interface NativeWalker {
-    walk(input: { roots: string[]; maxDepth: number; names: string[]; includeDirectories: boolean }): string;
+// macOS 26 SDK values (`sys/attr.h`, `fcntl.h`, `sys/vnode.h`), checked against the headers on 2026-10-12.
+const ATTR_BIT_MAP_COUNT = 5;
+const ATTR_CMN_NAME = 0x1;
+const ATTR_CMN_OBJTYPE = 0x8;
+const ATTR_CMN_MODTIME = 0x400;
+const ATTR_CMN_RETURNED_ATTRS = 0x80000000;
+const ATTR_FILE_DATALENGTH = 0x200;
+const FSOPT_NOFOLLOW = 0x1;
+const FSOPT_PACK_INVAL_ATTRS = 0x8;
+const O_NONBLOCK = 0x4;
+const O_DIRECTORY = 0x100000;
+const O_CLOEXEC = 0x1000000;
+const VREG = 1;
+const VDIR = 2;
+const VLNK = 5;
+const TWO_TO_32 = 4294967296;
+const BULK_BUFFER_BYTES = 256 * 1024;
+/** Directories read between two yields to the event loop, so a resident server keeps answering during a walk. */
+const DIRECTORIES_PER_YIELD = 256;
+
+/** `open`, `getattrlistbulk` and `close` from `libSystem`, or null off macOS (the JS walker answers then). */
+const nativeCalls = defineSystemLibrary({
+    path: "/usr/lib/libSystem.B.dylib",
+    platforms: ["darwin"],
+    symbols: {
+        open: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+        close: { args: [FFIType.i32], returns: FFIType.i32 },
+        getattrlistbulk: {
+            args: [FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.u64],
+            returns: FFIType.i32,
+        },
+        __error: { args: [], returns: FFIType.ptr },
+    },
+});
+
+type LibSystem = NonNullable<ReturnType<typeof nativeCalls>>;
+
+function errnoNow(calls: LibSystem): number {
+    const location = calls.__error();
+    return location ? read.i32(location, 0) : 0;
 }
 
-let native: NativeWalker | null | undefined;
+/** A name pattern as bytes: an exact name, or the suffix of a `*suffix` pattern. */
+interface BytePattern {
+    suffix: boolean;
+    bytes: Uint8Array;
+}
+
+function bytePatterns(names: string[]): BytePattern[] {
+    const encoder = new TextEncoder();
+    return names.map((name) =>
+        name.startsWith("*")
+            ? { suffix: true, bytes: encoder.encode(name.slice(1)) }
+            : { suffix: false, bytes: encoder.encode(name) }
+    );
+}
+
+function nameMatches(buffer: Uint8Array, start: number, length: number, patterns: BytePattern[]): boolean {
+    if (patterns.length === 0) {
+        return true;
+    }
+
+    for (const pattern of patterns) {
+        const bytes = pattern.bytes;
+
+        if (pattern.suffix ? length < bytes.length : length !== bytes.length) {
+            continue;
+        }
+
+        const from = start + length - bytes.length;
+        let same = true;
+
+        for (let i = 0; i < bytes.length && same; i++) {
+            same = buffer[from + i] === bytes[i];
+        }
+
+        if (same) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 /**
- * The compiled walker, built on first use with `clang` into `native/` beside the source and named by the source's
- * hash, so an edited source never loads a stale library and parallel processes never share a half-written one.
- * Null off macOS, or when the build fails (the JS walker answers then, with the same result).
+ * The macOS walker: one `getattrlistbulk` call returns the name, type, mtime and size of many entries of a directory,
+ * so a directory costs one `open`, a few bulk reads and one `close`, and no file is stat'ed on its own. The calls go
+ * straight to `libSystem` through `bun:ffi` and the entries are read in place, decoding a name only for a directory
+ * to enter or an entry to return. The arrays go to every call as arrays (see `defineSystemLibrary` for why).
  */
-function nativeWalker(): NativeWalker | null {
-    if (native !== undefined) {
-        return native;
-    }
-
-    native = null;
-
-    if (process.platform !== "darwin" || !existsSync(SOURCE)) {
-        return native;
-    }
-
-    try {
-        const hash = Bun.hash(readFileSync(SOURCE)).toString(16);
-        const library = join(import.meta.dir, "native", `libfastwalk-${hash}.dylib`);
-
-        if (!existsSync(library)) {
-            const building = `${library}.${process.pid}.tmp`;
-            const built = Bun.spawnSync(["clang", "-O2", "-dynamiclib", "-o", building, SOURCE], { stderr: "pipe" });
-
-            if (built.exitCode !== 0) {
-                log.warn(
-                    { stderr: built.stderr.toString().slice(0, 2000) },
-                    "fast-walk: native build failed; using JS"
-                );
-                return native;
-            }
-
-            renameSync(building, library);
-            log.debug({ library }, "fast-walk: built the native walker");
-        }
-
-        const { symbols } = dlopen(library, {
-            fw_walk: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.ptr },
-            fw_free: { args: [FFIType.ptr], returns: FFIType.void },
-        });
-        native = {
-            walk({ roots, maxDepth, names, includeDirectories }) {
-                const length = new BigUint64Array(1);
-                const result = symbols.fw_walk(
-                    Buffer.from(`${roots.join("\n")}\0`),
-                    maxDepth,
-                    Buffer.from(`${names.join("\n")}\0`),
-                    includeDirectories ? 1 : 0,
-                    ptr(length)
-                );
-
-                if (!result) {
-                    throw new Error("fast-walk: the native walker returned no buffer");
-                }
-
-                try {
-                    return new TextDecoder().decode(toArrayBuffer(result, 0, Number(length[0])));
-                } finally {
-                    symbols.fw_free(result);
-                }
-            },
-        };
-    } catch (err) {
-        log.warn({ err }, "fast-walk: native walker unavailable; using JS");
-        native = null;
-    }
-
-    return native;
-}
-
-function parseNative(text: string): Pick<FastWalkResult, "entries" | "errors"> {
+async function walkNative(
+    calls: LibSystem,
+    options: Required<Omit<FastWalkOptions, "engine">>
+): Promise<FastWalkResult> {
     const entries: FastWalkEntry[] = [];
     const errors: FastWalkError[] = [];
+    const patterns = bytePatterns(options.names);
+    const decoder = new TextDecoder();
+    const attributes = new Uint8Array(24);
+    const attributeView = new DataView(attributes.buffer);
+    attributeView.setUint16(0, ATTR_BIT_MAP_COUNT, true);
+    attributeView.setUint32(4, ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE | ATTR_CMN_MODTIME, true);
+    attributeView.setUint32(16, ATTR_FILE_DATALENGTH, true);
+    const buffer = new Uint8Array(BULK_BUFFER_BYTES);
+    const words = new Uint32Array(buffer.buffer);
+    const signedWords = new Int32Array(buffer.buffer);
+    const stack = options.roots.map((root) => ({ directory: root, depth: 0 }));
+    let directoriesRead = 0;
 
-    for (const line of text.split("\n")) {
-        if (!line) {
+    while (stack.length > 0) {
+        const next = stack.pop();
+
+        if (!next) {
+            break;
+        }
+
+        if (++directoriesRead % DIRECTORIES_PER_YIELD === 0) {
+            await Bun.sleep(0);
+        }
+
+        const fd = calls.open(Buffer.from(`${next.directory}\0`), O_DIRECTORY | O_NONBLOCK | O_CLOEXEC);
+
+        if (fd < 0) {
+            errors.push({ path: next.directory, errno: errnoNow(calls) });
             continue;
         }
 
-        const first = line.indexOf("\t");
-        const second = line.indexOf("\t", first + 1);
-        const third = line.indexOf("\t", second + 1);
-        const kind = line.slice(0, first);
-        const mtimeMs = Number(line.slice(first + 1, second));
-        const size = Number(line.slice(second + 1, third));
-        const path = line.slice(third + 1);
+        for (;;) {
+            const count = calls.getattrlistbulk(
+                fd,
+                attributes,
+                buffer,
+                buffer.length,
+                FSOPT_PACK_INVAL_ATTRS | FSOPT_NOFOLLOW
+            );
 
-        if (kind === "e") {
-            errors.push({ path, errno: size });
-            continue;
+            if (count < 0) {
+                errors.push({ path: next.directory, errno: errnoNow(calls) });
+                break;
+            }
+
+            if (count === 0) {
+                break;
+            }
+
+            // Entries are packed in attribute bit order and 4-byte aligned: 0 length | 4 returned attributes |
+            // 24 name reference (offset, length with NUL) | 32 object type | 36 mtime (s, ns) | 52 data length.
+            // A 64-bit field is read as two 32-bit words, so no BigInt is made per entry.
+            let offset = 0;
+
+            for (let i = 0; i < count; i++) {
+                const at = offset >> 2;
+                const nameStart = offset + 24 + signedWords[at + 6];
+                const nameLength = words[at + 7] - 1;
+                const type = words[at + 8];
+                offset += words[at];
+                const descend = type === VDIR && next.depth + 1 <= options.maxDepth;
+                const wanted =
+                    (type === VDIR && options.includeDirectories) ||
+                    type === VLNK ||
+                    (type === VREG && nameMatches(buffer, nameStart, nameLength, patterns));
+
+                if (!descend && !wanted) {
+                    continue;
+                }
+
+                const path = `${next.directory}/${decoder.decode(buffer.subarray(nameStart, nameStart + nameLength))}`;
+
+                if (wanted) {
+                    entries.push({
+                        kind: type === VDIR ? "directory" : type === VLNK ? "link" : "file",
+                        path,
+                        mtimeMs: (signedWords[at + 10] * TWO_TO_32 + words[at + 9]) * 1000 + words[at + 11] / 1e6,
+                        size: type === VREG ? signedWords[at + 14] * TWO_TO_32 + words[at + 13] : 0,
+                    });
+                }
+
+                if (descend) {
+                    stack.push({ directory: path, depth: next.depth + 1 });
+                }
+            }
         }
 
-        entries.push({ kind: kind === "f" ? "file" : kind === "d" ? "directory" : "link", path, mtimeMs, size });
+        calls.close(fd);
     }
 
-    return { entries, errors };
+    return { engine: "native", entries, errors };
 }
 
 function nameMatcher(names: string[]): (name: string) => boolean {
@@ -213,10 +298,11 @@ async function walkJs(options: Required<Omit<FastWalkOptions, "engine">>): Promi
 }
 
 /**
- * Every file under `roots` whose name matches, with its mtime and size, from one walk. On macOS the walk is one
- * native call that reads each directory with `getattrlistbulk` (name, type, mtime and size of many entries per
- * syscall), so no file is stat'ed on its own; elsewhere, or when the native build fails, a JS walk returns the
- * same entries. Order is not defined. A directory that cannot be read is listed in `errors` and the walk goes on.
+ * Every file under `roots` whose name matches, with its mtime and size, from one walk. On macOS each directory is
+ * read with `getattrlistbulk` through `bun:ffi` (no C, no build step), so no file is stat'ed on its own: 2 to 3 times
+ * less CPU than `readdir` plus `stat` on the session trees (`scripts/benchmarks/fs/walk-primitives.ts`). Elsewhere,
+ * or when `libSystem` does not load, a JS walk returns the same entries. Order is not defined. A directory that
+ * cannot be read is listed in `errors` and the walk goes on.
  */
 export async function fastWalk(options: FastWalkOptions): Promise<FastWalkResult> {
     const resolved = {
@@ -225,16 +311,10 @@ export async function fastWalk(options: FastWalkOptions): Promise<FastWalkResult
         names: options.names ?? [],
         includeDirectories: options.includeDirectories ?? false,
     };
-    const walker = options.engine === "js" ? null : nativeWalker();
+    const calls = options.engine === "js" ? null : nativeCalls();
 
-    if (walker) {
-        const text = walker.walk({
-            roots: resolved.roots,
-            maxDepth: Number.isFinite(resolved.maxDepth) ? resolved.maxDepth : -1,
-            names: resolved.names,
-            includeDirectories: resolved.includeDirectories,
-        });
-        return { engine: "native", ...parseNative(text) };
+    if (calls) {
+        return walkNative(calls, resolved);
     }
 
     if (options.engine === "native") {
