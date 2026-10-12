@@ -835,3 +835,35 @@ describe("per-project jobs", () => {
         });
     });
 });
+
+describe("the one-minute tick", () => {
+    test("reads git facts only for the paths whose project is due", async () => {
+        let config = applyNotifySettings(defaultNotifyConfig(), {
+            repo: "/w/shop",
+            repoEnabled: true,
+            intervalMinutes: 5,
+        });
+        config = applyNotifySettings(config, { repo: "/w/work", repoEnabled: true, intervalMinutes: 10 });
+        const read: string[][] = [];
+        const deps: PollDeps = {
+            readConfig: () => config,
+            readFacts: async (paths) => {
+                read.push([...paths]);
+                return paths.map((path) => facts(path, `git@github.com:acme/${path.split("/").pop()}.git`));
+            },
+            fetchGithub: async () => ({ prs: [], viewer: "alice", rate: null, requests: 1 }),
+            fetchGitlab: async () => {
+                throw new Error("no GitLab here");
+            },
+            post: async () => true,
+            statePath: join(mkdtempSync(join(tmpdir(), "hub-notify-tick-")), "notify-state.json"),
+        };
+
+        await pollNotify({ deps, now: new Date(NOW) });
+        const quiet = await pollNotify({ deps, now: new Date(Date.parse(NOW) + 60_000) });
+        await pollNotify({ deps, now: new Date(Date.parse(NOW) + 5 * 60_000) });
+
+        expect(quiet.skipped).toStartWith("not due");
+        expect(read).toEqual([["/w/shop", "/w/work"], ["/w/shop"]]);
+    });
+});

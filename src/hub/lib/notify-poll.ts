@@ -60,6 +60,8 @@ export interface NotifyState {
     recent: Array<NotifyItem & { at: string; posted: boolean }>;
     /** Host calls per poll, for the request-rate figure in `status`. */
     requests: Array<{ at: string; count: number }>;
+    /** Watched checkout path to its project key, so a tick reads git facts only for the paths that are due. */
+    pathKeys?: Record<string, string>;
 }
 
 export interface RepoPollResult {
@@ -85,7 +87,7 @@ export interface PollReport {
 }
 
 export function emptyNotifyState(): NotifyState {
-    return { lastPollAt: null, prs: {}, repos: {}, hosts: {}, recent: [], requests: [] };
+    return { lastPollAt: null, prs: {}, repos: {}, hosts: {}, recent: [], requests: [], pathKeys: {} };
 }
 
 export function notifyStatePath(dir = notifyDir()): string {
@@ -228,6 +230,27 @@ export function watchedProjects(facts: RepoFacts[]): { projects: WatchedProject[
     }
 
     return { projects: [...projects.values()], skipped };
+}
+
+/** The start of `PollReport.skipped` when no watched repo's cadence has come this tick. */
+export const NOT_DUE = "not due";
+
+function factKey(fact: RepoFacts): string | null {
+    const project = fact.origin ? projectRefFromRemote(fact.origin.url) : null;
+    return project ? `${project.host}/${project.path}` : null;
+}
+
+/** A watched path is due when its project is unknown yet, or that project's cadence has come. */
+function pathDue(input: { config: NotifyConfig; state: NotifyState; path: string; now: Date }): boolean {
+    const key = input.state.pathKeys?.[input.path];
+    const status = key ? input.state.repos[key] : undefined;
+
+    if (!key || !status?.lastAttemptAt) {
+        return true;
+    }
+
+    const cadenceMs = repoIntervalMinutes(input.config, status.path ?? input.path) * 60_000;
+    return input.now.getTime() - Date.parse(status.lastAttemptAt) >= cadenceMs - DUE_SLACK_MS;
 }
 
 /** A repo's cadence has come: its last poll attempt (or never) is a cadence ago, less the tick slack. */
@@ -473,7 +496,30 @@ async function pollLocked({
     }
 
     const state = readNotifyState(deps.statePath);
-    const { projects, skipped } = watchedProjects(await deps.readFacts(paths));
+    // Git facts cost a few spawns per checkout, and the task ticks every minute: read them only for the paths whose
+    // project is due (or not known yet).
+    const factPaths = force ? paths : paths.filter((path) => pathDue({ config, state, path, now }));
+
+    if (factPaths.length === 0) {
+        report.skipped = `${NOT_DUE}: no watched repo's cadence has come (${paths.length} watched)`;
+        return finish();
+    }
+
+    const facts = await deps.readFacts(factPaths);
+
+    const pathKeys = state.pathKeys ?? {};
+
+    for (const fact of facts) {
+        const key = factKey(fact);
+
+        if (key) {
+            pathKeys[fact.path] = key;
+        }
+    }
+
+    state.pathKeys = pathKeys;
+
+    const { projects, skipped } = watchedProjects(facts);
     report.repos.push(...skipped);
 
     // Each repo keeps its own cadence (`intervalMinutes` per repo, else the global one): the daemon task ticks every
@@ -481,7 +527,7 @@ async function pollLocked({
     const due = projects.filter((watched) => force || repoDue({ config, state, watched, now }));
 
     if (due.length === 0) {
-        report.skipped = `not due: no watched repo's cadence has come (${projects.length} watched)`;
+        report.skipped = `${NOT_DUE}: no watched repo's cadence has come (${paths.length} watched)`;
         return finish();
     }
 
