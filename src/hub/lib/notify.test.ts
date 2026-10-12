@@ -40,7 +40,7 @@ import {
 } from "./notify-poll";
 import { isHubPrRef } from "./pr-ref";
 
-const ALL_ON = { thread: true, ciFailed: true, ciPassed: true, botReview: true, merged: true };
+const ALL_ON = { thread: true, reviewRequested: true, ciFailed: true, ciPassed: true, botReview: true, merged: true };
 const NOW = "2026-01-02T10:00:00.000Z";
 
 function snap(over: Partial<PrSnapshot> = {}): PrSnapshot {
@@ -865,5 +865,92 @@ describe("the one-minute tick", () => {
 
         expect(quiet.skipped).toStartWith("not due");
         expect(read).toEqual([["/w/shop", "/w/work"], ["/w/shop"]]);
+    });
+});
+
+describe("review requested", () => {
+    test("posts once when my review is newly requested, never on the first poll after an upgrade", () => {
+        const events = ALL_ON;
+        const before = diffPr({
+            previous: undefined,
+            pr: snap({ reviewRequested: false }),
+            viewer: "alice",
+            events,
+            onlyMine: false,
+            now: NOW,
+        });
+        const asked = diffPr({
+            previous: before.memory,
+            pr: snap({ reviewRequested: true }),
+            viewer: "alice",
+            events,
+            onlyMine: false,
+            now: NOW,
+        });
+        expect(asked.items.map((i) => i.type)).toEqual(["reviewRequested"]);
+        const again = diffPr({
+            previous: asked.memory,
+            pr: snap({ reviewRequested: true }),
+            viewer: "alice",
+            events,
+            onlyMine: false,
+            now: NOW,
+        });
+        expect(again.items).toEqual([]);
+
+        const { reviewRequested: _dropped, ...legacy } = before.memory;
+        const upgraded = diffPr({
+            previous: legacy,
+            pr: snap({ reviewRequested: true }),
+            viewer: "alice",
+            events,
+            onlyMine: false,
+            now: NOW,
+        });
+        expect(upgraded.items).toEqual([]);
+        expect(upgraded.memory.reviewRequested).toBe(true);
+
+        const off = diffPr({
+            previous: before.memory,
+            pr: snap({ reviewRequested: true }),
+            viewer: "alice",
+            events: { ...events, reviewRequested: false },
+            onlyMine: false,
+            now: NOW,
+        });
+        expect(off.items).toEqual([]);
+    });
+
+    test("GitHub: the viewer among the requested reviewers of an open PR", () => {
+        const json = SafeJSON.stringify({
+            data: {
+                viewer: { login: "alice" },
+                rateLimit: null,
+                repository: {
+                    open: {
+                        nodes: [
+                            {
+                                number: 3,
+                                title: "t",
+                                url: "u",
+                                headRefOid: "abc",
+                                author: { login: "bob" },
+                                reviewRequests: {
+                                    nodes: [{ requestedReviewer: { __typename: "User", login: "alice" } }],
+                                },
+                            },
+                            { number: 4, title: "t", url: "u", headRefOid: "abd", author: { login: "bob" } },
+                        ],
+                    },
+                    merged: { nodes: [] },
+                },
+            },
+        });
+        const parsed = parseGithubWatch({
+            json,
+            project: { host: "github.com", path: "acme/web", kind: "github" } as ProjectRef,
+            botLogins: [],
+        });
+        expect(parsed.prs.map((pr) => pr.reviewRequested)).toEqual([true, false]);
     });
 });

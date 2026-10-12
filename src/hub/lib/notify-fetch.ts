@@ -34,6 +34,7 @@ query($owner: String!, $repo: String!) {
         author { login }
         reviewThreads(last: ${THREADS_PER_PR}) { nodes { id path comments(first: 1) { nodes { author { __typename login } } } } }
         reviews(last: 10) { nodes { id state author { __typename login } } }
+        reviewRequests(first: 10) { nodes { requestedReviewer { __typename ... on User { login } } } }
         commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
       }
     }
@@ -163,6 +164,7 @@ export function parseGithubWatch({
                 ? [{ id, author: who.login, state: str(review.state) }]
                 : [];
         });
+        const requested = nodes(pr.reviewRequests).map((request) => login(request.requestedReviewer).login);
         const [lastCommit] = nodes(pr.commits);
         const commit = isRecord(lastCommit?.commit) ? lastCommit.commit : null;
         const rollup = commit && isRecord(commit.statusCheckRollup) ? str(commit.statusCheckRollup.state) : null;
@@ -182,6 +184,7 @@ export function parseGithubWatch({
             threads: state === "OPEN" ? threads.filter((t) => t.id !== "") : [],
             notes: null,
             botReviews,
+            reviewRequested: state === "OPEN" && viewer !== null ? requested.includes(viewer) : null,
         };
     };
 
@@ -269,6 +272,7 @@ function gitlabSnapshot(project: ProjectRef, pr: PrSummary, viewer: string | nul
         threads: null,
         notes: pr.comments,
         botReviews: [],
+        reviewRequested: pr.state === "OPEN" && viewer !== null ? pr.reviewers.includes(viewer) : null,
     };
 }
 

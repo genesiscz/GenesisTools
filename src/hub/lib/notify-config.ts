@@ -10,7 +10,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const log = logger.child({ component: "hub/notify-config" });
 
-export const NOTIFY_EVENTS = ["thread", "ciFailed", "ciPassed", "botReview", "merged"] as const;
+export const NOTIFY_EVENTS = ["thread", "reviewRequested", "ciFailed", "ciPassed", "botReview", "merged"] as const;
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
 
 /** The daemon's interval grammar (src/daemon/lib/interval.ts): "every N minutes", never "3m". */
@@ -21,6 +21,7 @@ export function daemonEvery(intervalMinutes: number): string {
 
 export const NOTIFY_EVENT_LABELS: Record<NotifyEvent, string> = {
     thread: "New review threads",
+    reviewRequested: "My review was requested",
     ciFailed: "CI failed",
     ciPassed: "CI passed",
     botReview: "A review bot finished",
@@ -57,7 +58,7 @@ export function defaultNotifyConfig(): NotifyConfig {
         enabled: true,
         intervalMinutes: 3,
         onlyMine: false,
-        events: { thread: true, ciFailed: true, ciPassed: false, botReview: true, merged: true },
+        events: { thread: true, reviewRequested: true, ciFailed: true, ciPassed: false, botReview: true, merged: true },
         repos: {},
         botLogins: [],
     };

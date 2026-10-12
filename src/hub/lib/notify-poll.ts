@@ -130,6 +130,7 @@ export function openHubCommand(ref: string | null, bundle = genesisAppBundlePath
 
 const TITLES: Record<NotifyEvent, string> = {
     thread: "New review thread",
+    reviewRequested: "Review requested",
     ciFailed: "CI failed",
     ciPassed: "CI passed",
     botReview: "Review bot finished",

@@ -40,6 +40,8 @@ export interface PrSnapshot {
     /** GitLab's note count, the cheap signal that decides whether threads are fetched. */
     notes: number | null;
     botReviews: BotReview[];
+    /** The viewer is among the requested reviewers; null when the host did not say or the viewer is unknown. */
+    reviewRequested?: boolean | null;
 }
 
 /** What the notifier keeps per PR between polls. */
@@ -54,6 +56,8 @@ export interface PrMemory {
     ci?: PrCi;
     notes: number | null;
     seenAt: string;
+    /** The viewer was a requested reviewer at the last poll; missing in memories from before the event existed. */
+    reviewRequested?: boolean;
 }
 
 export interface NotifyItem {
@@ -106,6 +110,11 @@ export function memoryOf(pr: PrSnapshot, previous: PrMemory | undefined, now: st
         ci: pr.ci,
         notes: pr.notes ?? previous?.notes ?? null,
         seenAt: now,
+        ...(typeof pr.reviewRequested === "boolean"
+            ? { reviewRequested: pr.reviewRequested }
+            : previous?.reviewRequested !== undefined
+              ? { reviewRequested: previous.reviewRequested }
+              : {}),
     };
 }
 
@@ -160,6 +169,16 @@ export function diffPr({
                 }`,
             });
         }
+    }
+
+    // A memory from before this event existed is a baseline, so an upgrade posts no burst of old requests.
+    if (
+        events.reviewRequested &&
+        pr.state === "OPEN" &&
+        pr.reviewRequested === true &&
+        previous.reviewRequested === false
+    ) {
+        items.push({ ...base, type: "reviewRequested", message: `Your review was requested on ${tag}` });
     }
 
     if (events.botReview) {
