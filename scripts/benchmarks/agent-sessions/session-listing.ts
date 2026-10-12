@@ -27,7 +27,8 @@ const BASELINE_NAME = "agent-sessions-listing";
 const REPO = join(import.meta.dir, "..", "..", "..");
 const LISTING = ["usage", "sessions", "--json", "--hours", "24", "--min", "10"];
 
-async function cliCpuMs(extra: string[]): Promise<number> {
+async function cliRun(extra: string[]): Promise<{ cpuMs: number; wallMs: number }> {
+    const started = performance.now();
     const proc = Bun.spawn(["bun", "run", join(REPO, "src/ai/index.ts"), ...LISTING, ...extra], {
         cwd: REPO,
         stdout: "ignore",
@@ -39,7 +40,7 @@ async function cliCpuMs(extra: string[]): Promise<number> {
         throw new Error(`usage sessions ${extra.join(" ")} exited ${exitCode}`);
     }
 
-    return Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
+    return { cpuMs: Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000, wallMs: performance.now() - started };
 }
 
 async function discoverSample(): Promise<Record<string, number>> {
@@ -61,9 +62,12 @@ const args = parseBenchArgs(process.argv.slice(2));
 const runs: BaselineMetrics[] = [];
 
 for (let i = 0; i < args.warmup + args.runs; i++) {
+    const fresh = await cliRun(["--fresh", "--no-cache-write"]);
+    const cached = await cliRun([]);
     const metrics: BaselineMetrics = {
-        "cli.fresh.cpuMs": await cliCpuMs(["--fresh", "--no-cache-write"]),
-        "cli.cached.cpuMs": await cliCpuMs([]),
+        "cli.fresh.cpuMs": fresh.cpuMs,
+        "cli.fresh.wallMs": fresh.wallMs,
+        "cli.cached.cpuMs": cached.cpuMs,
         ...(await discoverSample()),
     };
 
