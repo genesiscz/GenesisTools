@@ -130,6 +130,31 @@ describe("daily file sink", () => {
         expect(readLogs(sandboxHome)).toContain("FILE_SINK_FOLLOWS_HOME");
         expect(readLogs(earlyHome)).not.toContain("FILE_SINK_FOLLOWS_HOME");
     });
+
+    it("writes a bounded copy of an error whose message carries a whole file, and a normal error unchanged", async () => {
+        const mod = await import("./logger");
+        const home = mkdtempSync(join(tmpdir(), "logger-bounded-error-"));
+        const huge = Object.assign(new Error(`ENAMETOOLONG: open '${"x".repeat(200_000)}'`), { code: "ENAMETOOLONG" });
+        const small = new Error("small failure");
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const log = mod.createLogger({ logToFile: true, minimalLevels: true });
+            log.debug({ error: huge }, "HUGE_ERROR_RECORD");
+            log.debug({ error: small }, "SMALL_ERROR_RECORD");
+        });
+
+        const dir = join(home, ".genesis-tools", "logs");
+        const lines = readdirSync(dir).flatMap((file) => readFileSync(join(dir, file), "utf8").split("\n"));
+        const hugeLine = lines.find((line) => line.includes("HUGE_ERROR_RECORD")) ?? "";
+        const smallLine = lines.find((line) => line.includes("SMALL_ERROR_RECORD")) ?? "";
+
+        expect(hugeLine.length).toBeGreaterThan(0);
+        expect(hugeLine.length).toBeLessThan(10_000);
+        expect(hugeLine).toContain('"code":"ENAMETOOLONG"');
+        expect(hugeLine).toContain('"messageChars":');
+        expect(smallLine).toContain('"message":"small failure"');
+        expect(smallLine).not.toContain("messageChars");
+    });
 });
 
 describe("scoped out + log.out/log.tee double-mirror rule", () => {

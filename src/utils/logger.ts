@@ -211,6 +211,46 @@ function createDailyFileStream(resolveLogDir: () => string): Writable {
     });
 }
 
+const ERROR_MESSAGE_LOG_CHARS = 2_000;
+const ERROR_STACK_LOG_LINES = 60;
+const ERROR_STACK_LINE_CHARS = 500;
+
+/**
+ * pino's error serializer with the message and stack cut to a bounded size. A message can carry a whole file
+ * (ENAMETOOLONG names the path it was given, a parse error quotes its input) and the stack repeats it, so one
+ * widget warning wrote 8 MB into the day log, 87 times on 2026-10-08. `messageChars` keeps the original length.
+ */
+function boundedErrorSerializer(serialize: (err: Error) => unknown): (err: Error) => unknown {
+    return (err) => {
+        const serialized = serialize(err);
+        if (!serialized || typeof serialized !== "object") {
+            return serialized;
+        }
+
+        if ("message" in serialized && typeof serialized.message === "string") {
+            const message = serialized.message;
+            if (message.length > ERROR_MESSAGE_LOG_CHARS) {
+                Object.assign(serialized, {
+                    message: `${message.slice(0, ERROR_MESSAGE_LOG_CHARS)}…`,
+                    messageChars: message.length,
+                });
+            }
+        }
+
+        if ("stack" in serialized && typeof serialized.stack === "string") {
+            const lines = serialized.stack.split("\n");
+            const bounded = lines
+                .slice(0, ERROR_STACK_LOG_LINES)
+                .map((line) =>
+                    line.length > ERROR_STACK_LINE_CHARS ? `${line.slice(0, ERROR_STACK_LINE_CHARS)}…` : line
+                );
+            Object.assign(serialized, { stack: bounded.join("\n") });
+        }
+
+        return serialized;
+    };
+}
+
 /**
  * Create a pino logger with pretty printing
  */
@@ -315,7 +355,10 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         // serialized to a useless `error: {}` (observed while triaging a failed
         // consolidate vote batch). The house convention is to pass the raw error, so
         // both key spellings get pino's error serializer; non-Errors pass through.
-        serializers: { err: pinoFn.stdSerializers.err, error: pinoFn.stdSerializers.err },
+        serializers: {
+            err: boundedErrorSerializer(pinoFn.stdSerializers.err),
+            error: boundedErrorSerializer(pinoFn.stdSerializers.err),
+        },
         ...(showPid && { base: { pid: process.pid } }),
         // GenesisTools.app's per-call id (utils/trace.ts): a day-log record names the app call it served.
         mixin: () => {
