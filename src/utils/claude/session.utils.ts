@@ -1,4 +1,5 @@
 import { basename, sep } from "node:path";
+import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import type {
     AgentCompletionStats,
     AgentProgressData,
@@ -88,32 +89,14 @@ export async function readHeadTailLines(filePath: string, headCount: number, tai
 }
 
 /**
- * Efficiently read the last N bytes of a file and return complete lines.
- * Uses Bun.file().slice() to avoid reading entire multi-MB JSONL files into memory.
+ * The complete lines in the last `bytes` of a file (an unfinished last line included). One synchronous read through
+ * `readLastLines`: 25 ms of CPU for 627 transcripts against 61 ms for the two `Bun.file().slice()` reads this made
+ * before (`scripts/benchmarks/fs/read-primitives.ts`, 2026-10-12).
  */
 export async function readTailBytes(filePath: string, bytes = 8192): Promise<string[]> {
-    const file = Bun.file(filePath);
-    const size = file.size;
-    const start = Math.max(0, size - bytes);
-    const tail = await file.slice(start, size).text();
-    const lines = tail.split("\n").filter((l) => l.trim());
-
-    // First line may be partial if we sliced mid-line — drop it unless:
-    // 1. We read from the start of the file
-    // 2. The slice starts exactly on a newline boundary
-    if (start > 0 && lines.length > 0) {
-        const prevByte = await file.slice(start - 1, start).text();
-        const startsOnBoundary = tail.startsWith("\n") || prevByte === "\n";
-
-        if (!startsOnBoundary) {
-            lines.shift();
-        }
-    }
-
-    return lines;
+    return readLastLines(filePath, { maxBytes: bytes }).lines;
 }
 
-/** User-visible text only. Does not join tool_result payloads. */
 export function humanTextOf(content: string | ContentBlock[] | undefined): string {
     if (typeof content === "string") {
         return content;

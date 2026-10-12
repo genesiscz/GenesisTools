@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { type EdgeLines, readFirstLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -105,39 +106,17 @@ async function readHeader(options: {
     return header;
 }
 
-/** Rollout bytes read in one go for the header; a header beyond them is found by the stream scan. */
-const HEADER_PREFIX_BYTES = 64 * 1024;
-
 /**
- * The rollout's first complete lines, from one read, and whether that read reached the end of the file. Null when
- * the read fails: the stream scan then reads the file and reports why. A cold listing opened a stream per rollout to
- * find its first line: 308 streams were about a third of a fresh `ai usage sessions` in a CPU profile (2026-10-12).
- * The lines are parsed by the caller one at a time, so a header on the first line costs one parse.
+ * The rollout's first lines, or null when the file cannot be opened (the stream scan then reads it and reports why).
+ * A cold listing opened a stream per rollout to find its first line: 308 streams were about a third of a fresh
+ * `ai usage sessions` in a CPU profile (2026-10-12). `readFirstLines` is one synchronous read of 64 KB.
  */
-async function headerPrefixLines(path: string): Promise<{ lines: string[]; complete: boolean } | null> {
-    let handle: Awaited<ReturnType<typeof open>> | undefined;
+function headerLines(path: string): EdgeLines | null {
     try {
-        handle = await open(path, "r");
-        const buffer = Buffer.alloc(HEADER_PREFIX_BYTES);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-        const complete = bytesRead < buffer.length;
-        const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
-        if (!complete) {
-            // The last line may be cut by the read.
-            lines.pop();
-        }
-
-        return {
-            lines: lines.map((line) => line.replace(/\r$/, "")).filter((line) => line.trim() !== ""),
-            complete,
-        };
+        return readFirstLines(path);
     } catch (err) {
-        logger.debug({ err, path }, "[codex-discovery] header prefix unreadable; scanning the rollout");
+        logger.debug({ err, path }, "[codex-discovery] rollout start unreadable; scanning the rollout");
         return null;
-    } finally {
-        await handle?.close().catch((err: unknown) => {
-            logger.debug({ err, path }, "[codex-discovery] header prefix close failed");
-        });
     }
 }
 
@@ -179,7 +158,7 @@ async function readHeaderUncached(options: {
 
         return verdict.header;
     };
-    const prefix = await headerPrefixLines(options.path);
+    const prefix = headerLines(options.path);
     let prefixParsed = prefix !== null;
 
     for (const line of prefix?.lines ?? []) {
@@ -201,7 +180,7 @@ async function readHeaderUncached(options: {
         }
     }
 
-    if (prefixParsed && prefix?.complete) {
+    if (prefixParsed && prefix?.wholeFile) {
         issue("Native session header missing");
         return undefined;
     }
