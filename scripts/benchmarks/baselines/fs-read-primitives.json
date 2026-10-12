@@ -1,7 +1,7 @@
 {
     "name": "fs-read-primitives",
     "capturedAt": "2026-10-12T20:04:25.975Z",
-    "commit": "76f558368",
+    "commit": "629412992",
     "loadAvg": [
         35.36328125,
         34.765625,
@@ -76,5 +76,5 @@
         "stat.ffi.warm.cpuMs": 10.11,
         "stat.ffi.check": 3840
     },
-    "notes": "live session files, read-only; each sample is a fresh process (cold pass, then warm pass) | commit 76f558368 | uptime 22:04  up  9:21, 23 users, load averages: 35.36 34.77 32.63"
+    "notes": "live session files, read-only; each sample is a fresh process (cold pass, then warm pass) | commit 629412992 | uptime 22:04  up  9:21, 23 users, load averages: 35.36 34.77 32.63"
 }

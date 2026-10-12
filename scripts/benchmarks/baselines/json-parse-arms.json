@@ -1,7 +1,7 @@
 {
     "name": "json-parse-arms",
     "capturedAt": "2026-10-12T20:12:21.236Z",
-    "commit": "f0e10b495",
+    "commit": "47fcb2223",
     "loadAvg": [
         21.37451171875,
         31.4609375,
@@ -32,5 +32,5 @@
         "simdjsonPick.warm.cpuMs": 23.052,
         "simdjsonPick.check": 15907
     },
-    "notes": "live transcript tails, read-only; each sample is a fresh process (cold pass, then warm pass) | commit f0e10b495 | uptime 22:12  up  9:29, 23 users, load averages: 21.37 31.46 32.15"
+    "notes": "live transcript tails, read-only; each sample is a fresh process (cold pass, then warm pass) | commit 47fcb2223 | uptime 22:12  up  9:29, 23 users, load averages: 21.37 31.46 32.15"
 }

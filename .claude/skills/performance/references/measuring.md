@@ -77,4 +77,4 @@ processes per arm: `statSync` 10.1 ms, bulk read for folders with 4 or more aske
 
 State: the metric (CPU ms), the statistic (median of N), the order, the load average, the input size, the check,
 both values, and the commit. Example: "cold row build 1,180 → 423 ms of CPU, median of 9 fresh processes per arm,
-BAABBA blocks of 4, load 37, 630 rows in both arms, 747458e06 → 33778190a." Then the cause in one sentence.
+BAABBA blocks of 4, load 37, 630 rows in both arms, 747458e06 → 2082e48f9." Then the cause in one sentence.

@@ -11,7 +11,7 @@ CPU ms, cold / warm, medians of 5 fresh processes, load 21 to 32, 2026-10-12.
 
 - `JSON.parse` on ready strings: 112 / 110.
 - Decode bytes to strings, then `JSON.parse` (what a file reader really does): 148 / 144.
-- `SafeJSON.parse` with no options (native first since ac115cfc9): 115 / 111.
+- `SafeJSON.parse` with no options (native first since fd9561cb3): 115 / 111.
 - comment-json alone (the old `SafeJSON.parse` default): 1,261 / 1,026. About 10 times `JSON.parse`.
 - `Bun.JSONL.parse` on the joined text: 110 / 109. It uses JSC's parser; Bun 1.4 only.
 - simdjson through `bun:ffi`, full parse, NO JS objects built: 35 / 33.
