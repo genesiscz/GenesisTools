@@ -84,6 +84,14 @@ const DEFAULT_PROVIDER_PREFIXES = [
     "openrouter/openai/",
 ];
 
+const RELEASE_DATE_SUFFIX = /[-@]\d{4}-?\d{2}-?\d{2}$/;
+
+/** A model's own name: no provider path, no release-date suffix, lower case. */
+function modelStem(name: string): string {
+    const lower = name.toLowerCase();
+    return lower.slice(lower.lastIndexOf("/") + 1).replace(RELEASE_DATE_SUFFIX, "");
+}
+
 function createLogger(logger?: PricingLogger): PricingLogger {
     if (logger != null) {
         return logger;
@@ -274,11 +282,17 @@ export class LiteLLMPricingFetcher {
             }
         }
 
-        // Try fuzzy matching (case-insensitive substring)
-        const lower = modelName.toLowerCase();
+        // Fall back to the same model under another provider path or release date. Only the whole model name
+        // counts: a substring match priced `openrouter/openai/gpt-4o` as `gpt-4` (30/60 per 1M, twelve times
+        // too high) once LiteLLM dropped its openrouter key, and could hand `gpt-4o` the `gpt-4o-mini` rate.
+        const stem = modelStem(modelName);
+        const undated = pricing.get(stem);
+        if (undated != null) {
+            return undated;
+        }
+
         for (const [key, value] of pricing) {
-            const comparison = key.toLowerCase();
-            if (comparison.includes(lower) || lower.includes(comparison)) {
+            if (modelStem(key) === stem) {
                 return value;
             }
         }
