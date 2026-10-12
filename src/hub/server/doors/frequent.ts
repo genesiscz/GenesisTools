@@ -194,7 +194,12 @@ export const repoDoor: CallDoor<RepoArgs> = {
  * `ai usage sessions --json [--hours N] [--min N] [--limit N] [--fresh]`: the session list the hub and
  * Genesis.app poll. A `--provider` list stays a process (its enum errors print from the CLI).
  */
-export const usageSessionsDoor: CallDoor<{ listing: Record<string, number>; fresh: boolean; cacheWrite: boolean }> = {
+export const usageSessionsDoor: CallDoor<{
+    listing: Record<string, number>;
+    fresh: boolean;
+    cacheWrite: boolean;
+    liveLocations: boolean;
+}> = {
     kind: "call",
     name: "ai usage sessions --json",
     match(argv) {
@@ -205,6 +210,7 @@ export const usageSessionsDoor: CallDoor<{ listing: Record<string, number>; fres
                 "--json": "bool",
                 "--fresh": "bool",
                 "--no-cache-write": "bool",
+                "--journal-only": "bool",
                 "--hours": "value",
                 "--min": "value",
                 "--limit": "value",
@@ -236,14 +242,19 @@ export const usageSessionsDoor: CallDoor<{ listing: Record<string, number>; fres
             listing,
             fresh: parsed.flags.get("--fresh") === true,
             cacheWrite: parsed.flags.get("--no-cache-write") !== true,
+            liveLocations: parsed.flags.get("--journal-only") !== true,
         };
     },
-    async run({ listing, fresh, cacheWrite }, { signal }) {
+    async run({ listing, fresh, cacheWrite, liveLocations }, { signal }) {
         try {
             signal.throwIfAborted();
             const { sessionRowsJson } = await import("@app/ai/lib/sessions/rows-cache");
             const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
-            return ok(asResult(await sessionRowsJson(listing, { fresh, cacheWrite, listRows: listAgentSessionRows })));
+            return ok(
+                asResult(
+                    await sessionRowsJson(listing, { fresh, cacheWrite, liveLocations, listRows: listAgentSessionRows })
+                )
+            );
         } catch (error) {
             return failed(error);
         }

@@ -507,12 +507,12 @@ final class HubTimelineModel: ObservableObject {
     /// Folds a row open (loading its detail once) or closed, in one `GenMotion` animation.
     func toggle(_ event: TimelineEvent) {
         if expanded.contains(event.id) {
-            GenMotion.perform(expanding: false, reduceMotion: GenMotion.systemReduceMotion) {
+            GenMotion.perform(expanding: false, reduceMotion: HubReduceMotion.isOn) {
                 _ = expanded.remove(event.id)
             }
             return
         }
-        GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion) {
+        GenMotion.perform(expanding: true, reduceMotion: HubReduceMotion.isOn) {
             _ = expanded.insert(event.id)
         }
         if details[event.id] == nil {
@@ -556,7 +556,7 @@ final class HubTimelineModel: ObservableObject {
                     guard let self else { return }
                     self.loadingDetails.remove(event.id)
                     // The detail replaces its skeleton under an open row: it grows like the click that opened it.
-                    let reduceMotion = GenMotion.systemReduceMotion || !self.expanded.contains(event.id)
+                    let reduceMotion = HubReduceMotion.isOn || !self.expanded.contains(event.id)
                     GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
                         switch result {
                         case .success(let detail): self.details[event.id] = detail
@@ -575,7 +575,7 @@ final class HubTimelineModel: ObservableObject {
         guard let sha = event.sha else { return }
         let key = Self.diffKey(sha: sha, path: path)
         if fileDiffs[key] != nil {
-            GenMotion.perform(expanding: false, reduceMotion: GenMotion.systemReduceMotion) { fileDiffs[key] = nil }
+            GenMotion.perform(expanding: false, reduceMotion: HubReduceMotion.isOn) { fileDiffs[key] = nil }
             return
         }
         guard !loadingDiffs.contains(key) else { return }
@@ -589,7 +589,7 @@ final class HubTimelineModel: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.loadingDiffs.remove(key)
-                    GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion) {
+                    GenMotion.perform(expanding: true, reduceMotion: HubReduceMotion.isOn) {
                         if case .success(.commit(let detail)) = result, let diff = detail.diff {
                             self.fileDiffs[key] = diff
                         } else if case .failure(let failure) = result {

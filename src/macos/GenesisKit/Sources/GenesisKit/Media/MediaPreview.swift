@@ -122,6 +122,7 @@ public final class MediaPreviewState: ObservableObject {
             if !Task.isCancelled { self?.copyStatus = .idle }
         }
     }
+
     public var current: MediaPreviewItem? { items.indices.contains(index) ? items[index] : nil }
 
     public func present(_ items: [MediaPreviewItem], selectedID: String? = nil) {
@@ -339,7 +340,6 @@ private struct MediaPreviewOverlay: View {
         .instantTooltip(tooltip)
         .accessibilityLabel(Text(tooltip))
     }
-
 }
 
 extension MediaImageCopy {

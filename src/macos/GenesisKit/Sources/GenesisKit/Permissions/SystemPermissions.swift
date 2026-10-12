@@ -306,6 +306,7 @@ public struct PermissionAccess: Sendable {
     public let system: any PermissionSystem
     private let simulation: @Sendable () -> PermissionSimulation
     private let lifted = LiftedKinds()
+    private let probed = ProbeAnswers()
 
     public init(system: any PermissionSystem, simulation: @escaping @Sendable () -> PermissionSimulation = { PermissionSimulation() }) {
         self.system = system
@@ -318,10 +319,14 @@ public struct PermissionAccess: Sendable {
         return lifted.contains(kind, under: current) ? nil : current.mode(for: kind)
     }
 
+    /// A probe kind has no silent read, so after a probe answered it shows that answer in place of `.unknown`: macOS
+    /// held it then, and a Settings change since shows at the next `recheck`.
     public func status(_ kind: PermissionKind) -> PermissionStatus {
         let current = simulation()
         if !lifted.contains(kind, under: current), let simulated = current.status(for: kind) { return simulated }
-        return system.status(kind)
+        let live = system.status(kind)
+        if case .unknown = live, let answered = probed.answer(kind) { return answered }
+        return live
     }
 
     public func isGranted(_ kind: PermissionKind) -> Bool {
@@ -350,8 +355,31 @@ public struct PermissionAccess: Sendable {
             return status(kind)
         case nil:
             let result = await system.request(kind)
+            probed.remember(result, for: kind)
             GenesisKit.log("permission \(kind.rawValue) requested: \(result.wireValue)")
             return result
+        }
+    }
+
+    /// Reads a probe kind's grant again for a dialog waiting on System Settings. The probe touches the resource, which
+    /// prompts only while macOS has not answered, so it runs only after an earlier probe got an answer. A kind still
+    /// waiting for its first answer starts no probe and keeps its status, and so does a probe macOS does not answer by
+    /// its deadline: the last answer stands.
+    public func recheck(_ kind: PermissionKind) async -> PermissionStatus {
+        guard kind.requestStyle == .probe, simulatedMode(kind) == nil, probed.answer(kind) != nil else {
+            return status(kind)
+        }
+
+        let result = await request(kind)
+        return result == .notDetermined ? status(kind) : result
+    }
+
+    /// Probes again every probe kind whose last answer was a grant. Nothing else notices a grant revoked in System
+    /// Settings: `status` keeps showing the remembered answer. macOS has answered those kinds, so the probe never
+    /// prompts; one it does not answer by its deadline leaves the grant standing.
+    public func recheckGrantedProbes() async {
+        for kind in PermissionKind.allCases where kind.requestStyle == .probe && probed.answer(kind) == .granted {
+            _ = await recheck(kind)
         }
     }
 
@@ -380,6 +408,27 @@ private final class LiftedKinds: @unchecked Sendable {
     func insert(_ kind: PermissionKind, under simulation: PermissionSimulation) {
         lock.lock()
         kinds[kind] = simulation
+        lock.unlock()
+    }
+}
+
+/// What macOS last answered to the probe of each probe kind (Automation, the three folders).
+private final class ProbeAnswers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answers: [PermissionKind: PermissionStatus] = [:]
+
+    func answer(_ kind: PermissionKind) -> PermissionStatus? {
+        lock.lock()
+        defer { lock.unlock() }
+        return answers[kind]
+    }
+
+    /// Keeps a grant or a refusal. A probe macOS did not answer by its deadline reads `.notDetermined` and leaves the
+    /// last answer standing.
+    func remember(_ answer: PermissionStatus, for kind: PermissionKind) {
+        guard kind.requestStyle == .probe, answer == .granted || answer == .denied else { return }
+        lock.lock()
+        answers[kind] = answer
         lock.unlock()
     }
 }

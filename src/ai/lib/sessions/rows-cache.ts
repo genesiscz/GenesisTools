@@ -181,12 +181,18 @@ export async function sessionRowsJson(
     {
         fresh = false,
         cacheWrite = true,
+        liveLocations = true,
         path = sessionRowsCachePath(),
         listRows,
         tmuxLocations = isTestProcess() ? async () => new Map() : () => tmuxCmuxLocations(),
     }: {
         fresh?: boolean;
         cacheWrite?: boolean;
+        /**
+         * False for an answer that will be written into the cache (the poll daemon's refresh through the hub
+         * server): a live tmux tab stored there would outlive the client that showed it.
+         */
+        liveLocations?: boolean;
         path?: string;
         listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
         /** Live cmux tabs of tmux-hosted sessions. A test that injects none gets none. */
@@ -212,7 +218,7 @@ export async function sessionRowsJson(
             return {
                 fetchedAt: cached.fetchedAt,
                 cached: true,
-                rows: await withTmuxLocations(cached.rows, tmuxLocations),
+                rows: liveLocations ? await withTmuxLocations(cached.rows, tmuxLocations) : cached.rows,
             };
         }
     }
@@ -223,5 +229,5 @@ export async function sessionRowsJson(
         await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows }, path);
     }
 
-    return { fetchedAt: now, cached: false, rows: await withTmuxLocations(rows, tmuxLocations) };
+    return { fetchedAt: now, cached: false, rows: liveLocations ? await withTmuxLocations(rows, tmuxLocations) : rows };
 }

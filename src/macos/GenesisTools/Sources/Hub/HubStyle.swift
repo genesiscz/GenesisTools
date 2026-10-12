@@ -134,8 +134,8 @@ enum HubGlassSwitch {
 }
 
 /// On the hub's root: follows the style, the glass switch and General → Theme, draws the window's backdrop and hands
-/// the look to every `.hubSurface` below through the environment. A change (from the settings window too) re-runs
-/// only this modifier and the surfaces that read the look, never the hub's views themselves.
+/// the look, and General → Reduce motion, to every view below through the environment. A change (from the settings
+/// window too) re-runs only this modifier and the surfaces that read the look, never the hub's views themselves.
 struct HubStyleHost: ViewModifier {
     @ObservedObject private var preferences = HubDefaults.preferences
     @ObservedObject private var appearance = HubDefaults.appearance
@@ -154,7 +154,14 @@ struct HubStyleHost: ViewModifier {
             .environment(\.nativePanes, native)
             .environment(\.nativeSettingsTheme, look.theme)
             .environment(\.nativeSettingsReduceTransparency, appearance.reduceTransparency)
+            .environment(\.nativeSettingsReduceMotion, appearance.reduceMotion)
     }
+}
+
+/// Reduce Motion for hub code with no SwiftUI environment (the Timeline model's folds): the system setting or
+/// General → Reduce motion, the two that views read through `@GenReduceMotion`.
+enum HubReduceMotion {
+    @MainActor static var isOn: Bool { GenMotion.systemReduceMotion || HubDefaults.appearance.reduceMotion }
 }
 
 /// The window's backdrop: none in Hub style (the surfaces are opaque), the settings window's in Native style. The

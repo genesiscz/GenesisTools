@@ -160,12 +160,11 @@ struct HubSessionDetailHost: View {
             onScreen = false
             buildID += 1
             builder.cancel()
-            stopTail()
-            publishActivity(nil)
+            pauseTail()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in stopTail() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in pauseTail() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { note in
-            if note.object as? NSWindow === host.window { stopTail() }
+            if note.object as? NSWindow === host.window { pauseTail() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in resumeTail() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { note in
@@ -319,19 +318,6 @@ struct HubSessionDetailHost: View {
         SessionGitBranch.read(cwd: cwd)
     }
 
-    /// One shell word: single quotes, and a `'` inside written as `'\''`.
-    nonisolated static func shellQuoted(_ text: String) -> String {
-        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    /// A command word as typed: bare when no character in it means anything to a shell, else quoted. A
-    /// leading `=` is quoted too: zsh (EQUALS) turns `=cat` into the path of `cat`.
-    nonisolated static func shellWord(_ text: String) -> String {
-        let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-")
-        let bare = !text.isEmpty && !text.hasPrefix("=") && text.unicodeScalars.allSatisfy { plain.contains($0) }
-        return bare ? text : shellQuoted(text)
-    }
-
     /// The branch the session ran on: the folder's branch while it runs there now, else the branch its
     /// transcript recorded (`gitBranch` from `tools ai usage sessions`). An old session no longer
     /// shows whatever the folder has checked out today, nor that branch's PR.
@@ -376,8 +362,8 @@ struct HubSessionDetailHost: View {
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
         // nothing set the command. It runs in the session's folder, where the agent finds the session.
         if !agentChild, let command = AgentLauncher.resumeCommand(for: session) {
-            let line = command.map(Self.shellWord).joined(separator: " ")
-            actions.resumeCommand = session.cwd.isEmpty ? line : "cd \(Self.shellQuoted(session.cwd)) && \(line)"
+            let line = command.map(ShellWords.word).joined(separator: " ")
+            actions.resumeCommand = session.cwd.isEmpty ? line : "cd \(ShellWords.quoted(session.cwd)) && \(line)"
         }
         if !session.cwd.isEmpty {
             let cwd = session.cwd
@@ -600,6 +586,13 @@ struct HubSessionDetailHost: View {
         tail = nil
     }
 
+    /// Closed, hidden or minimized: no follow keeps the list's dot current any more, so what this detail told the list
+    /// is withdrawn and the list goes back to its own session data until a follow runs again.
+    private func pauseTail() {
+        stopTail()
+        publishActivity(nil)
+    }
+
     /// Tells the session list whether this session's agent works or waits; nil clears what this detail said.
     /// A sub-agent's file is not a session of the list.
     private func publishActivity(_ live: TranscriptLiveActivity?) {
@@ -678,6 +671,9 @@ struct HubSessionDetailHost: View {
             if activityShown != (activityFeed.row != nil) {
                 activityShown = activityFeed.row != nil
             }
+        }
+        // After a pause the list holds nothing from this detail, so the first activity is told again even unchanged.
+        if let live = batch.activity, activityChanged || publishedActivityFor == nil {
             publishActivity(live)
         }
         guard changed || current != envelope else {

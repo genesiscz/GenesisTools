@@ -351,8 +351,12 @@ public final class FocusController: ObservableObject {
             throw FlowFocusMailbox.Failure.unavailable(lastError ?? "The Focus ledger is unavailable.")
         }
 
-        // Fenced before the deletion starts: a flush already on its way to the recorder lands while it runs.
-        recorder?.ledgerForgetting(from: range.from, to: range.to)
+        // Fenced before the deletion starts: a flush already on its way to the recorder lands while it runs. The hold
+        // ends with the deletion, after `didForget` fenced the range for good, or at once when the ledger refused it
+        // and nothing was deleted.
+        let recorder = self.recorder
+        let fence = recorder?.ledgerForgetting(from: range.from, to: range.to)
+        defer { if let fence { recorder?.ledgerForgetEnded(fence) } }
         let deletion = Task.detached(priority: .userInitiated) {
             try FocusForgetResult.forget(range, in: store)
         }

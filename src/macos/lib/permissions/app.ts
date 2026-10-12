@@ -17,7 +17,7 @@ import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
-import { captureRelaunch, type RelaunchCapture, runRelaunch } from "./relaunch";
+import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
 /** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
@@ -986,7 +986,14 @@ async function reapStaleAppFaces(step: (message: string) => void, relaunch: bool
         try {
             reopen = captureRelaunch({ psStdout: listing.stdout, launcherPath: launcher, stalePids: stale });
         } catch (err) {
-            logger.warn({ err }, "relaunch: faces could not be recorded; they stay closed after the reap");
+            // The relay decision needs only the listing, so a relay that was running still comes back.
+            const relay = linkRelayAmong({
+                psStdout: listing.stdout,
+                launcherPath: launcher,
+                stalePids: new Set(stale),
+            });
+            reopen = { steps: [], relay };
+            logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
         }
     } else {
         logger.info("relaunch: off (--no-relaunch); reaped faces stay closed");

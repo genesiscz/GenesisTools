@@ -20,8 +20,7 @@ enum PreviewWidgetRoster {
                 return nil
             }
             let tools = root.appendingPathComponent("tools")
-            let script = "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = snapshot ]; then cat '\(snapshot.path)'; exit 0; fi; done\nexit 0\n"
-            try script.write(to: tools, atomically: true, encoding: .utf8)
+            try toolsScript(snapshot: snapshot).write(to: tools, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.path)
         } catch {
             fputs("Preview widget roster failed: \(error)\n", stderr)
@@ -29,6 +28,11 @@ enum PreviewWidgetRoster {
         }
         return WidgetModel(binaryPath: root.appendingPathComponent("tools").path, stateRoot: root.path,
                            defaults: defaults, appearance: appearance)
+    }
+
+    /// The stand-in `tools`: prints the snapshot when asked for `snapshot`, nothing otherwise.
+    nonisolated static func toolsScript(snapshot: URL) -> String {
+        "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = snapshot ]; then cat \(ShellWords.quoted(snapshot.path)); exit 0; fi; done\nexit 0\n"
     }
 
     /// A snapshot with `sessions` rows: a selected lead and `sessions - 1` agents under it.

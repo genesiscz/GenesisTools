@@ -106,6 +106,7 @@ final class FittedPanelGeometryTests: XCTestCase {
 @MainActor
 final class EdgePanelReshapeTests: XCTestCase {
     private func controller(expanded: CGSize) throws -> EdgePanelController<Color> {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "Edge panels need a display")
         _ = NSApplication.shared
         let screen = try XCTUnwrap(NSScreen.screens.first)
         let value = EdgePanelController(

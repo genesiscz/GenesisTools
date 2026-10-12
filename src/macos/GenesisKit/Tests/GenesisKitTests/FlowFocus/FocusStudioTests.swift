@@ -681,6 +681,62 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1, "a minute outside it is kept")
     }
 
+    /// The hold a running deletion puts on its range ends with the deletion. A deletion the ledger refused deleted
+    /// nothing, so the range must record again; one that committed stays fenced.
+    func testADeletionTheLedgerRefusedLetsItsRangeRecordAgainAndACommittedOneDoesNot() async throws {
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        let recorder = ActivityRecorder(store: store)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let from = nowMs() - 3_600_000
+        let to = nowMs() + 1_000
+        func countAKeyAndFlush() async throws {
+            recorder.recordKeyForTesting()
+            recorder.flushOffMainForTesting()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        let refused = try XCTUnwrap(recorder.ledgerForgetting(from: from, to: to))
+        try await countAKeyAndFlush()
+        XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty, "held while the deletion runs")
+        recorder.ledgerForgetEnded(refused)
+        try await countAKeyAndFlush()
+        XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1,
+                       "the ledger refused the deletion, so the range records again")
+
+        let committed = try XCTUnwrap(recorder.ledgerForgetting(from: from, to: to))
+        try store.forget(from: from, to: to)
+        recorder.ledgerForgot(from: from, to: to)
+        recorder.ledgerForgetEnded(committed)
+        // The deletion took the open segment, so the same window opens a new one inside the range.
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        XCTAssertEqual(try store.openSegments().count, 1)
+        try await countAKeyAndFlush()
+        XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
+                      "a deletion that committed stays fenced after its hold ends")
+    }
+
+    func testOneDeletionFailingKeepsTheRangeAnotherDeletionStillHolds() async throws {
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        let recorder = ActivityRecorder(store: store)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let from = nowMs() - 3_600_000
+        let to = nowMs() + 1_000
+        let failing = try XCTUnwrap(recorder.ledgerForgetting(from: from, to: to))
+        let running = try XCTUnwrap(recorder.ledgerForgetting(from: from, to: to))
+        recorder.ledgerForgetEnded(failing)
+        recorder.recordKeyForTesting()
+        recorder.flushOffMainForTesting()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
+                      "the other deletion is still running over the same range")
+        recorder.ledgerForgetEnded(running)
+        recorder.recordKeyForTesting()
+        recorder.flushOffMainForTesting()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1, "no deletion is left running")
+        XCTAssertNil(recorder.ledgerForgetting(from: to, to: from), "an empty range holds nothing")
+    }
+
     func testTwoDeletionsInARowLeaveTheRecorderRecordingInARealSegment() throws {
         let recorder = ActivityRecorder(store: store)
         let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)

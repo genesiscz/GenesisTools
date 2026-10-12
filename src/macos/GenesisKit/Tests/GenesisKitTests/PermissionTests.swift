@@ -405,6 +405,36 @@ final class PermissionTests: XCTestCase {
         showing.dialogs[.automation]?.dismiss()
     }
 
+    /// The confirming probe does not depend on this process having no answer of its own: a refusal it remembers from
+    /// an earlier probe is what the other dialog's grant replaces.
+    func testAWaitingProcessRefusedEarlierStillConfirmsAGrantMadeInTheOtherDialog() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("permission-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let namespace = "test.permission-lock.\(UUID().uuidString)"
+        let system = FakePermissionSystem()
+        system.statuses[.desktopFolder] = .unknown("asks on first use")
+        system.probeAnswers[.desktopFolder] = .denied
+        func center() -> PermissionCenter {
+            PermissionCenter(
+                access: PermissionAccess(system: system, simulation: { PermissionSimulation.parse(nil) }),
+                presenter: RecordingPermissionPresenter(),
+                lock: PermissionDialogLock(directory: directory, namespace: namespace),
+                pollInterval: .seconds(3600), closeDelay: .zero, activateForPrompt: {})
+        }
+        let other = center()
+        let here = center()
+        _ = await here.access.request(.desktopFolder)
+        XCTAssertEqual(here.status(.desktopFolder), .denied)
+        XCTAssertFalse(other.require(PermissionNeed(.desktopFolder)))
+        var retries = 0
+        XCTAssertFalse(here.require(PermissionNeed(.desktopFolder, onGranted: { retries += 1 })))
+        XCTAssertNil(here.dialogs[.desktopFolder], "the other process shows the dialog")
+
+        system.probeAnswers[.desktopFolder] = .granted
+        other.dialogs[.desktopFolder]?.allow()
+        await waitUntil { retries == 1 }
+    }
+
     func testAutomaticNeedsStopAfterNotNowWhileAUsersActionStillShows() {
         let system = FakePermissionSystem()
         let (center, presenter) = center(system)
@@ -539,6 +569,7 @@ final class PermissionTests: XCTestCase {
         await dialog?.refresh(explicit: false)
         XCTAssertEqual(dialog?.status, .denied, "the poll keeps the refusal instead of reading it as never asked")
         XCTAssertEqual(dialog?.primaryAction, .openSettings)
+        XCTAssertEqual(center.status(.automation), .denied, "status keeps the last probe's answer too")
         XCTAssertEqual(system.requests, [.automation], "the plain poll never runs the probe")
 
         await dialog?.refresh(explicit: true)
@@ -549,7 +580,156 @@ final class PermissionTests: XCTestCase {
         await dialog?.refresh(explicit: true)
         await waitUntil { presenter.closed == [.automation] }
         XCTAssertEqual(dialog?.phase, .granted)
+        XCTAssertEqual(center.status(.automation), .granted)
         XCTAssertEqual(retries, 1)
+    }
+
+    /// Automation and the folders have no silent read: what `status` shows for them is what their last probe answered.
+    func testAProbeKindStatusFollowsItsLastAnsweredProbe() async {
+        for kind in [PermissionKind.automation, .desktopFolder, .documentsFolder, .downloadsFolder] {
+            let system = FakePermissionSystem()
+            system.statuses[kind] = .unknown("asks on first use")
+            let (center, presenter) = center(system)
+            XCTAssertEqual(center.status(kind), .unknown("asks on first use"), "\(kind): never probed")
+
+            system.probeAnswers[kind] = .notDetermined
+            _ = await center.access.request(kind)
+            XCTAssertEqual(center.status(kind), .unknown("asks on first use"), "\(kind): no answer is not an answer")
+
+            system.probeAnswers[kind] = .denied
+            _ = await center.access.request(kind)
+            XCTAssertEqual(center.status(kind), .denied, "\(kind)")
+            XCTAssertFalse(center.isGranted(kind))
+
+            system.probeAnswers[kind] = .notDetermined
+            _ = await center.access.request(kind)
+            XCTAssertEqual(center.status(kind), .denied, "\(kind): a probe macOS leaves open keeps the refusal")
+
+            system.probeAnswers[kind] = .granted
+            _ = await center.access.request(kind)
+            XCTAssertEqual(center.status(kind), .granted, "\(kind)")
+            XCTAssertTrue(center.require(PermissionNeed(kind)), "\(kind): a granted probe needs no dialog")
+            XCTAssertTrue(presenter.presented.isEmpty)
+        }
+    }
+
+    /// A probe grant revoked in System Settings: probing the remembered grants again (on app activation) finds it.
+    func testARevokedProbeGrantIsFoundWhenTheGrantsAreProbedAgain() async {
+        for kind in [PermissionKind.automation, .desktopFolder, .documentsFolder, .downloadsFolder] {
+            let system = FakePermissionSystem()
+            system.statuses[kind] = .unknown("asks on first use")
+            let (center, presenter) = center(system)
+            system.probeAnswers[kind] = .granted
+            _ = await center.access.request(kind)
+            XCTAssertTrue(center.require(PermissionNeed(kind)), "\(kind)")
+
+            system.probeAnswers[kind] = .denied
+            XCTAssertTrue(center.isGranted(kind), "\(kind): nothing has looked again yet")
+            await center.recheckGrantedProbes()
+            XCTAssertEqual(center.status(kind), .denied, "\(kind)")
+            XCTAssertFalse(center.require(PermissionNeed(kind)), "\(kind): the feature asks again")
+            XCTAssertEqual(presenter.presented.count, 1, "\(kind)")
+        }
+    }
+
+    func testAnObservationEndsWhenItsTokenIsReleased() {
+        let center = NotificationCenter()
+        let name = Notification.Name("permission-tests.observation")
+        var heard = 0
+        var token: ObservationToken? = ObservationToken(
+            center.addObserver(forName: name, object: nil, queue: nil) { _ in heard += 1 }, center: center)
+        center.post(name: name, object: nil)
+        XCTAssertEqual(heard, 1)
+        XCTAssertNotNil(token)
+        token = nil
+        center.post(name: name, object: nil)
+        XCTAssertEqual(heard, 1, "a released token leaves no observer behind")
+    }
+
+    func testProbingTheGrantsAgainStartsNoProbeForARefusalOrAKindNeverProbed() async {
+        let system = FakePermissionSystem()
+        for kind in [PermissionKind.automation, .desktopFolder, .documentsFolder, .downloadsFolder] {
+            system.statuses[kind] = .unknown("asks on first use")
+        }
+        system.probeAnswers[.automation] = .denied
+        let (center, _) = center(system)
+        _ = await center.access.request(.automation)
+        let before = system.requests.count
+        await center.recheckGrantedProbes()
+        XCTAssertEqual(system.requests.count, before, "a remembered refusal and an unprobed folder start no probe")
+    }
+
+    func testAFeatureAskingAfterARefusedProbeFindsTheGrantMadeInSystemSettingsMeanwhile() async throws {
+        let system = FakePermissionSystem()
+        system.statuses[.documentsFolder] = .unknown("asks on first use")
+        system.probeAnswers[.documentsFolder] = .denied
+        let (center, presenter) = center(system)
+        center.require(PermissionNeed(.documentsFolder))
+        let first = try XCTUnwrap(center.dialogs[.documentsFolder])
+        first.primary()
+        await waitUntil { first.status == .denied && first.phase == .asking }
+        first.dismiss()
+        XCTAssertNil(center.dialogs[.documentsFolder])
+
+        // Asked again, the dialog starts where the refusal left it and looks once without a click: still refused.
+        var retries = 0
+        center.require(PermissionNeed(.documentsFolder, onGranted: { retries += 1 }))
+        let dialog = try XCTUnwrap(center.dialogs[.documentsFolder])
+        XCTAssertEqual(dialog.status, .denied)
+        XCTAssertEqual(dialog.primaryAction, .openSettings, "a refusal is changed in Settings: no Continue again")
+        XCTAssertTrue(dialog.offersCheckAgain)
+        await waitUntil { system.answered.count == 2 }
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(dialog.status, .denied)
+        XCTAssertEqual(retries, 0)
+
+        system.probeAnswers[.documentsFolder] = .granted
+        dialog.checkAgain()
+        await waitUntil { dialog.phase == .granted }
+        XCTAssertEqual(retries, 1)
+        XCTAssertEqual(system.requests.count, 3, "Continue, the look when the dialog opened, Check again")
+        XCTAssertEqual(center.status(.documentsFolder), .granted)
+        await waitUntil { presenter.closed == [.documentsFolder, .documentsFolder] }
+    }
+
+    func testACheckAgainMacOSLeavesUnansweredKeepsTheRefusal() async throws {
+        let system = FakePermissionSystem()
+        system.statuses[.desktopFolder] = .unknown("asks on first use")
+        system.probeAnswers[.desktopFolder] = .denied
+        let (center, _) = center(system)
+        center.require(PermissionNeed(.desktopFolder))
+        let dialog = try XCTUnwrap(center.dialogs[.desktopFolder])
+        dialog.primary()
+        await waitUntil { dialog.status == .denied && dialog.phase == .asking }
+
+        // The probe sits behind a macOS prompt nobody answers, until its deadline.
+        system.probeAnswers[.desktopFolder] = .notDetermined
+        await dialog.refresh(explicit: true)
+        XCTAssertEqual(system.requests, [.desktopFolder, .desktopFolder], "Check again did look")
+        XCTAssertEqual(dialog.status, .denied, "no answer is not a reason to forget the refusal")
+        XCTAssertEqual(dialog.primaryAction, .openSettings)
+        XCTAssertEqual(center.status(.desktopFolder), .denied)
+    }
+
+    /// The control for the two above: a kind macOS has not answered is never touched again, which could be a second
+    /// prompt, and it stays as the unanswered probe left it.
+    func testAProbeMacOSNeverAnsweredStaysUnansweredAndIsNotProbedAgain() async throws {
+        let system = FakePermissionSystem()
+        system.statuses[.automation] = .unknown("asks on first use")
+        system.probeAnswers[.automation] = .notDetermined
+        let (center, _) = center(system)
+        center.require(PermissionNeed(.automation))
+        let dialog = try XCTUnwrap(center.dialogs[.automation])
+        dialog.primary()
+        await waitUntil { dialog.status == .notDetermined && dialog.phase == .asking }
+        XCTAssertEqual(dialog.primaryAction, .allow, "nothing was decided, so Continue stays")
+
+        await dialog.refresh(explicit: false)
+        await dialog.refresh(explicit: false, fresh: true)
+        await dialog.refresh(explicit: true)
+        XCTAssertEqual(system.requests, [.automation], "no second probe for a kind macOS never answered")
+        XCTAssertEqual(dialog.status, .notDetermined)
+        XCTAssertEqual(dialog.primaryAction, .allow)
     }
 
     func testAProbeMacOSHoldsAnswersByItsDeadline() async {

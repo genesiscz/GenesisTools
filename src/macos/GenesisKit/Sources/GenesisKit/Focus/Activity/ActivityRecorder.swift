@@ -570,16 +570,35 @@ public final class ActivityRecorder: ObservableObject {
         }
     }
 
-    /// A deletion of `from..<to` is starting (`FocusController.forgetOwned`, before it runs off the main actor). From
-    /// now on a minute that starts inside the range is forgotten: counts the counter already flushed, still on their
-    /// way here, and the rest of that minute are not written back while the deletion runs or after it.
-    public func ledgerForgetting(from: Int64, to: Int64) {
-        guard remoteCommand == nil, from < to else { return }
-        fence(from: from, to: to)
+    /// The hold one running deletion has on the recorder's input (`ledgerForgetting`). Each deletion has its own, so
+    /// one that fails lets go of nothing another deletion, or a committed one, holds.
+    public struct DeletionFence: Hashable, Sendable {
+        fileprivate let id = UUID()
+    }
+
+    /// A deletion of `from..<to` is starting (`FocusController.forgetOwned`, before it runs off the main actor). A
+    /// minute that starts inside the range is forgotten while the deletion runs: counts the counter already flushed,
+    /// still on their way here, and the rest of that minute are not written back. The hold lasts until
+    /// `ledgerForgetEnded`. A deletion that commits is fenced for good by `ledgerForgot`; one the ledger refused
+    /// deleted nothing, so its range records again. Nil when there is nothing to hold (a client, an empty range).
+    @discardableResult
+    public func ledgerForgetting(from: Int64, to: Int64) -> DeletionFence? {
+        guard remoteCommand == nil, from < to else { return nil }
+        let fence = DeletionFence()
+        runningDeletions[fence] = (from, to)
+        return fence
+    }
+
+    /// The deletion that took `fence` is over, committed or refused. Call it after `ledgerForgot` on a commit, so
+    /// the range is never unfenced in between.
+    public func ledgerForgetEnded(_ fence: DeletionFence) {
+        runningDeletions[fence] = nil
     }
 
     /// Ranges deleted since this recorder started; one per "Delete activity", so the list stays short.
     private var forgottenRanges: [(from: Int64, to: Int64)] = []
+    /// Ranges whose deletion is running now; they leave this list when it ends.
+    private var runningDeletions: [DeletionFence: (from: Int64, to: Int64)] = [:]
 
     private func fence(from: Int64, to: Int64) {
         guard !forgottenRanges.contains(where: { $0.from == from && $0.to == to }) else { return }
@@ -588,7 +607,8 @@ public final class ActivityRecorder: ObservableObject {
 
     private func persistInput(bucketMs: Int64, counts: ActivityStore.InputCounts) {
         // The ledger deletes a minute by its start, so a forgotten one is fenced by its start too.
-        guard !forgottenRanges.contains(where: { bucketMs >= $0.from && bucketMs < $0.to }) else { return }
+        guard !forgottenRanges.contains(where: { bucketMs >= $0.from && bucketMs < $0.to }),
+              !runningDeletions.values.contains(where: { bucketMs >= $0.from && bucketMs < $0.to }) else { return }
         guard let id = segmentId else { return }
         persist("input bucket") { try store.appendInput(bucketMs: bucketMs, segmentId: id, counts: counts) }
     }

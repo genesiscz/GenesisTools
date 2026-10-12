@@ -139,8 +139,8 @@ function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
 /**
  * The cmux panes whose terminal runs a client of a tmux session this session runs in, joined by tty.
  *
- * Two clients in two panes give two targets. The match is exact only while the session's tmux pane is the one
- * on screen: typing into the cmux surface reaches whatever pane the tmux client shows.
+ * Two clients in two panes, or in two tabs of one pane, give two targets. The match is exact only while the
+ * session's tmux pane is the one on screen: typing into the cmux surface reaches whatever pane the tmux client shows.
  */
 export function tmuxHostTargets(snapshot: CmuxLiveSnapshot, hosts: TmuxHost[], sessionId: string): FocusTarget[] {
     const names = new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace.name]));
@@ -150,26 +150,24 @@ export function tmuxHostTargets(snapshot: CmuxLiveSnapshot, hosts: TmuxHost[], s
         const ttys = new Set(host.clientTtys.map(ttyName).filter((tty) => tty !== ""));
 
         for (const pane of snapshot.panes) {
-            const surface = pane.surfaces.find((candidate) => ttys.has(ttyName(candidate.tty)));
+            const surfaces = pane.surfaces.filter((candidate) => ttys.has(ttyName(candidate.tty)));
 
-            if (!surface) {
-                continue;
+            for (const surface of surfaces) {
+                targets.push({
+                    workspaceId: pane.workspaceId,
+                    workspaceName: names.get(pane.workspaceId) ?? pane.workspaceId,
+                    paneId: pane.id,
+                    paneTitle: pane.title,
+                    cwd: pane.cwd,
+                    windowRef: pane.windowRef,
+                    surfaceId: surface.id,
+                    sessionIds: [sessionId.toLowerCase()],
+                    matchedOn: host.visible ? "tmux" : "tmux-hidden",
+                    score: host.visible ? 95 : 90,
+                    active: pane.active,
+                    tmux: { session: host.session, pane: host.pane },
+                });
             }
-
-            targets.push({
-                workspaceId: pane.workspaceId,
-                workspaceName: names.get(pane.workspaceId) ?? pane.workspaceId,
-                paneId: pane.id,
-                paneTitle: pane.title,
-                cwd: pane.cwd,
-                windowRef: pane.windowRef,
-                surfaceId: surface.id,
-                sessionIds: [sessionId.toLowerCase()],
-                matchedOn: host.visible ? "tmux" : "tmux-hidden",
-                score: host.visible ? 95 : 90,
-                active: pane.active,
-                tmux: { session: host.session, pane: host.pane },
-            });
         }
     }
 

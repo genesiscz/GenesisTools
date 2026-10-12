@@ -29,7 +29,7 @@ public struct GenHoverButtonStyle: ButtonStyle {
     var brighten: Double = 0
 
     @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
 
     public func makeBody(configuration: Configuration) -> some View {
@@ -113,7 +113,7 @@ struct GenHoverEffect: ViewModifier {
     var scale: CGFloat = 1.04
 
     @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     func body(content: Content) -> some View {
         content

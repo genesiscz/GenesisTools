@@ -5,5 +5,9 @@ let package = Package(
     name: "GenesisClickyPreview",
     platforms: [.macOS(.v14)],
     dependencies: [.package(path: "../GenesisKit")],
-    targets: [.executableTarget(name: "GenesisClickyPreview", dependencies: ["GenesisKit"], path: "Sources")]
+    targets: [
+        .executableTarget(name: "GenesisClickyPreview", dependencies: ["GenesisKit"], path: "Sources"),
+        .testTarget(name: "GenesisClickyPreviewTests", dependencies: ["GenesisClickyPreview"],
+                    path: "Tests/GenesisClickyPreviewTests"),
+    ]
 )

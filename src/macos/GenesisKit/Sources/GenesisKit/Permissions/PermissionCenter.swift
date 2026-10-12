@@ -131,6 +131,29 @@ public final class PermissionCenter {
             self.presenter.bringToFront(open, takesFocus: false)
         }
         lock?.onGrantAnnounced = { [weak self] kind in self?.verifyGrantElsewhere(kind) }
+        // Coming back to this app (from System Settings, say) is when a revoked probe grant is worth a look.
+        activationObserver = ObservationToken(NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recheckGrantedProbesOnActivation() }
+        })
+    }
+
+    /// Removes the observer when this center is released (tests create many centers).
+    private var activationObserver: ObservationToken?
+    private var lastGrantRecheck: Date?
+
+    /// At most every 10 s: activating the app is frequent, and an Automation probe runs AppleScript.
+    private func recheckGrantedProbesOnActivation() {
+        if let lastGrantRecheck, Date().timeIntervalSince(lastGrantRecheck) < 10 { return }
+        lastGrantRecheck = Date()
+        Task { await recheckGrantedProbes() }
+    }
+
+    /// Probes the remembered grants of Automation and the folders again (`PermissionAccess.recheckGrantedProbes`),
+    /// so a grant revoked in System Settings stops reading as granted and the next `require` asks again.
+    public func recheckGrantedProbes() async {
+        await access.recheckGrantedProbes()
     }
 
     private static func makeShared() -> PermissionCenter {
@@ -240,6 +263,8 @@ public final class PermissionCenter {
         GenesisKit.log("permission \(need.kind.rawValue) missing (\(status.wireValue)); dialog shown, trigger \(need.trigger)")
         presenter.present(dialog, takesFocus: need.trigger == .userAction)
         dialog.startWatching()
+        // A refusal remembered from an earlier probe may have been lifted in System Settings since.
+        if need.kind.requestStyle == .probe, status == .denied { dialog.checkAgainQuietly() }
     }
 
     /// Needs whose dialog another process of this app shows. That process cannot run their `onGranted`, so this one
@@ -250,9 +275,10 @@ public final class PermissionCenter {
     private var waitingElsewhere: [PermissionKind: (needs: [PermissionNeed], poll: Task<Void, Never>)] = [:]
     private var verifyingElsewhere: Set<PermissionKind> = []
 
-    /// The dialog in another process saw the grant: its lock file says so. A probe kind reads `.unknown` here, but
+    /// The dialog in another process saw the grant: its lock file says so. A probe kind has no silent read here, but
     /// macOS holds the answer now, so touching the resource once does not prompt; it confirms the grant reaches this
-    /// process too. Nothing is probed before that, so a waiting process never puts up a second macOS prompt.
+    /// process too, whatever an earlier probe here answered. Nothing is probed before that, so a waiting process never
+    /// puts up a second macOS prompt.
     private func verifyGrantElsewhere(_ kind: PermissionKind) {
         guard waitingElsewhere[kind] != nil, !verifyingElsewhere.contains(kind),
               lock?.holderSawGrant(kind) == true else { return }
@@ -261,7 +287,9 @@ public final class PermissionCenter {
             guard let self else { return }
             defer { self.verifyingElsewhere.remove(kind) }
             var current = self.access.status(kind)
-            if kind.requestStyle == .probe, case .unknown = current { current = await self.access.request(kind) }
+            if kind.requestStyle == .probe, !current.isGranted, self.access.simulatedMode(kind) == nil {
+                current = await self.access.request(kind)
+            }
             guard current.isGranted else {
                 GenesisKit.log("permission \(kind.rawValue) granted in another process, not here (\(current.wireValue)); still waiting")
                 return
@@ -639,18 +667,23 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     func refresh(explicit: Bool, fresh: Bool = false) async {
         guard let center, !closed, phase != .granted, phase != .working else { return }
         var current = center.access.status(kind)
-        if kind.requestStyle == .probe, status == .denied, case .unknown = current {
-            // A probe kind has no silent read. Once its probe was refused, macOS has the answer, so touching the
-            // resource again never prompts: it tells a grant made in System Settings from a refusal. It runs on
-            // "Check again" and when the user comes back from another app (System Settings), at most every few
-            // seconds, never on the plain poll: each probe runs AppleScript or lists a folder.
-            let due = lastFreshCheck.map { Date().timeIntervalSince($0) > 3 } ?? true
-            guard explicit || (fresh && due) else { return }
-            lastFreshCheck = Date()
-            if explicit { checking = true }
-            current = await center.access.request(kind)
-            checking = false
-            guard !closed, phase != .granted, phase != .working else { return }
+        if kind.requestStyle == .probe, !current.isGranted {
+            // A probe kind has no silent read: `.unknown` says nothing new, so the dialog keeps what its last probe
+            // answered. Once a probe was refused, macOS has the answer, so touching the resource again never
+            // prompts: `recheck` tells a grant made in System Settings from a refusal. It runs on "Check again" and
+            // when the user comes back from another app (System Settings), at most every few seconds, never on the
+            // plain poll: each probe runs AppleScript or lists a folder.
+            if case .unknown = current { current = status }
+            if current == .denied {
+                if status != current { status = current }
+                let due = lastFreshCheck.map { Date().timeIntervalSince($0) > 3 } ?? true
+                guard explicit || (fresh && due) else { return }
+                lastFreshCheck = Date()
+                if explicit { checking = true }
+                current = await center.access.recheck(kind)
+                checking = false
+                guard !closed, phase != .granted, phase != .working else { return }
+            }
         }
         if current != status { status = current }
         if current.isGranted {
@@ -854,5 +887,21 @@ public enum PermissionRelaunch {
             exit(0)
         }
         return true
+    }
+}
+
+/// A `NotificationCenter` observation that ends when its holder is released, so an owner needs no `deinit` (which a
+/// `@MainActor` class cannot use to read its observer token).
+final class ObservationToken {
+    private let token: NSObjectProtocol
+    private let center: NotificationCenter
+
+    init(_ token: NSObjectProtocol, center: NotificationCenter = .default) {
+        self.token = token
+        self.center = center
+    }
+
+    deinit {
+        center.removeObserver(token)
     }
 }

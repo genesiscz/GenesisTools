@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -178,6 +178,19 @@ describe("file kinds", () => {
             "image needs an asset store, and this caller configured none"
         );
         expect((await one('{{image path="a.ts"}}', { assetDir })).token.error).toContain("a.ts is not an image");
+    });
+
+    test("image takes a file up to the shared attachment limit, as question_answer does, and names that limit", async () => {
+        const assetDir = join(repo, ".assets");
+        writeFileSync(join(repo, "large.png"), "");
+        truncateSync(join(repo, "large.png"), 12 * 1024 * 1024);
+        expect((await one('{{image path="large.png"}}', { assetDir })).token.ok).toBe(true);
+
+        writeFileSync(join(repo, "huge.png"), "");
+        truncateSync(join(repo, "huge.png"), 26 * 1024 * 1024);
+        expect((await one('{{image path="huge.png"}}', { assetDir })).token.error).toBe(
+            "huge.png is 26 MB; the limit is 25 MB"
+        );
     });
 
     test("image encodes parentheses, so no folder name can end the markdown destination early", async () => {

@@ -17,8 +17,10 @@ public final class ImageViewerCanvasView: NSView {
         case sideBySide
     }
 
-    /// A decoded picture and the source's own size in pixels (the layout never moves when a sharper decode lands).
+    /// A decoded picture, the viewer item it is, and the source's own size in pixels (the layout never moves when a
+    /// sharper decode lands).
     struct Picture {
+        var id: String
         var image: CGImage?
         var pixelSize: CGSize
     }
@@ -143,13 +145,14 @@ public final class ImageViewerCanvasView: NSView {
 
     // MARK: - State from the model
 
-    func setPicture(_ slot: Slot, image: CGImage?, pixelSize: CGSize) {
+    func setPicture(_ slot: Slot, id: String, image: CGImage?, pixelSize: CGSize) {
         let previous = slot == .a ? pictureA : pictureB
-        let picture = Picture(image: image, pixelSize: pixelSize)
+        let picture = Picture(id: id, image: image, pixelSize: pixelSize)
         if slot == .a { pictureA = picture } else { pictureB = picture }
         withoutActions { (slot == .a ? imageA : imageB).contents = image }
-        // A sharper decode of the same picture changes nothing on screen but its pixels; another picture starts fitted.
-        if previous?.pixelSize != pixelSize {
+        // A sharper decode of the picture already shown changes nothing on screen but its pixels. Any other picture
+        // starts fitted, one of the same size included: equal pixel sizes do not make it the same picture.
+        if previous?.id != id || previous?.pixelSize != pixelSize {
             refit(keepingUserZoom: false)
         }
         requestPixelsIfNeeded()

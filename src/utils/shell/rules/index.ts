@@ -19,6 +19,7 @@ import { findRules } from "./find";
 import { gitRules } from "./git";
 import { pipelineRules } from "./pipeline";
 import { rgRules } from "./rg";
+import { swiftpmRules } from "./swiftpm";
 import type { ShellMatch, ShellRule, ShellSeverity, ShellViolation } from "./types";
 import { zshRules } from "./zsh";
 
@@ -33,6 +34,7 @@ export const SHELL_RULES: readonly ShellRule[] = [
     ...findRules,
     ...gitRules,
     ...zshRules,
+    ...swiftpmRules,
     ...destructiveRules,
 ];
 
@@ -42,11 +44,15 @@ export function ruleById(id: string): ShellRule | undefined {
 
 // Run every rule over one command. Never throws: a rule that crashes is
 // skipped, because a guard that takes the harness down guards nothing.
-export function detectShellViolations(command: string, rules: readonly ShellRule[] = SHELL_RULES): ShellViolation[] {
+export function detectShellViolations(
+    command: string,
+    rules: readonly ShellRule[] = SHELL_RULES,
+    options: { cwd?: string } = {}
+): ShellViolation[] {
     let scan: ShellScan;
 
     try {
-        scan = scanShell(command);
+        scan = scanShell(command, options.cwd);
     } catch {
         return [];
     }

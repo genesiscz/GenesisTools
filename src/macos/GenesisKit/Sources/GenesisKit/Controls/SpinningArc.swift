@@ -8,7 +8,7 @@ import SwiftUI
 /// kept GenesisTools Preview at 23% CPU (2026-10-08). Here the turn is a layer animation, which the
 /// render server runs, so the app does no work between frames.
 public struct SpinningArc: NSViewRepresentable {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
     public var color: Color
     public var lineWidth: CGFloat
     /// The visible part of the circle, as `Circle().trim(from:to:)` takes it.

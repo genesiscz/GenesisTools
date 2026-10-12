@@ -211,6 +211,27 @@ describe("evaluateGuard", () => {
         expect(verdict?.message.startsWith("Blocked:")).toBe(true);
     });
 
+    it("hands the payload's cwd to the rules, so a rule that reads the project sees the right folder", () => {
+        const root = mkdtempSync(join(tmpdir(), "guard-cwd-"));
+
+        try {
+            const app = join(root, "app");
+            mkdirSync(app);
+            writeFileSync(
+                join(app, "Package.swift"),
+                'let package = Package(name: "App", dependencies: [.package(path: "../kit")])\n'
+            );
+
+            const inPackage = evaluateGuard(payload({ command: "swift test", cwd: app }), DEFAULT_HOOKS_CONFIG);
+
+            expect(inPackage?.outcome).toBe("block");
+            expect(inPackage?.message).toContain("swiftpm-stale-plan");
+            expect(evaluateGuard(payload({ command: "swift test", cwd: root }), DEFAULT_HOOKS_CONFIG)).toBeNull();
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("passes a clean command", () => {
         expect(evaluateGuard(payload(), DEFAULT_HOOKS_CONFIG)).toBeNull();
     });

@@ -58,7 +58,8 @@ build. So never add an app copy of anything that lives here.
 ## Tests
 
 `swift test` here covers the shared code, including `SessionTranscriptScrollTests` (the transcript's scroll,
-streaming and resize cost; `SESSION_SCROLL_PERF=1` for the timing runs) and `WindowTitlebarTests`, which open
+streaming and resize cost; `SESSION_SCROLL_PERF=1` for the timing runs; the image viewer's frame and build limits
+likewise only with `IMAGE_VIEWER_PERF=1`) and `WindowTitlebarTests`, which open
 windows at alpha 0, below the desktop, never activated. Then build both apps (`bun run app` in GenesisTools,
 `bun scripts/install.ts --debug` in `Genesis/apps/Genesis`) and run their suites: GenesisTools `swift test`,
 GenesisAIMonitorKit `swift test`, Genesis `bun run test:scope`.

@@ -5,6 +5,7 @@ import SwiftUI
 /// it while comparing, and the "Compare with…" picker as a transient panel over the canvas.
 public struct ImageViewerView: View {
     @ObservedObject var model: ImageViewerModel
+    @GenReduceMotion private var reduceMotion
 
     public init(model: ImageViewerModel) {
         self.model = model
@@ -27,11 +28,11 @@ public struct ImageViewerView: View {
                         .padding(.top, 10)
                         .padding(.trailing, 12)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .transition(.opacity.combined(with: .offset(y: -6)))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -6)))
                 }
             }
             .clipped()
-            .animation(.easeOut(duration: 0.14), value: model.picking)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: model.picking)
             if model.compare != nil {
                 ImageViewerCompareBar(model: model)
                     .transition(.opacity)
@@ -152,7 +153,7 @@ private struct ImageViewerCanvasOverlay: View {
 
     var body: some View {
         ZStack {
-            stateView(model.stateA, slot: .a, name: model.current?.name ?? "")
+            states
             if let compare = model.compare {
                 labels(compare)
             }
@@ -167,14 +168,49 @@ private struct ImageViewerCanvasOverlay: View {
         }
     }
 
+    /// What each picture says about itself: alone, over the whole canvas; compared, over its own side of the slider's
+    /// divider or its own pane, so a failed B is not read as a failed A.
+    @ViewBuilder
+    private var states: some View {
+        if let compare = model.compare {
+            GeometryReader { proxy in
+                HStack(spacing: 0) {
+                    region(model.stateA, slot: .a, name: model.current?.name ?? "")
+                        .frame(width: regionA(compare, canvasWidth: proxy.size.width))
+                    region(model.stateB, slot: .b, name: model.itemB?.name ?? "")
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
+            }
+        } else {
+            stateView(model.stateA, slot: .a, name: model.current?.name ?? "")
+        }
+    }
+
+    /// The region as a real view with the picture's state centred over it: a frame on the state itself lays out
+    /// nothing while that state is an `EmptyView` (loading, drawn).
+    private func region(_ state: ImageViewerModel.PictureState, slot: ImageViewerCanvasView.Slot, name: String) -> some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay { stateView(state, slot: slot, name: name) }
+    }
+
+    private func regionA(_ compare: ImageViewerModel.Compare, canvasWidth: CGFloat) -> CGFloat {
+        switch compare.mode {
+        case .slider: (compare.divider * canvasWidth).rounded()
+        case .sideBySide: max(1, (canvasWidth - ImageViewerCanvasView.paneGap) / 2)
+        }
+    }
+
     @ViewBuilder
     private func stateView(_ state: ImageViewerModel.PictureState, slot: ImageViewerCanvasView.Slot, name: String) -> some View {
         switch state {
         case .failed(let reason):
             VStack(spacing: 8) {
                 Image(systemName: "photo").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
-                Text(verbatim: name).font(.system(size: 12, weight: .semibold))
+                Text(verbatim: name).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Text(verbatim: reason).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 Button { model.retry(slot) } label: {
                     Label("Retry", systemImage: "arrow.clockwise").font(.system(size: 11, weight: .medium))
                 }
@@ -288,6 +324,7 @@ private struct ImageViewerCompareBar: View {
 
 private struct ImageViewerPicker: View {
     @ObservedObject var model: ImageViewerModel
+    @GenReduceMotion private var reduceMotion
     static let columns = 3
     static let tile = CGSize(width: 128, height: 86)
 
@@ -324,7 +361,7 @@ private struct ImageViewerPicker: View {
                 }
                 .scrollOverflowHints()
                 .onChange(of: model.pickerFocus) { _, focus in
-                    withAnimation(.easeOut(duration: 0.12)) { scroller.scrollTo(focus) }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) { scroller.scrollTo(focus) }
                 }
             }
         }

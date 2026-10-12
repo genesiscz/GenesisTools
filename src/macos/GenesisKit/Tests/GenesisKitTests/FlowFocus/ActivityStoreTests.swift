@@ -476,6 +476,48 @@ final class ActivityStoreTests: XCTestCase {
                        "only the last hour is deleted")
     }
 
+    /// A "Delete activity" the ledger refuses (another writer holds it past the busy timeout) deleted nothing, so the
+    /// recorder must keep counting the period it fenced while the deletion ran.
+    @MainActor
+    func testADeleteActivityTheLedgerRefusedLeavesTheRecorderCountingThatPeriod() async throws {
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: [:], databasePath: path, liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        let recorder = try XCTUnwrap(controller.recorder)
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        func countAKeyAndFlush() async throws {
+            recorder.recordKeyForTesting()
+            recorder.flushOffMainForTesting()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let now = Date()
+        var other: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &other), SQLITE_OK)
+        defer { sqlite3_close(other) }
+        XCTAssertEqual(sqlite3_exec(other, "BEGIN IMMEDIATE;", nil, nil, nil), SQLITE_OK)
+        do {
+            _ = try await controller.forgetActivity(from: now.addingTimeInterval(-3_600), to: now.addingTimeInterval(1))
+            XCTFail("the deletion cannot commit while another writer holds the ledger")
+        } catch {
+            XCTAssertFalse(error is CancellationError)
+        }
+        XCTAssertEqual(sqlite3_exec(other, "ROLLBACK;", nil, nil, nil), SQLITE_OK)
+
+        try await countAKeyAndFlush()
+        XCTAssertEqual(try store.inputTotals(from: 0, to: Int64(now.timeIntervalSince1970 * 1000) + 120_000).keys, 1,
+                       "nothing was deleted, so the current minute is still recorded")
+
+        // The same deletion once the ledger is free: it commits, and its period stays fenced.
+        _ = try await controller.forgetActivity(from: now.addingTimeInterval(-3_600), to: now.addingTimeInterval(1))
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        try await countAKeyAndFlush()
+        XCTAssertTrue(try store.inputSeries(from: 0, to: Int64(now.timeIntervalSince1970 * 1000) + 120_000).isEmpty,
+                      "a deletion that committed is not written back")
+    }
+
     @MainActor
     func testAClientAsksTheOwnerToForgetAndNeverWritesItsReadOnlyLedger() async throws {
         let id = try store.openSegment(segment(1_000, title: "kept"))

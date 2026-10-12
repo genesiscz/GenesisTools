@@ -1,6 +1,13 @@
-import { describe, expect, it } from "bun:test";
-
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { scanShell } from "../scan";
 import { detectShellViolations, renderViolation, renderViolations, ruleById, SHELL_RULES } from "./index";
+import { swiftpmRules, swiftpmStalePlan } from "./swiftpm";
+
+/** The repository root: a rule that reads the project resolves its `wrong` example against it. */
+const REPO_ROOT = resolve(import.meta.dir, "../../../..");
 
 describe("the registry", () => {
     it("has unique, kebab-case ids", () => {
@@ -27,8 +34,8 @@ describe("the registry", () => {
 
     it("every rule's own `wrong` example trips that rule, and its `right` example does not", () => {
         for (const rule of SHELL_RULES) {
-            const wrong = detectShellViolations(rule.wrong, [rule]);
-            const right = detectShellViolations(rule.right, [rule]);
+            const wrong = detectShellViolations(rule.wrong, [rule], { cwd: REPO_ROOT });
+            const right = detectShellViolations(rule.right, [rule], { cwd: REPO_ROOT });
 
             expect(wrong.map((v) => v.ruleId)).toEqual([rule.id]);
             expect(right).toEqual([]);
@@ -46,7 +53,7 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the thirteen rules harvested from CLAUDE.md", () => {
+    it("holds the fourteen rules harvested from CLAUDE.md and real sessions", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
@@ -61,6 +68,7 @@ describe("the registry", () => {
                 "rg-replace-cluster",
                 "stderr-discarded-then-counted",
                 "stderr-discarded-then-read",
+                "swiftpm-stale-plan",
                 "zsh-glob-qualifier",
             ].sort()
         );
@@ -292,5 +300,76 @@ describe("rendering", () => {
 
         expect(text).toContain(`matched (offset 0): ${command}`);
         expect(text).toContain(`your command, corrected:\n${"x".repeat(1000)} | wc -l`);
+    });
+});
+
+describe("swiftpm-stale-plan", () => {
+    // Two packages side by side: `app` uses `kit` by path, `kit` has no local dependency.
+    const root = mkdtempSync(join(tmpdir(), "swiftpm-rule-"));
+    const app = join(root, "app");
+    const kit = join(root, "kit");
+    const named = join(root, "named");
+    mkdirSync(app);
+    mkdirSync(kit);
+    mkdirSync(named);
+    writeFileSync(
+        join(app, "Package.swift"),
+        'let package = Package(name: "App", dependencies: [.package(path: "../kit")])\n'
+    );
+    writeFileSync(join(kit, "Package.swift"), 'let package = Package(name: "Kit", targets: [.target(name: "Kit")])\n');
+    writeFileSync(
+        join(named, "Package.swift"),
+        'let package = Package(name: "Named", dependencies: [.package(name: "Kit", path: "../kit")])\n'
+    );
+
+    afterAll(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    function fires(command: string, cwd = root): boolean {
+        return detectShellViolations(command, swiftpmRules, { cwd }).length > 0;
+    }
+
+    it("fires for a package with a path dependency and inserts the flag after the subcommand", () => {
+        const [violation] = detectShellViolations(
+            `swift test --package-path ${app} --filter WidgetTests`,
+            swiftpmRules,
+            {
+                cwd: root,
+            }
+        );
+
+        expect(violation?.severity).toBe("block");
+        expect(violation?.suggestion).toBe(
+            `swift test --disable-build-manifest-caching --package-path ${app} --filter WidgetTests`
+        );
+        expect(fires("swift build --package-path app")).toBe(true);
+        expect(fires(`swift run --package-path=${app} App --samples`)).toBe(true);
+        expect(fires("/usr/bin/swift build --package-path ./app")).toBe(true);
+        expect(fires("swift build", app)).toBe(true);
+        expect(fires("swift test", named)).toBe(true);
+    });
+
+    it("never throws on a quoted subcommand, which the cleaned text blanks, and leaves it alone", () => {
+        const scan = scanShell(`swift "test" --package-path ${app}`, root);
+
+        expect(() => swiftpmStalePlan.detect(scan)).not.toThrow();
+        expect(swiftpmStalePlan.detect(scan)).toBeNull();
+    });
+
+    it("follows a cd earlier in the same command", () => {
+        const [violation] = detectShellViolations(`cd ${app} && swift test 2>&1 | tail -5`, swiftpmRules, { cwd: kit });
+
+        expect(violation?.suggestion).toBe(`cd ${app} && swift test --disable-build-manifest-caching 2>&1 | tail -5`);
+        expect(fires(`cd ${kit} && swift build`, app)).toBe(false);
+    });
+
+    it("stays quiet with the flag, without a path dependency, or when nothing builds", () => {
+        expect(fires(`swift test --package-path ${app} --disable-build-manifest-caching`)).toBe(false);
+        expect(fires(`swift test --package-path ${kit}`)).toBe(false);
+        expect(fires("swift build --show-bin-path", app)).toBe(false);
+        expect(fires("swift package describe --type json", app)).toBe(false);
+        expect(fires('cd "$PACKAGE" && swift test')).toBe(false);
+        expect(fires(`swift test --package-path ${join(root, "missing")}`)).toBe(false);
     });
 });

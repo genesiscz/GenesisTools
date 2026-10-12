@@ -242,7 +242,9 @@ export function withoutHubActions(argv: string[]): string[] {
  * and an older hub's record that has none keeps its own arguments. The widget and Clicky come back
  * without the settings page or session they were opened with; the widget also gets `--ensure-running`,
  * so a copy that finds one already started (by another face) exits instead of opening the settings, and
- * `--no-activate` keeps a widget that is switched off from opening them on its own.
+ * `--no-activate` keeps a widget that is switched off from opening them on its own. Copies of one window
+ * (settings windows opened before that face held an instance lock) come back as one: the frontmost copy
+ * when it is among them, else the first.
  */
 export function relaunchPlan(faces: WindowFace[], frontPid: number | null): RelaunchStep[] {
     const steps = faces.map((face): RelaunchStep => {
@@ -266,8 +268,19 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
 
         return { pid: face.pid, kind: face.kind, argv, activate };
     });
+    const unique = new Map<string, RelaunchStep>();
 
-    return [...steps.filter((step) => !step.activate), ...steps.filter((step) => step.activate)];
+    for (const step of steps) {
+        const key = step.argv.filter((arg) => arg !== "--no-activate").join("\0");
+        const kept = unique.get(key);
+
+        if (!kept || (step.activate && !kept.activate)) {
+            unique.set(key, step);
+        }
+    }
+
+    const once = [...unique.values()];
+    return [...once.filter((step) => !step.activate), ...once.filter((step) => step.activate)];
 }
 
 function spawnText(cmd: string[]): { code: number; stdout: string; stderr: string } {
@@ -293,7 +306,10 @@ function isFaceRecord(value: unknown): value is FaceRecord {
     return typeof pid === "number" && Array.isArray(argv) && argv.every((arg: unknown) => typeof arg === "string");
 }
 
-/** Every face record on disk, by pid. An unreadable one is skipped and logged. */
+/**
+ * Every face record on disk, by pid. An unreadable one is skipped and logged, and a folder that cannot be listed
+ * gives none: each face then comes back from its `ps` line, and the reap still knows whether a link relay ran.
+ */
 export function readFaceRecords(dir = facesRecordDir()): Map<number, string[]> {
     const records = new Map<number, string[]>();
 
@@ -301,7 +317,15 @@ export function readFaceRecords(dir = facesRecordDir()): Map<number, string[]> {
         return records;
     }
 
-    for (const name of readdirSync(dir)) {
+    let names: string[];
+    try {
+        names = readdirSync(dir);
+    } catch (err) {
+        logger.warn({ err, dir }, "relaunch: face records unreadable; faces come back from their ps lines");
+        return records;
+    }
+
+    for (const name of names) {
         if (!name.endsWith(".json")) {
             continue;
         }

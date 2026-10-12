@@ -37,7 +37,13 @@ import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
 import type { AgentNode } from "../agents/types";
 import { performWidgetAction } from "../widget/actions";
-import { ImageLiftBudget, liftCardImages } from "../widget/card-images";
+import {
+    IMAGE_PENDING_LIMIT,
+    type ImageFiles,
+    ImageLiftBudget,
+    imageReadsSettled,
+    liftCardImages,
+} from "../widget/card-images";
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
 import { readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
@@ -4836,6 +4842,139 @@ describe("inbox card images and agent messages", () => {
         expect(lifted.texts.slice(0, 3)).toEqual(literal);
         expect(lifted.texts[3]).toBe(literal[1]);
         expect(lifted.attachments.map((image) => [image.path, image.label])).toEqual([[real, "Real"]]);
+    });
+
+    /** A disk whose `stat` or read waits for `release()`, as a network volume that stopped answering does. */
+    function stalledDisk(at: "stat" | "bytes") {
+        const calls = { stat: 0, bytes: 0 };
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const disk: ImageFiles = {
+            stat: async (path) => {
+                calls.stat++;
+
+                if (at === "stat") {
+                    await gate;
+                }
+
+                return files.stat(path);
+            },
+            bytes: async (path) => {
+                calls.bytes++;
+
+                if (at === "bytes") {
+                    await gate;
+                }
+
+                return Bun.file(path).bytes();
+            },
+        };
+        return { disk, calls, release };
+    }
+
+    test("a stat that never answers leaves the image as text within the deadline; no later snapshot starts a second read", async () => {
+        const directory = await root();
+        const shot = png(join(directory, "stalled.png"));
+        const text = `![Stalled](${shot})`;
+        const { disk, calls, release } = stalledDisk("stat");
+
+        try {
+            const budget = new ImageLiftBudget({ deadlineMs: 40 });
+            const startedAt = performance.now();
+            const first = await liftCardImages([text], { budget, files: disk });
+            expect(performance.now() - startedAt).toBeLessThan(1500);
+            expect(first.attachments).toEqual([]);
+            expect(first.texts[0]).toBe(text);
+            expect(budget.deferred).toBe(0);
+
+            const again = await liftCardImages([text], {
+                budget: new ImageLiftBudget({ deadlineMs: 40 }),
+                files: disk,
+            });
+            expect(again.texts[0]).toBe(text);
+            expect(calls.stat).toBe(1);
+
+            release();
+            await imageReadsSettled();
+            expect(calls.bytes).toBe(0);
+
+            const later = await liftCardImages([text], { files: disk });
+            expect(later.attachments.map((image) => image.path)).toEqual([shot]);
+            expect(calls.stat).toBe(2);
+        } finally {
+            release();
+        }
+    });
+
+    test("a read that stalls after the stat is left as text too, and its late bytes are not kept", async () => {
+        const directory = await root();
+        const shot = png(join(directory, "stalled-read.png"));
+        const text = `![Stalled read](${shot})`;
+        const { disk, calls, release } = stalledDisk("bytes");
+
+        try {
+            const first = await liftCardImages([text], {
+                budget: new ImageLiftBudget({ deadlineMs: 40 }),
+                files: disk,
+            });
+            expect(first.attachments).toEqual([]);
+            expect(first.texts[0]).toBe(text);
+            expect(calls).toEqual({ stat: 1, bytes: 1 });
+
+            await liftCardImages([text], { budget: new ImageLiftBudget({ deadlineMs: 40 }), files: disk });
+            expect(calls).toEqual({ stat: 1, bytes: 1 });
+
+            release();
+            await imageReadsSettled();
+            const later = await liftCardImages([text], { files: disk });
+            expect(later.attachments.map((image) => image.path)).toEqual([shot]);
+            expect(calls).toEqual({ stat: 2, bytes: 2 });
+        } finally {
+            release();
+        }
+    });
+
+    test("no more stalled reads stay in flight than the limit; the other images stay text", async () => {
+        const directory = await root();
+        const shots = Array.from({ length: IMAGE_PENDING_LIMIT + 4 }, (_, index) =>
+            png(join(directory, `many-${index}.png`))
+        );
+        const text = shots.map((shot, index) => `![Many ${index}](${shot})`).join("\n\n");
+        const { disk, calls, release } = stalledDisk("stat");
+
+        try {
+            const lifted = await liftCardImages([text], {
+                budget: new ImageLiftBudget({ deadlineMs: 5, waitMs: 10_000 }),
+                files: disk,
+            });
+            expect(calls.stat).toBe(IMAGE_PENDING_LIMIT);
+            expect(lifted.attachments).toEqual([]);
+            expect(lifted.texts[0]).toBe(text);
+        } finally {
+            release();
+            await imageReadsSettled();
+        }
+    });
+
+    test("one snapshot waits on stalled images no longer than its wait budget", async () => {
+        const directory = await root();
+        const shots = Array.from({ length: 6 }, (_, index) => png(join(directory, `slow-${index}.png`)));
+        const text = shots.map((shot, index) => `![Slow ${index}](${shot})`).join("\n\n");
+        const { disk, calls, release } = stalledDisk("stat");
+
+        try {
+            const startedAt = performance.now();
+            await liftCardImages([text], { budget: new ImageLiftBudget({ deadlineMs: 25, waitMs: 40 }), files: disk });
+            expect(performance.now() - startedAt).toBeLessThan(1500);
+            // The first wait may use up the whole budget on a loaded machine, so one `stat` is as valid as three.
+            expect(calls.stat).toBeGreaterThanOrEqual(1);
+            expect(calls.stat).toBeLessThanOrEqual(3);
+        } finally {
+            release();
+            await imageReadsSettled();
+        }
     });
 
     test("decision and form cards carry the images of their text as attachments", async () => {

@@ -73,6 +73,7 @@ public struct SessionDetailInfo: Equatable {
         branch: String? = nil,
         liveness: SessionLiveness = .ended,
         livenessNote: String = "",
+        livenessLabel: String? = nil,
         cacheNote: String? = nil,
         cacheCold: Bool = false,
         inPane: Bool? = nil,
@@ -100,6 +101,7 @@ public struct SessionDetailInfo: Equatable {
         self.branch = branch
         self.liveness = liveness
         self.livenessNote = livenessNote
+        self.livenessLabel = livenessLabel
         self.cacheNote = cacheNote
         self.cacheCold = cacheCold
         self.inPane = inPane

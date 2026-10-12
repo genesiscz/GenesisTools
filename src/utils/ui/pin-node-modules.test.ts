@@ -57,6 +57,44 @@ describe("pinNodeModules", () => {
         expect(code).not.toContain("hoisted-4");
     });
 
+    it("lets a nested package use a sibling nested beside it, as Node resolves it", async () => {
+        const root = tempRoot();
+        writeTree(root, {
+            "index.js": `import { which } from "lib";\nconsole.log(which());\n`,
+            "node_modules/lib/package.json": manifest("lib"),
+            "node_modules/lib/index.js": `export { which } from "helper";\n`,
+            "node_modules/lib/node_modules/helper/package.json": manifest("helper"),
+            "node_modules/lib/node_modules/helper/index.js": `import { version } from "redux";\nexport const which = () => version;\n`,
+            "node_modules/lib/node_modules/redux/package.json": manifest("redux"),
+            "node_modules/lib/node_modules/redux/index.js": `export const version = "nested-5";\n`,
+            "node_modules/redux/package.json": manifest("redux"),
+            "node_modules/redux/index.js": `export const version = "hoisted-4";\n`,
+        });
+
+        const code = await bundle(root);
+
+        expect(code).toContain("nested-5");
+        expect(code).not.toContain("hoisted-4");
+    });
+
+    it("keeps React on the dashboard's copy even when a dependency nests its own", async () => {
+        const root = tempRoot();
+        writeTree(root, {
+            "index.js": `import { which } from "lib";\nimport { id } from "react";\nconsole.log(which(), id);\n`,
+            "node_modules/lib/package.json": manifest("lib"),
+            "node_modules/lib/index.js": `import { id } from "react";\nexport const which = () => id;\n`,
+            "node_modules/lib/node_modules/react/package.json": manifest("react"),
+            "node_modules/lib/node_modules/react/index.js": `export const id = "nested-react";\n`,
+            "node_modules/react/package.json": manifest("react"),
+            "node_modules/react/index.js": `export const id = "dashboard-react";\n`,
+        });
+
+        const code = await bundle(root);
+
+        expect(code).toContain("dashboard-react");
+        expect(code).not.toContain("nested-react");
+    });
+
     it("still pins a dependency without a nested copy to the dashboard's tree", async () => {
         const base = tempRoot();
         writeTree(base, {

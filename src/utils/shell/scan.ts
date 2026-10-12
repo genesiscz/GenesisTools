@@ -743,9 +743,11 @@ export interface ShellScan {
     units: Span[][];
     /** Bounds of quoted/backtick bodies that are executable, used to keep violation excerpts inside the body. */
     executableRanges: Array<{ start: number; end: number }>;
+    /** The folder the command runs in, from the hook payload; absent when the caller did not say. */
+    cwd?: string;
 }
 
-export function scanShell(command: string): ShellScan {
+export function scanShell(command: string, cwd?: string): ShellScan {
     const cleaned = stripShellNoise(command);
     const bodies = executableBodies(command);
     const units = [
@@ -759,5 +761,6 @@ export function scanShell(command: string): ShellScan {
         cleaned,
         units,
         executableRanges: bodies.map(({ start, end }) => ({ start, end })),
+        ...(cwd ? { cwd } : {}),
     };
 }

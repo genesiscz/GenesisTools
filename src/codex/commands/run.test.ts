@@ -438,6 +438,57 @@ test("Codex driver refuses an unsupported turn guard and keeps a daemon-proven r
     }
 });
 
+test("the exact-session steer refuses a turn guard or a guard naming another thread or home before it queues", async () => {
+    const previousExitCode = process.exitCode;
+    const root = mkdtempSync(join(tmpdir(), "gt-codex-steer-guards-"));
+    const target = { provider: "codex" as const, sessionId: "thread-1", sourceHome: "/fixture/codex" };
+    const address = ["steer", "--session", "thread-1", "--home", "/fixture/codex", "--queue-root", root];
+    // A fresh program per run: commander keeps option values between parses of one instance.
+    const steer = async (args: string[]): Promise<unknown> => {
+        const program = new Command().exitOverride();
+        program
+            .command("steer")
+            .requiredOption("--name <name>")
+            .option("--prompt <text>")
+            .option("--expect-turn <turn>")
+            .option("--expect-session <id>")
+            .option("--expect-home <path>");
+        let receipt: unknown;
+        registerCodexMessageCommands({
+            program,
+            output: (value) => {
+                receipt = value;
+            },
+            deps: { store: { listNames: () => [], readMeta: () => null } },
+        });
+        process.exitCode = undefined;
+        await program.parseAsync([...address, ...args], { from: "user" });
+        return receipt;
+    };
+
+    try {
+        for (const guard of [
+            ["--expect-turn", "3"],
+            ["--expect-session", "thread-2"],
+            ["--expect-home", "/other/codex"],
+        ]) {
+            expect(await steer(["--prompt", "guarded", ...guard])).toMatchObject({
+                delivered: false,
+                queued: false,
+                certainty: "not-sent",
+            });
+            expect(process.exitCode).toBe(1);
+        }
+        expect(listSessionMessages({ target, root })).toEqual([]);
+
+        const matching = ["--expect-session", "thread-1", "--expect-home", "/fixture/codex"];
+        expect(await steer(["--prompt", "matching", ...matching])).toMatchObject({ delivered: false, queued: true });
+        expect(listSessionMessages({ target, root })).toMatchObject([{ text: "matching", state: "queued" }]);
+    } finally {
+        process.exitCode = previousExitCode;
+    }
+});
+
 test("the wrapped named steer preserves structured pre-dispatch rejection receipts", async () => {
     const previousExitCode = process.exitCode;
     const program = new Command().exitOverride();

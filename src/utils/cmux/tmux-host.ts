@@ -94,6 +94,9 @@ export function readClaudeSessionRegistry(dir: string = claudeSessionsDir()): Ma
 const RESUME_ID =
     /(?:^|\s)(?:--resume|--session-id|-r|resume)(?:=|\s+)['"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])/gi;
 
+/** The program a resume command must start before its id counts: Claude Code, Codex or the `ccc` wrapper. */
+const AGENT_PROGRAM = /(?:^|[\s/])(?:claude|codex|ccc)(?=\s|$)/i;
+
 function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
     const list = map.get(key);
 
@@ -110,7 +113,8 @@ function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
  * Claude's registry names the pid that owns a session right now (a `/resume` inside the TUI moves it), so it
  * wins. Only a session with no live registry entry is found by a command line that resumes its id, and never
  * through a pid the registry gives to another session. A command that only mentions an id (`rg <id>`, `tools
- * claude cmux focus <id>`) is not evidence: its tmux pane is somebody else's.
+ * claude cmux focus <id>`) is not evidence: its tmux pane is somebody else's. Nor is a resume-shaped argument of a
+ * program that is no agent (`python job.py resume <id>`): a send must never type into it.
  */
 export function sessionPidsBySession(
     processes: readonly HostProcess[],
@@ -125,13 +129,35 @@ export function sessionPidsBySession(
         push(found, sessionId, pid);
     }
 
+    // A wrapper (`zsh -ic exec ccc --resume <id>`) keeps the id it started with after a `/resume` inside the TUI
+    // moved its agent to another session. A command line above a registered process of ANOTHER session is that
+    // session's wrapper now, not evidence for the id it names.
+    const parentOf = new Map(processes.map((proc) => [proc.pid, proc.ppid]));
+    const ownersBelow = new Map<number, Set<string>>();
+
+    for (const [pid, sessionId] of liveOwner) {
+        let ancestor = parentOf.get(pid);
+
+        for (let step = 0; ancestor !== undefined && ancestor > 1 && step < ANCESTRY_LIMIT; step++) {
+            const owners = ownersBelow.get(ancestor) ?? new Set<string>();
+            owners.add(sessionId);
+            ownersBelow.set(ancestor, owners);
+            ancestor = parentOf.get(ancestor);
+        }
+    }
+
     const resumed = new Map<string, number[]>();
 
     for (const proc of processes) {
         for (const match of proc.command.matchAll(RESUME_ID)) {
-            const sessionId = match[1].toLowerCase();
+            if (!AGENT_PROGRAM.test(proc.command.slice(0, match.index))) {
+                continue;
+            }
 
-            if ((liveOwner.get(proc.pid) ?? sessionId) === sessionId) {
+            const sessionId = match[1].toLowerCase();
+            const wrapsAnother = [...(ownersBelow.get(proc.pid) ?? [])].some((owner) => owner !== sessionId);
+
+            if ((liveOwner.get(proc.pid) ?? sessionId) === sessionId && !wrapsAnother) {
                 push(resumed, sessionId, proc.pid);
             }
         }

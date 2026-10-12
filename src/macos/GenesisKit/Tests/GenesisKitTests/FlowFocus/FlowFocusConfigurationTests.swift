@@ -85,6 +85,19 @@ final class FlowFocusConfigurationTests: XCTestCase {
     }
 
     @MainActor
+    func testSavedStaysOnlyWhileTheChoiceOnScreenIsTheOneJustWritten() {
+        let written = "@account/acc_work:fixture-writer"
+        let confirms = FlowTransformSettingsView.confirmsSave
+        XCTAssertTrue(confirms(written, written, written), "the choice written and still on screen")
+        XCTAssertFalse(confirms("@account/acc_work:other-model", written, written), "another model on screen")
+        XCTAssertFalse(confirms("@account/acc_home:fixture-writer", written, written), "another account on screen")
+        XCTAssertFalse(confirms(nil, written, written), "an incomplete choice on screen")
+        XCTAssertFalse(confirms(written, written, nil), "no save to confirm")
+        XCTAssertFalse(confirms(written, "@account/acc_home:fixture-writer", written),
+                       "another window stored a different choice since")
+    }
+
+    @MainActor
     func testToolsTransformMetadataAndMissingSelectionNeverExecuteARewrite() async throws {
         let config = FlowFocusConfiguration(directory: directory)
         let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)

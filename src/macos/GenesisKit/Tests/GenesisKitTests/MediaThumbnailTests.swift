@@ -426,6 +426,24 @@ final class MediaImageCopyTests: XCTestCase {
         XCTAssertEqual(bitmap.pixelsHigh, 400)
     }
 
+    func testAPictureReachedThroughASymbolicLinkIsPreparedLikeTheFileItself() throws {
+        let url = directory.appendingPathComponent("target.png")
+        try MediaThumbnailCacheTests.writePNG(url, width: 40, height: 30, color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let link = directory.appendingPathComponent("link.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
+        guard case .image(let tiff) = MediaImageCopy.prepare(path: link.path) else {
+            return XCTFail("a link to a readable PNG is that picture, not 'not a picture file'")
+        }
+
+        XCTAssertEqual(NSBitmapImageRep(data: tiff)?.pixelsWide, 40)
+        let fifo = directory.appendingPathComponent("pipe.png")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let fifoLink = directory.appendingPathComponent("pipe-link.png")
+        try FileManager.default.createSymbolicLink(at: fifoLink, withDestinationURL: fifo)
+        XCTAssertEqual(MediaImageCopy.prepare(path: fifoLink.path), .failed("This is not a picture file."),
+                       "a link to a pipe is still refused before anything opens it")
+    }
+
     func testAFileOverTheByteBudgetIsNeverReadAndTheFileItselfIsOffered() throws {
         let url = directory.appendingPathComponent("big.png")
         try MediaThumbnailCacheTests.writePNG(url, width: 64, height: 64, color: CGColor(red: 0, green: 1, blue: 0, alpha: 1))

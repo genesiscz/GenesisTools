@@ -5,7 +5,7 @@ The installer builds the GenesisTools app in preview mode, renames its executabl
 The GenesisWidgetPreview Swift package supplies a separate sample studio. Run that studio without installing the app:
 
 ```sh
-swift run --package-path src/macos/GenesisWidgetPreview GenesisWidgetPreview --samples
+swift run --package-path src/macos/GenesisWidgetPreview --disable-build-manifest-caching GenesisWidgetPreview --samples
 ```
 
 The sample interactions and implementation scope below describe that studio.

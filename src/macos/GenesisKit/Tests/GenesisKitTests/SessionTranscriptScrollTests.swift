@@ -22,6 +22,13 @@ import XCTest
 ///   tail --json output>` measures a real one instead, with its session file for the full results.
 @MainActor
 final class SessionTranscriptScrollTests: XCTestCase {
+    /// The live activity slot sits under the newest section's end marker: "the latest turn" is the slot when it shows.
+    func testTheLatestTurnIsTheActivitySlotWhenItShowsElseTheNewestEndMarker() {
+        XCTAssertEqual(SessionTranscriptList.latestTarget(lastSectionId: "s9", showsActivity: true),
+                       SessionTranscriptList.activityRowId)
+        XCTAssertEqual(SessionTranscriptList.latestTarget(lastSectionId: "s9", showsActivity: false), "end-s9")
+    }
+
     /// The wrap preferences live in the standard defaults: every test starts unwrapped (sideways
     /// blocks, which `Rig.codeBlocks` finds), and the user's values come back afterwards.
     private static let wrapKeys = ["sessionTranscript.wrapInputs", "sessionTranscript.wrapOutputs"]

@@ -360,6 +360,15 @@ describe("handoff gist", () => {
             "See excerpts.ts:50 and https://x.dev/a.b for the cause. Fixed."
         );
     });
+
+    test("a reply with a single sentence end keeps the unpunctuated text after it", () => {
+        expect(gist("Implemented the fix. Tests still need running")).toBe(
+            "Implemented the fix. Tests still need running"
+        );
+        expect(gist("Implemented the fix.")).toBe("Implemented the fix.");
+        expect(gist("Nothing was run. Check `a.b` next")).toBe("Nothing was run. Check `a.b` next");
+        expect(gist(`${"Word ".repeat(10)}done. Open`, 30)).toHaveLength(30);
+    });
 });
 
 describe("handoff inline code", () => {

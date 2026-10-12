@@ -37,7 +37,7 @@ public struct FocusHUDView: View {
     /// which is also less to read on a 320pt window than a floating bubble.
     @State private var hint: String?
     @FocusState private var tagFieldFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     private var accent: Color {
         switch engine.phase {

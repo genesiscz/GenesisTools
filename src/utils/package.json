@@ -115,6 +115,11 @@
             "types": "./cli/is-interactive.ts",
             "default": "./cli/is-interactive.ts"
         },
+        "./cli/tool-command": {
+            "bun": "./cli/tool-command.ts",
+            "types": "./cli/tool-command.ts",
+            "default": "./cli/tool-command.ts"
+        },
         "./clipboard": {
             "bun": "./clipboard.ts",
             "types": "./clipboard.ts",

@@ -48,7 +48,7 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
 
     @State private var isOn = false
     @State private var running: Task<Void, Never>?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     /// One step of a pulse: show or hide the border, animated or not, then wait.
     struct Step: Equatable {

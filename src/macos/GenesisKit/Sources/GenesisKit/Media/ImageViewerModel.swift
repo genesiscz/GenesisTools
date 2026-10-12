@@ -312,7 +312,7 @@ public final class ImageViewerModel: ObservableObject {
             guard shown?.id == item.id else { return }
             switch result {
             case .ready(let thumbnail):
-                self.canvas.setPicture(slot, image: thumbnail.image, pixelSize: thumbnail.sourceSize)
+                self.canvas.setPicture(slot, id: item.id, image: thumbnail.image, pixelSize: thumbnail.sourceSize)
                 self.setState(slot, .ready(pixelSize: thumbnail.sourceSize))
             case .failed(let message):
                 // A sharper decode that failed keeps the picture already shown.
@@ -331,7 +331,12 @@ public final class ImageViewerModel: ObservableObject {
         }
     }
 
+    /// More pixels of the picture on the canvas, once it is the item shown and ready. While the next item loads the
+    /// canvas still holds the previous picture, and a sharper load then cancelled the new picture's own load.
     private func sharpen(_ slot: ImageViewerCanvasView.Slot, pixels: CGFloat) {
+        let shown = slot == .a ? current : itemB
+        let picture = slot == .a ? canvas.pictureA : canvas.pictureB
+        guard (slot == .a ? stateA : stateB).isReady, let shown, picture?.id == shown.id else { return }
         let bucket = MediaThumbnailCache.bucket(forPixels: pixels, ceiling: MediaThumbnailCache.largestCeiling)
         guard bucket > (requested[slot] ?? 0) else { return }
         load(slot, pixels: pixels)

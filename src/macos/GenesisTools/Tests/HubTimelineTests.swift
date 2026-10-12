@@ -148,6 +148,20 @@ final class HubTimelineTests: XCTestCase {
         return try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
     }
 
+    /// General → Reduce motion stops the Timeline's own folds as the system setting does.
+    @MainActor
+    func testGeneralReduceMotionStopsTheTimelineFoldsLikeTheSystemSetting() {
+        HubDefaults.isolate()
+        let appearance = HubDefaults.appearance
+        let before = appearance.reduceMotion
+        defer { appearance.reduceMotion = before }
+
+        appearance.reduceMotion = true
+        XCTAssertTrue(HubReduceMotion.isOn)
+        appearance.reduceMotion = false
+        XCTAssertEqual(HubReduceMotion.isOn, GenMotion.systemReduceMotion)
+    }
+
     /// One click: the reveal waits while the list, the head fetch or the review of its PR is not in,
     /// and a different PR picked meanwhile drops it.
     @MainActor

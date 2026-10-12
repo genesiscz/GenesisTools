@@ -59,12 +59,16 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
                 while let widget, !widget.settingsLoaded, ContinuousClock.now < deadline {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+                // A picture of the loading state is not a snapshot of the page: no file, and a failing exit.
+                if let widget, !widget.settingsLoaded {
+                    fputs("Clicky snapshot: the widget settings did not load within 30 s; nothing written\n", stderr)
+                    exit(1)
+                }
                 try? await Task.sleep(for: .seconds(widget == nil ? 0.8 : 1.5))
                 print("Clicky titlebar: \(WindowTitlebar.audit(window).line)")
                 guard let capture = await WindowSnapshot.capture(window) else {
                     fputs("Clicky snapshot could not allocate a bitmap\n", stderr)
-                    NSApp.terminate(nil)
-                    return
+                    exit(1)
                 }
                 do {
                     guard let data = capture.image.representation(using: .png, properties: [:]) else {
@@ -72,7 +76,10 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
                     }
                     try data.write(to: output)
                     print("Clicky snapshot: \(output.path) (\(capture.method))")
-                } catch { fputs("Clicky snapshot failed: \(error)\n", stderr) }
+                } catch {
+                    fputs("Clicky snapshot failed: \(error)\n", stderr)
+                    exit(1)
+                }
                 NSApp.terminate(nil)
             }
         } else {

@@ -115,16 +115,23 @@ public struct NativeGlassControl: ViewModifier {
         self.tint = tint
     }
 
+    /// Solid themes get an opaque control, and every theme does under Reduce transparency; the others glass. Dusk
+    /// stays Dusk under Reduce transparency (`NativeSettingsTheme.effective`), so the flag is checked here for it, as
+    /// its bar does.
+    static func isOpaque(theme: NativeSettingsTheme, reduceTransparency: Bool) -> Bool {
+        switch theme.effective(reduceTransparency: reduceTransparency, systemReduceTransparency: false) {
+        case .solid, .graphite, .midnight: return true
+        case .dusk: return reduceTransparency
+        case .glass, .gradient: return false
+        }
+    }
+
     public func body(content: Content) -> some View {
-        // Solid themes (and Reduce transparency) get an opaque control; the others glass, Glass a dark one.
-        let opaqueControl: Bool = {
-            switch theme.effective(reduceTransparency: systemOpaque || requestedOpaque, systemReduceTransparency: false) {
-            case .solid, .graphite, .midnight: return true
-            case .glass, .gradient, .dusk: return false
-            }
-        }()
+        let opaqueControl = Self.isOpaque(theme: theme, reduceTransparency: systemOpaque || requestedOpaque)
         let tint = theme == .glass ? NativeThemePalette.glassCardTint : self.tint
-        if opaqueControl {
+        if opaqueControl, theme == .dusk {
+            content.modifier(NativeGlassSurface(radius: radius, opaqueColor: NativeThemePalette.duskRaised, opaque: true))
+        } else if opaqueControl {
             content.modifier(NativeGlassSurface(radius: radius, opaque: true))
         } else if #available(macOS 26, *) {
             if systemStill || requestedStill {

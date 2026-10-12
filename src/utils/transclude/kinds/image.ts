@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { MAX_IMAGE_ATTACHMENT_BYTES } from "../../image/attachments";
 import { defineTransclusion, TransclusionError } from "../registry";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".svg", ".bmp", ".tiff"]);
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /** `encodeURI` leaves parentheses alone, and an unbalanced one ends a markdown image destination early. */
 function markdownDestination(path: string): string {
@@ -43,9 +43,10 @@ export const imageTransclusion = defineTransclusion({
 
         const bytes = statSync(path).size;
 
-        if (bytes > MAX_IMAGE_BYTES) {
+        // The limit every image door shares: question_post validates its attachments with it before they get here.
+        if (bytes > MAX_IMAGE_ATTACHMENT_BYTES) {
             throw new TransclusionError(
-                `${basename(path)} is ${Math.round(bytes / 1024 / 1024)} MB; the limit is 10 MB`
+                `${basename(path)} is ${Math.round(bytes / 1024 / 1024)} MB; the limit is ${MAX_IMAGE_ATTACHMENT_BYTES / 1024 / 1024} MB`
             );
         }
 

@@ -65,10 +65,13 @@ public enum ImageViewer {
     static var controllers: [ObjectIdentifier: ImageViewerWindowController] = [:]
     /// How long the open waits for the picture before it flies a placeholder instead.
     static let decodeWait: Duration = .milliseconds(120)
+    /// The viewer's own decodes, up to `MediaThumbnailCache.largestCeiling`. A full-size picture costs 40 to 180 MB,
+    /// and in the shared 96 MB thumbnail cache one of them evicted every thumbnail of every page at once.
+    nonisolated static let cache = MediaThumbnailCache(byteLimit: 192 << 20)
 
     public static func present(_ request: ImageViewerRequest) {
         guard !request.items.isEmpty else { return }
-        if let open = controllers[request.ownerID], open.window?.isVisible == true {
+        if let open = reusableViewer(for: request.ownerID) {
             open.replace(request)
             return
         }
@@ -82,6 +85,14 @@ public enum ImageViewer {
         }
         controllers[request.ownerID] = controller
         controller.open()
+    }
+
+    /// The owner's viewer that takes a new request: one on screen, or one still waiting for its picture (not on
+    /// screen yet, so `isVisible` is false). A viewer that is closing finishes its close, and the request opens a
+    /// new one; the closing one's `windowWillClose` leaves the new entry alone.
+    static func reusableViewer(for owner: ObjectIdentifier) -> ImageViewerWindowController? {
+        guard let open = controllers[owner], !open.isClosing else { return nil }
+        return open
     }
 
     /// A window built and laid out ahead of time, never shown, so an open costs a frame change and a layout instead
@@ -108,8 +119,8 @@ public enum ImageViewer {
         let frame = ImageViewerPlacement.frame(remembered: rememberedSize, visible: screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900))
         let pixels = max(frame.width, frame.height) * (screen?.backingScaleFactor ?? 2)
         Task.detached(priority: .userInitiated) {
-            _ = await MediaThumbnailCache.shared.thumbnail(path: path, maxPixels: pixels, kind: .image,
-                                                           ceiling: MediaThumbnailCache.largestCeiling)
+            _ = await ImageViewer.cache.thumbnail(path: path, maxPixels: pixels, kind: .image,
+                                                  ceiling: MediaThumbnailCache.largestCeiling)
         }
         prepare()
     }
@@ -173,12 +184,20 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
     private var flight: ImageViewerTransition?
     private var closeConfirmed = false
     private var closing = false
+    /// The window is on screen: `reveal` ran.
+    private var revealed = false
+    /// The open's wait for the picture; a close cancels it, so a viewer closed meanwhile never shows.
+    private var opening: Task<Void, Never>?
+    /// The close has started (the fade or the flight back) or is done; such a viewer takes no new request.
+    var isClosing: Bool { closing || closeConfirmed }
+    /// False for a window that exists only to be drawn (a snapshot, a test): closing it must not become the user's size.
+    var remembersSize = true
     private var titleWatch: AnyCancellable?
     private var pictureWatch: AnyCancellable?
 
     init(request: ImageViewerRequest, frame: CGRect? = nil) {
         self.request = request
-        model = ImageViewerModel(items: request.items, selectedID: request.selectedID)
+        model = ImageViewerModel(items: request.items, selectedID: request.selectedID, cache: ImageViewer.cache)
         model.background = Color(nsColor: request.background)
         let placed = frame ?? Self.placement(for: request)
         let window = ImageViewerWindow(
@@ -255,10 +274,11 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
         window.contentView?.layoutSubtreeIfNeeded()
         model.start()
         let buildMs = (CACurrentMediaTime() - built) * 1000
-        Task { [weak self] in
+        opening = Task { [weak self] in
             guard let self else { return }
             let waited = CACurrentMediaTime()
             await self.model.waitUntilLoaded(timeout: ImageViewer.decodeWait)
+            guard !Task.isCancelled else { return }
             PerfLog.mark(String(format: "imageviewer.open build=%.1fms decode-wait=%.1fms ready=%@", buildMs,
                                 (CACurrentMediaTime() - waited) * 1000, self.model.stateA.isReady ? "yes" : "no"))
             self.reveal()
@@ -266,7 +286,8 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
     }
 
     private func reveal() {
-        guard let window else { return }
+        guard let window, !isClosing else { return }
+        revealed = true
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(model.canvas)
         guard !reduceMotion, let origin = request.origin, let target = canvasFrame(fitted: true) else {
@@ -296,7 +317,10 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
     func replace(_ next: ImageViewerRequest) {
         request = next
         model.replace(items: next.items, selectedID: next.selectedID)
-        window?.makeKeyAndOrderFront(nil)
+        // Before `reveal` the window waits at alpha 0 for its picture; the reveal shows it, flying from this click.
+        if revealed {
+            window?.makeKeyAndOrderFront(nil)
+        }
     }
 
     // MARK: - Close
@@ -305,6 +329,8 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
         if closeConfirmed { return true }
         guard !closing else { return false }
         closing = true
+        opening?.cancel()
+        opening = nil
         flight?.cancel()
         flight = nil
         Task { [weak self] in await self?.animateClose() }
@@ -318,6 +344,8 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
             let answer = Task { @MainActor in await ask(item) }
             target = await MediaThumbnailCache.firstResult(of: answer, within: .milliseconds(150)) ?? nil
         }
+        // A `closeNow` (the source went away) may have closed the viewer while the origin was asked for.
+        guard !closeConfirmed else { return }
         guard let target, let from = canvasFrame(fitted: false), let image = model.canvas.pictureA?.image else {
             fade(window, to: 0, duration: reduceMotion ? 0.16 : 0.18) { [weak self] in self?.finishClose() }
             return
@@ -335,6 +363,8 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
     }
 
     private func finishClose() {
+        opening?.cancel()
+        opening = nil
         closeConfirmed = true
         window?.close()
     }
@@ -358,7 +388,8 @@ public final class ImageViewerWindowController: NSWindowController, NSWindowDele
     }
 
     private func rememberSize() {
-        guard let size = window?.frame.size, size.width >= ImageViewerPlacement.minSize.width else { return }
+        guard remembersSize, let size = window?.frame.size,
+              size.width >= ImageViewerPlacement.minSize.width else { return }
         UserDefaults.standard.set(NSStringFromSize(size), forKey: ImageViewer.sizeKey)
     }
 

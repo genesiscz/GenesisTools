@@ -15,7 +15,7 @@ public struct FlowPillView: View {
     /// a `TimelineView` — both are documented idle-CPU sinks in this repo.
     @State private var breathing = false
     @State private var breathingGeneration: UInt64 = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     private var accent: Color {
         switch session.phase {

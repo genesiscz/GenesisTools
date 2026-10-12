@@ -330,11 +330,23 @@ describe("hub server argv", () => {
             listing: { hours: 24, minRows: 10 },
             fresh: false,
             cacheWrite: true,
+            liveLocations: true,
         });
-        expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write"])).toEqual({
+        expect(
+            usageSessionsDoor.match([
+                "ai",
+                "usage",
+                "sessions",
+                "--json",
+                "--fresh",
+                "--no-cache-write",
+                "--journal-only",
+            ])
+        ).toEqual({
             listing: {},
             fresh: true,
             cacheWrite: false,
+            liveLocations: false,
         });
         expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--hours", "24"])).toBeNull();
         expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--hours", "0"])).toBeNull();

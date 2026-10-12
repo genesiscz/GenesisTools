@@ -46,6 +46,7 @@ public enum ImageViewerSnapshot {
                                          background: background)
         let controller = ImageViewerWindowController(
             request: request, frame: CGRect(x: -30000, y: -30000, width: size.width, height: size.height))
+        controller.remembersSize = false
         guard let window = controller.window else { return nil }
         window.alphaValue = 0
         window.ignoresMouseEvents = true

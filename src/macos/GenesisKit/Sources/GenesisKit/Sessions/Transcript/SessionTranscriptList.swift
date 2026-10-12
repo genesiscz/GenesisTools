@@ -718,7 +718,7 @@ public struct SessionTranscriptList: View {
                 DispatchQueue.main.async {
                     // Read after `recompute` ran: a new prompt adds a section.
                     guard let last = visible.last else { return }
-                    proxy.scrollTo(Self.endMarker(last.id), anchor: .bottom)
+                    proxy.scrollTo(Self.latestTarget(lastSectionId: last.id, showsActivity: showsActivity), anchor: .bottom)
                 }
             }
             // A live session's appended rows (GenesisTools hub) are followed by `anchor` alone, and only
@@ -746,7 +746,7 @@ public struct SessionTranscriptList: View {
                 for delay in [0, 0.12, 0.35] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                         guard let section = visible.last else { return }
-                        proxy.scrollTo(Self.endMarker(section.id), anchor: .bottom)
+                        proxy.scrollTo(Self.latestTarget(lastSectionId: section.id, showsActivity: showsActivity), anchor: .bottom)
                     }
                 }
             }
@@ -758,7 +758,8 @@ public struct SessionTranscriptList: View {
             atLatest = true
             anchor.listMoves()
             if let last = visible.last {
-                ScrollViewPositioning.scroll(proxy, to: Self.endMarker(last.id), anchor: .bottom)
+                ScrollViewPositioning.scroll(
+                    proxy, to: Self.latestTarget(lastSectionId: last.id, showsActivity: showsActivity), anchor: .bottom)
             }
         } label: {
             HStack(spacing: 5) {
@@ -806,6 +807,15 @@ public struct SessionTranscriptList: View {
     static let activityRowId = "live-activity"
 
     private static func endMarker(_ sectionId: String) -> String { "end-\(sectionId)" }
+
+    /// Whether the live activity slot is in the list (it shows under the last row, never in a search).
+    private var showsActivity: Bool { activity != nil && appliedQuery.isEmpty }
+
+    /// What "the latest turn" scrolls to: the activity slot when it shows, since it sits under the newest section's end
+    /// marker and aligning the marker left the slot below the viewport; else that end marker.
+    static func latestTarget(lastSectionId: String, showsActivity: Bool) -> String {
+        showsActivity ? activityRowId : endMarker(lastSectionId)
+    }
 
 
     private var loadEarlierRow: some View {
@@ -1636,7 +1646,7 @@ private struct ActivityRow: View {
 /// the agent waits for the user, and when it has written nothing for a long time.
 private struct WorkingMark: View {
     var tone: TranscriptActivity.Tone = .working
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         PulsingDots(

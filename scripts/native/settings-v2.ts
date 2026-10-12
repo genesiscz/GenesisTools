@@ -10,11 +10,15 @@
  *
  * Skipped on purpose: "Show the widget" (hides the panels) and the Clicky main switch (starts key sounds). A switch
  * that a failed restore leaves flipped is named in the report's first line, so it can be set back by hand.
+ *
+ * A page is read only when it has drawn, shows no sign of loading and has stopped moving (`settings-v2-ready.ts`). One
+ * that is not ready by `READY_TIMEOUT_MS` is reported as NOT READ and fails the run, never as a page with no switches.
  */
 import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { type AxRow, type PageRead, readPage, type SwitchState, waitUntilReady } from "./settings-v2-ready";
 
 const APP = join(homedir(), "Applications", "GenesisTools.app", "Contents", "MacOS", "GenesisTools");
 const ALL_PAGES = [
@@ -38,21 +42,6 @@ const ALL_PAGES = [
 const SKIP = new Set(["widget.showWidget", "clicky.enabled"]);
 const READY_TIMEOUT_MS = 12_000;
 const SETTLE_MS = 900;
-
-interface AxRow {
-    role: string;
-    id: string;
-    title: string;
-    value: string;
-    enabled: boolean;
-}
-
-interface SwitchState {
-    key: string;
-    id: string;
-    title: string;
-    value: string;
-}
 
 interface SwitchResult {
     page: string;
@@ -109,20 +98,16 @@ function isAxRow(value: unknown): value is AxRow {
     );
 }
 
-/**
- * One read of the page's switches. `drawn` tells a page that has no switches from one that was never read: an AX
- * failure (no Accessibility grant, a dead process) is an `error`, and a page whose window never appeared is not drawn.
- */
-interface SwitchRead {
-    switches: SwitchState[];
-    drawn: boolean;
-    error?: string;
-}
-
-function readSwitches(pid: number): SwitchRead {
+function readSwitches(pid: number): PageRead {
     const { ok, out } = ax(["json", String(pid)]);
     if (!ok) {
-        return { switches: [], drawn: false, error: out || "ax json failed with no output" };
+        return {
+            switches: [],
+            drawn: false,
+            pending: false,
+            outline: "",
+            error: out || "ax json failed with no output",
+        };
     }
 
     const rows = out
@@ -130,11 +115,7 @@ function readSwitches(pid: number): SwitchRead {
         .filter((line) => line.startsWith("{"))
         .map((line): unknown => SafeJSON.parse(line, { strict: true }))
         .filter(isAxRow);
-    const switches = rows
-        .filter((row) => row.role === "AXCheckBox" && row.enabled && (row.id || row.title))
-        .map((row) => ({ key: row.id || row.title, id: row.id, title: row.title, value: row.value }))
-        .filter((row) => !SKIP.has(row.key));
-    return { switches, drawn: rows.some((row) => row.role === "AXWindow") };
+    return readPage(rows, SKIP);
 }
 
 function press(pid: number, state: SwitchState): boolean {
@@ -148,30 +129,19 @@ interface OpenPage {
     pid: number;
     child: Bun.Subprocess;
     switches: SwitchState[];
-    /** Why the page could not be read; a page that drew with no switches has none. */
+    /** Why the page was not ready to read in time; a page that drew, settled and has no switches has none. */
     failure?: string;
 }
 
 async function openPage(page: string): Promise<OpenPage> {
     const child = Bun.spawn([APP, "--clicky", "--page", page, "--headless"], { stdout: "ignore", stderr: "ignore" });
-    const deadline = Date.now() + READY_TIMEOUT_MS;
-    let last: SwitchRead = { switches: [], drawn: false };
-    let stableRounds = 0;
-
-    // Ready when two reads in a row agree: the stored values arrive a moment after the window draws.
-    while (Date.now() < deadline) {
-        await Bun.sleep(Math.min(700, Math.max(0, deadline - Date.now())));
-        const now = readSwitches(child.pid);
-        const same = now.switches.length > 0 && SafeJSON.stringify(now.switches) === SafeJSON.stringify(last.switches);
-        stableRounds = same ? stableRounds + 1 : 0;
-        last = now;
-        if (stableRounds >= 2) {
-            break;
-        }
-    }
-
-    const failure = last.error ?? (last.drawn ? undefined : "the page never drew a window");
-    return { pid: child.pid, child, switches: last.switches, failure };
+    const { page: read, failure } = await waitUntilReady({
+        read: () => readSwitches(child.pid),
+        sleep: (ms) => Bun.sleep(ms),
+        now: () => Date.now(),
+        timeoutMs: READY_TIMEOUT_MS,
+    });
+    return { pid: child.pid, child, switches: read.switches, failure };
 }
 
 async function closePage(child: Bun.Subprocess): Promise<void> {
@@ -187,6 +157,17 @@ const results: SwitchResult[] = [];
 const leftFlipped: string[] = [];
 /** Pages that were never read; each one fails the run, since nothing on it was tested. */
 const unread: string[] = [];
+
+/** A page opened to check or restore its switches was not ready, so what this run flipped there is not confirmed back. */
+function notConfirmedBack(page: string, opening: string, failure: string, pageResults: SwitchResult[]): void {
+    unread.push(`${page} (${opening}: ${failure})`);
+    console.log(`${page}: NOT READ at ${opening}: ${failure}`);
+    for (const result of pageResults.filter((entry) => entry.flippedInUi)) {
+        leftFlipped.push(
+            `${page} › ${result.key} (was ${result.before}; ${opening} was not ready, so it is not confirmed back)`
+        );
+    }
+}
 
 for (const page of PAGES) {
     const first = await openPage(page);
@@ -222,6 +203,13 @@ for (const page of PAGES) {
     await closePage(first.child);
 
     const second = await openPage(page);
+    if (second.failure) {
+        await closePage(second.child);
+        notConfirmedBack(page, "the second open", second.failure, pageResults);
+        results.push(...pageResults);
+        continue;
+    }
+
     const toRestore: SwitchState[] = [];
     for (const result of pageResults) {
         const now = switchValue(second.switches, result.key);
@@ -242,6 +230,13 @@ for (const page of PAGES) {
     await closePage(second.child);
 
     const third = await openPage(page);
+    if (third.failure) {
+        await closePage(third.child);
+        notConfirmedBack(page, "the third open", third.failure, pageResults);
+        results.push(...pageResults);
+        continue;
+    }
+
     for (const result of pageResults) {
         const now = switchValue(third.switches, result.key);
         result.restored = now === result.before;

@@ -73,15 +73,21 @@ public enum WindowSnapshot {
     }
 
     private enum Failure: Error, CustomStringConvertible {
-        case notHidden, notListed
+        case notHidden, notListed, noAnswer
+        case screenCaptureKit(String)
 
         var description: String {
             switch self {
             case .notHidden: return "no desktop picture covers the window"
             case .notListed: return "ScreenCaptureKit does not list the window"
+            case .noAnswer: return "the window server did not answer within \(WindowSnapshot.windowServerDeadline)"
+            case .screenCaptureKit(let message): return message
             }
         }
     }
+
+    /// How long the window server may take to list the window and draw it before the capture falls back.
+    nonisolated static let windowServerDeadline: Duration = .seconds(10)
 
     private static func listed(_ window: NSWindow, _ option: CGWindowListOption) -> [ListedWindow] {
         (CGWindowListCopyWindowInfo(option, CGWindowID(window.windowNumber)) as? [[String: Any]] ?? [])
@@ -122,6 +128,23 @@ public enum WindowSnapshot {
         window.alphaValue = 1
         guard try await settled(window, until: { $0.alpha >= 1 }) != nil else { throw Failure.notHidden }
         let number = CGWindowID(window.windowNumber)
+        // The window server can stop answering, and ScreenCaptureKit ignores cancellation: past the deadline the capture
+        // falls back to `cacheDisplay` and the late answer is dropped.
+        let capture = Task { () -> Result<CGImage, Failure> in
+            do {
+                return .success(try await serverImage(number))
+            } catch {
+                return .failure(error as? Failure ?? .screenCaptureKit(error.localizedDescription))
+            }
+        }
+        guard let answer = await MediaThumbnailCache.firstResult(of: capture, within: windowServerDeadline) else {
+            throw Failure.noAnswer
+        }
+
+        return NSBitmapImageRep(cgImage: try answer.get())
+    }
+
+    private static func serverImage(_ number: CGWindowID) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let target = content.windows.first(where: { $0.windowID == number }) else { throw Failure.notListed }
         let filter = SCContentFilter(desktopIndependentWindow: target)
@@ -131,7 +154,6 @@ public enum WindowSnapshot {
         configuration.height = Int((info.contentRect.height * CGFloat(info.pointPixelScale)).rounded())
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
-        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
-        return NSBitmapImageRep(cgImage: image)
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 }

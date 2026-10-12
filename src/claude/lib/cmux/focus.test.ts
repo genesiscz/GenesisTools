@@ -752,6 +752,12 @@ const TMUX_PROCESSES: HostProcess[] = [
     { pid: 70001, ppid: 55786, command: `claude --resume ${SESSION_A}` },
 ];
 
+/** No agent and no registry entry: the only process naming TMUX_ID is another program with a resume-shaped argument. */
+const UNRELATED_RESUME: HostProcess[] = [
+    ...TMUX_PROCESSES.filter((proc) => proc.pid !== 80002 && proc.pid !== 46112),
+    { pid: 90002, ppid: 79918, command: `python job.py resume ${TMUX_ID}` },
+];
+
 function tmuxDeps(overrides: {
     processes?: HostProcess[];
     registry?: Map<number, string>;
@@ -802,13 +808,19 @@ describe("sessionProcessPids", () => {
         expect(sessionProcessPids(TMUX_ID, TMUX_PROCESSES, new Map())).toEqual([80002, 46112]);
     });
 
+    test("a resume-shaped argument of a program that is no agent is not evidence", () => {
+        expect(sessionProcessPids(TMUX_ID, UNRELATED_RESUME, new Map())).toEqual([]);
+    });
+
     test("a registry pid that now runs something else is gone, and a pid the registry gives another session is not this one", () => {
         const recycled = TMUX_PROCESSES.map((proc) =>
             proc.pid === 46112 ? { ...proc, command: "/usr/bin/vim" } : proc
         );
         expect(sessionProcessPids(TMUX_ID, recycled, new Map([[46112, TMUX_ID]]))).toEqual([80002]);
-        // `/resume` inside the TUI moved pid 46112 to another session; its argv still names the old id.
-        expect(sessionProcessPids(TMUX_ID, TMUX_PROCESSES, new Map([[46112, SESSION_B]]))).toEqual([80002]);
+        // `/resume` inside the TUI moved pid 46112 to another session; its argv still names the old id, and so does
+        // the wrapper above it, which now runs SESSION_B's agent and is no evidence for the old id either.
+        expect(sessionProcessPids(TMUX_ID, TMUX_PROCESSES, new Map([[46112, SESSION_B]]))).toEqual([]);
+        expect(sessionProcessPids(SESSION_B, TMUX_PROCESSES, new Map([[46112, SESSION_B]]))).toEqual([46112]);
     });
 });
 
@@ -820,6 +832,21 @@ describe("findTmuxHosts", () => {
         ]);
         // The server was started with no socket flag, so the default server is asked.
         expect(sockets).toEqual([undefined]);
+    });
+
+    test("a pane whose program only takes a resume-shaped argument is no host to type into", async () => {
+        expect(await findTmuxHosts(TMUX_ID, tmuxDeps({ processes: UNRELATED_RESUME, registry: new Map() }))).toEqual(
+            []
+        );
+    });
+
+    test("after a /resume moved the agent to another session, the old id has no tmux pane to type into", async () => {
+        const moved = new Map([[46112, SESSION_B]]);
+
+        expect(await findTmuxHosts(TMUX_ID, tmuxDeps({ registry: moved }))).toEqual([]);
+        expect(await findTmuxHosts(SESSION_B, tmuxDeps({ registry: moved }))).toEqual([
+            { session: "dd-045c53d3", pane: "%200", visible: true, clientTtys: ["/dev/ttys001"] },
+        ]);
     });
 
     test("a session outside tmux asks tmux nothing", async () => {
@@ -950,6 +977,33 @@ describe("findSessionTargets through tmux", () => {
         expect(result.targets.map((target) => [target.paneId, target.surfaceId])).toEqual([
             ["pane:1", "surface:2"],
             ["pane:2", "surface:3"],
+        ]);
+        expect(isUnambiguous(result.targets)).toBe(false);
+        expect(identifiesExactSession(result)).toBe(false);
+    });
+
+    test("two clients in two tabs of one cmux pane are two targets as well, and neither is picked on its own", async () => {
+        const twoTabs = pane({
+            id: "pane:1",
+            workspaceId: "workspace:11",
+            title: "tools tmux session attach dd-045c53d3",
+            cwd: "/repo",
+            surfaces: [
+                surface({
+                    id: "surface:1",
+                    title: "tools tmux session attach dd-045c53d3",
+                    selected: true,
+                    tty: "ttys001",
+                }),
+                surface({ id: "surface:2", title: "tmux attach -t dd-045c53d3", tty: "ttys002" }),
+            ],
+        });
+        const twoClients: TmuxHost = { ...onScreen, clientTtys: ["/dev/ttys001", "/dev/ttys002"] };
+        const result = await findSessionTargets(TMUX_ID, { deps: deps(snapshot([twoTabs]), [twoClients]) });
+
+        expect(result.targets.map((target) => [target.paneId, target.surfaceId])).toEqual([
+            ["pane:1", "surface:1"],
+            ["pane:1", "surface:2"],
         ]);
         expect(isUnambiguous(result.targets)).toBe(false);
         expect(identifiesExactSession(result)).toBe(false);

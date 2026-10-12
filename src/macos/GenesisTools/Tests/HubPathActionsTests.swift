@@ -163,20 +163,6 @@ final class HubPathActionsTests: XCTestCase {
         XCTAssertTrue(SessionSidebarSplit.overlays(width: 500, sidebar: 301, mainMinWidth: 460))
     }
 
-    func testTheResumeCommandQuotesTheFolderAsOneShellWord() {
-        XCTAssertEqual(HubSessionDetailHost.shellQuoted("/Users/someone/Acme app"), "'/Users/someone/Acme app'")
-        XCTAssertEqual(HubSessionDetailHost.shellQuoted("/tmp/it's"), "'/tmp/it'\\''s'")
-    }
-
-    func testTheResumeCommandQuotesOnlyTheWordsAShellWouldRead() {
-        let words = ["tools", "claude", "resume", "11111111-2222-4333-8444-555555555555"]
-        XCTAssertEqual(words.map(HubSessionDetailHost.shellWord).joined(separator: " "), "tools claude resume 11111111-2222-4333-8444-555555555555")
-        XCTAssertEqual(HubSessionDetailHost.shellWord("id; rm -r x"), "'id; rm -r x'")
-        XCTAssertEqual(HubSessionDetailHost.shellWord("$(whoami)"), "'$(whoami)'")
-        XCTAssertEqual(HubSessionDetailHost.shellWord(""), "''")
-        XCTAssertEqual(HubSessionDetailHost.shellWord("=cat"), "'=cat'", "zsh would expand a leading =")
-    }
-
     // MARK: diff header menu
 
     func testTheHeaderMenuMessageDecodes() {

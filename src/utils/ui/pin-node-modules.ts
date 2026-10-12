@@ -3,18 +3,31 @@ import { resolve } from "node:path";
 import { normalizePath, type Plugin } from "vite";
 
 const NODE_MODULES = "/node_modules/";
+/** One copy for the whole page, whatever a dependency nests: two Reacts is the "Invalid hook call" this plugin stops. */
+const SINGLETONS = ["react", "react-dom"];
 
-function packageDirOf(importer: string): string | null {
+function isSingleton(source: string): boolean {
+    return SINGLETONS.some((name) => source === name || source.startsWith(`${name}/`));
+}
+
+/**
+ * The package folders an importer inside `node_modules` sits in, outermost first:
+ * `/r/node_modules/a/node_modules/b/x.js` is in `/r/node_modules/a` and `/r/node_modules/a/node_modules/b`.
+ */
+function packageDirsOf(importer: string): string[] {
     const file = normalizePath(importer.split("?")[0]);
-    const at = file.lastIndexOf(NODE_MODULES);
-    if (at === -1) {
-        return null;
+    const dirs: string[] = [];
+    let at = file.indexOf(NODE_MODULES);
+
+    while (at !== -1) {
+        const start = at + NODE_MODULES.length;
+        const [first, second] = file.slice(start).split("/");
+        const dir = `${file.slice(0, start)}${first.startsWith("@") ? `${first}/${second}` : first}`;
+        dirs.push(dir);
+        at = file.indexOf(NODE_MODULES, dir.length);
     }
 
-    const [first, second] = file.slice(at + NODE_MODULES.length).split("/");
-    const name = first.startsWith("@") ? `${first}/${second}` : first;
-
-    return `${file.slice(0, at + NODE_MODULES.length)}${name}`;
+    return dirs;
 }
 
 /**
@@ -33,10 +46,12 @@ function packageDirOf(importer: string): string | null {
  * When not in a worktree this is a harmless no-op — the dashboard root and
  * the repo root share the same `node_modules/`.
  *
- * Exception: a dependency's OWN nested copy (`node_modules/<pkg>/node_modules/<dep>`)
- * wins. The package manager nests a copy exactly when the hoisted one has the wrong
- * version for that package (`@reduxjs/toolkit` needs redux 5 while the hoisted redux
- * is 4), so pinning it to the hoisted copy fails the build with MISSING_EXPORT.
+ * Exception: a nested copy (`node_modules/<pkg>/node_modules/<dep>`) wins for the code
+ * inside `<pkg>`, nested packages included, as Node's own lookup lets it. The package
+ * manager nests a copy exactly when the hoisted one has the wrong version for that
+ * package (`@reduxjs/toolkit` needs redux 5 while the hoisted redux is 4), so pinning
+ * it to the hoisted copy fails the build with MISSING_EXPORT. React and react-dom never
+ * take that exception: a nested React is the second copy this plugin exists to stop.
  */
 export function pinNodeModules(dashboardRoot: string): Plugin {
     return {
@@ -61,10 +76,13 @@ export function pinNodeModules(dashboardRoot: string): Plugin {
                 return null;
             }
 
-            const packageDir = packageDirOf(importer);
-            if (packageDir && existsSync(`${packageDir}/node_modules`)) {
+            const nesting = isSingleton(source)
+                ? []
+                : packageDirsOf(importer).filter((dir) => existsSync(`${dir}/node_modules`));
+            if (nesting.length > 0) {
                 const own = await this.resolve(source, importer, { ...options, skipSelf: true });
-                if (own && normalizePath(own.id).startsWith(`${packageDir}${NODE_MODULES}`)) {
+                const id = own ? normalizePath(own.id) : "";
+                if (own && nesting.some((dir) => id.startsWith(`${dir}${NODE_MODULES}`))) {
                     return own;
                 }
             }

@@ -4,6 +4,10 @@ import UniformTypeIdentifiers
 import XCTest
 @testable import GenesisKit
 
+/// The wall-clock limits below hold on an idle machine and fail on a loaded one with correct code, so they are checked
+/// only in a timing run (`IMAGE_VIEWER_PERF=1`). The functional checks and the printed numbers run every time.
+private let timingRun = ProcessInfo.processInfo.environment["IMAGE_VIEWER_PERF"] == "1"
+
 final class ImageZoomMathTests: XCTestCase {
     func testTheFitShowsTheWholePictureAndNeverGoesPast100Percent() {
         // A 4112 × 2580 Retina screenshot in a 1100 × 700 viewport: width decides, 1100 / 4112.
@@ -229,6 +233,9 @@ enum ImageViewerFixtures {
     static var after: URL { picture("after", width: 2056, height: 1340, tint: (0.86, 0.45, 0.14), label: "B · after") }
     static var diagram: URL { picture("diagram", width: 1200, height: 800, tint: (0.2, 0.6, 0.4), label: "diagram") }
     static var second: URL { picture("second-before", width: 2056, height: 1290, tint: (0.45, 0.3, 0.7), label: "second") }
+    /// Two different screenshots of one size, as a note's before and after usually are.
+    static var sameSizeOne: URL { picture("same-size-one", width: 3000, height: 2000, tint: (0.8, 0.2, 0.2), label: "one") }
+    static var sameSizeTwo: URL { picture("same-size-two", width: 3000, height: 2000, tint: (0.2, 0.7, 0.3), label: "two") }
 
     static func picture(_ name: String, width: Int, height: Int, tint: (CGFloat, CGFloat, CGFloat), label: String) -> URL {
         let url = folder.appendingPathComponent("\(name)-\(width)x\(height).png")
@@ -384,6 +391,86 @@ final class ImageViewerSnapshotTests: XCTestCase {
         }
     }
 
+    /// How many points of `region` (top-left, in the bitmap's points) are not the canvas colour: ink of any kind.
+    private func inkCount(_ result: ImageViewerSnapshot.Result, in region: CGRect) -> Int {
+        let canvas = result.canvas
+        guard let background = color(result, x: canvas.midX + canvas.width * 0.25, y: canvas.maxY - 30) else { return 0 }
+        var count = 0
+        for y in stride(from: region.minY, to: region.maxY, by: 1) {
+            for x in stride(from: region.minX, to: region.maxX, by: 1) {
+                guard let pixel = color(result, x: x, y: y) else { continue }
+                let distance = abs(pixel.redComponent - background.redComponent)
+                    + abs(pixel.greenComponent - background.greenComponent)
+                    + abs(pixel.blueComponent - background.blueComponent)
+                if distance > 0.12 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    private func brokenPictures() throws -> (folder: URL, missing: URL, unreadable: URL) {
+        let folder = ImageViewerFixtures.folder.appendingPathComponent("broken-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let unreadable = folder.appendingPathComponent("not-a-picture.png")
+        try Data("this is not an image".utf8).write(to: unreadable)
+        return (folder, folder.appendingPathComponent("gone.png"), unreadable)
+    }
+
+    /// Picture B is compared on the right of the divider, or in the right pane. When it cannot load, that region says
+    /// why and offers Retry, as picture A's does for the whole canvas.
+    func testAComparisonPictureThatFailsToLoadSaysSoInItsOwnRegion() async throws {
+        let broken = try brokenPictures()
+        defer { try? FileManager.default.removeItem(at: broken.folder) }
+        for (label, file) in [("missing", broken.missing), ("undecodable", broken.unreadable)] {
+            let items = [ImageViewerItem(id: "0", path: ImageViewerFixtures.diagram.path),
+                         ImageViewerItem(id: "1", path: file.path)]
+            for mode in [ImageViewerModel.CompareMode.slider, .sideBySide] {
+                let result = try await shot(items, .compare(bID: "1", mode: mode, divider: 0.5))
+                try write(result, "6-compare-b-\(label)-\(mode)")
+                guard case .failed = result.model.stateB else { XCTFail("\(label) B must fail to load"); continue }
+                let canvas = result.canvas
+                let region = CGRect(x: canvas.minX + canvas.width * 0.58, y: canvas.midY - 80,
+                                    width: canvas.width * 0.34, height: 160)
+                XCTAssertGreaterThan(inkCount(result, in: region), 40, "\(label) B in \(mode): its reason and Retry are drawn")
+            }
+        }
+    }
+
+    func testRetryingAFailedComparisonPictureLoadsItOnceTheFileIsBack() async throws {
+        let broken = try brokenPictures()
+        defer { try? FileManager.default.removeItem(at: broken.folder) }
+        let items = [ImageViewerItem(id: "0", path: ImageViewerFixtures.diagram.path),
+                     ImageViewerItem(id: "1", path: broken.missing.path)]
+        let result = try await shot(items, .compare(bID: "1", mode: .slider, divider: 0.5))
+        guard case .failed = result.model.stateB else { return XCTFail("B must fail to load") }
+
+        try FileManager.default.copyItem(at: ImageViewerFixtures.after, to: broken.missing)
+        result.model.retry(.b)
+        await result.model.waitUntilLoaded()
+
+        XCTAssertTrue(result.model.stateB.isReady, "\(result.model.stateB)")
+        XCTAssertNotNil(result.model.canvas.pictureB)
+    }
+
+    /// A render closes its window, and a closing viewer remembers its size for the next one: a fixture window must not.
+    func testARenderLeavesTheRememberedViewerSizeAlone() async throws {
+        let defaults = UserDefaults.standard
+        let key = ImageViewer.sizeKey
+        let before = defaults.object(forKey: key)
+        defer {
+            if let before { defaults.set(before, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        let items = [ImageViewerItem(id: "0", path: ImageViewerFixtures.diagram.path)]
+
+        defaults.set("{777, 555}", forKey: key)
+        _ = try await shot(items, .single)
+        XCTAssertEqual(defaults.string(forKey: key), "{777, 555}", "a render must not overwrite the size the user left")
+
+        defaults.removeObject(forKey: key)
+        _ = try await shot(items, .single)
+        XCTAssertNil(defaults.object(forKey: key), "a render must not invent a remembered size")
+    }
+
     /// Every pinch, scroll and drag only moves layer frames; one step must leave most of a 60 Hz frame free.
     func testZoomAndPanOnALargeScreenshotCostLessThanAFrame() async throws {
         let items = [ImageViewerItem(id: "0", path: ImageViewerFixtures.before.path),
@@ -419,7 +506,93 @@ final class ImageViewerSnapshotTests: XCTestCase {
         let p95 = sorted[Int(Double(sorted.count) * 0.95)]
         print(String(format: "image viewer zoom/pan step on 4112 × 2580: p50 %.3f ms, p95 %.3f ms, max %.3f ms (%d steps)",
                      p50, p95, sorted.last ?? 0, sorted.count))
-        XCTAssertLessThan(p95, 4, "a zoom or pan step must leave most of a 16.7 ms frame free")
+        if timingRun {
+            XCTAssertLessThan(p95, 4, "a zoom or pan step must leave most of a 16.7 ms frame free")
+        }
+    }
+
+    /// A second double-click while the first viewer still waits for its picture goes to that viewer, which stays off
+    /// screen until its reveal; once a viewer is closing, the next request opens a new one.
+    func testANewRequestGoesToTheViewerStillOpeningAndNeverToOneClosing() throws {
+        let owner = ObjectIdentifier(self)
+        let first = [ImageViewerItem(id: "0", path: ImageViewerFixtures.diagram.path)]
+        let second = [ImageViewerItem(id: "1", path: ImageViewerFixtures.before.path)]
+        let controller = ImageViewerWindowController(
+            request: ImageViewerRequest(ownerID: owner, items: first, selectedID: "0"),
+            frame: CGRect(x: -30000, y: -30000, width: 1180, height: 760))
+        controller.remembersSize = false
+        ImageViewer.controllers[owner] = controller
+        defer {
+            controller.closeNow()
+            ImageViewer.controllers[owner] = nil
+        }
+        let window = try XCTUnwrap(controller.window)
+        XCTAssertFalse(window.isVisible, "an opening viewer is not on screen yet")
+
+        XCTAssertTrue(ImageViewer.reusableViewer(for: owner) === controller, "the opening viewer takes the request")
+        controller.replace(ImageViewerRequest(ownerID: owner, items: second, selectedID: "1"))
+        XCTAssertEqual(controller.model.current?.id, "1")
+        XCTAssertFalse(window.isVisible, "the replaced request still waits for the reveal")
+
+        XCTAssertFalse(controller.windowShouldClose(window), "the close animates first")
+        XCTAssertTrue(controller.isClosing)
+        XCTAssertNil(ImageViewer.reusableViewer(for: owner), "a closing viewer takes no new request")
+    }
+
+    /// The source page closes while the open still waits for the picture: the viewer stays closed.
+    func testAViewerClosedWhileItsOpenWaitsForThePictureNeverShows() async throws {
+        let owner = ObjectIdentifier(self)
+        let controller = ImageViewerWindowController(
+            request: ImageViewerRequest(
+                ownerID: owner, items: [ImageViewerItem(id: "0", path: ImageViewerFixtures.diagram.path)], selectedID: "0"),
+            frame: CGRect(x: -30000, y: -30000, width: 1180, height: 760))
+        controller.remembersSize = false
+        ImageViewer.controllers[owner] = controller
+        defer { ImageViewer.controllers[owner] = nil }
+        let window = try XCTUnwrap(controller.window)
+
+        controller.open()
+        controller.closeNow()
+        try await Task.sleep(for: ImageViewer.decodeWait + .milliseconds(400))
+
+        XCTAssertFalse(window.isVisible, "a closed viewer must not come back when its open finishes")
+        XCTAssertNil(ImageViewer.controllers[owner])
+    }
+
+    /// The source goes away while the close still asks where the picture is: the late answer starts no flight.
+    func testAnAnswerThatArrivesAfterAnImmediateCloseStartsNoCloseFlight() async throws {
+        try XCTSkipIf(GenMotion.systemReduceMotion, "with Reduce Motion the close fades and never asks for the origin")
+        var release: CheckedContinuation<Void, Never>?
+        let asked = expectation(description: "the close asked where the picture is")
+        let request = ImageViewerRequest(
+            ownerID: ObjectIdentifier(self), items: [ImageViewerItem(id: "0", path: ImageViewerFixtures.diagram.path)],
+            selectedID: "0",
+            currentOrigin: { _ in
+                await withCheckedContinuation { continuation in
+                    release = continuation
+                    asked.fulfill()
+                }
+                return ImageViewerOrigin(rect: CGRect(x: -29000, y: -29000, width: 80, height: 60),
+                                         clip: CGRect(x: -29000, y: -29000, width: 80, height: 60))
+            })
+        let controller = ImageViewerWindowController(request: request,
+                                                     frame: CGRect(x: -30000, y: -30000, width: 1180, height: 760))
+        controller.remembersSize = false
+        let window = try XCTUnwrap(controller.window)
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        controller.model.start()
+        await controller.model.waitUntilLoaded()
+        XCTAssertNotNil(controller.model.canvas.pictureA?.image, "a loaded picture is what a close flight would carry")
+
+        XCTAssertFalse(controller.windowShouldClose(window), "the close animates first")
+        await fulfillment(of: [asked], timeout: 5)
+        controller.closeNow()
+        release?.resume()
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertFalse(controller.model.canvas.picturesHidden, "no close flight starts for a viewer already closed")
+        XCTAssertFalse(window.isVisible)
     }
 
     /// The window is built and laid out before the motion starts; this is that cost.
@@ -431,6 +604,7 @@ final class ImageViewerSnapshotTests: XCTestCase {
             let request = ImageViewerRequest(ownerID: ObjectIdentifier(self), items: items, selectedID: "0")
             let controller = ImageViewerWindowController(request: request,
                                                          frame: CGRect(x: -30000, y: -30000, width: 1180, height: 760))
+            controller.remembersSize = false
             controller.window?.alphaValue = 0
             controller.window?.layoutIfNeeded()
             controller.window?.contentView?.layoutSubtreeIfNeeded()
@@ -439,12 +613,15 @@ final class ImageViewerSnapshotTests: XCTestCase {
             controller.closeNow()
         }
         print(String(format: "image viewer build + layout: first %.1f ms, then %.1f ms, %.1f ms", timings[0], timings[1], timings[2]))
-        XCTAssertLessThan(timings[1], 60)
+        if timingRun {
+            XCTAssertLessThan(timings[1], 60)
+        }
 
         // The spare the first click builds: the open only adopts the request and lays the window out again.
         ImageViewer.makeSpare()
         let spare = try XCTUnwrap(ImageViewer.spare)
         ImageViewer.spare = nil
+        spare.remembersSize = false
         defer { spare.closeNow() }
         let started = CACurrentMediaTime()
         spare.adopt(ImageViewerRequest(ownerID: ObjectIdentifier(self), items: items, selectedID: "0"))
@@ -454,7 +631,136 @@ final class ImageViewerSnapshotTests: XCTestCase {
         print(String(format: "image viewer spare adopt + layout: %.1f ms", adopt))
         XCTAssertEqual(spare.model.current?.id, "0")
         XCTAssertGreaterThan(spare.model.canvas.bounds.width, 600)
-        XCTAssertLessThan(adopt, 30)
+        if timingRun {
+            XCTAssertLessThan(adopt, 30)
+        }
+    }
+}
+
+@MainActor
+final class ImageViewerNavigationTests: XCTestCase {
+    private func hosted(_ items: [ImageViewerItem]) async throws -> ImageViewerWindowController {
+        let host = await ImageViewerSnapshot.host(items: items, selectedID: "0", size: CGSize(width: 1180, height: 760))
+        let controller = try XCTUnwrap(host)
+        let canvas = controller.model.canvas
+        XCTAssertLessThan(canvas.fitScale, canvas.actualScale, "the pictures are bigger than the canvas")
+        return controller
+    }
+
+    private func sameSizeItems() -> [ImageViewerItem] {
+        [ImageViewerItem(id: "0", path: ImageViewerFixtures.sameSizeOne.path),
+         ImageViewerItem(id: "1", path: ImageViewerFixtures.sameSizeTwo.path)]
+    }
+
+    /// A decode the test lets finish when it chooses; the first call only.
+    private final class DecodeGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        private var gate: CheckedContinuation<Void, Never>?
+        var isHeld: Bool { lock.withLock { gate != nil } }
+        func isFirstCall() -> Bool { lock.withLock { calls += 1; return calls == 1 } }
+        func hold() async { await withCheckedContinuation { gate in lock.withLock { self.gate = gate } } }
+        func release() { lock.withLock { gate }?.resume() }
+    }
+
+    private static let pixel: CGImage = {
+        let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        return context!.makeImage()!
+    }()
+
+    /// A zoom while the next picture still loads asks for more pixels of the previous one. That must not cancel the
+    /// new picture's load: once the sharper request failed, the new picture stayed loading for good.
+    func testAZoomWhileTheNextPictureLoadsNeverStrandsIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("viewer-sharpen-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = try ["first.png", "next.png"].map { name in
+            let url = directory.appendingPathComponent(name)
+            try MediaThumbnailCacheTests.writePNG(url, width: 8, height: 8, color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+            return url.path
+        }
+        let size = CGSize(width: 4000, height: 3000)
+        let gate = DecodeGate()
+        let cache = MediaThumbnailCache(concurrency: 2, deadline: .seconds(5)) { path, _, _ in
+            let picture = MediaThumbnail(image: Self.pixel, kind: .image, sourceSize: size, duration: nil)
+            guard path.hasSuffix("next.png") else { return .ready(picture) }
+            guard gate.isFirstCall() else { return .failed("the sharper decode failed") }
+            await gate.hold()
+            return .ready(picture)
+        }
+        let model = ImageViewerModel(
+            items: [ImageViewerItem(id: "0", path: paths[0]), ImageViewerItem(id: "1", path: paths[1])], selectedID: "0",
+            cache: cache)
+        model.start()
+        _ = await model.waitUntilLoaded(timeout: .seconds(2))
+        XCTAssertEqual(model.canvas.pictureA?.id, "0")
+
+        model.step(1)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !gate.isHeld, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(gate.isHeld, "the next picture's load is under way")
+        model.canvas.onNeedsPixels?(.a, 6000)
+        gate.release()
+        _ = await model.waitUntilLoaded(timeout: .seconds(2))
+
+        XCTAssertEqual(model.stateA, .ready(pixelSize: size), "the next picture finished loading")
+        XCTAssertEqual(model.canvas.pictureA?.id, "1")
+    }
+
+    func testSteppingToAnotherPictureOfTheSameSizeStartsFitted() async throws {
+        let controller = try await hosted(sameSizeItems())
+        defer { controller.closeNow() }
+        let model = controller.model
+        let canvas = model.canvas
+        let first = canvas.pictureA?.image
+        canvas.zoom(to: canvas.actualScale, anchor: CGPoint(x: 300, y: 200), animated: false)
+        XCTAssertTrue(canvas.userZoomed)
+
+        model.step(1)
+        await model.waitUntilLoaded()
+
+        XCTAssertEqual(model.current?.id, "1")
+        XCTAssertNotNil(canvas.pictureA?.image)
+        XCTAssertFalse(canvas.pictureA?.image === first, "the second picture is on the canvas")
+        XCTAssertFalse(canvas.userZoomed, "another picture starts fitted, as one of another size does")
+        XCTAssertEqual(canvas.zoom.scale, canvas.fitScale, accuracy: 0.0001)
+        XCTAssertTrue(model.readout.isFit)
+    }
+
+    func testASharperDecodeOfThePictureShownKeepsTheZoomAndPan() async throws {
+        let controller = try await hosted(sameSizeItems())
+        defer { controller.closeNow() }
+        let canvas = controller.model.canvas
+        let shown = try XCTUnwrap(canvas.pictureA)
+        canvas.zoom(to: canvas.actualScale, anchor: CGPoint(x: 300, y: 200), animated: false)
+        canvas.pan(by: CGSize(width: 40, height: 25))
+        let viewport = canvas.zoom
+        XCTAssertTrue(canvas.userZoomed)
+
+        canvas.setPicture(.a, id: "0", image: shown.image, pixelSize: shown.pixelSize)
+
+        XCTAssertTrue(canvas.userZoomed, "the same picture, sharper, stays where the reader put it")
+        XCTAssertEqual(canvas.zoom, viewport)
+    }
+
+    func testSwappingTwoPicturesOfTheSameSizeStartsBothFitted() async throws {
+        let controller = try await hosted(sameSizeItems())
+        defer { controller.closeNow() }
+        let model = controller.model
+        let canvas = model.canvas
+        model.compare(with: model.items[1])
+        await model.waitUntilLoaded()
+        canvas.zoom(to: canvas.actualScale, anchor: CGPoint(x: 300, y: 200), animated: false)
+        XCTAssertTrue(canvas.userZoomed)
+
+        model.swap()
+        await model.waitUntilLoaded()
+
+        XCTAssertEqual(model.current?.id, "1")
+        XCTAssertEqual(model.itemB?.id, "0")
+        XCTAssertFalse(canvas.userZoomed)
+        XCTAssertEqual(canvas.zoom.scale, canvas.fitScale, accuracy: 0.0001)
     }
 }
 

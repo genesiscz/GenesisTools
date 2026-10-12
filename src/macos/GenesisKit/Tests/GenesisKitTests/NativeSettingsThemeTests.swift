@@ -63,6 +63,15 @@ final class NativeSettingsThemeTests: XCTestCase {
         XCTAssertEqual(NativeSettingsTheme.allCases.filter(\.isSeeThrough), [.glass])
     }
 
+    func testEveryControlIsOpaqueUnderReduceTransparencyDuskIncluded() {
+        for theme in NativeSettingsTheme.allCases {
+            XCTAssertTrue(NativeGlassControl.isOpaque(theme: theme, reduceTransparency: true), "\(theme) under Reduce transparency")
+        }
+        XCTAssertFalse(NativeGlassControl.isOpaque(theme: .dusk, reduceTransparency: false), "Dusk's controls are glass otherwise")
+        XCTAssertFalse(NativeGlassControl.isOpaque(theme: .glass, reduceTransparency: false))
+        XCTAssertTrue(NativeGlassControl.isOpaque(theme: .solid, reduceTransparency: false))
+    }
+
     func testThemeNamesAreSentenceCase() {
         XCTAssertEqual(NativeSettingsTheme.allCases.map(\.title),
                        ["Glass", "Solid", "Gradient", "Graphite", "Midnight", "Dusk"])

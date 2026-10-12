@@ -154,6 +154,33 @@ describe("sessionRowsJson tmux locations", () => {
         expect(cached.rows.map((r) => r.cmux ?? null)).toEqual([live, null]);
     });
 
+    test("a daemon refresh through the server caches the journal's answer, so a detached client is not shown its old tab", async () => {
+        const path = await scratch();
+        await writeSessionRowsCache({ ...entry(), lastRequestedAt: Date.now() }, path);
+        const served = async () =>
+            (
+                await sessionRowsJson(entry().query, {
+                    fresh: true,
+                    cacheWrite: false,
+                    liveLocations: false,
+                    path,
+                    listRows: async () => [row(9)],
+                    tmuxLocations: async () => new Map([["s-9", live]]),
+                })
+            ).rows;
+        await refreshSessionRowsCache(async () => [], { path, remote: served });
+
+        expect((await readSessionRowsCache(path))?.rows.map((r) => r.cmux ?? null)).toEqual([null]);
+
+        const detached = await sessionRowsJson(entry().query, {
+            path,
+            listRows: async () => [],
+            tmuxLocations: async () => new Map(),
+        });
+
+        expect(detached.rows.map((r) => r.cmux ?? null)).toEqual([null]);
+    });
+
     test("an unavailable tmux lookup serves the rows unchanged", async () => {
         const answer = await sessionRowsJson(entry().query, {
             fresh: true,

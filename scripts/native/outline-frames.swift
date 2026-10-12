@@ -9,7 +9,8 @@
 //     <pid> <displayID> <x> <y> <w> <h> <seconds> <out-dir> [scale=0.5] [images|noimages]
 //   x y w h: the region in display-local points, top-left origin. displayID: WidgetCoordinator.id(screen).
 // It prints "started" once the first frame is recorded; send the test commands after that (scripts/native/widget-drive.ts).
-// A pid with no shareable window exits 3 before any capture.
+// A pid with no shareable window exits 3 before any capture. A run that has not finished <seconds> + 20 s after it
+// started exits 4: discovery, start and stop wait on the window server with no timeout of their own.
 // Output: <out-dir>/frames.txt, one line per frame: "<index> <ms since first frame> bbox=minX,minY,maxX,maxY" in
 // output pixels (divide by scale for points), and <out-dir>/<index>.jpg unless "noimages".
 // The background stays black (SCStreamConfiguration.backgroundColor traps in SCStream.init on macOS 26.3); a pixel
@@ -116,6 +117,12 @@ final class Recorder: NSObject, SCStreamOutput {
 }
 
 let recorder = Recorder(outdir: outdir)
+// One deadline for the whole run, so a window server that stops answering ends the run instead of hanging it.
+let runDeadline = seconds + 20
+DispatchQueue.main.asyncAfter(deadline: .now() + runDeadline) {
+    FileHandle.standardError.write(Data("capture did not finish within \(runDeadline) s; ScreenCaptureKit stopped answering\n".utf8))
+    exit(4)
+}
 Task {
     do {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)

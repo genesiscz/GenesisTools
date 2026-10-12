@@ -207,7 +207,8 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
 - The Native style in a snapshot: `--set hub.style=native --set featureSettings.appearance.theme=glass|solid|gradient|graphite|midnight|dusk`
   (scratch only; `HubDefaults.isolate()` copies General's `featureSettings.appearance.*` too). A `--snapshot` cannot show
   the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--clicky`; from
-  a checkout use `../GenesisClickyPreview` (`swift build`, then `.build/debug/GenesisClickyPreview --page hub.appearance
+  a checkout use `../GenesisClickyPreview` (`swift build --disable-build-manifest-caching`, see the root CLAUDE.md,
+  then `.build/debug/GenesisClickyPreview --page hub.appearance
   --theme gradient --hub-style native --snapshot x.png`), which writes only its own preview suite and tells no hub.
   It shows the Widgets pages with `--sessions <n>` (a made-up roster) or `--widget-snapshot <file.json>` (a saved
   `tools hub widget snapshot --json`).

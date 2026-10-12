@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import type { Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withTimeout } from "@genesiscz/utils/async";
 import { type ImageAttachment, MAX_IMAGE_ATTACHMENT_BYTES, MAX_IMAGE_PIXELS } from "@genesiscz/utils/image/attachments";
 import { detectImageFormat } from "@genesiscz/utils/image/detect-format";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
@@ -31,6 +33,46 @@ const LIFTABLE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 const imageCache = new Map<string, Omit<ImageAttachment, "label"> | null>();
 const IMAGE_CACHE_LIMIT = 512;
 
+/**
+ * How long one image may hold a snapshot. Card text can name any absolute path, and a file on a network or removable
+ * volume that went away answers a `stat` or a read late or never; the watch loop awaits the snapshot, so one such
+ * image would stop every later inbox update and the shutdown that waits for the loop.
+ */
+const IMAGE_READ_DEADLINE_MS = 2_000;
+/**
+ * Reads still running after their caller gave up. A stalled file call cannot be cancelled and holds a worker thread
+ * until the volume answers, so no more than this many stay in flight: past it a new image stays text.
+ */
+export const IMAGE_PENDING_LIMIT = 8;
+const EXPIRED = new Error("widget card image: no answer within the deadline");
+
+type DescribedImage = Omit<ImageAttachment, "label">;
+
+/** The two file calls a card image costs, apart so a test can stall them; the disk answers in production. */
+export interface ImageFiles {
+    stat(path: string): Promise<Pick<Stats, "isFile" | "size" | "mtimeMs">>;
+    bytes(path: string): Promise<Uint8Array<ArrayBuffer>>;
+}
+
+const diskFiles: ImageFiles = {
+    stat: (path) => stat(path),
+    bytes: (path) => Bun.file(path).bytes(),
+};
+
+interface ImageRead {
+    result: Promise<DescribedImage | null>;
+    /** Fired when the caller stopped waiting: the read ends where it is and leaves nothing behind. */
+    abandoned: AbortController;
+}
+
+/** The read of each path that has not ended yet, so a path is never read twice at once, stalled or not. */
+const reads = new Map<string, ImageRead>();
+
+/** Settles once every read in flight has ended and left `reads`, abandoned ones included. Tests wait on it. */
+export async function imageReadsSettled(): Promise<void> {
+    await Promise.allSettled([...reads.values()].map((read) => read.result));
+}
+
 function localPath(target: string): string | null {
     const raw = target.startsWith("<") && target.endsWith(">") ? target.slice(1, -1) : target;
 
@@ -59,12 +101,18 @@ function localPath(target: string): string | null {
  * attachment limit each), so a snapshot reads a few new files and leaves the rest as text for the next one, which
  * `deferred` asks for. The distinct paths one snapshot lifts stay under the cache size, so the files it read stay
  * cached for the next snapshot instead of pushing each other out.
+ *
+ * Time is spent too: one image is waited for at most `deadlineMs`, and the images of one snapshot together at most
+ * `waitMs`. An image that did not answer stays text without being `deferred`, since asking for another snapshot at
+ * once would only wait on the same stalled volume again.
  */
 export class ImageLiftBudget {
     /** Images left as text because this snapshot's reads were spent: a later snapshot lifts them. */
     deferred = 0;
     private files: number;
     private bytes: number;
+    private waitMs: number;
+    private readonly deadlineMs: number;
     private readonly pathLimit: number;
     private readonly paths = new Set<string>();
 
@@ -72,10 +120,24 @@ export class ImageLiftBudget {
         files = 8,
         bytes = 2 * MAX_IMAGE_ATTACHMENT_BYTES,
         paths = 128,
-    }: { files?: number; bytes?: number; paths?: number } = {}) {
+        deadlineMs = IMAGE_READ_DEADLINE_MS,
+        waitMs = 2 * IMAGE_READ_DEADLINE_MS,
+    }: { files?: number; bytes?: number; paths?: number; deadlineMs?: number; waitMs?: number } = {}) {
         this.files = files;
         this.bytes = bytes;
+        this.waitMs = waitMs;
+        this.deadlineMs = deadlineMs;
         this.pathLimit = Math.min(paths, IMAGE_CACHE_LIMIT / 2);
+    }
+
+    /** How long the next image may be waited for: its own deadline, within what this snapshot has left to wait. */
+    nextDeadlineMs(): number {
+        return Math.min(this.deadlineMs, this.waitMs);
+    }
+
+    /** Takes the time an image kept this snapshot waiting out of what it has left. */
+    chargeWait(ms: number): void {
+        this.waitMs = Math.max(0, this.waitMs - ms);
     }
 
     /** Whether this snapshot lifts `path` at all; past the path limit a new path stays text. */
@@ -121,14 +183,75 @@ function remember(key: string, described: Omit<ImageAttachment, "label"> | null)
     imageCache.set(key, described);
 }
 
-async function describeImage(path: string, budget: ImageLiftBudget): Promise<Omit<ImageAttachment, "label"> | null> {
+/**
+ * One image, waited for within the budget's deadline. A file call that does not answer in time leaves the image as
+ * text. The read goes on in the thread pool, since a stalled file call cannot be stopped, so it is kept in `reads`:
+ * a later snapshot neither starts a second read of the path nor waits on this one again, and nothing the late read
+ * produces reaches a snapshot or the cache.
+ */
+async function describeImage(path: string, budget: ImageLiftBudget, files: ImageFiles): Promise<DescribedImage | null> {
+    const running = reads.get(path);
+
+    if (running?.abandoned.signal.aborted) {
+        logger.debug({ path }, "widget card image: an earlier read of it is still waiting on the disk");
+        return null;
+    }
+
+    const deadline = budget.nextDeadlineMs();
+
+    if (deadline <= 0 || (!running && reads.size >= IMAGE_PENDING_LIMIT)) {
+        logger.debug({ path, pending: reads.size }, "widget card image: left as text, the disk has stalled reads");
+        return null;
+    }
+
+    const read = running ?? startRead(path, budget, files);
+    const started = performance.now();
+
+    try {
+        return await withTimeout(read.result, deadline, EXPIRED);
+    } catch (error) {
+        if (error !== EXPIRED) {
+            throw error;
+        }
+
+        if (!running) {
+            read.abandoned.abort();
+        }
+
+        logger.warn({ path, deadlineMs: deadline }, "widget card image: the disk did not answer in time");
+        return null;
+    } finally {
+        budget.chargeWait(performance.now() - started);
+    }
+}
+
+function startRead(path: string, budget: ImageLiftBudget, files: ImageFiles): ImageRead {
+    const abandoned = new AbortController();
+    const read: ImageRead = {
+        abandoned,
+        result: readImage(path, budget, files, abandoned.signal).finally(() => {
+            if (reads.get(path) === read) {
+                reads.delete(path);
+            }
+        }),
+    };
+    reads.set(path, read);
+    return read;
+}
+
+async function readImage(
+    path: string,
+    budget: ImageLiftBudget,
+    files: ImageFiles,
+    abandoned: AbortSignal
+): Promise<DescribedImage | null> {
     let size: number;
     let mtime: number;
 
     try {
-        const info = await stat(path);
+        const info = await files.stat(path);
 
-        if (!info.isFile()) {
+        if (abandoned.aborted || !info.isFile()) {
             return null;
         }
 
@@ -147,7 +270,7 @@ async function describeImage(path: string, budget: ImageLiftBudget): Promise<Omi
         return cached;
     }
 
-    let described: Omit<ImageAttachment, "label"> | null = null;
+    let described: DescribedImage | null = null;
 
     if (size > 0 && size <= MAX_IMAGE_ATTACHMENT_BYTES) {
         if (!budget.spend(size)) {
@@ -156,7 +279,12 @@ async function describeImage(path: string, budget: ImageLiftBudget): Promise<Omi
         }
 
         try {
-            const bytes = await Bun.file(path).bytes();
+            const bytes = await files.bytes(path);
+
+            if (abandoned.aborted) {
+                return null;
+            }
+
             const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
             const format = detectImageFormat(data);
 
@@ -177,6 +305,10 @@ async function describeImage(path: string, budget: ImageLiftBudget): Promise<Omi
         } catch (error) {
             logger.debug({ error, path }, "widget card image: not a still PNG, JPEG or WebP image");
         }
+    }
+
+    if (abandoned.aborted) {
+        return null;
     }
 
     remember(key, described);
@@ -212,11 +344,16 @@ function liftTokens(text: string, lift: (path: string, label?: string) => boolea
 /**
  * Lifts the images of a card's texts into attachments. `existing` are the card's stored attachments (answer cards);
  * a path already among them is not added twice. Returns the texts with lifted markdown images and tokens removed.
- * `budget` is shared by every card of one snapshot; a card built alone gets its own.
+ * `budget` is shared by every card of one snapshot; a card built alone gets its own. `files` is the disk; a test
+ * passes a stalled one.
  */
 export async function liftCardImages(
     texts: string[],
-    { existing = [], budget = new ImageLiftBudget() }: { existing?: ImageAttachment[]; budget?: ImageLiftBudget } = {}
+    {
+        existing = [],
+        budget = new ImageLiftBudget(),
+        files = diskFiles,
+    }: { existing?: ImageAttachment[]; budget?: ImageLiftBudget; files?: ImageFiles } = {}
 ): Promise<{ texts: string[]; attachments: ImageAttachment[] }> {
     const known = new Set(existing.map((image) => image.path));
     // The files are read first (without the event loop waiting on the disk), then the texts are rewritten with them.
@@ -232,7 +369,7 @@ export async function liftCardImages(
             continue;
         }
 
-        const image = await describeImage(path, budget);
+        const image = await describeImage(path, budget, files);
 
         if (image) {
             described.set(path, image);

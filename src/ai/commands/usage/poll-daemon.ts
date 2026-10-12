@@ -179,7 +179,8 @@ async function main(): Promise<void> {
                     return null;
                 }
 
-                const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write"];
+                // `--journal-only`: these rows go into the cache file, which must never hold a live tmux tab.
+                const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write", "--journal-only"];
                 for (const [flag, value] of [
                     ["--hours", query.hours],
                     ["--min", query.minRows],

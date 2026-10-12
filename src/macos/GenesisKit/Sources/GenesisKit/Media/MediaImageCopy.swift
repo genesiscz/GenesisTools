@@ -20,7 +20,8 @@ public enum MediaImageCopy {
     }
 
     public static func prepare(path: String, maxBytes: Int = maxBytes, maxPixels: Int = maxPixels) -> Outcome {
-        let url = URL(fileURLWithPath: path)
+        // The file a link points at is the picture: `isRegularFile` describes a link itself, which is no regular file.
+        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         // A regular file only: opening a FIFO with no writer would wait for one, and a directory is no picture.
         guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]) else {
             return .failed("The file is no longer there.")

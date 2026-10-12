@@ -40,15 +40,20 @@ struct ElementKey: Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(CFHash(element)) }
 }
 
-/// Depth-first, each element once, and never into the menu bar. The widget face lists its application element again
-/// under itself (and under its menu bar items), so a walk without the visited set doubled at every level: 480,000
-/// lines at depth 40 and a press that never finished (2026-10-11).
-func walk(_ element: AXUIElement, depth: Int, maxDepth: Int, visit: (AXUIElement, Int) -> Bool) -> Bool {
+/// Depth-first, each element once, and into the menu bar only when `menuBar` is set. The widget face lists its
+/// application element again under itself (and under its menu bar items), so a walk without the visited set doubled
+/// at every level: 480,000 lines at depth 40 and a press that never finished (2026-10-11). The visited set ends that
+/// on its own; the menu bar stays out of every other walk because its hundreds of items are never what they look for.
+func walk(
+    _ element: AXUIElement, depth: Int, maxDepth: Int, menuBar: Bool = false, visit: (AXUIElement, Int) -> Bool
+) -> Bool {
     var seen = Set<ElementKey>()
     func step(_ element: AXUIElement, _ depth: Int) -> Bool {
         guard seen.insert(ElementKey(element: element)).inserted else { return false }
         if visit(element, depth) { return true }
-        guard depth < maxDepth, text(element, kAXRoleAttribute) != kAXMenuBarRole as String else { return false }
+        guard depth < maxDepth, menuBar || text(element, kAXRoleAttribute) != kAXMenuBarRole as String else {
+            return false
+        }
         for child in children(element) where step(child, depth + 1) {
             return true
         }
@@ -66,9 +71,11 @@ func find(pid: pid_t, identifier: String) -> [AXUIElement] {
     return matches
 }
 
+/// A menu role (`AXMenuItem`, `AXMenuBarItem`) is looked for inside the menu bar too, so `press-titled` reaches
+/// "Settings…" in an app menu.
 func find(pid: pid_t, role: String, title: String) -> [AXUIElement] {
     var matches: [AXUIElement] = []
-    _ = walk(AXUIElementCreateApplication(pid), depth: 0, maxDepth: 60) { element, _ in
+    _ = walk(AXUIElementCreateApplication(pid), depth: 0, maxDepth: 60, menuBar: role.hasPrefix("AXMenu")) { element, _ in
         if text(element, kAXRoleAttribute) == role, text(element, kAXTitleAttribute) == title { matches.append(element) }
         return false
     }

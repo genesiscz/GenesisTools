@@ -347,6 +347,15 @@ installed bundle at `~/Applications/GenesisTools.app`. **After ANY edit to `Sour
 signs, atomically swaps the bundle, re-registers with Launch Services, and then reaps stale
 processes. `bun run app:status` prints what is installed and whether it is stale.
 
+**🛑 A package that uses GenesisKit by path** (`src/macos/GenesisTools`, `GenesisClickyPreview`,
+`GenesisWidgetPreview`) **is built, tested and run with `--disable-build-manifest-caching`**:
+`swift test --package-path src/macos/GenesisTools --disable-build-manifest-caching`. SwiftPM re-plans a build
+only when the ROOT package's own folders, `Package.swift` or `Package.resolved` change, so a Swift file added
+to GenesisKit is never compiled into the dependent, and its first use fails with "cannot find 'X' in scope" on
+correct code. It hit three merges on 2026-10-10 and the Clicky preview twice on 2026-10-12. The flag costs
+about 0.1 s. `bun run app` decides it by itself (a hash of the Swift file list in `app.ts`), and the shell guard
+blocks the bare command (rule `swiftpm-stale-plan`). GenesisKit's own tests do not need it.
+
 **🛑 The reap is the part that matters, and it is why this is a rule rather than a suggestion.**
 macOS delivers a notification click to the bundle's ALREADY-RUNNING instance and only launches a
 fresh one when none exists. So a settings window or an `--rpc` process from an older build keeps

@@ -43,7 +43,7 @@ public struct NewItemsPill: View {
 public struct RowArrival: ViewModifier {
     public let active: Bool
     @State private var shown: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     public init(active: Bool) {
         self.active = active

@@ -158,8 +158,8 @@ struct CmuxHost: TerminalHost {
 
     /// Words are shell-quoted here because cmux takes one command string; nothing in them comes from a URL.
     private func run(_ command: [String], cwd: String, name: String, at target: CmuxTarget) -> String? {
-        let words = command.map(Self.quote).joined(separator: " ")
-        let line = cwd.isEmpty ? words : "cd \(Self.quote(cwd)) && \(words)"
+        let words = command.map(ShellWords.word).joined(separator: " ")
+        let line = cwd.isEmpty ? words : "cd \(ShellWords.word(cwd)) && \(words)"
         switch target {
         case .newWorkspace(let window):
             let result = Self.cmux(["new-workspace", "--name", name, "--cwd", cwd, "--command", words, "--focus", "true"] + (window.map { ["--window", $0] } ?? []))
@@ -205,12 +205,6 @@ struct CmuxHost: TerminalHost {
         return (result.status == 0, result.status == 0 ? text : String(decoding: result.stderr, as: UTF8.self) + text)
     }
 
-    static func quote(_ word: String) -> String {
-        if word.range(of: "^[A-Za-z0-9_./:=@%+,-]+$", options: .regularExpression) != nil {
-            return word
-        }
-        return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
 }
 
 // MARK: - Loading the tree off the main thread
@@ -413,7 +407,7 @@ struct LaunchPicker: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text("Will run").font(.system(size: 11, weight: .semibold)).foregroundColor(ReviewPalette.dim)
-                Text(command.map(CmuxHost.quote).joined(separator: " "))
+                Text(command.map(ShellWords.word).joined(separator: " "))
                     .font(.system(size: 11.5, design: .monospaced))
                     .textSelection(.enabled)
                     .padding(6)

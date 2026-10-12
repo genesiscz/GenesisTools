@@ -13,7 +13,9 @@ public struct FlowTransformSettingsView: View {
     /// The model reference client.json holds, to tell an unsaved choice from the saved one. Read from the observed
     /// configuration, so a write from another window, or one that failed and was rolled back, shows at once.
     private var savedRef: String { tools.modelRef }
-    @State private var justSaved = false
+    /// The reference a save just wrote, for the two seconds "Saved" stays up. "Saved" is derived from it
+    /// (`confirmsSave`), so it goes as soon as the choice on screen is another one.
+    @State private var justSavedRef: String?
     @State private var saving = false
 
     public init(tools: FlowTransformTools) {
@@ -59,7 +61,7 @@ public struct FlowTransformSettingsView: View {
                     if choices?.providers.isEmpty == true {
                         Text("Add an enabled chat account in AI account settings first.")
                             .font(.caption).foregroundStyle(.secondary)
-                    } else if justSaved {
+                    } else if Self.confirmsSave(displayed: displayedRef, saved: savedRef, justSaved: justSavedRef) {
                         Label("Saved", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
                     } else if hasUnsavedChoice {
                         Text("Not saved yet. Press Save to use this account and model.")
@@ -91,13 +93,24 @@ public struct FlowTransformSettingsView: View {
         provider?.accounts.contains(where: { $0.id == accountID }) == true && !trimmedModel.isEmpty
     }
 
-    private var hasUnsavedChoice: Bool {
-        canSave && "@account/\(accountID):\(trimmedModel)" != savedRef
+    /// The reference the account and model on screen would be stored as; nil while the choice is incomplete.
+    private var displayedRef: String? {
+        canSave ? "@account/\(accountID):\(trimmedModel)" : nil
     }
 
-    /// "Saved" only after the write landed, and only while the choice on screen is still the one written. A refused or
-    /// failed write keeps the choice unsaved, so Save stays on to retry, and `configuration.lastError` (shown below
-    /// the card) says why.
+    private var hasUnsavedChoice: Bool {
+        displayedRef.map { $0 != savedRef } ?? false
+    }
+
+    /// Whether the footer says "Saved": the choice on screen is the one just written and still the stored one. A
+    /// change of account or model during the confirmation, or a write from another window, ends it at once.
+    static func confirmsSave(displayed: String?, saved: String, justSaved: String?) -> Bool {
+        guard let displayed, let justSaved else { return false }
+        return displayed == justSaved && saved == justSaved
+    }
+
+    /// "Saved" only after the write landed. A refused or failed write keeps the choice unsaved, so Save stays on to
+    /// retry, and `configuration.lastError` (shown below the card) says why.
     private func save() {
         let account = accountID
         let model = trimmedModel
@@ -106,10 +119,10 @@ public struct FlowTransformSettingsView: View {
         Task { @MainActor in
             let saved = await tools.save(accountID: account, model: model)
             saving = false
-            guard saved, "@account/\(accountID):\(trimmedModel)" == ref else { return }
-            justSaved = true
+            guard saved else { return }
+            justSavedRef = ref
             try? await Task.sleep(for: .seconds(2))
-            justSaved = false
+            if justSavedRef == ref { justSavedRef = nil }
         }
     }
 

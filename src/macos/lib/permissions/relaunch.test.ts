@@ -138,6 +138,16 @@ describe("relaunchPlan", () => {
         ]);
     });
 
+    it("reopens copies of one window once, the frontmost copy when it is among them", () => {
+        const settings = (pid: number): WindowFace => ({ pid, kind: "settings", argv: ["--window"], lossless: true });
+        const plan = relaunchPlan([settings(5), settings(6), settings(7), ...faces], 6);
+
+        expect(plan.filter((step) => step.kind === "settings")).toEqual([
+            { pid: 6, kind: "settings", argv: ["--window"], activate: true },
+        ]);
+        expect(plan.map((step) => step.kind)).toEqual(["review", "hub", "settings"]);
+    });
+
     it("opens everything behind when no face was in front", () => {
         const plan = relaunchPlan(faces, 999);
         expect(plan.every((step) => !step.activate && step.argv.at(-1) === "--no-activate")).toBe(true);
@@ -158,6 +168,12 @@ describe("readFaceRecords", () => {
         writeFileSync(join(dir, "12.json"), "{not json");
         writeFileSync(join(dir, "13.json"), '{"pid":13,"argv":[1]}');
         expect([...readFaceRecords(dir)]).toEqual([[11, ["--hub", "--session", "a b"]]]);
+    });
+
+    it("answers no records, never an error, when the folder cannot be listed", () => {
+        const notAFolder = join(mkdtempSync(join(tmpdir(), "faces-")), "faces");
+        writeFileSync(notAFolder, "a file where the folder should be");
+        expect(readFaceRecords(notAFolder).size).toBe(0);
     });
 });
 

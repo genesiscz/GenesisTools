@@ -1,7 +1,8 @@
 import { registerSessionQueueCommand } from "@app/ai/commands/agent/queue";
 import { readWorkerPrompt } from "@app/ai/commands/agent/worker";
 import { out } from "@genesiscz/utils/logger";
-import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
+import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
+import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
 import type { Command } from "commander";
 import { codexDriver } from "../lib/driver";
@@ -21,6 +22,29 @@ interface MessageFlags extends Record<string, unknown> {
     name?: string;
     force?: boolean;
     consumer?: string;
+    expectTurn?: string;
+    expectSession?: string;
+    expectHome?: string;
+}
+
+/**
+ * The shared steer guards on an exact conversation. No worker meta stands behind it to check them against, so a turn
+ * guard (Codex cannot honour one) and a guard naming another thread or source home refuse before anything is queued.
+ */
+function refuseUnmetGuards(flags: MessageFlags): void {
+    if (flags.expectTurn !== undefined) {
+        throw new WorkerDeliveryRejectedError(`${WORKER_CAPABILITIES.codex.turnGuardUnsupported} No prompt was sent.`);
+    }
+
+    const otherSession = flags.expectSession !== undefined && flags.expectSession !== flags.session;
+    const otherHome =
+        flags.expectHome !== undefined &&
+        (!flags.home || workerSourceHome(flags.expectHome) !== workerSourceHome(flags.home));
+    if (otherSession || otherHome) {
+        throw new WorkerDeliveryRejectedError(
+            "The expected Codex thread or source home is not this conversation; no prompt was sent."
+        );
+    }
 }
 
 function target(flags: MessageFlags) {
@@ -69,10 +93,12 @@ export function registerCodexMessageCommands({
 
             const text = prompt(flags);
             if (flags.session) {
+                const exact = target(flags);
                 try {
+                    refuseUnmetGuards(flags);
                     output(
                         await steerCodexMessage({
-                            target: target(flags),
+                            target: exact,
                             text,
                             force: flags.force,
                             root: flags.queueRoot,

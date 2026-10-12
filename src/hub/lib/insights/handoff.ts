@@ -192,9 +192,10 @@ function commitsOf(tools: readonly TranscriptTool[]): HandoffCommit[] {
 
 /**
  * The first one or two sentences of a reply, on one line. The cut is at the second sentence end outside an inline
- * code span; the text before it is kept whole. Matching sentence-shaped pieces dropped whatever did not match, and a
- * dot inside a code span such as `` `/docs/v1.2` `` started a "sentence" mid-span, so the line opened "`), and …" (hub
- * inventory H9).
+ * code span; the text before it is kept whole. A reply with fewer than two sentence ends is kept whole, up to `max`,
+ * so an unpunctuated last sentence ("Tests still need running") is not lost. Matching sentence-shaped pieces dropped
+ * whatever did not match, and a dot inside a code span such as `` `/docs/v1.2` `` started a "sentence" mid-span, so
+ * the line opened "`), and …" (hub inventory H9).
  */
 export function gist(text: string, max = 280): string {
     const flat = text.replace(/\s+/g, " ").trim();
@@ -217,7 +218,7 @@ export function gist(text: string, max = 280): string {
         }
     }
 
-    const lead = (end > 0 ? masked.slice(0, end) : masked).replace(
+    const lead = (ends === 2 ? masked.slice(0, end) : masked).replace(
         /(\d+)/g,
         (_, index: string) => spans[Number(index)] ?? ""
     );

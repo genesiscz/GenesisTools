@@ -251,8 +251,8 @@ enum HubMenuCommands {
         }
     }
 
-    /// View → Look: the Hub look and the three Native looks, the current one checked. A Native look also sets
-    /// General → Theme, and its item's tooltip says so.
+    /// View → Look: the Hub look and one Native look per General theme, the current one checked. A Native look
+    /// also sets General → Theme, and its item's tooltip says so.
     static func lookItem(hub: HubModel) -> NSMenuItem {
         let item = NSMenuItem(title: "Look", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Look")

@@ -19,6 +19,7 @@ interface SessionsOptions {
     json?: boolean;
     fresh?: boolean;
     cacheWrite?: boolean;
+    journalOnly?: boolean;
 }
 
 function positiveInt(value: string | undefined): number | undefined {
@@ -99,6 +100,10 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
         .option("--json", "Emit the rows as JSON")
         .option("--fresh", "Recompute instead of reading the daemon's cached answer (--json only)")
         .option("--no-cache-write", "Read the rows without updating the daemon cache or request stamp (--json only)")
+        .option(
+            "--journal-only",
+            "Leave out the live cmux tab of tmux-hosted sessions; for rows that will be cached (--json only)"
+        )
         // `tools ai usage` declares --provider and --json itself, so commander attaches them to
         // the PARENT when they are typed after `sessions`. Without the merge every flag was
         // silently dropped and the command always printed every provider as a table.
@@ -135,6 +140,7 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
                     await sessionRowsJson(listing, {
                         fresh: opts.fresh === true,
                         cacheWrite: opts.cacheWrite !== false,
+                        liveLocations: opts.journalOnly !== true,
                         listRows: listAgentSessionRows,
                     })
                 );

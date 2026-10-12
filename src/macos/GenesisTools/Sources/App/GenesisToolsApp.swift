@@ -24,6 +24,9 @@ func runWindowApp(showWindowImmediately: Bool) -> Never {
     exit(0)
 }
 
+/// A later launch that finds the settings window open in another process asks it to come forward.
+private let settingsWindowShowNotification = Notification.Name(NativePreview.namespace + ".settings-window.show")
+
 /// How long a no-argument launch waits for a click response before deciding it was a real launch.
 /// The response arrives within a few hundred milliseconds in practice; the rest is headroom.
 private let notificationClickGraceSeconds = 1.2
@@ -31,6 +34,9 @@ private let notificationClickGraceSeconds = 1.2
 final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     private let showWindowImmediately: Bool
     private var window: NSWindow?
+    /// The settings window's instance lock, held while this process shows it; -1 until then. The kernel
+    /// drops it when the process ends.
+    private var windowLock: Int32 = -1
     /// A local file this face handed to the browser. A bare launch that Launch Services made only to
     /// deliver it has nothing left to show, like a link or notification click.
     private var documentHandedOff = false
@@ -119,6 +125,25 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showWindow() {
+        if let window, window.isVisible || window.isMiniaturized {
+            window.deminiaturize(nil)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        // One settings window: the hub's Permissions… and `tools macos permissions ui` start a new process
+        // each time, and every copy used to stay open (four after a day, each reopened by every rebuild).
+        guard windowLock >= 0 || claimSettingsWindow() else {
+            logClick("the settings window is open in another process, bringing it forward")
+            if !CommandLine.arguments.contains("--no-activate") {
+                DistributedNotificationCenter.default().postNotificationName(
+                    settingsWindowShowNotification, object: nil, userInfo: nil, deliverImmediately: true)
+            }
+            NSApp.terminate(nil)
+            return
+        }
+
         quitAfterNotificationClick = false
         MainActor.assumeIsolated { DockTile.keep(.window) }
 
@@ -135,6 +160,42 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         if !CommandLine.arguments.contains("--no-activate") {
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+}
+
+extension GenesisAppDelegate {
+    /// Takes the settings window's instance lock, and with it the requests of later launches to come
+    /// forward. False when another process holds it. A lock that cannot be opened shows the window
+    /// anyway: a second window is better than none.
+    fileprivate func claimSettingsWindow() -> Bool {
+        let root = NativePreview.root
+        let descriptor: Int32
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            descriptor = open(
+                root.appendingPathComponent("settings-window.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        } catch {
+            logClick("settings window lock folder failed: \(error.localizedDescription)")
+            return true
+        }
+
+        guard descriptor >= 0 else {
+            logClick("settings window lock could not be opened (errno \(errno))")
+            return true
+        }
+
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return false
+        }
+
+        windowLock = descriptor
+        DistributedNotificationCenter.default().addObserver(
+            forName: settingsWindowShowNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.showWindow()
+        }
+        return true
     }
 }
 

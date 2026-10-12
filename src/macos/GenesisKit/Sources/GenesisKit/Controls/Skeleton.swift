@@ -240,7 +240,7 @@ public struct PaneSkeleton: View {
 /// graph and laid the window out on every frame for as long as a skeleton was on screen (2026-10-08). The mask
 /// stays SwiftUI's and is static, so the render server moves the highlight alone.
 struct SkeletonShimmer: ViewModifier {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GenReduceMotion private var reduceMotion
 
     func body(content: Content) -> some View {
         content

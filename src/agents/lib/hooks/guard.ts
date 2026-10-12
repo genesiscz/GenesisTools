@@ -34,6 +34,8 @@ export interface EvaluateOptions {
     harness?: HarnessName;
     /** Context notes already shown this session, per rule. */
     contextCounts?: Record<string, number>;
+    /** The folder the command runs in (the payload's `cwd`), for rules that read the project. */
+    cwd?: string;
 }
 
 /**
@@ -80,7 +82,7 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
     // The length downgrade lives in `resolveOutcome`, so the `rules test` diagnostic and
     // this hot path can never disagree. `demoted` is read back off the trace rather than
     // re-applied here, which is what a second implementation would silently drift from.
-    const graded = detectShellViolations(command).map((violation) => {
+    const graded = detectShellViolations(command, undefined, { cwd: options.cwd }).map((violation) => {
         const resolution = resolveOutcome({
             ruleId: violation.ruleId,
             ruleSeverity: violation.severity,
@@ -187,6 +189,7 @@ export function evaluateGuard(payload: HookPayload, config: HooksConfig): GuardV
         model: modelFor(payload, config),
         harness: payload.harness,
         contextCounts: sessionId ? readContextCounts(sessionId) : {},
+        cwd: payload.cwd,
     });
 
     return verdict.outcome === "allow" ? null : verdict;
