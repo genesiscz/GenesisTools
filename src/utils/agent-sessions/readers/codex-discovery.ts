@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -105,43 +105,117 @@ async function readHeader(options: {
     return header;
 }
 
-async function readHeaderUncached(options: {
-    path: string;
-    root: string;
-    issues: NativeSourceIssue[];
-    incompleteRoots: Set<string>;
-}): Promise<CodexDiscoveryHeader | undefined> {
-    for await (const scanned of scanJsonlRecords({
-        path: options.path,
-        onIssue: (issue) => {
-            options.issues.push(issue);
-            options.incompleteRoots.add(options.root);
-        },
-    })) {
-        const row = asRecord(scanned.value);
-        const header = parseCodexHeaderRow(row);
+/** Rollout bytes read in one go for the header; a header beyond them is found by the stream scan. */
+const HEADER_PREFIX_BYTES = 64 * 1024;
 
-        if (!header) {
-            if (row.type === "session_meta") {
-                options.issues.push({ path: options.path, message: "Native session header missing id" });
-                options.incompleteRoots.add(options.root);
-                return;
-            }
-
-            continue;
+/**
+ * The rows of the rollout's first complete lines, from one read, and whether that read reached the end of the file.
+ * Null when the read fails or a line does not parse: the stream scan then reads the file and reports why. A cold
+ * listing opened a stream per rollout to find its first line: 308 streams were about a third of a fresh
+ * `ai usage sessions` in a CPU profile (2026-10-12).
+ */
+async function headerPrefixRows(path: string): Promise<{ rows: JsonRecord[]; complete: boolean } | null> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+        handle = await open(path, "r");
+        const buffer = Buffer.alloc(HEADER_PREFIX_BYTES);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        const complete = bytesRead < buffer.length;
+        const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+        if (!complete) {
+            // The last line may be cut by the read.
+            lines.pop();
         }
 
-        return {
+        const rows: JsonRecord[] = [];
+        for (const line of lines) {
+            const original = line.replace(/\r$/, "");
+            if (!original.trim()) {
+                continue;
+            }
+
+            const value: JsonValue = SafeJSON.parse(original, { strict: true });
+            rows.push(asRecord(value));
+        }
+
+        return { rows, complete };
+    } catch (err) {
+        logger.debug({ err, path }, "[codex-discovery] header prefix unreadable; scanning the rollout");
+        return null;
+    } finally {
+        await handle?.close().catch((err: unknown) => {
+            logger.debug({ err, path }, "[codex-discovery] header prefix close failed");
+        });
+    }
+}
+
+/** What one row says about the header: found, a `session_meta` row without an id, or nothing (read on). */
+function headerVerdict(row: JsonRecord): { header: CodexDiscoveryHeader } | "missing id" | undefined {
+    const header = parseCodexHeaderRow(row);
+
+    if (!header) {
+        return row.type === "session_meta" ? "missing id" : undefined;
+    }
+
+    return {
+        header: {
             nativeId: header.nativeId,
             ...(header.parentNativeId ? { parentNativeId: header.parentNativeId } : {}),
             ...(header.cwd ? { cwd: header.cwd } : {}),
             historyMode: header.historyMode,
             isSubagent: header.isSubagent,
             ...(header.gitBranch ? { gitBranch: header.gitBranch } : {}),
-        };
+        },
+    };
+}
+
+async function readHeaderUncached(options: {
+    path: string;
+    root: string;
+    issues: NativeSourceIssue[];
+    incompleteRoots: Set<string>;
+}): Promise<CodexDiscoveryHeader | undefined> {
+    const issue = (message: string) => {
+        options.issues.push({ path: options.path, message });
+        options.incompleteRoots.add(options.root);
+    };
+    const settle = (verdict: { header: CodexDiscoveryHeader } | "missing id") => {
+        if (verdict === "missing id") {
+            issue("Native session header missing id");
+            return undefined;
+        }
+
+        return verdict.header;
+    };
+    const prefix = await headerPrefixRows(options.path);
+
+    if (prefix) {
+        for (const row of prefix.rows) {
+            const verdict = headerVerdict(row);
+            if (verdict) {
+                return settle(verdict);
+            }
+        }
+
+        if (prefix.complete) {
+            issue("Native session header missing");
+            return undefined;
+        }
     }
-    options.issues.push({ path: options.path, message: "Native session header missing" });
-    options.incompleteRoots.add(options.root);
+
+    for await (const scanned of scanJsonlRecords({
+        path: options.path,
+        onIssue: (found) => {
+            options.issues.push(found);
+            options.incompleteRoots.add(options.root);
+        },
+    })) {
+        const verdict = headerVerdict(asRecord(scanned.value));
+        if (verdict) {
+            return settle(verdict);
+        }
+    }
+    issue("Native session header missing");
 }
 
 async function metadataPathsForHome(options: {

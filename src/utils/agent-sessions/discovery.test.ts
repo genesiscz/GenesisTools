@@ -452,6 +452,23 @@ test("discovery accepts a pre-session_meta Codex rollout and keeps its root comp
     expect(discovered.sources.map((source) => source.metadata?.sessionId)).toEqual([ID_A]);
 });
 
+test("Codex discovery finds a header that sits behind a first line longer than its one-read prefix", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-long-prefix-"));
+    const root = join(home, "sessions");
+    mkdirSync(root, { recursive: true });
+    const path = join(root, `rollout-2026-10-12T21-00-00-${ID_A}.jsonl`);
+    const long = line({
+        type: "response_item",
+        payload: { type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(80_000) }] },
+    });
+    writeFileSync(path, long + line({ type: "session_meta", payload: { id: ID_A, cwd: "/projects/shop" } }));
+
+    const discovered = await discoverCodexHistorySources([root]);
+
+    expect(discovered.issues).toEqual([]);
+    expect(discovered.sources.map((source) => source.metadata?.cwd)).toEqual(["/projects/shop"]);
+});
+
 test("a repeated Codex discovery keeps the header of an appended rollout and re-reads one rewritten in place", async () => {
     const home = mkdtempSync(join(tmpdir(), "gt-codex-header-cache-"));
     const root = join(home, "sessions");
