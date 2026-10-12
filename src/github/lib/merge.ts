@@ -11,10 +11,15 @@
 //      - rebase → stack-safe path (local restack + FF) unless --no-restack
 //      - ff-only → update base ref to head SHA (force=false) so SHAs stay intact
 //   2. find open PRs whose base is the merged head
-//   3. retarget each dependent onto the merged PR's base
-//   4. for stack-safe rebase: restack dependents with git rebase --onto
-//      (gh-stack cascade algorithm) so the next PR is FF-able
+//   3. retarget each dependent onto the merged PR's base (metadata only)
+//   4. only with restackChildren: rebase and force-push each dependent with git rebase --onto
 //   5. only then optionally delete the remote head branch
+//
+// By default a merge pushes no branch but the merged PR's own head. From 360d43c53 (2026-07-17, PR #271) to
+// 2026-10-13 step 4 always ran, "so the next PR is FF-able". It rewrote branches outside the merge (another session's
+// #495 under #490) and left their children on commits that no longer existed (#496 showed 635 files instead of 62).
+// A child is now rebased at its own merge, from the tip its base had before the parent's force push
+// (`listBaseForcePushTips`), which GitHub records on the child itself.
 
 import {
     createGitStackRestack,
@@ -168,6 +173,11 @@ export interface SafeMergeOptions {
      * directly (breaks cascading stacks after parent rewrite). Default false.
      */
     noRestack?: boolean;
+    /**
+     * For stack-safe --rebase: also rebase and force-push each direct child onto the new base right away (always on
+     * before 2026-10-13). Off by default: it rewrites branches outside the merge and strands their own children.
+     */
+    restackChildren?: boolean;
     commitTitle?: string;
     commitMessage?: string;
     /**
@@ -560,8 +570,8 @@ export function createOctokitMergeClient(): MergeGitHubClient {
  * delete the head branch. Never deletes before retargeting.
  *
  * For method=rebase (default stack-safe):
- *   restack head onto base if needed → force-with-lease → FF base →
- *   retarget dependents → restack each dependent with rebase --onto.
+ *   restack head onto base if needed → force-with-lease → FF base → retarget dependents;
+ *   with restackChildren also restack each dependent with rebase --onto.
  */
 export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMergeResult> {
     const {
@@ -571,6 +581,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         method,
         deleteBranch = false,
         noRestack = false,
+        restackChildren = false,
         commitTitle,
         commitMessage,
         dryRun = false,
@@ -876,7 +887,11 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
     const dependentsRestacked: DependentRestackResult[] = [];
     const parentWasRewritten = Boolean(headRestack?.rebased);
 
-    if (stackSafeRebase && toRetarget.length > 0) {
+    if (stackSafeRebase && !restackChildren && parentWasRewritten && retargeted.some((r) => r.ok)) {
+        logLine(log, "Children keep their branches: each is rebased at its own merge, from the base tip it carries.");
+    }
+
+    if (stackSafeRebase && restackChildren && toRetarget.length > 0) {
         const okRetargets = retargeted.filter((r) => r.ok);
         if (okRetargets.length > 0) {
             logLine(

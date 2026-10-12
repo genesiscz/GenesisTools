@@ -55,7 +55,8 @@ tools github releases oven-sh/bun --limit 3
 tools github releases facebook/react --since 2026-01-01 --no-prereleases -o react-releases.md
 
 # Safe stack-aware merge (retargets dependents before optional branch delete)
-tools github merge 123 --rebase           # stack-safe: restack+FF (preserves SHAs) + restack children
+tools github merge 123 --rebase           # stack-safe: restack+FF (preserves SHAs); children only retargeted
+tools github merge 123 --rebase --restack-children  # also rebase + force-push each direct child now
 tools github merge 123 --rebase --no-restack  # legacy GitHub rewrite rebase (breaks cascades)
 tools github merge 123 --ff-only          # true FF (base ref → head SHA; keeps commit SHAs)
 tools github merge 123 --squash --delete-branch   # subject = PR title (#123), body = one bullet per commit
@@ -96,9 +97,14 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
    - `--merge` / `--squash` → GitHub `pulls.merge`
    - `--rebase` (default stack-safe) → local restack head onto base if needed,
      `git push --force-with-lease`, then true FF of base → head (preserves SHAs).
-     After retarget, restacks each dependent with `git rebase --onto <base> <old-parent-tip>`
-     (same algorithm as `gh stack` cascade). Pass `--no-restack` for legacy
-     GitHub `merge_method=rebase` (rewrites SHAs; breaks cascading children).
+     The restack starts from the tip the PR's base had before its last force push
+     (GitHub records it on the PR as a base force push), so a child whose parent a
+     previous merge rebased drops exactly the parent's old commits.
+     `--restack-children` also rebases each direct child right away
+     (`git rebase --onto <base> <old-parent-tip>`, the `gh stack` cascade). It is off
+     by default: it force-pushes branches outside this merge and strands their own
+     children (2026-10-13: #496 showed 635 files instead of 62). Pass `--no-restack`
+     for legacy GitHub `merge_method=rebase` (rewrites SHAs; breaks cascading children).
    - `--ff-only` (alias `--ff`) → true fast-forward: move base ref to head SHA
      (`git.updateRef` with `force=false` after a compare preflight). Preserves
      commit SHAs; fails if base is not an ancestor of head.
@@ -111,7 +117,8 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
    happy path. If retarget still fails after the parent SHA is already on the
    base, stdout prints `MERGED` plus recovery commands (non-zero exit). It does
    not throw as if the merge never happened.
-4. (stack-safe `--rebase`) Restacks dependents so the next PR is FF-able
+4. (`--rebase --restack-children` only) Restacks dependents so the next PR is FF-able.
+   Without it a child is rebased at its own merge.
 5. Only then, if `--delete-branch` / `--delete-remote`, deletes the remote head ref
 
 Exactly one of `--merge`, `--rebase`, `--squash`, or `--ff-only` is required.

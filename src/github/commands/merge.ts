@@ -18,10 +18,13 @@ export interface MergeCommandOptions {
     /** Alias for ffOnly. */
     ff?: boolean;
     /**
-     * With --rebase: call GitHub merge_method=rebase (rewrites SHAs) instead of
-     * local restack + FF + dependent restack. Breaks cascading stacks.
+     * Commander's value for `--no-restack`: false when it is passed. With --rebase it calls GitHub merge_method=rebase
+     * (rewrites SHAs) instead of the local restack + FF. Until 2026-10-13 the command read `noRestack`, which
+     * commander never sets, so the flag did nothing.
      */
-    noRestack?: boolean;
+    restack?: boolean;
+    /** With --rebase: also rebase and force-push each direct child right away. */
+    restackChildren?: boolean;
     deleteBranch?: boolean;
     deleteRemote?: boolean;
     subject?: string;
@@ -139,7 +142,16 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
     const dryRun = Boolean(options.dryRun);
     const jsonMode = options.format === "json";
     log.info(
-        { owner, repo, number, method, deleteBranch, dryRun, noRestack: Boolean(options.noRestack) },
+        {
+            owner,
+            repo,
+            number,
+            method,
+            deleteBranch,
+            dryRun,
+            noRestack: options.restack === false,
+            restackChildren: Boolean(options.restackChildren),
+        },
         "safe merge start"
     );
     // In JSON mode stdout carries only the result object; progress goes to the logger (stderr + file).
@@ -163,7 +175,8 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         number,
         method,
         deleteBranch,
-        noRestack: Boolean(options.noRestack),
+        noRestack: options.restack === false,
+        restackChildren: Boolean(options.restackChildren),
         commitTitle: options.subject,
         commitMessage: options.body,
         dryRun,
@@ -237,7 +250,7 @@ export function createMergeCommand(): Command {
         .option("--merge", "Create a merge commit")
         .option(
             "--rebase",
-            "Stack-safe rebase: local restack head onto base if needed, force-with-lease, FF base (preserves SHAs), restack dependents with rebase --onto"
+            "Stack-safe rebase: restack head onto base if needed, force-with-lease, FF base (preserves SHAs), retarget dependents; their branches stay untouched"
         )
         .option("--squash", "Squash and merge")
         .option(
@@ -248,6 +261,10 @@ export function createMergeCommand(): Command {
         .option(
             "--no-restack",
             "With --rebase only: use GitHub merge_method=rebase (rewrites SHAs; breaks cascading child PRs)"
+        )
+        .option(
+            "--restack-children",
+            "With --rebase only: also rebase and force-push each direct child onto the new base now (pushes branches outside this merge)"
         )
         .option(
             "--delete-branch",

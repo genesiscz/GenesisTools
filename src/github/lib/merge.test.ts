@@ -300,6 +300,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             repo: "r",
             number: 1,
             method: "rebase",
+            restackChildren: true,
             deleteBranch: false,
             client,
             restack,
@@ -352,6 +353,35 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(logs.some((l) => l.includes("Keeping remote branch"))).toBe(true);
     });
 
+    test("by default only the merged PR's branch is pushed: children are retargeted, never restacked (#496)", async () => {
+        const logs: string[] = [];
+        const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const { client, calls } = makeMock({
+            pr: basePr({ headSha }),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+            baseForcePushTips: { 1: ["main-before-push"] },
+        });
+        const { restack, calls: restackCalls } = makeRestackMock({ byBranch: { "branch-a": { rebased: true } } });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: false,
+            client,
+            restack,
+            log: (m) => logs.push(m),
+        });
+
+        expect(restackCalls.map((c) => c.branch)).toEqual(["branch-a"]);
+        expect(restackCalls[0].priorBaseShas).toEqual(["main-before-push"]);
+        expect(result.dependentsRestacked).toEqual([]);
+        expect(result.retargeted.map((r) => [r.number, r.toBase, r.ok])).toEqual([[2, "main", true]]);
+        expect(calls.some((c) => c.op === "listBaseForcePushTips" && c.args[0] === 2)).toBe(false);
+        expect(logs.some((l) => l.includes("Children keep their branches"))).toBe(true);
+    });
+
     test("every restack gets its own PR's earlier base tips, so a child on a replaced parent tip restacks cleanly", async () => {
         const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const { client } = makeMock({
@@ -366,6 +396,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             repo: "r",
             number: 1,
             method: "rebase",
+            restackChildren: true,
             deleteBranch: false,
             client,
             restack,
@@ -392,6 +423,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             repo: "r",
             number: 1,
             method: "rebase",
+            restackChildren: true,
             deleteBranch: false,
             client,
             restack,
@@ -554,6 +586,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             repo: "r",
             number: 1,
             method: "rebase",
+            restackChildren: true,
             deleteBranch: true,
             client,
             restack,
@@ -1007,6 +1040,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             repo: "r",
             number: 1,
             method: "rebase",
+            restackChildren: true,
             deleteBranch: false,
             client,
             restack,
