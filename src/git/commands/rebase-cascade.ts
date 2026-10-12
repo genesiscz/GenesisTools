@@ -109,9 +109,13 @@ async function run(parentArg: string | undefined, opts: Options): Promise<number
         out.println(`phase: ${existing.phase}${existing.current ? `, waiting on ${existing.current}` : ""}`);
         out.println(`completed: ${existing.completed.join(", ") || "(none)"}`);
         out.println(planLines(existing).join("\n"));
-        const targetNow = await git.getSha(existing.target);
 
-        if (targetNow !== existing.targetSha) {
+        // The status of a finished or abandoned plan must still print after its target branch was deleted.
+        const targetNow = (await git.refExists(existing.target)) ? await git.getSha(existing.target) : null;
+
+        if (targetNow === null) {
+            out.log.warn(`${existing.target} no longer exists, so the plan cannot be compared with it`);
+        } else if (targetNow !== existing.targetSha) {
             out.log.warn(
                 `${existing.target} moved since the plan (${existing.targetSha.slice(0, 9)} → ${targetNow.slice(0, 9)})`
             );
