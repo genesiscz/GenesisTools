@@ -21,6 +21,10 @@ describe("readTailBytes", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
+    it("returns no lines for a transcript that no longer exists", async () => {
+        expect(await readTailBytes(join(dir, "gone.jsonl"), 8192)).toEqual([]);
+    });
+
     it("returns all lines when file is smaller than byte budget", async () => {
         const path = await writeTmpFile("small.jsonl", '{"a":1}\n{"b":2}\n{"c":3}\n');
         const lines = await readTailBytes(path, 8192);

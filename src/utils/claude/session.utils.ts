@@ -94,7 +94,16 @@ export async function readHeadTailLines(filePath: string, headCount: number, tai
  * before (`scripts/benchmarks/fs/read-primitives.ts`, 2026-10-12).
  */
 export async function readTailBytes(filePath: string, bytes = 8192): Promise<string[]> {
-    return readLastLines(filePath, { maxBytes: bytes }).lines;
+    try {
+        return readLastLines(filePath, { maxBytes: bytes }).lines;
+    } catch (err) {
+        // A transcript that is gone has no tail, as before (`Bun.file` of a missing path reads as empty).
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return [];
+        }
+
+        throw err;
+    }
 }
 
 export function humanTextOf(content: string | ContentBlock[] | undefined): string {
