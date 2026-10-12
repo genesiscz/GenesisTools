@@ -65,7 +65,11 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
             guard let transforms else { throw CancellationError() }
             return try await transforms.run(request)
         }
-        if !offscreen { runtimeStart = Task { await runtime.start() } }
+        // A snapshot only draws the pages. Headless Settings presses switches and reopens pages
+        // (scripts/native/settings-v2.ts), so it joins the running owner as a settings-only client: its writes land
+        // like the normal Settings' do, and it never owns, so it starts no capture, hotkeys or sounds.
+        if headless { runtime.settingsOnly = true }
+        if snapshotPath == nil { runtimeStart = Task { await runtime.start() } }
         for section in WidgetFeatureSettings.sections(
             model: model, modules: WidgetModuleChoice.builtins, flowRuntime: runtime, transforms: transforms,
             openSession: { session in
@@ -82,7 +86,8 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         model.startSettings()
         if let snapshotPath {
             let delay = Double(snapshotArgument("--snapshot-delay") ?? "") ?? 2
-            ClickyHost.shared.snapshotSettings(pageID: initialPageID, to: snapshotPath, delay: delay)
+            ClickyHost.shared.snapshotSettings(
+                pageID: initialPageID, to: snapshotPath, delay: delay, ready: { model.settingsLoaded })
             return
         }
         if headless {
@@ -141,6 +146,8 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         widgetModel?.stop()
         ClickyHost.shared.stop()
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
+        // A snapshot or headless run holds no instance lock (its descriptor is -1).
+        guard descriptor >= 0 else { return }
         flock(descriptor, LOCK_UN)
         close(descriptor)
     }
@@ -151,9 +158,8 @@ func runClicky(_ args: [String] = []) -> Never {
         let pageID = args.firstIndex(of: "--page").flatMap { index in
             args.indices.contains(index + 1) ? args[index + 1] : nil
         }
-        let snapshotPath = args.firstIndex(of: "--snapshot").flatMap { index in
-            args.indices.contains(index + 1) ? args[index + 1] : nil
-        }
+        // The staging gate's own reading, so `--snapshot --page general` never writes a file named "--page".
+        let snapshotPath = NativeStaging.snapshotPath(args)
         let headless = args.contains("--headless")
         if snapshotPath != nil || headless {
             let app = NSApplication.shared

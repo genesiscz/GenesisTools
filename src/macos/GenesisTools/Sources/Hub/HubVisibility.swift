@@ -13,10 +13,23 @@ final class HubVisibility {
 
     private(set) var visible = true
     private var observer: NSObjectProtocol?
-    private var listeners: [(Bool) -> Void] = []
+    /// Held weakly: a listener goes when its owner does, so models created and dropped (tests make many) leave
+    /// nothing behind.
+    private struct Listener {
+        weak var owner: AnyObject?
+        let call: (Bool) -> Void
+    }
+
+    private var listeners: [Listener] = []
+
+    /// Stored listeners; one whose owner went is dropped at the next registration or change.
+    var listenerCount: Int {
+        listeners.count
+    }
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
-    /// Follows `window` from now on; called once, for the live hub's window.
+    /// Follows `window` from now on; called once, for the live hub's window. The state it has now counts too: a hub
+    /// opened behind other windows (`--no-activate`) posts no change until it is uncovered, and polled meanwhile.
     func watch(_ window: NSWindow) {
         observer = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self, weak window] _ in
             MainActor.assumeIsolated {
@@ -24,11 +37,17 @@ final class HubVisibility {
                 self?.set(window.occlusionState.contains(.visible))
             }
         }
+        set(window.occlusionState.contains(.visible))
     }
 
-    /// `listener` hears every change, with the new value.
-    func onChange(_ listener: @escaping (Bool) -> Void) {
-        listeners.append(listener)
+    /// `listener` hears every change, with the new value, for as long as `owner` lives.
+    func onChange<Owner: AnyObject>(_ owner: Owner, _ listener: @escaping (Owner, Bool) -> Void) {
+        listeners.removeAll { $0.owner == nil }
+        listeners.append(Listener(owner: owner) { [weak owner] visible in
+            if let owner {
+                listener(owner, visible)
+            }
+        })
     }
 
     /// Returns at once while the window can be seen, else as soon as it can again, or when the task is
@@ -58,8 +77,9 @@ final class HubVisibility {
         guard next != visible else { return }
         visible = next
         HubPerf.log("hub.visible \(next ? "shown" : "hidden"): polls \(next ? "resume" : "pause")")
+        listeners.removeAll { $0.owner == nil }
         for listener in listeners {
-            listener(next)
+            listener.call(next)
         }
         if next {
             let woken = waiters.values

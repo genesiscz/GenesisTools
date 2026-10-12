@@ -683,7 +683,9 @@ export async function createTodo({
 }): Promise<DecisionRecord> {
     const title = todo.title.trim();
     const details = todo.details?.trim();
-    if (!title || !todo.sessionId.trim()) {
+    // Trimmed once and used everywhere: " fixture" must number on with the session "fixture", not start at 1.
+    const sessionId = todo.sessionId.trim();
+    if (!title || !sessionId) {
         throw new Error("A task needs a title and a session");
     }
 
@@ -691,12 +693,12 @@ export async function createTodo({
     const provider = providerName(todo.provider);
     return withDecisionsLock(file, () => {
         signal?.throwIfAborted();
-        const used = sessionNumbers(readDecisions(file), todo.sessionId).todo;
+        const used = sessionNumbers(readDecisions(file), sessionId).todo;
         const number = used.size === 0 ? 1 : Math.max(...used) + 1;
         const ts = now();
         const row: DecisionRecord = {
-            id: `${ID_PREFIX.todo}_${number}_${todo.sessionId}`,
-            sessionId: todo.sessionId,
+            id: `${ID_PREFIX.todo}_${number}_${sessionId}`,
+            sessionId,
             type: "todo",
             number,
             prompt: details || title,
@@ -730,6 +732,7 @@ export async function reviseTodo({
     expected,
     signal,
     now = () => new Date().toISOString(),
+    beforeRevise,
 }: {
     file: string;
     events: string;
@@ -739,6 +742,8 @@ export async function reviseTodo({
     expected: TodoUpdateSnapshot;
     signal?: AbortSignal;
     now?: () => string;
+    /** Throws to refuse the edit, seeing the stored row under the ledger lock (a caller's own limits). */
+    beforeRevise?: (row: DecisionRecord) => void;
 }): Promise<DecisionRecord> {
     const nextTitle = title.trim();
     const nextDetails = details?.trim();
@@ -764,6 +769,7 @@ export async function reviseTodo({
             throw new Error(`Only an open task can be edited; reopen ${row.id} first`);
         }
 
+        beforeRevise?.(row);
         const ts = laterThan(expected.updatedTs, now);
         const next: DecisionRecord = {
             ...row,

@@ -350,6 +350,11 @@ describe("handoff gist", () => {
         );
     });
 
+    test("a span opened by two backticks ends at two, so a single backtick and a dot inside it end nothing", () => {
+        expect(gist("Used ``a` . b`` safely. Next task. Third one.")).toBe("Used ``a` . b`` safely. Next task.");
+        expect(gist("Ran `a.b` and `c`. Done. More.")).toBe("Ran `a.b` and `c`. Done.");
+    });
+
     test("a dot in a file name or a URL outside code is not a sentence end either", () => {
         expect(gist("See excerpts.ts:50 and https://x.dev/a.b for the cause. Fixed. Also more.")).toBe(
             "See excerpts.ts:50 and https://x.dev/a.b for the cause. Fixed."

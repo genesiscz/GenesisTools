@@ -690,6 +690,24 @@ describe("question_post item validation", () => {
         );
         expect(existsSync(join(dir, "decisions.jsonl"))).toBe(false);
     });
+
+    test("an item's images is refused toward attachments, as the server instructions say", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-mcp-item-images-"));
+        const logDeps: QuestionDeps = {
+            ...deps,
+            decisionLog: { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl"), session: "sess-1" },
+        };
+        const items = [
+            { type: "decision", promptMarkdown: "Ship?", images: [join(dir, "after.png")] },
+        ] as unknown as QuestionPostArgs["items"];
+
+        await expect(handleQuestionPost({ sessionHint: "sess-1", items }, logDeps)).rejects.toThrow(
+            /unknown key "images" \(did you mean attachments\?\)/
+        );
+        const instructions = serverInstructions({ askViaQuestionTool: true, inboxState: "running" });
+        expect(instructions).toContain("A question_post item takes attachments only: images there is refused.");
+        expect(instructions).not.toContain("the same for question_post items");
+    });
 });
 
 describe("question_post inline tokens and superseding", () => {

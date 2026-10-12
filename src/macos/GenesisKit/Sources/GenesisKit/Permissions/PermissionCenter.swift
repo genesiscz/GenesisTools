@@ -33,13 +33,21 @@ public struct PermissionNeed {
         self.grantWorksInNewProcess = grantWorksInNewProcess
         self.onGranted = onGranted
     }
+
+    /// The same feature asking again automatically (a check that repeats while a dialog is open, here or in another
+    /// process) is already waiting. Keeping every copy grows without end and runs its retry once per copy when the
+    /// grant arrives; a user's request and a different feature are always kept.
+    func repeatsAutomatically(in waiting: [PermissionNeed]) -> Bool {
+        trigger == .automatic && waiting.contains { $0.trigger == .automatic && $0.reason == reason }
+    }
 }
 
 /// Puts a dialog on screen. `PermissionPanelPresenter` is the real one; tests record.
 @MainActor
 public protocol PermissionPresenting: AnyObject {
     func present(_ dialog: PermissionDialogModel, takesFocus: Bool)
-    func bringToFront(_ dialog: PermissionDialogModel)
+    /// A need that joins an open dialog: a user's request makes it key, an automatic one only orders it front.
+    func bringToFront(_ dialog: PermissionDialogModel, takesFocus: Bool)
     func close(_ dialog: PermissionDialogModel)
 }
 
@@ -48,12 +56,22 @@ public protocol PermissionPresenting: AnyObject {
 public final class RecordingPermissionPresenter: PermissionPresenting {
     public private(set) var presented: [PermissionKind] = []
     public private(set) var fronted: [PermissionKind] = []
+    /// The kinds shown or brought forward with keyboard focus.
+    public private(set) var focused: [PermissionKind] = []
     public private(set) var closed: [PermissionKind] = []
 
     public init() {}
 
-    public func present(_ dialog: PermissionDialogModel, takesFocus: Bool) { presented.append(dialog.kind) }
-    public func bringToFront(_ dialog: PermissionDialogModel) { fronted.append(dialog.kind) }
+    public func present(_ dialog: PermissionDialogModel, takesFocus: Bool) {
+        presented.append(dialog.kind)
+        if takesFocus { focused.append(dialog.kind) }
+    }
+
+    public func bringToFront(_ dialog: PermissionDialogModel, takesFocus: Bool) {
+        fronted.append(dialog.kind)
+        if takesFocus { focused.append(dialog.kind) }
+    }
+
     public func close(_ dialog: PermissionDialogModel) { closed.append(dialog.kind) }
 }
 
@@ -109,8 +127,10 @@ public final class PermissionCenter {
         self.activateForPrompt = activateForPrompt
         lock?.onFrontRequest = { [weak self] kind in
             guard let self, let open = self.dialogs[kind] else { return }
-            self.presenter.bringToFront(open)
+            // Another process asked: it is not this process's user action, so the dialog takes no focus here.
+            self.presenter.bringToFront(open, takesFocus: false)
         }
+        lock?.onGrantAnnounced = { [weak self] kind in self?.verifyGrantElsewhere(kind) }
     }
 
     private static func makeShared() -> PermissionCenter {
@@ -178,9 +198,23 @@ public final class PermissionCenter {
 
     private func present(_ need: PermissionNeed, status: PermissionStatus) {
         if let open = dialogs[need.kind] {
-            open.merge(need)
-            presenter.bringToFront(open)
-            GenesisKit.log("permission \(need.kind.rawValue) joined the open dialog")
+            guard open.phase == .granted else {
+                open.merge(need)
+                // Only the user's request brings the open dialog forward (and makes it key): an automatic need asks
+                // again on its own schedule, and lifting the dialog each time would cover whatever the user is doing.
+                if need.trigger == .userAction { presenter.bringToFront(open, takesFocus: true) }
+                GenesisKit.log("permission \(need.kind.rawValue) joined the open dialog")
+                return
+            }
+
+            // The "is on" confirmation is showing and its callbacks already ran, so joining it would drop this need.
+            if open.joinGranted(need) { return }
+            if need.trigger == .automatic, dismissed.contains(need.kind) {
+                GenesisKit.log("permission \(need.kind.rawValue) missing; dialog not shown again after Not now")
+                return
+            }
+
+            replace(open, with: need, status: status)
             return
         }
 
@@ -190,21 +224,113 @@ public final class PermissionCenter {
         }
 
         if let lock, !lock.acquire(need.kind) {
-            lock.requestFront(need.kind)
+            // As for a dialog here: only the user's request lifts the other process's dialog over their work.
+            if need.trigger == .userAction { lock.requestFront(need.kind) }
             GenesisKit.log("permission \(need.kind.rawValue) dialog is open in another process")
+            waitForGrantElsewhere(need)
             return
         }
 
         let dialog = PermissionDialogModel(need: need, status: status, center: self)
         dialogs[need.kind] = dialog
+        if let waiting = waitingElsewhere.removeValue(forKey: need.kind) {
+            waiting.poll.cancel()
+            waiting.needs.forEach(dialog.merge)
+        }
         GenesisKit.log("permission \(need.kind.rawValue) missing (\(status.wireValue)); dialog shown, trigger \(need.trigger)")
         presenter.present(dialog, takesFocus: need.trigger == .userAction)
         dialog.startWatching()
     }
 
+    /// Needs whose dialog another process of this app shows. That process cannot run their `onGranted`, so this one
+    /// reads the grant on the dialog's own interval, until its deadline, and runs them when it arrives. A grant this
+    /// process reads only at launch never arrives here; the other dialog offers the relaunch, and the wait ends with
+    /// the deadline. A probe kind (Automation, the three folders) has no silent read, so its grant is seen when the
+    /// other dialog announces it (`verifyGrantElsewhere`).
+    private var waitingElsewhere: [PermissionKind: (needs: [PermissionNeed], poll: Task<Void, Never>)] = [:]
+    private var verifyingElsewhere: Set<PermissionKind> = []
+
+    /// The dialog in another process saw the grant: its lock file says so. A probe kind reads `.unknown` here, but
+    /// macOS holds the answer now, so touching the resource once does not prompt; it confirms the grant reaches this
+    /// process too. Nothing is probed before that, so a waiting process never puts up a second macOS prompt.
+    private func verifyGrantElsewhere(_ kind: PermissionKind) {
+        guard waitingElsewhere[kind] != nil, !verifyingElsewhere.contains(kind),
+              lock?.holderSawGrant(kind) == true else { return }
+        verifyingElsewhere.insert(kind)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.verifyingElsewhere.remove(kind) }
+            var current = self.access.status(kind)
+            if kind.requestStyle == .probe, case .unknown = current { current = await self.access.request(kind) }
+            guard current.isGranted else {
+                GenesisKit.log("permission \(kind.rawValue) granted in another process, not here (\(current.wireValue)); still waiting")
+                return
+            }
+
+            self.grantedElsewhere(kind)
+        }
+    }
+
+    /// The dialog reached "granted": another process waiting on it can stop.
+    func dialogGranted(_ kind: PermissionKind) {
+        lock?.announceGranted(kind)
+    }
+
+    private func waitForGrantElsewhere(_ need: PermissionNeed) {
+        guard need.onGranted != nil else { return }
+        if let waiting = waitingElsewhere[need.kind] {
+            if !need.repeatsAutomatically(in: waiting.needs) { waitingElsewhere[need.kind]?.needs.append(need) }
+            return
+        }
+
+        let kind = need.kind
+        let interval = pollInterval
+        let deadline = ContinuousClock.now.advanced(by: pollDeadline)
+        let poll = Task { [weak self] in
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                if self.access.status(kind).isGranted {
+                    self.grantedElsewhere(kind)
+                    return
+                }
+            }
+            self?.waitingElsewhere[kind] = nil
+        }
+        waitingElsewhere[kind] = ([need], poll)
+        // The other dialog may already show "is on": its announcement went out before this wait began.
+        verifyGrantElsewhere(kind)
+    }
+
+    private func grantedElsewhere(_ kind: PermissionKind) {
+        guard let waiting = waitingElsewhere.removeValue(forKey: kind) else { return }
+        // Seen by the announcement, the poll is still running; at its deadline it would clear a later wait.
+        waiting.poll.cancel()
+        GenesisKit.log("permission \(kind.rawValue) granted through another process's dialog; \(waiting.needs.count) retries run here")
+        for callback in waiting.needs.compactMap(\.onGranted) {
+            callback()
+        }
+    }
+
+    /// A need the granted dialog's grant does not reach (this process reads it only at launch, or it went away) gets a
+    /// dialog of its own in place of the closing one. The kind's lock stays held and no "last dialog closed" fires,
+    /// since a dialog stays open throughout.
+    private func replace(_ open: PermissionDialogModel, with need: PermissionNeed, status: PermissionStatus) {
+        open.didClose()
+        presenter.close(open)
+        let dialog = PermissionDialogModel(need: need, status: status, center: self)
+        dialogs[need.kind] = dialog
+        GenesisKit.log("permission \(need.kind.rawValue) still missing here after its dialog saw the grant; dialog shown again")
+        presenter.present(dialog, takesFocus: need.trigger == .userAction)
+        dialog.startWatching()
+        // The grant usually exists for a new process, so the new dialog offers the relaunch without a click.
+        dialog.checkAgainQuietly()
+    }
+
     func close(_ dialog: PermissionDialogModel, dismissedByUser: Bool) {
         guard dialogs[dialog.kind] === dialog else { return }
         dialogs[dialog.kind] = nil
+        dialog.didClose()
         if dismissedByUser { dismissed.insert(dialog.kind) }
         lock?.release(dialog.kind)
         presenter.close(dialog)
@@ -223,6 +349,9 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
         case working
         /// System Settings is open; the dialog reads the grant until it arrives.
         case waiting
+        /// The dialog stopped reading the grant after the center's `pollDeadline`; "Check again" reads it and waits
+        /// again.
+        case expired
         /// System Settings shows the grant, but this process reads it only at launch.
         case relaunch
         /// The grant arrived; the dialog closes itself.
@@ -248,6 +377,10 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     private var closing: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private var lastFreshCheck: Date?
+    /// The dialog left its center ("Not now", ⌘W, or after a grant). A request or probe still awaiting macOS then
+    /// finishes into nothing: no state change, no System Settings, and above all no `onGranted` the user opted out of.
+    private(set) var closed = false
+    private var runningCallbacks = false
 
     init(need: PermissionNeed, status: PermissionStatus, center: PermissionCenter) {
         kind = need.kind
@@ -270,7 +403,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     public var primaryAction: Action {
         if phase == .relaunch { return .relaunch }
         switch kind.requestStyle {
-        case .systemPrompt where status == .notDetermined: return .allow
+        case .systemPrompt where kind.systemPromptAsks(from: status) && !declinedUpgrade: return .allow
         case .probe where status != .denied: return .allow
         default: return .openSettings
         }
@@ -322,8 +455,25 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     }
 
     func merge(_ need: PermissionNeed) {
+        if need.repeatsAutomatically(in: needs) { return }
         needs.append(need)
         if need.trigger == .userAction { reason = need.reason }
+    }
+
+    /// A need that arrives during the "is on" confirmation. The grant this dialog saw covers a feature that runs in
+    /// a new process, so its retry runs now and this returns true. A need raised by one of this dialog's own retries
+    /// while they run is that retry again: it is dropped, so a retry that asks again cannot recurse. False means
+    /// this process must read the grant itself and does not: the center gives the need a dialog of its own.
+    func joinGranted(_ need: PermissionNeed) -> Bool {
+        guard need.grantWorksInNewProcess, kind.cachedPerProcess else { return false }
+        if runningCallbacks {
+            GenesisKit.log("permission \(kind.rawValue) asked again by its own retry; not run twice")
+            return true
+        }
+
+        GenesisKit.log("permission \(kind.rawValue) need joined after the grant; its retry runs now")
+        run(need.onGranted.map { [$0] } ?? [])
+        return true
     }
 
     // MARK: - Actions
@@ -345,17 +495,23 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
         let kind = self.kind
         Task { [weak self] in
             let result = await center.access.request(kind)
-            guard let self else { return }
+            guard let self, !self.closed else { return }
             self.status = result
             if result.isGranted {
                 self.grant()
                 return
             }
 
+            // An Add Only grant still Add Only after the full-access prompt: the user kept it, and only System
+            // Settings changes it now.
+            if result == .addOnly { self.declinedUpgrade = true }
             self.phase = .asking
             self.note = result == .notDetermined ? "macOS did not answer. Try again." : nil
         }
     }
+
+    /// The full-access prompt for an Add Only grant was answered without upgrading it.
+    private var declinedUpgrade = false
 
     public func openSettings() {
         guard let center, phase != .working else { return }
@@ -365,8 +521,10 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
             // Asking first puts the app in System Settings' list, so turning it on is one switch.
             if self.kind.requestStyle == .promptThenSettings {
                 self.phase = .working
-                self.status = await center.access.request(self.kind)
-                if self.status.isGranted {
+                let result = await center.access.request(self.kind)
+                guard !self.closed else { return }
+                self.status = result
+                if result.isGranted {
                     self.grant()
                     return
                 }
@@ -374,6 +532,8 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
 
             let opened = center.access.openSettings(self.kind)
             self.phase = .waiting
+            // The wait that began with the dialog may have run out while it sat open.
+            self.startPolling()
             if !opened {
                 self.note = "System Settings did not open. Open it from the Apple menu, then Privacy & Security."
             }
@@ -381,6 +541,11 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     }
 
     public func checkAgain() {
+        if phase == .expired {
+            phase = .waiting
+            note = nil
+            startPolling()
+        }
         Task { await refresh(explicit: true) }
     }
 
@@ -392,23 +557,22 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     }
 
     public func dismiss() {
+        closed = true
         stopWatching()
         center?.close(self, dismissedByUser: true)
+    }
+
+    /// The center took this dialog off the screen; nothing awaiting macOS may act for it afterwards.
+    func didClose() {
+        closed = true
+        stopWatching()
     }
 
     // MARK: - Watching for the grant
 
     func startWatching() {
-        guard poll == nil, let center else { return }
-        let interval = center.pollInterval
-        let deadline = ContinuousClock.now.advanced(by: center.pollDeadline)
-        poll = Task { [weak self] in
-            while ContinuousClock.now < deadline {
-                try? await Task.sleep(for: interval)
-                guard !Task.isCancelled, let self else { return }
-                await self.refresh(explicit: false)
-            }
-        }
+        guard poll == nil, observers.isEmpty else { return }
+        startPolling()
         // Coming back from System Settings activates another app; that is the moment a new grant is worth a look.
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -427,7 +591,36 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
         }
     }
 
-    private func checkAgainQuietly() {
+    /// Reads the grant on the center's interval until its deadline. At the deadline the task ends and is let go, so a
+    /// later "Check again" or "Open System Settings" starts a new one; a dialog still waiting shows that it stopped.
+    private func startPolling() {
+        guard poll == nil, !closed, let center else { return }
+        let interval = center.pollInterval
+        let deadline = ContinuousClock.now.advanced(by: center.pollDeadline)
+        poll = Task { [weak self] in
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                await self.refresh(explicit: false)
+            }
+            guard !Task.isCancelled else { return }
+            self?.pollExpired()
+        }
+    }
+
+    private func pollExpired() {
+        poll = nil
+        guard !closed, phase == .waiting else { return }
+        phase = .expired
+        note = "Stopped waiting after \(PermissionDialogModel.minutes(center?.pollDeadline)). Turn on \(appName), then check again."
+    }
+
+    private static func minutes(_ duration: Duration?) -> String {
+        let minutes = max(1, Int((duration?.components.seconds ?? 0) / 60))
+        return minutes == 1 ? "a minute" : "\(minutes) minutes"
+    }
+
+    func checkAgainQuietly() {
         Task { await refresh(explicit: false, fresh: true) }
     }
 
@@ -444,8 +637,21 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     /// Reads the grant again. A cached kind also asks a new process: on "Check again" always, otherwise at most
     /// every few seconds (each ask starts a process).
     func refresh(explicit: Bool, fresh: Bool = false) async {
-        guard let center, phase != .granted, phase != .working else { return }
-        let current = center.access.status(kind)
+        guard let center, !closed, phase != .granted, phase != .working else { return }
+        var current = center.access.status(kind)
+        if kind.requestStyle == .probe, status == .denied, case .unknown = current {
+            // A probe kind has no silent read. Once its probe was refused, macOS has the answer, so touching the
+            // resource again never prompts: it tells a grant made in System Settings from a refusal. It runs on
+            // "Check again" and when the user comes back from another app (System Settings), at most every few
+            // seconds, never on the plain poll: each probe runs AppleScript or lists a folder.
+            let due = lastFreshCheck.map { Date().timeIntervalSince($0) > 3 } ?? true
+            guard explicit || (fresh && due) else { return }
+            lastFreshCheck = Date()
+            if explicit { checking = true }
+            current = await center.access.request(kind)
+            checking = false
+            guard !closed, phase != .granted, phase != .working else { return }
+        }
         if current != status { status = current }
         if current.isGranted {
             grant()
@@ -460,6 +666,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
                 if explicit { checking = true }
                 grantedElsewhere = await center.freshStatus(kind)?.isGranted == true
                 checking = false
+                guard !closed else { return }
             }
 
             if grantedElsewhere {
@@ -474,20 +681,27 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     }
 
     private func grant() {
-        guard phase != .granted else { return }
+        guard !closed, phase != .granted else { return }
         phase = .granted
         status = .granted
         note = nil
         stopWatching()
+        center?.dialogGranted(kind)
         let callbacks = needs.compactMap(\.onGranted)
         needs.removeAll()
-        for callback in callbacks { callback() }
+        run(callbacks)
         let delay = center?.closeDelay ?? .zero
         closing = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
             self.center?.close(self, dismissedByUser: false)
         }
+    }
+
+    private func run(_ callbacks: [@MainActor () -> Void]) {
+        runningCallbacks = true
+        defer { runningCallbacks = false }
+        for callback in callbacks { callback() }
     }
 }
 
@@ -498,8 +712,13 @@ public final class PermissionDialogLock {
     private let namespace: String
     private var descriptors: [PermissionKind: Int32] = [:]
     private var observer: NSObjectProtocol?
+    private var grantObserver: NSObjectProtocol?
     var onFrontRequest: (@MainActor (PermissionKind) -> Void)? {
         didSet { observeFrontRequests() }
+    }
+    /// Another process's dialog for this kind saw the grant. Only a wake-up: the lock file is what is read.
+    var onGrantAnnounced: (@MainActor (PermissionKind) -> Void)? {
+        didSet { observeGrants() }
     }
 
     public init(directory: URL, namespace: String) {
@@ -539,9 +758,33 @@ public final class PermissionDialogLock {
             return false
         }
 
+        // A new dialog has seen no grant yet; the last holder's marker goes.
+        if ftruncate(descriptor, 0) != 0 {
+            GenesisKit.log("permission lock \(path) did not clear its grant marker (errno \(errno))")
+        }
         descriptors[kind] = descriptor
         return true
     }
+
+    /// The dialog holding this kind's lock saw the grant. The lock file says so for a process that starts waiting
+    /// during the "is on" confirmation, and the processes already waiting are woken.
+    func announceGranted(_ kind: PermissionKind) {
+        guard let descriptor = descriptors[kind] else { return }
+        let marker = Array(Self.grantedMarker.utf8)
+        if pwrite(descriptor, marker, marker.count, 0) != marker.count {
+            GenesisKit.log("permission lock \(kind.rawValue) did not record its grant (errno \(errno))")
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            grantedNotification, object: kind.rawValue, userInfo: nil, deliverImmediately: true)
+    }
+
+    /// Whether the dialog that holds this kind's lock saw the grant (read after `acquire` failed).
+    func holderSawGrant(_ kind: PermissionKind) -> Bool {
+        let path = directory.appendingPathComponent("\(kind.rawValue).lock").path
+        return FileManager.default.contents(atPath: path) == Data(Self.grantedMarker.utf8)
+    }
+
+    private static let grantedMarker = "granted"
 
     func release(_ kind: PermissionKind) {
         guard let descriptor = descriptors.removeValue(forKey: kind) else { return }
@@ -558,6 +801,10 @@ public final class PermissionDialogLock {
         Notification.Name("\(namespace).permission-dialog.front")
     }
 
+    private var grantedNotification: Notification.Name {
+        Notification.Name("\(namespace).permission-dialog.granted")
+    }
+
     private func observeFrontRequests() {
         guard observer == nil else { return }
         observer = DistributedNotificationCenter.default().addObserver(
@@ -565,6 +812,16 @@ public final class PermissionDialogLock {
         ) { [weak self] note in
             guard let id = note.object as? String, let kind = PermissionKind(rawValue: id) else { return }
             MainActor.assumeIsolated { self?.onFrontRequest?(kind) }
+        }
+    }
+
+    private func observeGrants() {
+        guard grantObserver == nil else { return }
+        grantObserver = DistributedNotificationCenter.default().addObserver(
+            forName: grantedNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let id = note.object as? String, let kind = PermissionKind(rawValue: id) else { return }
+            MainActor.assumeIsolated { self?.onGrantAnnounced?(kind) }
         }
     }
 }

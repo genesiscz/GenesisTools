@@ -356,8 +356,8 @@ private struct WidgetSessionSettings: View {
                 Spacer()
                 Button("Clear all filters") { patch(["projects": [], "sessions": []]) }
                     .buttonStyle(.bordered)
-                    .disabled(selected.isEmpty && projects.isEmpty)
                     .nativeSettingsPointer()
+                    .disabled(selected.isEmpty && projects.isEmpty)
                     .accessibilityIdentifier("widget.filters.clear")
             }
         }
@@ -495,6 +495,7 @@ private struct WidgetDictationSettings: View {
     @State private var failure: String?
     @State private var language = ""
     @State private var languageSaved = false
+    @State private var savedReset: Task<Void, Never>?
     @FocusState private var languageFocused: Bool
     private var prefs: WidgetPreferences? { model.snapshot?.state.preferences }
     private var provider: VoiceConfiguration.Provider? {
@@ -592,15 +593,26 @@ private struct WidgetDictationSettings: View {
         }
     }
 
-    /// Stores the field when it changed, on Return or when focus leaves it, and confirms it for two seconds.
+    /// Stores the field when it changed, on Return or when focus leaves it. "Saved" shows for two seconds once the
+    /// write is stored, never before it and never for a write that failed (the page shows that error instead).
     private func saveLanguage() {
         let value = language.trimmingCharacters(in: .whitespaces)
         language = value
         guard value != (prefs?.voiceLanguage ?? "") else { return }
-        patch(["voiceLanguage": .string(value)])
+        savedReset?.cancel()
+        languageSaved = false
+        model.updatePreferences(["voiceLanguage": .string(value)], saved: confirmLanguageSaved, failed: {
+            savedReset?.cancel()
+            languageSaved = false
+        })
+    }
+
+    /// One timer: a second save restarts the two seconds instead of letting the first save's timer hide it early.
+    private func confirmLanguageSaved() {
         withAnimation(.easeOut(duration: 0.15)) { languageSaved = true }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
+        savedReset?.cancel()
+        savedReset = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
             withAnimation(.easeOut(duration: 0.3)) { languageSaved = false }
         }
     }

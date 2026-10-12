@@ -184,8 +184,8 @@ public struct FlowSettingsView: View {
                         session.requestDictationPermissions()
                     }
                     .buttonStyle(.bordered)
-                    .disabled(session.isRequestingPermissions)
                     .nativeSettingsPointer()
+                    .disabled(session.isRequestingPermissions)
                     .accessibilityIdentifier("flow-review-permissions")
                     Spacer(minLength: 0)
                     Button("Microphone settings") { PermissionAccess.live.openSettings(.microphone) }
@@ -204,7 +204,7 @@ public struct FlowSettingsView: View {
             }
 
             NativeSettingsCard("Shortcut", subtitle: "The global shortcut that starts dictation in any app.") {
-                NativeSettingsToggle("Dictation shortcut", detail: "Register the shortcut. Off leaves dictation in the menu bar only.",
+                NativeSettingsToggle("Dictation", detail: "On registers the shortcut. Off turns dictation off, from the menu bar too.",
                                      identifier: "flow-setting-enabled", isOn: binding(\.enabled))
                 Divider()
                 NativeSettingsRow("Shortcut", detail: hotkeyDetail) {
@@ -218,7 +218,8 @@ public struct FlowSettingsView: View {
                                 session.config = config
                             }),
                         defaultChord: HotkeyChord(keyCode: FlowConfig().keyCode, modifiers: FlowConfig.defaultModifiers),
-                        identifier: "flow-setting-shortcut")
+                        identifier: "flow-setting-shortcut",
+                        onListening: { session.suspendHotkey($0) })
                 }
                 .disabled(!session.config.enabled)
                 Divider()

@@ -336,21 +336,52 @@ public final class FocusController: ObservableObject {
     public func forgetActivity(from: Date, to: Date) async throws -> FocusForgetResult {
         let range = FocusForgetCommand(from: Int64(from.timeIntervalSince1970 * 1000), to: Int64(to.timeIntervalSince1970 * 1000))
         guard range.from < range.to else { return FocusForgetResult(segments: 0, sessions: 0) }
-        let result: FocusForgetResult
-        if let remoteRequest {
-            let reply = try await remoteRequest("focus.forget", JSONEncoder().encode(range))
-            result = try JSONDecoder().decode(FocusForgetResult.self, from: reply)
-        } else {
-            guard ownsRuntime, let store else {
-                throw FlowFocusMailbox.Failure.unavailable(lastError ?? "The Focus ledger is unavailable.")
-            }
-            result = try await Task.detached(priority: .userInitiated) {
-                try FocusForgetResult.forget(range, in: store)
-            }.value
-        }
-        FlowFocusLog.focus.info("forgot activity \(range.from)..<\(range.to): segments=\(result.segments) sessions=\(result.sessions)")
-        studioModel?.reload()
+        guard let remoteRequest else { return try await forgetOwned(range) }
+        let reply = try await remoteRequest("focus.forget", JSONEncoder().encode(range))
+        let result = try JSONDecoder().decode(FocusForgetResult.self, from: reply)
+        FlowFocusLog.focus.info("owner forgot activity \(range.from)..<\(range.to): segments=\(result.segments) sessions=\(result.sessions)")
+        didForget(range)
         return result
+    }
+
+    /// The owner's deletion, for its own Settings and for a client's `focus.forget`. The range can cover the whole
+    /// ledger, so it runs off the main actor; the recorder and the views catch up after.
+    func forgetOwned(_ range: FocusForgetCommand) async throws -> FocusForgetResult {
+        guard ownsRuntime, let store else {
+            throw FlowFocusMailbox.Failure.unavailable(lastError ?? "The Focus ledger is unavailable.")
+        }
+
+        // Fenced before the deletion starts: a flush already on its way to the recorder lands while it runs.
+        recorder?.ledgerForgetting(from: range.from, to: range.to)
+        let deletion = Task.detached(priority: .userInitiated) {
+            try FocusForgetResult.forget(range, in: store)
+        }
+        let id = UUID()
+        deletions[id] = deletion
+        defer { deletions[id] = nil }
+        let result = try await deletion.value
+        FlowFocusLog.focus.info("forgot activity \(range.from)..<\(range.to): segments=\(result.segments) sessions=\(result.sessions)")
+        didForget(range)
+        return result
+    }
+
+    /// Deletions still running off the main actor. They hold the store, so they go on after `stop()`.
+    private var deletions: [UUID: Task<FocusForgetResult, Error>] = [:]
+
+    /// Waits for every ledger deletion still running, so the owner gives up the ledger (its lease) only after its
+    /// last write. Each deletion's own caller gets its result or error.
+    func finishLedgerWrites() async {
+        for deletion in deletions.values { _ = await deletion.result }
+    }
+
+    /// After the owner's ledger forgot a range (here or for a client's `focus.forget`): the live recorder lets go of
+    /// a segment the deletion removed, and the views read the ledger again.
+    func didForget(_ range: FocusForgetCommand) {
+        recorder?.ledgerForgot(from: range.from, to: range.to)
+        // The live phase's row and pauses were rewritten with its remaining time kept: the engine reads its clock
+        // back from them, so a resume and a later restart agree with the countdown.
+        if let engine, engine.state != .idle { engine.resumeOpenSessionIfAny() }
+        studioModel?.reload()
     }
 
     // MARK: - Interruptions

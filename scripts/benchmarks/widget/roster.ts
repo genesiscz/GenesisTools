@@ -16,7 +16,8 @@
  *
  * `--parity` checks that the resident pipeline shows what the old one showed: old (discover, then read), new
  * (scoped refresh, then read), old again. A row or parent that differs between new and both olds is a parity
- * failure; one that also differs between the two olds is a live session writing during the run.
+ * failure; one that also differs between the two olds was written by a live session during the run, and is checked
+ * again after a pause. A key still undecided after the retries fails the run too, listed apart from the failures.
  */
 
 import { resolve } from "node:path";
@@ -24,13 +25,17 @@ import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchm
 import type { AgentParent } from "@app/hub/lib/agents/types";
 import { readWidgetRoster, refreshWidgetIndex, type WidgetRoster } from "@app/hub/lib/widget/roster-index";
 import { discoverWidgetCatalog } from "@app/hub/lib/widget/snapshot";
+import { withoutListingReuse } from "@genesiscz/utils/agent-sessions/listing-freshness";
+import { collectOutput, runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 
 const NAME = "widget-roster";
 const REPO = resolve(import.meta.dir, "../../..");
+/** A discover still running after this is stalled. It is stopped, and the round fails instead of counting it. */
+const DISCOVER_DEADLINE_MS = 120_000;
 
 function cpuMs(start: NodeJS.CpuUsage): number {
     const used = process.cpuUsage(start);
@@ -44,12 +49,23 @@ async function inProcess(fn: () => Promise<unknown>): Promise<number> {
 }
 
 async function discoverProcess(): Promise<{ cpuMs: number; rssMb: number }> {
+    // Its own process group, so the deadline stops whatever the discover started as well.
     const proc = Bun.spawn([process.execPath, resolve(REPO, "src/hub/index.ts"), "widget", "discover"], {
         cwd: REPO,
-        stdout: "ignore",
-        stderr: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
     });
-    await proc.exited;
+    const { stderr, exitCode: code, timedOut } = await collectOutput(proc, DISCOVER_DEADLINE_MS, { group: true });
+    if (timedOut) {
+        throw new Error(`widget discover did not finish within ${DISCOVER_DEADLINE_MS / 1000} s; it was stopped`);
+    }
+
+    if (code !== 0) {
+        // A failed discover is cheap, and its CPU would read as a fast old pipeline.
+        throw new Error(`widget discover exited ${code}: ${stderr.trim().slice(-500)}`);
+    }
+
     const usage = proc.resourceUsage();
     if (!usage) {
         throw new Error("discover subprocess reported no resource usage");
@@ -89,7 +105,17 @@ function differing(left: Map<string, string>, right: Map<string, string>): Set<s
     return new Set([...keys].filter((key) => left.get(key) !== right.get(key)));
 }
 
-async function parity(): Promise<void> {
+/** Rounds after the first that re-check the keys a live write left undecided, and the pause before each. */
+const PARITY_RETRIES = 2;
+const PARITY_SETTLE_MS = 3000;
+
+/**
+ * One old, new, old triple. A key whose resident value differs from both old reads fails when the old reads agree;
+ * when they differ too, a live session wrote during the triple and the key is undecided (the resident read may have
+ * caught a state between the two), so it is checked again rather than counted as a pass. `only` limits the verdicts
+ * to the keys a previous triple left undecided.
+ */
+async function parityTriple(only?: Set<string>) {
     const readOld = async () => {
         await discoverWidgetCatalog();
         return canonical(await readWidgetRoster());
@@ -102,18 +128,42 @@ async function parity(): Promise<void> {
     const resident = await readNew();
     const after = await readOld();
     const live = differing(before, after);
-    const broken = [...differing(resident, before)].filter((key) => differing(resident, after).has(key));
-    const result = {
+    const fromAfter = differing(resident, after);
+    const broken = [...differing(resident, before)].filter((key) => fromAfter.has(key) && (!only || only.has(key)));
+    return {
         entries: resident.size,
-        changedByLiveWrites: live.size,
-        parityFailures: broken.filter((key) => !live.has(key)),
+        live,
+        failures: broken.filter((key) => !live.has(key)),
+        undecided: broken.filter((key) => live.has(key)),
+    };
+}
+
+async function parity(): Promise<void> {
+    const first = await parityTriple();
+    const failures = [...first.failures];
+    let inconclusive = first.undecided;
+    let retries = 0;
+    while (inconclusive.length > 0 && retries < PARITY_RETRIES) {
+        retries++;
+        await Bun.sleep(PARITY_SETTLE_MS);
+        const again = await parityTriple(new Set(inconclusive));
+        failures.push(...again.failures);
+        inconclusive = again.undecided;
+    }
+
+    const result = {
+        entries: first.entries,
+        changedByLiveWrites: first.live.size,
+        parityFailures: failures,
+        inconclusive,
+        retries,
         uptime: uptime(),
     };
     out.println(
-        `parity: ${result.entries} rows/parents compared, ${result.changedByLiveWrites} changed by live writes, ${result.parityFailures.length} parity failures`
+        `parity: ${result.entries} rows/parents compared, ${result.changedByLiveWrites} changed by live writes, ${failures.length} parity failures, ${inconclusive.length} still undecided after ${retries} retries`
     );
     out.result(result);
-    if (result.parityFailures.length > 0) {
+    if (failures.length > 0 || inconclusive.length > 0) {
         process.exitCode = 1;
     }
 }
@@ -127,23 +177,45 @@ async function measure(runs: number): Promise<Record<string, number>> {
         residentRead: [],
     };
     const rss: number[] = [];
+    const steps: Record<string, () => Promise<void>> = {
+        discoverProcess: async () => {
+            const spawned = await discoverProcess();
+            arms.discoverProcess.push(spawned.cpuMs);
+            rss.push(spawned.rssMb);
+        },
+        // Another arm may have just refreshed the same listings, so with reuse on this arm could measure a read.
+        // The Widget's full refresh runs every 120 s and cannot count on a refresh that recent.
+        residentFull: async () => {
+            arms.residentFull.push(
+                await inProcess(() =>
+                    withoutListingReuse(async () => {
+                        await refreshWidgetIndex(new Set(["all"]));
+                        await readWidgetRoster();
+                    })
+                )
+            );
+        },
+        residentClaude: async () => {
+            arms.residentClaude.push(
+                await inProcess(async () => {
+                    await refreshWidgetIndex(new Set(["claude"]));
+                    await readWidgetRoster();
+                })
+            );
+        },
+        residentRead: async () => {
+            arms.residentRead.push(await inProcess(() => readWidgetRoster()));
+        },
+    };
+    // The order rotates each round, so no arm always runs on the caches the arm before it warmed.
+    const names = Object.keys(steps);
+    const orders: string[] = [];
     for (let round = 0; round < runs; round++) {
-        const spawned = await discoverProcess();
-        arms.discoverProcess.push(spawned.cpuMs);
-        rss.push(spawned.rssMb);
-        arms.residentFull.push(
-            await inProcess(async () => {
-                await refreshWidgetIndex(new Set(["all"]));
-                await readWidgetRoster();
-            })
-        );
-        arms.residentClaude.push(
-            await inProcess(async () => {
-                await refreshWidgetIndex(new Set(["claude"]));
-                await readWidgetRoster();
-            })
-        );
-        arms.residentRead.push(await inProcess(() => readWidgetRoster()));
+        const order = names.map((_, index) => names[(index + round) % names.length]);
+        orders.push(order.join(" > "));
+        for (const arm of order) {
+            await steps[arm]();
+        }
     }
 
     renderCliHeader("Widget roster update cost", `CPU ms per update, ${runs} interleaved rounds`);
@@ -158,6 +230,7 @@ async function measure(runs: number): Promise<Record<string, number>> {
     metrics.discoverProcessRssMb = Math.round(stats(rss).median);
     metrics.residentRssMb = Math.round(process.memoryUsage().rss / 1048576);
     out.println(table.toString());
+    out.println(`Round orders: ${orders.map((order, round) => `${round + 1}: ${order}`).join("; ")}`);
     out.println(
         `cold first read ${metrics.coldReadCpuMs} ms · discover RSS ${metrics.discoverProcessRssMb} MB · resident RSS ${metrics.residentRssMb} MB`
     );
@@ -165,9 +238,19 @@ async function measure(runs: number): Promise<Record<string, number>> {
     return metrics;
 }
 
+/** Zero rounds would record every arm as 0 ms, and a baseline or comparison would take that as a result. */
+function positiveInteger(value: string): number {
+    const runs = Number(value);
+    if (!Number.isInteger(runs) || runs < 1) {
+        throw new InvalidArgumentError(`expected a positive integer, got ${value}`);
+    }
+
+    return runs;
+}
+
 const program = new Command()
     .name("widget-roster")
-    .option("--runs <n>", "Interleaved rounds", (value) => Number(value), 5)
+    .option("--runs <n>", "Interleaved rounds (a positive integer)", positiveInteger, 5)
     .option("--baseline [name]", "Record the numbers as a baseline")
     .option("--compare [name]", "Compare against a recorded baseline")
     .option("--parity", "Check that the resident pipeline shows what the discover pipeline showed")
@@ -204,4 +287,4 @@ const program = new Command()
         out.result(metrics);
     });
 
-await program.parseAsync();
+await runTool(program, { tool: "bench-widget-roster" });

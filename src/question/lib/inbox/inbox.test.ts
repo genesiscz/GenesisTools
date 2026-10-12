@@ -206,6 +206,27 @@ describe("loadSessionDecisions", () => {
         const unknown = await loadSessionDecisions("s-alpha", { rows: () => [], scan, sessionCwd: async () => null });
         expect(unknown[0]?.refs[0]?.missing).toBe(true);
     });
+
+    test("a ref whose folder is a file is missing on its own; the other refs and the decision still load", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "inbox-enotdir-"));
+        writeFileSync(join(dir, "notes.txt"), "first line\nsecond line\n");
+        // plain/inner.ts: its parent is a file, so looking at it throws ENOTDIR, not ENOENT.
+        writeFileSync(join(dir, "plain"), "a file, not a folder\n");
+        const reply = [
+            "See plain/inner.ts:1 and notes.txt:2 before you pick.",
+            "",
+            "❓ DECISION 1: Keep it?",
+            "- **a)** yes",
+        ].join("\n");
+        const scan = async () => ({ at: "2026-03-01T10:04:00.000Z", blocks: parseDecisionBlocks(reply) });
+
+        const decisions = await loadSessionDecisions("s-alpha", { rows: () => [], scan, sessionCwd: async () => dir });
+        expect(decisions[0]?.refs.map((ref) => [ref.path, ref.missing])).toEqual([
+            ["plain/inner.ts", true],
+            ["notes.txt", false],
+        ]);
+        expect(decisions[0]?.refs[1]?.excerpt).toContain("second line");
+    });
 });
 
 describe("locateRef", () => {

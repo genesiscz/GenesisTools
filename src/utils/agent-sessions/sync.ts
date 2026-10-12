@@ -44,10 +44,16 @@ class IdentityConflict extends Error {
  * Sources whose metadata names a native identity another live file already holds, by provider and path, with the
  * fingerprint they had then. Such a source gets no row, so every sync used to read it again only to fail the same
  * way, and its persisted issue kept every listing off the unchanged fast path (a forked 2.4 MB Codex rollout was
- * parsed by every refresh, 1.5 to 4 s each under load, 2026-10-10). While the source keeps that fingerprint and the
- * holder still exists, the conflict is reported again without a read. In-process: a resident caller pays it once.
+ * parsed by every refresh, 1.5 to 4 s each under load, 2026-10-10). While the source keeps that fingerprint, the
+ * holder still exists and the repository being synced still gives the identity to the holder, the conflict is
+ * reported again without a read. In-process: a resident caller pays it once.
+ *
+ * The ownership check is what frees the source: a holder rewritten to another session keeps its path, and its row
+ * moves to the new identity on the sync that reads it, so the next sync reads the source again. The holder's own
+ * fingerprint is deliberately not compared: the holder is usually the live session the source was forked from, and
+ * every turn it takes would re-read the source for the same answer.
  */
-const identityConflicts = new Map<string, { revision: string; holder: string }>();
+const identityConflicts = new Map<string, { revision: string; holder: string; sourceKey: string }>();
 const IDENTITY_CONFLICT_LIMIT = 1000;
 
 function conflictKey(providerId: string, filePath: string): string {
@@ -173,7 +179,8 @@ export async function synchronizeHistory(options: {
         try {
             return (
                 conflict.revision === sourceFingerprint({ source, parserVersion: reader.parserVersion }) &&
-                sourceExists(conflict.holder)
+                sourceExists(conflict.holder) &&
+                repository.metadata.getSource(conflict.sourceKey)?.filePath === conflict.holder
             );
         } catch (error) {
             logger.debug({ error, path: source.filePath }, "[history] conflict source unreadable; it is read again");
@@ -465,6 +472,7 @@ export async function synchronizeHistory(options: {
                     identityConflicts.set(conflictKey(providerId, current.source.filePath), {
                         revision: current.revision,
                         holder: error.holder,
+                        sourceKey: current.metadata.sourceKey,
                     });
                     if (identityConflicts.size > IDENTITY_CONFLICT_LIMIT) {
                         const oldest = identityConflicts.keys().next().value;

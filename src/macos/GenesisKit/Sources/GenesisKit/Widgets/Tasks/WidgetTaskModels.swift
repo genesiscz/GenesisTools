@@ -43,8 +43,9 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
         default: return nil
         }
     }
-    /// Only an open task's text can change; a taken or finished task keeps what was agreed.
-    public var editable: Bool { state == "open" }
+    /// Only an open task's text can change; a taken or finished task keeps what was agreed. A task the widget shows as
+    /// an excerpt is not editable here either: saving the excerpt would cut the stored text to it.
+    public var editable: Bool { state == "open" && !truncated }
     /// Written in the widget without a session (`tools hub widget tasks create` without `--session`).
     public var isLocal: Bool { sessionId == WidgetTask.localSession }
     public static let localSession = "local"

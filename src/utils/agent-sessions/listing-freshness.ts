@@ -19,6 +19,22 @@ export interface ListingFreshness {
     touch(key: string): void;
 }
 
+let reuseOff = 0;
+
+/**
+ * Runs `work` with every listing in this process refreshing as if no other process had refreshed it lately. For a
+ * benchmark that measures the refresh itself: a preceding arm's refresh would otherwise be reused, and the arm would
+ * measure a read. Other processes still see and reuse the markers.
+ */
+export async function withoutListingReuse<T>(work: () => Promise<T>): Promise<T> {
+    reuseOff++;
+    try {
+        return await work();
+    } finally {
+        reuseOff--;
+    }
+}
+
 /**
  * One empty marker file per scope; its mtime is the refresh time. No lock and no JSON: a marker
  * write is a single `writeFileSync`, and the last writer wins, which is the right answer here.
@@ -30,6 +46,10 @@ export function fileListingFreshness(
 
     return {
         age(key) {
+            if (reuseOff > 0) {
+                return null;
+            }
+
             try {
                 return Date.now() - statSync(markerPath(key)).mtimeMs;
             } catch (error) {

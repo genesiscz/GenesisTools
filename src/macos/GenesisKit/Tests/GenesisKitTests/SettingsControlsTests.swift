@@ -51,9 +51,9 @@ final class SettingsControlsTests: XCTestCase {
 
     // MARK: - Settings face loading (S6)
 
-    private func snapshotJSON(showWidget: Bool) -> String {
+    private func snapshotJSON(showWidget: Bool, revision: Int = 0) -> String {
         """
-        {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"showWidget":\(showWidget),"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+        {"version":1,"state":{"version":1,"revision":\(revision),"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"showWidget":\(showWidget),"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
         """
     }
 
@@ -149,6 +149,125 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false, "the next load carries the stored change")
     }
 
+    func testAReadThatGoesStaleDuringAWriteWaitsForTheWriteInsteadOfRunningAgainAtOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-settings-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stored = directory.appendingPathComponent("snapshot.json")
+        try snapshotJSON(showWidget: true).write(to: stored, atomically: true, encoding: .utf8)
+        try snapshotJSON(showWidget: false).write(to: directory.appendingPathComponent("after.json"), atomically: true, encoding: .utf8)
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("state.json"))
+        let calls = directory.appendingPathComponent("calls.log")
+        let script = directory.appendingPathComponent("tools")
+        // A snapshot answers quickly; the preference write takes 1.5 s to land.
+        try """
+        #!/bin/sh
+        case "$*" in
+        *snapshot*) echo snapshot >> '\(calls.path)'; sleep 0.1; cat '\(stored.path)' ;;
+        *) sleep 1.5; cp '\(directory.path)/after.json' '\(stored.path)'; echo '{}' ;;
+        esac
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let domain = "settings-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(binaryPath: script.path, stateRoot: directory.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain,
+                                                                     observeExternalChanges: false))
+        defer { model.stop() }
+        func reads() throws -> Int {
+            try String(contentsOf: calls, encoding: .utf8).split(separator: "\n").count
+        }
+        model.startSettings()
+        var deadline = ContinuousClock.now + .seconds(5)
+        while model.snapshot == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(model.settingsLoaded)
+
+        model.updatePreferences(["showWidget": .bool(false)])
+        try await Task.sleep(for: .milliseconds(350))
+        let before = try reads()
+        model.refreshSettings()
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertLessThanOrEqual(try reads() - before, 1, "one stale read while the write lands, not one after another")
+
+        // Once the write lands, one more read brings what it stored.
+        deadline = ContinuousClock.now + .seconds(4)
+        while try reads() < before + 2 && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertGreaterThanOrEqual(try reads(), before + 2)
+        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false)
+    }
+
+    /// The live widget's watch builds each snapshot from state it read earlier, so one read before a preference write
+    /// can arrive after the write was saved. It must not undo the saved value; a later change made elsewhere still shows.
+    func testAWatchSnapshotReadBeforeASavedPreferenceNeverUndoesIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-watch-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateFile = directory.appendingPathComponent("state.json")
+        try Data(#"{"revision":3}"#.utf8).write(to: stateFile)
+        let domain = "settings-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: directory.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain,
+                                                                     observeExternalChanges: false))
+        defer { model.stop() }
+        model.actionRunner = { _ in
+            // `hub widget` stores the preference as revision 5.
+            try Data(#"{"revision":5}"#.utf8).write(to: stateFile)
+            return ["ok": true]
+        }
+        model.receive([snapshotJSON(showWidget: true, revision: 3)])
+        var saved = false
+        model.updatePreferences(["showWidget": .bool(false)], saved: { saved = true })
+        var deadline = ContinuousClock.now + .seconds(2)
+        while !saved && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(saved)
+
+        // The watch read revision 4 before the write and answers only now.
+        model.receive([snapshotJSON(showWidget: true, revision: 4)])
+        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false, "a snapshot read before the write keeps it")
+        model.receive([snapshotJSON(showWidget: false, revision: 5)])
+        // Another surface turns it back on afterwards: that shows, the saved patch no longer covers it.
+        model.receive([snapshotJSON(showWidget: true, revision: 6)])
+        deadline = ContinuousClock.now + .seconds(2)
+        while model.snapshot?.state.preferences.showWidget != true && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, true, "a later change made elsewhere shows")
+    }
+
+    func testAPreferenceWriteReportsItsOwnOutcomeSoAPageConfirmsOnlyAStoredValue() async throws {
+        let domain = "settings-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: FileManager.default.temporaryDirectory.path,
+                                defaults: defaults, appearance: NativeSettingsAppearance(
+                                    defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        defer { model.stop() }
+        var refuse = true
+        model.actionRunner = { _ in
+            if refuse { throw ToolsBridgeError.refused("the widget state folder is not writable") }
+            return ["ok": true]
+        }
+        var saved = 0
+        var failed = 0
+        func settle() async throws {
+            let deadline = ContinuousClock.now + .seconds(2)
+            let before = saved + failed
+            while saved + failed == before && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        }
+
+        model.updatePreferences(["voiceLanguage": .string("cs")], saved: { saved += 1 }, failed: { failed += 1 })
+        try await settle()
+        XCTAssertEqual([saved, failed], [0, 1], "a write that failed was reported as saved")
+
+        refuse = false
+        model.updatePreferences(["voiceLanguage": .string("cs")], saved: { saved += 1 }, failed: { failed += 1 })
+        try await settle()
+        XCTAssertEqual([saved, failed], [1, 1])
+    }
+
     func testTheSettingsFaceWatchesTheStateFileHubWidgetReads() {
         XCTAssertEqual(WidgetModel.widgetStateFile(stateRoot: "/fixture/root/", environment: [:]), "/fixture/root/state.json")
         XCTAssertEqual(WidgetModel.widgetStateFile(stateRoot: nil, environment: ["GENESIS_TOOLS_HOME": "/fixture/home"]),
@@ -199,6 +318,28 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(recorded.count, 1, "Escape records nothing")
     }
 
+    func testTheRecorderTellsTheShortcutOwnerWhenListeningStartsAndEndsHoweverItEnds() {
+        let model = HotkeyRecorderModel()
+        var listening: [Bool] = []
+        let chord: (HotkeyChord) -> Void = { _ in XCTAssertEqual(listening.last, true, "a chord is saved while the live one is let go") }
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.receive(keyCode: 0x0C, flags: [.command], onRecord: chord)
+        XCTAssertEqual(listening, [true], "a refused chord keeps listening, and the live shortcut stays let go")
+        model.receive(keyCode: 0x31, flags: [.control, .option], onRecord: chord)
+        XCTAssertEqual(listening, [true, false], "saving ends listening")
+
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.receive(keyCode: 0x35, flags: [], onRecord: chord)
+        XCTAssertEqual(listening, [true, false, true, false], "Escape ends listening")
+
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.stop()
+        model.stop()
+        XCTAssertEqual(listening, [true, false, true, false, true, false, true, false],
+                       "a restart ends the first listening once, and a second stop says nothing")
+    }
+
     func testDictationShortcutLanguageAndGraceControlsPersistToTheFlowConfigTheSessionReads() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-settings-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -242,6 +383,71 @@ final class SettingsControlsTests: XCTestCase {
         settings.excludedHosts = [FocusSettings.normalizedHost("https://example.com/a") ?? ""]
         XCTAssertFalse(settings.records(host: "docs.example.com"), "the stored host excludes its subdomains")
         XCTAssertTrue(settings.records(host: "example.org"))
+    }
+
+    func testTheRuleEditorSavesTheRuleItOpenedAfterAnEarlierRuleIsRemoved() throws {
+        let alpha = FocusSettings.ProjectRule(name: "Alpha", cmuxSession: "alpha-")
+        let beta = FocusSettings.ProjectRule(name: "Beta", cmuxSession: "beta-")
+        let gamma = FocusSettings.ProjectRule(name: "Gamma", titleContains: "Gamma docs")
+        var editor = FocusRuleEditor(rule: beta)
+        editor.cmuxSession = "beta-edited"
+        // Alpha is removed while Beta's editor is open.
+        let remaining = [beta, gamma]
+        XCTAssertEqual(editor.index(in: remaining), 0)
+        let saved = try editor.committed(to: remaining)
+        XCTAssertEqual(saved, [FocusSettings.ProjectRule(name: "Beta", cmuxSession: "beta-edited"), gamma],
+                       "the edit lands on Beta; Gamma, now at Beta's old index, is untouched")
+
+        var last = FocusRuleEditor(rule: gamma)
+        last.host = "gamma.example.com"
+        let lastSaved = try last.committed(to: remaining)
+        XCTAssertEqual(lastSaved.count, 2, "the last rule is replaced, never appended as a copy")
+        XCTAssertEqual(lastSaved[1].host, "gamma.example.com")
+
+        var added = FocusRuleEditor()
+        added.name = "Delta"
+        added.host = "delta.example.com"
+        XCTAssertTrue(added.isNew)
+        XCTAssertEqual(try added.committed(to: [alpha]).map(\.name), ["Alpha", "Delta"])
+    }
+
+    func testTheRuleEditorEditsTheRowItOpenedWhenTwoRulesAreIdentical() throws {
+        let copy = FocusSettings.ProjectRule(name: "Fixture", cmuxSession: "fixture-")
+        let other = FocusSettings.ProjectRule(name: "Other", host: "other.example.com")
+        var editor = FocusRuleEditor(rule: copy, at: 1)
+        XCTAssertEqual(editor.index(in: [copy, copy]), 1, "the second row's editor stays under the second row")
+        editor.name = "Fixture copy"
+        XCTAssertEqual(try editor.committed(to: [copy, copy]).map(\.name), ["Fixture", "Fixture copy"],
+                       "saving replaces the row that was edited, not the first equal one")
+        // After a move the row no longer holds the rule, so the editor finds it where it went.
+        XCTAssertEqual(FocusRuleEditor(rule: copy, at: 1).index(in: [copy, other]), 0)
+    }
+
+    func testTheRuleEditorStaysOnItsCopyOfADuplicatedRuleWhenTheListMovesOrShrinks() throws {
+        let copy = FocusSettings.ProjectRule(name: "Fixture", cmuxSession: "fixture-")
+        let other = FocusSettings.ProjectRule(name: "Other", host: "other.example.com")
+
+        // The second copy is open and the row above both copies is removed here.
+        var rules = [other, copy, copy]
+        var editor = FocusRuleEditor(rule: copy, at: 2, in: rules)
+        rules.remove(at: 0)
+        editor.follow(removalOf: 0, in: rules)
+        XCTAssertEqual(editor.index(in: rules), 1)
+        editor.name = "Fixture copy"
+        XCTAssertEqual(try editor.committed(to: rules).map(\.name), ["Fixture", "Fixture copy"])
+
+        // The second copy is moved up past another rule.
+        rules = [copy, other, copy]
+        editor = FocusRuleEditor(rule: copy, at: 2, in: rules)
+        rules.swapAt(2, 1)
+        editor.follow(swapOf: 2, and: 1, in: rules)
+        XCTAssertEqual(editor.index(in: rules), 1)
+
+        // A reload (another window's save) drops the row above: the editor keeps the second copy.
+        editor = FocusRuleEditor(rule: copy, at: 2, in: [other, copy, copy])
+        XCTAssertEqual(editor.index(in: [copy, copy]), 1)
+        // A reload drops the edited copy itself: saving adds it again rather than overwriting the other copy.
+        XCTAssertNil(editor.index(in: [copy]))
     }
 
     func testTheRuleEditorTrimsDropsEmptyConditionsAndRefusesUnusableRules() throws {

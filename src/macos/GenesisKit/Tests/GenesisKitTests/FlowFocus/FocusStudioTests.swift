@@ -547,6 +547,32 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertNil(recorder.pausedUntil)
     }
 
+    /// "Delete activity" inside a running capture pause splits its gap; the recorder follows the part after the range.
+    func testDeletingARangeInsideACapturePauseThenResumingClosesThePause() throws {
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        let until = Date().addingTimeInterval(600)
+        recorder.pauseCapture(until: until)
+        let paused = try XCTUnwrap(try store.gaps(from: 0, to: nowMs() + 60_000).first)
+        let from = paused.startedMs + 1
+        let to = paused.startedMs + 2
+        try store.forget(from: from, to: to)
+        recorder.ledgerForgot(from: from, to: to)
+        let tail = try XCTUnwrap(try store.gaps(from: 0, to: nowMs() + 60_000).first { $0.endedMs == nil })
+        XCTAssertEqual(tail.startedMs, to)
+
+        // Extending the pause moves the deadline of the row that is still open, not the closed part.
+        recorder.pauseCapture(until: until.addingTimeInterval(600))
+        let extended = Int64(until.addingTimeInterval(600).timeIntervalSince1970 * 1000)
+        XCTAssertEqual(try store.gapUntil(id: tail.id), extended)
+
+        Thread.sleep(forTimeInterval: 0.01)
+        recorder.resumeCapture()
+        let gaps = try store.gaps(from: 0, to: nowMs() + 60_000)
+        XCTAssertEqual(gaps.map(\.reason), ["capture_paused", "capture_paused"])
+        XCTAssertEqual(gaps.first?.endedMs, from, "the part before the deleted range ends where it begins")
+        XCTAssertTrue(gaps.allSatisfy { $0.endedMs != nil }, "resuming closes the part after the range too")
+    }
+
     func testACapturePauseOutlivesTheRecorderThatTookIt() throws {
         // The elected owner exits a minute after "Pause capture for 1 hour"; its successor builds a new recorder.
         let first = ActivityRecorder(store: store, liveServices: false)
@@ -601,6 +627,78 @@ final class FocusStudioModelTests: XCTestCase {
         let gap = try XCTUnwrap(try store.gaps(from: 0, to: wake + 1).first { $0.reason == "system_sleep" })
         XCTAssertEqual(gap.startedMs, lastTick + 2_000)
         XCTAssertEqual(gap.endedMs, wake)
+    }
+
+    func testDeletingTheLastHourLetsTheRecorderGoOnInANewSegmentAndDropsItsCounts() throws {
+        let recorder = ActivityRecorder(store: store)
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let forgotten = try XCTUnwrap(try store.openSegments().first?.id)
+        recorder.recordKeyForTesting()
+        // What Settings → Focus → "Delete activity" asks for: the period up to one second past now.
+        let from = nowMs() - 3_600_000
+        let to = nowMs() + 1_000
+        try store.forget(from: from, to: to)
+        recorder.ledgerForgot(from: from, to: to)
+
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let reopened = try XCTUnwrap(try store.openSegments().first,
+                                     "the same window keeps recording after its segment was deleted")
+        XCTAssertNotEqual(reopened.id, forgotten)
+        recorder.attach(sessionId: nil)
+        XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
+                      "a key counted inside the deleted period is not written back afterwards")
+    }
+
+    /// The first deletion cuts the open segment, which then starts where that range ended; a second deletion covering
+    /// only that new start removes the row, so the recorder must open a new one rather than touch the deleted row.
+    /// The deletion runs off the main actor, and the counter flushes off it too: a minute's counts can leave the
+    /// counter before the deletion commits and reach the recorder after it, before `didForget` reconciles.
+    func testAFlushLandingBetweenADeletionAndItsReconciliationWritesNothingBack() async throws {
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        let recorder = ActivityRecorder(store: store)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        recorder.recordKeyForTesting()
+        let from = nowMs() - 3_600_000
+        let to = nowMs() + 1_000
+        // What FocusController.forgetOwned does before the deletion runs off the main actor.
+        recorder.ledgerForgetting(from: from, to: to)
+        recorder.flushOffMainForTesting()
+        try store.forget(from: from, to: to)
+        // The queued flush runs now, after the commit and before the reconciliation.
+        try await Task.sleep(for: .milliseconds(100))
+        recorder.ledgerForgot(from: from, to: to)
+        XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
+                      "a minute inside the deleted period is not written back")
+
+        // A deletion of an earlier period leaves this minute's counts alone.
+        let other = ActivityRecorder(store: store)
+        other.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        other.recordKeyForTesting()
+        other.ledgerForgetting(from: from - 3_600_000, to: from)
+        other.flushOffMainForTesting()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1, "a minute outside it is kept")
+    }
+
+    func testTwoDeletionsInARowLeaveTheRecorderRecordingInARealSegment() throws {
+        let recorder = ActivityRecorder(store: store)
+        let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let open = try XCTUnwrap(try store.openSegments().first)
+        let start = open.startedMs
+
+        try store.forget(from: start + 10, to: start + 20)
+        recorder.ledgerForgot(from: start + 10, to: start + 20)
+        XCTAssertEqual(try store.openSegments().map(\.id), [open.id], "the segment ran across the range and keeps its id")
+
+        try store.forget(from: start + 15, to: start + 30)
+        recorder.ledgerForgot(from: start + 15, to: start + 30)
+        XCTAssertTrue(try store.openSegments().isEmpty, "its new start was inside the second range, so the row is gone")
+
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let reopened = try XCTUnwrap(try store.openSegments().first, "the same window keeps recording in a real row")
+        XCTAssertNotEqual(reopened.id, open.id)
     }
 
     func testResumingAPauseDoesNotCloseTheCaptureOffGap() throws {

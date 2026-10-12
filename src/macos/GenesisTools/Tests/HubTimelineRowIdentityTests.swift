@@ -93,17 +93,18 @@ final class HubTimelineRowIdentityTests: XCTestCase {
 
         // The fresh page: "say hi" took another turn at 23:07, so it moves up into the 23:00 hour, the way
         // `HubTimelineModel.apply` lands a small refresh (animated).
+        let next = [
+            try event("turn:a", at: "2026-10-10T21:10:28Z", title: "genesis-tools-native"),
+            try event("turn:say-hi", at: "2026-10-10T21:07:52Z", title: "say hi"),
+            try event("pr:b", at: "2026-10-10T21:04:24Z", title: "fix(emails)"),
+            try event("turn:c", at: "2026-10-10T20:00:05Z", title: "col-279041"),
+        ]
         withAnimation(SWR.animation) {
-            feed.events = [
-                try! event("turn:a", at: "2026-10-10T21:10:28Z", title: "genesis-tools-native"),
-                try! event("turn:say-hi", at: "2026-10-10T21:07:52Z", title: "say hi"),
-                try! event("pr:b", at: "2026-10-10T21:04:24Z", title: "fix(emails)"),
-                try! event("turn:c", at: "2026-10-10T20:00:05Z", title: "col-279041"),
-            ]
+            feed.events = next
         }
         RunLoop.main.run(until: Date().addingTimeInterval(0.8))
 
-        XCTAssertEqual(Self.drawn["turn:say-hi"], "2026-10-10T21:07:52Z", "the moved row still draws its old time")
+        XCTAssertEqual(Self.drawn["turn:say-hi"], "2026-10-10T21:07:52Z", "a row moved to another hour must draw its new time there")
     }
 
     /// The positive control: a row that changes but stays in its hour is drawn again as it is.

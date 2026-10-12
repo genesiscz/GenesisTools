@@ -231,8 +231,8 @@ public struct FocusSettingsView: View {
                     .accessibilityIdentifier("focus.forget.range")
                     Button(forgetting ? "Deleting…" : "Delete…") { confirmForget = true }
                         .buttonStyle(.bordered)
-                        .disabled(forgetting || !controller.available)
                         .nativeSettingsPointer()
+                        .disabled(forgetting || !controller.available)
                         .accessibilityIdentifier("focus.forget")
                 }
             }
@@ -332,8 +332,8 @@ public struct FocusSettingsView: View {
                     .accessibilityIdentifier("focus.excludedSites.field")
                 Button("Add site", action: addHost)
                     .buttonStyle(.bordered)
-                    .disabled(FocusSettings.normalizedHost(newHost) == nil)
                     .nativeSettingsPointer()
+                    .disabled(FocusSettings.normalizedHost(newHost) == nil)
                     .accessibilityIdentifier("focus.excludedSites.add")
             }
             if !newHost.trimmingCharacters(in: .whitespaces).isEmpty, FocusSettings.normalizedHost(newHost) == nil {
@@ -375,11 +375,12 @@ public struct FocusSettingsView: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            let editing = editor?.index(in: settings.projects)
             ForEach(ruleRows) { row in
-                ruleRow(row)
-                if editor?.index == row.index { ruleEditor }
+                ruleRow(row, editing: editing == row.index)
+                if editing == row.index { ruleEditor }
             }
-            if editor != nil && editor?.index == nil {
+            if editor != nil && editing == nil {
                 ruleEditor
             } else if editor == nil {
                 Button("Add rule") { editor = FocusRuleEditor() }
@@ -390,7 +391,7 @@ public struct FocusSettingsView: View {
         }
     }
 
-    private func ruleRow(_ row: RuleRow) -> some View {
+    private func ruleRow(_ row: RuleRow, editing: Bool) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.rule.name).font(.system(size: 13, weight: .medium))
@@ -401,10 +402,13 @@ public struct FocusSettingsView: View {
                 .disabled(row.index == 0)
             IconButton(systemName: "arrow.down", tooltip: "Check \(row.rule.name) later") { moveRule(row.index, by: 1) }
                 .disabled(row.index == settings.projects.count - 1)
-            IconButton(systemName: "pencil", tooltip: "Edit \(row.rule.name)") { editor = FocusRuleEditor(index: row.index, rule: row.rule) }
+            IconButton(systemName: "pencil", tooltip: "Edit \(row.rule.name)") {
+                editor = FocusRuleEditor(rule: row.rule, at: row.index, in: settings.projects)
+            }
             IconButton(systemName: "minus.circle", tooltip: "Remove \(row.rule.name)") {
-                if editor?.index == row.index { editor = nil }
+                if editing { editor = nil }
                 settings.projects.remove(at: row.index)
+                editor?.follow(removalOf: row.index, in: settings.projects)
                 save()
             }
         }
@@ -415,7 +419,7 @@ public struct FocusSettingsView: View {
 
     private var ruleEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(editor?.index == nil ? "New rule" : "Edit rule").font(.system(size: 12, weight: .semibold))
+            Text(editor?.isNew ?? true ? "New rule" : "Edit rule").font(.system(size: 12, weight: .semibold))
             editorField("Project name", text: binding(\.name), prompt: "Example project", identifier: "focus.rule.name")
             editorField("cmux session contains", text: binding(\.cmuxSession), prompt: "project-", identifier: "focus.rule.cmux")
             editorField("Window title contains", text: binding(\.titleContains), prompt: "Example project", identifier: "focus.rule.title")
@@ -428,7 +432,7 @@ public struct FocusSettingsView: View {
                 Button("Cancel") { editor = nil }
                     .keyboardShortcut(.cancelAction)
                     .nativeSettingsPointer()
-                Button(editor?.index == nil ? "Add rule" : "Save rule", action: commitRule)
+                Button(editor?.isNew ?? true ? "Add rule" : "Save rule", action: commitRule)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .nativeSettingsPointer()
@@ -460,16 +464,8 @@ public struct FocusSettingsView: View {
 
     private func commitRule() {
         guard let draft = editor else { return }
-        let others = settings.projects.enumerated().filter { $0.offset != draft.index }.map(\.element.name)
         do {
-            let rule = try FocusSettings.ProjectRule.validated(
-                name: draft.name, cmuxSession: draft.cmuxSession, titleContains: draft.titleContains,
-                host: draft.host, existingNames: others)
-            if let index = draft.index, settings.projects.indices.contains(index) {
-                settings.projects[index] = rule
-            } else {
-                settings.projects.append(rule)
-            }
+            settings.projects = try draft.committed(to: settings.projects)
             editor = nil
             save()
         } catch {
@@ -481,7 +477,7 @@ public struct FocusSettingsView: View {
         let target = index + offset
         guard settings.projects.indices.contains(index), settings.projects.indices.contains(target) else { return }
         settings.projects.swapAt(index, target)
-        if editor?.index == index { editor?.index = target } else if editor?.index == target { editor?.index = index }
+        editor?.follow(swapOf: index, and: target, in: settings.projects)
         save()
     }
 
@@ -550,9 +546,15 @@ private struct FocusSettingsNotice: Equatable {
     let isError: Bool
 }
 
-/// The project rule being added (`index` nil) or edited.
-private struct FocusRuleEditor: Equatable {
-    var index: Int?
+/// The project rule being added (`original` nil) or edited. Rules are positional, and removing, moving or reloading
+/// them shifts every index, so the editor holds the rule it edits and finds its row whenever it draws or saves.
+struct FocusRuleEditor: Equatable {
+    var original: FocusSettings.ProjectRule?
+    /// The row being edited, kept on it through this view's own removals and moves (`follow`). Two identical rules
+    /// (a hand-edited client.json) are told apart by it.
+    var originalIndex: Int?
+    /// Which of the rules equal to `original` is edited (0: the first), for a reload that shifted rows under it.
+    var occurrence = 0
     var name = ""
     var cmuxSession = ""
     var titleContains = ""
@@ -561,12 +563,66 @@ private struct FocusRuleEditor: Equatable {
 
     init() {}
 
-    init(index: Int, rule: FocusSettings.ProjectRule) {
-        self.index = index
+    /// `rules` is the list the row was opened in, so the edited copy of a duplicated rule is known.
+    init(rule: FocusSettings.ProjectRule, at index: Int? = nil, in rules: [FocusSettings.ProjectRule] = []) {
+        original = rule
+        originalIndex = index
         name = rule.name
         cmuxSession = rule.cmuxSession ?? ""
         titleContains = rule.titleContains ?? ""
         host = rule.host ?? ""
+        recount(in: rules)
+    }
+
+    var isNew: Bool { original == nil }
+
+    /// Where the edited rule is now: its own row while that still holds it, else, after a reload, the same copy
+    /// among the rows equal to it. Nil for a new rule, or when that copy is gone (saving then adds it again).
+    func index(in rules: [FocusSettings.ProjectRule]) -> Int? {
+        guard let original else { return nil }
+        if let originalIndex, rules.indices.contains(originalIndex), rules[originalIndex] == original {
+            return originalIndex
+        }
+        let equal = rules.indices.filter { rules[$0] == original }
+        return equal.indices.contains(occurrence) ? equal[occurrence] : nil
+    }
+
+    /// This view removed row `removed` (not the edited one) and the list is now `rules`: a later row moved up.
+    mutating func follow(removalOf removed: Int, in rules: [FocusSettings.ProjectRule]) {
+        guard let index = originalIndex, removed != index else { return }
+        if removed < index { originalIndex = index - 1 }
+        recount(in: rules)
+    }
+
+    /// This view swapped rows `first` and `second` and the list is now `rules`.
+    mutating func follow(swapOf first: Int, and second: Int, in rules: [FocusSettings.ProjectRule]) {
+        guard let index = originalIndex else { return }
+        if index == first {
+            originalIndex = second
+        } else if index == second {
+            originalIndex = first
+        }
+        recount(in: rules)
+    }
+
+    private mutating func recount(in rules: [FocusSettings.ProjectRule]) {
+        guard let original, let originalIndex else { return }
+        occurrence = rules.prefix(originalIndex).filter { $0 == original }.count
+    }
+
+    /// The rules with this draft saved: in place of the edited rule, or appended for a new one.
+    func committed(to rules: [FocusSettings.ProjectRule]) throws -> [FocusSettings.ProjectRule] {
+        let index = index(in: rules)
+        let others = rules.enumerated().filter { $0.offset != index }.map(\.element.name)
+        let rule = try FocusSettings.ProjectRule.validated(
+            name: name, cmuxSession: cmuxSession, titleContains: titleContains, host: host, existingNames: others)
+        var result = rules
+        if let index {
+            result[index] = rule
+        } else {
+            result.append(rule)
+        }
+        return result
     }
 }
 

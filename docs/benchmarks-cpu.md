@@ -324,3 +324,24 @@ parents that differ from both old reads, over 145 entries, three times.
 
 What remains per run is mostly the agents tree of large live leads: `readTaskNotifications` verifies the consumed
 prefix of a changed transcript (2026-10-08 section above), and the lead of this campaign was 306 MB with 170 agents.
+
+## 2026-10-11 04:52 — Widget roster: the full refresh arm measured without listing reuse
+
+The `residentFull` arm of `scripts/benchmarks/widget/roster.ts` ran right after `discoverProcess`, whose refresh left
+fresh listing markers, so its `refreshWidgetIndex({all})` reused them (15 s and 30 s reuse windows) and the 349 ms
+above measured little more than a read. The arm now runs inside `withoutListingReuse`
+(`src/utils/agent-sessions/listing-freshness.ts`), which makes every listing in the benchmark process refresh; other
+processes still reuse the markers. The Widget's own full refresh runs every 120 s and cannot count on a recent one.
+
+Rerun, 5 interleaved rounds, load 22–30:
+
+| Arm | Median CPU | Min / max |
+| --- | ---: | --- |
+| `discoverProcess` (old, per run) | 2256 ms | 2127 / 3014 ms, 342 MB RSS per process |
+| `residentFull` | 709 ms | 655 / 1487 ms: the full catalog refresh, no reuse, plus a read |
+| `residentClaude` | 134 ms | 129 / 186 ms |
+| `residentRead` | 93 ms | 86 / 102 ms |
+
+The full refresh costs about twice the earlier figure and still about a third of a discover process. The 5-minute
+side-by-side totals above stand as measured: they timed the real watch as it runs, with whatever reuse the other
+processes on the machine offered it.

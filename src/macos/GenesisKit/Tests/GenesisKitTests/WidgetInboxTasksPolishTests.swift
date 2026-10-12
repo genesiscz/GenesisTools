@@ -72,7 +72,8 @@ final class WidgetTasksPolishTests: XCTestCase {
         store.perform(.complete, on: second)
         XCTAssertEqual(store.shownState(first), "implemented", "the tick shows before the ledger answers")
         XCTAssertEqual(store.mutatingIDs, [first.id, second.id], "two tasks are saved side by side")
-        while released.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0 ..< 400 where released.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(released.count, 2, "both updates reached the ledger")
         released.values.forEach { $0.resume() }
         released = [:]
         await settled(store)
@@ -82,7 +83,8 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(store.undo?.action, .reopen)
         let undo = try XCTUnwrap(store.undo)
         store.perform(undo.action, on: undo.task)
-        while released.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0 ..< 400 where released.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertFalse(released.isEmpty, "the undo reached the ledger")
         released.values.forEach { $0.resume() }
         await settled(store)
         XCTAssertFalse(store.recent.contains { $0.id == undo.task.id }, "an undone task returns to the list")
@@ -314,6 +316,9 @@ final class WidgetTasksPolishTests: XCTestCase {
             "--provider", "codex"])
         XCTAssertEqual(store.receipt, "Saved: Water every plant")
         XCTAssertFalse(task(state: "acknowledged").editable)
+        var excerpt = task()
+        excerpt.truncated = true
+        XCTAssertFalse(excerpt.editable, "an excerpt saved as the task's text would cut the rest of it")
         XCTAssertEqual(task(state: "implemented").toggleAction, .reopen)
         XCTAssertEqual(task(state: "acknowledged").toggleAction, .complete)
         XCTAssertEqual(WidgetTaskAction.returning(to: "acknowledged"), [.reopen, .acknowledge],
@@ -586,5 +591,245 @@ final class WidgetInboxPolishTests: XCTestCase {
                        session("d", "working", agent: "worker"), session("e", "working", visible: false)]
             + (0..<950).map { session("old-\($0)", "finished") })
         XCTAssertEqual(roster.active, 2, "952 sessions, 2 of them active: the preview shows 2, not 952")
+    }
+
+    @MainActor
+    func testASnapshotDecodedForAStoppedWatchIsDroppedAfterARestart() async throws {
+        let decoder = WidgetSnapshotDecoder()
+        decoder.reset()
+        var delivered: [Int] = []
+        decoder.decode(["{\"fixture\":\"old stream\"}"]) { _ in delivered.append(1) }
+        // The watch restarts before the old stream's result reaches the main actor.
+        decoder.reset()
+        decoder.decode(["{\"fixture\":\"new stream\"}"]) { _ in delivered.append(2) }
+        for _ in 0 ..< 400 where delivered.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(delivered, [2], "only the restarted stream's result is applied")
+    }
+}
+
+/// The surface under an open media preview (Media/MediaPreview.swift `.mediaPreviewHost()`).
+@MainActor
+final class MediaPreviewHostTests: XCTestCase {
+    private final class Seen {
+        var enabled: [Bool] = []
+        var preview: MediaPreviewState?
+    }
+
+    private struct Probe: View {
+        let seen: Seen
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.mediaPreview) private var preview
+
+        var body: some View {
+            seen.enabled.append(enabled)
+            seen.preview = preview
+            return Button("Behind the preview") {}
+        }
+    }
+
+    override func tearDown() async throws {
+        MediaPreviewState.active?.dismiss()
+        try await super.tearDown()
+    }
+
+    func testTheSurfaceUnderAnOpenPreviewIsOutOfTheKeyboardOrderUntilItCloses() throws {
+        let seen = Seen()
+        let host = NSHostingView(rootView: Probe(seen: seen).frame(width: 240, height: 160).mediaPreviewHost())
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 240, height: 160),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.contentView = host
+        defer { window.close() }
+        window.order(.below, relativeTo: 0)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(seen.enabled.last, true)
+
+        let preview = try XCTUnwrap(seen.preview)
+        // What a thumbnail hears when the preview closes, and whether the surface took input again by then.
+        var returns: [(id: String, enabled: Bool?)] = []
+        let listening = preview.focusReturns.sink { returns.append(($0, seen.enabled.last)) }
+        defer { listening.cancel() }
+        let items = ["opener", "next"].map { MediaPreviewItem(id: $0, path: "/fixture/media-preview-\($0).png") }
+        preview.present(items, selectedID: "opener")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(seen.enabled.last, false, "a control behind the open preview stayed in the keyboard order")
+
+        preview.step(1)
+        preview.dismiss()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(seen.enabled.last, true, "the surface stayed disabled after the preview closed")
+        XCTAssertEqual(returns.map(\.id), ["opener"], "the keyboard goes back to the thumbnail that opened the preview")
+        XCTAssertEqual(returns.first?.enabled, true, "the focus came back while the opener could not take it")
+    }
+
+    func testAPreviewClosedByAnotherSurfaceGivesNoFocusBack() {
+        let inbox = MediaPreviewState()
+        let shelf = MediaPreviewState()
+        var returned: [String] = []
+        let listening = inbox.focusReturns.sink { returned.append($0) }
+        defer { listening.cancel() }
+        inbox.present([MediaPreviewItem(id: "a", path: "/fixture/a.png")])
+        shelf.present([MediaPreviewItem(id: "b", path: "/fixture/b.png")])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(returned, [], "the inbox thumbnail took the keyboard from the shelf preview that just opened")
+        shelf.dismiss()
+    }
+}
+
+/// What the composer and the number keys answer: an open, unanswered decision, never a folded one or one behind an
+/// open media preview.
+@MainActor
+final class WidgetAnswerTargetTests: XCTestCase {
+    private let key = "local:codex:fixture:"
+
+    private func decision() -> WidgetCard {
+        WidgetCard(id: "decision:d_1_fixture", kind: "decision", sessionKey: key, sourceId: "d_1_fixture", at: 1,
+                   title: "Keep the compact layout?", body: "", status: "open", revision: 1, number: 1,
+                   choices: [WidgetChoice(id: "keep", title: "Keep", recommended: true),
+                             WidgetChoice(id: "drop", title: "Drop", recommended: false)],
+                   attachments: [], refs: [], read: false)
+    }
+
+    private func snapshot(_ card: WidgetCard) throws -> String {
+        let session: [String: Any] = [
+            "key": key, "target": ["hostId": "local", "provider": "codex", "sessionId": "fixture", "sourceHome": "",
+                                   "cwd": "/fixture"],
+            "title": "Fixture", "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true,
+            "visible": true, "hiddenByFilter": false]
+        let cards = try JSONSerialization.jsonObject(with: JSONEncoder().encode([card]))
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
+            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"],
+            "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": cards,
+            "manifests": [:], "errors": [], "selectedKey": key,
+            "notifications": ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false, "sessions": []]])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func testAFoldedDecisionIsNotAnsweredByTheComposer() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-answer-\(UUID().uuidString)")
+        let journal = root.appendingPathComponent("native-submissions")
+        try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.answer." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: root.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults,
+                                    notificationNamespace: "answer." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        let card = decision()
+        model.receive([try snapshot(card)])
+        if model.selectedKey != key { model.select(key) }
+        model.openCard(card)
+        XCTAssertEqual(model.answerCard?.id, card.id, "the open decision is what Return answers")
+
+        // The user folds it and writes an ordinary follow-up.
+        model.foldedCardIDs.insert(card.id)
+        XCTAssertNil(model.answerCard)
+        XCTAssertEqual(model.card?.id, card.id, "it stays selected, folded")
+        model.setText("Carry on with the tests")
+        model.send()
+        let files = try FileManager.default.contentsOfDirectory(at: journal, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "json" }
+        XCTAssertEqual(files.count, 1)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: try XCTUnwrap(files.first)))
+            as? [String: Any])
+        let payload = try XCTUnwrap(request["payload"] as? [String: Any])
+        XCTAssertEqual(payload["kind"] as? String, "followup", "a follow-up, not an answer to the folded decision")
+        XCTAssertEqual(payload["text"] as? String, "Carry on with the tests")
+
+        model.openCard(card)
+        XCTAssertEqual(model.answerCard?.id, card.id, "opening it again makes it the answer target")
+    }
+
+    func testANumberKeyAnswersOnlyAnOpenDecisionAndNeverOneBehindAPreview() {
+        let card = decision()
+        func key(_ characters: String, keyCode: UInt16, previewOpen: Bool = false,
+                 answering: WidgetCard?) -> WidgetCoordinator.PanelKey {
+            WidgetCoordinator.panelKey(keyCode: keyCode, characters: characters, context: .init(
+                previewOpen: previewOpen, agents: true, editingText: false, answering: answering))
+        }
+        XCTAssertEqual(key("1", keyCode: 0x12, answering: card), .choose("keep"))
+        XCTAssertEqual(key("2", keyCode: 0x13, answering: card), .choose("drop"))
+        XCTAssertEqual(key("1", keyCode: 0x12, answering: nil), .pass, "a folded decision is not answered")
+        XCTAssertEqual(key("1", keyCode: 0x12, previewOpen: true, answering: card), .pass,
+                       "a number pressed in the preview never answers the decision behind it")
+        XCTAssertEqual(key("j", keyCode: 0x26, previewOpen: true, answering: card), .pass,
+                       "nor does j change the session under it")
+        XCTAssertEqual(key("j", keyCode: 0x26, answering: card), .previous)
+        XCTAssertEqual(key("", keyCode: 53, answering: card), .collapse)
+    }
+}
+
+/// The camera button when macOS refuses the screenshot.
+@MainActor
+final class WidgetCaptureRefusalTests: XCTestCase {
+    func testARefusedScreenshotThatOpensNoDialogSaysWhy() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-capture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("native-submissions"),
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.capture." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: root.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults,
+                                    notificationNamespace: "capture." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        // This process still reads the grant as on (macOS caches it per process), so no dialog opens; the new
+        // screenshot process is refused.
+        var gateCalls = 0
+        model.screenCaptureGate = { _ in
+            gateCalls += 1
+            return true
+        }
+        model.actionRunner = { _ in
+            throw ToolsBridgeError.refused("[\(WidgetCaptureError.screenRecordingDenied)] Screen Recording is off")
+        }
+        model.capture()
+        for _ in 0 ..< 400 where model.error == nil { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(model.error, WidgetModel.screenRecordingRefused, "the camera button says why nothing happened")
+        XCTAssertEqual(gateCalls, 2, "asked before the screenshot, and again after the refusal")
+    }
+}
+
+/// The warm Agents pane after the panel collapsed (WidgetHostView `WarmPaneVisibility`).
+@MainActor
+final class WarmPaneVisibilityTests: XCTestCase {
+    private final class Seen {
+        var enabled: [Bool] = []
+    }
+
+    private struct Probe: View {
+        let seen: Seen
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            seen.enabled.append(enabled)
+            return TextField("Reply to agent…", text: .constant(""))
+        }
+    }
+
+    private func render(shown: Bool, _ seen: Seen) {
+        let host = NSHostingView(rootView: Probe(seen: seen).modifier(WarmPaneVisibility(shown: shown, alignment: .top))
+            .frame(width: 240, height: 160))
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 240, height: 160),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.contentView = host
+        defer { window.close() }
+        window.order(.below, relativeTo: 0)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+
+    func testAHiddenWarmPaneKeepsItsControlsOutOfTheKeyboardOrder() {
+        let hidden = Seen()
+        render(shown: false, hidden)
+        XCTAssertEqual(hidden.enabled.last, false, "the hidden composer can take no keystrokes")
+        let shown = Seen()
+        render(shown: true, shown)
+        XCTAssertEqual(shown.enabled.last, true)
     }
 }

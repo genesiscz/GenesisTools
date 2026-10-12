@@ -475,7 +475,7 @@ final class HubAgentsModel: ObservableObject {
 
     init() {
         visible = HubVisibility.shared.visible
-        HubVisibility.shared.onChange { [weak self] visible in self?.visibilityChanged(visible) }
+        HubVisibility.shared.onChange(self) { model, visible in model.visibilityChanged(visible) }
     }
 
     /// The mode came on screen: paint the last list, ask the CLI, watch the open parents.
@@ -1388,7 +1388,7 @@ struct AgentsMain: View {
                     symbol: "person.2",
                     text: "No agent open",
                     detail: "Pick an agent or a session's Main row in the list to read its whole transcript.",
-                    actionTitle: newest.map { "Open \(TitleFormatter.cleanSessionTitle($0.displayTitle) ?? $0.displayTitle)" },
+                    actionTitle: newest.map { "Open \($0.displayTitle)" },
                     action: newest.map { parent in { agents.openMain(parent) } }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

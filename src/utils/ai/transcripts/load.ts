@@ -7,6 +7,7 @@ import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 import { claudeMessagesToTurns } from "./claude";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
+import { parseTranscriptLine } from "./parse-line";
 import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
 import { foldTurnsAppendOnly } from "./turn-fold-cache";
@@ -67,7 +68,10 @@ async function turnsFromFile(resolved: ResolvedTranscript, path: string, index =
         }
     }
 
-    const records = readRecords(path);
+    return codexTurns(resolved, readRecords(path), index);
+}
+
+function codexTurns(resolved: ResolvedTranscript, records: unknown[], index: number): TranscriptTurn[] {
     if (resolved.source === "worker" || looksLikeCodexGt(records)) {
         // The codex CLI's own event mapping, not a second guess at it: the
         // stored notifications are `item/started`, `item/completed`,
@@ -79,6 +83,26 @@ async function turnsFromFile(resolved: ResolvedTranscript, path: string, index =
         return workerEventsToTurns(events, resolved.sessionId, index);
     }
     return codexNativeLinesToTurns(records);
+}
+
+/**
+ * The turns of some of a Codex or Grok transcript's lines (the end of a file too large to parse whole), by the same
+ * parsers a whole file gets. A turn that began before the first line is missing its start. Claude has its own tail
+ * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
+ */
+export function turnsFromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[] {
+    if (resolved.provider === "grok") {
+        return resolved.source === "worker"
+            ? grokWorkerTextToTurns(lines.join("\n"), resolved.sessionId)
+            : grokNativeLinesToTurns(lines);
+    }
+
+    if (resolved.provider === "codex") {
+        const records = lines.map(parseTranscriptLine).filter((record) => record !== null);
+        return codexTurns(resolved, records, 1);
+    }
+
+    return [];
 }
 
 /** Every turn of the transcript by a full parse, earlier chain files first; the array index is the global turn index. */

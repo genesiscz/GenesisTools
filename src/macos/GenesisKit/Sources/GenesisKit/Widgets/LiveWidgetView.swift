@@ -27,8 +27,6 @@ public struct LiveWidgetView: View {
     @State private var retry: WidgetOutgoing?
     @State private var choosingSession = false
     @State private var sourcesExpanded = false
-    /// Inbox rows the user folded. The open row is the selected card, the one the composer answers.
-    @State private var collapsedCards: Set<String> = []
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
     @State private var discard: WidgetOutgoing?
@@ -380,15 +378,16 @@ public struct LiveWidgetView: View {
                 unread > 0 ? "\(unread) unread" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
+    /// The open row is the selected card unless the user folded it (`WidgetModel.foldedCardIDs`); only an open
+    /// decision is what the composer and the number keys answer (`WidgetModel.answerCard`).
     private func isOpen(_ card: WidgetCard) -> Bool {
-        card.id == model.card?.id && !collapsedCards.contains(card.id)
+        card.id == model.card?.id && !model.foldedCardIDs.contains(card.id)
     }
 
     private func toggle(_ card: WidgetCard) {
         if isOpen(card) {
-            collapsedCards.insert(card.id)
+            model.foldedCardIDs.insert(card.id)
         } else {
-            collapsedCards.remove(card.id)
             model.openCard(card)
         }
     }
@@ -404,8 +403,12 @@ public struct LiveWidgetView: View {
                     Image(systemName: Self.kindSymbol(card.kind)).font(.system(size: 11))
                         .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(card.title).font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                            .lineLimit(open ? 4 : 2).fixedSize(horizontal: false, vertical: true)
+                        // A one-question form's title is its prompt, which the open card does not repeat: open, it
+                        // shows whole and as Markdown, the way the form drew it.
+                        let isPrompt = Self.asksOneQuestion(card)
+                        (isPrompt ? Text(.init(card.title)) : Text(card.title))
+                            .font(.system(size: 12.5, weight: open ? .semibold : .medium))
+                            .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
                         if !open, let preview = Self.previewLine(card.body) {
                             Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -452,7 +455,7 @@ public struct LiveWidgetView: View {
             if card.needsAnswer {
                 if card.kind == "form" {
                     ForEach(card.formItems ?? []) { item in
-                        formItem(item, card: card, showsPrompt: (card.formItems?.count ?? 0) != 1)
+                        formItem(item, card: card, showsPrompt: !Self.asksOneQuestion(card))
                             .disabled(model.cardPending)
                     }
                     Button(model.cardPending ? "Answer queued" : "Send answers") { model.submit(answering: true) }
@@ -529,6 +532,11 @@ public struct LiveWidgetView: View {
         case "todo": return "checklist"
         default: return "tray"
         }
+    }
+
+    /// A form with one question: its title is that question's prompt, so the open card shows it once, in the header.
+    static func asksOneQuestion(_ card: WidgetCard) -> Bool {
+        card.kind == "form" && card.formItems?.count == 1
     }
 
     static func kindLabel(_ card: WidgetCard) -> String {
@@ -647,7 +655,7 @@ public struct LiveWidgetView: View {
                         }
                         if card.needsAnswer {
                             Button("Answer this question") {
-                                collapsedCards.remove(card.id)
+                                model.foldedCardIDs.remove(card.id)
                                 model.selectedCardID = card.id
                                 section = "Inbox"
                             }.buttonStyle(.genHover())
@@ -817,16 +825,10 @@ public struct LiveWidgetView: View {
                     text: Binding(get: { model.draft.text }, set: model.setText), axis: .vertical
                 )
                 .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4).focused($editing)
-                .onSubmit {
-                    model.submit(
-                        answering: model.card?.kind == "decision" && model.card?.needsAnswer == true
-                            && !model.cardPending)
-                }
+                .onSubmit { model.send() }
                 .accessibilityLabel("Reply to selected agent")
                 Button {
-                    model.submit(
-                        answering: model.card?.kind == "decision" && model.card?.needsAnswer == true
-                            && !model.cardPending)
+                    model.send()
                 } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 23)).foregroundStyle(.blue)
                 }.buttonStyle(.genHoverIcon(accent: .blue, diameter: 28)).disabled(model.importing > 0)

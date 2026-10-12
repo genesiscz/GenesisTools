@@ -327,6 +327,19 @@ public final class ActivityStore {
         try segmentsWhere("is_closed=0")
     }
 
+    /// Where segment `id` starts now, or nil when the ledger no longer has it (a deletion can move or remove it).
+    func segmentStartedMs(id: Int64) throws -> Int64? {
+        try queue.sync {
+            let stmt = try prepare("SELECT started_ms FROM activity_segment WHERE id=?;")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, id)
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_DONE { return nil }
+            guard step == SQLITE_ROW else { throw StoreError.sqlite(lastMessage()) }
+            return sqlite3_column_int64(stmt, 0)
+        }
+    }
+
     /// Attaches a segment to a pomodoro session after the fact (a flow can start mid-segment).
     public func attachSegment(id: Int64, toSession sessionId: Int64?) throws {
         try queue.sync {
@@ -512,6 +525,30 @@ public final class ActivityStore {
             sqlite3_bind_int64(stmt, 1, id)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return optionalInt(stmt, 0)
+        }
+    }
+
+    /// The open row that carries gap `id` on after `forget` ended at `to`: the row itself while it is still open (it
+    /// started inside or after the range), else the open tail `forget` split off at `to` with its reason and
+    /// deadline. Nil when neither is open.
+    func openGapAfterForget(id: Int64, to: Int64) throws -> Int64? {
+        try queue.sync {
+            let own = try prepare("SELECT ended_ms IS NULL, reason FROM capture_gap WHERE id=?;")
+            defer { sqlite3_finalize(own) }
+            sqlite3_bind_int64(own, 1, id)
+            let step = sqlite3_step(own)
+            if step == SQLITE_DONE { return nil }
+            guard step == SQLITE_ROW else { throw StoreError.sqlite(lastMessage()) }
+            if sqlite3_column_int(own, 0) == 1 { return id }
+            let tail = try prepare("""
+            SELECT id FROM capture_gap WHERE ended_ms IS NULL AND started_ms=? AND reason=? AND id>?
+            ORDER BY id DESC LIMIT 1;
+            """)
+            defer { sqlite3_finalize(tail) }
+            sqlite3_bind_int64(tail, 1, to)
+            bindText(tail, 2, text(own, 1) ?? "")
+            sqlite3_bind_int64(tail, 3, id)
+            return sqlite3_step(tail) == SQLITE_ROW ? sqlite3_column_int64(tail, 0) : nil
         }
     }
 
@@ -704,22 +741,25 @@ public final class ActivityStore {
     /// Every pause inside one session, oldest first. `pausedMs` answers "how long"; this
     /// answers "when, and why", which is what a breakdown has to draw.
     public func pauses(sessionId: Int64) throws -> [Pause] {
-        try queue.sync {
-            let stmt = try prepare("""
-            SELECT id, started_ms, ended_ms, reason FROM focus_pause
-            WHERE session_id=? ORDER BY started_ms ASC;
-            """)
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_int64(stmt, 1, sessionId)
-            var rows: [Pause] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                rows.append(Pause(id: sqlite3_column_int64(stmt, 0),
-                                  startedMs: sqlite3_column_int64(stmt, 1),
-                                  endedMs: optionalInt(stmt, 2),
-                                  reason: text(stmt, 3) ?? "manual"))
-            }
-            return rows
+        try queue.sync { try pausesHoldingQueue(sessionId: sessionId) }
+    }
+
+    /// `pauses(sessionId:)` for a caller already on `queue` (a transaction such as `forget`).
+    private func pausesHoldingQueue(sessionId: Int64) throws -> [Pause] {
+        let stmt = try prepare("""
+        SELECT id, started_ms, ended_ms, reason FROM focus_pause
+        WHERE session_id=? ORDER BY started_ms ASC;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, sessionId)
+        var rows: [Pause] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            rows.append(Pause(id: sqlite3_column_int64(stmt, 0),
+                              startedMs: sqlite3_column_int64(stmt, 1),
+                              endedMs: optionalInt(stmt, 2),
+                              reason: text(stmt, 3) ?? "manual"))
         }
+        return rows
     }
 
     /// Paused milliseconds inside a session, so "actual focused time" excludes them.
@@ -729,7 +769,11 @@ public final class ActivityStore {
     /// that time twice and the phase clock runs backwards. Measured 2026-09-21 on a live flow:
     /// 248 seconds of real pauses were reported as 6,844.
     public func pausedMs(sessionId: Int64, now: Int64) throws -> Int64 {
-        let spans = try pauses(sessionId: sessionId).map {
+        Self.mergedPausedMs(try pauses(sessionId: sessionId), now: now)
+    }
+
+    static func mergedPausedMs(_ pauses: [Pause], now: Int64) -> Int64 {
+        let spans = pauses.map {
             (start: $0.startedMs, end: $0.endedMs ?? now)
         }.filter { $0.end > $0.start }.sorted { $0.start < $1.start }
 
@@ -829,9 +873,25 @@ public final class ActivityStore {
         }
     }
 
+    /// The live phase's planned length and the time it has run at `now` (wall clock minus merged pauses), for a
+    /// caller already on `queue`. The timer derives its remaining time from exactly these rows.
+    private func liveClockHoldingQueue(at now: Int64) throws -> (id: Int64, plannedMs: Int64, elapsedMs: Int64)? {
+        let stmt = try prepare("""
+        SELECT id, planned_sec, started_ms FROM focus_session
+        WHERE state IN ('running','paused') ORDER BY started_ms DESC LIMIT 1;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        let id = sqlite3_column_int64(stmt, 0)
+        let paused = Self.mergedPausedMs(try pausesHoldingQueue(sessionId: id), now: now)
+        return (id, sqlite3_column_int64(stmt, 1) * 1000, now - sqlite3_column_int64(stmt, 2) - paused)
+    }
+
     /// Deletes everything recorded in a range, optionally for one app only, and reports what went.
+    /// `now` is the clock the live phase's remaining time is kept against (tests pass one).
     @discardableResult
-    public func forget(from: Int64, to: Int64, appBundle: String? = nil) throws -> (segments: Int, sessions: Int) {
+    public func forget(from: Int64, to: Int64, appBundle: String? = nil,
+                       now: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) throws -> (segments: Int, sessions: Int) {
         guard from < to else { return (0, 0) }
         return try queue.sync {
             try exec("BEGIN IMMEDIATE;")
@@ -888,11 +948,42 @@ public final class ActivityStore {
             _ = try run("UPDATE activity_segment SET ended_ms=?, is_closed=1 WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?)\(app);", [from, from, from], app: appBundle)
             var sessions = 0
             if appBundle == nil {
+                // The timer's remaining time comes from the live row and its pauses. Forgetting part of them must not
+                // move that countdown, so it is measured now and kept below through the planned length.
+                let reference = max(now, to)
+                let liveBefore = try liveClockHoldingQueue(at: reference)
+                // The session the timer still runs (or holds paused) keeps its row, so the timer goes on writing to a
+                // real one: like the open segment, it starts again where the range ends, and its pauses inside the
+                // range go below.
+                _ = try run("UPDATE focus_session SET started_ms=? WHERE started_ms >= ? AND started_ms < ? AND state IN ('running','paused');", [to, from, to])
+                // A pause of that timer still open, or running past the range, keeps its part after the range: the
+                // phase clock subtracts paused time, so deleting it would count the rest of the pause as focus.
+                _ = try run("""
+                UPDATE focus_pause SET started_ms=? WHERE started_ms >= ? AND started_ms < ?
+                  AND (ended_ms IS NULL OR ended_ms > ?)
+                  AND session_id IN (SELECT id FROM focus_session WHERE state IN ('running','paused'));
+                """, [to, from, to, to])
                 _ = try run("DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE started_ms >= ? AND started_ms < ?);", [from, to])
                 sessions = try run("DELETE FROM focus_session WHERE started_ms >= ? AND started_ms < ?;", [from, to])
                 // A finished session that started earlier keeps only its time before the range; a running one is left
                 // to its timer, and its pauses inside the range go.
                 _ = try run("DELETE FROM focus_pause WHERE started_ms >= ? AND started_ms < ?;", [from, to])
+                // Remaining = planned - elapsed, before and after: the planned length takes up whatever the rewrite
+                // changed in the elapsed time, so the countdown, a resume and a restart all read the same remaining
+                // time (`FocusController.didForget` reloads the engine from these rows).
+                if let liveBefore, let after = try liveClockHoldingQueue(at: reference), after.id == liveBefore.id {
+                    let remaining = liveBefore.plannedMs - liveBefore.elapsedMs
+                    let planned = remaining + after.elapsedMs
+                    if planned >= 0 {
+                        _ = try run("UPDATE focus_session SET planned_sec=? WHERE id=?;",
+                                    [Int64((Double(planned) / 1000).rounded()), after.id])
+                    } else {
+                        // An overrunning phase whose overrun the time after the range cannot hold: a planned length
+                        // cannot go below zero, so the start moves back by the rest, and it stays the same time over.
+                        _ = try run("UPDATE focus_session SET planned_sec=0, started_ms=started_ms+? WHERE id=?;",
+                                    [planned, after.id])
+                    }
+                }
                 _ = try run("UPDATE focus_session SET ended_ms=? WHERE started_ms < ? AND ended_ms IS NOT NULL AND ended_ms > ?;", [from, from, from])
                 // Preserve both outside fragments of a gap spanning the forgotten interval.
                 _ = try run("INSERT INTO capture_gap(started_ms,ended_ms,reason,until_ms) SELECT ?,ended_ms,reason,until_ms FROM capture_gap WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [to, from, to])

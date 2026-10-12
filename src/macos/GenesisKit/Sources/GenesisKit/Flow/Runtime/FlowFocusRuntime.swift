@@ -28,6 +28,10 @@ public final class FlowFocusRuntime: ObservableObject {
     public let directory: URL
     public let hostID: String
     public let liveServices: Bool
+    /// Set before `start()` by a face that only edits settings (Clicky's `--headless` Settings): it never takes the
+    /// owner's place, so it starts no capture, hotkeys or DND, and plays no sounds or notifications. It joins the
+    /// running owner as a client, so its switches and Flow files are written by the owner as the normal Settings'.
+    public var settingsOnly = false
     private let presentsWindows: Bool
     private let dnd: FocusOrchestrator
     private let flowStore: FlowStore
@@ -106,7 +110,7 @@ public final class FlowFocusRuntime: ObservableObject {
                     await stop()
                     return
                 }
-                if let acquired = try FlowFocusLease.acquire(directory: directory, hostID: hostID) {
+                if !settingsOnly, let acquired = try FlowFocusLease.acquire(directory: directory, hostID: hostID) {
                     lease = acquired
                     try becomeOwner(acquired)
                     return
@@ -135,8 +139,9 @@ public final class FlowFocusRuntime: ObservableObject {
         }
     }
 
-    /// Hosts must await this from their terminate-later delegate path. The descriptor stays held
-    /// until recording has stopped and every already-queued settings write has reached disk.
+    /// Hosts must await this from their terminate-later delegate path. The descriptor stays held until recording has
+    /// stopped, the command the owner took and any ledger deletion have finished, and every already-queued settings
+    /// write has reached disk. A terminating host bounds the wait (5 s); the process exit then frees the lease.
     public func stop() async {
         if let shutdown {
             await shutdown.value
@@ -168,7 +173,9 @@ public final class FlowFocusRuntime: ObservableObject {
         stateWatcher = nil
         discoveryWatcher?.stop()
         discoveryWatcher = nil
-        mailbox?.stop()
+        // A command the owner already took finishes first, while the models it uses still run (a client's "delete
+        // activity" waits for its deletion); commands still waiting are refused.
+        await mailbox?.stopAfterCurrentCommand()
         mailbox = nil
         subscriptions.removeAll()
         configuration.allowsWrites = false
@@ -185,6 +192,8 @@ public final class FlowFocusRuntime: ObservableObject {
         dnd.ownsRuntime = false
         dnd.remoteCommand = nil
         if let beforeShutdownFlush { await beforeShutdownFlush() }
+        // The owner's own "delete activity" runs outside the mailbox; the ledger is not handed over mid-deletion.
+        await focus.finishLedgerWrites()
         await configuration.flush()
         if Self.activeOwners[directory] === self { Self.activeOwners.removeValue(forKey: directory) }
         lease?.release()
@@ -263,8 +272,8 @@ public final class FlowFocusRuntime: ObservableObject {
         configuration.onFailure = { [weak self] in self?.reportFailure($0) }
         configuration.reload()
         flow.configure(store: flowStore)
-        FlowFocusHost.shared.soundsEnabled = liveServices
-        FlowFocusHost.shared.notificationsEnabled = liveServices
+        FlowFocusHost.shared.soundsEnabled = liveServices && !settingsOnly
+        FlowFocusHost.shared.notificationsEnabled = liveServices && !settingsOnly
         installTargetObserver()
         stateWatcher = DirectoryWatcher(paths: [dataRoot.path], latency: 0.2,
             accepts: { [dataRoot] in $0 == dataRoot.appendingPathComponent("client.json").path }) { [weak self] _ in
@@ -294,7 +303,7 @@ public final class FlowFocusRuntime: ObservableObject {
             guard let self, self.role.isOwner else {
                 throw FlowFocusMailbox.Failure.unavailable("This process no longer owns Flow and Focus.")
             }
-            return try self.handle(command)
+            return try await self.handle(command)
         }
         self.mailbox = mailbox
         role = .owner(hostID)
@@ -313,9 +322,18 @@ public final class FlowFocusRuntime: ObservableObject {
         let forward: (String, Data) -> Void = { [weak self] action, payload in self?.perform(action, payload) }
         flow.remoteCommand = forward
         dnd.remoteCommand = forward
+        // The configuration reports a refusal itself (its `onFailure` reaches `reportFailure`), and a save waits for it.
         configuration.forwardPatch = { [weak self] patch in
-            do { self?.perform("configuration.patch", try JSONSerialization.data(withJSONObject: patch)) }
-            catch { self?.reportFailure(error.localizedDescription) }
+            guard let self, let channel = self.mailbox else {
+                throw FlowFocusMailbox.Failure.unavailable("Flow and Focus are not ready.")
+            }
+            let sent = self.forward("configuration.patch", try JSONSerialization.data(withJSONObject: patch), through: channel)
+            return Task { @MainActor [weak self] in
+                try await sent.value
+                // The owner answers after its write, so client.json holds the patch now; a save that returns true
+                // already reads it, without waiting for the owner's next snapshot.
+                self?.configuration.reload()
+            }
         }
         flowStore.forwardWrite = { [weak self] name, data in
             do { self?.perform("flow.file", try JSONEncoder().encode(FlowStoreWrite(name: name, data: data))) }
@@ -413,23 +431,47 @@ public final class FlowFocusRuntime: ObservableObject {
 
     private func perform(_ action: String, _ payload: Data) {
         guard let channel = mailbox else { reportFailure("Flow and Focus are not ready."); return }
+        let sent = forward(action, payload, through: channel)
+        Task { @MainActor [weak self] in
+            do { try await sent.value }
+            catch {
+                guard let self, self.mailbox === channel else { return }
+                self.reportFailure(error.localizedDescription)
+            }
+        }
+    }
+
+    /// One command to the owner. A refusal makes this client read the stored state again, so it shows nothing that
+    /// was never written; the error goes to the caller.
+    private func forward(_ action: String, _ payload: Data, through channel: FlowFocusMailbox) -> Task<Void, Error> {
         Task { @MainActor [weak self] in
             do {
                 _ = try await channel.request(action: action, payload: payload)
                 guard let self, self.mailbox === channel else { return }
                 self.receiveSnapshot()
             } catch {
-                guard let self, self.mailbox === channel else { return }
-                self.flow.reloadStoredState()
-                self.configuration.reload()
-                self.reportFailure(error.localizedDescription)
+                if let self, self.mailbox === channel {
+                    self.flow.reloadStoredState()
+                    self.configuration.reload()
+                }
+                throw error
             }
         }
     }
 
-    private func handle(_ command: FlowFocusMailbox.Command) throws -> Data {
+    private func handle(_ command: FlowFocusMailbox.Command) async throws -> Data {
         do {
-            return try flowStore.verifyingWrites { try handleMutation(command) }
+            if command.action == "focus.forget" { return try await forget(command) }
+            let failures = configuration.failureCount
+            let reply = try flowStore.verifyingWrites { try handleMutation(command) }
+            if command.action == "configuration.patch" {
+                // The answer waits for client.json, so a client's Save reports what was stored, not what was sent.
+                await configuration.flush()
+                if configuration.failureCount != failures {
+                    throw FlowFocusMailbox.Failure.unavailable(configuration.lastError ?? "The setting was not stored.")
+                }
+            }
+            return reply
         } catch {
             reportFailure(error.localizedDescription)
             throw error
@@ -441,7 +483,6 @@ public final class FlowFocusRuntime: ObservableObject {
         if command.action.hasPrefix("focus."), !command.action.hasPrefix("focus.dnd."), focus.engine == nil {
             throw FlowFocusMailbox.Failure.unavailable(focus.lastError ?? "The Focus ledger is unavailable.")
         }
-        var reply = Data()
         switch command.action {
         case "audio.acquire": try externalAudio.acquire(decode(FlowAudioAdmission.self))
         case "audio.attach": try externalAudio.attach(decode(FlowAudioAttachment.self))
@@ -457,6 +498,7 @@ public final class FlowFocusRuntime: ObservableObject {
         case "flow.permissions": flow.requestDictationPermissions()
         case "flow.accessibility": flow.requestAccessibility()
         case "flow.lab": flow.setLabEnabled(try decode(Bool.self))
+        case "flow.hotkey.suspend": flow.suspendHotkey(try decode(Bool.self))
         case "flow.config":
             let patch = try JSONSerialization.jsonObject(with: command.payload) as? [String: Any] ?? [:]
             // Decoding clamps a stored value; a new one outside the range is refused, not quietly changed.
@@ -512,12 +554,6 @@ public final class FlowFocusRuntime: ObservableObject {
         case "focus.note": focus.engine?.setNote(try decode(String.self))
         case "focus.capture.pause": focus.recorder?.pauseCapture(until: try decode(Date.self))
         case "focus.capture.resume": focus.recorder?.resumeCapture()
-        case "focus.forget":
-            // A client's ledger connection is read-only, so a "delete activity" request from its Settings runs here.
-            let range = try decode(FocusForgetCommand.self)
-            guard range.from < range.to, let store = focus.store else { throw invalidCommand() }
-            reply = try JSONEncoder().encode(FocusForgetResult.forget(range, in: store))
-            focus.studioModel?.reload()
         case "focus.dnd.begin": _ = try dnd.beginSession(reason: String(data: command.payload, encoding: .utf8) ?? "genesis-voice")
         case "focus.dnd.end":
             let reason = String(data: command.payload, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 }
@@ -525,7 +561,17 @@ public final class FlowFocusRuntime: ObservableObject {
         default: throw invalidCommand()
         }
         schedulePublication()
-        return reply
+        return Data()
+    }
+
+    /// A client's ledger connection is read-only, so a "delete activity" request from its Settings runs here, off the
+    /// main actor like the owner's own (the range can be the whole ledger).
+    private func forget(_ command: FlowFocusMailbox.Command) async throws -> Data {
+        let range = try JSONDecoder().decode(FocusForgetCommand.self, from: command.payload)
+        guard range.from < range.to else { throw invalidCommand() }
+        let result = try await focus.forgetOwned(range)
+        schedulePublication()
+        return try JSONEncoder().encode(result)
     }
 
     private func invalidCommand() -> FlowFocusMailbox.Failure { .unavailable("Unsupported Flow and Focus command.") }

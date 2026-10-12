@@ -10,9 +10,11 @@ public struct FlowTransformSettingsView: View {
     @State private var modelID = ""
     @State private var failure: String?
     @State private var loading = false
-    /// The model reference stored in client.json, to tell an unsaved choice from the saved one.
-    @State private var savedRef = ""
+    /// The model reference client.json holds, to tell an unsaved choice from the saved one. Read from the observed
+    /// configuration, so a write from another window, or one that failed and was rolled back, shows at once.
+    private var savedRef: String { tools.modelRef }
     @State private var justSaved = false
+    @State private var saving = false
 
     public init(tools: FlowTransformTools) {
         self.tools = tools
@@ -64,9 +66,9 @@ public struct FlowTransformSettingsView: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                     Spacer()
-                    Button("Save", action: save)
+                    Button(saving ? "Saving…" : "Save", action: save)
                         .buttonStyle(.borderedProminent)
-                        .disabled(!canSave || !hasUnsavedChoice)
+                        .disabled(saving || !canSave || !hasUnsavedChoice)
                         .accessibilityIdentifier("flow.transforms.save")
                 }
             }
@@ -93,11 +95,19 @@ public struct FlowTransformSettingsView: View {
         canSave && "@account/\(accountID):\(trimmedModel)" != savedRef
     }
 
+    /// "Saved" only after the write landed, and only while the choice on screen is still the one written. A refused or
+    /// failed write keeps the choice unsaved, so Save stays on to retry, and `configuration.lastError` (shown below
+    /// the card) says why.
     private func save() {
-        tools.save(accountID: accountID, model: modelID)
-        savedRef = tools.modelRef
-        justSaved = true
+        let account = accountID
+        let model = trimmedModel
+        let ref = "@account/\(account):\(model)"
+        saving = true
         Task { @MainActor in
+            let saved = await tools.save(accountID: account, model: model)
+            saving = false
+            guard saved, "@account/\(accountID):\(trimmedModel)" == ref else { return }
+            justSaved = true
             try? await Task.sleep(for: .seconds(2))
             justSaved = false
         }
@@ -112,7 +122,6 @@ public struct FlowTransformSettingsView: View {
             try Task.checkCancellation()
             choices = loaded
             let ref = tools.modelRef
-            savedRef = ref
             if ref.hasPrefix("@account/"), let split = ref.firstIndex(of: ":") {
                 accountID = String(ref[ref.index(ref.startIndex, offsetBy: 9) ..< split])
                 modelID = String(ref[ref.index(after: split)...])

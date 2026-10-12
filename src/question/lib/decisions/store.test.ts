@@ -35,6 +35,7 @@ import {
 import { DECISION_STATES, decisionUpdateInputSchema, postDecisionsInputSchema } from "./schema";
 import { sendAnsweredDecisions } from "./send";
 import {
+    createTodo,
     type DecisionRecord,
     harvestDecisions,
     markNotified,
@@ -1939,6 +1940,15 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         expect(() => listWidgetTasks({ file: files.file, signal: controller.signal })).toThrow();
     });
 
+    test("a task's session is trimmed once, so it numbers on with that session's tasks", async () => {
+        const { files } = fixture();
+        const next = await createTodo({
+            ...files,
+            todo: { title: "Next step", sessionId: " fixture ", provider: "codex" },
+        });
+        expect(next).toMatchObject({ id: "t_2_fixture", sessionId: "fixture", number: 2 });
+    });
+
     test("a created task is numbered per session, lists as active and ticks done through the same guards", async () => {
         const { files, row } = fixture();
         const now = () => "2026-01-02T09:00:00.000Z";
@@ -2060,5 +2070,24 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         await expect(
             editWidgetTask({ files, input: { id: row.id, title: "Too late", expected: expected(finished) } })
         ).rejects.toThrow("Only an open task");
+    });
+
+    test("a task the widget shows as an excerpt cannot be edited there, so its full text is never cut", async () => {
+        const { files, row } = fixture();
+        const long: DecisionRecord = { ...row, prompt: `${"Check every step. ".repeat(150)}The last line.` };
+        writeFileSync(files.file, `${SafeJSON.stringify(long)}\n`);
+        expect(listWidgetTasks({ file: files.file }).tasks[0]?.truncated).toBe(true);
+        const before = readFileSync(files.file, "utf8");
+        await expect(
+            editWidgetTask({ files, input: { id: row.id, title: "Shorter title", expected: expected(long) } })
+        ).rejects.toThrow("longer than the widget shows (2000 characters)");
+        expect(readFileSync(files.file, "utf8")).toBe(before);
+
+        const longTitle: DecisionRecord = { ...row, title: "t".repeat(200) };
+        writeFileSync(files.file, `${SafeJSON.stringify(longTitle)}\n`);
+        expect(listWidgetTasks({ file: files.file }).tasks[0]?.truncated).toBe(true);
+        await expect(
+            editWidgetTask({ files, input: { id: row.id, title: "t".repeat(180), expected: expected(longTitle) } })
+        ).rejects.toThrow("longer than the widget shows (a 180-character title)");
     });
 });

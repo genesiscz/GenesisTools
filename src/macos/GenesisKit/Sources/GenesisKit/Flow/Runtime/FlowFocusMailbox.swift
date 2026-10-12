@@ -34,7 +34,11 @@ public final class FlowFocusMailbox {
     public var onOwnerChange: (() -> Void)?
     public let directory: URL
     public let owner: FlowFocusLease.Owner
-    private let handler: ((Command) throws -> Data)?
+    /// Runs one command on the owner. It may suspend (work that must not hold the main actor); commands stay in order,
+    /// one at a time, the owner's own requests included.
+    public typealias Handler = @MainActor (Command) async throws -> Data
+
+    private let handler: Handler?
     private let requests: URL
     private let replies: URL
     private let wakeName: Notification.Name
@@ -43,6 +47,13 @@ public final class FlowFocusMailbox {
     private var pending: [UUID: CheckedContinuation<Data, Error>] = [:]
     private var deadlines: [UUID: Task<Void, Never>] = [:]
     private var isDraining = false
+    private var drainAgain = false
+    /// One command runs at a time, in the order it reached the owner, whether a client queued it or the owner asked
+    /// itself (`request` on the owner runs it directly). A handler may suspend, so without this a second one started
+    /// while the first waited.
+    private var running = false
+    private var turns: [CheckedContinuation<Void, Never>] = []
+    private var settled: [CheckedContinuation<Void, Never>] = []
     private var stopped = false
     private var completed: [UUID] = []
     private var processed = Set<UUID>()
@@ -50,7 +61,7 @@ public final class FlowFocusMailbox {
     private var sequence: UInt64 = 0
 
     public init(directory: URL, owner: FlowFocusLease.Owner,
-                handler: ((Command) throws -> Data)? = nil) throws {
+                handler: Handler? = nil) throws {
         self.directory = directory
         self.owner = owner
         self.handler = handler
@@ -93,6 +104,15 @@ public final class FlowFocusMailbox {
         for continuation in continuations { continuation.resume(throwing: CancellationError()) }
     }
 
+    /// Stops, then waits for the command already running: a client's "delete activity" waits for its deletion. The
+    /// owner calls this before it stops its models and releases its lease, so nothing it accepted changes the ledger
+    /// after a replacement took over. Commands still waiting for their turn are refused, not run.
+    public func stopAfterCurrentCommand() async {
+        stop()
+        guard running else { return }
+        await withCheckedContinuation { settled.append($0) }
+    }
+
     /// A repeated ID in the same ownership epoch returns its saved reply. A request from a
     /// previous owner is refused, so a delayed client cannot mutate a replacement's state.
     public func request(action: String, payload: Data = Data(), id: UUID = UUID(),
@@ -106,7 +126,7 @@ public final class FlowFocusMailbox {
         let command = Command(id: id, ownerNonce: owner.nonce, action: action, payload: payload,
                               createdAt: Date(), expiresAt: Date().addingTimeInterval(wait), sequence: sequence)
         if handler != nil {
-            return try unwrap(execute(command))
+            return try unwrap(await execute(command))
         }
         guard pending[id] == nil else { throw Failure.unavailable("That command is already pending.") }
         guard let current = try? FlowFocusLease.readOwner(directory: directory), current.nonce == owner.nonce else {
@@ -171,10 +191,26 @@ public final class FlowFocusMailbox {
         onOwnerChange?()
     }
 
+    /// One pass at a time, commands in order. A handler may wait without holding the main actor (a ledger deletion
+    /// runs off it), so a file event that arrives during a pass reads the queue again once the pass is done.
     private func drain() {
-        guard !isDraining else { return }
+        guard !isDraining else {
+            drainAgain = true
+            return
+        }
+
         isDraining = true
-        defer { isDraining = false }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            repeat {
+                self.drainAgain = false
+                await self.drainPass()
+            } while self.drainAgain && !self.stopped
+            self.isDraining = false
+        }
+    }
+
+    private func drainPass() async {
         do {
             let files = try FileManager.default.contentsOfDirectory(at: requests, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "json" }
@@ -200,6 +236,8 @@ public final class FlowFocusMailbox {
                 return $0.1.sequence < $1.1.sequence
             }
             for (file, command) in commands {
+                // A stopped owner leaves the rest queued: it no longer answers for them.
+                guard !stopped else { return }
                 // Claimed by a rename, so a caller that withdrew its command (removed the file) first is never run.
                 let claimed = file.appendingPathExtension("claimed")
                 do { try FileManager.default.moveItem(at: file, to: claimed) }
@@ -207,17 +245,19 @@ public final class FlowFocusMailbox {
                     FlowFocusLog.focus.info("runtime command \(command.id) withdrawn before it ran")
                     continue
                 }
-                _ = execute(command)
+                _ = await execute(command)
                 do { try FileManager.default.removeItem(at: claimed) }
                 catch { FlowFocusLog.focus.error("runtime queue cleanup failed: \(error.localizedDescription)") }
             }
-            if files.count > 128 { Task { @MainActor [weak self] in self?.drain() } }
+            if files.count > 128 { drainAgain = true }
         } catch {
             FlowFocusLog.focus.error("runtime queue read failed: \(error.localizedDescription)")
         }
     }
 
-    private func execute(_ command: Command) -> Reply {
+    private func execute(_ command: Command) async -> Reply {
+        await takeTurn()
+        defer { endTurn() }
         if let prior = replyCache[command.id] ?? readReply(command.id), prior.ownerNonce == command.ownerNonce {
             return prior
         }
@@ -226,6 +266,7 @@ public final class FlowFocusMailbox {
             guard command.ownerNonce == owner.nonce, let handler else {
                 throw Failure.unavailable("This command belongs to an expired Flow and Focus owner.")
             }
+            guard !stopped else { throw Failure.unavailable("Flow and Focus have stopped.") }
             guard !processed.contains(command.id) else {
                 throw Failure.unavailable("That command already ran; its saved reply has expired.")
             }
@@ -233,7 +274,7 @@ public final class FlowFocusMailbox {
                 throw Failure.unavailable("That command timed out before the owner could run it.")
             }
             processed.insert(command.id)
-            let result = try handler(command)
+            let result = try await handler(command)
             reply = Reply(id: command.id, ownerNonce: command.ownerNonce, result: result, error: nil)
         } catch {
             reply = Reply(id: command.id, ownerNonce: command.ownerNonce, result: nil, error: error.localizedDescription)
@@ -252,6 +293,26 @@ public final class FlowFocusMailbox {
         }
         wake()
         return reply
+    }
+
+    private func takeTurn() async {
+        guard running else {
+            running = true
+            return
+        }
+        await withCheckedContinuation { turns.append($0) }
+    }
+
+    /// The next command in line runs; with none waiting, a stop waiting for the owner to settle goes on.
+    private func endTurn() {
+        guard turns.isEmpty else {
+            turns.removeFirst().resume()
+            return
+        }
+        running = false
+        let waiting = settled
+        settled.removeAll()
+        for continuation in waiting { continuation.resume() }
     }
 
     private func receiveReplies() {

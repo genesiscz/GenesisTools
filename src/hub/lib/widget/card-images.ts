@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ImageAttachment, MAX_IMAGE_ATTACHMENT_BYTES, MAX_IMAGE_PIXELS } from "@genesiscz/utils/image/attachments";
@@ -29,7 +29,7 @@ const LIFTABLE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 /** The image metadata of each file, by path, size and mtime: a refresh every few seconds must not re-hash it. */
 const imageCache = new Map<string, Omit<ImageAttachment, "label"> | null>();
-const IMAGE_CACHE_LIMIT = 256;
+const IMAGE_CACHE_LIMIT = 512;
 
 function localPath(target: string): string | null {
     const raw = target.startsWith("<") && target.endsWith(">") ? target.slice(1, -1) : target;
@@ -54,12 +54,79 @@ function localPath(target: string): string | null {
     return isAbsolute(decoded) ? decoded : null;
 }
 
-function describeImage(path: string): Omit<ImageAttachment, "label"> | null {
+/**
+ * What one snapshot may spend on card images. Reading and hashing a file it has not seen is the cost (up to the
+ * attachment limit each), so a snapshot reads a few new files and leaves the rest as text for the next one, which
+ * `deferred` asks for. The distinct paths one snapshot lifts stay under the cache size, so the files it read stay
+ * cached for the next snapshot instead of pushing each other out.
+ */
+export class ImageLiftBudget {
+    /** Images left as text because this snapshot's reads were spent: a later snapshot lifts them. */
+    deferred = 0;
+    private files: number;
+    private bytes: number;
+    private readonly pathLimit: number;
+    private readonly paths = new Set<string>();
+
+    constructor({
+        files = 8,
+        bytes = 2 * MAX_IMAGE_ATTACHMENT_BYTES,
+        paths = 128,
+    }: { files?: number; bytes?: number; paths?: number } = {}) {
+        this.files = files;
+        this.bytes = bytes;
+        this.pathLimit = Math.min(paths, IMAGE_CACHE_LIMIT / 2);
+    }
+
+    /** Whether this snapshot lifts `path` at all; past the path limit a new path stays text. */
+    admits(path: string): boolean {
+        if (this.paths.has(path)) {
+            return true;
+        }
+
+        if (this.paths.size >= this.pathLimit) {
+            return false;
+        }
+
+        this.paths.add(path);
+        return true;
+    }
+
+    /** Takes one read of `size` bytes; false (and one more deferred image) when this snapshot has none left. */
+    spend(size: number): boolean {
+        if (this.files <= 0 || size > this.bytes) {
+            this.deferred++;
+            return false;
+        }
+
+        this.files--;
+        this.bytes -= size;
+        return true;
+    }
+}
+
+/** WebCrypto hashes a large buffer off the JavaScript thread, so a 25 MB image does not hold the watch loop. */
+async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {
+    return Buffer.from(await crypto.subtle.digest("SHA-256", data)).toString("hex");
+}
+
+function remember(key: string, described: Omit<ImageAttachment, "label"> | null): void {
+    // Least recently used first: a hit moves its entry to the end, so what the current cards show is evicted last.
+    imageCache.delete(key);
+
+    if (imageCache.size >= IMAGE_CACHE_LIMIT) {
+        imageCache.delete(imageCache.keys().next().value as string);
+    }
+
+    imageCache.set(key, described);
+}
+
+async function describeImage(path: string, budget: ImageLiftBudget): Promise<Omit<ImageAttachment, "label"> | null> {
     let size: number;
     let mtime: number;
 
     try {
-        const info = statSync(path);
+        const info = await stat(path);
 
         if (!info.isFile()) {
             return null;
@@ -75,14 +142,22 @@ function describeImage(path: string): Omit<ImageAttachment, "label"> | null {
     const key = `${path}|${size}|${mtime}`;
 
     if (imageCache.has(key)) {
-        return imageCache.get(key) ?? null;
+        const cached = imageCache.get(key) ?? null;
+        remember(key, cached);
+        return cached;
     }
 
     let described: Omit<ImageAttachment, "label"> | null = null;
 
     if (size > 0 && size <= MAX_IMAGE_ATTACHMENT_BYTES) {
+        if (!budget.spend(size)) {
+            logger.debug({ path, size }, "widget card image: read left to a later snapshot");
+            return null;
+        }
+
         try {
-            const data = readFileSync(path);
+            const bytes = await Bun.file(path).bytes();
+            const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
             const format = detectImageFormat(data);
 
             if (format && LIFTABLE_MIME.has(format.mime)) {
@@ -96,7 +171,7 @@ function describeImage(path: string): Omit<ImageAttachment, "label"> | null {
                     bytes: data.length,
                     width,
                     height,
-                    sha256: createHash("sha256").update(data).digest("hex"),
+                    sha256: await sha256Hex(bytes),
                 };
             }
         } catch (error) {
@@ -104,11 +179,7 @@ function describeImage(path: string): Omit<ImageAttachment, "label"> | null {
         }
     }
 
-    if (imageCache.size >= IMAGE_CACHE_LIMIT) {
-        imageCache.delete(imageCache.keys().next().value as string);
-    }
-
-    imageCache.set(key, described);
+    remember(key, described);
     return described;
 }
 
@@ -141,20 +212,41 @@ function liftTokens(text: string, lift: (path: string, label?: string) => boolea
 /**
  * Lifts the images of a card's texts into attachments. `existing` are the card's stored attachments (answer cards);
  * a path already among them is not added twice. Returns the texts with lifted markdown images and tokens removed.
+ * `budget` is shared by every card of one snapshot; a card built alone gets its own.
  */
-export function liftCardImages(
+export async function liftCardImages(
     texts: string[],
-    existing: ImageAttachment[] = []
-): { texts: string[]; attachments: ImageAttachment[] } {
-    const attachments = [...existing];
-    const seen = new Set(existing.map((image) => image.path));
+    { existing = [], budget = new ImageLiftBudget() }: { existing?: ImageAttachment[]; budget?: ImageLiftBudget } = {}
+): Promise<{ texts: string[]; attachments: ImageAttachment[] }> {
+    const known = new Set(existing.map((image) => image.path));
+    // The files are read first (without the event loop waiting on the disk), then the texts are rewritten with them.
+    const wanted = new Set<string>();
+    rewriteImages(texts, (path) => {
+        wanted.add(path);
+        return false;
+    });
+    const described = new Map<string, Omit<ImageAttachment, "label">>();
 
-    const lift = (path: string, label?: string): boolean => {
+    for (const path of wanted) {
+        if (known.has(path) || !budget.admits(path)) {
+            continue;
+        }
+
+        const image = await describeImage(path, budget);
+
+        if (image) {
+            described.set(path, image);
+        }
+    }
+
+    const attachments = [...existing];
+    const seen = new Set(known);
+    const cleaned = rewriteImages(texts, (path, label) => {
         if (seen.has(path)) {
             return true;
         }
 
-        const image = describeImage(path);
+        const image = described.get(path);
 
         if (!image) {
             return false;
@@ -164,9 +256,14 @@ export function liftCardImages(
         const named = label?.trim();
         attachments.push(named && named !== image.name ? { ...image, label: named } : image);
         return true;
-    };
+    });
 
-    const cleaned = texts.map((text) => {
+    return { texts: cleaned, attachments };
+}
+
+/** Each text without the images `lift` accepts; `lift` sees every image path, tokens first, in text order. */
+function rewriteImages(texts: string[], lift: (path: string, label?: string) => boolean): string[] {
+    return texts.map((text) => {
         if (!text) {
             return text;
         }
@@ -192,6 +289,4 @@ export function liftCardImages(
         next = next.replace(/\n{3,}/g, "\n\n").trim();
         return next === text.trim() ? text : next;
     });
-
-    return { texts: cleaned, attachments };
 }

@@ -204,4 +204,11 @@ movie FPS; neither establishes compositor frame delivery.
 
 
 ## From the widget motion stream (2026-10-10, 417458101)
-add "Edge panels: resize the window once and animate a CAShapeLayer mask; keep the old content until a shrink ends; a per-frame setFrame makes the window server fall behind (12-17 sizes per 250 ms with 40 ms holes at 120 Hz callbacks)". Add that a time-based NSAnimation plus a main-thread block before its first callback turns any transition into a jump.
+For an edge panel that changes content (open, close, another module), resize the window once and animate a
+`CAShapeLayer` mask inside it. Keep the old content until a shrink ends. Do not call `setFrame` on every frame
+for these transitions: with callbacks at 120 Hz the window server fell behind and showed only 12 to 17 sizes per
+250 ms, with 40 ms holes. The one exception is a size change with the same content (a measured height, a rail
+that gained a session): the edges must move with the content, so `EdgePanelController.beginResize` steps
+`setFrame` from a display-link ticker. These resizes are rare and small; keep new motion off that path. A
+time-based `NSAnimation` jumps when the
+main thread is blocked before its first callback: the first frame it draws is already late in the curve.

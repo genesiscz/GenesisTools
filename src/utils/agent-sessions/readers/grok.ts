@@ -610,7 +610,12 @@ async function readGrokMetadataUncounted(
     let validRecords = 0;
     let firstPrompt: string | null = null;
     let firstTimestamp = summary.createdAt;
-    let lastTimestamp = summary.lastActiveAt ?? summary.updatedAt ?? summary.createdAt;
+    // Only the summary's stamp is capped: Grok moves `last_active_at` with no turn. A chat row's own timestamp is the
+    // activity itself, so the rows below raise the capped stamp and are never capped.
+    let lastTimestamp = capAtLastTurn(
+        summary.lastActiveAt ?? summary.updatedAt ?? summary.createdAt,
+        await lastTurnWriteMs(chatPath)
+    );
     const userParts: string[] = [];
     let userCharacters = 0;
     let userBounded = false;
@@ -634,8 +639,6 @@ async function readGrokMetadataUncounted(
             userBounded ||= text.length > remaining;
         }
     }
-
-    lastTimestamp = capAtLastTurn(lastTimestamp, await lastTurnWriteMs(chatPath));
 
     if (validRecords === 0 && issues.length > 0) {
         return { metadata: null, issues, complete: false };
@@ -707,7 +710,10 @@ export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVer
 
 export function createGrokHistoryOperations(): GrokHistoryOperations {
     return {
-        parserVersion: "4",
+        // 5: `lastTimestamp` is capped at the last turn-file write. The bump makes every indexed session read once
+        // more; an unchanged file is otherwise never read again and kept the old, too-recent activity time.
+        // 6: only the summary stamp is capped; a chat row's timestamp raises the result uncapped.
+        parserVersion: "6",
         readMetadata: readGrokMetadata,
         scan: scanGrokRecords,
         readRecords: readGrokRecords,

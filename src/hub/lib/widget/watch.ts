@@ -54,6 +54,7 @@ export async function watchWidget({
         watchInbox?: typeof createWatcher;
         watchSessions?: typeof createWatcher;
         sessionRoots?: Record<WidgetRosterProvider, string[]>;
+        writeRosterCache?: typeof writeWidgetRosterCache;
     };
 }): Promise<void> {
     const directory = widgetRoot(root);
@@ -86,6 +87,8 @@ export async function watchWidget({
                         },
                     }));
             let dispatchTask: Promise<void> | undefined;
+            let rosterCacheWrite: Promise<void> | undefined;
+            const writeRosterCache = dependencies.writeRosterCache ?? writeWidgetRosterCache;
             let last = "";
             const startedAt = Date.now();
             let emitted = false;
@@ -143,8 +146,14 @@ export async function watchWidget({
                             dispatchTask = undefined;
                         });
                 }
+                // A snapshot reads a few new card images at most; the rest arrive with the next one, taken at once.
                 const snapshot = await prof.measureAsync("watch snapshot", () =>
-                    readSnapshot({ root: directory, selectedKey, refresh: false })
+                    readSnapshot({
+                        root: directory,
+                        selectedKey,
+                        refresh: false,
+                        onImagesDeferred: () => void requestRefresh(),
+                    })
                 );
                 const fingerprint = SafeJSON.stringify(snapshot);
                 if (fingerprint !== last && !signal.aborted) {
@@ -222,9 +231,14 @@ export async function watchWidget({
                         // One-shot snapshots (the settings page) read this instead of rebuilding the tree cold.
                         if (roster && !roster.error && roster.agents.generatedAt) {
                             const { rows, agents } = roster;
-                            writeWidgetRosterCache({ root: directory, roster: { rows, agents } }).catch((error) => {
-                                logger.debug({ error }, "Widget roster cache not written");
-                            });
+                            // Kept so shutdown waits for it inside the worker lock: one landing after a replacement
+                            // watch took the lock would put this older roster over that watch's newer one. Writes
+                            // run in order (roster-cache.ts), so the latest settles after every earlier one.
+                            rosterCacheWrite = writeRosterCache({ root: directory, roster: { rows, agents } }).catch(
+                                (error) => {
+                                    logger.debug({ error }, "Widget roster cache not written");
+                                }
+                            );
                         }
                         void requestRefresh();
                     },
@@ -362,6 +376,8 @@ export async function watchWidget({
                 }
                 await Promise.allSettled([...jobs.values()].map((job) => job.done));
                 await dispatchTask;
+                // The roster is stopped above, so no write starts after this one.
+                await rosterCacheWrite;
             }
         },
         1500

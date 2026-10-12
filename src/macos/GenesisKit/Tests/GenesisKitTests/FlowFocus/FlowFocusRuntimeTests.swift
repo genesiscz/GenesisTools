@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import SQLite3
 import XCTest
 @testable import GenesisKit
 
@@ -398,6 +399,73 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    /// Another writer holds the ledger, so the owner's deletion waits (within the store's 1 s busy timeout) while the
+    /// owner stops. The owner must keep its lease until the deletion has ended, through the mailbox (a client's
+    /// Settings) and outside it (the owner's own).
+    func testAnOwnerStoppingDuringADeletionKeepsItsLeaseUntilTheDeletionEnds() async throws {
+        for fromClient in [true, false] {
+            let root = directory.appendingPathComponent("\(fromClient ? "client" : "owner")-path")
+            let owner = FlowFocusRuntime(dataRoot: root, hostID: "test.owner", liveServices: false, presentsWindows: false)
+            await owner.start()
+            do {
+                try await stopDuringAHeldDeletion(owner: owner, root: root, fromClient: fromClient)
+            } catch {
+                // The helper's ledger connection is closed by now, so the held deletion ends and the stop can finish.
+                await owner.stop()
+                throw error
+            }
+        }
+    }
+
+    private func stopDuringAHeldDeletion(owner: FlowFocusRuntime, root: URL, fromClient: Bool) async throws {
+        let path = fromClient ? "client" : "owner"
+        XCTAssertTrue(owner.role.isOwner)
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let store = try XCTUnwrap(owner.focus.store)
+        let segment = try store.openSegment(ActivityStore.Segment(
+            startedMs: nowMs - 60_000, appBundle: "com.example.fixture", appName: "Fixture", windowTitle: "held"))
+        try store.closeSegment(id: segment, at: nowMs - 30_000)
+        let range = FocusForgetCommand(from: nowMs - 3_600_000, to: nowMs + 1_000)
+        // A bare client mailbox, not a client runtime: one would reconnect and take the lease once the owner stops.
+        let channel = try FlowFocusMailbox(directory: owner.directory,
+                                           owner: FlowFocusLease.readOwner(directory: owner.directory))
+        channel.start()
+        defer { channel.stop() }
+
+        var other: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(root.appendingPathComponent("activity.db").path, &other), SQLITE_OK)
+        defer { sqlite3_close(other) }
+        XCTAssertEqual(sqlite3_exec(other, "BEGIN IMMEDIATE;", nil, nil, nil), SQLITE_OK)
+        let forgetting = Task { () throws -> FocusForgetResult in
+            guard fromClient else { return try await owner.focus.forgetOwned(range) }
+            let reply = try await channel.request(action: "focus.forget", payload: JSONEncoder().encode(range))
+            return try JSONDecoder().decode(FocusForgetResult.self, from: reply)
+        }
+        if fromClient {
+            // The owner has taken the command once it renamed the request to `.claimed`.
+            let requests = owner.directory.appendingPathComponent("requests")
+            func claimed() -> Bool {
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: requests.path)) ?? []
+                return names.contains { $0.hasSuffix(".claimed") }
+            }
+            for _ in 0 ..< 200 where !claimed() { try await Task.sleep(nanoseconds: 5_000_000) }
+            XCTAssertTrue(claimed(), "the owner took the client's command")
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let stopping = Task { await owner.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let rival = try FlowFocusLease.acquire(directory: owner.directory, hostID: "test.rival")
+        XCTAssertNil(rival, "no replacement owner while the deletion still runs (\(path) path)")
+        rival?.release()
+        XCTAssertEqual(sqlite3_exec(other, "ROLLBACK;", nil, nil, nil), SQLITE_OK)
+        await stopping.value
+        let result = try await forgetting.value
+        XCTAssertEqual(result.segments, 1, "the deletion ran to its end (\(path) path)")
+        let replacement = try FlowFocusLease.acquire(directory: owner.directory, hostID: "test.rival")
+        XCTAssertNotNil(replacement, "the stopped owner released its lease (\(path) path)")
+        replacement?.release()
+    }
+
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)
@@ -433,13 +501,91 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    /// Clicky's `--headless` Settings: its switches must be stored, without it ever becoming the owner.
+    func testASettingsOnlyFaceWritesThroughTheOwnerAndNeverTakesItsPlace() async throws {
+        let settings = FlowFocusRuntime(dataRoot: directory, hostID: "test.settings", liveServices: false,
+                                        presentsWindows: false)
+        settings.settingsOnly = true
+        let starting = Task { await settings.start() }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let free = try FlowFocusLease.acquire(directory: settings.directory, hostID: "test.probe")
+        XCTAssertNotNil(free, "with no owner running, the settings face did not take the owner's place")
+        free?.release()
+
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await starting.value
+        do {
+            XCTAssertEqual(settings.role, .client("test.owner"), "it joins the owner once one runs")
+            XCTAssertTrue(settings.focus.available, "so the Focus page reads the ledger like the normal Settings")
+            let saved = await settings.configuration.saveAppValue(false, forKey: "focusWhileListening")
+            XCTAssertTrue(saved, settings.configuration.lastError ?? "")
+            XCTAssertEqual(owner.configuration.app["focusWhileListening"] as? Bool, false, "the owner stored the switch")
+            let rules = try JSONEncoder().encode(["recognised phrase", "Canonical phrase"])
+            _ = try await settings.send(action: "flow.rule.add", payload: rules)
+            let persisted = FlowStore(directory: directory.appendingPathComponent("flow"), writesEnabled: false)
+            XCTAssertEqual(persisted.loadDictionary().first?.to, "Canonical phrase", "a Flow edit reached the owner's files")
+        } catch {
+            await settings.stop()
+            await owner.stop()
+            throw error
+        }
+        await settings.stop()
+        await owner.stop()
+    }
+
+    /// Settings builds each Focus patch from `configuration.app`, so a client's edit must show before the owner answers.
+    func testAClientShowsItsPatchUntilTheOwnerAnswersAndDropsARefusedOne() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.overlay-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.overlay-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        XCTAssertEqual(client.role, .client("test.overlay-owner"))
+        let configuration = client.configuration
+        let before = configuration.revision
+        configuration.setAppValue(false, forKey: "focusWhileListening")
+        XCTAssertEqual(configuration.app["focusWhileListening"] as? Bool, false, "shown before the owner answers")
+        XCTAssertGreaterThan(configuration.revision, before, "and the page redraws with it")
+        await configuration.flush()
+        XCTAssertEqual(configuration.app["focusWhileListening"] as? Bool, false, "the owner stored it")
+
+        configuration.setAppValue(["modelRef": "fixture-model"], forKey: "flowTransforms")
+        XCTAssertEqual((configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String, "fixture-model")
+        await configuration.flush()
+        XCTAssertNil((configuration.app["flowTransforms"] as? [String: Any])?["modelRef"],
+                     "the owner refused it, so the page shows the stored value again")
+        XCTAssertNotNil(configuration.lastError)
+        await client.stop()
+        await owner.stop()
+    }
+
+    func testAClientSaveReportsWhatTheOwnerStoredNotWhatItSent() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.save-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.save-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        XCTAssertEqual(client.role, .client("test.save-owner"))
+        let refused = await client.configuration.saveAppValue(["modelRef": "fixture-model"], forKey: "flowTransforms")
+        XCTAssertFalse(refused, "the owner refuses a model that is not an account's, so the client's Save must not succeed")
+        XCTAssertNotNil(client.configuration.lastError)
+        let tools = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration)
+        let stored = await tools.save(accountID: "work", model: " fixture-model ")
+        XCTAssertTrue(stored)
+        XCTAssertEqual(tools.modelRef, "@account/work:fixture-model",
+                       "the client reads its saved choice at once, so Settings does not call it unsaved again")
+        XCTAssertEqual((owner.configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String,
+                       "@account/work:fixture-model", "true arrives after the owner's write, so the owner already reads it")
+        await client.stop()
+        await owner.stop()
+    }
+
     func testAClientSavesTheTransformModelThroughItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.transform-owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.transform-client", liveServices: false, presentsWindows: false)
         await owner.start()
         await client.start()
         do {
-            FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
+            await FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
             try await waitUntil {
                 (owner.configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String == "@account/work:fixture-model"
             }
@@ -450,6 +596,67 @@ final class FlowFocusRuntimeTests: XCTestCase {
             } catch {
                 XCTAssertFalse(error.localizedDescription.isEmpty)
             }
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
+    func testSuspendingTheShortcutEndsTheTurnItCouldNoLongerEnd() throws {
+        let previousURL = FlowEvents.logURL
+        FlowEvents.logURL = directory.appendingPathComponent("events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        var config = FlowConfig()
+        config.showPill = false
+        let store = FlowStore(directory: directory.appendingPathComponent("flow"))
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        session.preRollEffect = { _ in }
+        session.hotkeyBindingEffect = {}
+        session.recognitionStartEffect = {}
+        session.start()
+        defer { session.stop() }
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(session.phase, .listening)
+        session.suspendHotkey(true)
+        XCTAssertEqual(session.phase, .idle, "the release that would end this turn can no longer arrive")
+        session.suspendHotkey(false)
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(session.phase, .listening, "dictation works again once the recorder lets go")
+        session.cancelTurn()
+    }
+
+    func testAShortcutRecorderInAClientSuspendsTheOwnersLiveShortcutUntilItStops() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.hotkey-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.hotkey-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        do {
+            owner.flow.preRollEffect = { _ in }
+            owner.flow.config.showPill = false
+            // F19 alone: a chord nobody uses, so the test never takes the shortcut of the person running it.
+            owner.flow.config.keyCode = 0x50
+            owner.flow.config.modifiers = 0
+            owner.flow.hotkeySuspensionLimit = .milliseconds(400)
+            owner.flow.start()
+
+            client.flow.suspendHotkey(true)
+            try await waitUntil { owner.flow.hotkeySuspended }
+            XCTAssertFalse(client.flow.hotkeySuspended, "the client only asks; the owner holds the shortcut")
+            client.flow.suspendHotkey(false)
+            try await waitUntil { !owner.flow.hotkeySuspended }
+
+            owner.flow.suspendHotkey(true)
+            try await waitUntil { !owner.flow.hotkeySuspended }
+            // The live Carbon registration: a headless runner refuses it (CompanionHotKeyTests skips the same way).
+            try XCTSkipUnless(owner.flow.hotkeyRegistered, "Carbon refused registration (headless test runner)")
+            owner.flow.suspendHotkey(true)
+            XCTAssertFalse(owner.flow.hotkeyRegistered, "a suspended shortcut is not registered, so the recorder sees it")
+            owner.flow.suspendHotkey(false)
+            XCTAssertTrue(owner.flow.hotkeyRegistered)
         } catch {
             await client.stop()
             await owner.stop()
@@ -733,6 +940,84 @@ final class FlowFocusRuntimeTests: XCTestCase {
         let reply = try await client.request(action: "flow.begin", payload: payload, timeout: 2)
         XCTAssertEqual(reply, payload)
         XCTAssertEqual(received, ["flow.begin"])
+    }
+
+    func testAnOwnerCommandThatWaitsLeavesTheMainActorFreeAndTheQueueInOrder() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        var order: [String] = []
+        var release: CheckedContinuation<Void, Never>?
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { command in
+            order.append("start \(command.action)")
+            // As a client's "delete activity" waits for a deletion that runs off the main actor.
+            if command.action == "focus.forget" { await withCheckedContinuation { release = $0 } }
+            order.append("end \(command.action)")
+            return command.payload
+        }
+        let client = try FlowFocusMailbox(directory: directory, owner: lease.owner)
+        owner.start()
+        client.start()
+        defer { client.stop(); owner.stop() }
+        let slow = Task { try await client.request(action: "focus.forget", payload: Data("slow".utf8), timeout: 5) }
+        for _ in 0 ..< 400 where release == nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertNotNil(release, "the owner took the command, and this test still runs on the main actor meanwhile")
+        let next = Task { try await client.request(action: "focus.start", payload: Data("next".utf8), timeout: 5) }
+        // The owner's own face asks too: it runs on the owner directly, and still waits its turn.
+        let local = Task { try await owner.request(action: "focus.pause", payload: Data("local".utf8), timeout: 5) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(order, ["start focus.forget"], "a command queued meanwhile waits its turn, the owner's own too")
+        release?.resume()
+        let slowReply = try await slow.value
+        let nextReply = try await next.value
+        let localReply = try await local.value
+        XCTAssertEqual(slowReply, Data("slow".utf8))
+        XCTAssertEqual(nextReply, Data("next".utf8), "the queue is read again after the pass, so it is not stranded")
+        XCTAssertEqual(localReply, Data("local".utf8))
+        XCTAssertEqual(Array(order.prefix(2)), ["start focus.forget", "end focus.forget"])
+        XCTAssertEqual(Set(order.dropFirst(2)), ["start focus.start", "end focus.start", "start focus.pause", "end focus.pause"])
+        for index in stride(from: 0, to: order.count - 1, by: 2) {
+            XCTAssertEqual(order[index + 1], order[index].replacingOccurrences(of: "start ", with: "end "),
+                           "no command starts while another runs: \(order)")
+        }
+    }
+
+    func testAStoppingOwnerFinishesTheCommandItTookAndRefusesTheOnesStillWaiting() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        var order: [String] = []
+        var release: CheckedContinuation<Void, Never>?
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { command in
+            order.append("start \(command.action)")
+            if command.action == "focus.forget" { await withCheckedContinuation { release = $0 } }
+            order.append("end \(command.action)")
+            return command.payload
+        }
+        owner.start()
+        defer { owner.stop() }
+        let held = Task { try await owner.request(action: "focus.forget", payload: Data("held".utf8), timeout: 5) }
+        for _ in 0 ..< 400 where release == nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        let waiting = Task { try await owner.request(action: "focus.start", timeout: 5) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        var stopped = false
+        let stopping = Task {
+            await owner.stopAfterCurrentCommand()
+            stopped = true
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(stopped, "the owner does not let go while the command it took is still running")
+        release?.resume()
+        await stopping.value
+        XCTAssertEqual(order, ["start focus.forget", "end focus.forget"], "the waiting command never ran")
+        let heldReply = try await held.value
+        XCTAssertEqual(heldReply, Data("held".utf8))
+        do {
+            _ = try await waiting.value
+            XCTFail("a command still waiting when the owner stopped is refused")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("stopped"), error.localizedDescription)
+        }
     }
 
     func testClientRefusesAReplacementOwnerBeforeWritingACommand() async throws {

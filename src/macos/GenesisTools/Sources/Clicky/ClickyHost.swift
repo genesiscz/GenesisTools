@@ -34,10 +34,22 @@ final class ClickyHost: NSObject {
 
     /// `--clicky --page <id> --snapshot <png>`: draws the Settings page in a window that never reaches the screen
     /// or the keyboard (alpha 0, `.prohibited` app), waits for its data, writes the PNG and quits.
-    func snapshotSettings(pageID: String?, to path: String, delay: Double) {
+    ///
+    /// `ready` says the pages have their data (`WidgetModel.settingsLoaded`). The data comes from an asynchronous
+    /// `hub widget snapshot`, and a fixed delay alone drew the loading state whenever that took longer. `delay` is the
+    /// time the page then gets to lay out.
+    func snapshotSettings(pageID: String?, to path: String, delay: Double, ready: @escaping @MainActor () -> Bool) {
         let window = settings.prepare(pageID: pageID)
         window.orderInForSnapshot()
         Task { @MainActor in
+            let deadline = ContinuousClock.now + .seconds(45)
+            while !ready(), ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard ready() else {
+                FileHandle.standardError.write(Data("snapshot: the settings data did not load within 45 s\n".utf8))
+                exit(1)
+            }
             try? await Task.sleep(for: .seconds(delay))
             guard let view = window.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)

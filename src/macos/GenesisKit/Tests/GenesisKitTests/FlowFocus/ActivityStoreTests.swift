@@ -180,6 +180,95 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertTrue(try store.sessions(from: 0, to: 100_000).isEmpty)
     }
 
+    func testForgetKeepsTheRunningSessionRowAndStartsItWhereTheRangeEnds() throws {
+        let running = try store.startSession(.init(kind: "flow", plannedSec: 1_500, startedMs: 1_200,
+                                                   state: "running", cycleIndex: 0))
+        _ = try store.recordPause(sessionId: running, startedMs: 2_000, endedMs: 2_500, reason: .manual)
+        // Paused now: the pause began inside the range and is still open.
+        let open = try store.recordPause(sessionId: running, startedMs: 3_000, endedMs: nil, reason: .manual)
+
+        let removed = try store.forget(from: 0, to: 5_000)
+        XCTAssertEqual(removed.sessions, 0, "the session the timer runs is not deleted under it")
+        let kept = try XCTUnwrap(try store.openSession())
+        XCTAssertEqual(kept.id, running)
+        XCTAssertEqual(kept.startedMs, 5_000, "none of the forgotten time stays in the session")
+        XCTAssertEqual(try store.pauses(sessionId: running).map { [$0.id, $0.startedMs] }, [[open, 5_000]],
+                       "a pause inside the range goes; the open one keeps its part after it")
+        XCTAssertNil(try store.pauses(sessionId: running).first?.endedMs, "and stays open, so the timer stays paused")
+        try store.endSession(id: running, at: 9_000, state: .done)
+        XCTAssertEqual(try store.sessions(from: 0, to: 100_000).first?.endedMs, 9_000,
+                       "the timer's later writes land on a real row")
+    }
+
+    /// "Delete activity" for the last hour under a live phase: the countdown must not move, now, on resume, or after a
+    /// restart (the engine reads its clock back from the rewritten rows, as `FocusController.didForget` makes it).
+    @MainActor
+    func testDeletingActivityUnderALivePhaseKeepsItsRemainingTimeThroughResumeAndRestart() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // A 300 s flow that started four minutes ago and was paused after one minute of work.
+        let paused = try store.startSession(.init(kind: "flow", plannedSec: 300, startedMs: now - 240_000,
+                                                  state: "paused", cycleIndex: 0))
+        _ = try store.recordPause(sessionId: paused, startedMs: now - 180_000, endedMs: nil, reason: .manual)
+        let engine = PomodoroEngine(store: store, plan: PomodoroPlan(flowSec: 300))
+        defer { engine.stop() }
+        engine.resumeOpenSessionIfAny()
+        XCTAssertEqual(engine.state, .paused)
+        XCTAssertEqual(Double(engine.remainingSec), 240, accuracy: 2)
+
+        // Settings' range ends a second after now.
+        try store.forget(from: now - 3_600_000, to: now + 1_000, now: now)
+        engine.resumeOpenSessionIfAny()
+        XCTAssertEqual(Double(engine.remainingSec), 240, accuracy: 2, "the paused phase shows the same time left")
+        engine.resume()
+        XCTAssertEqual(Double(engine.remainingSec), 240, accuracy: 2, "its paused minutes are not counted as work")
+        let restarted = PomodoroEngine(store: store, plan: PomodoroPlan(flowSec: 300))
+        defer { restarted.stop() }
+        restarted.resumeOpenSessionIfAny()
+        XCTAssertEqual(Double(restarted.remainingSec), 240, accuracy: 2, "a restart reads the same clock")
+    }
+
+    /// The same under a flow already past its planned length: it stays as many minutes over, not reset to zero.
+    @MainActor
+    func testDeletingActivityUnderAnOverrunningFlowKeepsItsOverrun() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // A 300 s flow that started 360 s ago: one minute over.
+        _ = try store.startSession(.init(kind: "flow", plannedSec: 300, startedMs: now - 360_000, state: "running",
+                                         cycleIndex: 0))
+        let engine = PomodoroEngine(store: store, plan: PomodoroPlan(flowSec: 300))
+        defer { engine.stop() }
+        engine.resumeOpenSessionIfAny()
+        XCTAssertEqual(engine.state, .overrun)
+        XCTAssertEqual(Double(engine.remainingSec), -60, accuracy: 2)
+
+        try store.forget(from: now - 3_600_000, to: now + 1_000, now: now)
+        engine.resumeOpenSessionIfAny()
+        XCTAssertEqual(engine.state, .overrun)
+        XCTAssertEqual(Double(engine.remainingSec), -60, accuracy: 2, "the flow is still a minute over")
+        let restarted = PomodoroEngine(store: store, plan: PomodoroPlan(flowSec: 300))
+        defer { restarted.stop() }
+        restarted.resumeOpenSessionIfAny()
+        XCTAssertEqual(Double(restarted.remainingSec), -60, accuracy: 2, "a restart reads the same overrun")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(try store.openSession()).startedMs, now - 3_600_000,
+                                    "the start moves back only by the overrun, not to where the phase began")
+    }
+
+    func testDeletingAPauseOfALivePhaseThatStartedEarlierKeepsItsRemainingTime() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // A three-hour flow that started two hours ago, with a two-minute pause half an hour ago.
+        let running = try store.startSession(.init(kind: "flow", plannedSec: 10_800, startedMs: now - 7_200_000,
+                                                   state: "running", cycleIndex: 0))
+        _ = try store.recordPause(sessionId: running, startedMs: now - 1_800_000, endedMs: now - 1_680_000,
+                                  reason: .manual)
+        func remaining() throws -> Int64 {
+            let session = try XCTUnwrap(try store.openSession())
+            return Int64(session.plannedSec) * 1000 - (now - session.startedMs - (try store.pausedMs(sessionId: running, now: now)))
+        }
+        let before = try remaining()
+        try store.forget(from: now - 3_600_000, to: now + 1_000, now: now)
+        XCTAssertTrue(try store.pauses(sessionId: running).isEmpty, "the pause inside the range is gone")
+        XCTAssertEqual(Double(try remaining()), Double(before), accuracy: 1_000, "the countdown did not move")
+    }
+
     func testForgetCutsASegmentAndSessionThatStartedBeforeTheRange() throws {
         let straddling = try store.openSegment(segment(1_000))
         try store.closeSegment(id: straddling, at: 9_000)

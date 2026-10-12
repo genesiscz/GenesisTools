@@ -1,9 +1,10 @@
 import { profiler } from "@genesiscz/utils/profile";
-import { readWidgetRoster, refreshWidgetIndex } from "./roster-index";
+import { readWidgetRoster, refreshWidgetIndex, WidgetRosterReads } from "./roster-index";
 import type { WidgetRosterReply, WidgetRosterRequest } from "./roster-reader";
 
 declare const self: Worker;
 const prof = profiler.scope("widget");
+const reads = new WidgetRosterReads();
 
 self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
     const { id, index = [], onlyIfChanged = false } = event.data;
@@ -19,12 +20,14 @@ self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
                 },
                 () => ({ scopes: index.join(","), changed })
             );
-            if (onlyIfChanged && !changed) {
+            // This refresh writing nothing is not enough: another process may have written since the last read.
+            if (onlyIfChanged && !reads.needed(changed)) {
                 self.postMessage({ id, ok: true, unchanged: true } satisfies WidgetRosterReply);
                 return;
             }
         }
 
+        reads.reading();
         const { rows, agents } = await prof.measureAsync("background roster", () => readWidgetRoster());
         self.postMessage({ id, ok: true, rows, agents } satisfies WidgetRosterReply);
     } catch (error) {

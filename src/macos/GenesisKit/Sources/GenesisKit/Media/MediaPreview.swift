@@ -1,5 +1,6 @@
 import AVKit
 import AppKit
+import Combine
 import SwiftUI
 
 /// One file a preview can show: a picture, a video or a document.
@@ -29,24 +30,131 @@ public final class MediaPreviewState: ObservableObject {
 
     static weak var active: MediaPreviewState?
 
+    /// The item the preview opened on: its thumbnail opened it, and gets the keyboard back when it closes.
+    private var openedID: String?
+    /// The opener's item id, sent once the preview has closed and the surface under it takes input again
+    /// (`MediaThumbnailView` focuses its button on it). A passthrough, so a late subscriber is not focused.
+    public let focusReturns = PassthroughSubject<String, Never>()
+
+    /// The Copy button: one copy at a time, and a refusal says why.
+    public enum CopyStatus: Equatable {
+        case idle, copying, copied
+        case refused(String)
+    }
+
+    @Published public private(set) var copyStatus: CopyStatus = .idle
+    /// Checks and reads the file off the main actor, inside `MediaImageCopy`'s budget; tests answer without a file.
+    var loadImage: @Sendable (_ path: String) async -> MediaImageCopy.Outcome = { path in
+        await Task.detached(priority: .userInitiated) { MediaImageCopy.prepare(path: path) }.value
+    }
+    /// Puts the prepared picture, or only the file, on the pasteboard and answers what to tell the user; tests record
+    /// instead of touching the user's clipboard.
+    var writeImage: @MainActor (_ outcome: MediaImageCopy.Outcome, _ path: String) -> CopyStatus =
+        MediaImageCopy.writeToPasteboard
+    private var copyReset: Task<Void, Never>?
+    private var copyTimeout: Task<Void, Never>?
+    /// How long Copy waits for the read. The read itself cannot be stopped (a file on a stalled network volume blocks
+    /// in the kernel), so past this the copy is refused and its late answer is dropped.
+    var copyDeadline: Duration = .seconds(10)
+    /// A read that has not returned yet, expired or not. A new click while it runs starts no second read beside it.
+    private var readInFlight = false
+    /// The copy whose answer may still reach the clipboard. An expired copy is never the current one.
+    private var copyGeneration = 0
+
     public init() {}
 
     public var isOpen: Bool { !items.isEmpty }
+
+    /// Copies the picture and its file. A click while a copy runs is ignored, and so is one while an expired read is
+    /// still running, so repeated clicks never start parallel reads of one file.
+    public func copyImage(_ item: MediaPreviewItem) {
+        guard copyStatus != .copying else { return }
+        guard !readInFlight else {
+            showCopy(.refused("The last image read has not finished yet. Try again in a moment."))
+            return
+        }
+        copyReset?.cancel()
+        copyGeneration &+= 1
+        let generation = copyGeneration
+        readInFlight = true
+        copyStatus = .copying
+        let load = loadImage
+        Task { [weak self] in
+            let outcome = await load(item.path)
+            guard let self else { return }
+            self.readInFlight = false
+            // Expired (the deadline answered) or replaced: this answer never reaches the clipboard.
+            guard generation == self.copyGeneration, self.copyStatus == .copying else {
+                GenesisKit.log("media copy of \(item.path) answered after its deadline; dropped")
+                return
+            }
+            self.copyTimeout?.cancel()
+            self.finishCopy(outcome, item: item)
+        }
+        let deadline = copyDeadline
+        copyTimeout = Task { [weak self] in
+            try? await Task.sleep(for: deadline)
+            guard !Task.isCancelled, let self, generation == self.copyGeneration, self.copyStatus == .copying else {
+                return
+            }
+            self.copyGeneration &+= 1
+            GenesisKit.log("media copy of \(item.path) timed out after \(deadline)")
+            self.showCopy(.refused("Reading the image took too long; its volume may be slow or unavailable."))
+        }
+    }
+
+    private func finishCopy(_ outcome: MediaImageCopy.Outcome, item: MediaPreviewItem) {
+        switch outcome {
+        case .image, .fileOnly:
+            showCopy(writeImage(outcome, item.path))
+        case .failed(let reason):
+            GenesisKit.log("media copy failed \(item.path): \(reason)")
+            showCopy(.refused(reason))
+        }
+    }
+
+    private func showCopy(_ status: CopyStatus) {
+        copyReset?.cancel()
+        copyStatus = status
+        let shown: Duration = status == .copied ? .seconds(1.4) : .seconds(5)
+        copyReset = Task { [weak self] in
+            try? await Task.sleep(for: shown)
+            if !Task.isCancelled { self?.copyStatus = .idle }
+        }
+    }
     public var current: MediaPreviewItem? { items.indices.contains(index) ? items[index] : nil }
 
     public func present(_ items: [MediaPreviewItem], selectedID: String? = nil) {
         guard !items.isEmpty else { return }
-        if let other = Self.active, other !== self { other.dismiss() }
+        // The other surface's preview closes without taking the keyboard back: this one is taking it.
+        if let other = Self.active, other !== self { other.close(returningFocus: false) }
         self.items = items
         index = items.firstIndex { $0.id == selectedID } ?? 0
+        openedID = items[index].id
         Self.active = self
     }
 
     public func dismiss() {
+        close(returningFocus: true)
+    }
+
+    private func close(returningFocus: Bool) {
         guard isOpen else { return }
+        let opener = openedID
+        // A copy's "Copied" or refusal belongs to this preview; one still reading ends by its deadline.
+        if copyStatus != .copying {
+            copyReset?.cancel()
+            copyStatus = .idle
+        }
         items = []
         index = 0
+        openedID = nil
         if Self.active === self { Self.active = nil }
+        guard returningFocus, let opener else { return }
+        // A turn later: the surface is disabled while the preview is up, and a disabled button takes no focus.
+        DispatchQueue.main.async { [weak self] in
+            self?.focusReturns.send(opener)
+        }
     }
 
     public func step(_ delta: Int) {
@@ -108,6 +216,10 @@ private struct MediaPreviewHost: ViewModifier {
         let reduceMotion = systemReduceMotion || widgetReduceMotion
         content
             .environment(\.mediaPreview, state)
+            // The covered surface leaves the keyboard order and the accessibility tree while the preview is up:
+            // `.isModal` on the overlay alone let Tab reach the inbox buttons and composer fields behind it.
+            .disabled(state.isOpen)
+            .accessibilityHidden(state.isOpen)
             .overlay {
                 if state.isOpen {
                     MediaPreviewOverlay(state: state)
@@ -127,14 +239,8 @@ private struct MediaPreviewOverlay: View {
     @ObservedObject var state: MediaPreviewState
     @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
     @Environment(\.widgetReduceTransparency) private var widgetReduceTransparency
-    @State private var copyFeedback: CopyFeedback?
-    /// True from the click until the feedback has been shown, so a second click cannot start another read.
-    @State private var copying = false
-
-    private enum CopyFeedback: Equatable {
-        case copied
-        case note(String)
-    }
+    /// The keyboard moves into the preview when it opens, so a field behind it is no longer being edited.
+    @FocusState private var focused: Bool
 
     var body: some View {
         ZStack {
@@ -152,6 +258,10 @@ private struct MediaPreviewOverlay: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onAppear { focused = true }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("media-preview")
         .accessibilityAddTraits(.isModal)
@@ -181,19 +291,22 @@ private struct MediaPreviewOverlay: View {
                 }
             }
             Spacer(minLength: 8)
-            switch copyFeedback {
+            switch state.copyStatus {
             case .copied:
                 Label("Copied", systemImage: "checkmark").font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.green).transition(.opacity)
-            case .note(let text):
-                Text(verbatim: text).font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
-                    .lineLimit(2).multilineTextAlignment(.trailing).transition(.opacity)
-            case nil:
+            case .refused(let message):
+                Label(message, systemImage: "exclamationmark.triangle").font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.orange).lineLimit(2).frame(maxWidth: 280, alignment: .trailing)
+                    .transition(.opacity)
+            case .copying:
+                ProgressView().controlSize(.small).accessibilityLabel("Copying the image")
+            case .idle:
                 EmptyView()
             }
             if item.kind == .image {
-                IconButton(systemName: "doc.on.doc", tooltip: "Copy image") { copy(item) }
-                    .disabled(copying)
+                IconButton(systemName: "doc.on.doc", tooltip: "Copy image") { state.copyImage(item) }
+                    .disabled(state.copyStatus == .copying)
             }
             IconButton(systemName: "folder", tooltip: "Show in Finder") { PathOpener.reveal(item.path) }
             IconButton(systemName: "arrow.up.forward.app", tooltip: "Open in its app") { PathOpener.open(item.path) }
@@ -201,6 +314,7 @@ private struct MediaPreviewOverlay: View {
                 .accessibilityIdentifier("media-preview-close")
         }
         .foregroundStyle(.primary)
+        .animation(.easeOut(duration: 0.15), value: state.copyStatus)
     }
 
     private var stepButtons: some View {
@@ -222,41 +336,31 @@ private struct MediaPreviewOverlay: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.genHoverPlain(scale: 1.06))
-        .modifier(MediaPointerCursor())
         .instantTooltip(tooltip)
         .accessibilityLabel(Text(tooltip))
     }
 
-    /// The picture is read and encoded off the main thread inside `MediaImageCopy`'s budget. An original past it puts
-    /// only the file on the pasteboard, and says so; one that cannot be read says that.
-    private func copy(_ item: MediaPreviewItem) {
-        guard !copying else { return }
-        copying = true
-        let path = item.path
-        Task {
-            let outcome = await Task.detached(priority: .userInitiated) { MediaImageCopy.prepare(path: path) }.value
-            let pasteboard = NSPasteboard.general
-            let file = URL(fileURLWithPath: path) as NSURL
-            let feedback: CopyFeedback
-            switch outcome {
-            case .image(let tiff):
-                let picture = NSPasteboardItem()
-                picture.setData(tiff, forType: .tiff)
-                pasteboard.clearContents()
-                pasteboard.writeObjects([picture, file])
-                feedback = .copied
-            case .fileOnly(let reason):
-                pasteboard.clearContents()
-                pasteboard.writeObjects([file])
-                feedback = .note("Copied the file only. \(reason)")
-            case .failed(let reason):
-                feedback = .note(reason)
-            }
+}
 
-            withAnimation(.easeOut(duration: 0.15)) { copyFeedback = feedback }
-            try? await Task.sleep(for: .seconds(feedback == .copied ? 1.4 : 4))
-            withAnimation(.easeOut(duration: 0.3)) { copyFeedback = nil }
-            copying = false
+extension MediaImageCopy {
+    /// Puts what `prepare` made on the pasteboard: the picture as TIFF beside its file, or the file alone when the
+    /// original is too large to copy as a picture. The answer is what the preview tells the user.
+    @MainActor
+    static func writeToPasteboard(_ outcome: Outcome, path: String) -> MediaPreviewState.CopyStatus {
+        let pasteboard = NSPasteboard.general
+        let file = URL(fileURLWithPath: path) as NSURL
+        let notCopied = MediaPreviewState.CopyStatus.refused("The image could not be put on the clipboard.")
+        switch outcome {
+        case .image(let tiff):
+            let picture = NSPasteboardItem()
+            picture.setData(tiff, forType: .tiff)
+            pasteboard.clearContents()
+            return pasteboard.writeObjects([picture, file]) ? .copied : notCopied
+        case .fileOnly(let reason):
+            pasteboard.clearContents()
+            return pasteboard.writeObjects([file]) ? .refused("Copied the file only. \(reason)") : notCopied
+        case .failed(let reason):
+            return .refused(reason)
         }
     }
 }
@@ -295,28 +399,5 @@ private struct MediaInlinePlayer: NSViewRepresentable {
     static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
         view.player?.pause()
         view.player = nil
-    }
-}
-
-/// The pointing hand over a clickable picture, set on every move so a text view underneath cannot take it back,
-/// and reset when the view goes away under the pointer.
-struct MediaPointerCursor: ViewModifier {
-    @State private var inside = false
-
-    func body(content: Content) -> some View {
-        content
-            .onContinuousHover { phase in
-                switch phase {
-                case .active:
-                    inside = true
-                    NSCursor.pointingHand.set()
-                case .ended:
-                    inside = false
-                    NSCursor.arrow.set()
-                }
-            }
-            .onDisappear {
-                if inside { NSCursor.arrow.set() }
-            }
     }
 }

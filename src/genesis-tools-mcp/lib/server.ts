@@ -118,7 +118,8 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         "them and previews a text. To correct an unanswered item, post it again with `supersedes: <id>`.\n\n" +
         "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
         'Screenshot evidence goes in optional images: ["/absolute/local/image.png"], or in attachments: [{type: ' +
-        '"image", path: "/absolute/local/image.png", label: "Result"}] (the same for question_post items). ' +
+        '"image", path: "/absolute/local/image.png", label: "Result"}]. A question_post item takes attachments ' +
+        "only: images there is refused. " +
         "PNG/JPEG/WebP files are validated and copied into durable storage. For comparison, " +
         'add comparison: {group: "layout", role: "before" or "after"}. Keep refs for ordinary source references.\n\n' +
         "WHEN TO USE THE question_answer TOOL:\n" +

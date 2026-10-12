@@ -11,13 +11,22 @@ final class PermissionTests: XCTestCase {
     final class FakePermissionSystem: PermissionSystem, @unchecked Sendable {
         var statuses: [PermissionKind: PermissionStatus] = [:]
         var grantOnRequest: Set<PermissionKind> = []
+        /// What a probe kind's request answers while `status` reads `.unknown`, as the real probes do.
+        var probeAnswers: [PermissionKind: PermissionStatus] = [:]
+        /// How long a request waits for "macOS" before it answers, so a test can act while it is open.
+        var requestDelay: Duration?
         private(set) var requests: [PermissionKind] = []
+        /// Requests that answered, in the order they did: `requests` records only that one started.
+        private(set) var answered: [PermissionKind] = []
         private(set) var opened: [PermissionKind] = []
 
         func status(_ kind: PermissionKind) -> PermissionStatus { statuses[kind] ?? .denied }
 
         func request(_ kind: PermissionKind) async -> PermissionStatus {
             requests.append(kind)
+            if let requestDelay { try? await Task.sleep(for: requestDelay) }
+            defer { answered.append(kind) }
+            if let answer = probeAnswers[kind] { return answer }
             if grantOnRequest.contains(kind) { statuses[kind] = .granted }
             return status(kind)
         }
@@ -31,13 +40,13 @@ final class PermissionTests: XCTestCase {
     private func center(
         _ system: FakePermissionSystem, simulation: String? = nil,
         fresh: @escaping (PermissionKind) async -> PermissionStatus? = { _ in nil },
-        relaunch: @escaping @MainActor () -> Bool = { false }
+        relaunch: @escaping @MainActor () -> Bool = { false }, closeDelay: Duration = .zero
     ) -> (PermissionCenter, RecordingPermissionPresenter) {
         let presenter = RecordingPermissionPresenter()
         let parsed = PermissionSimulation.parse(simulation)
         let center = PermissionCenter(
             access: PermissionAccess(system: system, simulation: { parsed }), presenter: presenter,
-            freshProbe: fresh, relaunch: relaunch, pollInterval: .seconds(3600), closeDelay: .zero,
+            freshProbe: fresh, relaunch: relaunch, pollInterval: .seconds(3600), closeDelay: closeDelay,
             activateForPrompt: {})
         return (center, presenter)
     }
@@ -160,6 +169,35 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(PermissionSimulation.current(defaults: defaults).modes, [.accessibility: .denied, .microphone: .ask])
     }
 
+    /// The defaults value a running face re-reads on every check; `staging.ts allow|deny|ask` rewrites it.
+    private final class SimulationBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var text: String?
+        func set(_ value: String?) { lock.withLock { text = value } }
+        func read() -> PermissionSimulation { PermissionSimulation.parse(lock.withLock { text }) }
+    }
+
+    func testAnAnsweredSimulatedPromptHoldsOnlyUntilTheSimulationChanges() async {
+        let system = FakePermissionSystem()
+        system.statuses = [.microphone: .granted]
+        let defaults = SimulationBox()
+        defaults.set("microphone:ask")
+        let access = PermissionAccess(system: system, simulation: { defaults.read() })
+        XCTAssertEqual(access.status(.microphone), .notDetermined)
+        let answered = await access.request(.microphone)
+        XCTAssertEqual(answered, .granted)
+        XCTAssertEqual(access.status(.microphone), .granted, "the answered prompt lifts the simulation")
+
+        defaults.set(nil)
+        XCTAssertEqual(access.status(.microphone), .granted, "allow: the real grant")
+        defaults.set("microphone")
+        XCTAssertEqual(access.status(.microphone), .denied, "deny takes effect without a relaunch")
+        XCTAssertEqual(access.simulatedMode(.microphone), .denied)
+        defaults.set("microphone:ask")
+        XCTAssertEqual(access.status(.microphone), .notDetermined, "ask again shows the prompt again")
+        XCTAssertTrue(system.requests.isEmpty, "no simulated request reached the system")
+    }
+
     func testAccessAppliesTheSimulationAndNeverRequestsASimulatedKind() async {
         let system = FakePermissionSystem()
         system.statuses = [.microphone: .granted, .accessibility: .granted, .speechRecognition: .notDetermined]
@@ -188,6 +226,35 @@ final class PermissionTests: XCTestCase {
         XCTAssertTrue(presenter.presented.isEmpty)
     }
 
+    func testAUsersNeedJoiningAnAutomaticDialogGivesItKeyboardFocus() {
+        let system = FakePermissionSystem()
+        let (center, presenter) = center(system)
+        XCTAssertFalse(center.require(PermissionNeed(.accessibility, trigger: .automatic)))
+        XCTAssertFalse(center.require(PermissionNeed(.accessibility, trigger: .automatic)))
+        XCTAssertTrue(presenter.fronted.isEmpty, "an automatic need asking again leaves the open dialog where it is")
+        XCTAssertTrue(presenter.focused.isEmpty, "automatic needs never take the keyboard")
+        XCTAssertFalse(center.require(PermissionNeed(.accessibility, reason: "Grant pressed.")))
+        XCTAssertEqual(presenter.fronted, [.accessibility])
+        XCTAssertEqual(presenter.focused, [.accessibility], "the user's own request made the open dialog key")
+    }
+
+    func testAFeatureAskingAgainRunsItsRetryOnceWhileAnotherFeaturesNeedIsKept() async {
+        let system = FakePermissionSystem()
+        system.statuses[.microphone] = .notDetermined
+        system.grantOnRequest = [.microphone]
+        let (center, presenter) = center(system)
+        var first = 0
+        var second = 0
+        for _ in 0 ..< 3 {
+            center.require(PermissionNeed(.microphone, reason: "First asks.", trigger: .automatic, onGranted: { first += 1 }))
+        }
+        center.require(PermissionNeed(.microphone, reason: "Second asks.", trigger: .automatic, onGranted: { second += 1 }))
+        center.dialogs[.microphone]?.primary()
+        await waitUntil { presenter.closed == [.microphone] }
+        XCTAssertEqual(first, 1, "the same feature asking three times runs its retry once")
+        XCTAssertEqual(second, 1, "another feature's automatic need is still kept")
+    }
+
     func testOneDialogPerKindAndASecondNeedJoinsIt() {
         let system = FakePermissionSystem()
         let (center, presenter) = center(system)
@@ -200,6 +267,142 @@ final class PermissionTests: XCTestCase {
         center.dialogs[.microphone]?.dismiss()
         XCTAssertFalse(center.require(PermissionNeed(.microphone)))
         XCTAssertEqual(presenter.presented, [.microphone, .speechRecognition, .microphone], "closed, so it shows again")
+    }
+
+    func testANeedWhoseDialogAnotherProcessShowsRunsItsRetryWhenTheGrantArrives() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("permission-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let namespace = "test.permission-lock.\(UUID().uuidString)"
+        let system = FakePermissionSystem()
+        func center(_ presenter: RecordingPermissionPresenter, poll: Duration) -> PermissionCenter {
+            PermissionCenter(
+                access: PermissionAccess(system: system, simulation: { PermissionSimulation.parse(nil) }),
+                presenter: presenter, lock: PermissionDialogLock(directory: directory, namespace: namespace),
+                pollInterval: poll, activateForPrompt: {})
+        }
+        // Another face of the app holds the Accessibility dialog (a second lock on the same file stands in for it).
+        let other = center(RecordingPermissionPresenter(), poll: .seconds(3600))
+        XCTAssertFalse(other.require(PermissionNeed(.accessibility)))
+        let presenter = RecordingPermissionPresenter()
+        let here = center(presenter, poll: .milliseconds(10))
+        var retries = 0
+        XCTAssertFalse(here.require(PermissionNeed(.accessibility, onGranted: { retries += 1 })))
+        XCTAssertNil(here.dialogs[.accessibility], "the other process shows the dialog")
+        XCTAssertTrue(presenter.presented.isEmpty)
+
+        system.statuses[.accessibility] = .granted
+        await waitUntil { retries == 1 }
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(retries, 1, "the retry ran once")
+        other.dialogs[.accessibility]?.dismiss()
+    }
+
+    func testAFeatureAskingAgainWhileAnotherProcessShowsTheDialogRunsItsRetryOnce() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("permission-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let namespace = "test.permission-lock.\(UUID().uuidString)"
+        let system = FakePermissionSystem()
+        func center(_ presenter: RecordingPermissionPresenter, poll: Duration) -> PermissionCenter {
+            PermissionCenter(
+                access: PermissionAccess(system: system, simulation: { PermissionSimulation.parse(nil) }),
+                presenter: presenter, lock: PermissionDialogLock(directory: directory, namespace: namespace),
+                pollInterval: poll, activateForPrompt: {})
+        }
+        let other = center(RecordingPermissionPresenter(), poll: .seconds(3600))
+        XCTAssertFalse(other.require(PermissionNeed(.accessibility)))
+        let here = center(RecordingPermissionPresenter(), poll: .milliseconds(10))
+        var first = 0
+        var second = 0
+        var user = 0
+        // Capture starts and resumes: the same automatic need, three times.
+        for _ in 0 ..< 3 {
+            here.require(PermissionNeed(.accessibility, reason: "First asks.", trigger: .automatic, onGranted: { first += 1 }))
+        }
+        here.require(PermissionNeed(.accessibility, reason: "Second asks.", trigger: .automatic, onGranted: { second += 1 }))
+        here.require(PermissionNeed(.accessibility, reason: "First asks.", onGranted: { user += 1 }))
+
+        system.statuses[.accessibility] = .granted
+        await waitUntil { first >= 1 && second >= 1 && user >= 1 }
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(first, 1, "the same feature asking three times runs its retry once")
+        XCTAssertEqual(second, 1, "another feature's automatic need is still kept")
+        XCTAssertEqual(user, 1, "and so is a user's request")
+        other.dialogs[.accessibility]?.dismiss()
+    }
+
+    func testOnlyAUsersNeedLiftsTheDialogAnotherProcessShows() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("permission-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let namespace = "test.permission-lock.\(UUID().uuidString)"
+        let system = FakePermissionSystem()
+        func center(_ presenter: RecordingPermissionPresenter) -> PermissionCenter {
+            PermissionCenter(
+                access: PermissionAccess(system: system, simulation: { PermissionSimulation.parse(nil) }),
+                presenter: presenter, lock: PermissionDialogLock(directory: directory, namespace: namespace),
+                pollInterval: .seconds(3600), activateForPrompt: {})
+        }
+        let otherPresenter = RecordingPermissionPresenter()
+        let other = center(otherPresenter)
+        XCTAssertFalse(other.require(PermissionNeed(.accessibility)))
+        let here = center(RecordingPermissionPresenter())
+        here.require(PermissionNeed(.accessibility, reason: "Focus counts input.", trigger: .automatic, onGranted: {}))
+        // Front requests arrive in the order they were sent, so when the user's one lands the automatic one would have.
+        here.require(PermissionNeed(.accessibility, onGranted: {}))
+        await waitUntil { !otherPresenter.fronted.isEmpty }
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(otherPresenter.fronted, [.accessibility], "only the user's need lifted the other dialog")
+        other.dialogs[.accessibility]?.dismiss()
+    }
+
+    /// Automation and the folders have no silent read: `status` stays `.unknown` after the grant, only a probe sees it.
+    func testAWaitOnAnotherProcessesDialogSeesAProbeGrantThatStatusNeverShows() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("permission-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let namespace = "test.permission-lock.\(UUID().uuidString)"
+        let system = FakePermissionSystem()
+        system.statuses[.desktopFolder] = .unknown("asks on first use")
+        system.probeAnswers[.desktopFolder] = .denied
+        func center(closeDelay: Duration = .zero) -> PermissionCenter {
+            PermissionCenter(
+                access: PermissionAccess(system: system, simulation: { PermissionSimulation.parse(nil) }),
+                presenter: RecordingPermissionPresenter(),
+                lock: PermissionDialogLock(directory: directory, namespace: namespace),
+                pollInterval: .seconds(3600), closeDelay: closeDelay, activateForPrompt: {})
+        }
+        let other = center()
+        XCTAssertFalse(other.require(PermissionNeed(.desktopFolder)))
+        let here = center()
+        var retries = 0
+        XCTAssertFalse(here.require(PermissionNeed(.desktopFolder, onGranted: { retries += 1 })))
+        XCTAssertNil(here.dialogs[.desktopFolder], "the other process shows the dialog")
+
+        // Refused there: nothing to see here, and a waiting process never probes on its own.
+        other.dialogs[.desktopFolder]?.allow()
+        await waitUntil { system.answered.count == 1 }
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(system.requests, [.desktopFolder], "only the other dialog asked macOS")
+        XCTAssertEqual(retries, 0)
+
+        system.probeAnswers[.desktopFolder] = .granted
+        other.dialogs[.desktopFolder]?.allow()
+        await waitUntil { retries == 1 }
+        XCTAssertEqual(system.requests, [.desktopFolder, .desktopFolder, .desktopFolder],
+                       "the other dialog's two probes, then one check here once it saw the grant")
+        XCTAssertEqual(system.statuses[.desktopFolder], .unknown("asks on first use"), "status never showed it")
+
+        // A need that starts waiting while the other dialog still shows "is on" missed the announcement: the lock
+        // file tells it.
+        let showing = center(closeDelay: .seconds(60))
+        let late = center()
+        system.probeAnswers[.automation] = .granted
+        system.statuses[.automation] = .unknown("asks on first use")
+        XCTAssertFalse(showing.require(PermissionNeed(.automation)))
+        showing.dialogs[.automation]?.allow()
+        await waitUntil { showing.dialogs[.automation]?.phase == .granted }
+        var lateRetries = 0
+        XCTAssertFalse(late.require(PermissionNeed(.automation, onGranted: { lateRetries += 1 })))
+        await waitUntil { lateRetries == 1 }
+        showing.dialogs[.automation]?.dismiss()
     }
 
     func testAutomaticNeedsStopAfterNotNowWhileAUsersActionStillShows() {
@@ -236,18 +439,70 @@ final class PermissionTests: XCTestCase {
         XCTAssertTrue(center.dialogs[.contacts]?.instructions.contains("administrator") == true)
     }
 
-    func testAnAddOnlyCalendarSendsTheUserToSettingsWhereFullAccessIsChosen() {
+    /// Calendars "Add Only" can still be upgraded by macOS's own prompt, as an undetermined grant can be granted.
+    func testAnAddOnlyCalendarGrantIsAskedForFullAccessLikeAnUndeterminedOne() async throws {
+        // The rule `SystemPermissions.request` and the dialog both follow.
+        XCTAssertTrue(PermissionKind.calendars.systemPromptAsks(from: .addOnly))
+        XCTAssertTrue(PermissionKind.reminders.systemPromptAsks(from: .addOnly))
+        XCTAssertTrue(PermissionKind.calendars.systemPromptAsks(from: .notDetermined))
+        XCTAssertFalse(PermissionKind.calendars.systemPromptAsks(from: .denied))
+        XCTAssertFalse(PermissionKind.contacts.systemPromptAsks(from: .partial("limited")))
+        XCTAssertFalse(PermissionKind.accessibility.systemPromptAsks(from: .notDetermined))
+
+        for start in [PermissionStatus.addOnly, .notDetermined] {
+            let system = FakePermissionSystem()
+            system.statuses[.calendars] = start
+            system.grantOnRequest = [.calendars]
+            let (center, presenter) = center(system)
+            var retried = 0
+            center.require(PermissionNeed(.calendars, onGranted: { retried += 1 }))
+            let dialog = try XCTUnwrap(center.dialogs[.calendars])
+            XCTAssertEqual(dialog.primaryAction, .allow, "\(start.label): Continue asks macOS")
+            dialog.primary()
+            await waitUntil { presenter.closed == [.calendars] }
+            XCTAssertEqual(system.requests, [.calendars])
+            XCTAssertEqual(retried, 1)
+        }
+
+        // Kept at Add Only in the prompt: only System Settings changes it now, and it says to choose Full Access
+        // there instead of to turn on an app that is already on.
         let system = FakePermissionSystem()
         system.statuses[.calendars] = .addOnly
         let (center, _) = center(system)
-        XCTAssertFalse(center.require(PermissionNeed(.calendars)))
-        let dialog = center.dialogs[.calendars]
-        XCTAssertEqual(dialog?.primaryAction, .openSettings, "macOS asks for full access once; the switch is in Settings")
-        XCTAssertEqual(dialog?.offersCheckAgain, true)
-        let instructions = dialog?.instructions ?? ""
+        center.require(PermissionNeed(.calendars))
+        let dialog = try XCTUnwrap(center.dialogs[.calendars])
+        XCTAssertTrue(dialog.instructions.contains("Choose Allow"), "the prompt comes first: \(dialog.instructions)")
+        dialog.primary()
+        await waitUntil { system.requests == [.calendars] && dialog.phase == .asking }
+        XCTAssertEqual(dialog.primaryAction, .openSettings)
+        XCTAssertEqual(dialog.offersCheckAgain, true)
+        let instructions = dialog.instructions
         XCTAssertTrue(instructions.contains("Full Access"), "turning on an app that is already on changes nothing: \(instructions)")
         XCTAssertFalse(instructions.contains("turn on"), instructions)
-        XCTAssertTrue(system.requests.isEmpty)
+        XCTAssertEqual(system.requests, [.calendars], "the prompt is asked once")
+    }
+
+    func testWaitingForAGrantStopsAtItsDeadlineAndCheckAgainWaitsAgain() async throws {
+        let system = FakePermissionSystem()
+        system.statuses[.fullDiskAccess] = .denied
+        let center = PermissionCenter(
+            access: PermissionAccess(system: system, simulation: { PermissionSimulation.parse(nil) }),
+            presenter: RecordingPermissionPresenter(), pollInterval: .milliseconds(10), pollDeadline: .milliseconds(300),
+            activateForPrompt: {})
+        center.require(PermissionNeed(.fullDiskAccess))
+        let dialog = try XCTUnwrap(center.dialogs[.fullDiskAccess])
+        dialog.openSettings()
+        await waitUntil { dialog.phase == .waiting }
+        await waitUntil { dialog.phase == .expired }
+        XCTAssertNotNil(dialog.note, "it says it stopped instead of spinning on")
+        XCTAssertTrue(dialog.offersCheckAgain)
+
+        // Check again reads once and waits again: a grant that arrives after it is seen without another press.
+        dialog.checkAgain()
+        XCTAssertEqual(dialog.phase, .waiting)
+        await waitUntil { dialog.note?.hasPrefix("Still off") == true }
+        system.statuses[.fullDiskAccess] = .granted
+        await waitUntil { dialog.phase == .granted }
     }
 
     func testContinueAsksInPlaceThenClosesAndRetriesTheFeature() async {
@@ -265,6 +520,139 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(retries, 1)
         XCTAssertNil(center.dialogs[.microphone])
         XCTAssertFalse(center.dismissed.contains(.microphone), "a grant is not a Not now")
+    }
+
+    func testARefusedProbeIsProbedAgainSoAGrantInSystemSettingsClosesTheDialog() async {
+        let system = FakePermissionSystem()
+        system.statuses[.automation] = .unknown("asks on first use")
+        system.probeAnswers[.automation] = .denied
+        let (center, presenter) = center(system)
+        var retries = 0
+        center.require(PermissionNeed(.automation, onGranted: { retries += 1 }))
+        let dialog = center.dialogs[.automation]
+        dialog?.primary()
+        await waitUntil { dialog?.status == .denied && dialog?.phase == .asking }
+        XCTAssertEqual(dialog?.primaryAction, .openSettings)
+        dialog?.primary()
+        await waitUntil { dialog?.phase == .waiting }
+
+        await dialog?.refresh(explicit: false)
+        XCTAssertEqual(dialog?.status, .denied, "the poll keeps the refusal instead of reading it as never asked")
+        XCTAssertEqual(dialog?.primaryAction, .openSettings)
+        XCTAssertEqual(system.requests, [.automation], "the plain poll never runs the probe")
+
+        await dialog?.refresh(explicit: true)
+        XCTAssertEqual(system.requests, [.automation, .automation], "Check again probes the refused grant")
+        XCTAssertNotNil(dialog?.note, "still refused, and it says so")
+
+        system.probeAnswers[.automation] = .granted
+        await dialog?.refresh(explicit: true)
+        await waitUntil { presenter.closed == [.automation] }
+        XCTAssertEqual(dialog?.phase, .granted)
+        XCTAssertEqual(retries, 1)
+    }
+
+    func testAProbeMacOSHoldsAnswersByItsDeadline() async {
+        let flights = ProbeFlights()
+        let started = ContinuousClock.now
+        let held = await SystemPermissions.probe("fixture-held", within: 0.05, flights: flights) {
+            Thread.sleep(forTimeInterval: 0.6)
+            return .granted
+        }
+        XCTAssertEqual(held, .notDetermined, "an unanswered probe reads as not asked, so Continue and Check again work")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(450))
+        let answered = await SystemPermissions.probe("fixture-answered", within: 5, flights: flights) { .denied }
+        XCTAssertEqual(answered, .denied)
+    }
+
+    /// Counts probe runs from the queue they block on.
+    private final class ProbeRuns: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return count
+        }
+        func record() {
+            lock.lock()
+            count += 1
+            lock.unlock()
+        }
+    }
+
+    func testCheckingAgainWhileAProbeIsStuckStartsNoMoreBlockingProbes() async {
+        let flights = ProbeFlights()
+        let runs = ProbeRuns()
+        // An Automation prompt nobody answers: the probe blocks until the gate opens.
+        let gate = DispatchSemaphore(value: 0)
+        var opened = false
+        defer { if !opened { gate.signal() } }
+        for _ in 0 ..< 3 {
+            let answer = await SystemPermissions.probe("fixture", within: 0.05, flights: flights) {
+                runs.record()
+                // The test opens the gate within a second; the deadline keeps a broken test from hanging the suite.
+                if gate.wait(timeout: .now() + 10) == .timedOut { XCTFail("the stuck probe's gate never opened") }
+                return .granted
+            }
+            XCTAssertEqual(answer, .notDetermined)
+        }
+        XCTAssertEqual(runs.value, 1, "one blocking probe, however often Check again is pressed")
+        XCTAssertEqual(flights.running, 1)
+
+        // A request still waiting when the stuck probe answers gets that answer, and starts nothing.
+        async let joined = SystemPermissions.probe("fixture", within: 5, flights: flights) {
+            runs.record()
+            return .denied
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        opened = true
+        gate.signal()
+        let answer = await joined
+        XCTAssertEqual(answer, .granted)
+        XCTAssertEqual(runs.value, 1)
+        XCTAssertEqual(flights.running, 0)
+
+        // Once it answered, the next request probes again.
+        let fresh = await SystemPermissions.probe("fixture", within: 5, flights: flights) {
+            runs.record()
+            return .denied
+        }
+        XCTAssertEqual(fresh, .denied)
+        XCTAssertEqual(runs.value, 2)
+    }
+
+    func testNotNowWhileMacOSIsAskingNeverRunsTheFeatureOrOpensSettings() async throws {
+        let system = FakePermissionSystem()
+        system.statuses[.accessibility] = .notDetermined
+        system.grantOnRequest = [.accessibility, .microphone]
+        system.requestDelay = .milliseconds(80)
+        system.statuses[.microphone] = .notDetermined
+        let (center, presenter) = center(system)
+        var retries = 0
+        // Settings-style kind: the request that lists the app is still open when the user presses "Not now".
+        center.require(PermissionNeed(.accessibility, onGranted: { retries += 1 }))
+        let settingsDialog = try XCTUnwrap(center.dialogs[.accessibility])
+        settingsDialog.primary()
+        await waitUntil { settingsDialog.phase == .working }
+        settingsDialog.dismiss()
+        // In-place prompt kind: the same, through Continue.
+        center.require(PermissionNeed(.microphone, onGranted: { retries += 1 }))
+        let promptDialog = try XCTUnwrap(center.dialogs[.microphone])
+        promptDialog.primary()
+        promptDialog.dismiss()
+
+        // Both grants arrive after Not now; then the dialogs' own continuations get their turn on the main actor.
+        await waitUntil { system.answered.count == 2 }
+        for _ in 0 ..< 20 { await Task.yield() }
+        XCTAssertEqual(system.requests, [.accessibility, .microphone], "both requests reached macOS and answered granted")
+        XCTAssertEqual(Set(system.answered), [.accessibility, .microphone])
+        XCTAssertEqual(retries, 0, "a grant that arrives after Not now runs no feature")
+        XCTAssertTrue(system.opened.isEmpty, "System Settings does not open after Not now")
+        XCTAssertNotEqual(settingsDialog.phase, .granted)
+        XCTAssertNotEqual(promptDialog.phase, .granted)
+        XCTAssertEqual(presenter.closed, [.accessibility, .microphone])
+        XCTAssertEqual(center.dismissed, [.accessibility, .microphone])
     }
 
     func testOpenSettingsListsTheAppFirstThenWaitsAndCheckAgainCloses() async {
@@ -331,6 +719,39 @@ final class PermissionTests: XCTestCase {
         XCTAssertFalse(inProcess, "an in-process feature never counts a grant only a new process sees")
     }
 
+    func testANeedDuringTheGrantedConfirmationRunsItsRetryOrGetsADialogOfItsOwn() async {
+        let system = FakePermissionSystem()
+        system.statuses[.screenRecording] = .denied
+        var fresh: PermissionStatus = .denied
+        let (center, presenter) = center(system, fresh: { _ in fresh }, closeDelay: .seconds(3600))
+        var retries = 0
+        // A retry that asks again at once, as a capture refused by this process's old answer does.
+        func ask() {
+            center.require(PermissionNeed(.screenRecording, grantWorksInNewProcess: true, onGranted: {
+                retries += 1
+                ask()
+            }))
+        }
+        ask()
+        let dialog = center.dialogs[.screenRecording]
+        fresh = .granted
+        await dialog?.refresh(explicit: true)
+        XCTAssertEqual(dialog?.phase, .granted)
+        XCTAssertEqual(retries, 1, "the retry's own ask does not run it again")
+
+        ask()
+        XCTAssertEqual(retries, 2, "a need that arrives while the confirmation shows still runs its retry")
+        XCTAssertTrue(center.dialogs[.screenRecording] === dialog)
+        XCTAssertEqual(presenter.presented, [.screenRecording])
+
+        XCTAssertFalse(center.require(PermissionNeed(.screenRecording)))
+        let replacement = center.dialogs[.screenRecording]
+        XCTAssertFalse(replacement === dialog, "an in-process feature cannot use the grant this process has not read")
+        XCTAssertEqual(presenter.presented, [.screenRecording, .screenRecording])
+        XCTAssertEqual(presenter.closed, [.screenRecording])
+        await waitUntil { replacement?.phase == .relaunch }
+    }
+
     func testStaleSimulationOffersRelaunchWithoutAskingTheProbe() async {
         let system = FakePermissionSystem()
         system.statuses[.inputMonitoring] = .granted
@@ -361,6 +782,58 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(needs, [.screenRecording])
         XCTAssertFalse(store.isCapturing)
         XCTAssertTrue(store.notice?.contains("Screen Recording") == true)
+    }
+
+    func testAScreenshotQueuedBeforeTeardownNeverAsksForTheGrantOrCaptures() async throws {
+        let domain = "permission-capture." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+                                defaults: defaults, appearance: NativeSettingsAppearance(
+                                    defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        var gates = 0
+        var actions: [WidgetJSON] = []
+        model.screenCaptureGate = { _ in
+            gates += 1
+            return true
+        }
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["ok": true]
+        }
+
+        // Stopped while the capture waited on the queue: no gate, no screenshot.
+        model.capture()
+        model.stop()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(gates, 0, "a capture queued before teardown asked for the grant afterwards")
+        XCTAssertTrue(actions.isEmpty)
+    }
+
+    func testAScreenshotWhoseGateEndsAfterTeardownTakesNoScreenshot() async throws {
+        let domain = "permission-capture." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+                                defaults: defaults, appearance: NativeSettingsAppearance(
+                                    defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        var gates = 0
+        var actions: [WidgetJSON] = []
+        // The face is torn down while the gate waits on the fresh-process probe.
+        model.screenCaptureGate = { _ in
+            gates += 1
+            model.stop()
+            return true
+        }
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["ok": true]
+        }
+
+        model.capture()
+        await waitUntil { gates == 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(actions.isEmpty, "the screenshot started after teardown")
     }
 
     func testAPasteRefusedForAccessibilityOpensTheDialogAsAnAutomaticNeed() async {

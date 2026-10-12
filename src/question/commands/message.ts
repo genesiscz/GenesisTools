@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
@@ -17,7 +18,7 @@ export function registerMessageCommand(program: Command): void {
         .option("--file <path>", "read the message text (markdown) from a file")
         .option("--agent <label>", "subagent attribution label")
         .option("--session <id>", "override the session id (only outside Claude, Codex or Grok)")
-        .option("--project-path <path>", "source worktree directory; relative image paths resolve here")
+        .option("--project-path <path>", "source worktree directory; relative --image and --file paths resolve here")
         .option("--json", "print the receipt as JSON")
         .addHelpText(
             "after",
@@ -36,7 +37,22 @@ export function registerMessageCommand(program: Command): void {
                     json?: boolean;
                 }
             ) => {
-                const text = o.file ? readFileSync(o.file, "utf8") : words.join(" ");
+                // A missing --file or a refused image is one red line, and the exit is explicit: a sink may already
+                // hold the event loop open (see the exit below).
+                const fail = (error: unknown): never => {
+                    out.error(pc.red(error instanceof Error ? error.message : String(error)));
+                    process.exit(1);
+                };
+                let text = "";
+
+                try {
+                    // Resolved like the images, so `--project-path` names one folder for both.
+                    text = o.file
+                        ? readFileSync(resolve(o.projectPath ?? process.cwd(), o.file), "utf8")
+                        : words.join(" ");
+                } catch (error) {
+                    fail(error);
+                }
 
                 if (!text.trim() && o.image.length === 0) {
                     out.error(pc.red("Give the message text, --file, or at least one --image."));
@@ -52,7 +68,7 @@ export function registerMessageCommand(program: Command): void {
                     sessionHint: o.session,
                     projectPath: o.projectPath,
                     source: "cli",
-                });
+                }).catch(fail);
                 const note = messageNote(nativeInboxState());
 
                 if (o.json) {

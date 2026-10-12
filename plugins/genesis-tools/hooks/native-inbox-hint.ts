@@ -106,7 +106,12 @@ function readText(path: string): string | null {
 }
 
 function commandOf(pid: number): string | null {
-    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], { stdout: "pipe", stderr: "pipe" });
+    // A session start waits on this, so a stuck `ps` gives up after 2 s and the lock reads as not live.
+    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 2000,
+    });
     const command = result.exitCode === 0 ? result.stdout.toString().trim() : "";
     return command || null;
 }

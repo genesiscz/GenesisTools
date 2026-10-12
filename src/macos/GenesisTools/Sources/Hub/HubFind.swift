@@ -38,6 +38,8 @@ final class HubFindModel: ObservableObject {
         truncated = false
         note = nil
         let needle = query.trimmingCharacters(in: .whitespaces)
+        // An empty query clears the hits, and the count shows "return searches" again, not "0 hits".
+        searched = false
         guard !needle.isEmpty, !roots.isEmpty else { return }
         searched = true
 
@@ -199,7 +201,7 @@ struct HubFindPanel: View {
                 if find.hits.isEmpty, find.note == nil {
                     // Before a search: how it works, in a panel sized to these lines, not 460 pt of empty black (H17).
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(find.running ? "Searching…" : "Type a word or a regular expression, then press Return.")
+                        Text(find.running ? "Searching…" : "Type a word or a phrase, then press Return. It is matched as plain text, not as a pattern.")
                             .font(.system(size: 12.5))
                             .foregroundColor(.settingsText)
                         Text("Searches every file in \(roots.count > 1 ? "these folders" : "this folder"), line by line. A click on a hit opens it in Cursor at its line.")

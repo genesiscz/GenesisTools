@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// The picture of a file, everywhere an image, a video or a document is shown: decoded off the main thread
@@ -34,6 +35,8 @@ public struct MediaThumbnailView: View {
     @State private var hovering = false
     @State private var slow = false
     @State private var loadedPath: String?
+    /// The button's keyboard focus: it comes back here when the preview this thumbnail opened closes.
+    @FocusState private var focused: Bool
 
     /// `gallery` is the set ← and → move through in the preview (this item included); `aspect` (width / height),
     /// when the caller knows it, shapes the loading placeholder like the picture. `onOpen` replaces the preview.
@@ -85,7 +88,10 @@ public struct MediaThumbnailView: View {
             } else if interactive && emphasis != .large {
                 Button(action: open) { picture }
                     .buttonStyle(.genHoverPlain(brighten: 0.06))
-                    .modifier(MediaPointerCursor())
+                    .focused($focused)
+                    .onReceive(preview?.focusReturns.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { id in
+                        if id == item.id { focused = true }
+                    }
                     .onHover { hovering = $0 }
                     .instantTooltip(item.kind == .video ? "Play \(item.name)" : "Preview \(item.name)")
                     .accessibilityLabel(Text(verbatim: (item.kind == .video ? "Play " : "Preview ") + item.name))
@@ -101,10 +107,20 @@ public struct MediaThumbnailView: View {
                 roomy: proxy.size.width >= 76 && proxy.size.height >= 64)
         } action: { measure = $0 }
         .task(id: LoadKey(path: item.path, bucket: measure.bucket, attempt: attempt, revision: revision)) {
+            // The file as this load is about to read it, so a change while the decode runs reloads at once.
+            let seen = MediaFileIdentity.current(item.path)
             await load()
+            guard measure.bucket > 0 else { return }
             // The cache compares the file's identity only when asked; nothing asks while the tile stays the same
             // size. Wait for the file itself to change, then load again (the old picture stays until the new one).
-            if measure.bucket > 0, await MediaFileChange.next(path: item.path) {
+            // A tile showing "took too long" also loads again once the decoder past its deadline answers.
+            var lateAnswer: (@Sendable () async -> Bool)?
+            if case .failed(let message) = result, message == MediaThumbnailCache.tooLong {
+                let path = item.path
+                let pixels = CGFloat(measure.bucket)
+                lateAnswer = { await MediaThumbnailCache.shared.lateAnswer(path: path, maxPixels: pixels) }
+            }
+            if await MediaFileChange.nextReload(path: item.path, seen: seen, lateAnswer: lateAnswer) {
                 revision += 1
             }
         }
@@ -201,7 +217,6 @@ public struct MediaThumbnailView: View {
                     Label("Retry", systemImage: "arrow.clockwise").font(.system(size: 9.5, weight: .medium))
                 }
                 .buttonStyle(.genHover(padding: EdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5)))
-                .modifier(MediaPointerCursor())
                 .accessibilityLabel(Text(verbatim: "Retry the preview of \(item.name)"))
             } else {
                 IconButton(systemName: "arrow.clockwise", tooltip: "Retry the preview of \(item.name)", size: 9) { retry() }
@@ -302,6 +317,15 @@ extension MediaKind {
 /// rename (an atomic save replaces the file by a rename), or, while the file is missing, any change of its folder, so a
 /// repaired file is seen. True after the change, debounced by 200 ms so a file written in pieces loads once; false when
 /// the task is cancelled or nothing can be watched. Cancellation closes the descriptor.
+///
+/// `seen` is the file as the caller last read it (nil: missing then). The watch starts after that read, so a change
+/// in between (a file replaced while its thumbnail decoded, or while the tile waited for a watch) shows as another
+/// identity once the watch is armed and counts at once.
+///
+/// Each watch holds one descriptor, and an app starts with a soft limit of 256, so at most `watchLimit` files are
+/// watched at once: a tile past it waits for a watch to end (another tile went away or saw its change) and then
+/// watches its own file. Waiting holds no descriptor. While it waits, the tile compares its file's identity every
+/// `overflowCheck`, so a file replaced while every watch stays taken (a gallery that does not move) still reloads.
 enum MediaFileChange {
     private final class Outcome: @unchecked Sendable {
         /// Touched only on `queue`, where both source handlers run.
@@ -309,8 +333,69 @@ enum MediaFileChange {
     }
 
     private static let queue = DispatchQueue(label: "genesiskit.media.file-change", qos: .utility)
+    static let watchLimit = 64
+    static let slots = MediaWatchSlots(limit: watchLimit)
+    /// One `stat` per waiting tile in this interval; a watched tile sees its change at once.
+    static let overflowCheck: Duration = .seconds(2)
 
-    static func next(path: String, debounce: Duration = .milliseconds(200)) async -> Bool {
+    static func next(path: String, seen: MediaFileIdentity?, debounce: Duration = .milliseconds(200),
+                     slots: MediaWatchSlots = MediaFileChange.slots,
+                     overflowCheck: Duration = MediaFileChange.overflowCheck) async -> Bool
+    {
+        switch await slotOrChange(path: path, seen: seen, slots: slots, every: overflowCheck) {
+        case .cancelled:
+            return false
+        case .changed:
+            break
+        case .slot:
+            let changed = await watch(path, seen: seen)
+            await slots.release()
+            guard changed else { return false }
+        }
+        try? await Task.sleep(for: debounce)
+        return !Task.isCancelled
+    }
+
+    /// The next reason for a tile to load again: its file changed (`next`), or `lateAnswer` said true (the decoder
+    /// that ran past its deadline answered). A `lateAnswer` that says false leaves the file watch running.
+    static func nextReload(path: String, seen: MediaFileIdentity?, lateAnswer: (@Sendable () async -> Bool)?,
+                           debounce: Duration = .milliseconds(200)) async -> Bool
+    {
+        guard let lateAnswer else { return await next(path: path, seen: seen, debounce: debounce) }
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask { await next(path: path, seen: seen, debounce: debounce) }
+            group.addTask { await lateAnswer() }
+            for await reload in group where reload {
+                group.cancelAll()
+                return true
+            }
+            return false
+        }
+    }
+
+    private enum Wait: Sendable { case slot, changed, cancelled }
+
+    /// A watch slot, or, while every slot stays taken, the file's own change, seen by its identity.
+    private static func slotOrChange(path: String, seen: MediaFileIdentity?, slots: MediaWatchSlots,
+                                     every interval: Duration) async -> Wait
+    {
+        await withTaskGroup(of: Wait.self) { group in
+            group.addTask { await slots.acquire() ? .slot : .cancelled }
+            group.addTask {
+                while true {
+                    do { try await Task.sleep(for: interval) } catch { return .cancelled }
+                    if MediaFileIdentity.current(path) != seen { return .changed }
+                }
+            }
+            let first = await group.next() ?? .cancelled
+            group.cancelAll()
+            // A slot granted just as the change was seen goes back.
+            for await other in group where other == .slot { await slots.release() }
+            return first
+        }
+    }
+
+    private static func watch(_ path: String, seen: MediaFileIdentity?) async -> Bool {
         guard !Task.isCancelled else { return false }
         let exists = FileManager.default.fileExists(atPath: path)
         let descriptor = open(exists ? path : (path as NSString).deletingLastPathComponent, O_EVTONLY)
@@ -330,12 +415,58 @@ enum MediaFileChange {
                     continuation.resume(returning: outcome.changed)
                 }
                 source.resume()
+                // Armed from here: a change before it shows as another identity, a change after it as an event.
+                queue.async {
+                    guard !outcome.changed, MediaFileIdentity.current(path) != seen else { return }
+                    outcome.changed = true
+                    source.cancel()
+                }
             }
         } onCancel: {
             source.cancel()
         }
-        guard changed else { return false }
-        try? await Task.sleep(for: debounce)
-        return !Task.isCancelled
+        return changed
+    }
+}
+
+/// Watches allowed at once, handed out in request order. A request whose task is cancelled while it waits answers
+/// false at once and takes no slot.
+actor MediaWatchSlots {
+    private let limit: Int
+    private(set) var inUse = 0
+    private var waiting: [(id: UUID, continuation: CheckedContinuation<Bool, Never>)] = []
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    var waitingCount: Int { waiting.count }
+
+    func acquire() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if inUse < limit {
+            inUse += 1
+            return true
+        }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { waiting.append((id, $0)) }
+        } onCancel: {
+            Task { await self.withdraw(id) }
+        }
+    }
+
+    /// The slot goes to the oldest waiting request, or back to the pool.
+    func release() {
+        if waiting.isEmpty {
+            inUse -= 1
+        } else {
+            waiting.removeFirst().continuation.resume(returning: true)
+        }
+    }
+
+    private func withdraw(_ id: UUID) {
+        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
+        waiting.remove(at: index).continuation.resume(returning: false)
     }
 }

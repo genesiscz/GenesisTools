@@ -890,8 +890,10 @@ struct InboxListView: View {
                 }
                 .padding(.bottom, 12)
             }
-            .onChange(of: inbox.selectedID, initial: true) { _, id in
-                if let id, rows.contains(where: { $0.id == id && $0.isStale }) { showOlder = true }
+            // Keyed on the selected row being a quiet one, not on the selection alone: a reveal can select a session
+            // before the load that lists it lands, and the fold must open when the row arrives too.
+            .onChange(of: rows.contains { $0.id == inbox.selectedID && $0.isStale } ? inbox.selectedID : nil, initial: true) { _, id in
+                if id != nil { showOlder = true }
             }
         }
     }
@@ -1040,7 +1042,7 @@ struct InboxMain: View {
             parts.append("nothing waiting")
         }
         if older > 0 {
-            parts.append("\(older) quiet for 3+ days")
+            parts.append("\(Plural.count(older, "session")) quiet for 3+ days")
         }
         if queued > 0 {
             parts.append("\(queued) queued")

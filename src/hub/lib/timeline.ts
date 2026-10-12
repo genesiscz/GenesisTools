@@ -744,10 +744,19 @@ export async function cachedPatchIds({
     const key = `timeline/patch-ids-${createHash("sha1").update(repo).digest("hex").slice(0, 12)}.json`;
     const known = (await storage.getCacheFile<Record<string, string>>(key, PATCH_ID_TTL)) ?? {};
     const missing = shas.filter((sha) => !(sha in known));
+    let found: Map<string, string> | null = null;
 
     if (missing.length > 0) {
-        const found = await compute(missing);
+        try {
+            found = await compute(missing);
+        } catch (error) {
+            // Patch ids only fold copies together. Without them the page still shows every commit it read, folded
+            // by author, author time and subject only; nothing is cached, so the next page asks again.
+            log.warn({ error, repo, missing: missing.length }, "timeline: patch ids unavailable; folding without them");
+        }
+    }
 
+    if (found) {
         // A sha with no patch (a merge, an empty commit) is kept as "", so it is not asked again.
         for (const sha of missing) {
             known[sha] = found.get(sha) ?? "";
@@ -769,7 +778,7 @@ export async function cachedPatchIds({
         }
     }
 
-    return { patchIds, computed: missing.length };
+    return { patchIds, computed: found ? missing.length : 0 };
 }
 
 /** `git diff-tree --stdin -p | git patch-id --stable` over `shas` (full ids), in one pipeline. */
@@ -790,15 +799,17 @@ export async function patchIdsOf(cwd: string, shas: readonly string[]): Promise<
         stderr: "pipe",
         timeout: 15_000,
     });
-    const [out, diffCode, patchCode] = await Promise.all([
+    // Both stderr pipes are read while the processes run: one left unread fills and blocks its writer.
+    const [out, diffErr, patchErr, diffCode, patchCode] = await Promise.all([
         new Response(patch.stdout).text(),
+        new Response(diff.stderr).text(),
+        new Response(patch.stderr).text(),
         diff.exited,
         patch.exited,
     ]);
 
     if (diffCode !== 0 || patchCode !== 0) {
-        const stderr = (await new Response(diff.stderr).text()) + (await new Response(patch.stderr).text());
-        throw new Error(`git patch-id exited ${diffCode}/${patchCode}: ${stderr.trim().slice(0, 200)}`);
+        throw new Error(`git patch-id exited ${diffCode}/${patchCode}: ${(diffErr + patchErr).trim().slice(0, 200)}`);
     }
 
     const found = new Map<string, string>();
@@ -812,6 +823,22 @@ export async function patchIdsOf(cwd: string, shas: readonly string[]): Promise<
     }
 
     return found;
+}
+
+/** The candidates' own committer times: the checked-out branch is read only across them, not the whole range. */
+function candidateSpan(rows: readonly CommitRow[], candidates: readonly string[]): TimelineWindow {
+    const wanted = new Set(candidates);
+    let low = Number.POSITIVE_INFINITY;
+    let high = Number.NEGATIVE_INFINITY;
+
+    for (const { commit } of rows) {
+        if (wanted.has(commit.sha)) {
+            low = Math.min(low, commit.committer.epoch);
+            high = Math.max(high, commit.committer.epoch);
+        }
+    }
+
+    return { since: new Date(low * 1000), upper: new Date((high + 1) * 1000) };
 }
 
 async function repoEvents(
@@ -851,17 +878,11 @@ async function repoEvents(
     }
 
     const candidates = copyCandidates(read.map((row) => row.commit));
-    // The checked-out branch is read only across the candidates' own times, not the whole range.
-    const times = read.filter((row) => candidates.includes(row.commit.sha)).map((row) => row.commit.committer.epoch);
-    const span: TimelineWindow = {
-        since: new Date(Math.min(...times) * 1000),
-        upper: new Date((Math.max(...times) + 1) * 1000),
-    };
     const commits =
         candidates.length === 0
             ? read.map((row) => row.event)
             : await prof.measureAsync(`fold ${project} ${candidates.length} candidates`, async () =>
-                  foldCopies(read, await deps.commitCopies(repo, candidates, span))
+                  foldCopies(read, await deps.commitCopies(repo, candidates, candidateSpan(read, candidates)))
               );
 
     const pushes: TimelineEvent[] = [];
@@ -1393,8 +1414,10 @@ export async function buildTimeline({
     const upper = before && before < end ? before : end;
     // The caller sets `--until` to its own clock and then starts this process: under load Bun's startup alone
     // took more than a second, the page read as an old one keyed by its exact end, never hit, and left one cache
-    // file per call (272 in the hub's cache folder, 2026-10-10).
-    const live = upper.getTime() >= now.getTime() - TIMELINE_LIVE_SLACK_MS;
+    // file per call (272 in the hub's cache folder, 2026-10-10). That slack is for the first page only: a cursor
+    // page of a busy feed can end seconds ago too, and under the shared "live" key it would get the first page back.
+    const cursored = Boolean(before && before < end);
+    const live = !cursored && upper.getTime() >= now.getTime() - TIMELINE_LIVE_SLACK_MS;
     const shape = [
         filters.author ?? "all",
         filters.needsMe ? "needs-me" : "",

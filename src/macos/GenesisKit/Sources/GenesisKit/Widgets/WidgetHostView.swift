@@ -286,13 +286,7 @@ struct WidgetHostView: View {
             ZStack(alignment: edgeAlignment) {
                 if presentation == .expanded || keepsExpandedPane {
                     expandedPane(selected)
-                        .opacity(presentation == .expanded ? 1 : 0)
-                        .allowsHitTesting(presentation == .expanded)
-                        .accessibilityHidden(presentation != .expanded)
-                        // Hidden, the warm pane keeps its full size but takes no room: at its ~875 pt it made this
-                        // stack taller than the preview window, the edge overlay centred it, and the preview lost
-                        // its header above the window (Martin, 2026-10-10 22:17).
-                        .frame(height: presentation == .expanded ? nil : 0, alignment: edgeAlignment)
+                        .modifier(WarmPaneVisibility(shown: presentation == .expanded, alignment: edgeAlignment))
                 }
                 if presentation == .preview {
                     previewPane(selected)
@@ -423,6 +417,26 @@ struct WidgetHostView: View {
 
     private func expand() {
         if let selected { model.openModule(selected.id, on: surface) } else { model.showSettings?() }
+    }
+}
+
+/// The warm expanded pane while hidden: it stays built, so opening it is instant, but it takes no clicks, no
+/// keyboard focus and no accessibility focus. Disabled, its composer cannot keep the first responder and type into
+/// an invisible draft after the panel collapsed. Flipping the enabled state rebuilds nothing.
+struct WarmPaneVisibility: ViewModifier {
+    let shown: Bool
+    let alignment: Alignment
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .allowsHitTesting(shown)
+            .disabled(!shown)
+            .accessibilityHidden(!shown)
+            // Hidden, the warm pane keeps its full size but takes no room: at its ~875 pt it made this stack taller
+            // than the preview window, the edge overlay centred it, and the preview lost its header above the window
+            // (Martin, 2026-10-10 22:17).
+            .frame(height: shown ? nil : 0, alignment: alignment)
     }
 }
 

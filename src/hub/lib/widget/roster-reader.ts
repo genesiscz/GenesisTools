@@ -5,7 +5,8 @@ import type { WidgetRosterScope } from "./roster-index";
 
 /**
  * A roster read, after refreshing the named parts of the shared index when `index` is not empty. With
- * `onlyIfChanged`, a refresh that changed no index row ends without the read: nothing the roster shows moved.
+ * `onlyIfChanged`, a refresh that changed no index row ends without the read when no other process wrote the index
+ * since the worker's last read either: nothing the roster shows moved.
  */
 export interface WidgetRosterRequest {
     id: number;

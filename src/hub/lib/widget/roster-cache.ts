@@ -1,4 +1,4 @@
-import { rename } from "node:fs/promises";
+import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -66,10 +66,41 @@ export async function writeWidgetRosterCache({
     now?: number;
 }): Promise<void> {
     const path = widgetRosterCachePath(root);
-    const temporary = `${path}.${process.pid}.tmp`;
     const file: WidgetRosterCacheFile = { version: 1, pid: process.pid, writtenAt: now, ...roster };
+    // An earlier write's failure was already reported to its own caller; this one goes ahead either way.
+    const write = (pendingRosterWrites.get(path) ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => replaceRosterCache(path, file));
+    pendingRosterWrites.set(path, write);
+
+    try {
+        await write;
+    } finally {
+        if (pendingRosterWrites.get(path) === write) {
+            pendingRosterWrites.delete(path);
+        }
+    }
+}
+
+/**
+ * Writes to one cache file run one at a time, in the order they were asked for: they share the temporary path, and
+ * an older roster must never replace a newer one. Every roster run asks for a write, often before the last finished.
+ */
+const pendingRosterWrites = new Map<string, Promise<void>>();
+
+async function replaceRosterCache(path: string, file: WidgetRosterCacheFile): Promise<void> {
+    const temporary = `${path}.${process.pid}.tmp`;
     await Bun.write(temporary, SafeJSON.stringify(file, { strict: true }));
-    await rename(temporary, path);
+
+    try {
+        await rename(temporary, path);
+    } catch (error) {
+        // A failed rename would leave the temporary file in the widget root for good.
+        await unlink(temporary).catch((cleanup) => {
+            logger.debug({ error: cleanup, temporary }, "Widget roster cache: temporary file not removed");
+        });
+        throw error;
+    }
 }
 
 /** The watch's roster when its writer is alive and wrote it recently; undefined sends the caller to the index. */

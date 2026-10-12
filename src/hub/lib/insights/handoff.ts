@@ -199,8 +199,9 @@ function commitsOf(tools: readonly TranscriptTool[]): HandoffCommit[] {
 export function gist(text: string, max = 280): string {
     const flat = text.replace(/\s+/g, " ").trim();
     const spans: string[] = [];
-    // Code spans become one opaque character each, so their dots and question marks end nothing.
-    const masked = flat.replace(/`+[^`]*`+/g, (span) => {
+    // Code spans become one opaque character each, so their dots and question marks end nothing. A span closes only
+    // at a backtick run as long as the one that opened it, as in Markdown: ``a ` b`` holds a single backtick.
+    const masked = flat.replace(/(?<!`)(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, (span) => {
         spans.push(span);
         return `${spans.length - 1}`;
     });

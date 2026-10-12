@@ -396,6 +396,17 @@ describe("timeline", () => {
         expect(again.cached).toBe(true);
     });
 
+    test("a cursor page that ends seconds ago is its own page, not the cached first one", async () => {
+        const storage = await scratchStorage();
+        await buildTimeline({ since: SINCE, now: NOW, deps: deps({}), storage, limit: 1 });
+        // A busy feed: the first page's oldest event is a few seconds old, so the next page ends there.
+        const before = new Date(NOW.getTime() - 5_000);
+        const next = await buildTimeline({ since: SINCE, now: NOW, deps: deps({}), storage, limit: 1, before });
+
+        expect(next.cached).toBe(false);
+        expect(next.before).toBe(before.toISOString());
+    });
+
     test("a failing repository or PR list is a warning, not an empty feed", async () => {
         const result = await buildTimeline({
             since: SINCE,
@@ -548,6 +559,35 @@ describe("timeline: a change picked onto several branches is one row", () => {
         expect(first.patchIds.get(D)).toBe("p-d");
         expect(first.patchIds.has(F)).toBe(false);
         expect(again.computed).toBe(1);
+    });
+
+    test("a failed patch-id run keeps the cached ids, caches nothing new, and asks again next time", async () => {
+        const storage = await scratchStorage();
+        await cachedPatchIds({
+            repo: "/repo/.git",
+            shas: [D],
+            storage,
+            compute: async () => new Map([[D, "p-d"]]),
+        });
+        let fail = true;
+        const asked: string[][] = [];
+        const compute = async (missing: string[]) => {
+            asked.push(missing);
+
+            if (fail) {
+                throw new Error("git patch-id exited 128/0: fatal: bad object");
+            }
+
+            return new Map(missing.map((sha) => [sha, `p-${sha.slice(0, 1)}`]));
+        };
+
+        const failed = await cachedPatchIds({ repo: "/repo/.git", shas: [D, E], storage, compute });
+        fail = false;
+        const retried = await cachedPatchIds({ repo: "/repo/.git", shas: [D, E], storage, compute });
+
+        expect(failed).toEqual({ patchIds: new Map([[D, "p-d"]]), computed: 0 });
+        expect(asked).toEqual([[E], [E]]);
+        expect(retried.patchIds.get(E)).toBe("p-e");
     });
 
     test("patchIdsOf gives a cherry-pick the patch-id of its original", async () => {

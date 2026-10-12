@@ -532,7 +532,63 @@ public final class ActivityRecorder: ObservableObject {
         }
     }
 
+    /// The ledger just forgot `from..<to` (`ActivityStore.forget`). A segment that started before the range keeps its
+    /// row and id there and starts again where the range ends, so recording goes on in it. One that started inside
+    /// the range is gone: its id is dropped, so the next probe opens a new segment instead of touching a missing row
+    /// and filing input under it. Where the row starts now is read back from the ledger, so a later deletion that
+    /// covers that new start drops it too. An open capture gap (a pause, an exclusion) that started before the range
+    /// was closed where the range begins and goes on in a new row after it, with its reason and deadline: the
+    /// recorder follows that row, so resuming closes it. The current minute's counts, counted inside the range, are
+    /// discarded rather than written back after the deletion.
+    public func ledgerForgot(from: Int64, to: Int64) {
+        guard remoteCommand == nil, from < to else { return }
+        fence(from: from, to: to)
+        counter.discardPending(overlapping: from, to: to)
+        if let gap = openGapId {
+            do {
+                openGapId = try store.openGapAfterForget(id: gap, to: to)
+                if openGapId == nil { openGapReason = nil }
+            } catch {
+                FlowFocusLog.focus.error("capture gap \(gap) not reread after a deletion: \(error.localizedDescription)")
+            }
+        }
+        guard let id = segmentId else { return }
+        do {
+            if let started = try store.segmentStartedMs(id: id) {
+                segmentStartedMs = started
+            } else {
+                segmentId = nil
+            }
+        } catch {
+            FlowFocusLog.focus.error("segment \(id) not reread after a deletion: \(error.localizedDescription)")
+            // The ledger's own rule for an open segment, without reading it back.
+            if segmentStartedMs >= from, segmentStartedMs < to {
+                segmentId = nil
+            } else if segmentStartedMs < from {
+                segmentStartedMs = to
+            }
+        }
+    }
+
+    /// A deletion of `from..<to` is starting (`FocusController.forgetOwned`, before it runs off the main actor). From
+    /// now on a minute that starts inside the range is forgotten: counts the counter already flushed, still on their
+    /// way here, and the rest of that minute are not written back while the deletion runs or after it.
+    public func ledgerForgetting(from: Int64, to: Int64) {
+        guard remoteCommand == nil, from < to else { return }
+        fence(from: from, to: to)
+    }
+
+    /// Ranges deleted since this recorder started; one per "Delete activity", so the list stays short.
+    private var forgottenRanges: [(from: Int64, to: Int64)] = []
+
+    private func fence(from: Int64, to: Int64) {
+        guard !forgottenRanges.contains(where: { $0.from == from && $0.to == to }) else { return }
+        forgottenRanges.append((from, to))
+    }
+
     private func persistInput(bucketMs: Int64, counts: ActivityStore.InputCounts) {
+        // The ledger deletes a minute by its start, so a forgotten one is fenced by its start too.
+        guard !forgottenRanges.contains(where: { bucketMs >= $0.from && bucketMs < $0.to }) else { return }
         guard let id = segmentId else { return }
         persist("input bucket") { try store.appendInput(bucketMs: bucketMs, segmentId: id, counts: counts) }
     }
@@ -540,6 +596,20 @@ public final class ActivityRecorder: ObservableObject {
     /// One key press into the live counter, for tests that drive `applyProbe` without an event tap.
     func recordKeyForTesting() {
         counter.recordForTesting(type: .keyDown)
+    }
+
+    /// The counter's flush timer, off the main thread: the open minute's counts leave the counter there and reach
+    /// `persistInput` through a task queued on the main actor. For tests.
+    func flushOffMainForTesting() {
+        let counter = self.counter
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            counter.flush(now: Date().timeIntervalSince1970 * 1000, force: true)
+            done.signal()
+        }
+        if done.wait(timeout: .now() + 10) == .timedOut {
+            FlowFocusLog.focus.error("the off-main test flush did not finish within 10 s")
+        }
     }
 
     private func retryPendingCloses() {

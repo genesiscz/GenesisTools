@@ -148,7 +148,7 @@ function sourceFiles(root: string): string[] {
 }
 
 /** The paths (not the contents) of every Swift file the build compiles, the app's and GenesisKit's. */
-function swiftFileListHash(sourceDir = APP_SOURCE_DIR): string {
+export function swiftFileListHash(sourceDir = APP_SOURCE_DIR): string {
     const hash = createHash("sha256");
 
     for (const root of SOURCE_ROOTS) {
@@ -160,7 +160,8 @@ function swiftFileListHash(sourceDir = APP_SOURCE_DIR): string {
 
         for (const file of sourceFiles(full)) {
             if (file.endsWith(".swift")) {
-                hash.update(`${file}\n`);
+                // Relative, as in `sourceHash`: the same files in another checkout give the same marker.
+                hash.update(`${relative(sourceDir, file)}\n`);
             }
         }
     }

@@ -18,6 +18,9 @@ struct HubTranscriptPane: View, Equatable {
     var transcriptQuery: String?
     var agentChild = false
 
+    /// The closures are left out, so a pane that compares equal keeps the closures it was first given. A caller may
+    /// therefore capture only references that never change (the hub model) and values compared here (`session`):
+    /// a closure that captured anything else, such as the selected tab, would act on its first value without a sign.
     static func == (left: HubTranscriptPane, right: HubTranscriptPane) -> Bool {
         left.session == right.session && left.showsSidebar == right.showsSidebar
             && left.transcriptQuery == right.transcriptQuery && left.agentChild == right.agentChild

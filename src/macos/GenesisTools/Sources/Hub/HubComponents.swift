@@ -184,7 +184,9 @@ struct RepoFacts: Codable, Equatable {
 /// a `Process.waitUntilExit()` inside a body spins the main run loop, AppKit lays out inside the
 /// body being computed, and that re-entry corrupted SwiftUI's StackLayout (hub crash 2026-09-24).
 /// The last facts of every folder stay on disk (Hub/HubSWR.swift): links paint at launch from
-/// them, and each folder is still fetched once per run.
+/// them, and each folder is still fetched once per run. A folder a batch did not answer (the CLI failed)
+/// may be asked again after `retryAfter`, not at once: every body asks, and a broken `tools` would otherwise
+/// start on each render.
 @MainActor
 final class RepoFactsStore: ObservableObject {
     static let shared = RepoFactsStore()
@@ -195,7 +197,10 @@ final class RepoFactsStore: ObservableObject {
     private var queue: [String] = []
     private var queuePR: [String] = []
     private var flushScheduled = false
-    private static let cache = HubSWR.cache("repo-facts")
+    /// Tests set these three before the first read.
+    var cache = HubSWR.cache("repo-facts")
+    var fetch: ([String], Bool) -> [RepoFacts] = { RepoFacts.fetch($0, pr: $1) }
+    var retryAfter: TimeInterval = 30
     private static let cacheKey = "all"
     /// Folders whose facts on screen came from a fetch of this run, not the disk.
     private var fresh = Set<String>()
@@ -203,8 +208,9 @@ final class RepoFactsStore: ObservableObject {
 
     init() {
         Task { [weak self] in
+            guard let cache = self?.cache else { return }
             let span = HubPerf.begin("repoFacts.cache", awaits: true)
-            let cached = await Self.cache.load([String: RepoFacts].self, key: Self.cacheKey) ?? [:]
+            let cached = await cache.load([String: RepoFacts].self, key: Self.cacheKey) ?? [:]
             span.end("\(cached.count) folders")
             guard let self, !cached.isEmpty else { return }
             // A fetch that landed first wins; the cache only fills the folders still unknown.
@@ -241,10 +247,26 @@ final class RepoFactsStore: ObservableObject {
         return byPath[path]
     }
 
-    /// Fetch again on the next read (after a checkout switch or a push).
+    /// Fetch again on the next read (after a checkout switch or a push). The folder is no longer known to be no
+    /// checkout either, or the `fresh` shortcut in `facts(for:pr:)` would keep answering for it.
     func invalidate(_ path: String) {
         requested.remove(path)
         requestedPR.remove(path)
+        fresh.remove(path)
+    }
+
+    /// Lets a later read ask again for the folders a batch did not answer.
+    private func retryLater(_ paths: [String], pr: Bool) {
+        HubPerf.log("repoFacts \(paths.count) unanswered folders asked again after \(Int(retryAfter)) s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + retryAfter) { [weak self] in
+            guard let self else { return }
+            for path in paths {
+                self.requested.remove(path)
+                if pr {
+                    self.requestedPR.remove(path)
+                }
+            }
+        }
     }
 
     private func scheduleFlush() {
@@ -259,11 +281,17 @@ final class RepoFactsStore: ObservableObject {
         let withPR = queuePR
         queue.removeAll()
         queuePR.removeAll()
+        let fetch = fetch
         for (paths, pr) in [(plain, false), (withPR, true)] where !paths.isEmpty {
             DispatchQueue.global(qos: .userInitiated).async {
-                let found = RepoFacts.fetch(paths, pr: pr)
+                let found = fetch(paths, pr)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+                    let answered = Set(found.map(\.path))
+                    let unanswered = paths.filter { !answered.contains($0) }
+                    if !unanswered.isEmpty {
+                        self.retryLater(unanswered, pr: pr)
+                    }
                     for facts in found {
                         // A plain batch must not drop a PR the slower batch stored, or will store: a
                         // cached PR stays on screen until the --pr answer replaces it.
@@ -292,7 +320,7 @@ final class RepoFactsStore: ObservableObject {
             guard let self else { return }
             self.saveScheduled = false
             let snapshot = self.byPath.filter { self.fresh.contains($0.key) }
-            let cache = Self.cache
+            let cache = self.cache
             let key = Self.cacheKey
             DispatchQueue.global(qos: .utility).async {
                 // Folders fetched in an earlier run and not seen in this one stay.

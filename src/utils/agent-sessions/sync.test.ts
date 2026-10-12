@@ -490,6 +490,28 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
     }
 });
 
+test("a new parser version reads an unchanged, already indexed source again", async () => {
+    const fixture = createFixture();
+    try {
+        await sync(fixture);
+        expect((await sync(fixture)).report).toMatchObject({ parsed: 0, unchanged: 1 });
+
+        fixture.state.title = "Title the new parser reads";
+        const upgraded = await synchronizeHistory({
+            providerId: PROVIDER,
+            reader: { ...fixture.reader, parserVersion: "fixture-v2" },
+            repository: fixture.repository,
+            roots: [fixture.root],
+        });
+
+        expect(upgraded.report).toMatchObject({ parsed: 1, unchanged: 0 });
+        expect(fixture.readCount()).toBe(2);
+        expect(metadataTitle(fixture.repository)).toBe("Title the new parser reads");
+    } finally {
+        fixture.db.close();
+    }
+});
+
 test("clearing metadata invalidates an unchanged physical source so the next sync restores it", async () => {
     const fixture = createFixture();
     try {
@@ -543,6 +565,73 @@ test("a file whose identity another live file holds is not read again while both
                 ?.filePath
         ).toBe(forkPath);
     } finally {
+        fixture.db.close();
+    }
+});
+
+/** A holder and a fork of it that claim one identity; the first sync reports the fork as a conflict. */
+async function forkedFixture() {
+    const fixture = createFixture();
+    const forkPath = join(fixture.root, "fork.jsonl");
+    writeFileSync(forkPath, "forked fixture source\n");
+    const holder = fixture.state.sources[0];
+    const fork = { ...holder, filePath: forkPath, dataPaths: [forkPath] };
+    fixture.state.sources = [holder, fork];
+    const first = await sync(fixture);
+    expect(first.report.issues).toEqual([
+        { path: forkPath, message: "Multiple live files claim one native session identity" },
+    ]);
+    return { fixture, fork, forkPath };
+}
+
+test("a fork whose holder was rewritten as another session at the same path is read again and indexed", async () => {
+    const { fixture, forkPath } = await forkedFixture();
+    try {
+        const readFixture = fixture.reader.readMetadata!;
+        fixture.reader.readMetadata = async (source, options) => {
+            const read = await readFixture(source, options);
+            return source.filePath === fixture.filePath && read.metadata
+                ? { ...read, metadata: { ...read.metadata, nativeId: "rewritten-native", sessionId: "rewritten" } }
+                : read;
+        };
+        writeFileSync(fixture.filePath, "a different session now\n");
+
+        // The holder is read and its row moves to its new identity; the fork was judged before that commit.
+        await sync(fixture);
+        const settled = await sync(fixture);
+
+        expect(settled.report.issues).toEqual([]);
+        expect(fixture.readCount()).toBe(4);
+        const owner = (sessionId: string) =>
+            fixture.repository.metadata.getMetadataBySessionId({ providerId: PROVIDER, sessionId })?.filePath;
+        expect(owner(SESSION_ID)).toBe(forkPath);
+        expect(owner("rewritten")).toBe(fixture.filePath);
+    } finally {
+        fixture.db.close();
+    }
+});
+
+test("a conflict one history index found is not reused by another index that has no holder", async () => {
+    const { fixture, fork, forkPath } = await forkedFixture();
+    const otherDb = new Database(":memory:");
+    try {
+        initializeCompactHistorySchema(otherDb);
+        const other = new HistorySyncRepository(otherDb);
+        fixture.state.sources = [fork];
+
+        const elsewhere = await synchronizeHistory({
+            providerId: PROVIDER,
+            reader: fixture.reader,
+            repository: other,
+            roots: [fixture.root],
+        });
+
+        expect(elsewhere.report.issues).toEqual([]);
+        expect(other.metadata.getMetadataBySessionId({ providerId: PROVIDER, sessionId: SESSION_ID })?.filePath).toBe(
+            forkPath
+        );
+    } finally {
+        otherDb.close();
         fixture.db.close();
     }
 });

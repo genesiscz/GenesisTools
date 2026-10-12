@@ -2,9 +2,11 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, sep } from "node:path";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { getSessionListing } from "@app/claude/lib/history/search";
+import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { logger } from "@genesiscz/utils/logger";
+import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
 import type { AgentsTree } from "../agents/types";
 
@@ -30,6 +32,34 @@ export type WidgetRosterProvider = (typeof WIDGET_ROSTER_PROVIDERS)[number];
 export interface WidgetRoster {
     rows: AgentSessionRow[];
     agents: AgentsTree;
+}
+
+/**
+ * Whether a refresh that wrote no index row still needs a roster read. The index is shared: another process may
+ * have indexed a transcript after this worker's last read, and this refresh then finds nothing left to write.
+ * `PRAGMA data_version` moves on every other connection's commit and never on this connection's own, so a value
+ * that differs from the one taken at the last read says another process wrote since.
+ */
+export class WidgetRosterReads {
+    private lastRead: number | null | undefined;
+
+    constructor(
+        private readonly version: () => number | null = () => readDataVersion(HistoryDatabase.getInstance().getDb())
+    ) {}
+
+    needed(changed: boolean): boolean {
+        if (changed || this.lastRead === undefined) {
+            return true;
+        }
+
+        const now = this.version();
+        return now === null || now !== this.lastRead;
+    }
+
+    /** Before every roster read: a commit that lands during the read moves the version, so the next request reads. */
+    reading(): void {
+        this.lastRead = this.version();
+    }
 }
 
 /** The roster the Widget shows: the indexed sessions and the agents tree, read from the index as it is. */
@@ -128,6 +158,8 @@ function under(root: string, path: string): string | undefined {
  * - `<claude root>/<project>/<session>.jsonl`: the Claude listing (title, activity time).
  * - `<claude root>/<project>/<lead>/subagents/<file>`: a read only, because the agents tree reads a listed lead's
  *   `subagents/` folder directly; the sub-agent listing only when the lead is not a listed parent.
+ * - A transcript deeper under `subagents/` (a workflow's agents): the sub-agent listing, which walks the whole folder,
+ *   while the agents tree reads only the files directly in it. A workflow's `journal.jsonl` is not indexed.
  * - A rollout under a codex root, or a chat history or summary under a grok root: that provider's listing.
  */
 export function widgetRosterChange({
@@ -152,6 +184,16 @@ export function widgetRosterChange({
 
         if (parts.length === 4 && parts[2] === "subagents" && /\.(jsonl|json)$/.test(parts[3])) {
             return listedParent(parts[1]) ? "read" : "claude-agents";
+        }
+
+        const name = parts[parts.length - 1];
+        if (
+            parts.length > 4 &&
+            parts[2] === "subagents" &&
+            name.endsWith(".jsonl") &&
+            !(name === "journal.jsonl" && parts.includes("workflows"))
+        ) {
+            return "claude-agents";
         }
 
         return undefined;

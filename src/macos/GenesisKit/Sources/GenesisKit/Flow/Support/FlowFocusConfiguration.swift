@@ -8,7 +8,9 @@ import Foundation
 public final class FlowFocusConfiguration: ObservableObject {
     public static var shared = FlowFocusConfiguration()
     public var readApp: (() -> [String: Any])?
-    public var forwardPatch: (([String: Any]) -> Void)?
+    /// A runtime client hands each patch to its owner. The task ends once the owner stored it, and throws when the
+    /// owner refused it or its write failed.
+    public var forwardPatch: (([String: Any]) throws -> Task<Void, Error>)?
     public var onFailure: ((String) -> Void)?
     public var didPersist: (() -> Void)?
     @Published public private(set) var revision: UInt64 = 0
@@ -20,6 +22,8 @@ public final class FlowFocusConfiguration: ObservableObject {
     /// Writes run one after another, in the order they were made, off the main actor. The last one is kept so the
     /// next write and `flush()` can wait for it; waiting for the cross-process lock suspends instead of sleeping a thread.
     private var lastWrite: Task<Void, Never>?
+    /// A client's patches the owner has not answered yet, in order, for `flush()`.
+    private var lastForward: Task<Void, Never>?
 
     public init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis")) {
         self.directory = directory
@@ -72,12 +76,25 @@ public final class FlowFocusConfiguration: ObservableObject {
 
     func reportFailure(_ message: String) {
         lastError = message
+        failures &+= 1
         revision &+= 1
         onFailure?(message)
     }
 
+    /// Counts every reported failure, so a caller can tell whether its own write failed while it waited.
+    private var failures: UInt64 = 0
+
     public func setAppValue(_ value: Any, forKey key: String) {
         applyPatch([key: value])
+    }
+
+    /// `setAppValue`, then waits for the write: false when it was refused or failed (`lastError` says why), true once
+    /// client.json holds it. A runtime client waits for its owner's answer, which comes after the owner's write.
+    public func saveAppValue(_ value: Any, forKey key: String) async -> Bool {
+        let before = failures
+        applyPatch([key: value])
+        await flush()
+        return failures == before
     }
 
     /// Writes every Focus setting the Settings page shows, under the same `app.focus` keys `FocusSettings.from` and
@@ -103,7 +120,30 @@ public final class FlowFocusConfiguration: ObservableObject {
             return
         }
         if let forwardPatch {
-            forwardPatch(patch)
+            do {
+                let sent = try forwardPatch(patch)
+                // Shown at once, like a local write, so the next edit builds on it; it goes once the owner answered
+                // (its reload then holds the stored value) or refused.
+                let id = UUID()
+                pendingWrites.append((id, patch))
+                lastError = nil
+                revision &+= 1
+                let previous = lastForward
+                lastForward = Task { [weak self] in
+                    await previous?.value
+                    do {
+                        try await sent.value
+                        self?.finishedForward(id)
+                    } catch is CancellationError {
+                        // The runtime stopped before the owner answered: not stored, and nothing to tell the user.
+                        self?.failures &+= 1
+                        self?.finishedForward(id)
+                    } catch {
+                        self?.finishedForward(id)
+                        self?.reportFailure(error.localizedDescription)
+                    }
+                }
+            } catch { reportFailure(error.localizedDescription) }
             return
         }
         guard allowsWrites else {
@@ -133,6 +173,11 @@ public final class FlowFocusConfiguration: ObservableObject {
         } catch { reportFailure(error.localizedDescription) }
     }
 
+    private func finishedForward(_ id: UUID) {
+        pendingWrites.removeAll { $0.id == id }
+        revision &+= 1
+    }
+
     private func finishedWrite(_ id: UUID, error: String?) {
         pendingWrites.removeAll { $0.id == id }
         if let error {
@@ -143,10 +188,15 @@ public final class FlowFocusConfiguration: ObservableObject {
         }
     }
 
-    /// Waits until every write made before this call has reached disk (or failed).
+    /// Waits until every write made before this call has reached disk (or failed), and for a runtime client until the
+    /// owner answered every patch.
     public func flush() async {
         await lastWrite?.value
+        await lastForward?.value
     }
+
+    /// Counts every reported failure; the owner compares it around a client's patch.
+    var failureCount: UInt64 { failures }
 
     nonisolated static func merge(_ original: [String: Any], _ patch: [String: Any]) -> [String: Any] {
         var result = original

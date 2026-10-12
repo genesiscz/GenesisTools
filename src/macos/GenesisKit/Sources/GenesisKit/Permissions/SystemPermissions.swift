@@ -21,7 +21,8 @@ public protocol PermissionSystem: Sendable {
 public extension PermissionStatus {
     /// Input Monitoring is on in System Settings, but this process still reads its old answer.
     static let needsRelaunch = PermissionStatus.partial("granted, relaunch to use")
-    /// Calendars may add events but not read them. Full Access is chosen in System Settings.
+    /// EventKit's write-only grant: events can be added but not read. Full Access is asked for through macOS's prompt
+    /// once, and otherwise chosen in System Settings.
     static let addOnly = PermissionStatus.partial("Add Only")
 }
 
@@ -84,15 +85,16 @@ public struct SystemPermissions: PermissionSystem {
     public func request(_ kind: PermissionKind) async -> PermissionStatus {
         switch kind {
         case .microphone:
-            guard status(kind) == .notDetermined else { return status(kind) }
+            guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             await Self.waitForAnswer { done in AVCaptureDevice.requestAccess(for: .audio) { _ in done() } }
         case .speechRecognition:
-            guard status(kind) == .notDetermined else { return status(kind) }
+            guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             await Self.waitForAnswer { done in SFSpeechRecognizer.requestAuthorization { _ in done() } }
         case .calendars:
-            // Add Only is not asked again: macOS prompts for full access once ("any subsequent instantiations of
-            // EKEventStore uses existing permissions"), so the dialog sends that state to System Settings instead.
-            guard status(kind) == .notDetermined else { return status(kind) }
+            // An Add Only grant is asked for full access once, like an undetermined one. macOS may not show the prompt
+            // again for an app that answered before; the answer then stays Add Only and the dialog sends the user to
+            // System Settings (`PermissionDialogModel.declinedUpgrade`).
+            guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             let store = EKEventStore()
             await Self.waitForAnswer { done in
                 store.requestFullAccessToEvents { _, error in
@@ -101,7 +103,7 @@ public struct SystemPermissions: PermissionSystem {
                 }
             }
         case .reminders:
-            guard status(kind) == .notDetermined else { return status(kind) }
+            guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             let store = EKEventStore()
             await Self.waitForAnswer { done in
                 store.requestFullAccessToReminders { _, error in
@@ -110,7 +112,7 @@ public struct SystemPermissions: PermissionSystem {
                 }
             }
         case .contacts:
-            guard status(kind) == .notDetermined else { return status(kind) }
+            guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             let store = CNContactStore()
             await Self.waitForAnswer { done in
                 store.requestAccess(for: .contacts) { _, error in
@@ -167,55 +169,110 @@ public struct SystemPermissions: PermissionSystem {
 
     /// Runs `start`, then returns once it calls back or the deadline passes, whichever is first.
     private static func waitForAnswer(_ start: (@escaping @Sendable () -> Void) -> Void) async {
-        let wait = PromptWait()
+        let wait = PromptWait<Void>()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             wait.arm(continuation)
-            start { wait.finish() }
+            start { wait.finish(()) }
             DispatchQueue.global().asyncAfter(deadline: .now() + promptDeadline) {
-                if wait.finish() { GenesisKit.log("permission prompt had no answer after \(Int(promptDeadline)) s") }
+                if wait.finish(()) { GenesisKit.log("permission prompt had no answer after \(Int(promptDeadline)) s") }
+            }
+        }
+    }
+
+    /// Runs a blocking probe off the main thread and returns its answer, or `.notDetermined` once `deadline` passes.
+    /// The probe may sit behind a macOS prompt (Automation) or a TCC check (a folder) for as long as the user leaves
+    /// it, so the dialog gets its answer by the deadline like every other request. The probe itself cannot be
+    /// stopped, so `flights` keeps one per `key`: a "Check again" while it still runs waits for that one's answer
+    /// (by its own deadline) instead of starting another blocking probe.
+    static func probe(_ key: String, within deadline: TimeInterval, flights: ProbeFlights = .shared,
+                      _ work: @escaping @Sendable () -> PermissionStatus) async -> PermissionStatus
+    {
+        let wait = PromptWait<PermissionStatus>()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<PermissionStatus, Never>) in
+            wait.arm(continuation)
+            if flights.join(key, wait) {
+                DispatchQueue.global(qos: .userInitiated).async { flights.land(key, work()) }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + deadline) {
+                if wait.finish(.notDetermined) { GenesisKit.log("permission probe had no answer after \(Int(deadline)) s") }
             }
         }
     }
 
     private static func probeAutomation() async -> PermissionStatus {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                var errorInfo: NSDictionary?
-                let script = NSAppleScript(source: "tell application \"System Events\" to get name")
-                let result = script?.executeAndReturnError(&errorInfo)
-                if let message = errorInfo?[NSAppleScript.errorMessage] as? String {
-                    GenesisKit.log("permission automation probe: \(message)")
-                }
-                continuation.resume(returning: result != nil ? .granted : .denied)
+        await probe("automation", within: promptDeadline) {
+            var errorInfo: NSDictionary?
+            let script = NSAppleScript(source: "tell application \"System Events\" to get name")
+            let result = script?.executeAndReturnError(&errorInfo)
+            if let message = errorInfo?[NSAppleScript.errorMessage] as? String {
+                GenesisKit.log("permission automation probe: \(message)")
             }
+            return result != nil ? .granted : .denied
         }
     }
 
     private static func probeFolder(_ path: String) async -> PermissionStatus {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let readable = (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil
-                continuation.resume(returning: readable ? .granted : .denied)
-            }
+        await probe("folder:" + path, within: promptDeadline) {
+            (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil ? .granted : .denied
         }
     }
 }
 
-/// One continuation resumed exactly once, by the answer or by the deadline.
-private final class PromptWait: @unchecked Sendable {
+/// The blocking probes still running, one per resource, and who waits for each. A probe can outlive its caller's
+/// deadline (an Automation prompt nobody answers), so a later request joins it rather than starting another: at most
+/// one blocking work item per resource, however often "Check again" is pressed.
+final class ProbeFlights: @unchecked Sendable {
+    static let shared = ProbeFlights()
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiting: [String: [PromptWait<PermissionStatus>]] = [:]
+
+    /// Adds `wait` to `key`'s probe; true when none was running, so the caller starts it.
+    func join(_ key: String, _ wait: PromptWait<PermissionStatus>) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let starts = waiting[key] == nil
+        // Waits that already answered by their deadline are dropped, so a stalled probe holds no growing list.
+        waiting[key] = (waiting[key] ?? []).filter { !$0.isFinished } + [wait]
+        return starts
+    }
+
+    /// The probe answered: every wait still open gets the answer, and the next request starts a new probe.
+    func land(_ key: String, _ answer: PermissionStatus) {
+        lock.lock()
+        let waits = waiting.removeValue(forKey: key) ?? []
+        lock.unlock()
+        for wait in waits { wait.finish(answer) }
+    }
+
+    /// Probes still running; for tests.
+    var running: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return waiting.count
+    }
+}
+
+/// One continuation resumed exactly once, by the answer or by the deadline.
+final class PromptWait<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
     private var finished = false
 
-    func arm(_ continuation: CheckedContinuation<Void, Never>) {
+    func arm(_ continuation: CheckedContinuation<Value, Never>) {
         lock.lock()
         self.continuation = continuation
         lock.unlock()
     }
 
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return finished
+    }
+
     /// True for the call that resumed it.
     @discardableResult
-    func finish() -> Bool {
+    func finish(_ value: Value) -> Bool {
         lock.lock()
         guard !finished else {
             lock.unlock()
@@ -226,8 +283,18 @@ private final class PromptWait: @unchecked Sendable {
         let pending = continuation
         continuation = nil
         lock.unlock()
-        pending?.resume()
+        pending?.resume(returning: value)
         return true
+    }
+}
+
+extension PermissionKind {
+    /// Whether macOS still shows its own prompt for this kind from `status`: an undetermined grant, or an Add Only
+    /// Calendars or Reminders grant, which EventKit's full-access request upgrades with a prompt.
+    public func systemPromptAsks(from status: PermissionStatus) -> Bool {
+        guard requestStyle == .systemPrompt else { return false }
+        if status == .notDetermined { return true }
+        return status == .addOnly && (self == .calendars || self == .reminders)
     }
 }
 
@@ -247,11 +314,13 @@ public struct PermissionAccess: Sendable {
 
     /// The simulated mode for `kind`, nil when it reads the real grant.
     public func simulatedMode(_ kind: PermissionKind) -> PermissionSimulation.Mode? {
-        lifted.contains(kind) ? nil : simulation().mode(for: kind)
+        let current = simulation()
+        return lifted.contains(kind, under: current) ? nil : current.mode(for: kind)
     }
 
     public func status(_ kind: PermissionKind) -> PermissionStatus {
-        if !lifted.contains(kind), let simulated = simulation().status(for: kind) { return simulated }
+        let current = simulation()
+        if !lifted.contains(kind, under: current), let simulated = current.status(for: kind) { return simulated }
         return system.status(kind)
     }
 
@@ -261,15 +330,19 @@ public struct PermissionAccess: Sendable {
 
     /// What a new process would read under the simulation; nil when the kind is not simulated.
     public func simulatedFreshStatus(_ kind: PermissionKind) -> PermissionStatus? {
-        lifted.contains(kind) ? nil : simulation().freshStatus(for: kind)
+        let current = simulation()
+        return lifted.contains(kind, under: current) ? nil : current.freshStatus(for: kind)
     }
 
     /// Asks macOS in place where it allows it. A simulated kind never reaches macOS: `:ask` is lifted for this
-    /// process (as if the prompt had been answered) and a denied one stays denied.
+    /// process (as if the prompt had been answered) and a denied one stays denied. A lift holds only under the
+    /// simulation it answered: once the defaults change (`staging.ts allow`, `deny`, `ask`), the kind reads the new
+    /// simulation, the way a running face reads every other change, with no relaunch.
     public func request(_ kind: PermissionKind) async -> PermissionStatus {
-        switch simulatedMode(kind) {
+        let current = simulation()
+        switch lifted.contains(kind, under: current) ? nil : current.mode(for: kind) {
         case .ask:
-            lifted.insert(kind)
+            lifted.insert(kind, under: current)
             GenesisKit.log("permission \(kind.rawValue) simulated prompt answered")
             return system.status(kind)
         case .denied, .stale:
@@ -289,19 +362,24 @@ public struct PermissionAccess: Sendable {
     }
 }
 
+/// Kinds whose simulated prompt was answered, each with the simulation it answered.
 private final class LiftedKinds: @unchecked Sendable {
     private let lock = NSLock()
-    private var kinds: Set<PermissionKind> = []
+    private var kinds: [PermissionKind: PermissionSimulation] = [:]
 
-    func contains(_ kind: PermissionKind) -> Bool {
+    /// True while the simulation is the one the prompt answered; a changed simulation drops the answer.
+    func contains(_ kind: PermissionKind, under simulation: PermissionSimulation) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return kinds.contains(kind)
+        guard let answered = kinds[kind] else { return false }
+        if answered == simulation { return true }
+        kinds[kind] = nil
+        return false
     }
 
-    func insert(_ kind: PermissionKind) {
+    func insert(_ kind: PermissionKind, under simulation: PermissionSimulation) {
         lock.lock()
-        kinds.insert(kind)
+        kinds[kind] = simulation
         lock.unlock()
     }
 }

@@ -432,7 +432,7 @@ test("the operations factory binds metadata, scan, and selected reads", async ()
     }
     const selected = await operations.readRecords(source, { locators: ["jsonl:1"] });
 
-    expect(operations.parserVersion).toBe("4");
+    expect(operations.parserVersion).toBe("6");
     expect(metadata.metadata?.firstPrompt).toBe("factory query");
     expect(metadata.metadata?.boundedFields).toEqual(["firstTimestamp", "lastTimestamp"]);
     expect(scanned.map((record) => record.locator)).toEqual(["jsonl:1"]);
@@ -588,7 +588,12 @@ test("last_active_at wins over a summary rewritten with no new turn", async () =
  * open CLI appends to idle sessions, a summary stamped `lastActiveAt`, and turn files last written at
  * `turnAt`. Chat rows carry no timestamps, as in real chat histories.
  */
-function grokSessionWithTurnFiles(options: { lastActiveAt: string; turnAt: string }): NativeSessionSource<"grok"> {
+function grokSessionWithTurnFiles(options: {
+    lastActiveAt: string;
+    turnAt: string;
+    /** A timestamp on the assistant row, for a layout that writes one per row. */
+    rowAt?: string;
+}): NativeSessionSource<"grok"> {
     const home = mkdtempSync(join(tmpdir(), "gt-grok-turn-files-"));
     const root = join(home, "sessions");
     const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
@@ -598,7 +603,7 @@ function grokSessionWithTurnFiles(options: { lastActiveAt: string; turnAt: strin
     writeFileSync(
         chatPath,
         line({ type: "user", content: [{ type: "text", text: "<user_query>check the mail records</user_query>" }] }) +
-            line({ type: "assistant", content: "Done." }) +
+            line({ type: "assistant", content: "Done.", ...(options.rowAt ? { timestamp: options.rowAt } : {}) }) +
             line({ type: "user", synthetic_reason: "system_reminder", content: "skills changed" }) +
             line({ type: "user", synthetic_reason: "system_reminder", content: "mcp servers changed" })
     );
@@ -643,6 +648,20 @@ test("a last_active_at that Grok stamps without a turn falls back to the last tu
     const result = await readGrokMetadata(source);
 
     expect(result.metadata?.lastTimestamp).toBe("2026-09-01T14:11:01.000Z");
+});
+
+test("a chat row's own timestamp later than the capped stamp is activity and stays", async () => {
+    // The cap is for the summary stamp. A layout that writes a timestamp on each row and leaves the turn files alone
+    // would otherwise have that row's real activity moved back to the older turn-file write.
+    const source = grokSessionWithTurnFiles({
+        lastActiveAt: "2026-09-02T18:03:55.158Z",
+        turnAt: "2026-09-01T14:11:01.000Z",
+        rowAt: "2026-09-01T16:30:00.000Z",
+    });
+
+    const result = await readGrokMetadata(source);
+
+    expect(result.metadata?.lastTimestamp).toBe("2026-09-01T16:30:00.000Z");
 });
 
 test("a real turn keeps its last_active_at, written with the turn files", async () => {

@@ -125,6 +125,8 @@ public final class WidgetModel: ObservableObject {
     private var settingsOnly = false
     private var settingsTask: Task<Void, Never>?
     private var settingsRefreshAgain = false
+    /// A settings read came back stale while a preference write was in flight; the last write to land reads again.
+    private var settingsRefreshAfterWrites = false
     /// Bumped when a preference write starts and when it lands. A settings snapshot read across either holds the
     /// preferences from before the write; applied, it undid the optimistic change, and the next toggle built its
     /// patch on that stale layout, so two quick module toggles lost one (settings V2 pass, 2026-10-10).
@@ -143,6 +145,15 @@ public final class WidgetModel: ObservableObject {
     private var mutationTask: Task<Void, Never>?
     private var preferenceTask: Task<Void, Never>?
     private var pendingPreferences: [String: WidgetJSON] = [:]
+    /// Saved preference patches, still shown over every snapshot until one read at or after their write arrives
+    /// (`fence`: state.json's revision once the write landed; nil while that is read). The watch builds a snapshot
+    /// from state it read earlier, so one read before the write can arrive after it; applied bare, it undid the
+    /// saved preference in the live widget.
+    private var savedPreferences: [(id: UUID, fence: Int?, patch: [String: WidgetJSON])] = []
+    /// The last snapshot as it arrived, before any overlay.
+    private var lastReceived: WidgetSnapshot?
+    /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
+    private var pendingPreferenceOutcomes: [(saved: () -> Void, failed: () -> Void)] = []
     private var draftTasks: [String: Task<Void, Never>] = [:]
     private var dirtyDrafts: Set<String> = []
     private var draftRevisions: [String: Int] = [:]
@@ -236,6 +247,13 @@ public final class WidgetModel: ObservableObject {
     public var card: WidgetCard? {
         cards.first { $0.id == selectedCardID } ?? cards.last(where: \.needsAnswer) ?? cards.last
     }
+    /// Inbox rows the user folded. A folded decision stays selected, but nothing answers it until it opens again.
+    @Published public var foldedCardIDs: Set<String> = []
+    /// The decision the composer and the number keys answer: the selected one, unanswered and not folded.
+    public var answerCard: WidgetCard? {
+        guard let card, card.kind == "decision", card.needsAnswer, !foldedCardIDs.contains(card.id) else { return nil }
+        return card
+    }
     public var draft: WidgetDraft { drafts[selectedKey] ?? WidgetDraft() }
     public var outgoing: [WidgetOutgoing] {
         WidgetOutgoing.shown(snapshot?.state.outgoing.filter { $0.target.hasSameIdentity(as: selected?.target) } ?? [])
@@ -308,7 +326,13 @@ public final class WidgetModel: ObservableObject {
                 if !Task.isCancelled, current || self.snapshot == nil {
                     self.receive([result.stdout])
                 } else if !current {
-                    self.settingsRefreshAgain = true
+                    // Read again, but not while a write is still landing: every read until it lands is stale too,
+                    // and they would run back to back. The write asks for the read when it lands.
+                    if self.preferenceWritesInFlight == 0 {
+                        self.settingsRefreshAgain = true
+                    } else {
+                        self.settingsRefreshAfterWrites = true
+                    }
                 }
             } catch {
                 if !Task.isCancelled { self.report(error) }
@@ -375,6 +399,7 @@ public final class WidgetModel: ObservableObject {
         settingsTask?.cancel()
         settingsTask = nil
         settingsRefreshAgain = false
+        settingsRefreshAfterWrites = false
         settingsWatcher?.stop()
         settingsWatcher = nil
         followedTranscript = nil
@@ -425,8 +450,10 @@ public final class WidgetModel: ObservableObject {
 
     private func apply(_ decoded: WidgetSnapshot) {
         do {
+            lastReceived = decoded
+            savedPreferences.removeAll { entry in entry.fence.map { decoded.state.revision >= $0 } ?? false }
             var next = decoded
-            next.state.preferences = try mergingPreferences(pendingPreferences, into: next.state.preferences)
+            next.state.preferences = try overlaid(next.state.preferences)
             snapshot = next
             if !draggingSide, let position = draggedSidePosition,
                 abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
@@ -662,6 +689,7 @@ public final class WidgetModel: ObservableObject {
     /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
     /// way opening it from a notification does.
     public func openCard(_ card: WidgetCard) {
+        foldedCardIDs.remove(card.id)
         selectedCardID = card.id
         guard !stopping, !card.read, ["answer", "result"].contains(card.kind) else { return }
         let token = card.sessionKey + "|" + card.id + "|" + String(card.at)
@@ -866,6 +894,55 @@ public final class WidgetModel: ObservableObject {
         try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
 
+    /// `preferences` with the saved patches not yet seen in a snapshot, then the ones still to be written, on top.
+    private func overlaid(_ preferences: WidgetPreferences) throws -> WidgetPreferences {
+        var patch: [String: WidgetJSON] = [:]
+        for entry in savedPreferences { patch.merge(entry.patch) { _, new in new } }
+        patch.merge(pendingPreferences) { _, new in new }
+        return try mergingPreferences(patch, into: preferences)
+    }
+
+    /// A write landed: its patch stays shown until a snapshot read at or after the revision it stored arrives.
+    private func holdSaved(_ patch: [String: WidgetJSON]) {
+        let id = UUID()
+        savedPreferences.append((id, nil, patch))
+        let file = Self.widgetStateFile(stateRoot: stateRoot)
+        Task { [weak self] in
+            let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
+            self?.fenceSaved(id, at: revision)
+        }
+    }
+
+    private func fenceSaved(_ id: UUID, at revision: Int?) {
+        guard let index = savedPreferences.firstIndex(where: { $0.id == id }) else { return }
+        guard let revision else {
+            // Unreadable: the patch is dropped as before, rather than shown over every later snapshot.
+            savedPreferences.remove(at: index)
+            return
+        }
+
+        savedPreferences[index].fence = revision
+        // The snapshot on screen may already be that new; then it shows what is stored now.
+        guard let last = lastReceived, last.state.revision >= revision, var current = snapshot else { return }
+        savedPreferences.remove(at: index)
+        do {
+            current.state.preferences = try overlaid(last.state.preferences)
+            snapshot = current
+            presentationChanged?()
+        } catch { report(error) }
+    }
+
+    /// state.json's revision (`hub widget` bumps it on every stored change); nil when it cannot be read.
+    nonisolated static func storedRevision(_ path: String) -> Int? {
+        struct Stored: Decodable { let revision: Int }
+        do {
+            return try JSONDecoder().decode(Stored.self, from: Data(contentsOf: URL(fileURLWithPath: path))).revision
+        } catch {
+            PerfLog.mark("widget.preferences revision unreadable: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     private func mergingPreferences(
         _ patch: [String: WidgetJSON], into preferences: WidgetPreferences
     ) throws -> WidgetPreferences {
@@ -874,8 +951,15 @@ public final class WidgetModel: ObservableObject {
         return try JSONDecoder().decode(WidgetPreferences.self, from: JSONEncoder().encode(WidgetJSON.object(fields)))
     }
 
-    public func updatePreferences(_ patch: [String: WidgetJSON]) {
+    /// Shows `patch` at once and writes it after a short pause, merged with the patches that follow. `saved` or
+    /// `failed` runs when the write that carries it ends, so a page can confirm only what was stored.
+    public func updatePreferences(
+        _ patch: [String: WidgetJSON], saved: (() -> Void)? = nil, failed: (() -> Void)? = nil
+    ) {
         pendingPreferences.merge(patch) { _, new in new }
+        if saved != nil || failed != nil {
+            pendingPreferenceOutcomes.append((saved ?? {}, failed ?? {}))
+        }
         if var current = snapshot {
             do {
                 current.state.preferences = try mergingPreferences(patch, into: current.state.preferences)
@@ -893,23 +977,33 @@ public final class WidgetModel: ObservableObject {
     private func flushPreferences() {
         let patch = pendingPreferences
         guard !patch.isEmpty else { return }
+        let outcomes = pendingPreferenceOutcomes
+        pendingPreferenceOutcomes = []
         preferenceWriteEpoch += 1
         preferenceWritesInFlight += 1
-        func acknowledge() {
+        /// True when it started the settings read a stale one put off.
+        @discardableResult func acknowledge() -> Bool {
             preferenceWriteEpoch += 1
             preferenceWritesInFlight -= 1
             for (key, value) in patch where pendingPreferences[key] == value {
                 pendingPreferences.removeValue(forKey: key)
             }
+            guard preferenceWritesInFlight == 0, settingsRefreshAfterWrites, !stopping else { return false }
+            settingsRefreshAfterWrites = false
+            refreshSettings()
+            return true
         }
         action(
             ["action": "preferences", "patch": .object(patch)],
             failed: { [weak self] in
-                acknowledge()
-                self?.refreshSettings()
+                let reread = acknowledge()
+                outcomes.forEach { $0.failed() }
+                if !reread { self?.refreshSettings() }
             },
             completed: { [weak self] in
+                self?.holdSaved(patch)
                 acknowledge()
+                outcomes.forEach { $0.saved() }
                 self?.preferencesSaved?(patch)
             })
     }
@@ -1015,6 +1109,11 @@ public final class WidgetModel: ObservableObject {
             PerfLog.mark("widget.journal unreadable \(error.localizedDescription)")
             return file.path
         }
+    }
+
+    /// The composer's Send (Return): it answers the open decision, else it is a follow-up to the session.
+    public func send() {
+        submit(answering: answerCard != nil && !cardPending)
     }
 
     public func submit(choice: String? = nil, answering: Bool = false) {
@@ -1260,6 +1359,8 @@ public final class WidgetModel: ObservableObject {
 
     /// Screen Recording for the composer's screenshot: true when it may run, otherwise the permission dialog is up.
     var screenCaptureGate: @MainActor (PermissionNeed) async -> Bool = { await PermissionCenter.shared.ensure($0) }
+    static let screenRecordingRefused = "macOS refused the screenshot: Screen Recording is off for this app. Turn it on "
+        + "in System Settings → Privacy & Security → Screen & System Audio Recording, then try again."
 
     /// The panel steps aside for the selection, then reopens with the new attachment in the draft. Escape returns
     /// `{cancelled: true, reason: "user"}`, which is not an error and reopens nothing. A missing Screen Recording grant
@@ -1274,9 +1375,11 @@ public final class WidgetModel: ObservableObject {
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
-            guard let self else { return }
+            // `stop()` neither cancels the chain nor drops what waits on it: a capture queued before teardown must
+            // not collapse the face or open the selection afterwards. The gate can take seconds, so check again.
+            guard let self, !self.stopping, !Task.isCancelled else { return }
             // The screenshot runs in a new process, which reads the grant again: the gate asks one first.
-            guard await self.screenCaptureGate(need) else { return }
+            guard await self.screenCaptureGate(need), !self.stopping, !Task.isCancelled else { return }
             let returnEdge = self.expanded
             self.collapse()
             do {
@@ -1284,7 +1387,11 @@ public final class WidgetModel: ObservableObject {
                 if case .object(let fields) = result, fields["cancelled"] == .bool(true) { return }
                 if let returnEdge, self.expanded == nil { self.open(returnEdge) }
             } catch where WidgetCaptureError.isScreenRecordingDenied(error) {
-                PermissionCenter.shared.require(need)
+                // The gate opens the dialog once a new process reads the grant as off. A grant this process still
+                // reads as on opens nothing, so the refusal is said here rather than the button doing nothing.
+                if await self.screenCaptureGate(need) {
+                    self.report(ToolsBridgeError.refused(Self.screenRecordingRefused))
+                }
             } catch {
                 self.report(error)
             }
@@ -1564,12 +1671,17 @@ final class WidgetSnapshotDecoder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "genesis.widget.snapshot-decode", qos: .userInitiated)
     /// Confined to `queue`.
     private var last: String?
+    /// The watch stream the lines belong to; main actor only. `reset()` starts a new one, and results an older stream
+    /// queued before it are dropped, so a restarted watch never applies a snapshot of the stopped one.
+    @MainActor private var generation = 0
 
-    func reset() {
+    @MainActor func reset() {
+        generation &+= 1
         queue.async { self.last = nil }
     }
 
-    func decode(_ lines: [String], deliver: @escaping @MainActor ([Result<WidgetSnapshot, Error>]) -> Void) {
+    @MainActor func decode(_ lines: [String], deliver: @escaping @MainActor ([Result<WidgetSnapshot, Error>]) -> Void) {
+        let stream = generation
         queue.async {
             var results: [Result<WidgetSnapshot, Error>] = []
             for line in lines where line != self.last {
@@ -1583,7 +1695,10 @@ final class WidgetSnapshotDecoder: @unchecked Sendable {
             }
             guard !results.isEmpty else { return }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { deliver(results) }
+                MainActor.assumeIsolated {
+                    guard self.generation == stream else { return }
+                    deliver(results)
+                }
             }
         }
     }

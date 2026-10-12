@@ -156,8 +156,13 @@ public final class PermissionPanelPresenter: NSObject, PermissionPresenting, NSW
         }
     }
 
-    public func bringToFront(_ dialog: PermissionDialogModel) {
-        panels[dialog.kind]?.orderFrontRegardless()
+    public func bringToFront(_ dialog: PermissionDialogModel, takesFocus: Bool) {
+        guard let panel = panels[dialog.kind] else { return }
+        if takesFocus {
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            panel.orderFrontRegardless()
+        }
     }
 
     public func close(_ dialog: PermissionDialogModel) {

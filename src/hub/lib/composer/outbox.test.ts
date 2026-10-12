@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
-import { type DecisionRecord, postDecisions, readDecisions } from "@app/question/lib/decisions/store";
+import { createTodo, type DecisionRecord, postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
@@ -32,15 +32,16 @@ import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as fileLock from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import * as videos from "@genesiscz/utils/video/probe";
+import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
 import type { AgentNode } from "../agents/types";
 import { performWidgetAction } from "../widget/actions";
-import { liftCardImages } from "../widget/card-images";
+import { ImageLiftBudget, liftCardImages } from "../widget/card-images";
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
 import { readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
-import { widgetRosterChange } from "../widget/roster-index";
+import { WidgetRosterReads, widgetRosterChange } from "../widget/roster-index";
 import { WidgetRosterReader, type WidgetRosterReply } from "../widget/roster-reader";
 import {
     classifyScreenshot,
@@ -61,10 +62,13 @@ import {
 import {
     claudeAssistantText,
     discoverWidgetCatalog,
+    inboxWindowCounts,
+    lastAssistantTextOf,
     lastClaudeAssistantText,
     readWidgetChanges,
     readWidgetDecisionEvents,
     realWidgetSources,
+    type WidgetInboxWindow,
     type WidgetSources,
     widgetForms,
     widgetResultNode,
@@ -1235,6 +1239,23 @@ test("malformed stored times sort as the oldest activity instead of breaking the
     const wire = SafeJSON.stringify(snapshot);
     expect(wire).not.toContain('"activityAt":null');
     expect(wire).not.toContain('"at":null');
+});
+
+test("a task with details shows its title and its details on the inbox card", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    const events = join(directory, "events.jsonl");
+    const todo = { sessionId: "task-session", provider: "codex", title: "Ship the inbox" };
+    await createTodo({ file, events, todo: { ...todo, details: "Run the suite first." } });
+    await createTodo({ file, events, todo: { ...todo, title: "Only a title" } });
+    const snapshot = await widgetSnapshot({
+        root: directory,
+        sources: { ...emptySources, decisions: () => readDecisions(file) },
+    });
+    const cards = new Map(snapshot.cards.map((card) => [card.title, card.body]));
+
+    expect(cards.get("Ship the inbox")).toBe("Run the suite first.");
+    expect(cards.get("Only a title")).toBe("");
 });
 
 test("a change that would push widget history past the read limit is refused and the stored state stays readable", async () => {
@@ -2718,7 +2739,7 @@ describe("widget inbox notifications", () => {
             forms: () => [],
             answers: () => [],
             agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-            inboxData: () => ({
+            inboxData: (window) => ({
                 answers: [],
                 forms: [
                     {
@@ -2730,7 +2751,8 @@ describe("widget inbox notifications", () => {
                         cwd: "/fixture",
                         at: 1,
                         count: 1,
-                        total: 1,
+                        ...inboxWindowCounts([1], window),
+                        recentAfterClearTotal: inboxWindowCounts([1], window).recentAfterClear,
                     },
                 ],
                 complete: true,
@@ -2787,26 +2809,31 @@ describe("widget inbox notifications", () => {
                     updatedTs: new Date(at).toISOString(),
                 });
                 let decisions = [decision("ended-fixture", now - 240 * hour), decision("live-fixture", now - hour)];
-                const group = (sessionId: string, at: number, count: number) => ({
-                    id: `${sessionId}-newest`,
-                    sessionId,
-                    provider: "codex",
-                    title: "Fixture",
-                    project: "Fixture",
-                    cwd: "/fixture",
-                    at,
-                    count,
-                    total: count,
-                });
+                // Each kind has this one group, so its own recent count is the kind's total.
+                const group = (sessionId: string, at: number, count: number, window: WidgetInboxWindow) => {
+                    const counts = inboxWindowCounts(Array<number>(count).fill(at), window);
+                    return {
+                        id: `${sessionId}-newest`,
+                        sessionId,
+                        provider: "codex",
+                        title: "Fixture",
+                        project: "Fixture",
+                        cwd: "/fixture",
+                        at,
+                        count,
+                        ...counts,
+                        recentAfterClearTotal: counts.recentAfterClear,
+                    };
+                };
                 const sources: WidgetSources = {
                     sessions: async () => [],
                     decisions: () => decisions,
                     forms: () => [],
                     answers: () => [],
                     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-                    inboxData: () => ({
-                        answers: [group("answer-fixture", now - 10 * 60 * 1000, 2)],
-                        forms: [group("form-fixture", now - 120 * hour, 3)],
+                    inboxData: (window) => ({
+                        answers: [group("answer-fixture", now - 10 * 60 * 1000, 2, window)],
+                        forms: [group("form-fixture", now - 120 * hour, 3, window)],
                         complete: true,
                         truncated: false,
                     }),
@@ -2850,6 +2877,126 @@ describe("widget inbox notifications", () => {
                 expect((await widgetSnapshot({ root: directory, sources, now })).notifications?.needsAnswer).toBe(1);
             }
         );
+    });
+
+    test("a new question after Mark all read counts alone, never with the session's cleared ones", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                const post = (id: string, at: number) => {
+                    const db = openPendingStore(toolDataDir("question", "qa.db"));
+                    db.query(
+                        "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question','form-fixture','/fixture','/fixture','[]')"
+                    ).run(id, at);
+                    db.close();
+                };
+                for (const [index, at] of [now - 3000, now - 2000, now - 1000].entries()) {
+                    post(`cleared-${index}`, at);
+                }
+                // The real SQL source, so the per-item counts are what qa.db holds.
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: () => [],
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: realWidgetSources.inboxData,
+                };
+                const needsAnswer = async (at: number) =>
+                    (await widgetSnapshot({ root: directory, sources, now: at })).notifications?.needsAnswer;
+                expect(await needsAnswer(now)).toBe(3);
+                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
+                expect(await needsAnswer(now)).toBe(0);
+
+                post("after-clear", now + 1000);
+                expect(await needsAnswer(now + 2000)).toBe(1);
+            }
+        );
+    });
+
+    test("sessions past the inbox row limit count by the same watermark", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                // 258 sessions with one question each: two more than the 256 groups the snapshot lists.
+                const db = openPendingStore(toolDataDir("question", "qa.db"));
+                const insert = db.query(
+                    "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question',?,'/fixture','/fixture','[]')"
+                );
+                db.transaction(() => {
+                    for (let index = 0; index < 258; index++) {
+                        insert.run(`form-${index}`, now - 10_000 + index, `overflow-fixture-${index}`);
+                    }
+                })();
+                db.close();
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: () => [],
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: realWidgetSources.inboxData,
+                };
+                const notifications = async () =>
+                    (await widgetSnapshot({ root: directory, sources, now })).notifications;
+                expect((await notifications())?.needsAnswer).toBe(258);
+                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
+                const cleared = await notifications();
+                expect(cleared?.needsAnswer).toBe(0);
+                expect(cleared?.sessions.filter((session) => session.needsAnswer > 0)).toEqual([]);
+            }
+        );
+    });
+
+    test("a running agent that asks a new question stays live, so its older open questions still count", async () => {
+        const now = Date.now();
+        const hour = 60 * 60 * 1000;
+        const decision = (id: string, number: number, at: number): DecisionRecord => ({
+            id,
+            sessionId: "live-asker",
+            provider: "codex",
+            number,
+            prompt: `Decide ${id}?`,
+            options: ["yes", "no"],
+            state: "open",
+            updatedTs: new Date(at).toISOString(),
+        });
+        const sources: WidgetSources = {
+            sessions: async () => [],
+            // Older than the 72 h cut-off, and one from a minute ago that turns the session "waiting".
+            decisions: () => [decision("d_1_old", 1, now - 100 * hour), decision("d_2_new", 2, now - 60_000)],
+            forms: () => [],
+            answers: () => [],
+            agents: async () => ({
+                generatedAt: "",
+                orphans: [],
+                parents: [
+                    {
+                        sessionId: "live-asker",
+                        provider: "codex",
+                        title: "Asker",
+                        project: "Fixture",
+                        cwd: "/fixture",
+                        filePath: "/fixture/lead.jsonl",
+                        model: null,
+                        account: null,
+                        startedAt: null,
+                        // Its indexed activity is old; it is live because the roster says it runs now.
+                        lastAt: new Date(now - 100 * hour).toISOString(),
+                        live: true,
+                        children: [],
+                    },
+                ],
+            }),
+            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+        };
+        const snapshot = await widgetSnapshot({ root: await root(), sources, now });
+        expect(snapshot.sessions.find((session) => session.target.sessionId === "live-asker")?.status).toBe("waiting");
+        expect(snapshot.notifications?.needsAnswer).toBe(2);
     });
 });
 
@@ -3918,6 +4065,29 @@ describe("background Widget roster", () => {
         };
     }
 
+    test("a refresh that wrote nothing still reads when another process wrote the index since the last read", async () => {
+        const path = join(await mkdtemp(join(tmpdir(), "roster-version-")), "index.db");
+        const ours = new Database(path);
+        const theirs = new Database(path);
+        try {
+            ours.run("CREATE TABLE rows (id INTEGER)");
+            const reads = new WidgetRosterReads(() => readDataVersion(ours));
+            expect(reads.needed(false)).toBe(true);
+            reads.reading();
+            ours.run("INSERT INTO rows VALUES (1)");
+            expect(reads.needed(false)).toBe(false);
+            expect(reads.needed(true)).toBe(true);
+            // Another listing indexes a transcript after the last read; this worker's refresh then writes nothing.
+            theirs.run("INSERT INTO rows VALUES (2)");
+            expect(reads.needed(false)).toBe(true);
+            reads.reading();
+            expect(reads.needed(false)).toBe(false);
+        } finally {
+            ours.close();
+            theirs.close();
+        }
+    });
+
     test("inbox reads stay available while a cold roster is pending and refreshes coalesce", async () => {
         const f = fixture();
         try {
@@ -4216,6 +4386,11 @@ describe("background Widget roster", () => {
         expect(change("/fixture/claude/projects/-fixture-project/old-lead/subagents/agent-a1.jsonl")).toBe(
             "claude-agents"
         );
+        // A workflow's agents sit deeper; only the listing walks there, whether or not the lead is listed.
+        const workflow = "/fixture/claude/projects/-fixture-project/lead-session/subagents/workflows/wf_1";
+        expect(change(`${workflow}/agent-a2.jsonl`, true)).toBe("claude-agents");
+        expect(change(`${workflow}/journal.jsonl`, true)).toBeUndefined();
+        expect(change(`${workflow}/agent-a2.meta.json`, true)).toBeUndefined();
         expect(change("/fixture/claude/projects/-fixture-project/lead-session/tool-results/out.txt")).toBeUndefined();
         expect(change("/fixture/claude/projects/-fixture-project/memory.md")).toBeUndefined();
         expect(change("/fixture/codex/sessions/2026/10/10/rollout-fixture.jsonl")).toBe("codex");
@@ -4327,6 +4502,70 @@ describe("background Widget roster", () => {
         });
     });
 
+    test("a stopping watch finishes its roster cache write before it lets the worker lock go", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            // A run completes: the roster has a tree, and the watch writes it to the cache for one-shot readers.
+            const refresh = spyOn(WidgetRosterReader.prototype, "refresh").mockImplementation(function (
+                this: WidgetRosterReader
+            ) {
+                this.agents = { generatedAt: "2026-01-01T10:00:00.000Z", parents: [], orphans: [] };
+                Reflect.get(this, "options").changed();
+            });
+            const request = spyOn(WidgetRosterReader.prototype, "request").mockImplementation(() => {});
+            let finishWrite = () => {};
+            const writing = new Promise<void>((resolve) => {
+                finishWrite = resolve;
+            });
+            let writes = 0;
+            const controller = new AbortController();
+            let ready = () => {};
+            const started = new Promise<void>((resolve) => {
+                ready = resolve;
+            });
+            let stopped = false;
+            const worker = watchWidget({
+                root: directory,
+                signal: controller.signal,
+                emit: () => ready(),
+                dependencies: {
+                    inboxPaths: {
+                        answerLog: join(directory, "question/log"),
+                        database: join(directory, "question/qa.db"),
+                        decisions: join(directory, "question/decisions.jsonl"),
+                    },
+                    watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                    sessionRoots: { claude: [], codex: [], grok: [] },
+                    writeRosterCache: async () => {
+                        writes++;
+                        await writing;
+                    },
+                    dispatcher: {
+                        validate: async () => {},
+                        dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                    },
+                },
+            }).then(() => {
+                stopped = true;
+            });
+            try {
+                await withTimeout(started, 5000);
+                expect(writes).toBe(1);
+                controller.abort();
+                await Bun.sleep(150);
+                expect(stopped).toBe(false);
+                finishWrite();
+                await withTimeout(worker, 5000);
+                expect(stopped).toBe(true);
+            } finally {
+                finishWrite();
+                controller.abort();
+                request.mockRestore();
+                refresh.mockRestore();
+            }
+        });
+    });
+
     test("a seeded roster shows until the first run lands and never replaces a completed one", () => {
         const f = scheduled();
         try {
@@ -4418,6 +4657,28 @@ describe("background Widget roster", () => {
         });
     });
 
+    test("roster cache writes land in order and a failed one leaves no temporary file", async () => {
+        const directory = await root();
+        const agents = (generatedAt: string) => ({ generatedAt, parents: [], orphans: [] });
+        // The watch asks for a write after every roster run without waiting for the last one.
+        const writes = ["first", "second", "third"].map((name, index) =>
+            writeWidgetRosterCache({ root: directory, roster: { rows: [], agents: agents(name) }, now: 1000 + index })
+        );
+        await Promise.all(writes);
+        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => true })).toEqual({
+            rows: [],
+            agents: agents("third"),
+        });
+
+        // A directory in the cache's place makes the rename fail.
+        const blocked = await root();
+        await mkdir(join(blocked, "roster-cache.json", "occupied"), { recursive: true });
+        await expect(
+            writeWidgetRosterCache({ root: blocked, roster: { rows: [], agents: agents("blocked") } })
+        ).rejects.toThrow();
+        expect((await readdir(blocked)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    });
+
     test("a one-shot snapshot reads the watch's fresh roster and falls back to the index when it is stale", async () => {
         const directory = await root();
         const agents = { generatedAt: "fixture", parents: [], orphans: [] };
@@ -4485,7 +4746,7 @@ describe("inbox card images and agent messages", () => {
         const embedded = png(join(directory, "hub after.png"));
         const bare = png(join(directory, "bare.png"));
         const token = png(join(directory, "token.png"));
-        const lifted = liftCardImages([
+        const lifted = await liftCardImages([
             `Which layout?\n\n![Hub after](${encodeURI(embedded)})`,
             `See ${bare} for the old one.\n\n{{image path="${token}" alt="Token"}}\n\n![Gone](/fixture/missing.png)`,
         ]);
@@ -4501,12 +4762,39 @@ describe("inbox card images and agent messages", () => {
             lifted.attachments.every((image) => image.mimeType === "image/png" && image.id.startsWith("lifted-"))
         ).toBe(true);
         // Stable ids across refreshes, so the widget does not rebuild the thumbnails every five seconds.
-        expect(liftCardImages([`![Hub after](${encodeURI(embedded)})`]).attachments[0]?.id).toBe(
+        expect((await liftCardImages([`![Hub after](${encodeURI(embedded)})`])).attachments[0]?.id).toBe(
             lifted.attachments[0]?.id
         );
         // A path the card already carries (answer attachments) is not added twice.
         const existing = lifted.attachments[0]!;
-        expect(liftCardImages([`![again](${embedded})`], [existing]).attachments).toEqual([existing]);
+        expect((await liftCardImages([`![again](${embedded})`], { existing: [existing] })).attachments).toEqual([
+            existing,
+        ]);
+    });
+
+    test("a snapshot reads a few new image files at most, and the next one lifts the rest from where it stopped", async () => {
+        const directory = await root();
+        const shots = ["one.png", "two.png", "three.png"].map((name) => png(join(directory, name)));
+        const text = shots.map((shot, index) => `![Shot ${index + 1}](${shot})`).join("\n\n");
+
+        const first = new ImageLiftBudget({ files: 2 });
+        const partial = await liftCardImages([text], { budget: first });
+        expect(partial.attachments.map((image) => image.path)).toEqual(shots.slice(0, 2));
+        expect(partial.texts[0]).toBe(`![Shot 3](${shots[2]})`);
+        expect(first.deferred).toBe(1);
+
+        // The two it read are cached and cost nothing, so a budget of one read finishes the card.
+        const second = new ImageLiftBudget({ files: 1 });
+        const whole = await liftCardImages([text], { budget: second });
+        expect(whole.attachments.map((image) => image.path)).toEqual(shots);
+        expect(whole.texts[0]).toBe("");
+        expect(second.deferred).toBe(0);
+
+        // Past the path limit an image stays text for good: nothing is deferred, so no snapshot is asked for.
+        const narrow = new ImageLiftBudget({ paths: 1 });
+        const capped = await liftCardImages([text], { budget: narrow });
+        expect(capped.attachments).toHaveLength(1);
+        expect(narrow.deferred).toBe(0);
     });
 
     test("a markdown image path holding parentheses is lifted whole, however it is written", async () => {
@@ -4516,7 +4804,7 @@ describe("inbox card images and agent messages", () => {
         const encoded = png(join(directory, "run(2)", "encoded(1).png"));
         const titled = png(join(directory, "run(2)", "titled(1).png"));
         const wrapped = png(join(directory, "run(2)", "wrapped(1).png"));
-        const lifted = liftCardImages([
+        const lifted = await liftCardImages([
             `Plain (see below)\n\n![Plain](${plain}) and (more text)`,
             `![Encoded](${encodeURI(encoded)})`,
             `![Titled](${titled} "a title")`,
@@ -4543,7 +4831,7 @@ describe("inbox card images and agent messages", () => {
             ),
             ["~~~", `![example](${example})`, "an unclosed fence runs to the end", example].join("\n"),
         ];
-        const lifted = liftCardImages([...literal, [literal[1], "", `![Real](${real})`].join("\n")]);
+        const lifted = await liftCardImages([...literal, [literal[1], "", `![Real](${real})`].join("\n")]);
 
         expect(lifted.texts.slice(0, 3)).toEqual(literal);
         expect(lifted.texts[3]).toBe(literal[1]);
@@ -4601,6 +4889,34 @@ describe("inbox card images and agent messages", () => {
         expect(form?.attachments.map((image) => [image.path, image.label])).toEqual([[formShot, "Blue"]]);
         expect(form?.formItems?.[0]?.promptMarkdown).toBe("Which colour?");
         expect(form?.title).toBe("Which colour?");
+    });
+
+    test("a decision that is only a screenshot is titled by its image, not left blank", async () => {
+        const directory = await root();
+        const shot = png(join(directory, "only.png"));
+        const file = join(directory, "decisions.jsonl");
+        await postDecisions(
+            file,
+            join(directory, "events.jsonl"),
+            {
+                sessionId: target.sessionId,
+                provider: "codex",
+                decisions: [{ prompt: `![Hub after](${encodeURI(shot)})`, options: ["Keep", "Drop"] }],
+            },
+            { env: {} }
+        );
+        const sources: WidgetSources = {
+            sessions: async () => [],
+            decisions: () => readDecisions(file),
+            forms: () => [],
+            answers: () => [],
+            agents: noAgents,
+        };
+        const decision = (await widgetSnapshot({ root: directory, sources })).cards.find(
+            (card) => card.kind === "decision"
+        );
+        expect(decision?.attachments.map((image) => image.path)).toEqual([shot]);
+        expect(decision?.title).toBe("Hub after");
     });
 
     test("a Codex and a Grok message land as unread message cards under their own sessions, with the screenshot", async () => {
@@ -4696,4 +5012,126 @@ describe("widget agent result", () => {
         expect(size).toBeGreaterThan(256 * 1024);
         expect(await lastClaudeAssistantText(file, size)).toBe("Final highlights.");
     });
+
+    // Codex and Grok, native sessions and worker turn files: each holds its answer before 1 MB of tool output, so a
+    // 256 KB tail misses it and the window must grow, and an earlier answer must not win.
+    const bulk = "x".repeat(4000);
+    const harnesses: Array<{
+        name: string;
+        provider: "codex" | "grok";
+        source: "native" | "worker";
+        answer: (text: string) => unknown;
+        tool: (index: number) => unknown;
+        /** What ends a model call in this format, so the early answer and the final one are two turns. */
+        between: unknown[];
+    }> = [
+        {
+            name: "a Codex rollout",
+            provider: "codex",
+            source: "native",
+            answer: (text) => ({
+                type: "response_item",
+                payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] },
+            }),
+            tool: (index) => ({
+                type: "response_item",
+                payload: { type: "function_call_output", call_id: `call-${index}`, output: bulk },
+            }),
+            between: [
+                {
+                    type: "response_item",
+                    payload: { type: "function_call", name: "shell", call_id: "call-0", arguments: '{"cmd":"ls"}' },
+                },
+                {
+                    type: "response_item",
+                    payload: { type: "function_call_output", call_id: "call-0", output: "a.txt" },
+                },
+            ],
+        },
+        {
+            name: "a tools codex worker log",
+            provider: "codex",
+            source: "worker",
+            answer: (text) => ({
+                source: "app-server",
+                method: "item/completed",
+                params: { threadId: "fixture", item: { type: "agentMessage", id: `msg-${text.length}`, text } },
+            }),
+            tool: (index) => ({
+                source: "app-server",
+                method: "item/completed",
+                params: {
+                    threadId: "fixture",
+                    item: {
+                        type: "commandExecution",
+                        id: `exec-${index}`,
+                        command: "cat log",
+                        status: "completed",
+                        exitCode: 0,
+                        aggregatedOutput: bulk,
+                    },
+                },
+            }),
+            between: [
+                { source: "app-server", method: "turn/completed", params: { threadId: "fixture", turn: { id: "t1" } } },
+            ],
+        },
+        {
+            name: "a Grok session",
+            provider: "grok",
+            source: "native",
+            answer: (text) => ({
+                params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } },
+            }),
+            tool: (index) => ({
+                params: {
+                    update: {
+                        sessionUpdate: "tool_call",
+                        toolCallId: `tc-${index}`,
+                        title: "bash",
+                        rawInput: { bulk },
+                    },
+                },
+            }),
+            between: [{ params: { update: { sessionUpdate: "turn_completed" } } }],
+        },
+        {
+            name: "a tools grok worker turn",
+            provider: "grok",
+            source: "worker",
+            answer: (text) => ({ type: "text", data: text }),
+            tool: (index) => ({
+                type: "tool_call",
+                toolCallId: `call-${index}`,
+                title: "read_file",
+                toolName: "read_file",
+                rawInput: { bulk },
+            }),
+            between: [{ type: "usage", usage: { input_tokens: 10, output_tokens: 5 } }],
+        },
+    ];
+
+    for (const harness of harnesses) {
+        test(`${harness.name} yields its last assistant text from the tail, past a long run of tool output`, async () => {
+            const dir = await mkdtemp(join(tmpdir(), "widget-result-"));
+            const file = join(dir, `${harness.provider}-${harness.source}.jsonl`);
+            const lines = [
+                harness.answer("An early answer."),
+                ...harness.between,
+                harness.answer("Final highlights."),
+                ...Array.from({ length: 260 }, (_, index) => harness.tool(index + 1)),
+            ].map((line) => SafeJSON.stringify(line));
+            writeFileSync(file, `${lines.join("\n")}\n`);
+            const size = (await files.stat(file)).size;
+            expect(size).toBeGreaterThan(256 * 1024);
+
+            const resolved = {
+                provider: harness.provider,
+                source: harness.source,
+                sessionId: "fixture",
+                filePath: file,
+            };
+            expect(await lastAssistantTextOf(resolved, size)).toBe("Final highlights.");
+        });
+    }
 });

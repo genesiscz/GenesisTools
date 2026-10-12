@@ -648,31 +648,45 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if MediaPreviewKeyboard.handle(keyCode: event.keyCode, editingText: editingText) {
             return nil
         }
-        if event.keyCode == 53 {
-            model.collapse()
-            return nil
-        }
-        guard isAgent else { return event }
-        if panel.firstResponder is NSTextView { return event }
-        if let control = panel.firstResponder as? NSControl, control.currentEditor() != nil {
-            return event
-        }
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        if key == "j" {
-            model.next(-1)
-            return nil
-        }
-        if key == "k" {
-            model.next()
-            return nil
-        }
-        if let number = AgentWidgetKeyboard.choiceNumber(keyCode: event.keyCode, characters: key),
-            let card = model.card, card.needsAnswer, card.kind == "decision", number <= card.choices.count
+        switch Self.panelKey(
+            keyCode: event.keyCode, characters: event.charactersIgnoringModifiers?.lowercased() ?? "",
+            context: .init(previewOpen: MediaPreviewKeyboard.isOpen, agents: isAgent, editingText: editingText,
+                           answering: model.answerCard))
         {
-            model.submit(choice: card.choices[number - 1].id)
-            return nil
+        case .pass: return event
+        case .collapse: model.collapse()
+        case .previous: model.next(-1)
+        case .next: model.next()
+        case .choose(let choice): model.submit(choice: choice)
         }
-        return event
+        return nil
+    }
+
+    enum PanelKey: Equatable { case pass, collapse, previous, next, choose(String) }
+
+    struct PanelKeyContext {
+        let previewOpen: Bool
+        let agents: Bool
+        let editingText: Bool
+        /// `WidgetModel.answerCard`: an open, unanswered decision, never a folded one.
+        let answering: WidgetCard?
+    }
+
+    /// What an unmodified key the media preview did not take does on the panel. While the preview is open, nothing:
+    /// it is modal, so the key goes on to its own controls (a video's) and never to the inbox under it, where a
+    /// number would answer the decision behind the picture and j/k would change the session.
+    static func panelKey(keyCode: UInt16, characters: String, context: PanelKeyContext) -> PanelKey {
+        guard !context.previewOpen else { return .pass }
+        if keyCode == 53 { return .collapse }
+        guard context.agents, !context.editingText else { return .pass }
+        if characters == "j" { return .previous }
+        if characters == "k" { return .next }
+        if let number = AgentWidgetKeyboard.choiceNumber(keyCode: keyCode, characters: characters),
+           let card = context.answering, number <= card.choices.count
+        {
+            return .choose(card.choices[number - 1].id)
+        }
+        return .pass
     }
 
     public static func id(_ screen: NSScreen) -> String {

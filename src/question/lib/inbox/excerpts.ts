@@ -165,9 +165,20 @@ export function locateRef(
     return { absolute: null, searched: roots, matches: 0 };
 }
 
+/** Where a ref points, or nowhere when looking fails: one unreadable folder must not fail the whole inbox. */
+function tryLocateRef(ref: InboxRef, cwd: string | undefined, deps: ReadDeps): RefLocation {
+    try {
+        return locateRef(ref.path, cwd, deps);
+    } catch (error) {
+        // statSync throws past `throwIfNoEntry` for EACCES, ENOTDIR and a symlink loop; a root lookup can throw too.
+        log.debug({ error, path: ref.path, cwd }, "inbox: a decision's ref could not be located");
+        return { absolute: null, searched: [], matches: 0 };
+    }
+}
+
 /** One ref filled with the real lines from disk, its language and a start line; `missing` when unreadable. */
 function fillRef(ref: InboxRef, cwd: string | undefined, deps: ReadDeps): InboxRef {
-    const location = locateRef(ref.path, cwd, deps);
+    const location = tryLocateRef(ref, cwd, deps);
     const absolute = location.absolute;
     const found = absolute !== null && location.matches === 1;
     const base: InboxRef = {

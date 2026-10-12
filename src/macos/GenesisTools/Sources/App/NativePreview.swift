@@ -22,4 +22,22 @@ enum NativePreview {
 enum NativeStaging {
     static let defaultsKey = "GenesisToolsStagingFaces"
     static var facesEnabled: Bool { NativePreview.enabled || UserDefaults.standard.bool(forKey: defaultsKey) }
+
+    /// Whether these arguments start a staged face this app may not run. The exceptions are Clicky's off-screen Settings
+    /// runs, a snapshot (`--clicky --page <id> --snapshot <png>`, one page drawn, then exit) and a headless run
+    /// (`--clicky --page <id> --headless`): neither starts Clicky nor Flow. The widget has no such mode, so
+    /// `--widget --snapshot` is refused like any widget launch.
+    /// `--snapshot` with no path after it is refused too: Clicky would read no snapshot path and start for real.
+    static func refuses(_ arguments: [String], facesEnabled: Bool) -> Bool {
+        guard !facesEnabled, let face = arguments.first, face == "--widget" || face == "--clicky" else { return false }
+        // `--clicky --headless` (scripts/native/settings-v2.ts) is the same off-screen Settings without a picture.
+        return !(face == "--clicky" && (snapshotPath(arguments) != nil || arguments.contains("--headless")))
+    }
+
+    /// The value after `--snapshot`, when there is one and it is not the next flag.
+    static func snapshotPath(_ arguments: [String]) -> String? {
+        guard let flag = arguments.firstIndex(of: "--snapshot"), arguments.indices.contains(flag + 1) else { return nil }
+        let path = arguments[flag + 1]
+        return path.isEmpty || path.hasPrefix("-") ? nil : path
+    }
 }

@@ -9,7 +9,12 @@ import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import { type QaRow, queryEntriesSnapshot, readQuestionSnapshot } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
-import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
+import {
+    type ResolvedTranscript,
+    resolveTranscript,
+    transcriptEnvelope,
+    turnsFromLines,
+} from "@genesiscz/utils/ai/transcripts";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
@@ -22,7 +27,7 @@ import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
-import { liftCardImages } from "./card-images";
+import { ImageLiftBudget, liftCardImages } from "./card-images";
 import { WIDGET_DISCOVERY_REUSE_MS, WIDGET_ROSTER_HOURS, WIDGET_ROSTER_LIMIT } from "./roster-index";
 import { readWidgetState } from "./storage";
 import { parseWidgetSessionKey, shownOutgoing, type WidgetTarget, widgetSessionKey } from "./types";
@@ -102,8 +107,15 @@ export interface WidgetSources {
     answers(session?: string): QaRow[];
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
-    inboxData?(): WidgetInboxData;
+    inboxData?(window: WidgetInboxWindow): WidgetInboxData;
     rosterStatus?(): { loading: boolean; error?: string };
+}
+/** The cut-offs the badges count against, applied to every item before it is grouped. */
+export interface WidgetInboxWindow {
+    /** The last "Mark all read": only items after it count. */
+    clearedAt: number;
+    /** A quiet session's items count only from here on (`INBOX_STALE_MS` before now). */
+    staleBefore: number;
 }
 export interface WidgetInboxGroup {
     id: string;
@@ -112,9 +124,30 @@ export interface WidgetInboxGroup {
     title: string;
     project: string;
     cwd: string;
+    /** The group's newest item. */
     at: number;
     count: number;
-    total: number;
+    /** Items after the window's `clearedAt`. */
+    afterClear: number;
+    /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
+    recentAfterClear: number;
+    /**
+     * `recentAfterClear` summed over EVERY group, the ones past the row limit too, on every row. The groups the
+     * snapshot never sees are counted by this session-blind rule; the listed ones by their session's freshness.
+     */
+    recentAfterClearTotal: number;
+}
+
+/** How many of a group's item times fall in the window: the per-item counts a source without SQL reports. */
+export function inboxWindowCounts(
+    times: number[],
+    window: WidgetInboxWindow
+): Pick<WidgetInboxGroup, "afterClear" | "recentAfterClear"> {
+    const afterClear = times.filter((at) => at > window.clearedAt);
+    return {
+        afterClear: afterClear.length,
+        recentAfterClear: afterClear.filter((at) => at >= window.staleBefore).length,
+    };
 }
 export interface WidgetInboxData {
     answers: WidgetInboxGroup[];
@@ -147,40 +180,49 @@ export interface WidgetInboxSummary {
     profile?: { hostId: "local" };
 }
 
-function readInboxData(): WidgetInboxData {
+/**
+ * Per session and provider, each group's newest item and its counts. `afterClear` and `recentAfterClear` count the
+ * group's ITEMS against the window (?1 = clearedAt, ?2 = staleBefore), so a new item in a session never brings back
+ * the older items "Mark all read" cleared or the stale ones beside it.
+ */
+const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS afterClear,
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS recentAfterClear,
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER () AS recentAfterClearTotal`;
+
+function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
+    const bounds: [number, number] = [window.clearedAt, window.staleBefore];
     return readQuestionSnapshot({
         dbPath: toolDataDir("question", "qa.db"),
         read: (db) => {
             runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
             const answers = db
-                .query<WidgetInboxGroup, []>(`
+                .query<WidgetInboxGroup, [number, number]>(`
                 WITH unseen AS (
                     SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
                              WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
                         COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
-                        COALESCE(cwd,'') AS cwd, ts AS at,
-                        COUNT(*) OVER () AS total
+                        COALESCE(cwd,'') AS cwd, ts AS at
                     FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
                         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
                 ), ranked AS (
                     SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM unseen
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
-                .all();
+                .all(...bounds);
             const hasForms = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='qa_pending'").get();
             const forms = hasForms
                 ? db
-                      .query<WidgetInboxGroup, []>(`
+                      .query<WidgetInboxGroup, [number, number]>(`
                 WITH pending AS (
                     SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
                         CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
                         CASE WHEN json_valid(transcript_anchor_json) THEN json_extract(transcript_anchor_json,'$.provider') END AS anchor,
-                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at,
-                        COUNT(*) OVER () AS total
+                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at
                     FROM qa_pending WHERE status='pending'
                 ), normalized AS (
                     SELECT *, CASE WHEN COALESCE(poster,anchor) IN ('claude','claude-code') THEN 'claude'
@@ -188,12 +230,13 @@ function readInboxData(): WidgetInboxData {
                         ELSE 'unknown' END AS provider FROM pending
                 ), ranked AS (
                     SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM normalized
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
-                      .all()
+                      .all(...bounds)
                 : [];
             return {
                 answers: answers.slice(0, 256),
@@ -311,18 +354,19 @@ export function claudeAssistantText(line: string): string | undefined {
     return texts.join("\n").trim() || undefined;
 }
 
-/**
- * The last assistant text of a Claude transcript, read from the end of the file: the result of a 300 MB lead costs a
- * few hundred KB instead of a whole parse. Grows the window until it finds one or has read the whole file.
- */
-export async function lastClaudeAssistantText(filePath: string, size: number): Promise<string> {
-    for (const bytes of [256 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024]) {
-        const lines = await readTailBytes(filePath, bytes);
-        for (let index = lines.length - 1; index >= 0; index--) {
-            const text = claudeAssistantText(lines[index]);
-            if (text) {
-                return text;
-            }
+/** The windows a large transcript's end is read in, smallest first, until one holds an assistant text. */
+const RESULT_TAIL_WINDOWS = [256 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024];
+
+/** Runs `find` on growing windows of the file's end until it answers or the window covers the whole file. */
+async function fromTail(
+    filePath: string,
+    size: number,
+    find: (lines: string[]) => string | undefined
+): Promise<string> {
+    for (const bytes of RESULT_TAIL_WINDOWS) {
+        const text = find(await readTailBytes(filePath, bytes));
+        if (text) {
+            return text;
         }
 
         if (bytes >= size) {
@@ -331,6 +375,36 @@ export async function lastClaudeAssistantText(filePath: string, size: number): P
     }
 
     return "";
+}
+
+/**
+ * The last assistant text of a Claude transcript, read from the end of the file: the result of a 300 MB lead costs a
+ * few hundred KB instead of a whole parse. Grows the window until it finds one or has read the whole file.
+ */
+export function lastClaudeAssistantText(filePath: string, size: number): Promise<string> {
+    return fromTail(filePath, size, (lines) => {
+        for (let index = lines.length - 1; index >= 0; index--) {
+            const text = claudeAssistantText(lines[index]);
+            if (text) {
+                return text;
+            }
+        }
+
+        return undefined;
+    });
+}
+
+/**
+ * The same for a Codex or Grok transcript (a native session or a worker's turn file), parsed by the turn parsers a
+ * whole file gets, so a large one shows the result a small one does.
+ */
+export function lastAssistantTextOf(resolved: ResolvedTranscript, size: number): Promise<string> {
+    return fromTail(
+        resolved.filePath,
+        size,
+        (lines) =>
+            turnsFromLines(resolved, lines).findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text
+    );
 }
 
 const resultCache = new Map<string, { mtime: number; text: string }>();
@@ -348,7 +422,8 @@ async function widgetResult(node: AgentNode): Promise<string> {
     if (stat.size > 8 * 1024 * 1024 && node.harness === "claude") {
         text = (await lastClaudeAssistantText(node.filePath, stat.size)).slice(0, 32_000);
     } else if (stat.size > 8 * 1024 * 1024) {
-        text = "";
+        const resolved = await resolveTranscript(node.filePath, {}, node.harness);
+        text = (await lastAssistantTextOf(resolved, stat.size)).slice(0, 32_000);
     } else {
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
         const envelope = await transcriptEnvelope(resolved, { limit: 20 });
@@ -432,6 +507,15 @@ function targetOf(
 }
 function cleanVisibleContext(text: string): string {
     return text.replace(/<from(?:Image|Video)>[\s\S]*?<\/from(?:Image|Video)>/g, "").trim();
+}
+
+/** A card title after its images were lifted out: a title that was only an image is named by that image. */
+function liftedTitle(title: string, attachments: readonly { label?: string }[]): string {
+    if (title.trim() || attachments.length === 0) {
+        return title;
+    }
+
+    return attachments[0]?.label?.trim() || "Screenshot";
 }
 
 /** `body` without its first line when that line is the card title, so a message does not repeat its own title. */
@@ -565,6 +649,7 @@ export async function widgetSnapshot({
     refresh = false,
     sources = realWidgetSources,
     now = Date.now(),
+    onImagesDeferred,
 }: {
     root?: string;
     selectedKey?: string;
@@ -572,12 +657,20 @@ export async function widgetSnapshot({
     sources?: WidgetSources;
     /** The clock the inbox ages items against; tests pass a fixed one. */
     now?: number;
+    /** This snapshot left card images unread (its read budget was spent); the watch loop takes another one. */
+    onImagesDeferred?: () => void;
 }) {
     const state = await readWidgetState(root);
+    const imageBudget = new ImageLiftBudget();
     selectedKey ??= state.selectedKey ?? undefined;
-    /** An item still matters while it is recent or its session worked lately; a session can be "working" with old items. */
+    /**
+     * Sessions with a running agent, taken from the roster before any question turns a status into "waiting": a
+     * running agent that asks something is still live, and its older items still count.
+     */
+    const live = new Set<string>();
+    /** An item still matters while it is recent or its session worked lately; a live session can have old items. */
     const inboxFresh = (session: WidgetSession, at: number) =>
-        session.status === "working" || Math.max(at, session.activityAt) >= now - INBOX_STALE_MS;
+        live.has(session.key) || Math.max(at, session.activityAt) >= now - INBOX_STALE_MS;
     /** Counted in the badges: fresh, and newer than the user's last "Mark all read". Every item stays in its session. */
     const inboxCounted = (session: WidgetSession, at: number) =>
         at > (state.inboxClearedAt ?? 0) && inboxFresh(session, at);
@@ -606,22 +699,44 @@ export async function widgetSnapshot({
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
-    const inboxData = sources.inboxData
-        ? await read("inbox metadata", sources.inboxData, { answers: [], forms: [], complete: false, truncated: false })
+    const inboxWindow: WidgetInboxWindow = {
+        clearedAt: state.inboxClearedAt ?? 0,
+        staleBefore: now - INBOX_STALE_MS,
+    };
+    const inboxSource = sources.inboxData;
+    const rosterUnread = inboxSource ? [] : answerRoster.filter((row) => row.readAt === null);
+    const rosterRecent = {
+        answers: inboxWindowCounts(
+            rosterUnread.map((row) => row.ts),
+            inboxWindow
+        ).recentAfterClear,
+        forms: inboxSource
+            ? 0
+            : inboxWindowCounts(
+                  waitingForms.map((form) => form.createdAt),
+                  inboxWindow
+              ).recentAfterClear,
+    };
+    const inboxData = inboxSource
+        ? await read("inbox metadata", () => inboxSource(inboxWindow), {
+              answers: [],
+              forms: [],
+              complete: false,
+              truncated: false,
+          })
         : {
-              answers: answerRoster
-                  .filter((row) => row.readAt === null)
-                  .map((row) => ({
-                      id: row.id,
-                      sessionId: row.sessionId,
-                      provider: widgetProvider(row.agent),
-                      title: row.sessionTitle ?? row.sessionId,
-                      project: row.project,
-                      cwd: row.cwd,
-                      at: row.ts,
-                      count: 1,
-                      total: answerRoster.filter((entry) => entry.readAt === null).length,
-                  })),
+              answers: rosterUnread.map((row) => ({
+                  id: row.id,
+                  sessionId: row.sessionId,
+                  provider: widgetProvider(row.agent),
+                  title: row.sessionTitle ?? row.sessionId,
+                  project: row.project,
+                  cwd: row.cwd,
+                  at: row.ts,
+                  count: 1,
+                  ...inboxWindowCounts([row.ts], inboxWindow),
+                  recentAfterClearTotal: rosterRecent.answers,
+              })),
               forms: waitingForms.map((form) => ({
                   id: form.id,
                   sessionId: form.sessionHint || form.id,
@@ -631,7 +746,8 @@ export async function widgetSnapshot({
                   cwd: form.cwd,
                   at: form.createdAt,
                   count: 1,
-                  total: waitingForms.length,
+                  ...inboxWindowCounts([form.createdAt], inboxWindow),
+                  recentAfterClearTotal: rosterRecent.forms,
               })),
               complete: false,
               truncated: true,
@@ -770,6 +886,11 @@ export async function widgetSnapshot({
     for (const node of agents.orphans) {
         addWorker(node);
     }
+    for (const session of sessions.values()) {
+        if (session.status === "working") {
+            live.add(session.key);
+        }
+    }
     for (const decision of decisions) {
         const session =
             findSession(decision.sessionId, decision.provider) ??
@@ -839,9 +960,11 @@ export async function widgetSnapshot({
         }
         inboxSessions.set(session.key, entry);
     };
-    // Counted per group: the SQL groups carry their session's count and newest item, and `total` also covers groups
-    // past the row limit, so each group left out of the count is subtracted from it.
-    const skipped = { answer: 0, form: 0 };
+    // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
+    // clear watermark and after the stale cut-off. A listed group counts by its session's freshness; the groups past
+    // the row limit count by the session-blind rule (`recentAfterClearTotal` minus what the listed groups hold).
+    const counted = { answer: 0, form: 0 };
+    const listedRecent = { answer: 0, form: 0 };
     for (const [kind, groups] of [
         ["answer", inboxData.answers],
         ["form", inboxData.forms],
@@ -856,11 +979,16 @@ export async function widgetSnapshot({
                     row.project,
                     row.at
                 );
+            // `inboxCounted` per item: a working or lately active session counts every item after the watermark,
+            // a quiet one only its recent items.
+            const sessionFresh = live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
+            const items = sessionFresh ? row.afterClear : row.recentAfterClear;
             if (kind === "form" && inboxFresh(session, row.at)) {
                 session.status = "waiting";
             }
-            if (!inboxCounted(session, row.at)) {
-                skipped[kind] += row.count;
+            counted[kind] += items;
+            listedRecent[kind] += row.recentAfterClear;
+            if (items === 0) {
                 continue;
             }
             putInbox(
@@ -873,10 +1001,13 @@ export async function widgetSnapshot({
                     at: row.at,
                     needsAnswer: kind === "form",
                 },
-                row.count
+                items
             );
         }
     }
+    /** What the listed groups counted, plus the recent items of the groups past the row limit. */
+    const inboxCount = (kind: "answer" | "form", groups: WidgetInboxGroup[]) =>
+        counted[kind] + Math.max(0, (groups[0]?.recentAfterClearTotal ?? 0) - listedRecent[kind]);
     let pendingDecisions = 0;
     for (const row of decisions) {
         if (kindOf(row) !== "decision" || !["open", "drafted"].includes(row.state) || row.delivery?.uncertain) {
@@ -929,8 +1060,8 @@ export async function widgetSnapshot({
         putInbox(session, { id, sourceId: node.id, kind: "result", key: session.key, at, needsAnswer: false }, 1);
     }
     const notifications: WidgetInboxSummary = {
-        unread: Math.max(0, (inboxData.answers[0]?.total ?? 0) - skipped.answer) + unreadResults,
-        needsAnswer: Math.max(0, (inboxData.forms[0]?.total ?? 0) - skipped.form) + pendingDecisions,
+        unread: inboxCount("answer", inboxData.answers) + unreadResults,
+        needsAnswer: inboxCount("form", inboxData.forms) + pendingDecisions,
         complete: inboxData.complete && errors.length === 0,
         truncated: inboxData.truncated || inboxSessions.size > 512,
         sessions: [...inboxSessions.values()]
@@ -978,8 +1109,12 @@ export async function widgetSnapshot({
                 row.project,
                 row.ts
             );
-        const answerImages = liftCardImages([row.question, cleanVisibleContext(row.answerMd)], row.attachments ?? []);
-        const [answerTitle, answerBody] = answerImages.texts;
+        const answerImages = await liftCardImages([row.question, cleanVisibleContext(row.answerMd)], {
+            existing: row.attachments ?? [],
+            budget: imageBudget,
+        });
+        const answerTitle = liftedTitle(answerImages.texts[0], answerImages.attachments);
+        const answerBody = answerImages.texts[1];
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
@@ -1015,15 +1150,22 @@ export async function widgetSnapshot({
         if (!session || (selectedKey && session.key !== selectedKey)) {
             continue;
         }
-        // The prompt is lifted too: an item's attachments are embedded there, and with a title it is not drawn.
-        const decisionImages = liftCardImages([
-            row.title ?? row.prompt,
-            cleanVisibleContext(
-                [row.context, row.reasoning, row.proposal, row.answer, row.notes].filter(Boolean).join("\n\n")
-            ),
-            ...(row.title ? [row.prompt] : []),
-        ]);
-        const [decisionTitle, decisionBody] = decisionImages.texts;
+        // The prompt is lifted too: an item's attachments are embedded there. With a title (a task's short name) the
+        // prompt holds the details, and it leads the body.
+        const decisionImages = await liftCardImages(
+            [
+                row.title ?? row.prompt,
+                cleanVisibleContext(
+                    [row.context, row.reasoning, row.proposal, row.answer, row.notes].filter(Boolean).join("\n\n")
+                ),
+                ...(row.title ? [cleanVisibleContext(row.prompt)] : []),
+            ],
+            { budget: imageBudget }
+        );
+        const decisionTitle = liftedTitle(decisionImages.texts[0], decisionImages.attachments);
+        const decisionBody = [decisionImages.texts[2], decisionImages.texts[1]]
+            .filter((text) => text?.trim())
+            .join("\n\n");
         cards.push({
             id: `decision:${row.id}`,
             kind: kindOf(row),
@@ -1066,10 +1208,13 @@ export async function widgetSnapshot({
             continue;
         }
         // Each item's prompt is drawn by the form view, so the lifted images leave the prompts the widget receives.
-        const formImages = liftCardImages([
-            form.status === "answered" ? cleanVisibleContext(renderFormAnswer(form, form.answers ?? {})) : "",
-            ...form.items.map((item) => item.promptMarkdown),
-        ]);
+        const formImages = await liftCardImages(
+            [
+                form.status === "answered" ? cleanVisibleContext(renderFormAnswer(form, form.answers ?? {})) : "",
+                ...form.items.map((item) => item.promptMarkdown),
+            ],
+            { budget: imageBudget }
+        );
         const [formAnswer, ...formPrompts] = formImages.texts;
         const formItems = form.items.map((item, index) => ({ ...item, promptMarkdown: formPrompts[index] ?? "" }));
         cards.push({
@@ -1111,10 +1256,13 @@ export async function widgetSnapshot({
             continue;
         }
         const result = selectedKey ? await read("agent result", () => widgetResult(node), "") : "";
-        const resultImages = liftCardImages([
-            result ||
-                `Task context: ${node.spawnPromptPreview ?? node.description ?? "Open the conversation to read the agent's result."}`,
-        ]);
+        const resultImages = await liftCardImages(
+            [
+                result ||
+                    `Task context: ${node.spawnPromptPreview ?? node.description ?? "Open the conversation to read the agent's result."}`,
+            ],
+            { budget: imageBudget }
+        );
         cards.push({
             id: `result:${node.harness}:${node.id}`,
             kind: "result",
@@ -1179,6 +1327,12 @@ export async function widgetSnapshot({
                   []
               )
             : [];
+
+    if (imageBudget.deferred > 0) {
+        logger.debug({ deferred: imageBudget.deferred }, "Widget card images left to the next snapshot");
+        onImagesDeferred?.();
+    }
+
     return {
         version: 1,
         state,
