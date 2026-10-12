@@ -71,7 +71,10 @@ usage (`src/claude/lib/usage/session-rows.ts`, `parseTailLines`) is such a reade
 
 - **`bun:jsc` `serialize()` / `deserialize()`** restored the same objects 1.1 to 2.6 times faster than `JSON.parse`
   (15 to 27 ms against 39 ms on one sample). Bun to Bun only, versioned, files 1.0 to 1.4 times the JSON size. A
-  candidate for caches GenesisTools writes and reads itself; not measured on our cache files yet.
+  candidate for caches GenesisTools writes and reads itself. Measured on our three cache files (2026-10-12):
+  1.17 to 1.5 times faster to read, under 0.3 ms saved per read; below the 2x bar Martin set, so they stay JSON.
+- **Parallel parsing in Workers** cut the wall time of 2,441 uncached transcript tails from 846 to 260 ms (8 workers)
+  but cost 1.9 to 2.9 times more CPU. CPU is the metric here; cache the parse instead.
 - **`Bun.JSONL.parse(bytes)`** converts the whole buffer to a string when one byte is not ASCII: about 2 times slower
   than decoding first. Pass a string.
 - **Bun 1.4.3** ships a faster `JSON.parse` (key/value caches, SIMD): 5 to 12% on transcript lines here.
