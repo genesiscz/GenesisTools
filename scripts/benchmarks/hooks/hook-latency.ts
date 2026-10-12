@@ -3,20 +3,21 @@
  * The hook latency budget, measured. The guard and the pre-phase capture run synchronously
  * on EVERY Bash call, so an unmeasured port is how a 60 ms tax becomes a 300 ms one.
  *
- * Read-only: it pipes fixed payloads into the entrypoints and into the guard this port
- * replaces. It writes only under /tmp (source files, scratch git homes under a throwaway
- * `GENESIS_TOOLS_HOME`), never the real `~/.genesis-tools`.
+ * It pipes fixed payloads into the entrypoints. The first stages read the real hooks config; the
+ * paired arms run under a throwaway `GENESIS_TOOLS_HOME` and write only under /tmp.
  *
- * Usage: bun scripts/benchmarks/hooks/hook-latency.ts [--runs 20] [--json <path>]
+ * Usage: bun scripts/benchmarks/hooks/hook-latency.ts [--runs 20] [--json <path>] [--custom-rules <path>]
+ *
+ * `--custom-rules` measures a real rules folder (one whose modules import `@genesiscz/utils`)
+ * instead of the self-contained fixture modules.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, loadavg, tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
-const OLD_WRAPPER = join(homedir(), ".claude", "hooks", "announce-hook-bg.sh");
 const runsIndex = process.argv.indexOf("--runs");
 const RUNS = runsIndex >= 0 ? Number(process.argv[runsIndex + 1]) : 20;
 
@@ -136,24 +137,6 @@ for (const stage of STAGES) {
     rows.push({ stage: stage.name, ms: Number(ms.toFixed(1)), budget, withinBudget: ms <= budget });
 }
 
-// `LEGACY_GUARD_AND_DIFF=1` turns the legacy guard and capture back on FOR THIS CALL. After
-// the cutover the wrapper is neutered, and without this the reference line timed an empty
-// script and still printed a figure that looked fine: 48 ms became 5.9 ms with no warning.
-// The wrapper is only a reference line, and a fresh checkout does not have it. Timing it anyway
-// now throws (a missing script exits 127), which would cost every measured stage above.
-const oldClean = existsSync(OLD_WRAPPER)
-    ? timeIt(
-          "sh",
-          [OLD_WRAPPER],
-          SafeJSON.stringify({
-              ...base,
-              hook_event_name: "PreToolUse",
-              tool_input: { command: "git status --porcelain" },
-          }),
-          { LEGACY_GUARD_AND_DIFF: "1" }
-      )
-    : null;
-
 function dirtyCount(): number {
     const run = spawnSync("git", ["status", "--porcelain", "-z", "--no-renames"], { encoding: "utf8" });
 
@@ -171,10 +154,6 @@ for (const row of rows) {
     const mark = row.withinBudget ? "ok  " : "OVER";
     out.println(`  ${mark} ${row.stage.padEnd(32)} ${String(row.ms).padStart(7)} ms   budget ${row.budget} ms`);
 }
-
-out.println(
-    `  ---- reference: the wrapper this replaces, same payload  ${oldClean === null ? "not installed" : `${oldClean.toFixed(1)} ms`}`
-);
 
 // ---------------------------------------------------------------------------------------------
 // The per-session change-log sink: `recordFileToolChange` (Edit/Write) and `recordBashEdits`
@@ -357,6 +336,67 @@ function report(name: string, arm: ArmResult): RowResult {
             : {}),
     };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Custom rules (`guard.customRules`): the loader imports each module on every hook call. A/B on
+// the pre phase with the diff off, so the capture does not drown the import cost. The fixture
+// modules are self-contained; `--custom-rules` points arm B at a real folder instead.
+// ---------------------------------------------------------------------------------------------
+
+const customIndex = process.argv.indexOf("--custom-rules");
+const customFolder = customIndex >= 0 ? process.argv[customIndex + 1] : undefined;
+
+function fixtureRulesFolder(): string {
+    const dir = mkdtempSync(join(tmpdir(), "hook-bench-custom-rules-"));
+
+    for (const name of ["one", "two", "three"]) {
+        writeFileSync(
+            join(dir, `${name}.ts`),
+            `export const rules = [{ id: "bench-${name}", kind: "misread", severity: "block", title: "benchmark fixture ${name}", why: "fixture", wrong: "zz-${name}", right: "echo fine", detect(scan: { command: string }) { const at = scan.command.indexOf("zz-${name}"); return at === -1 ? null : { matched: "zz-${name}", index: at }; } }];\n`
+        );
+    }
+
+    return dir;
+}
+
+function guardHome(prefix: string, customRules: string[]): string {
+    const home = freshHome(prefix);
+
+    writeFileSync(
+        join(home, ".genesis-tools", "agents", "hooks.json"),
+        SafeJSON.stringify({ shadow: false, diff: { enabled: false }, guard: { customRules } })
+    );
+
+    return home;
+}
+
+const customRulesPath = customFolder ?? fixtureRulesFolder();
+const prePayload = () => ({
+    ...base,
+    hook_event_name: "PreToolUse",
+    tool_input: { command: "git status --porcelain" },
+});
+const customResult = interleave(
+    {
+        entry: "src/agents/bin/hook-pre.ts",
+        payload: prePayload,
+        env: { GENESIS_TOOLS_HOME: guardHome("hook-bench-nocustom-", []) },
+    },
+    {
+        entry: "src/agents/bin/hook-pre.ts",
+        payload: prePayload,
+        env: { GENESIS_TOOLS_HOME: guardHome("hook-bench-custom-", [customRulesPath]) },
+    },
+    RUNS
+);
+
+out.println("");
+out.println(`custom rules (interleaved A/B, ${RUNS} pairs, diff off, rules from ${customRulesPath}):`);
+rows.push(report("pre phase, guard only, no custom rules", customResult.a));
+rows.push(report("pre phase, guard only, custom rules loaded", customResult.b));
+out.println(
+    `    delta (custom rules loaded): ${(customResult.b.wall.median - customResult.a.wall.median).toFixed(1)} ms`
+);
 
 out.println("");
 out.println(`change-log sink cost (interleaved A/B, ${RUNS} pairs, 3 warmup pairs discarded):`);
@@ -612,7 +652,7 @@ if (!canMeasureCpu) {
 if (jsonIndex >= 0) {
     const path = process.argv[jsonIndex + 1] ?? join(tmpdir(), "hook-latency.json");
 
-    writeFileSync(path, `${SafeJSON.stringify({ runs: RUNS, rows, oldWrapperMs: oldClean, controls }, null, 2)}\n`);
+    writeFileSync(path, `${SafeJSON.stringify({ runs: RUNS, loadAverage: loadavg(), rows, controls }, null, 2)}\n`);
     out.println(`wrote ${path}`);
 }
 

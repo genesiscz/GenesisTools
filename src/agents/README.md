@@ -124,11 +124,11 @@ A second, independent subsystem under the same tool. It has nothing to do with t
 feed above: it is the harness-hook side of `tools agents`, and it answers two questions on
 every Bash call any coding agent makes.
 
-1. **Would this command lie, or destroy work?** Thirteen rules, each harvested from a real
-   session where the shape produced a confidently wrong answer. `$?` after a pipeline,
-   `2>/dev/null | wc -l`, `${PIPESTATUS[0]}` under zsh, `rg -rn`, `find` from `~`,
-   `git checkout --`, `push --force`, `migrate:fresh`, `(N)` globs, bare `log show`,
-   `docker volume rm`.
+1. **Would this command lie, or destroy work?** Fourteen built-in rules, each harvested from a
+   real session where the shape produced a confidently wrong answer. `$?` after a pipeline,
+   `2>/dev/null | wc -l`, `${PIPESTATUS[0]}` under zsh, `rg -rn`, `find` or `rg` from `~`,
+   `git checkout --`, `push --force`, `(N)` globs, bare `log show`, `docker volume rm`, a stale
+   SwiftPM plan. Your own rules load beside them (see **Custom rules** below).
 2. **What did this command actually change?** A diff of exactly this command's edits, for the
    cases the harness's own renderer does not cover: a file outside the cwd repository, a
    second edit to the same file, an edit inside an untracked directory.
@@ -136,19 +136,57 @@ every Bash call any coding agent makes.
 ## Commands
 
 ```bash
-tools agents hooks doctor                       # what is configured, what is wired, is it shadowed
-tools agents hooks rules list                   # every rule, its kind and its severity
+tools agents hooks doctor                       # config, custom rules, per-harness wiring and when each was last seen
+tools agents hooks rules list                   # every rule, built-in and custom: source, kind, severity, on/off
 tools agents hooks rules explain <id>           # why the rule exists, wrong and right forms
 tools agents hooks rules test '<command>'       # what would fire, and the resolved outcome, layer by layer
+tools agents hooks rules check [--corpus 2000]  # every enabled rule against its own examples; replay recent commands
 tools agents hooks log --decision block -n 50   # the decision log
 tools agents hooks install --write              # wire the hooks into ~/.claude/settings.json, additively
-tools agents hooks uninstall --write            # remove exactly what install added
+tools agents hooks install --harness codex --write   # the same for Codex (<CODEX_HOME>/hooks.json)
+tools agents hooks uninstall [--harness codex] --write   # remove exactly what install added
 tools agents hooks gc --older-than 6h --write   # sweep captures whose command is over
-tools agents hooks config import --write        # take the tuned overrides from the old guard
+tools agents hooks config rules                 # pick the rules that are on (a terminal gets a picker)
 tools agents hooks config set shadow false --write
 ```
 
-Every writing command is a **dry run by default**; `--write` applies it.
+Every writing command is a **dry run by default**; `--write` applies it. The one exception is the
+`config rules` picker in a terminal: saving the selection is the write.
+
+## Harnesses
+
+| Harness | Wiring | Notes |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | `install --write` |
+| Codex | `<CODEX_HOME>/hooks.json` | `install --harness codex --write`. Codex trusts a hook by its position and content: it asks to review a new or changed one at its next interactive start and does not run it before that. The installer appends new entries and replaces its own in place, so hooks already trusted keep their position. |
+| Grok | none of its own | Grok runs the hooks in Claude's `settings.json` |
+
+`doctor` shows each harness's wiring and the last decision the log holds for it: a harness that
+looks wired but never appears there is not running the hooks.
+
+## Custom rules
+
+Personal rules live in your own folder and run in the same guard. Point the config at files or
+folders (`~` expands, a relative path resolves against the home folder):
+
+```bash
+tools agents hooks config set guard.customRules ~/my-hook-rules --write
+```
+
+Every top-level `.ts`, `.mts`, `.js` or `.mjs` file in a folder is one module (`*.test.*`,
+`_drafts` and dotfiles are skipped). A module exports `rules` (or a default export): an array of
+`ShellRule` from `@genesiscz/utils/shell/rules/types`, with helpers from
+`@genesiscz/utils/shell/scan`. Outside this repository those imports resolve through the
+`tsconfig.json` that `tools link install` writes (see `src/link/README.md`).
+
+A rule is held to the built-in contract: a kebab-case id, a kind, a severity, a title, a causal
+`why`, a `wrong` example it fires on and a `right` one it does not. `rules check` runs those
+examples. Nothing a custom module does can break the guard: a module that fails to import,
+exports the wrong shape or takes longer than 3 s to import is skipped; a rule whose `detect`
+throws or returns something that is not a match is skipped for that command; an id that is
+already taken (a built-in rule, or an earlier module) is refused. Each of these is written to
+the decision log (`phase: "diag"`) and listed by `doctor`. With `guard.customRules` empty the
+hook imports nothing.
 
 ## How the diff knows what changed
 
@@ -179,8 +217,7 @@ repository file named `-C` would be read as an option.
 
 It ships **shadowed**: every hook decides and logs, and emits nothing. That is what lets it
 run beside the implementation it replaces on real traffic, with no double-deny and no double
-diff. `scripts/hooks-shadow-report.ts` replays the shadow log against the old guard and
-counts divergences. Turn it on with `tools agents hooks config set shadow false --write`.
+diff. Turn it on with `tools agents hooks config set shadow false --write`.
 
 ## Emergency stop
 
@@ -188,7 +225,7 @@ counts divergences. Turn it on with `tools agents hooks config set shadow false 
 |---|---|
 | One command | `AGENTS_HOOKS_DISABLE=1 <your command>` |
 | This machine | `tools agents hooks config set guard.enabled false --write` |
-| One rule | `tools agents hooks config set rules.<rule-id> allow --write` |
+| One rule | `tools agents hooks config rules --disable <rule-id> --write` |
 | Unwire entirely | `tools agents hooks uninstall --write` |
 | Stop logging commands | `tools agents hooks config set logCommands never --write` |
 
@@ -196,9 +233,9 @@ counts divergences. Turn it on with `tools agents hooks config set shadow false 
 session. The env var and the config file apply immediately.
 
 `logCommands` defaults to `"shadow"`: the decision log keeps the command verbatim only while
-the hooks are shadowed, which is the one period `scripts/hooks-shadow-report.ts` needs it to
-replay against the old guard. Once shadow is off it stops, so the log does not become a
-durable plaintext sink for whatever a command carries inline.
+the hooks are shadowed. Once shadow is off it stops, so the log does not become a durable
+plaintext sink for whatever a command carries inline. `rules check --corpus` replays commands
+from the Claude transcripts instead.
 
 The log is also **bounded**. `maxLogBytes` (16 MB) rotates it to `<log>.1` and starts fresh,
 keeping one generation, so the ceiling is twice the cap. The size is checked before EVERY
@@ -211,7 +248,9 @@ so a long-lived writer rotates too and the hot path still pays no `stat` per rec
 | Path | What |
 |---|---|
 | `src/utils/shell/scan.ts` | Tokenises a command into a `ShellScan`; no imports at all |
-| `src/utils/shell/rules/*` | The thirteen rules, one file per family, plus the registry |
+| `src/utils/shell/rules/*` | The fourteen built-in rules, one file per family, plus the registry |
+| `src/agents/lib/hooks/custom-rules.ts` | Loads `guard.customRules` modules, crash-safe |
+| `src/agents/lib/hooks/codex.ts` | Codex `hooks.json` install, uninstall and trust status |
 | `src/agents/lib/hooks/*` | Config, outcome ladder, payload parsing, guard, log, state, gc |
 | `src/agents/lib/hooks/diff/*` | Capture, collect, before-copy, render, post-phase orchestration |
 | `src/agents/bin/hook-pre.ts` | PreToolUse: guard then capture, in one process |
@@ -229,11 +268,15 @@ as the decisions.
 
 ```bash
 bun run test src/agents/ src/utils/shell/ src/utils/git/
-bun scripts/hooks-parity.ts 3000          # the guard, against the old one, over the real corpus
-bun scripts/hooks-diff-parity.ts          # the diff, over a constructed scenario matrix
-bun scripts/hooks-config-parity.ts        # every rule x harness x length, old config vs imported
-bun scripts/benchmarks/hooks/hook-latency.ts
+tools agents hooks rules check --corpus 3000   # every rule's examples, then a replay of real commands
+bun scripts/benchmarks/hooks/hook-latency.ts [--custom-rules <folder>]
 ```
+
+The parity harnesses that compared this port with the GenesisClaude guard it replaced
+(`scripts/hooks-parity.ts`, `hooks-diff-parity.ts`, `hooks-config-parity.ts`,
+`hooks-shadow-report.ts`) were retired on 2026-10-12 together with that guard. Their last run:
+3000 commands with 0 mismatches, 224 config resolutions with 0 mismatches, and 12 diff scenarios
+with 0 mismatches (1 expected divergence: the old hook went silent on a C-quoted path).
 
 ---
 
