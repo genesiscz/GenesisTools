@@ -17,7 +17,7 @@ public enum MediaDataURL {
     public static func decode(_ url: String, allowed: [String: String] = imageTypes, maxBytes: Int = maxBytes)
         -> (data: Data, ext: String)?
     {
-        guard url.count < maxBytes / 3 * 4 + 512, url.lowercased().hasPrefix("data:"),
+        guard url.utf8.count < maxBytes / 3 * 4 + 512, url.prefix(5).lowercased() == "data:",
               let comma = url.firstIndex(of: ",") else { return nil }
         let header = url[url.index(url.startIndex, offsetBy: 5)..<comma].lowercased()
         let parts = header.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
