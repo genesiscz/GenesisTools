@@ -16,9 +16,26 @@ type StringifyOptions = {
 };
 
 /**
+ * Plain JSON goes to the native `JSON.parse`; only text it rejects (comments, trailing commas) goes to comment-json,
+ * which then parses and preserves comments as before. comment-json alone cost about 10 times the CPU on comment-free
+ * text (1,039 ms against 112 ms for 15,861 transcript lines, 2026-10-12), and returned `CommentArray`s, boxed
+ * top-level primitives and a `"__proto__"` key turned into the object's prototype, none of which plain JSON needs.
+ * A text that neither parser accepts throws comment-json's error, as before.
+ */
+function parseTolerant(text: string, reviver: Reviver | null | undefined, noComments?: boolean): unknown {
+    try {
+        // biome-ignore lint/style/noRestrictedGlobals: the native parser is the fast path for plain JSON
+        return JSON.parse(text, reviver ?? undefined);
+    } catch {
+        // Not plain JSON: comment-json either parses it (comments, trailing commas) or throws the error callers see.
+        return parse(text, reviver, noComments);
+    }
+}
+
+/**
  * Drop-in replacement for the global JSON object, powered by comment-json.
  * parse: handles // comments, multi-line comments, trailing commas.
- *        Comments are preserved as Symbol-keyed properties on the result.
+ *        Plain JSON is parsed natively; text with comments keeps them as Symbol-keyed properties on the result.
  *        Pass { jsonl: true } or { strict: true } to use native JSON.parse (rejects comments).
  * stringify: produces standard JSON output with comments preserved.
  *            Pass { jsonl: true } or { strict: true } to use native JSON.stringify.
@@ -42,10 +59,10 @@ export const SafeJSON = {
             }
 
             // comment-json's 3rd arg `no_comments` skips primitive boxing at the source
-            return parse(text, options.reviver, options.unbox);
+            return parseTolerant(text, options.reviver, options.unbox);
         }
         // Legacy: reviver function or null
-        return parse(text, typeof reviverOrOptions === "function" ? reviverOrOptions : null);
+        return parseTolerant(text, typeof reviverOrOptions === "function" ? reviverOrOptions : null);
     },
     // biome-ignore lint/suspicious/noExplicitAny: match native JSON.stringify parameter types
     stringify: (value: any, replacerOrOptions?: any, space?: string | number): string => {
@@ -71,7 +88,7 @@ export const SafeJSON = {
  */
 export function parseJSON<T>(text: string, fallback?: T): T | null {
     try {
-        return parse(text) as T;
+        return parseTolerant(text, null) as T;
     } catch {
         if (fallback !== undefined) {
             return fallback;

@@ -6,6 +6,19 @@ describe("SafeJSON", () => {
         expect(SafeJSON.parse('{"a":1}') as Record<string, number>).toEqual({ a: 1 });
     });
 
+    it('parses plain JSON natively: plain arrays, unboxed primitives, and "__proto__" kept as a key', () => {
+        const parsed = SafeJSON.parse('{"list":[1,2],"__proto__":{"polluted":true}}');
+
+        expect(Object.getPrototypeOf(parsed.list)).toBe(Array.prototype);
+        expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+        expect(parsed.polluted).toBeUndefined();
+        expect(SafeJSON.parse("123")).toBe(123);
+    });
+
+    it("throws for text that is neither JSON nor JSON with comments", () => {
+        expect(() => SafeJSON.parse("{ not json")).toThrow();
+    });
+
     it("parses // comments, /* */ comments, trailing commas", () => {
         expect(SafeJSON.parse('{ /* comment */ "a": 1, }') as Record<string, number>).toEqual({ a: 1 });
         expect(SafeJSON.parse('{ "a": 1, // trailing\n }') as Record<string, number>).toEqual({ a: 1 });
