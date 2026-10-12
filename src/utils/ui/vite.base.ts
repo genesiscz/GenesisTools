@@ -7,6 +7,7 @@ import viteReact from "@vitejs/plugin-react";
 import { defineConfig, normalizePath, type Plugin, type PluginOption, type Rolldown, type UserConfig } from "vite";
 // Relative on purpose: config bundlers inline relative imports but externalize bare ones.
 import { env } from "../env.client";
+import { pinNodeModules } from "./pin-node-modules";
 
 export interface DashboardViteConfig {
     /** Root directory of the dashboard app */
@@ -63,55 +64,6 @@ const BROWSER_ASYNC_HOOKS_POLYFILL = resolve(__dirname, "browser-async-hooks.ts"
  * being complete.
  */
 const UTILS_PACKAGE_ROOT = resolve(__dirname, "..");
-
-/**
- * Vite plugin that pins ALL bare-module resolution to the dashboard's own
- * directory tree (walking up to its nearest `node_modules/`).
- *
- * Problem: When a dashboard's source lives in a git worktree, the worktree
- * has its own `node_modules/react` but TanStack Start (in the main repo's
- * `node_modules/`) loads `react-dom` from the *main* repo.  Two different
- * React instances → "Invalid hook call" crash during SSR.
- *
- * Fix: Resolve every bare import (`react`, `@tanstack/…`, etc.) from the
- * dashboard root, which walks up to the worktree's `node_modules/`.  This
- * guarantees a single copy of React regardless of where the importer lives.
- *
- * When not in a worktree this is a harmless no-op — the dashboard root and
- * the repo root share the same `node_modules/`.
- */
-function pinNodeModules(dashboardRoot: string): Plugin {
-    return {
-        name: "pin-node-modules-to-dashboard-root",
-        enforce: "pre",
-        async resolveId(
-            source: string,
-            importer: string | undefined,
-            options: { isEntry: boolean; [key: string]: unknown }
-        ) {
-            if (
-                !source ||
-                !importer ||
-                source.startsWith(".") ||
-                source.startsWith("/") ||
-                source.startsWith("#") ||
-                source.includes(":") ||
-                source.startsWith("@ui") ||
-                source.startsWith("@app") ||
-                source.startsWith("@genesiscz")
-            ) {
-                return null;
-            }
-
-            const resolved = await this.resolve(source, resolve(dashboardRoot, "_virtual.ts"), {
-                ...options,
-                skipSelf: true,
-            });
-
-            return resolved;
-        },
-    };
-}
 
 /**
  * Dependency-scan plugin that stops at server-only code.

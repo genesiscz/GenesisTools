@@ -34,9 +34,6 @@ const config = createDashboardViteConfig({
             emptyOutDir: true,
             target: "es2022",
         },
-        resolve: {
-            dedupe: ["redux"],
-        },
     },
 });
 
