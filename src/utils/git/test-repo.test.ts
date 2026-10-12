@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { TestRepo } from "@genesiscz/utils/git/test-repo";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { copyRepoTree, TestRepo } from "@genesiscz/utils/git/test-repo";
 import { skip } from "@genesiscz/utils/test/skip";
 
 const created: TestRepo[] = [];
@@ -57,4 +60,26 @@ describe.skipIf(skip.onWindows)("TestRepo template cache", () => {
         expect((await second.git(["log", "--oneline"])).trim()).toContain("seed");
         expect(second.dir).not.toBe(first.dir);
     }, 60_000);
+});
+
+describe("copyRepoTree", () => {
+    test("copies a repository whose .git holds git's fsmonitor socket, leaving the socket out", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-copy-tree-"));
+        const from = join(root, "from");
+        mkdirSync(join(from, ".git"), { recursive: true });
+        writeFileSync(join(from, ".git", "HEAD"), "ref: refs/heads/master\n");
+        writeFileSync(join(from, "a.txt"), "a\n");
+        const socket = Bun.listen({ unix: join(from, ".git", "fsmonitor--daemon.ipc"), socket: { data() {} } });
+
+        try {
+            expect(() => cpSync(from, join(root, "plain"), { recursive: true })).toThrow("socket");
+
+            copyRepoTree(from, join(root, "to"));
+
+            expect(readdirSync(join(root, "to", ".git"))).toEqual(["HEAD"]);
+            expect(readFileSync(join(root, "to", "a.txt"), "utf8")).toBe("a\n");
+        } finally {
+            socket.stop(true);
+        }
+    });
 });

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { cpSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
 import { git, recoverFromFailedPull, upstreamRef } from "./recovery";
 
 const dirs: string[] = [];
@@ -62,7 +63,7 @@ async function repoPair(): Promise<{ remote: string; local: string }> {
     const root = await scratch();
     const remote = join(root, "remote.git");
     const local = join(root, "local");
-    cpSync(await repoPairTemplate, root, { recursive: true });
+    copyRepoTree(await repoPairTemplate, root);
     await git(["remote", "set-url", "origin", remote], join(root, "seed"));
     await git(["remote", "set-url", "origin", remote], local);
 

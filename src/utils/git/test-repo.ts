@@ -11,7 +11,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 
 /**
@@ -22,6 +22,15 @@ import { env } from "@genesiscz/utils/env";
  * calls under test read too.
  */
 const HOUSEKEEPING_OFF = "[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n";
+
+/**
+ * Copies a repository folder. While git's file system monitor watches a worktree, its daemon keeps a socket at
+ * `.git/fsmonitor--daemon.ipc`, and `cpSync` refuses to copy a socket ("Cannot copy a socket file"). The copy has no
+ * daemon of its own, so the socket is skipped.
+ */
+export function copyRepoTree(from: string, to: string): void {
+    cpSync(from, to, { recursive: true, filter: (source) => basename(source) !== "fsmonitor--daemon.ipc" });
+}
 
 /** Fixed wall-clock anchor so every committed date is deterministic across runs. */
 export const TEST_REPO_EPOCH = 1_700_000_000;
@@ -233,7 +242,7 @@ export class TestRepo {
         const template = repoTemplates.get(shape);
 
         if (template !== undefined) {
-            cpSync(template.path, dir, { recursive: true });
+            copyRepoTree(template.path, dir);
             // A copy resumes on the epoch the real build ended on, or two repos of the same
             // shape would disagree on dates. The seed commit alone consumes one tick; a
             // scenario consumes as many as its setup made commits, which is why the number is
@@ -269,7 +278,7 @@ export class TestRepo {
         // whole suite with it. The Map is the index; this name only has to be unique, and the
         // sanitised prefix is kept so a leftover directory still says which shape it holds.
         const cached = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
-        cpSync(dir, cached, { recursive: true });
+        copyRepoTree(dir, cached);
         repoTemplates.set(shape, { path: cached, epoch: repo.nextEpoch });
 
         return repo;
@@ -299,7 +308,7 @@ export class TestRepo {
         if (cached !== undefined) {
             const root = realpathSync(mkdtempSync(join(tmpdir(), opts.prefix ?? "gt-repo-")));
             const dir = join(root, "repo");
-            cpSync(cached.path, dir, { recursive: true });
+            copyRepoTree(cached.path, dir);
 
             return new TestRepo(dir, root, cached.epoch);
         }
@@ -307,7 +316,7 @@ export class TestRepo {
         const repo = await TestRepo.create(opts);
         await setup(repo);
         const stored = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
-        cpSync(repo.dir, stored, { recursive: true });
+        copyRepoTree(repo.dir, stored);
         repoTemplates.set(shape, { path: stored, epoch: repo.nextEpoch });
 
         return repo;

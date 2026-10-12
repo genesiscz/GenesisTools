@@ -1,8 +1,9 @@
-import { cpSync, existsSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
 
 export const FIXED_HISTORY_NOW = "2026-08-15T12:00:00.000Z";
 
@@ -162,7 +163,7 @@ export async function createFixtureWorld(
         GIT_COMMITTER_DATE: FIXED_HISTORY_NOW,
     };
     const template = await fixtureRepositoryTemplate(gitEnvironment);
-    cpSync(template.path, git.root, { recursive: true });
+    copyRepoTree(template.path, git.root);
     git.head = template.head;
 
     const environment = {

@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
+import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -552,7 +553,7 @@ function stageTemplate(source: BaselineTemplateSource, parent: string): { stagin
         const staged = templatePaths(staging);
         // The build unlinks its node_modules symlink before this point, so the tree copied here
         // holds no dangling link.
-        cpSync(source.checkout, staged.checkout, { recursive: true });
+        copyRepoTree(source.checkout, staged.checkout);
         cpSync(source.archivePath, staged.archive);
 
         return { staging, staged };
@@ -639,7 +640,7 @@ async function materialize(options: {
     const template = baselineTemplate;
 
     if (template !== null) {
-        cpSync(template.checkout, checkout, { recursive: true });
+        copyRepoTree(template.checkout, checkout);
         cpSync(template.archive, archivePath);
         const manifest = SafeJSON.parse(await Bun.file(storedManifestPath).text(), {
             strict: true,
