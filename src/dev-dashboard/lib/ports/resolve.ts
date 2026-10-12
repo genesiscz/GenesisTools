@@ -1,5 +1,7 @@
 import { basename } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { canReadProcessCwd } from "@genesiscz/utils/process/cwd";
+import { batchCwd } from "@genesiscz/utils/process/ps";
 
 const PS_BATCH_SIZE = 60;
 
@@ -48,11 +50,17 @@ export async function batchProcessMeta(pids: number[]): Promise<Map<number, Proc
 }
 
 /**
- * Batch-resolve cwd for many PIDs via `lsof -a -d cwd -p …`.
- * Uses field mode (`-Fn`) so paths with spaces stay intact.
+ * Batch-resolve cwd for many PIDs. Where the kernel can be read (libproc on macOS, `/proc` on Linux) that is
+ * `batchCwd` at microseconds a pid; elsewhere `lsof -a -d cwd -p …`, in field mode (`-Fn`) so paths with spaces stay
+ * intact.
  */
 export async function batchCwds(pids: number[]): Promise<Map<number, string>> {
     const unique = [...new Set(pids.filter((p) => Number.isInteger(p) && p > 0))];
+
+    if (canReadProcessCwd()) {
+        return batchCwd(unique);
+    }
+
     const out = new Map<number, string>();
 
     for (let i = 0; i < unique.length; i += PS_BATCH_SIZE) {

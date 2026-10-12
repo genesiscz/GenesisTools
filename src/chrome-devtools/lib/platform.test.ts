@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import {
     artifactPath,
+    listListeningTcpPorts,
     parseCimProcesses,
     parseCimSample,
     parseLsofListeners,
@@ -11,6 +12,43 @@ import {
     terminatePid,
     tmpRoot,
 } from "./platform.ts";
+
+describe.skipIf(process.platform !== "darwin")("listListeningTcpPorts on live listeners", () => {
+    test("answers one row per listening socket, as lsof lists them, IPv4 and IPv6 on one port included", async () => {
+        // 127.0.0.1 and [::1] on the same port in one process: two sockets, two rows.
+        const code = `const net = require("node:net"); const a = net.createServer().listen(0, "127.0.0.1", () => { const port = a.address().port; net.createServer().listen(port, "::1", () => console.log(port)); });`;
+        const child = Bun.spawn([process.execPath, "-e", code], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+        });
+        const { value } = await child.stdout.getReader().read();
+        const port = Number(new TextDecoder().decode(value).trim());
+
+        try {
+            const lsof = Bun.spawnSync(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", String(child.pid)], {
+                env: process.env,
+            });
+            const spawnSync = spyOn(Bun, "spawnSync");
+            const listed = listListeningTcpPorts();
+            const spawned = spawnSync.mock.calls.length;
+            spawnSync.mockRestore();
+            const ours = listed.filter((listener) => listener.pid === child.pid);
+
+            // From libproc, not from an lsof child.
+            expect(spawned).toBe(0);
+            expect(ours).toEqual(parseLsofListeners(lsof.stdout.toString()));
+            expect(ours).toEqual([
+                { port, pid: child.pid },
+                { port, pid: child.pid },
+            ]);
+        } finally {
+            child.kill();
+            await child.exited;
+        }
+    });
+});
 
 describe("tmpRoot / artifactPath", () => {
     test("POSIX keeps the /tmp contract; win32 uses the OS temp dir", () => {

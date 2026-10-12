@@ -20,6 +20,8 @@ export const PROCESS_ARMS = {
     ancestry: ["ps", "libproc"],
     /** Identity checks (`readProcessCommand` + `processStartMs`) for 5 pids: two `ps -p` each against the kernel. */
     identity: ["ps", "libproc"],
+    /** Listening TCP sockets: `lsof -nP -iTCP -sTCP:LISTEN` against libproc. `check` = rows. */
+    listen: ["lsof", "libproc"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** How many pids the `identity` job checks. */

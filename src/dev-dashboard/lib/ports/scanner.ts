@@ -1,6 +1,7 @@
 import { classifyPortBatch, enrichPortsMeta } from "@app/dev-dashboard/lib/ports/enrich";
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@genesiscz/utils/logger";
+import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 
 /**
  * Parse `lsof -nP -iTCP -sTCP:LISTEN` output into PortInfo[]. PURE + the unit-tested boundary.
@@ -65,6 +66,17 @@ export function parseLsofListen(stdout: string): PortInfo[] {
  * Pair with `classifyListeningPorts` / SSE for progressive kind labels.
  */
 export async function listListeningPorts(): Promise<PortsResult> {
+    // The rows lsof prints, from libproc, without its 267 ms of CPU per refresh.
+    const fromKernel = listListeningTcpAsLsof();
+
+    if (fromKernel !== null) {
+        return {
+            lsofAvailable: true,
+            ports: await enrichPortsMeta(parseLsofListen(fromKernel)),
+            scannedAt: Date.now(),
+        };
+    }
+
     try {
         const proc = Bun.spawn(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], { stdout: "pipe", stderr: "pipe" });
         await proc.exited;

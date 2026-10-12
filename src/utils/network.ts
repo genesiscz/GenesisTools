@@ -1,6 +1,9 @@
 import { createServer } from "node:net";
 import { networkInterfaces, userInfo } from "node:os";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcessRow } from "@genesiscz/utils/process/libproc-table";
+import { listeningPids } from "@genesiscz/utils/process/socket-owner";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 
 /**
  * Returns the first non-internal IPv4 address (LAN IP).
@@ -67,13 +70,36 @@ export interface PortOwner {
 
 /**
  * Find who's listening on a TCP port. Returns null when nothing is listening
- * or the OS doesn't expose it to us. macOS/Linux use `lsof`. Windows is
- * unsupported for now (returns null) — most DashboardApp consumers are
- * macOS-only anyway.
+ * or the OS doesn't expose it to us. macOS reads libproc (the rows lsof would
+ * print, without its 267 ms); Linux, or a Mac where libproc does not load, uses
+ * `lsof`. Windows is unsupported for now (returns null) — most DashboardApp
+ * consumers are macOS-only anyway.
+ *
+ * The command is the WHOLE `ps -o command=` line. It used to come from
+ * `ps -o command=,uid=`, where ps cuts a column that is not the last one at 16
+ * characters, so a caller matching it (`isAiProxyServeCommand`) never matched.
  */
 export async function getPortOwner(port: number): Promise<PortOwner | null> {
     if (process.platform === "win32") {
         return null;
+    }
+
+    const fromKernel = listeningPids(port);
+
+    if (fromKernel !== null) {
+        const pid = fromKernel[0];
+
+        if (pid === undefined) {
+            return null;
+        }
+
+        const command = readProcessCommand(pid);
+
+        if (command === null) {
+            return { pid, command: "(unknown)", sameUser: false };
+        }
+
+        return { pid, command, sameUser: readProcessRow(pid)?.uid === userInfo().uid };
     }
 
     try {
@@ -96,7 +122,8 @@ export async function getPortOwner(port: number): Promise<PortOwner | null> {
             return null;
         }
 
-        const psProc = Bun.spawn(["ps", "-p", String(pid), "-o", "command=,uid="], {
+        // uid first: ps cuts every column but the last one to its width, so the command must come last.
+        const psProc = Bun.spawn(["ps", "-p", String(pid), "-o", "uid=,command="], {
             stdout: "pipe",
             stderr: "pipe",
         });
@@ -112,13 +139,13 @@ export async function getPortOwner(port: number): Promise<PortOwner | null> {
             return { pid, command: "(unknown)", sameUser: false };
         }
 
-        // `ps -p N -o command=,uid=` prints "<cmd...> <uid>" — uid is the last token.
-        const lastSpace = psOut.lastIndexOf(" ");
+        // `ps -p N -o uid=,command=` prints "<uid> <cmd...>" — uid is the first token.
+        const firstSpace = psOut.indexOf(" ");
         let command = psOut;
         let uid = Number.NaN;
-        if (lastSpace > 0) {
-            command = psOut.slice(0, lastSpace).trim();
-            uid = Number.parseInt(psOut.slice(lastSpace + 1).trim(), 10);
+        if (firstSpace > 0) {
+            uid = Number.parseInt(psOut.slice(0, firstSpace), 10);
+            command = psOut.slice(firstSpace + 1).trim();
         }
 
         const myUid = userInfo().uid;

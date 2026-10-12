@@ -48,6 +48,8 @@ export const libSystem = defineSystemLibrary({
         mach_timebase_info: { args: [FFIType.ptr], returns: FFIType.i32 },
         /** `char *devname(dev_t, mode_t)`: the `/dev` name of a device number, from a static buffer. */
         devname: { args: [FFIType.i32, FFIType.u16], returns: FFIType.ptr },
+        /** `const char *inet_ntop(int af, const void *src, char *dst, socklen_t size)`: an address as text. */
+        inet_ntop: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
     },
 });
 

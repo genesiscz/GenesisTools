@@ -31,6 +31,7 @@ import {
     sampleCpuBusyPercent,
 } from "@genesiscz/utils/macos/host-stats";
 import { batchCwd, batchCwdViaLsof, listPsTable } from "@genesiscz/utils/process/ps";
+import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 import { processStartMs, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { IDENTITY_PIDS, PROCESS_ARMS, type ProcessJob } from "./process-arms";
 
@@ -177,6 +178,14 @@ async function runOnce(): Promise<number> {
                       : 0),
             0
         );
+    }
+
+    if (job === "listen") {
+        const text =
+            arm === "lsof"
+                ? Bun.spawnSync(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]).stdout.toString()
+                : (listListeningTcpAsLsof() ?? "");
+        return text.split("\n").filter((line) => line.includes("(LISTEN)")).length;
     }
 
     throw new Error(`no job ${job}`);

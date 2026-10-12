@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 
 const { log } = logger.scoped("chrome-devtools:platform");
 
@@ -164,6 +165,13 @@ export function listListeningTcpPorts(
         const r = exec(["netstat", "-ano", "-p", "TCP"]);
 
         return r.exitCode === 0 ? parseNetstatListeners(r.stdout) : [];
+    }
+
+    // The same rows from libproc, without lsof's 267 ms; an injected exec (tests) still gets its own output.
+    const fromKernel = exec === defaultExec ? listListeningTcpAsLsof() : null;
+
+    if (fromKernel !== null) {
+        return parseLsofListeners(fromKernel);
     }
 
     const r = exec(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]);

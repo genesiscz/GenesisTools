@@ -1,7 +1,16 @@
 import { logger } from "@genesiscz/utils/logger";
 import { parsePidLines } from "@genesiscz/utils/network";
+import { listeningPids } from "@genesiscz/utils/process/socket-owner";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 
 function readPidsOnPort(port: number): number[] {
+    // libproc answers what `lsof -t` answers without its 267 ms; lsof only where libproc is unavailable.
+    const fromKernel = listeningPids(port);
+
+    if (fromKernel !== null) {
+        return fromKernel;
+    }
+
     const result = Bun.spawnSync(["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
         stdout: "pipe",
         stderr: "pipe",
@@ -14,17 +23,9 @@ function readPidsOnPort(port: number): number[] {
     return parsePidLines(new TextDecoder().decode(result.stdout));
 }
 
+/** What `ps -p <pid> -o command=` prints (from the kernel for this user's processes), or "" for a pid that is gone. */
 function commandForPid(pid: number): string {
-    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-
-    if (result.exitCode !== 0) {
-        return "";
-    }
-
-    return new TextDecoder().decode(result.stdout).trim();
+    return readProcessCommand(pid) ?? "";
 }
 
 /**
