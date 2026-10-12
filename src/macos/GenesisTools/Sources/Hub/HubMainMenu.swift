@@ -21,6 +21,8 @@ enum AppMainMenu {
         app.addItem(.separator())
         let settings = app.addItem(withTitle: "Settings…", action: #selector(AppMenuTarget.openSettings(_:)), keyEquivalent: ",")
         settings.target = AppMenuTarget.shared
+        let permissions = app.addItem(withTitle: "Permissions…", action: #selector(AppMenuTarget.openPermissions(_:)), keyEquivalent: "")
+        permissions.target = AppMenuTarget.shared
         app.addItem(.separator())
         app.addItem(withTitle: "Hide \(name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -117,8 +119,14 @@ enum AppMainMenu {
 final class AppMenuTarget: NSObject {
     static let shared = AppMenuTarget()
 
-    /// The settings window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
+    /// The settings window with every feature's pages: Clicky, Widgets, Dictation, Focus and Hub
+    /// (`GenesisTools --clicky`, ClickyEntry.swift).
     @objc func openSettings(_ sender: Any?) {
+        ClickyLaunch.openSettings()
+    }
+
+    /// The privacy grants window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
+    @objc func openPermissions(_ sender: Any?) {
         guard let executable = Bundle.main.executablePath else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -126,7 +134,7 @@ final class AppMenuTarget: NSObject {
         do {
             try process.run()
         } catch {
-            HubPerf.log("menu: the settings window did not start: \(error)")
+            HubPerf.log("menu: the permissions window did not start: \(error)")
         }
     }
 }

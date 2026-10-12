@@ -2116,7 +2116,7 @@ private struct SessionListView: View {
                 }
                 .foregroundColor(ReviewPalette.dim)
                 // A gear is the settings glyph; the shield read as a security warning (H19).
-                IconButton(systemName: "gearshape", tooltip: "Permissions and settings (⌘,)") {
+                IconButton(systemName: "gearshape", tooltip: "Settings (⌘,)") {
                     AppMenuTarget.shared.openSettings(nil)
                 }
                 .foregroundColor(ReviewPalette.dim)
