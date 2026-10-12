@@ -131,6 +131,9 @@ function loadNativeLibrary<Fns extends Record<string, FFIFunction>>(
  * the 200-line walker in `scripts/benchmarks/fs/fastwalk.c`); Bun's `cc` cannot write its output to a file, so a
  * TinyCC build is never shared between processes. A source edited while a process runs is picked up by the next
  * process, not this one.
+ *
+ * Which loader to use, what was measured (clang, TinyCC and pure FFI side by side), and how to measure: `README.md`
+ * in this folder.
  */
 export function defineNativeLibrary<Fns extends Record<string, FFIFunction>>(
     options: NativeLibraryOptions<Fns>

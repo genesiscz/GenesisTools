@@ -302,7 +302,8 @@ async function walkJs(options: Required<Omit<FastWalkOptions, "engine">>): Promi
  * read with `getattrlistbulk` through `bun:ffi` (no C, no build step), so no file is stat'ed on its own: 2 to 3 times
  * less CPU than `readdir` plus `stat` on the session trees (`scripts/benchmarks/fs/walk-primitives.ts`). Elsewhere,
  * or when `libSystem` does not load, a JS walk returns the same entries. Order is not defined. A directory that
- * cannot be read is listed in `errors` and the walk goes on.
+ * cannot be read is listed in `errors` and the walk goes on. Measurements and the rules it follows:
+ * `src/utils/bun/compiler/README.md`.
  */
 export async function fastWalk(options: FastWalkOptions): Promise<FastWalkResult> {
     const resolved = {

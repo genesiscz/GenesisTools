@@ -18,6 +18,9 @@ export interface SystemLibraryOptions<Fns extends Record<string, FFIFunction>> {
  * Hand a typed array to each call, never a pointer taken once with `ptr()`: the engine may move a small typed array
  * during garbage collection, and a cached pointer then reads freed memory. Measured on 2026-10-12: a walk that
  * cached `ptr()` of its 24-byte attribute list found 12,107 of 13,847 files, and 0 on every later walk.
+ *
+ * Which loader to use, what was measured, the rules for the TypeScript side of a system call, and how to measure:
+ * `README.md` in this folder.
  */
 export function defineSystemLibrary<Fns extends Record<string, FFIFunction>>(
     options: SystemLibraryOptions<Fns>
