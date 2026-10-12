@@ -2,7 +2,7 @@
 
 import { formatNotifications } from "@app/github/lib/output";
 import { Browser } from "@genesiscz/utils/browser";
-import { getOctokit } from "@genesiscz/utils/github/octokit";
+import { getOctokit, getOctokitForWrite } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
 import type { GitHubNotification, NotificationItem, NotificationsCommandOptions } from "@genesiscz/utils/github/types";
 import { apiUrlToWebUrl, extractNumberFromApiUrl, parseDate } from "@genesiscz/utils/github/url-parser";
@@ -149,12 +149,13 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
         }
     }
 
-    // Mark as read
+    // Marking goes through the gh login first: a fine-grained PAT cannot use the notifications API
+    // (403), and withGhFallback rescues the GET above but never a write.
     if (options.markRead) {
         for (const item of items) {
             await withRetry(
                 () =>
-                    octokit.request("PATCH /notifications/threads/{thread_id}", {
+                    getOctokitForWrite().request("PATCH /notifications/threads/{thread_id}", {
                         thread_id: parseInt(item.id, 10),
                     }),
                 { label: `PATCH /notifications/threads/${item.id}` }
@@ -168,7 +169,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
         for (const item of items) {
             await withRetry(
                 () =>
-                    octokit.request("DELETE /notifications/threads/{thread_id}", {
+                    getOctokitForWrite().request("DELETE /notifications/threads/{thread_id}", {
                         thread_id: parseInt(item.id, 10),
                     }),
                 { label: `DELETE /notifications/threads/${item.id}` }
