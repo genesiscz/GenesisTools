@@ -82,4 +82,17 @@ describe("copyRepoTree", () => {
             socket.stop(true);
         }
     });
+
+    test("a regular file or folder with the socket's name is copied like any other entry", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-copy-tree-"));
+        const from = join(root, "from");
+        mkdirSync(join(from, "docs", "fsmonitor--daemon.ipc"), { recursive: true });
+        writeFileSync(join(from, "fsmonitor--daemon.ipc"), "a tracked file\n");
+        writeFileSync(join(from, "docs", "fsmonitor--daemon.ipc", "notes.md"), "notes\n");
+
+        copyRepoTree(from, join(root, "to"));
+
+        expect(readFileSync(join(root, "to", "fsmonitor--daemon.ipc"), "utf8")).toBe("a tracked file\n");
+        expect(readFileSync(join(root, "to", "docs", "fsmonitor--daemon.ipc", "notes.md"), "utf8")).toBe("notes\n");
+    });
 });

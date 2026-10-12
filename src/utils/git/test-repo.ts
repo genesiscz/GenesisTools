@@ -2,6 +2,7 @@ import {
     appendFileSync,
     cpSync,
     existsSync,
+    lstatSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
@@ -26,10 +27,15 @@ const HOUSEKEEPING_OFF = "[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n";
 /**
  * Copies a repository folder. While git's file system monitor watches a worktree, its daemon keeps a socket at
  * `.git/fsmonitor--daemon.ipc`, and `cpSync` refuses to copy a socket ("Cannot copy a socket file"). The copy has no
- * daemon of its own, so the socket is skipped.
+ * daemon of its own, so that socket is skipped; a file or folder of the same name is copied. Only an entry with the
+ * name is checked, so the copy makes no extra call per file.
  */
 export function copyRepoTree(from: string, to: string): void {
-    cpSync(from, to, { recursive: true, filter: (source) => basename(source) !== "fsmonitor--daemon.ipc" });
+    cpSync(from, to, {
+        recursive: true,
+        filter: (source) =>
+            basename(source) !== "fsmonitor--daemon.ipc" || !lstatSync(source, { throwIfNoEntry: false })?.isSocket(),
+    });
 }
 
 /** Fixed wall-clock anchor so every committed date is deterministic across runs. */
