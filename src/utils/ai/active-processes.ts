@@ -117,11 +117,16 @@ export function parseLsofCwd(output: string): Map<number, string> {
 }
 
 /**
- * The scan from the kernel: the table (any user), then argv, environment, CPU time and cwd per process (this
- * user's, which is where an agent runs; `ps` would also read another user's argv, so such a process can no longer
- * match). Every field is what the `ps` path prints: argv escaped like `ps` and single-spaced like its parse, the
- * tty as `ps -o tty=`, the start to the whole second like `lstart`. About 15 ms of CPU, where the two `ps` and the
- * `lsof` cost about 550 ms. Null when the kernel read is unavailable.
+ * The scan from the kernel: the table (any user), then argv, environment, CPU time and cwd per process. Every field
+ * is what the `ps` path prints: argv escaped like `ps` and single-spaced like its parse, the tty as `ps -o tty=`, the
+ * start to the whole second like `lstart`. About 15 ms of CPU, where the two `ps` and the `lsof` cost about 550 ms.
+ * Null when the kernel read is unavailable.
+ *
+ * Scope: this user's processes only (all of them under root). Another user's argv is readable only through the
+ * setuid `ps`, and one `ps` costs 125 to 140 ms of CPU even for 16 pids (measured 2026-10-13, 1,521 processes), eight
+ * times this scan. The `ps` path listed such a process without account or cwd (`ps e` and `lsof` cannot read another
+ * user's environment or folder), so `who` could not say what it bills and the session list cannot join it to this
+ * user's transcripts.
  */
 function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] | null {
     const table = listProcessTable();
@@ -183,6 +188,7 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] | null {
     });
 }
 
+/** This user's live agent processes (every user's under root); see `scanFromKernel` for why only this user's. */
 export async function listActiveAgentProcesses(scan: AgentProcessScan): Promise<ActiveAgentProcess[]> {
     return scanFromKernel(scan) ?? listActiveAgentProcessesViaPs(scan);
 }
