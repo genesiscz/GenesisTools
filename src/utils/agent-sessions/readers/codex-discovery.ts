@@ -109,12 +109,12 @@ async function readHeader(options: {
 const HEADER_PREFIX_BYTES = 64 * 1024;
 
 /**
- * The rows of the rollout's first complete lines, from one read, and whether that read reached the end of the file.
- * Null when the read fails or a line does not parse: the stream scan then reads the file and reports why. A cold
- * listing opened a stream per rollout to find its first line: 308 streams were about a third of a fresh
- * `ai usage sessions` in a CPU profile (2026-10-12).
+ * The rollout's first complete lines, from one read, and whether that read reached the end of the file. Null when
+ * the read fails: the stream scan then reads the file and reports why. A cold listing opened a stream per rollout to
+ * find its first line: 308 streams were about a third of a fresh `ai usage sessions` in a CPU profile (2026-10-12).
+ * The lines are parsed by the caller one at a time, so a header on the first line costs one parse.
  */
-async function headerPrefixRows(path: string): Promise<{ rows: JsonRecord[]; complete: boolean } | null> {
+async function headerPrefixLines(path: string): Promise<{ lines: string[]; complete: boolean } | null> {
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
         handle = await open(path, "r");
@@ -127,18 +127,10 @@ async function headerPrefixRows(path: string): Promise<{ rows: JsonRecord[]; com
             lines.pop();
         }
 
-        const rows: JsonRecord[] = [];
-        for (const line of lines) {
-            const original = line.replace(/\r$/, "");
-            if (!original.trim()) {
-                continue;
-            }
-
-            const value: JsonValue = SafeJSON.parse(original, { strict: true });
-            rows.push(asRecord(value));
-        }
-
-        return { rows, complete };
+        return {
+            lines: lines.map((line) => line.replace(/\r$/, "")).filter((line) => line.trim() !== ""),
+            complete,
+        };
     } catch (err) {
         logger.debug({ err, path }, "[codex-discovery] header prefix unreadable; scanning the rollout");
         return null;
@@ -187,20 +179,31 @@ async function readHeaderUncached(options: {
 
         return verdict.header;
     };
-    const prefix = await headerPrefixRows(options.path);
+    const prefix = await headerPrefixLines(options.path);
+    let prefixParsed = prefix !== null;
 
-    if (prefix) {
-        for (const row of prefix.rows) {
-            const verdict = headerVerdict(row);
-            if (verdict) {
-                return settle(verdict);
-            }
+    for (const line of prefix?.lines ?? []) {
+        let row: JsonRecord;
+
+        try {
+            const value: JsonValue = SafeJSON.parse(line, { strict: true });
+            row = asRecord(value);
+        } catch {
+            // The stream scan reads the file again and reports this line the way it always has.
+            prefixParsed = false;
+            break;
         }
 
-        if (prefix.complete) {
-            issue("Native session header missing");
-            return undefined;
+        const verdict = headerVerdict(row);
+
+        if (verdict) {
+            return settle(verdict);
         }
+    }
+
+    if (prefixParsed && prefix?.complete) {
+        issue("Native session header missing");
+        return undefined;
     }
 
     for await (const scanned of scanJsonlRecords({
