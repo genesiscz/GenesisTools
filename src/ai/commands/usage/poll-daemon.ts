@@ -1,5 +1,6 @@
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
+import { TASK_SIGTERM_CLEANUP_MS } from "@app/daemon/lib/runner";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { releaseCodexUsageHomes } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
 import { touchUsageDaemonHeartbeat } from "@genesiscz/utils/ai/usage-poll/daemon-heartbeat";
@@ -255,8 +256,9 @@ function releaseTempHomesOnSignal(): void {
             const exit = () => process.exit(SIGNAL_EXIT_CODES[signal]);
             // Bounded, because installing a handler suppresses the default termination and
             // the runner follows SIGTERM with SIGKILL: a cleanup that hangs would trade a
-            // leaked directory for a leaked process.
-            const deadline = setTimeout(exit, 2000);
+            // leaked directory for a leaked process. The bound is the runner's own budget, so
+            // its SIGKILL cannot land before this cleanup has had its full time.
+            const deadline = setTimeout(exit, TASK_SIGTERM_CLEANUP_MS);
 
             deadline.unref();
             void releaseCodexUsageHomes()

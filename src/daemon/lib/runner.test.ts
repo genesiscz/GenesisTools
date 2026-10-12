@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
-import { runTask, taskPath } from "./runner";
+import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskPath } from "./runner";
 import type { DaemonTask } from "./types";
 
 const tempDirs: string[] = [];
@@ -62,5 +63,36 @@ describe("runTask", () => {
         const log = readFileSync(result.logFile, "utf-8");
         expect(log).toContain("work done");
         expect(log).toContain('"timedOut":true');
+    });
+
+    // The usage poll releases its Codex homes on SIGTERM; the runner used to SIGKILL 500 ms later, and 123 of
+    // 300 timed-out polls escalated to SIGKILL (2026-10-05..12). A cleanup inside the agreed budget must finish.
+    it.skipIf(skip.onWindows)("waits out a SIGTERM cleanup that takes longer than half a second", async () => {
+        const logsDir = makeTempDir();
+        const timeoutMs = 400;
+        const task: DaemonTask = {
+            name: "slow-cleanup-task",
+            command: `trap 'sleep 0.6; echo cleaned; exit 0' TERM; echo ready; while :; do sleep 0.05; done`,
+            every: "every 1 minute",
+            retries: 0,
+            enabled: true,
+            timeoutMs,
+        };
+
+        const started = Date.now();
+        const result = await runTask(task, 1, logsDir);
+        const elapsedMs = Date.now() - started;
+
+        // Only stdout records: the meta record repeats the command, which contains both words.
+        const stdout = readFileSync(result.logFile, "utf-8")
+            .trim()
+            .split("\n")
+            .map((line) => SafeJSON.parse(line, { strict: true }) as { type: string; data?: string })
+            .filter((record) => record.type === "stdout")
+            .map((record) => record.data);
+        expect(stdout).toEqual(["ready", "cleaned"]);
+        expect(result.exitCode).toBeNull();
+        expect(TASK_SIGTERM_GRACE_MS).toBeGreaterThan(TASK_SIGTERM_CLEANUP_MS);
+        expect(elapsedMs).toBeLessThan(timeoutMs + TASK_SIGTERM_GRACE_MS);
     });
 });

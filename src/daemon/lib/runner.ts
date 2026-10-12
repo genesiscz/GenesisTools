@@ -19,7 +19,14 @@ export function taskPath(inherited: string | undefined): string {
 }
 
 const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
-const FORCE_KILL_GRACE_MS = 500;
+/**
+ * The stop contract with a task: on timeout the runner SIGTERMs the task's process group and SIGKILLs it
+ * `TASK_SIGTERM_GRACE_MS` later. A task that cleans up on SIGTERM bounds that cleanup by
+ * `TASK_SIGTERM_CLEANUP_MS`; the extra second is for the exit itself. The grace was 500 ms while the usage
+ * poll's cleanup may take up to 2 s, and 123 of 300 timed-out polls escalated to SIGKILL (2026-10-05..12).
+ */
+export const TASK_SIGTERM_CLEANUP_MS = 2_000;
+export const TASK_SIGTERM_GRACE_MS = TASK_SIGTERM_CLEANUP_MS + 1_000;
 const STREAM_DRAIN_GRACE_MS = 250;
 
 function safeTimestamp(): string {
@@ -151,7 +158,7 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
                 );
                 killTree("SIGKILL");
             }
-        }, FORCE_KILL_GRACE_MS);
+        }, TASK_SIGTERM_GRACE_MS);
     }, timeoutMs);
 
     timeoutTimer.unref?.();
