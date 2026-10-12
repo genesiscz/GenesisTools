@@ -7,6 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { FILE_META_MIGRATION_CONTEXT, FILE_META_MIGRATIONS } from "./file-meta-migrations";
 import type { FileMetaDB } from "./file-meta-schema";
+import { clonesProfile } from "./profile";
 
 const log = logger.child({ component: "clones:file-meta-cache" });
 
@@ -33,6 +34,17 @@ const FLUSH_BATCH_ROWS = 5_000;
  *  30 days is conservative: short enough to GC dev churn, long enough that
  *  someone who scans monthly still sees a hot cache. */
 const PRUNE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A phase timer that always measures (the report needs the numbers) and also
+ *  records into the `clones` profiler scope when `PROFILE=clones` is on. */
+function startPhase(label: string): () => number {
+    const startedAt = performance.now();
+    const stopProfile = clonesProfile.start(label);
+    return () => {
+        stopProfile();
+        return performance.now() - startedAt;
+    };
+}
 
 export interface FileMetaEntry {
     size: bigint;
@@ -74,8 +86,23 @@ export interface ReconcileOptions {
     vacuumAtFraction?: number;
 }
 
+/** Milliseconds per reconcile phase. `sweep*` split into the row reads, the
+ *  existence checks and the deletes, summed over both tables. */
+export interface ReconcilePhases {
+    countMs: number;
+    ttlMs: number;
+    sweepFilesMs: number;
+    sweepDirsMs: number;
+    vacuumMs: number;
+    readMs: number;
+    probeMs: number;
+    deleteMs: number;
+}
+
 export interface ReconcileReport {
     rowsBefore: number;
+    fileRows: number;
+    dirRows: number;
     staleFiles: number;
     staleDirs: number;
     goneFiles: number;
@@ -85,6 +112,7 @@ export interface ReconcileReport {
     probes: number;
     vacuumed: boolean;
     elapsedMs: number;
+    phases: ReconcilePhases;
 }
 
 /** Writable cache database for per-file (size, mtime_ns, sha256, clone_id)
@@ -356,6 +384,16 @@ export class FileMetaCache {
         const pageSize = opts.pageSize ?? 5000;
         const vacuumAtFraction = opts.vacuumAtFraction ?? 0.1;
         const cutoff = BigInt(nowMs - PRUNE_TTL_MS);
+        const phases: ReconcilePhases = {
+            countMs: 0,
+            ttlMs: 0,
+            sweepFilesMs: 0,
+            sweepDirsMs: 0,
+            vacuumMs: 0,
+            readMs: 0,
+            probeMs: 0,
+            deleteMs: 0,
+        };
 
         const countRows = async (table: "file_meta" | "dir_meta"): Promise<number> => {
             const r = await kysely
@@ -364,12 +402,17 @@ export class FileMetaCache {
                 .executeTakeFirst();
             return Number(r?.n ?? 0);
         };
-        const rowsBefore = (await countRows("file_meta")) + (await countRows("dir_meta"));
+        const stopCount = startPhase("reconcile.count");
+        const fileRows = await countRows("file_meta");
+        const dirRows = await countRows("dir_meta");
+        phases.countMs = stopCount();
+        const rowsBefore = fileRows + dirRows;
         log.info(
-            { event: "cache.reconcile.start", rowsBefore, cutoff: Number(cutoff) },
+            { event: "cache.reconcile.start", rowsBefore, fileRows, dirRows, cutoff: Number(cutoff) },
             "FileMetaCache reconcile start"
         );
 
+        const stopTtl = startPhase("reconcile.ttl");
         const staleFilesRes = await kysely
             .deleteFrom("file_meta")
             .where("last_seen_at", "<", cutoff)
@@ -388,6 +431,8 @@ export class FileMetaCache {
                 this.dirMem.delete(path);
             }
         }
+
+        phases.ttlMs = stopTtl();
 
         // Memoised directory existence. Rows arrive in path order, so the memo
         // hits on almost every row; it is cleared when it grows past a bound
@@ -421,6 +466,7 @@ export class FileMetaCache {
             let gone = 0;
             let after = "";
             for (;;) {
+                let mark = performance.now();
                 const page = await kysely
                     .selectFrom(table)
                     .select("path")
@@ -428,10 +474,12 @@ export class FileMetaCache {
                     .orderBy("path")
                     .limit(pageSize)
                     .execute();
+                phases.readMs += performance.now() - mark;
                 if (page.length === 0) {
                     break;
                 }
 
+                mark = performance.now();
                 const dead: string[] = [];
                 for (const row of page) {
                     let present: boolean;
@@ -450,6 +498,8 @@ export class FileMetaCache {
                     }
                 }
 
+                phases.probeMs += performance.now() - mark;
+                mark = performance.now();
                 for (let i = 0; i < dead.length; i += 500) {
                     const chunk = dead.slice(i, i + 500);
                     await kysely.deleteFrom(table).where("path", "in", chunk).execute();
@@ -462,6 +512,7 @@ export class FileMetaCache {
                     }
                 }
 
+                phases.deleteMs += performance.now() - mark;
                 gone += dead.length;
                 after = page[page.length - 1]?.path ?? after;
                 if (page.length < pageSize) {
@@ -471,18 +522,30 @@ export class FileMetaCache {
 
             return gone;
         };
+        const stopFiles = startPhase("reconcile.sweep-files");
         const goneFiles = await sweep("file_meta", false);
+        phases.sweepFilesMs = stopFiles();
+        const stopDirs = startPhase("reconcile.sweep-dirs");
         const goneDirs = await sweep("dir_meta", true);
+        phases.sweepDirsMs = stopDirs();
 
         const deleted = staleFiles + staleDirs + goneFiles + goneDirs;
         let vacuumed = false;
         if (vacuumAtFraction > 0 && rowsBefore > 0 && deleted / rowsBefore >= vacuumAtFraction) {
+            const stopVacuum = startPhase("reconcile.vacuum");
             this.getClient().raw.exec("VACUUM");
+            phases.vacuumMs = stopVacuum();
             vacuumed = true;
+        }
+
+        for (const key of Object.keys(phases) as Array<keyof ReconcilePhases>) {
+            phases[key] = Math.round(phases[key]);
         }
 
         const report: ReconcileReport = {
             rowsBefore,
+            fileRows,
+            dirRows,
             staleFiles,
             staleDirs,
             goneFiles,
@@ -490,6 +553,7 @@ export class FileMetaCache {
             probes,
             vacuumed,
             elapsedMs: Math.round(sw.elapsedMs),
+            phases,
         };
         log.info({ event: "cache.reconcile.complete", ...report }, "FileMetaCache reconcile complete");
         return report;
