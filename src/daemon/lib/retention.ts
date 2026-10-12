@@ -1,10 +1,13 @@
-import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { RunLogRetention } from "./types";
 
 // Matches `<safeTimestamp>-<runId>.jsonl`, e.g. 2026-05-15T19-02-16-a8a9c339.jsonl
 const RUN_LOG_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-[A-Za-z0-9_-]+\.jsonl$/;
+
+/** One prune per task directory at a time: a later call joins the running one instead of racing its unlinks. */
+const inFlight = new Map<string, Promise<number>>();
 
 function runLogEpoch(filename: string): number | null {
     const m = filename.match(RUN_LOG_RE);
@@ -18,20 +21,24 @@ function runLogEpoch(filename: string): number | null {
     return Number.isFinite(t) ? t : null;
 }
 
-/**
- * Delete a task's run logs that are BOTH beyond the newest `minRuns` AND older
- * than `maxAgeDays`. Never deletes when total <= minRuns. Filename-timestamp
- * based — never opens a file. Only unlinks files matching RUN_LOG_RE inside
- * the task dir. Returns the number deleted.
- */
-export function pruneTaskRunLogs(logsBaseDir: string, taskName: string, policy: RunLogRetention): number {
-    const taskDir = join(logsBaseDir, taskName);
+function isMissing(err: unknown): boolean {
+    return err instanceof Error && "code" in err && err.code === "ENOENT";
+}
 
-    if (!existsSync(taskDir)) {
-        return 0;
+async function pruneDir(taskDir: string, taskName: string, policy: RunLogRetention): Promise<number> {
+    let names: string[];
+
+    try {
+        names = await readdir(taskDir);
+    } catch (err) {
+        if (isMissing(err)) {
+            return 0;
+        }
+
+        throw err;
     }
 
-    const files = readdirSync(taskDir)
+    const files = names
         .filter((f) => RUN_LOG_RE.test(f))
         .sort()
         .reverse(); // newest-first
@@ -54,8 +61,8 @@ export function pruneTaskRunLogs(logsBaseDir: string, taskName: string, policy: 
         try {
             const full = join(taskDir, file);
 
-            if (statSync(full).isFile()) {
-                unlinkSync(full);
+            if ((await stat(full)).isFile()) {
+                await unlink(full);
                 deleted++;
             }
         } catch (err) {
@@ -68,4 +75,26 @@ export function pruneTaskRunLogs(logsBaseDir: string, taskName: string, policy: 
     }
 
     return deleted;
+}
+
+/**
+ * Delete a task's run logs that are BOTH beyond the newest `minRuns` AND older
+ * than `maxAgeDays`. Never deletes when total <= minRuns. Filename-timestamp
+ * based — never opens a file. Only unlinks files matching RUN_LOG_RE inside
+ * the task dir. Resolves to the number deleted.
+ *
+ * Every filesystem call is awaited, so the daemon's event loop keeps running while a slow disk answers: the
+ * synchronous version held the scheduler for 51 s and 80 s on 2026-10-10 while it deleted five files.
+ */
+export function pruneTaskRunLogs(logsBaseDir: string, taskName: string, policy: RunLogRetention): Promise<number> {
+    const taskDir = join(logsBaseDir, taskName);
+    const running = inFlight.get(taskDir);
+
+    if (running) {
+        return running;
+    }
+
+    const prune = pruneDir(taskDir, taskName, policy).finally(() => inFlight.delete(taskDir));
+    inFlight.set(taskDir, prune);
+    return prune;
 }

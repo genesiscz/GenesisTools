@@ -352,12 +352,13 @@ async function executeTask(
     try {
         await runAttempts(task, logsBaseDir, notify, runTaskImpl, streak);
     } finally {
+        // Not awaited: the task stays in `activeRuns` until this function returns, and a prune on a throttled
+        // disk took up to 82 s, which would push the task's next run back by as much. Overlapping prunes of one
+        // task join each other inside `pruneTaskRunLogs`.
         if (task.retention) {
-            try {
-                pruneTaskRunLogs(logsBaseDir, task.name, task.retention);
-            } catch (err) {
+            void pruneTaskRunLogs(logsBaseDir, task.name, task.retention).catch((err) => {
                 log.warn({ err, task: task.name }, "[daemon] retention prune failed");
-            }
+            });
         }
     }
 }
