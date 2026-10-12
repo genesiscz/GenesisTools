@@ -497,6 +497,11 @@
             "types": "./ui/components/*.tsx",
             "default": "./ui/components/*.tsx"
         },
+        "./ui/dashboards": {
+            "bun": "./ui/dashboards.ts",
+            "types": "./ui/dashboards.ts",
+            "default": "./ui/dashboards.ts"
+        },
         "./ui/vite.base": {
             "bun": "./ui/vite.base.ts",
             "types": "./ui/vite.base.ts",

@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import {
     DASHBOARDS,
     findPortConflicts,
@@ -138,5 +140,86 @@ describe("match helpers", () => {
         expect(matchAll("a", "b")({ port: 1, command: "x", fullCommand: "a b c" })).toBe(true);
         expect(matchAll("a", "z")({ port: 1, command: "x", fullCommand: "a b c" })).toBe(false);
         expect(matchGenesisTool("youtube")({ port: 1, command: "bun", cwd: "/tmp" })).toBe(false);
+    });
+});
+
+const UTILS_ROOT = resolve(import.meta.dir, "..");
+const REPO_ROOT = resolve(UTILS_ROOT, "../..");
+const STATIC_IMPORT = /(?:^|\n)\s*(?:import|export)\s+(?!type\s)(?:[^"'`;]*?\sfrom\s*)?["']([^"']+)["']/g;
+
+function resolveRelativeImport(from: string, specifier: string): string | null {
+    const base = resolve(dirname(from), specifier);
+    for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+/** Vite's config bundler inlines relative imports and externalizes bare ones, so only this closure matters. */
+function bareUtilsImports(configFile: string): Map<string, string> {
+    const seen = new Set<string>();
+    const found = new Map<string, string>();
+    const queue = [configFile];
+
+    for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+        if (seen.has(file)) {
+            continue;
+        }
+
+        seen.add(file);
+        for (const match of readFileSync(file, "utf8").matchAll(STATIC_IMPORT)) {
+            const specifier = match[1];
+            if (specifier.startsWith(".")) {
+                const next = resolveRelativeImport(file, specifier);
+                if (next) {
+                    queue.push(next);
+                }
+
+                continue;
+            }
+
+            if (specifier === "@genesiscz/utils" || specifier.startsWith("@genesiscz/utils/")) {
+                found.set(specifier, relative(REPO_ROOT, file));
+            }
+        }
+    }
+
+    return found;
+}
+
+function isExported(exportsMap: Record<string, unknown>, specifier: string): boolean {
+    const subpath = specifier === "@genesiscz/utils" ? "." : `./${specifier.slice("@genesiscz/utils/".length)}`;
+    if (subpath in exportsMap) {
+        return true;
+    }
+
+    return Object.keys(exportsMap).some((key) => key.endsWith("*") && subpath.startsWith(key.slice(0, -1)));
+}
+
+describe("dashboard vite configs", () => {
+    test("every bare @genesiscz/utils import a config bundles is in the package exports map", async () => {
+        const pkg: { exports: Record<string, unknown> } = await Bun.file(join(UTILS_ROOT, "package.json")).json();
+        const configs = Bun.spawnSync(["git", "ls-files", "--", "*vite.config.ts"], {
+            cwd: REPO_ROOT,
+            env: process.env,
+        })
+            .stdout.toString()
+            .split("\n")
+            .filter(Boolean);
+        expect(configs.length).toBeGreaterThan(5);
+
+        const missing: string[] = [];
+        for (const config of configs) {
+            for (const [specifier, importer] of bareUtilsImports(join(REPO_ROOT, config))) {
+                if (!isExported(pkg.exports, specifier)) {
+                    missing.push(`${config}: ${specifier} (imported by ${importer})`);
+                }
+            }
+        }
+
+        expect(missing).toEqual([]);
     });
 });
