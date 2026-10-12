@@ -11,7 +11,18 @@ function fires(command: string): boolean {
 }
 
 describe("find-from-root: fires", () => {
-    const roots = ["/", "~", "~/", "$HOME", "$HOME/", "${HOME}", "/Users/Martin", "/Users/Martin/", "/Users/alice"];
+    const roots = [
+        "/",
+        "~",
+        "~/",
+        "$HOME",
+        "$HOME/",
+        "${HOME}",
+        "/Users/jdoe",
+        "/Users/jdoe/",
+        "/Users/alice",
+        "/home/alice",
+    ];
 
     for (const root of roots) {
         it(`find ${root} -name x`, () => {
@@ -51,7 +62,7 @@ describe("find-from-root: fires", () => {
 
     it("fd with value flags before the pattern and a root path after", () => {
         expect(fires("fd -e ts -t f pattern ~")).toBe(true);
-        expect(fires("fd --max-depth 3 --hidden 'x' /Users/Martin")).toBe(true);
+        expect(fires("fd --max-depth 3 --hidden 'x' /Users/jdoe")).toBe(true);
     });
 
     it("fd with a root as the second positional and no -name to suggest", () => {
@@ -80,8 +91,8 @@ describe("find-from-root: does not fire", () => {
         expect(fires("find ~/Downloads -maxdepth 2 -iname 'report.har'")).toBe(false);
         expect(fires("find . -name '*.ts'")).toBe(false);
         expect(fires("find /tmp -mtime -1")).toBe(false);
-        expect(fires("find /Users/Martin/Projects -type d")).toBe(false);
-        expect(fires("find /Users/Martin/.claude.bkp -type f")).toBe(false);
+        expect(fires("find /Users/jdoe/Projects -type d")).toBe(false);
+        expect(fires("find /Users/jdoe/.claude.bkp -type f")).toBe(false);
         expect(fires("find $HOME/.codex -name x")).toBe(false);
         expect(fires("find ${HOME}/.codex -name x")).toBe(false);
         expect(fires("fd pattern ~/Projects")).toBe(false);
@@ -102,7 +113,7 @@ describe("find-from-root: does not fire", () => {
 
     it("known gap: a fully quoted literal root leaves no token and is not seen", () => {
         expect(fires('find "/" -name x')).toBe(false);
-        expect(fires("find '/Users/Martin' -name x")).toBe(false);
+        expect(fires("find '/Users/jdoe' -name x")).toBe(false);
     });
 
     it("the -name value survives its quotes in the suggestion", () => {
@@ -134,7 +145,7 @@ describe("find-from-root: corpus fixtures", () => {
     const mustFire = [
         "find ~ -name '*.har' -mtime -7 2>/dev/null | head",
         "find / -name 'DarwinKit.app' -maxdepth 6 2>/dev/null | head -5",
-        "find /Users/Martin -maxdepth 3 -name '.claude' -type d 2>/dev/null",
+        "find /Users/jdoe -maxdepth 3 -name '.claude' -type d 2>/dev/null",
         "find $HOME -maxdepth 2 -name '*.jsonl' 2>/dev/null | head -20",
     ];
 
@@ -147,7 +158,7 @@ describe("find-from-root: corpus fixtures", () => {
     const mustNotFire = [
         'find "$HOME/.codex/sessions" -name "*.jsonl" -newer /tmp/stamp | head',
         "find . -path ./node_modules -prune -o -name '*.test.ts' -print",
-        "find /Users/Martin/Downloads -maxdepth 1 -iname '*.har' 2>&1 | head -20",
+        "find /Users/jdoe/Downloads -maxdepth 1 -iname '*.har' 2>&1 | head -20",
         "fd -t d -H --max-depth 8 'ColMobile.app' ~/Library/Developer/CoreSimulator/Devices/",
         "fd -e jsonl . ~/.claude/projects | wc -l",
     ];
@@ -157,4 +168,55 @@ describe("find-from-root: corpus fixtures", () => {
             expect(fires(command)).toBe(false);
         });
     }
+});
+
+function searchFires(command: string): boolean {
+    return detectShellViolations(command, findRules).some((v) => v.ruleId === "search-from-root");
+}
+
+describe("search-from-root", () => {
+    it("fires on rg and recursive grep rooted at /, ~ or a home folder", () => {
+        for (const command of [
+            "rg -l API_TOKEN ~",
+            "rg -l 'API_TOKEN' ~",
+            'rg -n "x" /',
+            "rg foo $HOME",
+            'rg foo "$HOME"',
+            "rg -C 3 foo /Users/alice",
+            "rg -e foo -e bar ~",
+            "rg --files ~",
+            "rg -tmarkdown foo ~/",
+            "grep -rn foo ~",
+            "grep -R --include=*.ts foo /",
+            "grep --recursive foo $HOME",
+            "cd /tmp && rg -l secret ~ | head",
+        ]) {
+            expect(searchFires(command)).toBe(true);
+        }
+    });
+
+    it("matched is the search element, from its command word", () => {
+        const [v] = detectShellViolations("cd /tmp && rg -l secret ~ | head", findRules);
+
+        expect(v?.ruleId).toBe("search-from-root");
+        expect(v?.matched).toBe("rg -l secret ~");
+        expect(v?.severity).toBe("block");
+    });
+
+    it("stays quiet on scoped searches, a lone pattern and grep without -r", () => {
+        for (const command of [
+            "rg foo ~/Projects/app",
+            "rg -n foo src",
+            "rg ~",
+            "rg /",
+            "rg -C 3 / src",
+            "grep foo ~/notes.txt",
+            "grep foo ~",
+            "grep -rn foo .",
+            "echo 'rg foo ~'",
+            "rg -g '*.ts' foo ./src",
+        ]) {
+            expect(searchFires(command)).toBe(false);
+        }
+    });
 });

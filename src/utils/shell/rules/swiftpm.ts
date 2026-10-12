@@ -74,12 +74,11 @@ export const swiftpmStalePlan: ShellRule = {
     wrong: "swift test --package-path src/macos/GenesisTools",
     right: "swift test --package-path src/macos/GenesisTools --disable-build-manifest-caching",
     evidence:
-        'GenesisTools 2026-10-10: three merges that added GenesisKit files failed the app build with "cannot find ' +
-        'type" and passed on the second run (src/macos/lib/permissions/app.ts). 2026-10-12: GenesisClickyPreview ' +
-        "failed twice with \"cannot find 'ShellWords' in scope\"; its plan from 17:26 predated the file (17:27) and " +
-        'was reused without "Planning build". Reproduced with a two-package fixture: the new dependency file is ' +
-        "not compiled until the flag is passed. 20 of the 113 Swift packages under ~/Tresors/Projects have a local " +
-        "path dependency.",
+        'Three merges that added files to a local path dependency failed an app build with "cannot find type" and ' +
+        "passed on the second run. A preview target failed twice with \"cannot find 'X' in scope\" because its " +
+        'build plan, one minute older than the new file, was reused without "Planning build". Reproduced with a ' +
+        "two-package fixture: the new dependency file is not compiled until the flag is passed. About one Swift " +
+        "package in six in a sampled projects folder has a local path dependency.",
     detect(scan): ShellMatch | null {
         for (const statements of scan.units) {
             // `cd` moves the folder for the statements after it in the same list.

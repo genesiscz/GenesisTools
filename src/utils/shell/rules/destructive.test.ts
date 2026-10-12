@@ -10,49 +10,7 @@ function only(command: string, ruleId: string): ShellViolation | undefined {
     return detectShellViolations(command, destructiveRules).find((v) => v.ruleId === ruleId);
 }
 
-const MIGRATE = "migrate-fresh-outside-testing";
 const DOCKER = "docker-volume-destroy";
-
-describe("migrate-fresh-outside-testing", () => {
-    it("fires on the bare form, matched from the command word", () => {
-        const command = "cd api && php artisan migrate:fresh --seed";
-        const v = only(command, MIGRATE);
-
-        expect(v?.severity).toBe("block");
-        expect(v?.matched).toBe("php artisan migrate:fresh --seed");
-        expect(v?.index).toBe(command.indexOf("php"));
-        expect(v?.suggestion).toBeUndefined();
-    });
-
-    it("fires when only one of the two testing flags is present", () => {
-        expect(ids("php artisan migrate:fresh --env=testing")).toEqual([MIGRATE]);
-        expect(ids("php artisan migrate:fresh --database=testing")).toEqual([MIGRATE]);
-    });
-
-    it("fires through sail, docker compose exec and wrappers", () => {
-        expect(ids("./vendor/bin/sail artisan migrate:fresh")).toEqual([MIGRATE]);
-        expect(ids("docker compose exec app php artisan migrate:fresh")).toEqual([MIGRATE]);
-        expect(ids("sudo -u www php artisan migrate:fresh")).toEqual([MIGRATE]);
-    });
-
-    it("the only allowed form passes", () => {
-        expect(ids("php artisan migrate:fresh --env=testing --database=testing")).toEqual([]);
-        expect(ids("php artisan migrate:fresh --database=testing --env=testing --seed")).toEqual([]);
-    });
-
-    it("other migrate commands pass", () => {
-        expect(ids("php artisan migrate")).toEqual([]);
-        expect(ids("php artisan migrate:rollback --step=1")).toEqual([]);
-        expect(ids("php artisan migrate:status")).toEqual([]);
-    });
-
-    it("prose", () => {
-        expect(ids("echo 'never migrate:fresh'")).toEqual([]);
-        expect(ids('git commit -m "docs: migrate:fresh is banned"')).toEqual([]);
-        expect(ids("rg 'migrate:fresh' docs")).toEqual([]);
-        expect(ids("# php artisan migrate:fresh\nphp artisan migrate")).toEqual([]);
-    });
-});
 
 describe("docker-volume-destroy", () => {
     it("volume rm / prune / remove", () => {

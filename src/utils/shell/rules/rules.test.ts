@@ -53,7 +53,7 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the fourteen rules harvested from CLAUDE.md and real sessions", () => {
+    it("holds the fourteen general rules; personal ones load from guard.customRules", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
@@ -63,9 +63,9 @@ describe("the registry", () => {
                 "find-from-root",
                 "git-checkout-overwrites-file",
                 "git-push-force-without-lease",
-                "migrate-fresh-outside-testing",
                 "pipestatus-under-zsh",
                 "rg-replace-cluster",
+                "search-from-root",
                 "stderr-discarded-then-counted",
                 "stderr-discarded-then-read",
                 "swiftpm-stale-plan",
@@ -199,7 +199,7 @@ describe("detectShellViolations: the array", () => {
             "git checkout -- fixture.ts",
             "git push --force",
             "log show",
-            "php artisan migrate:fresh --seed",
+            "rg -l token ~",
             "docker volume prune -f",
             "ls a 2>/dev/null | wc -l",
             "ls a 2>/dev/null | head",

@@ -1,52 +1,7 @@
-// Irreversible operations CLAUDE.md forbids outright.
+// Irreversible operations: data that is gone with no snapshot to restore.
 
 import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "../scan";
 import type { ShellMatch, ShellRule } from "./types";
-
-export const migrateFreshOutsideTesting: ShellRule = {
-    id: "migrate-fresh-outside-testing",
-    kind: "destructive",
-    title: "migrate:fresh drops every table; only the testing database may run it",
-    severity: "block",
-    why:
-        "`migrate:fresh` drops all tables and re-runs migrations. Against the development or production " +
-        "database that is data loss with no undo. The only allowed form names the testing connection " +
-        "explicitly with both `--env=testing` and `--database=testing`, and even that needs the user's yes.",
-    wrong: "php artisan migrate:fresh --seed",
-    right: "php artisan migrate:fresh --env=testing --database=testing --seed   # after an explicit yes",
-    evidence:
-        "4 mentions in 30 days: 3 in prose, 1 already in the testing form. Kept because the cost is the whole database.",
-    detect(scan): ShellMatch | null {
-        for (const statements of scan.units) {
-            for (const statement of statements) {
-                if (!statement.text.includes("migrate:fresh")) {
-                    continue;
-                }
-
-                for (const element of splitPipeline(statement)) {
-                    const tokens = tokenize(element);
-                    const idx = tokens.findIndex((t) => t.text === "migrate:fresh");
-
-                    if (idx === -1) {
-                        continue;
-                    }
-
-                    const texts = tokens.map((t) => t.text);
-
-                    if (texts.includes("--env=testing") && texts.includes("--database=testing")) {
-                        continue;
-                    }
-
-                    const cmd = commandTokenIndex(tokens);
-                    const start = cmd === -1 ? tokens[idx].start : tokens[cmd].start;
-                    return { matched: originalSlice(scan, start, element.start + element.text.length), index: start };
-                }
-            }
-        }
-
-        return null;
-    },
-};
 
 /** Docker global options that consume the next token, in their separate-value spelling. */
 const DOCKER_GLOBAL_WITH_VALUE = new Set([
@@ -145,4 +100,4 @@ export const dockerVolumeDestroy: ShellRule = {
     },
 };
 
-export const destructiveRules: readonly ShellRule[] = [migrateFreshOutsideTesting, dockerVolumeDestroy];
+export const destructiveRules: readonly ShellRule[] = [dockerVolumeDestroy];
