@@ -51,6 +51,9 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts.notify === false || opts.notify === "failure" ? { notify: opts.notify } : {}),
         retention: opts.retention ?? DEFAULT_RETENTION,
+        // Set by the user (tools daemon config set, the Daemon pane); a tool re-registering its task keeps them.
+        ...(existing?.priority ? { priority: existing.priority } : {}),
+        ...(existing?.missedRun ? { missedRun: existing.missedRun } : {}),
     };
 
     await upsertTask(task);

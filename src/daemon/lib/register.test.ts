@@ -65,3 +65,19 @@ describe("updateTask", () => {
         expect((await getTask("hourly"))?.priority).toBeUndefined();
     });
 });
+
+describe("registerTask overwrite", () => {
+    test("keeps the priority and missed-run policy the user set", async () => {
+        const { registerTask } = await import("./register");
+        const { getTask, updateTask } = await import("./config");
+        await registerTask({ name: "scan", command: "true", every: "every day at 03:00", overwrite: true });
+        await updateTask("scan", { priority: "high", missedRun: { mode: "on-wake" } });
+
+        await registerTask({ name: "scan", command: "echo again", every: "every day at 03:00", overwrite: true });
+        expect(await getTask("scan")).toMatchObject({
+            command: "echo again",
+            priority: "high",
+            missedRun: { mode: "on-wake" },
+        });
+    });
+});

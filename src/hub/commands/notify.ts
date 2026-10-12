@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { getTask } from "@app/daemon/lib/config";
+import { getTask, updateTask } from "@app/daemon/lib/config";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
@@ -218,7 +218,7 @@ export function registerNotifyCommands(program: Command): void {
                     const task = await getTask(NOTIFY_TASK_NAME);
 
                     if (task && task.every !== NOTIFY_TASK_EVERY) {
-                        await registerDaemonTask();
+                        await updateTask(NOTIFY_TASK_NAME, { every: NOTIFY_TASK_EVERY });
                     }
                 }
 
