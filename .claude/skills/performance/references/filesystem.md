@@ -81,6 +81,22 @@ readLastLines(path, { method: "ffi" });                  // libSystem open/lseek
 - Bun 1.3.13: every `fs.watch` created after the first `FSWatcher.close()` in a process goes deaf. Use the
   repository's `watchFileFeed` / `waitForPath` / `FileTailer` with a slow safety poll.
 - On this Mac a full home-wide walk is never the answer; scope to the known roots.
+- **A replay is not proof that nothing changed.** In 25 of 30 rounds, `getEventsSince` missed a write made just
+  before the replay (0 of 30 after a 20 ms pause). The agent hooks therefore keep a real `git status` after every
+  call; use a replay only to choose what to re-check, with a full check as the fallback.
+
+## 5b. Threads that stat cost more CPU than one thread
+
+- `git status` stats the index on up to 20 threads (`core.preloadIndex`, on above 1,000 entries). On this Mac at a
+  load average of about 30 the threads contend in the kernel: 151 to 163 ms of CPU per status on a 9,278-file
+  checkout, against 49 ms with `git -c core.preloadIndex=false status` (same output, wall 45 → 50 ms). The agent hooks
+  run their status that way (`src/agents/lib/hooks/git.ts`, `statusOf`): a Bash tool call went from about 420 to
+  220 ms of CPU. A `-c` flag applies to that one process and writes no config.
+- The general lesson: more threads can lower the wall time and raise the CPU. When CPU is the metric, measure the
+  single-threaded form too. The same held for parsing in Workers (`json.md`) and for `Promise.all` over async reads
+  (372 ms of CPU against 220 ms for synchronous reads of the same 2,441 tails, though 180 against 206 ms of wall).
+- Not enabled (a decision for Martin, measured in throwaway clones): `core.untrackedCache=true` brings a status to 24
+  to 26 ms of CPU; `core.fsmonitor=true` with it to 8.6 to 9.3 ms, plus a monitor daemon per worktree.
 
 ## 6. Rejected after measuring
 
