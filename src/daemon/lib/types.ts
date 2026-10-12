@@ -26,7 +26,8 @@ export interface MissedRunPolicy {
 }
 
 /** Why a run happened, recorded in its run log. */
-export type RunReason = "scheduled" | "catch-up" | "retry";
+/** Why a run started: its slot came, a missed slot is caught up, a retry-at retry, or `tools daemon run` by hand. */
+export type RunReason = "scheduled" | "catch-up" | "retry" | "manual";
 
 export interface DaemonTask {
     name: string;
@@ -111,6 +112,8 @@ export interface RunResult {
     exitCode: number | null;
     duration_ms: number;
     logFile: string;
+    /** The run's id, the last part of its log file name (`tools daemon stats --view run --run <id>`). */
+    runId: string;
 }
 
 export interface RunSummary {

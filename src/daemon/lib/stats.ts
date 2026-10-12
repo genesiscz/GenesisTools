@@ -11,7 +11,7 @@ import { listTasksWithLogs, parseLogFile } from "./log-reader";
 import { RUN_LOG_RE, taskLogDirName } from "./run-log-name";
 import type { DaemonTask, LogLine, RunReason } from "./types";
 
-const RUN_REASONS: readonly RunReason[] = ["scheduled", "catch-up", "retry"];
+const RUN_REASONS: readonly RunReason[] = ["scheduled", "catch-up", "retry", "manual"];
 
 /** A meta record's `reason`, or null when the log predates reasons or holds something else. */
 function runReason(value: unknown): RunReason | null {

@@ -241,5 +241,5 @@ export async function runTask(
         logger.info({ task: task.name, attempt, exitCode, duration_ms, logFile }, "[daemon] task process exited");
     }
 
-    return { exitCode, duration_ms, logFile };
+    return { exitCode, duration_ms, logFile, runId };
 }

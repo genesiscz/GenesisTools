@@ -21,6 +21,7 @@ const runTaskMock = mock(async () => {
         exitCode: 0,
         duration_ms: runDurationMs,
         logFile: "/tmp/test.jsonl",
+        runId: "r1",
     };
 });
 
@@ -437,7 +438,7 @@ describe('notify: "failure"', () => {
                 messages.push(options.message);
                 return true;
             },
-            runTask: async () => ({ exitCode, duration_ms: 1, logFile: "/tmp/test.jsonl" }),
+            runTask: async () => ({ exitCode, duration_ms: 1, logFile: "/tmp/test.jsonl", runId: "r1" }),
         });
         await drainActiveRuns(activeRuns);
         return messages;
@@ -486,7 +487,7 @@ describe("a task that keeps failing", () => {
                     messages.push(options.message);
                     return true;
                 },
-                runTask: async () => ({ exitCode, duration_ms: 1, logFile: "/tmp/test.jsonl" }),
+                runTask: async () => ({ exitCode, duration_ms: 1, logFile: "/tmp/test.jsonl", runId: "r1" }),
             });
             await drainActiveRuns(activeRuns);
         }
@@ -555,7 +556,9 @@ describe("task isolation", () => {
         const started: string[] = [];
         const runTask = async (task: DaemonTask): Promise<RunResult> => {
             started.push(task.name);
-            return task.name === "hung" ? hungResult : { exitCode: 0, duration_ms: 1, logFile: "/tmp/quick.jsonl" };
+            return task.name === "hung"
+                ? hungResult
+                : { exitCode: 0, duration_ms: 1, logFile: "/tmp/quick.jsonl", runId: "r1" };
         };
 
         dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now, notify: noopNotify, runTask });
@@ -571,7 +574,7 @@ describe("task isolation", () => {
 
         expect(started).toEqual(["hung", "quick", "quick"]);
 
-        finishHung({ exitCode: 1, duration_ms: 600_000, logFile: "/tmp/hung.jsonl" });
+        finishHung({ exitCode: 1, duration_ms: 600_000, logFile: "/tmp/hung.jsonl", runId: "r1" });
         await drainActiveRuns(activeRuns);
         dispatchDueTasks({
             tasks,
@@ -722,7 +725,7 @@ describe("dispatch with priorities and missed runs", () => {
         const started: Array<{ name: string; context: unknown }> = [];
         const run = mock(async (task: DaemonTask, _attempt: number, _logs: string, context?: unknown) => {
             started.push({ name: task.name, context });
-            return { exitCode: 0, duration_ms: 1, logFile: "/tmp/test.jsonl" } satisfies RunResult;
+            return { exitCode: 0, duration_ms: 1, logFile: "/tmp/test.jsonl", runId: "r1" } satisfies RunResult;
         });
         return { started, run };
     }
