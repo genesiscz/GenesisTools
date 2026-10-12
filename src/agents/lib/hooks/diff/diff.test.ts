@@ -13,15 +13,16 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { readOnlyCommand } from "./attribution";
 import { beforeCopy } from "./before";
-import { capturePre, captureRoots } from "./capture";
+import { type CaptureResult, capturePre, captureRoots } from "./capture";
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
@@ -34,6 +35,7 @@ import {
     captureChunks,
     capturedBefore,
     capturedBefores,
+    type DiffDecision,
     noteFileToolInput,
     runDiffPost,
     silentReason,
@@ -2645,5 +2647,608 @@ describe("writerChanges: fable-replace's journal names the files a sweep wrote",
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+});
+
+describe("characterization: what one call shows, logs and attributes", () => {
+    // Pinned on f8cb4f9f1, before the hooks' `git status` changed how it reads the tree. Every
+    // field a user or a log sees is here: the pre phase's result, the decision, its reason, the
+    // message, the files and the others, and each change-log row with its before-state bytes.
+    // A change to HOW the status is read must leave every snapshot below as it is.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const session = "gt-diff-char";
+    let main: string;
+    let second: string;
+    let turn = 0;
+
+    const run = (root: string, args: string[]) =>
+        spawnSync("git", ["-C", root, ...args], { encoding: "utf8", env: process.env });
+    const write = (root: string, name: string, body: string) => {
+        mkdirSync(join(root, name, ".."), { recursive: true });
+        writeFileSync(join(root, name), body);
+    };
+
+    function normalize(text: string): string {
+        return stripAnsi(text)
+            .replaceAll(main, "<main>")
+            .replaceAll(second, "<second>")
+            .replaceAll(basename(main), "<main-name>")
+            .replace(/\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b/g, "<sha>");
+    }
+
+    interface Observed {
+        pre: { roots: string[]; captured: number; named: number; skipped: string[] };
+        decision: string;
+        reason: string;
+        files: string[];
+        others: string[];
+        message: string | null;
+        log: Array<{ path: string; deleted: boolean; from: string; before: string | null }>;
+    }
+
+    /** One tool call: the pre phase, what the command does, the post phase, and everything it put out. */
+    function call(command: string, act: () => void, cwd = main): Observed {
+        turn += 1;
+
+        const current = payload({ sessionId: session, toolUseId: `char-${turn}`, cwd, command });
+        const pre: CaptureResult = capturePre(current, plain.diff);
+
+        act();
+
+        let log: Observed["log"] = [];
+        const decision: DiffDecision = runDiffPost(current, plain, (_payload, captures) => {
+            // The capture directory is gone once the post phase returns, so the bytes are read here.
+            log = captures.map((item) => ({
+                path: normalize(item.path),
+                deleted: item.deleted,
+                from: item.before ? "copy" : item.gitBase ? `git ${normalize(item.gitBase.base)}` : "none",
+                before: capturedBefore(item).after?.toString("utf8") ?? null,
+            }));
+        });
+
+        return {
+            pre: {
+                roots: pre.roots.map(normalize),
+                captured: pre.captured,
+                named: pre.named,
+                skipped: pre.skipped.map(normalize),
+            },
+            decision: decision.decision,
+            reason: normalize(decision.reason),
+            files: decision.files.map(normalize),
+            others: (decision.others ?? []).map(normalize),
+            message: decision.message === undefined ? null : normalize(decision.message),
+            log,
+        };
+    }
+
+    beforeAll(() => {
+        main = realpathSync(mkdtempSync(join(tmpdir(), "gt-char-main-")));
+        second = realpathSync(mkdtempSync(join(tmpdir(), "gt-char-second-")));
+
+        for (const root of [main, second]) {
+            run(root, ["init", "-q", "-b", "master"]);
+            run(root, ["config", "user.email", "probe@local"]);
+            run(root, ["config", "user.name", "probe"]);
+        }
+
+        write(main, "tracked.ts", "one\ntwo\nthree\n");
+        write(main, "dirty.ts", "alpha\nbravo\ncharlie\n");
+        write(main, "doomed.ts", "keep\nme\n");
+        write(main, "with space.ts", "space\nbefore\n");
+        write(main, "žluťoučký.ts", "kůň\npřed\n");
+        write(main, ".gitignore", "build/\n");
+        write(main, "build/log.txt", "old log\n");
+        run(main, ["add", "-A"]);
+        run(main, ["commit", "-qm", "init"]);
+        run(main, ["checkout", "-qb", "topic"]);
+        write(main, "topic.md", "topic work\n");
+        run(main, ["add", "-A"]);
+        run(main, ["commit", "-qm", "topic"]);
+        run(main, ["checkout", "-q", "master"]);
+
+        write(second, "other.ts", "first\nsecond\n");
+        run(second, ["add", "-A"]);
+        run(second, ["commit", "-qm", "init"]);
+    });
+
+    afterEach(() => {
+        // Each case starts from a clean tree. `clean` without `-x` keeps the ignored `build/`.
+        for (const root of [main, second]) {
+            run(root, ["checkout", "-q", "--", "."]);
+            run(root, ["clean", "-fdq"]);
+        }
+    });
+
+    afterAll(() => {
+        rmSync(main, { recursive: true, force: true });
+        rmSync(second, { recursive: true, force: true });
+        rmSync(sessionDir("claude", session), { recursive: true, force: true });
+    });
+
+    it("an edit to a clean tracked file", () => {
+        expect(call("bun run fmt", () => write(main, "tracked.ts", "one\nTWO\nthree\n"))).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/tracked.ts",
+            ],
+            "log": [
+              {
+                "before": 
+          "one
+          two
+          three
+          "
+          ,
+                "deleted": false,
+                "from": "git HEAD",
+                "path": "<main>/tracked.ts",
+              },
+            ],
+            "message": 
+          "Updated <main>/tracked.ts (+1 -1)
+               1  one
+                 -two
+               2 +TWO
+               3  three"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("a new untracked file, and one inside a new directory", () => {
+        expect(
+            call("bun run gen", () => {
+                write(main, "fresh.ts", "brand\nnew\n");
+                write(main, "gen/out.ts", "generated\n");
+            })
+        ).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/fresh.ts",
+              "<main>/gen/out.ts",
+            ],
+            "log": [
+              {
+                "before": null,
+                "deleted": false,
+                "from": "none",
+                "path": "<main>/fresh.ts",
+              },
+              {
+                "before": null,
+                "deleted": false,
+                "from": "none",
+                "path": "<main>/gen/out.ts",
+              },
+            ],
+            "message": 
+          "Added <main>/fresh.ts (+2 -0)
+               1 +brand
+               2 +new
+
+          Added <main>/gen/out.ts (+1 -0)
+               1 +generated"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("a deletion, then the next call while git still reports it", () => {
+        const removing = call("bun run prune", () => rmSync(join(main, "doomed.ts")));
+        const later = call("bun run fmt", () => undefined);
+
+        expect({ removing, later }).toMatchInlineSnapshot(`
+          {
+            "later": {
+              "decision": "silent",
+              "files": [],
+              "log": [],
+              "message": null,
+              "others": [],
+              "pre": {
+                "captured": 0,
+                "named": 0,
+                "roots": [
+                  "<main>",
+                ],
+                "skipped": [],
+              },
+              "reason": "1 deletion(s) had already happened before this command began",
+            },
+            "removing": {
+              "decision": "emitted",
+              "files": [
+                "<main>/doomed.ts",
+              ],
+              "log": [
+                {
+                  "before": 
+          "keep
+          me
+          "
+          ,
+                  "deleted": true,
+                  "from": "git HEAD",
+                  "path": "<main>/doomed.ts",
+                },
+              ],
+              "message": 
+          "Deleted <main>/doomed.ts (+0 -2)
+                 -keep
+                 -me"
+          ,
+              "others": [],
+              "pre": {
+                "captured": 0,
+                "named": 0,
+                "roots": [
+                  "<main>",
+                ],
+                "skipped": [],
+              },
+              "reason": "rendered a diff the harness did not",
+            },
+          }
+        `);
+    });
+
+    it("an edit to a tracked file and to an untracked file that were already dirty", () => {
+        write(main, "dirty.ts", "alpha\nBRAVO-BEFORE\ncharlie\n");
+        write(main, "notes.md", "note\nbefore\n");
+
+        expect(
+            call("bun run fmt", () => {
+                write(main, "dirty.ts", "alpha\nBRAVO-BEFORE\ncharlie\nDELTA-AFTER\n");
+                write(main, "notes.md", "note\nbefore\nafter\n");
+            })
+        ).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/dirty.ts",
+              "<main>/notes.md",
+            ],
+            "log": [
+              {
+                "before": 
+          "alpha
+          BRAVO-BEFORE
+          charlie
+          "
+          ,
+                "deleted": false,
+                "from": "copy",
+                "path": "<main>/dirty.ts",
+              },
+              {
+                "before": 
+          "note
+          before
+          "
+          ,
+                "deleted": false,
+                "from": "copy",
+                "path": "<main>/notes.md",
+              },
+            ],
+            "message": 
+          "Updated <main>/dirty.ts (+1 -0)
+               1  alpha
+               2  BRAVO-BEFORE
+               3  charlie
+               4 +DELTA-AFTER
+
+          Updated <main>/notes.md (+1 -0)
+               1  note
+               2  before
+               3 +after"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 2,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("a command that works in a second repository root as well", () => {
+        expect(
+            call(`bun run fmt && cd ${second} && bun run fmt`, () => {
+                write(main, "tracked.ts", "one\ntwo\nTHREE\n");
+                write(second, "other.ts", "first\nSECOND\n");
+            })
+        ).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/tracked.ts",
+              "<second>/other.ts",
+            ],
+            "log": [
+              {
+                "before": 
+          "one
+          two
+          three
+          "
+          ,
+                "deleted": false,
+                "from": "git HEAD",
+                "path": "<main>/tracked.ts",
+              },
+              {
+                "before": 
+          "first
+          second
+          "
+          ,
+                "deleted": false,
+                "from": "git HEAD",
+                "path": "<second>/other.ts",
+              },
+            ],
+            "message": 
+          "Updated <main>/tracked.ts (+1 -1)
+               1  one
+               2  two
+                 -three
+               3 +THREE
+
+          Updated <second>/other.ts (+1 -1)
+               1  first
+                 -second
+               2 +SECOND"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+                "<second>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("a read-only command while another writer changes a tracked file", () => {
+        expect(
+            call("rg needle tracked.ts", () => write(main, "tracked.ts", "one\nWRITER\nthree\n"))
+        ).toMatchInlineSnapshot(`
+          {
+            "decision": "noted",
+            "files": [],
+            "log": [],
+            "message": "1 file(s) changed by others in this root: tracked.ts",
+            "others": [
+              "<main>/tracked.ts",
+            ],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "1 changed file(s) were not attributable to this session",
+          }
+        `);
+    });
+
+    it("paths with a space and with non-ASCII letters", () => {
+        expect(
+            call("bun run fmt", () => {
+                write(main, "with space.ts", "space\nAFTER\n");
+                write(main, "žluťoučký.ts", "kůň\npo\n");
+                write(main, "nový adresář/poznámka.md", "nová\n");
+            })
+        ).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/with space.ts",
+              "<main>/žluťoučký.ts",
+              "<main>/nový adresář/poznámka.md",
+            ],
+            "log": [
+              {
+                "before": 
+          "space
+          before
+          "
+          ,
+                "deleted": false,
+                "from": "git HEAD",
+                "path": "<main>/with space.ts",
+              },
+              {
+                "before": 
+          "kůň
+          před
+          "
+          ,
+                "deleted": false,
+                "from": "git HEAD",
+                "path": "<main>/žluťoučký.ts",
+              },
+              {
+                "before": null,
+                "deleted": false,
+                "from": "none",
+                "path": "<main>/nový adresář/poznámka.md",
+              },
+            ],
+            "message": 
+          "Updated <main>/with space.ts (+1 -1)
+               1  space
+                 -before
+               2 +AFTER
+
+          Updated <main>/žluťoučký.ts (+1 -1)
+               1  kůň
+                 -před
+               2 +po
+
+          Added <main>/nový adresář/poznámka.md (+1 -0)
+               1 +nová"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("files under an ignored directory, one named by the command and one not", () => {
+        expect(
+            call("bun run build > build/log.txt", () => {
+                write(main, "build/log.txt", "new log\n");
+                write(main, "build/out.js", "bundle\n");
+            })
+        ).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/build/log.txt",
+            ],
+            "log": [
+              {
+                "before": 
+          "old log
+          "
+          ,
+                "deleted": false,
+                "from": "copy",
+                "path": "<main>/build/log.txt",
+              },
+            ],
+            "message": 
+          "Updated <main>/build/log.txt (+1 -1)
+                 -old log
+               1 +new log"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 1,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("a command that edits and commits", () => {
+        const observed = call("git commit -qam wip", () => {
+            write(main, "tracked.ts", "one\nCOMMITTED\nthree\n");
+            run(main, ["commit", "-qam", "wip"]);
+        });
+
+        run(main, ["reset", "-q", "--hard", "HEAD~1"]);
+        expect(observed).toMatchInlineSnapshot(`
+          {
+            "decision": "emitted",
+            "files": [
+              "<main>/tracked.ts",
+            ],
+            "log": [
+              {
+                "before": 
+          "one
+          two
+          three
+          "
+          ,
+                "deleted": false,
+                "from": "git <sha>",
+                "path": "<main>/tracked.ts",
+              },
+            ],
+            "message": 
+          "Updated <main>/tracked.ts (+1 -1)
+               1  one
+                 -two
+               2 +COMMITTED
+               3  three"
+          ,
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "rendered a diff the harness did not",
+          }
+        `);
+    });
+
+    it("a checkout that moves HEAD to another branch", () => {
+        const observed = call("git checkout topic", () => run(main, ["checkout", "-q", "topic"]));
+
+        run(main, ["checkout", "-q", "master"]);
+        expect(observed).toMatchInlineSnapshot(`
+          {
+            "decision": "noted",
+            "files": [],
+            "log": [],
+            "message": "git checkout moved HEAD in <main-name> (<sha> to <sha>): 1 file(s) came with it, no diff shown",
+            "others": [],
+            "pre": {
+              "captured": 0,
+              "named": 0,
+              "roots": [
+                "<main>",
+              ],
+              "skipped": [],
+            },
+            "reason": "no change since this command began",
+          }
+        `);
     });
 });
