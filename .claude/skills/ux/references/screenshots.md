@@ -30,7 +30,8 @@ Rules, each learned the hard way:
   "Reading the day…" still loads; a long check may still run. Mark those amber, never as a change.
 - **Write the capture command next to the pair** (a `capture.txt` or the note), so the next person can retake it.
 - **Names:** `<YYYY-MM-DD-HHMM>-<area>-<slug>-before.png` and `-after.png` in the area's `Screenshot/` folder of the
-  vault (`GenesisBrain/GenesisTools/GenesisTools.native/<Area>/Screenshot/`).
+  project's notes folder (`GenesisTools/GenesisTools.native/<Area>/Screenshot/`; the global instructions name where
+  the notes folder lives).
 
 ## 2. Write down what changed before you look
 
