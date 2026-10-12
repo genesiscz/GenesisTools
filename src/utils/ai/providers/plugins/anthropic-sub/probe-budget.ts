@@ -47,6 +47,94 @@ export function probesInWindow(days: Readonly<Record<string, number>> | undefine
     return Object.values(daysInWindow(days, now)).reduce((sum, count) => sum + count, 0);
 }
 
+interface PendingSpend {
+    account: string;
+    model: string;
+    cap: number;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+}
+
+/** Spends waiting for the next commit; a spend that arrives while one commit runs joins the next. */
+let gathering: PendingSpend[] | null = null;
+let commits: Promise<void> = Promise.resolve();
+
+/**
+ * One lock, one read and one write for every spend that arrived together. A round polls every account at once
+ * and each spends before its probe: a lock per spend queued the accounts behind each other, 2-3 s each while the
+ * disk stalled, so the later ones passed the 10 s lock wait and a round took the sum of the critical sections.
+ * A spend resolves only after the write that counts it, so the budget still guards the probe that follows.
+ */
+async function commitSpends(batch: PendingSpend[]): Promise<void> {
+    const storage = usagePollStorage();
+    const accepted: PendingSpend[] = [];
+    const settled = new Set<PendingSpend>();
+
+    try {
+        await storage.withFileLock({
+            file: usageCacheFilePath(LEDGER_KEY),
+            fn: async () => {
+                const now = Date.now();
+                const today = dayOf(now);
+                const ledger = (await storage.getCacheFile<Ledger>(LEDGER_KEY, USAGE_CACHE_TTL)) ?? {};
+
+                for (const spend of batch) {
+                    const days = daysInWindow(ledger[spend.account]?.[spend.model], now);
+                    const spent = probesInWindow(days, now);
+
+                    if (spent >= spend.cap) {
+                        logger.warn(
+                            { account: spend.account, model: spend.model, spent, cap: spend.cap },
+                            "[usage] quota probe refused: the budget is spent"
+                        );
+                        spend.reject(new ProbeBudgetExceeded(spend.account, spend.model, spent, spend.cap));
+                        settled.add(spend);
+                        continue;
+                    }
+
+                    days[today] = (days[today] ?? 0) + 1;
+                    ledger[spend.account] = { ...ledger[spend.account], [spend.model]: days };
+                    accepted.push(spend);
+                }
+
+                if (accepted.length > 0) {
+                    await storage.putCacheFile(LEDGER_KEY, ledger, USAGE_CACHE_TTL);
+                }
+            },
+            timeout: LOCK_TIMEOUT_MS,
+        });
+    } catch (error) {
+        // Nothing of this batch was recorded, so every spend not already refused is refused with the cause.
+        for (const spend of batch) {
+            if (!settled.has(spend)) {
+                spend.reject(error);
+            }
+        }
+
+        return;
+    }
+
+    for (const spend of accepted) {
+        spend.resolve();
+    }
+}
+
+function enqueueSpend(spend: Pick<PendingSpend, "account" | "model" | "cap">): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (gathering) {
+            gathering.push({ ...spend, resolve, reject });
+            return;
+        }
+
+        const batch: PendingSpend[] = [{ ...spend, resolve, reject }];
+        gathering = batch;
+        commits = commits.then(() => {
+            gathering = null;
+            return commitSpends(batch);
+        });
+    });
+}
+
 /**
  * The budget kept in `~/.genesis-tools/ai-usage/`, shared by every process that polls (the daemon, the
  * TUI, the dashboard) under one file lock. A lock that cannot be taken refuses the probe as well.
@@ -60,27 +148,7 @@ export function persistedProbeBudget(account: string, caps: Readonly<Record<stri
                 throw new Error(`no quota probe budget is set for ${model}`);
             }
 
-            const storage = usagePollStorage();
-            await storage.withFileLock({
-                file: usageCacheFilePath(LEDGER_KEY),
-                fn: async () => {
-                    const now = Date.now();
-                    const ledger = (await storage.getCacheFile<Ledger>(LEDGER_KEY, USAGE_CACHE_TTL)) ?? {};
-                    const days = daysInWindow(ledger[account]?.[model], now);
-                    const spent = probesInWindow(days, now);
-
-                    if (spent >= cap) {
-                        logger.warn({ account, model, spent, cap }, "[usage] quota probe refused: the budget is spent");
-                        throw new ProbeBudgetExceeded(account, model, spent, cap);
-                    }
-
-                    const today = dayOf(now);
-                    days[today] = (days[today] ?? 0) + 1;
-                    ledger[account] = { ...ledger[account], [model]: days };
-                    await storage.putCacheFile(LEDGER_KEY, ledger, USAGE_CACHE_TTL);
-                },
-                timeout: LOCK_TIMEOUT_MS,
-            });
+            await enqueueSpend({ account, model, cap });
         },
     };
 }

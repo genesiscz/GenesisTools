@@ -1,10 +1,10 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { __resetUsagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
+import { __resetUsagePollStorage, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -444,6 +444,27 @@ describe("the probe budget", () => {
         await work.spend(QUOTA_PROBE_FALLBACK_MODEL);
         await persistedProbeBudget("personal", caps).spend(QUOTA_PROBE_MODEL);
         expect(await work.spend(QUOTA_PROBE_MODEL).catch((err: unknown) => err)).toBeInstanceOf(ProbeBudgetExceeded);
+    });
+
+    it("commits spends that arrive together under one lock, and still refuses the one past the cap", async () => {
+        const caps = { [QUOTA_PROBE_MODEL]: 1 };
+        const lock = spyOn(usagePollStorage(), "withFileLock");
+
+        try {
+            const accounts = Array.from({ length: 11 }, (_, i) => `side-${i}`);
+            const results = await Promise.allSettled([
+                ...accounts.map((account) => persistedProbeBudget(account, caps).spend(QUOTA_PROBE_MODEL)),
+                persistedProbeBudget("side-0", caps).spend(QUOTA_PROBE_MODEL),
+            ]);
+            const refused = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+
+            expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(11);
+            expect(refused).toHaveLength(1);
+            expect(refused[0]).toBeInstanceOf(ProbeBudgetExceeded);
+            expect(lock.mock.calls.length).toBeLessThanOrEqual(2);
+        } finally {
+            lock.mockRestore();
+        }
     });
 });
 
