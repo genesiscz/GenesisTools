@@ -16,7 +16,10 @@ tools ts profile ai --threads -- usage sessions --json --fresh
 tools ts profile ai --focus listAgentSessionRows -- usage sessions --json --fresh
 ```
 
-- `<entry>` is a `.ts` file or a tool name (`src/<name>/index.ts`). Arguments for the entry go after `--`.
+- `<entry>` is any `.ts` or `.js` file of any project, run in the current folder, or a GenesisTools tool name.
+  `ai` above is not a keyword: it is the tool `tools ai` (`src/ai/index.ts`), so the second line profiles
+  `tools ai usage sessions --json --fresh --no-cache-write`. Flags before `--` go to the profiler; everything
+  after `--` goes to the entry.
 - `--runs N` profiles N fresh processes and adds them up (per-run averages in the report). Use 3 or more.
 - `--interval <µs>` sampling interval, default 250. Overhead: +3.0% at 1000 µs, +4.4% at 250 µs, +9.9% at 100 µs.
 - `--top`, `--depth`, `--min-pct` shape the tables; `--focus <name>` shows the subtree under functions whose name
