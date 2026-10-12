@@ -283,6 +283,14 @@ How it behaves, measured 2026-10-12 (git 2.55, medians of 9 interleaved runs, lo
   while nothing changes. A daemon exits within a second when its worktree folder is moved or deleted, so the
   throwaway repositories that tests create do not leave daemons behind. `git worktree remove` works while a daemon
   runs.
+- One agent-hook Bash call (the before and after hook processes with their git children): 205 → 113 ms of CPU for an
+  editing command, 190 → 90 ms for a read-only one, the same files rendered. The five daemons used 100 ms of CPU
+  together in 10 minutes.
+- ⚠️ While a daemon runs, the repository's `.git` holds the socket `fsmonitor--daemon.ipc`. Node's and Bun's
+  `fs.cpSync` refuse to copy a socket, so a recursive copy of that repository folder throws "Cannot copy a socket
+  file"; macOS `cp -R` skips it with a warning and exits 0. GenesisTools copies repositories through `copyRepoTree`
+  (`src/utils/git/test-repo.ts`), which skips the socket. `fsmonitor.socketDir` does not move it: git uses that
+  setting only when `.git` is on a network drive.
 - A daemon's working folder is the home folder. The tool finds its worktree from its open folder handles (it opens
   the worktree folder first, then each folder above it); a main checkout's socket path is the fallback. A linked
   worktree binds its socket by the bare name `fsmonitor--daemon.ipc`, which names nothing.
