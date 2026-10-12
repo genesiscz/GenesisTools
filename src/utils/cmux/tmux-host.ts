@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -270,7 +271,7 @@ export async function findTmuxHosts(sessionId: string, deps: TmuxHostDeps = {}):
 export function tmuxAttachCommand(host: TmuxHost): string {
     return host.socket
         ? `tmux ${host.socket.flag} ${shellWord(host.socket.value)} attach -t ${shellWord(host.session)}`
-        : `tools tmux session attach ${shellWord(host.session)}`;
+        : `${toolCommand("tmux session attach")} ${shellWord(host.session)}`;
 }
 
 /** A cmux terminal tab, from `cmux --id-format both tree --all --json`, keyed by what joins it to tmux: its tty. */
