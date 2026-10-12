@@ -626,9 +626,9 @@ private struct DaemonTaskEditor: View {
 
     private var priorityDetail: String {
         switch task.priority {
-        case "high": return "Starts first and is never throttled, though the daemon itself runs in the background."
+        case "high": return "Starts first and is never throttled, even under a daemon installed at background priority."
         case "low": return "Starts last and runs at background priority: slower disk and CPU, no effect on your work."
-        default: return "Runs like the daemon: background priority, in the order the tasks became due."
+        default: return "Runs at the daemon's priority, in the order the tasks became due."
         }
     }
 

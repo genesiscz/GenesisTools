@@ -97,11 +97,11 @@ const RAISE_FROM_BACKGROUND =
     'setpriority(4, 0, 0) or warn "setpriority: $!\\n"; exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\\n"';
 
 /**
- * The argv a task runs with, by priority. The launchd job is `ProcessType=Background`, so every child inherits
- * background QoS (throttled CPU and disk):
- * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS becomes.
- * - `normal`: the daemon's QoS, as before priorities existed.
- * - `high`: the child clears its inherited background state before the command starts, so it is not throttled.
+ * The argv a task runs with, by priority. The launchd job is `ProcessType=Standard` (launchd.ts); a plist installed
+ * before that is `Background`, and then every child inherits background QoS (throttled CPU and disk):
+ * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS is.
+ * - `normal`: the daemon's QoS.
+ * - `high`: the child clears any inherited background state before the command starts, so it is never throttled.
  *   Without /usr/bin/perl it runs as `normal`.
  */
 export function taskArgv(command: string, priority: TaskPriority, perlAvailable = existsSync(PERL)): string[] {

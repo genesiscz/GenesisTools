@@ -12,6 +12,9 @@ export const DAEMON_LOG_DIR = join(env.tools.getHome(), ".genesis-tools", "daemo
 export const DAEMON_STDOUT_LOG = join(DAEMON_LOG_DIR, "daemon-stdout.log");
 export const DAEMON_STDERR_LOG = join(DAEMON_LOG_DIR, "daemon-stderr.log");
 
+/** The launchd job. `ProcessType` is `Standard`: the daemon and a normal-priority task run unthrottled, and a heavy
+ *  task asks for background QoS itself with `priority: "low"` (runner `taskArgv`). As `Background`, every task was
+ *  throttled: a 0.2 s dry run took 125.6 s once at load average 35 (2026-10-12). */
 export function generatePlist(): string {
     const home = homedir();
     const daemonScript = resolve(import.meta.dir, "../daemon.ts");
@@ -33,7 +36,7 @@ ${launchdProgramArgumentsXml([bunPath, "run", daemonScript])}
   <dict><key>HOME</key><string>${home}</string><key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${dirname(bunPath)}</string></dict>
   <key>WorkingDirectory</key><string>${home}</string>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>ProcessType</key><string>Background</string>
+  <key>ProcessType</key><string>Standard</string>
 </dict>
 </plist>`;
 }

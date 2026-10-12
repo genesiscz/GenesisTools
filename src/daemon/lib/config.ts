@@ -210,7 +210,8 @@ function applyPatch(task: DaemonTask, patch: TaskPatch): void {
     }
 
     if (patch.priority !== undefined) {
-        if (patch.priority === null || patch.priority === "normal") {
+        // An explicit "normal" is stored, so a tool that registers the task again with a low default keeps it.
+        if (patch.priority === null) {
             delete task.priority;
         } else {
             task.priority = patch.priority;

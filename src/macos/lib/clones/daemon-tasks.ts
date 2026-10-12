@@ -98,6 +98,8 @@ export async function ensureClonesDaemonTasks(opts: { overwrite: boolean }): Pro
             timeoutMs: 30 * 60_000,
             retries: 1,
             retention: { maxAgeDays: 14, minRuns: 14 },
+            // Heavy disk work: background QoS, so it never competes with the user (the daemon runs at Standard).
+            priority: "low",
             description: "Clone-aware dry-run scan of watched dirs; notify reclaimable",
         }));
     const prune =
@@ -111,6 +113,7 @@ export async function ensureClonesDaemonTasks(opts: { overwrite: boolean }): Pro
             timeoutMs: 30 * 60_000,
             retries: 1,
             retention: { maxAgeDays: 14, minRuns: 14 },
+            priority: "low",
             description: "Drop file-meta cache rows that are stale or whose paths are gone; VACUUM when it pays",
         }));
     log.info({ scan, prune, overwrite: opts.overwrite }, "clones daemon tasks ensured");

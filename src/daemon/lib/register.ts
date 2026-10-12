@@ -1,6 +1,6 @@
 import { ensureStorage, getTask, removeTask, upsertTask } from "./config";
 import { parseInterval } from "./interval";
-import type { DaemonTask, RunLogRetention } from "./types";
+import type { DaemonTask, RunLogRetention, TaskPriority } from "./types";
 
 export const DEFAULT_RETENTION: RunLogRetention = { maxAgeDays: 14, minRuns: 50 };
 
@@ -17,6 +17,8 @@ export interface RegisterTaskOptions {
     notify?: boolean | "failure";
     /** Optional run-log retention; daemon prunes post-run. */
     retention?: RunLogRetention;
+    /** The task's default priority. A priority already stored (set by the user) wins on re-registration. */
+    priority?: TaskPriority;
 }
 
 function validateTaskName(name: string): void {
@@ -52,7 +54,11 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         ...(opts.notify === false || opts.notify === "failure" ? { notify: opts.notify } : {}),
         retention: opts.retention ?? DEFAULT_RETENTION,
         // Set by the user (tools daemon config set, the Daemon pane); a tool re-registering its task keeps them.
-        ...(existing?.priority ? { priority: existing.priority } : {}),
+        ...(existing?.priority
+            ? { priority: existing.priority }
+            : opts.priority && opts.priority !== "normal"
+              ? { priority: opts.priority }
+              : {}),
         ...(existing?.missedRun ? { missedRun: existing.missedRun } : {}),
     };
 

@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import { existsSync } from "node:fs";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
-const registerSpy = mock(async () => true);
+const registerSpy = mock(async (_opts: { name: string; priority?: string }) => true);
 mock.module("@app/daemon/lib/register", () => ({
     registerTask: registerSpy,
     unregisterTask: mock(async () => true),
@@ -68,5 +68,15 @@ describe("clones daemon tasks", () => {
         }));
         expect(await ensureClonesDaemonTasks({ overwrite: true })).toEqual({ scan: true, prune: true });
         expect(registerSpy.mock.calls.length).toBe(2);
+    });
+
+    it("registers the scan and the cache prune at low priority", async () => {
+        registerSpy.mockClear();
+        getTaskSpy.mockImplementation(async () => undefined);
+        await ensureClonesDaemonTasks({ overwrite: true });
+        expect(registerSpy.mock.calls.map(([opts]) => [opts.name, opts.priority])).toEqual([
+            ["macos-clones-scan", "low"],
+            ["macos-clones-cache-prune", "low"],
+        ]);
     });
 });

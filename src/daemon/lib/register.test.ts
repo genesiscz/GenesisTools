@@ -46,7 +46,7 @@ describe("updateTask", () => {
 
         await updateTask("nightly", { priority: "normal", missedRun: { mode: "asap" }, timeoutMs: 60_000 });
         const cleared = await getTask("nightly");
-        expect(cleared?.priority).toBeUndefined();
+        expect(cleared?.priority).toBe("normal");
         expect(cleared?.missedRun).toBeUndefined();
         expect(cleared?.timeoutMs).toBe(60_000);
     });
@@ -63,6 +63,40 @@ describe("updateTask", () => {
         await expect(updateTask("hourly", { missedRun: { mode: "retry-at" } })).rejects.toThrow(/at least one time/);
         await expect(updateTask("missing", { priority: "low" })).rejects.toThrow(/not found/);
         expect((await getTask("hourly"))?.priority).toBeUndefined();
+    });
+});
+
+describe("registerTask default priority", () => {
+    test("a fresh registration gets the tool's default; a priority the user set, even normal, wins", async () => {
+        const { registerTask } = await import("./register");
+        const { getTask, updateTask } = await import("./config");
+        await registerTask({
+            name: "heavy",
+            command: "true",
+            every: "every day at 04:00",
+            priority: "low",
+            overwrite: true,
+        });
+        expect((await getTask("heavy"))?.priority).toBe("low");
+
+        await updateTask("heavy", { priority: "normal" });
+        await registerTask({
+            name: "heavy",
+            command: "true",
+            every: "every day at 04:00",
+            priority: "low",
+            overwrite: true,
+        });
+        expect((await getTask("heavy"))?.priority).toBe("normal");
+
+        await registerTask({
+            name: "plain",
+            command: "true",
+            every: "every 1 hour",
+            priority: "normal",
+            overwrite: true,
+        });
+        expect((await getTask("plain"))?.priority).toBeUndefined();
     });
 });
 

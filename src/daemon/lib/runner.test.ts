@@ -109,7 +109,7 @@ describe("taskArgv", () => {
     it.skipIf(process.platform !== "darwin")(
         "a high task started from a background process is not throttled, a low one is",
         async () => {
-            // The daemon is a launchd Background job; `taskpolicy -b` puts this parent in the same state.
+            // A daemon from a Background plist (before Standard); `taskpolicy -b` puts this parent in the same state.
             const priorityOf = async (priority: "high" | "low"): Promise<number> => {
                 const proc = Bun.spawn(["/usr/sbin/taskpolicy", "-b", ...taskArgv("ps -o pri= -p $$", priority)], {
                     stdout: "pipe",
