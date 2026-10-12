@@ -81,7 +81,7 @@ function isDir(path: string): boolean {
  * reads every session folder of every provider (10 to 16 ms of CPU measured), and the stuck check asks for every
  * watched session at once. The memo lives for one call, so nothing is served from an earlier read.
  */
-interface FolderReads {
+export interface FolderReads {
     listDir(path: string): string[];
     isDir(path: string): boolean;
     mtimeOf(path: string): number;
@@ -90,7 +90,7 @@ interface FolderReads {
     readText(path: string): string;
 }
 
-const directReads: FolderReads = {
+export const directReads: FolderReads = {
     listDir,
     isDir,
     mtimeOf,
@@ -114,13 +114,13 @@ function memoized<T>(read: (path: string) => T): (path: string) => T {
     };
 }
 
-function memoReads(): FolderReads {
+function memoReads(base: FolderReads): FolderReads {
     return {
-        listDir: memoized(listDir),
-        isDir: memoized(isDir),
-        mtimeOf: memoized(mtimeOf),
-        exists: memoized(existsSync),
-        readText: memoized(directReads.readText),
+        listDir: memoized(base.listDir),
+        isDir: memoized(base.isDir),
+        mtimeOf: memoized(base.mtimeOf),
+        exists: memoized(base.exists),
+        readText: memoized(base.readText),
     };
 }
 
@@ -534,7 +534,22 @@ export async function resolveTranscripts(
     roots: TranscriptRoots = {},
     provider?: TranscriptProvider
 ): Promise<Map<string, ResolvedTranscript | Error>> {
-    const fs = memoReads();
+    return resolveTranscriptsWith({ queries, roots, provider, reads: directReads });
+}
+
+/** `resolveTranscripts` over the given folder reads, each read memoized for this one call (the tests count them). */
+export function resolveTranscriptsWith({
+    queries,
+    roots = {},
+    provider,
+    reads,
+}: {
+    queries: string[];
+    roots?: TranscriptRoots;
+    provider?: TranscriptProvider;
+    reads: FolderReads;
+}): Map<string, ResolvedTranscript | Error> {
+    const fs = memoReads(reads);
     const answers = new Map<string, ResolvedTranscript | Error>();
 
     for (const query of queries) {

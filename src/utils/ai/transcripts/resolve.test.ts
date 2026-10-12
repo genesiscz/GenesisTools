@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { rescanWorkerTurns, resolveTranscript, resolveTranscripts } from "./resolve";
+import {
+    directReads,
+    type FolderReads,
+    rescanWorkerTurns,
+    resolveTranscript,
+    resolveTranscripts,
+    resolveTranscriptsWith,
+} from "./resolve";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-transcript-"));
@@ -412,7 +419,39 @@ describe("resolveTranscripts", () => {
         expect(batch.get(tree.claudeId)).toBeInstanceOf(Error);
     });
 
-    test("an empty list reads nothing and answers nothing", async () => {
-        expect((await resolveTranscripts([], mixedTree().roots)).size).toBe(0);
+    function countingReads(): { reads: FolderReads; listed: Map<string, number> } {
+        const listed = new Map<string, number>();
+        return {
+            listed,
+            reads: {
+                ...directReads,
+                listDir: (path) => {
+                    listed.set(path, (listed.get(path) ?? 0) + 1);
+                    return directReads.listDir(path);
+                },
+            },
+        };
+    }
+
+    test("a batch lists each session folder once, and the next call lists it again", () => {
+        const tree = mixedTree();
+        const queries = mixedQueries(tree).map(([query]) => query);
+        const { reads, listed } = countingReads();
+
+        resolveTranscriptsWith({ queries, roots: tree.roots, reads });
+        const once = [...listed.values()];
+        resolveTranscriptsWith({ queries, roots: tree.roots, reads });
+
+        expect(queries.length).toBeGreaterThan(1);
+        expect(once.length).toBeGreaterThan(0);
+        expect(once.every((count) => count === 1)).toBe(true);
+        expect([...listed.values()].every((count) => count === 2)).toBe(true);
+    });
+
+    test("an empty list reads nothing and answers nothing", () => {
+        const { reads, listed } = countingReads();
+
+        expect(resolveTranscriptsWith({ queries: [], roots: mixedTree().roots, reads }).size).toBe(0);
+        expect(listed.size).toBe(0);
     });
 });
