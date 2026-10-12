@@ -863,7 +863,7 @@ export function liveActivityOf(snapshot: TurnSnapshot, stallMs = LIVE_STALL_MS):
             phase: "waiting",
             since: waitingTool?.startedAt ?? snapshot.lastEventAt,
             tool: waitingTool,
-            question: snapshot.question ?? plan,
+            question: plan ?? snapshot.question,
         };
     }
 

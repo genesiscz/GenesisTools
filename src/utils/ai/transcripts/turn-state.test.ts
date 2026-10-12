@@ -443,10 +443,12 @@ describe("open tool calls and the live activity", () => {
         });
 
         const plan = claudeAssistant(5, [{ type: "tool_use", id: "p1", name: "ExitPlanMode", input: {} }], "tool_use");
-        expect(liveActivityOf(claudeTurnState(input([claudeUser(0), plan], 30, INFINITE)))).toMatchObject({
+        const planSnapshot = claudeTurnState(input([claudeUser(0), plan], 30, INFINITE));
+        expect(liveActivityOf(planSnapshot)).toMatchObject({
             phase: "waiting",
             question: "Approve the plan?",
         });
+        expect(liveActivityOf({ ...planSnapshot, question: "Ship it?" }).question).toBe("Approve the plan?");
     });
 
     it("marks a running turn stalled only past the live limit", () => {
