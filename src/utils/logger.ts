@@ -138,27 +138,37 @@ let fileLogWarningShown = false;
  * A static `pino.destination` pins the file chosen at process start, so
  * long-running processes (TUIs, daemons) kept writing "today's" events into
  * yesterday's log — which broke time-window forensics across day files.
+ *
+ * The directory is resolved on every write too, so the sink follows
+ * GENESIS_TOOLS_HOME. The root logger is built on first use, and a module that
+ * calls `logger.scoped()` at import time (`process/ps.ts`, loaded by the test
+ * worker-log preload) builds it before the test sandbox sets that variable.
+ * A fixed directory then sent every test record into the real day log.
  */
-function createDailyFileStream(logDir: string): Writable {
-    fs.mkdirSync(logDir, { recursive: true });
-
+function createDailyFileStream(resolveLogDir: () => string): Writable {
     let fd: number | null = null;
+    let openDir = "";
     let nextRolloverAt = 0;
 
     const ensureFd = (): number => {
         const now = Date.now();
+        const logDir = resolveLogDir();
 
-        if (fd === null || now >= nextRolloverAt) {
+        if (fd === null || now >= nextRolloverAt || logDir !== openDir) {
             if (fd !== null) {
                 try {
                     fs.closeSync(fd);
                 } catch (err) {
                     process.stderr.write(`[logger] Failed to close rolled-over log file: ${err}\n`);
                 }
+
+                fd = null;
             }
 
             const day = new Date(now);
+            fs.mkdirSync(logDir, { recursive: true });
             fd = fs.openSync(path.join(logDir, `${formatLocalDate(day)}.log`), "a");
+            openDir = logDir;
             const midnight = new Date(day);
             midnight.setHours(24, 0, 0, 0);
             nextRolloverAt = midnight.getTime();
@@ -218,12 +228,13 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     // File stream (if enabled) — ALWAYS debug+, independent of the console
     // gate, so the file never starves no matter how high the console threshold.
     if (logToFile) {
-        const logDir = path.join(env.tools.getHome(), ".genesis-tools", "logs");
+        const resolveLogDir = () => path.join(env.tools.getHome(), ".genesis-tools", "logs");
+        const logDir = resolveLogDir();
 
         try {
             streams.push({
                 level: "debug" as pino.Level,
-                stream: createDailyFileStream(logDir),
+                stream: createDailyFileStream(resolveLogDir),
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

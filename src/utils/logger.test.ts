@@ -1,4 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 
 describe("logger facade", () => {
     it("is a stable object whose identity never changes and is lazy", async () => {
@@ -96,6 +100,35 @@ describe("configureLogger in-place", () => {
         const mod = await import("./logger");
         const d = mod.createLogger({ logToFile: false, minimalLevels: true });
         expect(typeof d.info).toBe("function");
+    });
+});
+
+describe("daily file sink", () => {
+    it("follows GENESIS_TOOLS_HOME, so a logger built before the test sandbox never writes the real day log", async () => {
+        const mod = await import("./logger");
+        const earlyHome = mkdtempSync(join(tmpdir(), "logger-early-home-"));
+        const sandboxHome = mkdtempSync(join(tmpdir(), "logger-sandbox-home-"));
+        const readLogs = (home: string): string => {
+            const dir = join(home, ".genesis-tools", "logs");
+            if (!existsSync(dir)) {
+                return "";
+            }
+
+            return readdirSync(dir)
+                .map((file) => readFileSync(join(dir, file), "utf8"))
+                .join("");
+        };
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: earlyHome }, async () => {
+            const early = mod.createLogger({ logToFile: true, minimalLevels: true });
+
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandboxHome }, async () => {
+                early.debug("FILE_SINK_FOLLOWS_HOME");
+            });
+        });
+
+        expect(readLogs(sandboxHome)).toContain("FILE_SINK_FOLLOWS_HOME");
+        expect(readLogs(earlyHome)).not.toContain("FILE_SINK_FOLLOWS_HOME");
     });
 });
 
