@@ -1,10 +1,13 @@
 import { Database } from "bun:sqlite";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { type EdgeLines, readFirstLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { profiler } from "@genesiscz/utils/profile";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, type JsonRecord, type JsonValue, scanJsonlRecords, text } from "../source-scan";
 import type { AgentSession, NativeSessionSource, NativeSourceIssue } from "../types";
@@ -45,31 +48,38 @@ function columns(database: Database, table: string): string[] {
     );
 }
 
-/**
- * Found headers by rollout path, reused only while the file's inode, size, mtime and ctime are unchanged. Any write
- * moves the ctime, so an append re-reads the header too: a rewrite beyond the header can look like an append. Every
- * listing read ~700 headers through a stream, about a sixth of a warm `ai usage sessions` (2026-10-08), and then
- * opened every file to compare its first 256 bytes, which only ran when all four fields already matched. One
- * `stat` is the check now. A missing or broken header is never cached: it is read again, and its issue reported
- * again, on every discovery.
- */
-const HEADER_CACHE_LIMIT = 10_000;
-const headerCache = new Map<
-    string,
-    { ino: number; size: number; mtimeMs: number; ctimeMs: number; header: CodexDiscoveryHeader }
->();
+function isDiscoveryHeader(value: unknown): value is CodexDiscoveryHeader {
+    return (
+        isObject(value) &&
+        typeof value.nativeId === "string" &&
+        typeof value.historyMode === "string" &&
+        typeof value.isSubagent === "boolean" &&
+        (value.parentNativeId === undefined || typeof value.parentNativeId === "string") &&
+        (value.cwd === undefined || typeof value.cwd === "string") &&
+        (value.gitBranch === undefined || typeof value.gitBranch === "string")
+    );
+}
 
-/** The file's inode, size and timestamps, or null when it cannot be read (the full read then reports why). */
-async function headerIdentity(
-    path: string
-): Promise<{ ino: number; size: number; mtimeMs: number; ctimeMs: number } | null> {
-    try {
-        const status = await stat(path);
-        return { ino: status.ino, size: status.size, mtimeMs: status.mtimeMs, ctimeMs: status.ctimeMs };
-    } catch (err) {
-        logger.debug({ err, path }, "[codex-discovery] header identity unreadable; reading the header in full");
-        return null;
-    }
+/**
+ * Found headers by rollout path, reused only while the file's identity (inode, size, mtime, ctime) is unchanged. Any
+ * write moves the ctime, so an append re-reads the header too: a rewrite beyond the header can look like an append.
+ * A missing or broken header is never cached: it is read again, and its issue reported again, on every discovery.
+ * Kept on disk too: a new process (the usage daemon's tick, a CLI call) opened all 308 rollouts to read headers no
+ * one had changed, 77 ms of a 321 ms row build (`tools ts profile`, 2026-10-12). Bump the version when
+ * `CodexDiscoveryHeader` or `parseCodexHeaderRow` changes what a header means.
+ */
+const headerCache = new FileIdentityCache<CodexDiscoveryHeader>({
+    limit: 10_000,
+    persist: {
+        path: () => toolDataDir("agent-sessions", "cache", "codex-headers.json"),
+        version: 1,
+        isValue: isDiscoveryHeader,
+    },
+});
+
+/** Forgets the header cache, as a new process with no saved file would. For tests. */
+export function __forgetCodexHeaderCacheForTests(): void {
+    headerCache.forget();
 }
 
 async function readHeader(options: {
@@ -78,29 +88,15 @@ async function readHeader(options: {
     issues: NativeSourceIssue[];
     incompleteRoots: Set<string>;
 }): Promise<CodexDiscoveryHeader | undefined> {
-    const identity = await headerIdentity(options.path);
-    const cached = headerCache.get(options.path);
-    if (
-        identity &&
-        cached &&
-        cached.ino === identity.ino &&
-        identity.size === cached.size &&
-        identity.mtimeMs === cached.mtimeMs &&
-        identity.ctimeMs === cached.ctimeMs
-    ) {
-        return cached.header;
+    const identity = await fileIdentity(options.path);
+    const cached = headerCache.get(options.path, identity);
+    if (cached) {
+        return cached;
     }
 
     const header = await readHeaderUncached(options);
     if (header && identity) {
-        headerCache.delete(options.path);
-        headerCache.set(options.path, { ...identity, header });
-        if (headerCache.size > HEADER_CACHE_LIMIT) {
-            const oldest = headerCache.keys().next().value;
-            if (oldest !== undefined) {
-                headerCache.delete(oldest);
-            }
-        }
+        headerCache.set(options.path, identity, header);
     }
 
     return header;
@@ -376,6 +372,7 @@ export async function discoverCodexHistorySources(
     completeRoots: string[];
 }> {
     const filtered = options.excludeAgents === true || options.agentsOnly === true || options.project !== undefined;
+    await headerCache.load();
     const walked = await walkSourceRoots({
         roots,
         filtered,
@@ -492,6 +489,7 @@ export async function discoverCodexHistorySources(
         sources.push(source);
     }
 
+    await headerCache.save();
     return {
         sources,
         issues,
