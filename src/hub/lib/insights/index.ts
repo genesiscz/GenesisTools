@@ -292,6 +292,28 @@ async function liveAgentSessions(): Promise<Set<string>> {
     return new Set(report.groups.flatMap((group) => (group.session ? [group.session.sessionId] : [])));
 }
 
+/** Session and error pairs this process has already warned about. */
+const unreadableWarned = new Set<string>();
+
+/**
+ * The hub asks for the same sessions' verdicts on every refresh, so a transcript that stays unreadable warned
+ * on each one: 155 lines for two Grok sessions from 2026-10-06 to 2026-10-12 (one never wrote `updates.jsonl`,
+ * the other was deleted while the history index still listed it). The first failure per session and error
+ * warns; a repeat in the same process logs at debug. The verdict carries the error either way.
+ */
+function reportUnreadable(sessionId: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    const key = `${sessionId}\n${message}`;
+
+    if (unreadableWarned.has(key)) {
+        log.debug({ sessionId, error: message }, "stuck: transcript still unreadable (warned once already)");
+        return;
+    }
+
+    unreadableWarned.add(key);
+    log.warn({ err, sessionId }, "stuck: transcript unreadable");
+}
+
 /** Verdicts for the given sessions, or for every recently active one. A session that fails to read carries `error`. */
 export async function stuckSessions(options: StuckOptions = {}): Promise<SessionStuck[]> {
     const now = options.now ?? Date.now();
@@ -349,7 +371,7 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
                     verdict: await stuckOf(resolved, thresholds, now),
                 };
             } catch (err) {
-                log.warn({ err, sessionId: target.id }, "stuck: transcript unreadable");
+                reportUnreadable(target.id, err);
                 return {
                     sessionId: target.id,
                     // A bare id whose transcript was never found has no provider to name.

@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { getLogger } from "@genesiscz/utils/logger";
 import { code, composeHandoff, gist, HandoffRangeError, selectRange } from "./handoff";
 import {
     cachedInsightsFit,
@@ -76,6 +77,38 @@ describe("stuckVerdict", () => {
 
         expect(result?.provider).toBe("codex");
         expect(result?.error).toBeDefined();
+    });
+
+    test("a transcript that stays unreadable warns once per process, and every verdict still carries the error", async () => {
+        const rows = async () => [
+            {
+                provider: "grok" as const,
+                sessionId: "sess-asked-every-refresh",
+                title: null,
+                cwd: "/work/shop",
+                cwdShort: "shop",
+                project: "shop",
+                mtime: T0,
+                model: null,
+                account: null,
+                // The hub re-asks on every refresh; a folder where the transcript should be throws EISDIR each time.
+                filePath: mkdtempSync(join(tmpdir(), "gt-stuck-")),
+            },
+        ];
+        const warn = spyOn(getLogger(), "warn").mockImplementation(() => undefined);
+
+        try {
+            const options = { rows, thresholds, now: T0, liveSessions: async () => new Set<string>() };
+            const first = await stuckSessions(options);
+            const again = await stuckSessions(options);
+            const warned = warn.mock.calls.filter((call) => call[1] === "stuck: transcript unreadable");
+
+            expect(warned).toHaveLength(1);
+            expect(first[0]?.error).toContain("EISDIR");
+            expect(again[0]?.error).toBe(first[0]?.error);
+        } finally {
+            warn.mockRestore();
+        }
     });
 
     test("a discovered session says whether a live agent process holds it, or null when ps fails", async () => {
