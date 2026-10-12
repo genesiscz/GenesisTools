@@ -95,8 +95,12 @@ readLastLines(path, { method: "ffi" });                  // libSystem open/lseek
 - The general lesson: more threads can lower the wall time and raise the CPU. When CPU is the metric, measure the
   single-threaded form too. The same held for parsing in Workers (`json.md`) and for `Promise.all` over async reads
   (372 ms of CPU against 220 ms for synchronous reads of the same 2,441 tails, though 180 against 206 ms of wall).
-- Not enabled (a decision for Martin, measured in throwaway clones): `core.untrackedCache=true` brings a status to 24
-  to 26 ms of CPU; `core.fsmonitor=true` with it to 8.6 to 9.3 ms, plus a monitor daemon per worktree.
+- **git's file system monitor beats both.** `core.fsmonitor=true` with `core.untrackedCache=true`, five real
+  repositories (3,065 to 12,213 tracked files), medians of 9: 22 to 279 ms of CPU per status with the default threads,
+  6 to 15 ms with the monitor, same output. Each worktree gets one daemon (about 8 MB, close to no CPU while idle: the
+  busiest, in an actively edited checkout, used 40 ms in 3 minutes). Managed by `tools git fsmonitor`
+  (`status`, `record`, `enable`, `disable`; `src/git/lib/fsmonitor.ts`), which records every watched worktree so
+  turning it off cleans all of them.
 
 ## 6. Rejected after measuring
 
