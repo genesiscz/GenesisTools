@@ -64,6 +64,27 @@ Do not bind `libSystem` again: `src/utils/fs/native/libsystem.ts` exports one bi
 `lseek`, `getattrlistbulk`, `__error`) plus `errnoNow`, `errnoError`, `cPath` and the flag constants. Add a symbol
 there. Every native fs utility needs a JS fallback for when `calls()` is null.
 
+## 3b. Process data from the kernel instead of `ps`, `lsof` and `top` (2026-10-13)
+
+Measured CPU per call, spawn against kernel read (`scripts/benchmarks/process/process-primitives.ts`, medians of
+5 to 7 fresh processes): cwd of 30 processes 226 → 1 ms (`proc_pidinfo` vnode path); the dev-dashboard pulse 1,718 →
+16 ms (`host_statistics`, `host_statistics64`, `sysctlbyname`, `statfs`); `tools claude who` 573 → 39 ms and the
+`say` caller chain 154 → 9 ms (`proc_listallpids`, `proc_pidinfo`, `KERN_PROCARGS2`;
+`src/utils/process/libproc-table.ts`); listening TCP ports 271 → 9 ms (`proc_pidfdinfo` socket info).
+
+- **libproc reads only your own processes** (1,142 of 1,487 here). `ps` sees the rest because it is setuid root;
+  `lsof` is not, so it answers for exactly the same pids as libproc and is no fallback for them. Callers that rank the
+  whole machine (top memory, other users) stay on `ps`.
+- **The kernel CPU tick counters can stand still for up to 990 ms.** A CPU % from two reads 250 ms apart was null in
+  18 of 40 tries; 1 s apart with one retry, 0 of 40. CPU % is "average since the last read", not `top`'s sample.
+- **`ps -o command=` with another column after it cuts the command to 16 characters.** That is why
+  `getPortOwner` never recognised the ai-proxy server; read the command line from `KERN_PROCARGS2` or put
+  `command` last.
+- Match `ps` byte for byte where callers parse the text (escaped tabs, newlines and control characters in argv):
+  checked 1,113 of 1,113 own processes.
+- Check the struct layout at start-up against your own row and fall back to the spawn if it looks wrong; a layout
+  change in a future macOS then costs speed, not correctness.
+
 ## 4. `defineNativeLibrary`: our own C, compiled once
 
 ```ts
