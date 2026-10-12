@@ -49,6 +49,9 @@ public final class FileTreeModel: ObservableObject {
     private var stale = Set<String>()
     /// Bumped by `reload` and `setRoot`: a listing that started before belongs to the old tree.
     private var generation = 0
+    /// Reduce Motion as the last clicked row saw it (system, app and widget settings), so a listing that lands later
+    /// opens its folder the same way the click did.
+    var reduceMotion = false
 
     /// Reads nothing yet: the host names the real root with `setRoot`.
     public init(root: URL) {
@@ -141,7 +144,9 @@ public final class FileTreeModel: ObservableObject {
             self.children[path] = listed
             // A folder the user opened grows by its rows like the click did; the root's first listing just appears.
             let opened = self.expanded.contains(path)
-            GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion || !opened) { self.rebuild() }
+            GenMotion.perform(expanding: true, reduceMotion: GenMotion.systemReduceMotion || reduceMotion || !opened) {
+                self.rebuild()
+            }
         }
     }
 
@@ -305,6 +310,7 @@ struct FileTreeRowView: View, Equatable {
     var body: some View {
         Button {
             if row.isFolder {
+                model.reduceMotion = reduceMotion
                 GenMotion.perform(expanding: !row.expanded, reduceMotion: reduceMotion) { model.toggle(row.id) }
             } else {
                 actions.open(row.url)
