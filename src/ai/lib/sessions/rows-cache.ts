@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
+import { computeCacheStatus } from "@app/claude/lib/usage/cache-clock";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { type TmuxCmuxLocation, tmuxCmuxLocations } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -171,6 +172,28 @@ async function withTmuxLocations(
 }
 
 /**
+ * Rows with each prompt-cache clock (`cacheStatus`, `cacheTtlSec`) worked out for `now` from `lastCacheAt` and
+ * `cacheLifetimeSec`, which are facts of the transcript. A cached answer may be 90 s old, and its clocks used to
+ * be 90 s old with it: a session shown with 3 minutes of cache left could already be cold. The files behind the
+ * answer are what the cache keeps; the clocks are always now.
+ */
+export function withLiveCacheClocks(rows: AgentSessionRow[], now: number): AgentSessionRow[] {
+    return rows.map((row) => {
+        if (typeof row.lastCacheAt !== "number" || typeof row.cacheLifetimeSec !== "number") {
+            return row;
+        }
+
+        const { status, ttlSec } = computeCacheStatus(row.lastCacheAt, now, row.cacheLifetimeSec * 1000);
+
+        if (status === row.cacheStatus && ttlSec === row.cacheTtlSec) {
+            return row;
+        }
+
+        return { ...row, cacheStatus: status, cacheTtlSec: ttlSec };
+    });
+}
+
+/**
  * `ai usage sessions --json`: the daemon's cached answer when it is usable (and the ask stamped, at most
  * twice a minute, so the daemon keeps it warm), else a fresh list, written back for the next ask. The
  * CLI command and the hub server's door both answer through this, so their output is the same bytes.
@@ -215,10 +238,11 @@ export async function sessionRowsJson(
                 }
             }
 
+            const rows = withLiveCacheClocks(cached.rows, now);
             return {
                 fetchedAt: cached.fetchedAt,
                 cached: true,
-                rows: liveLocations ? await withTmuxLocations(cached.rows, tmuxLocations) : cached.rows,
+                rows: liveLocations ? await withTmuxLocations(rows, tmuxLocations) : rows,
             };
         }
     }

@@ -10,21 +10,24 @@ import { isObject } from "@genesiscz/utils/object";
 import { collapsePath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { CACHE_TTL_MS, type CacheStatus, computeCacheStatus } from "./cache-clock";
 
-export const CACHE_TTL_MS = 60 * 60 * 1000; // Claude Code 1-hour prompt-cache TTL
-export const CODEX_CACHE_TTL_MS = 30 * 60 * 1000; // GPT-5.6+ / Codex subscription documented minimum
-export const GROK_CACHE_TTL_MS = 30 * 60 * 1000; // warning clock; xAI publishes no TTL (eviction anytime)
-export const COOLING_REMAINING_MS = 10 * 60 * 1000;
-export const CRITICAL_REMAINING_MS = 5 * 60 * 1000;
-export const COOLING_THRESHOLD_MS = CACHE_TTL_MS - COOLING_REMAINING_MS; // 50 min idle = 10 min left
-export const CRITICAL_THRESHOLD_MS = CACHE_TTL_MS - CRITICAL_REMAINING_MS; // 55 min idle = 5 min left
+export {
+    CACHE_TTL_MS,
+    type CacheStatus,
+    CODEX_CACHE_TTL_MS,
+    COOLING_REMAINING_MS,
+    COOLING_THRESHOLD_MS,
+    CRITICAL_REMAINING_MS,
+    CRITICAL_THRESHOLD_MS,
+    computeCacheStatus,
+    GROK_CACHE_TTL_MS,
+} from "./cache-clock";
 
 const TAIL_BATCH_SIZE = 20;
 /** First slice. Grows up to TAIL_MAX_BYTES until a user/assistant timestamp is found. */
 const TAIL_BYTES = 64 * 1024;
 const TAIL_MAX_BYTES = 1024 * 1024;
-
-export type CacheStatus = "HOT" | "COOLING" | "CRITICAL" | "COLD";
 
 export interface SessionRow {
     sessionId: string;
@@ -107,30 +110,6 @@ export interface ListSessionRowsOptions {
     maxDiscoveryAgeMs?: number;
     /** Passed to `getSessionListing`: `false` reads the index with no refresh. */
     refresh?: boolean;
-}
-
-export function computeCacheStatus(
-    cacheAt: number,
-    now: number,
-    ttlMs: number = CACHE_TTL_MS
-): { status: CacheStatus; ttlSec: number } {
-    const elapsed = now - cacheAt;
-    const ttlRemaining = Math.max(0, ttlMs - elapsed);
-    const ttlSec = Math.ceil(ttlRemaining / 1000);
-
-    if (elapsed >= ttlMs) {
-        return { status: "COLD", ttlSec: 0 };
-    }
-
-    if (ttlRemaining <= CRITICAL_REMAINING_MS) {
-        return { status: "CRITICAL", ttlSec };
-    }
-
-    if (ttlRemaining <= COOLING_REMAINING_MS) {
-        return { status: "COOLING", ttlSec };
-    }
-
-    return { status: "HOT", ttlSec };
 }
 
 function simplifyModel(model: string): string {

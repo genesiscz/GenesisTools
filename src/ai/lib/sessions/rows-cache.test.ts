@@ -122,6 +122,43 @@ describe("sessionRowsJson", () => {
         expect(updated?.rows).toEqual([row(10)]);
         expect(updated?.lastRequestedAt).toBeGreaterThan(original.lastRequestedAt);
     });
+
+    test("a cached answer carries cache clocks worked out for now, not for when the rows were built", async () => {
+        const path = await scratch();
+        const now = Date.now();
+        const built = now - 80_000;
+        const lastCacheAt = now - 3_600_000 + 30_000;
+        const clocked: AgentSessionRow = {
+            ...row(5),
+            lastCacheAt,
+            cacheLifetimeSec: 3600,
+            cacheStatus: "CRITICAL",
+            cacheTtlSec: 110,
+        };
+        await writeSessionRowsCache(
+            { query: { hours: 24 }, fetchedAt: built, lastRequestedAt: now, rows: [clocked, row(6)] },
+            path
+        );
+        const answer = await sessionRowsJson({ hours: 24 }, { path, liveLocations: false, listRows: async () => [] });
+
+        expect(answer.cached).toBe(true);
+        expect(answer.rows[0]?.cacheStatus).toBe("CRITICAL");
+        expect(answer.rows[0]?.cacheTtlSec).toBeLessThanOrEqual(30);
+        expect(answer.rows[1]).toEqual(row(6));
+
+        await writeSessionRowsCache(
+            {
+                query: { hours: 24 },
+                fetchedAt: built,
+                lastRequestedAt: now,
+                rows: [{ ...clocked, lastCacheAt: built - 3_600_000 + 60_000 }],
+            },
+            path
+        );
+        const cold = await sessionRowsJson({ hours: 24 }, { path, liveLocations: false, listRows: async () => [] });
+
+        expect(cold.rows[0]).toMatchObject({ cacheStatus: "COLD", cacheTtlSec: 0 });
+    });
 });
 
 describe("sessionRowsJson tmux locations", () => {
