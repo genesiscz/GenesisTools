@@ -185,7 +185,11 @@ export async function planPrune(
             continue;
         }
 
-        if (ctx.remote && report.branch && report.upstream === `origin/${report.branch}`) {
+        // A gone upstream has nothing on origin to delete, and `origin/<branch>` no longer resolves to a sha:
+        // the "is gone" warning above is the whole story for the remote side.
+        const upstreamLive = !report.upstreamGone;
+
+        if (ctx.remote && report.branch && upstreamLive && report.upstream === `origin/${report.branch}`) {
             remoteBranch = report.branch;
             const policy = ctx.policyFor(report.branch);
             const lookup = ctx.driver ? await ctx.driver.prForHead(report.branch) : null;
@@ -202,7 +206,7 @@ export async function planPrune(
                 warnings.push(`remote kept: push policy is never for ${report.branch} (${policy.matchedBy})`);
                 remoteBranch = null;
             }
-        } else if (ctx.remote && report.branch) {
+        } else if (ctx.remote && report.branch && upstreamLive) {
             warnings.push(`remote kept: upstream is ${report.upstream ?? "not set"}, not origin/${report.branch}`);
         }
 

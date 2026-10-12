@@ -397,6 +397,25 @@ describe("prune", () => {
         expect(await r.git(["ls-remote", "--heads", "origin", "feat/x"])).toContain("feat/x");
     });
 
+    it("plans a branch whose upstream is gone with no remote step, instead of failing the whole run", async () => {
+        const r = await repoWithFeature();
+        await r.addOrigin(["feat/x"]);
+        await r.squashMerge("feat/x");
+        await r.git(["push", "-q", "origin", "--delete", "feat/x"]);
+        await r.git(["fetch", "-q", "--prune", "origin"]);
+
+        const ctx = await pruneCtxFor(r, {
+            remote: true,
+            driver: { kind: "github", prForHead: async () => ({ pr: null, error: null }) },
+            policyFor: () => ({ push: "allowed", matchedBy: "catchAll" }),
+        });
+        const { plans, refusals } = await planPrune(ctx, ["feat/x"]);
+
+        expect(refusals).toEqual([]);
+        expect(plans[0]).toMatchObject({ branch: "feat/x", remoteBranch: null, remoteSha: null });
+        expect(plans[0].warnings).toEqual(["upstream origin/feat/x is gone"]);
+    });
+
     it("deletes the remote only with --remote, and keeps it for an open PR or a push:never policy", async () => {
         const r = await repo();
         await feature(r, "feat/open", "feat/never", "feat/ok");
