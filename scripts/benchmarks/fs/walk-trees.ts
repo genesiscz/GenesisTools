@@ -21,3 +21,10 @@ export type WalkTreeName = keyof typeof WALK_TREES;
 
 /** The walkers `walk-child.ts` can run; `walk-primitives.ts` runs each of them on every tree. */
 export const WALK_ARMS = ["native", "clang", "tcc", "js", "walkSourceRoots"] as const;
+
+/** The ways of doing each file job that `read-child.ts` can run; `read-primitives.ts` runs all of them. */
+export const READ_ARMS = {
+    head: ["stream", "slice", "promises", "sync", "ffi", "readFile"],
+    tail: ["sliceTwice", "slice", "sync", "ffi"],
+    stat: ["statSync", "lstatSync", "promises", "bunFile", "ffi"],
+} as const;
