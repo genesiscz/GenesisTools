@@ -8,6 +8,7 @@ import {
     renameSync,
     statSync,
     symlinkSync,
+    unlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
@@ -402,6 +403,28 @@ test("Grok discovery treats session_kind subagent as a subagent in the user home
 
     const agents = await discoverGrokHistorySources([root], { agentsOnly: true });
     expect(agents.sources.map((source) => source.metadata?.sessionId)).toEqual([ID_B]);
+});
+
+test("Grok discovery keeps an unchanged summary and reads a rewritten one again", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-discovery-grok-summary-cache-"));
+    const root = join(home, "sessions");
+    const sessionDir = join(root, encodeURIComponent("/projects/shop"), ID_A);
+    const summaryPath = join(sessionDir, "summary.json");
+    const summary = (title: string) =>
+        SafeJSON.stringify({ info: { id: ID_A, cwd: "/projects/shop" }, generated_title: title }, { strict: true });
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "chat_history.jsonl"), line({ type: "user", content: "main" }));
+    writeFileSync(summaryPath, summary("First title"));
+
+    const title = async () => (await discoverGrokHistorySources([root])).sources[0]?.metadata?.title;
+    expect(await title()).toBe("First title");
+    expect(await title()).toBe("First title");
+
+    writeFileSync(summaryPath, summary("Second, longer title"));
+    expect(await title()).toBe("Second, longer title");
+
+    unlinkSync(summaryPath);
+    expect(await title()).toBeUndefined();
 });
 
 test("discovery accepts a pre-session_meta Codex rollout and keeps its root complete", async () => {

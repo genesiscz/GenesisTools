@@ -1,4 +1,5 @@
-import { readFile, realpath } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -32,6 +33,19 @@ function isWorkerRoot(root: string): boolean {
     return root.split(/[\\/]/).some((part) => part.includes("worker"));
 }
 
+const SUMMARY_CACHE_LIMIT = 10_000;
+
+/**
+ * Each session's parsed `summary.json`, read again only when its inode, size, mtime or ctime changed. A resident
+ * process lists Grok every minute, and resolving, reading and parsing every summary (784 here) was most of a warm
+ * discovery: 92 ms of CPU against 21 ms for the walk itself (2026-10-12).
+ */
+const summaryCache = new Map<string, { identity: string; read: GrokSummaryRead }>();
+
+function summaryIdentity(status: Stats): string {
+    return `${status.ino}:${status.size}:${status.mtimeMs}:${status.ctimeMs}`;
+}
+
 async function readSummary(options: {
     directory: string;
     root: string;
@@ -40,10 +54,19 @@ async function readSummary(options: {
     incompleteRoots: Set<string>;
 }): Promise<GrokSummaryRead> {
     const unresolved = join(options.directory, "summary.json");
+    const key = `${options.worker ? "worker" : "home"}:${unresolved}`;
+    let identity: string;
     let path: string;
     try {
+        identity = summaryIdentity(await stat(unresolved));
+        const cached = summaryCache.get(key);
+        if (cached?.identity === identity) {
+            return cached.read;
+        }
+
         path = await realpath(unresolved);
     } catch (error) {
+        summaryCache.delete(key);
         if (error instanceof Error && "code" in error && error.code === "ENOENT") {
             return {};
         }
@@ -75,7 +98,7 @@ async function readSummary(options: {
     const updated = date(summary.updated_at ?? summary.created_at);
     const created = date(summary.created_at);
     const sessionKind = text(summary.session_kind);
-    return {
+    const read: GrokSummaryRead = {
         path,
         metadata: {
             ...(nativeId ? { sessionId: nativeId } : {}),
@@ -90,6 +113,16 @@ async function readSummary(options: {
         },
         fingerprint: raw,
     };
+    summaryCache.delete(key);
+    summaryCache.set(key, { identity, read });
+    if (summaryCache.size > SUMMARY_CACHE_LIMIT) {
+        const oldest = summaryCache.keys().next().value;
+        if (oldest !== undefined) {
+            summaryCache.delete(oldest);
+        }
+    }
+
+    return read;
 }
 
 export async function discoverGrokHistorySources(
