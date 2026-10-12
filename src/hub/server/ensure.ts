@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { askHubServer, type HubServerProbe } from "./client";
@@ -47,6 +48,6 @@ export async function ensureHubServer({
 
     await Bun.write(stampPath, `${now}\n`);
     const pid = start();
-    logger.info({ pid }, "[hub-server] nothing answered on the socket; started tools hub serve");
+    logger.info({ pid }, `[hub-server] nothing answered on the socket; started ${toolCommand("hub serve")}`);
     return "started";
 }
