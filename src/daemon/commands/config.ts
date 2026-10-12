@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -186,7 +187,7 @@ export function registerConfigCommand(program: Command): void {
 
             if (Object.keys(patch).length === 0) {
                 out.log.error(
-                    `Nothing to change. Pass at least one setting, e.g. tools daemon config set ${name} --priority low`
+                    `Nothing to change. Pass at least one setting, e.g. ${toolCommand("daemon config set", name, "--priority", "low")}`
                 );
                 process.exitCode = 1;
                 return;

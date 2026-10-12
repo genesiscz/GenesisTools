@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { getLogsBaseDir, getTask } from "../lib/config";
@@ -15,7 +16,7 @@ export function registerRunCommand(program: Command): void {
             const task = await getTask(name);
 
             if (!task) {
-                out.log.error(`Task "${name}" not found. tools daemon config list shows the tasks.`);
+                out.log.error(`Task "${name}" not found. ${toolCommand("daemon config list")} shows the tasks.`);
                 process.exitCode = 1;
                 return;
             }
@@ -33,7 +34,7 @@ export function registerRunCommand(program: Command): void {
                 out.log[ok ? "success" : "error"](
                     `${name} ${ok ? "finished" : result.exitCode === null ? "timed out" : `exited ${result.exitCode}`} in ${result.duration_ms} ms · run ${result.runId}`
                 );
-                out.log.info(`Output: tools daemon stats --view run --run ${result.runId}`);
+                out.log.info(`Output: ${toolCommand("daemon stats", "--view", "run", "--run", String(result.runId))}`);
             }
 
             process.exitCode = ok ? 0 : 1;

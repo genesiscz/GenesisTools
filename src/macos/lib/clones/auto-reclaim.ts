@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { type ApplyPlanResult, applyReclaimPlan, type PlanRunResult, runReclaimPlan } from "./plan-runner";
@@ -220,7 +221,9 @@ async function runOne(input: {
 /** The run-log lines of the auto reclaims. */
 export function formatAutoReclaimReport(outcomes: AutoReclaimOutcome[]): string[] {
     if (outcomes.length === 0) {
-        return ["auto reclaim: no plan is marked auto (tools macos clones reclaim presets auto <id> --on)"];
+        return [
+            `auto reclaim: no plan is marked auto (${toolCommand("macos clones reclaim presets auto", "<id>", "--on")})`,
+        ];
     }
 
     return [
