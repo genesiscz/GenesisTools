@@ -3,9 +3,10 @@ import { constants } from "node:os";
 import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 
 /**
- * The file calls of macOS `libSystem`, bound once through `bun:ffi` for every native fs utility here, or null off
- * macOS (each caller then uses `node:fs`). Pass typed arrays and Buffers to these calls as themselves, never a
- * `ptr()` kept from earlier: see `defineSystemLibrary` and `src/utils/bun/compiler/README.md`.
+ * The calls of macOS `libSystem`, bound once through `bun:ffi` for every native utility (the fs readers here, host
+ * statistics in `src/utils/macos/host-stats.ts`), or null off macOS (each caller then has its own fallback). Pass
+ * typed arrays and Buffers to these calls as themselves, never a `ptr()` kept from earlier: see
+ * `defineSystemLibrary` and `src/utils/bun/compiler/README.md`.
  */
 export const libSystem = defineSystemLibrary({
     path: "/usr/lib/libSystem.B.dylib",
@@ -20,6 +21,17 @@ export const libSystem = defineSystemLibrary({
             returns: FFIType.i32,
         },
         __error: { args: [], returns: FFIType.ptr },
+        /** `mach_port_t mach_host_self(void)`: a send right to the host port (call it once, it adds a reference). */
+        mach_host_self: { args: [], returns: FFIType.u32 },
+        /** `kern_return_t host_statistics(host_t, host_flavor_t, host_info_t, mach_msg_type_number_t *)`. */
+        host_statistics: { args: [FFIType.u32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+        /** `kern_return_t host_statistics64(host_t, host_flavor_t, host_info64_t, mach_msg_type_number_t *)`. */
+        host_statistics64: { args: [FFIType.u32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+        /** `int sysctlbyname(const char *, void *oldp, size_t *oldlenp, void *newp, size_t newlen)`. */
+        sysctlbyname: {
+            args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64],
+            returns: FFIType.i32,
+        },
     },
 });
 

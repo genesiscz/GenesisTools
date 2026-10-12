@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { logger } from "@genesiscz/utils/logger";
 import {
     parseBattery,
@@ -152,5 +153,99 @@ describe("runShell", () => {
         } finally {
             logger.debug = original;
         }
+    });
+});
+
+function systemText(command: string, args: string[]): string {
+    return spawnSync(command, args, { encoding: "utf8" }).stdout ?? "";
+}
+
+/** `vm.swapusage: total = 2048.00M  used = 1024.50M  free = ...` in bytes. */
+function parseSwapUsage(text: string): { totalBytes: number; usedBytes: number } {
+    const megabytes = (label: string) => Number(text.match(new RegExp(`${label} = ([\\d.]+)M`))?.[1]);
+    return {
+        totalBytes: Math.round(megabytes("total") * 1024 * 1024),
+        usedBytes: Math.round(megabytes("used") * 1024 * 1024),
+    };
+}
+
+describe.skipIf(process.platform !== "darwin")("collectPulse on this Mac", () => {
+    test("answers every field the dashboard shows, in range and in agreement with the system tools", async () => {
+        const { collectPulse } = await import("./collector");
+        const pulse = await collectPulse();
+        const memSize = Number(systemText("sysctl", ["-n", "hw.memsize"]).trim());
+        const pageSize = Number(systemText("sysctl", ["-n", "hw.pagesize"]).trim());
+        const vmUsed = parseVmStat(systemText("vm_stat", []), pageSize).usedBytes;
+        const freePct = parseMemoryFreePct(systemText("memory_pressure", []));
+        const swap = parseSwapUsage(systemText("sysctl", ["vm.swapusage"]));
+        const df = parseDfRoot(systemText("df", ["-k", "/"]));
+
+        // A null anywhere below becomes NaN, which fails every comparison.
+        expect(pulse.cpuPct ?? Number.NaN).toBeGreaterThanOrEqual(0);
+        expect(pulse.cpuPct ?? Number.NaN).toBeLessThanOrEqual(100);
+        expect(pulse.memTotalBytes).toBe(memSize);
+        // Memory moves between the two reads; a tenth of the used figure is far more than it moves in a second.
+        expect(Math.abs((pulse.memUsedBytes ?? Number.NaN) - vmUsed)).toBeLessThan(vmUsed * 0.1);
+        expect(Number.isInteger(pulse.memFreePct)).toBe(true);
+        expect(Math.abs((pulse.memFreePct ?? Number.NaN) - (freePct ?? Number.NaN))).toBeLessThanOrEqual(5);
+        expect(pulse.swapTotalBytes).toBe(swap.totalBytes);
+        // Swap use moves between the reads, and `sysctl` prints it in megabytes with two decimals.
+        expect(Math.abs((pulse.swapUsedBytes ?? Number.NaN) - swap.usedBytes)).toBeLessThan(256 * 1024 * 1024);
+        expect(pulse.diskTotalBytes).toBe(df.totalBytes);
+        expect(Math.abs((pulse.diskFreeBytes ?? Number.NaN) - (df.freeBytes ?? Number.NaN))).toBeLessThan(1024 ** 3);
+        expect(pulse.topProcesses.length).toBeGreaterThan(0);
+        expect(pulse.topProcesses.length).toBeLessThanOrEqual(5);
+
+        for (const proc of pulse.topProcesses) {
+            expect(proc.pid).toBeGreaterThan(0);
+            expect(proc.name.length).toBeGreaterThan(0);
+            expect(proc.rssBytes).toBeGreaterThan(0);
+        }
+
+        expect(pulse.batteryPct === null || (pulse.batteryPct >= 0 && pulse.batteryPct <= 100)).toBe(true);
+        expect(pulse.batteryState === null || typeof pulse.batteryState === "string").toBe(true);
+        expect(pulse.wifiSsid === null || typeof pulse.wifiSsid === "string").toBe(true);
+        expect(pulse.publicIp).toBeNull();
+        expect(Number.isNaN(Date.parse(pulse.capturedAt))).toBe(false);
+    });
+
+    test("a pulse right after another still answers a CPU figure", async () => {
+        const { collectPulse } = await import("./collector");
+        await collectPulse();
+        const second = await collectPulse();
+
+        expect(second.cpuPct ?? Number.NaN).toBeGreaterThanOrEqual(0);
+        expect(second.cpuPct ?? Number.NaN).toBeLessThanOrEqual(100);
+    });
+
+    test("spawns only what the kernel reads cannot answer: battery, Wi-Fi and the top processes", async () => {
+        const spawnSpy = mock(Bun.spawn);
+        const original = Bun.spawn;
+        // @ts-expect-error -- intentional test override
+        Bun.spawn = spawnSpy;
+
+        try {
+            const { collectPulse } = await import("./collector");
+            await collectPulse();
+        } finally {
+            Bun.spawn = original;
+        }
+
+        const spawned = spawnSpy.mock.calls.map((call) => (Array.isArray(call[0]) ? String(call[0][0]) : "?"));
+        expect(spawned.filter((cmd) => ["top", "vm_stat", "sysctl", "memory_pressure", "df"].includes(cmd))).toEqual(
+            []
+        );
+    });
+});
+
+describe.skipIf(process.platform === "darwin")("collectPulse off macOS", () => {
+    test("answers a whole snapshot through the command fallbacks, with null where a command is missing", async () => {
+        const { collectPulse } = await import("./collector");
+        const pulse = await collectPulse();
+
+        expect(pulse.cpuPct === null || typeof pulse.cpuPct === "number").toBe(true);
+        expect(pulse.memTotalBytes === null || typeof pulse.memTotalBytes === "number").toBe(true);
+        expect(Array.isArray(pulse.topProcesses)).toBe(true);
+        expect(Number.isNaN(Date.parse(pulse.capturedAt))).toBe(false);
     });
 });

@@ -8,8 +8,24 @@
  *   bun scripts/benchmarks/process/process-child.ts <job> <arm> [pids,comma,separated]
  */
 import { FFIType } from "bun:ffi";
+import { statfsSync } from "node:fs";
+import {
+    parseCpuIdlePct,
+    parseDfRoot,
+    parseMemoryFreePct,
+    parseVmStat,
+    runShell,
+} from "@app/dev-dashboard/lib/system/collector";
+import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
 import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    readMemoryFreePercent,
+    readMemorySizeBytes,
+    readSwapUsage,
+    readVmPageCounts,
+    sampleCpuBusyPercent,
+} from "@genesiscz/utils/macos/host-stats";
 import { batchCwd, batchCwdViaLsof } from "@genesiscz/utils/process/ps";
 import { PROCESS_ARMS, type ProcessJob } from "./process-arms";
 
@@ -52,9 +68,62 @@ const pids = pidList
     .filter((value) => value !== "")
     .map(Number);
 
+function answered(values: Array<number | null>): number {
+    return values.filter((value) => value !== null && Number.isFinite(value)).length;
+}
+
+/** What `collectCpu`, `collectMem`, `collectSwap` and `collectDisk` ran before the host reads replaced them. */
+async function pulseViaSpawn(): Promise<number> {
+    const [top, vmStat, pageSize, memSize, pressure, swapText, df] = await Promise.all([
+        runShell(["top", "-l", "1", "-n", "0"]),
+        runShell(["vm_stat"]),
+        runShell(["sysctl", "-n", "hw.pagesize"]),
+        runShell(["sysctl", "-n", "hw.memsize"]),
+        runShell(["memory_pressure"]),
+        runShell(["sysctl", "vm.swapusage"]),
+        runShell(["df", "-k", "/"]),
+    ]);
+    const page = Number(pageSize?.trim());
+    const swap = swapText === null ? null : parseSwapUsage(swapText);
+    const disk = df === null ? null : parseDfRoot(df);
+
+    return answered([
+        top === null ? null : parseCpuIdlePct(top),
+        vmStat === null ? null : parseVmStat(vmStat, page).usedBytes,
+        Number(memSize?.trim()),
+        pressure === null ? null : parseMemoryFreePct(pressure),
+        swap?.usedBytes ?? null,
+        swap?.totalBytes ?? null,
+        disk?.freeBytes ?? null,
+        disk?.totalBytes ?? null,
+    ]);
+}
+
+async function pulseViaHost(): Promise<number> {
+    const cpu = await sampleCpuBusyPercent();
+    const pages = readVmPageCounts();
+    const swap = readSwapUsage();
+    const disk = statfsSync("/");
+
+    return answered([
+        cpu,
+        pages === null ? null : (pages.active + pages.wired + pages.compressed) * pages.pageSize,
+        readMemorySizeBytes(),
+        readMemoryFreePercent(),
+        swap?.usedBytes ?? null,
+        swap?.totalBytes ?? null,
+        disk.bavail * disk.bsize,
+        disk.blocks * disk.bsize,
+    ]);
+}
+
 async function runOnce(): Promise<number> {
     if (job === "cwd") {
         return (arm === "lsof" ? batchCwdViaLsof(pids) : batchCwd(pids)).size;
+    }
+
+    if (job === "pulse") {
+        return arm === "spawn" ? pulseViaSpawn() : pulseViaHost();
     }
 
     throw new Error(`no job ${job}`);

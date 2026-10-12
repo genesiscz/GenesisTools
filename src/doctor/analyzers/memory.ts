@@ -11,6 +11,7 @@ import type {
     ExecutorContext,
     Finding,
 } from "@app/doctor/lib/types";
+import { readSwapUsage, readVmPageCounts } from "@genesiscz/utils/macos/host-stats";
 import clipboardy from "clipboardy";
 
 export interface VmStatParsed {
@@ -87,6 +88,37 @@ export function parseSwapusage(raw: string): SwapusageParsed {
         freeBytes: toBytes(match[3]),
         encrypted: Boolean(match[4]),
     };
+}
+
+/** `vm_stat`'s counts from the kernel on macOS (microseconds); the `vm_stat` command where that read is unavailable. */
+async function readVmStat(): Promise<VmStatParsed> {
+    const pages = readVmPageCounts();
+
+    if (!pages) {
+        return parseVmStat((await run("vm_stat", [])).stdout ?? "");
+    }
+
+    const { pageSize, free, active, inactive, speculative, wired, compressed } = pages;
+
+    return {
+        pageSize,
+        free,
+        active,
+        inactive,
+        speculative,
+        wired,
+        compressed,
+        freeBytes: free * pageSize,
+        activeBytes: active * pageSize,
+        inactiveBytes: inactive * pageSize,
+        wiredBytes: wired * pageSize,
+        compressedBytes: compressed * pageSize,
+    };
+}
+
+/** `vm.swapusage` in exact bytes from the kernel on macOS; the `sysctl` command where that read is unavailable. */
+async function readSwapusage(): Promise<SwapusageParsed> {
+    return readSwapUsage() ?? parseSwapusage((await run("sysctl", ["vm.swapusage"])).stdout ?? "");
 }
 
 interface TopProcess {
@@ -184,10 +216,8 @@ export class MemoryAnalyzer extends Analyzer {
     readonly cacheTtlMs = 0;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const vmRes = await run("vm_stat", []);
-        const swapRes = await run("sysctl", ["vm.swapusage"]);
-        const vm = parseVmStat(vmRes.stdout ?? "");
-        const swap = parseSwapusage(swapRes.stdout ?? "");
+        const vm = await readVmStat();
+        const swap = await readSwapusage();
         const swapPressureSevere =
             swap.usedBytes > 10 * 1024 * 1024 * 1024 || (swap.totalBytes > 0 && swap.usedBytes / swap.totalBytes > 0.5);
         const topProcesses = await getTopProcessesByRss(10);

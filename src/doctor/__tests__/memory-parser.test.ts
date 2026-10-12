@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryAnalyzer, parseSwapusage, parseVmStat } from "@app/doctor/analyzers/memory";
+import {
+    MemoryAnalyzer,
+    parseSwapusage,
+    parseVmStat,
+    type SwapusageParsed,
+    type VmStatParsed,
+} from "@app/doctor/analyzers/memory";
 import { analysisDirFor } from "@app/doctor/lib/paths";
 import type { EngineEvent } from "@app/doctor/lib/types";
 
@@ -73,4 +80,43 @@ describe("MemoryAnalyzer smoke", () => {
         expect(result.findings.length).toBeGreaterThan(0);
         expect(result.findings.some((finding) => finding.id === "mem-pressure")).toBe(true);
     });
+
+    it.skipIf(process.platform !== "darwin")(
+        "reports the page counts vm_stat and the swap sysctl show at the same moment",
+        async () => {
+            const analyzer = new MemoryAnalyzer();
+            const runId = `doctor-memory-test-${crypto.randomUUID()}`;
+            RUN_IDS.push(runId);
+            const result = await analyzer.analyze({
+                runId,
+                opts: { thorough: false, fresh: true, dryRun: true },
+                emit: () => {},
+            });
+            const vmStat = parseVmStat(spawnSync("vm_stat", [], { encoding: "utf8", env: process.env }).stdout);
+            const swap = parseSwapusage(
+                spawnSync("sysctl", ["vm.swapusage"], { encoding: "utf8", env: process.env }).stdout
+            );
+            const pressure = result.findings.find((finding) => finding.id === "mem-pressure");
+            const vm = pressure?.metadata?.vm as VmStatParsed | undefined;
+            const pages = (parsed: VmStatParsed) =>
+                parsed.free + parsed.active + parsed.inactive + parsed.speculative + parsed.wired + parsed.compressed;
+
+            expect(vm?.pageSize).toBe(vmStat.pageSize);
+            // Pages move between category counts from one read to the next; their sum barely does.
+            expect(Math.abs(pages(vm ?? vmStat) - pages(vmStat))).toBeLessThan(pages(vmStat) * 0.05);
+            expect(Math.abs((vm?.wired ?? Number.NaN) - vmStat.wired)).toBeLessThan(vmStat.wired * 0.1);
+
+            const swapFinding = result.findings.find((finding) => finding.id === "mem-swap");
+
+            if (swap.totalBytes === 0) {
+                expect(swapFinding).toBeUndefined();
+                return;
+            }
+
+            const reported = swapFinding?.metadata?.swap as SwapusageParsed | undefined;
+            expect(reported?.totalBytes).toBe(swap.totalBytes);
+            expect(reported?.encrypted).toBe(swap.encrypted);
+            expect(Math.abs((reported?.usedBytes ?? Number.NaN) - swap.usedBytes)).toBeLessThan(256 * 1024 * 1024);
+        }
+    );
 });

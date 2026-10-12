@@ -1,5 +1,14 @@
+import { statfsSync } from "node:fs";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    hostStatsAvailable,
+    readMemoryFreePercent,
+    readMemorySizeBytes,
+    readSwapUsage,
+    readVmPageCounts,
+    sampleCpuBusyPercent,
+} from "@genesiscz/utils/macos/host-stats";
 import { parseProcessRows } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
@@ -120,7 +129,16 @@ export async function runShell(cmd: string[]): Promise<string | null> {
     }
 }
 
+/**
+ * Busy CPU percent. On macOS from the kernel's tick counters: the average since the previous pulse (the first pulse
+ * of a process waits a second for its second reading, about half of what `top -l 1` took). `top -l 1 -n 0` cost
+ * about 2.0 s of CPU per pulse and stays only for a machine where the kernel read is unavailable.
+ */
 async function collectCpu(): Promise<number | null> {
+    if (hostStatsAvailable()) {
+        return sampleCpuBusyPercent();
+    }
+
     const out = await runShell(["top", "-l", "1", "-n", "0"]);
 
     if (out === null) {
@@ -131,6 +149,16 @@ async function collectCpu(): Promise<number | null> {
 }
 
 async function collectMem(): Promise<{ used: number | null; total: number | null; freePct: number | null }> {
+    if (hostStatsAvailable()) {
+        const pages = readVmPageCounts();
+
+        return {
+            used: pages === null ? null : (pages.active + pages.wired + pages.compressed) * pages.pageSize,
+            total: readMemorySizeBytes(),
+            freePct: readMemoryFreePercent(),
+        };
+    }
+
     const [vmStat, pageSizeOut, memSizeOut, memoryPressure] = await Promise.all([
         runShell(["vm_stat"]),
         runShell(["sysctl", "-n", "hw.pagesize"]),
@@ -151,6 +179,11 @@ async function collectMem(): Promise<{ used: number | null; total: number | null
 }
 
 async function collectSwap(): Promise<{ used: number | null; total: number | null }> {
+    if (hostStatsAvailable()) {
+        const swap = readSwapUsage();
+        return { used: swap?.usedBytes ?? null, total: swap?.totalBytes ?? null };
+    }
+
     const out = await runShell(["sysctl", "vm.swapusage"]);
 
     if (out === null) {
@@ -171,7 +204,15 @@ async function collectBattery(): Promise<{ pct: number | null; state: string | n
     return parseBattery(out);
 }
 
+/** The root volume, from `statfs` (the same numbers `df -k /` prints); `df` only when `statfs` fails. */
 async function collectDisk(): Promise<{ free: number | null; total: number | null }> {
+    try {
+        const stats = statfsSync("/");
+        return { free: stats.bavail * stats.bsize, total: stats.blocks * stats.bsize };
+    } catch (err) {
+        logger.debug({ err }, "[dev-dashboard] statfs of / failed; asking df");
+    }
+
     const out = await runShell(["df", "-k", "/"]);
 
     if (out === null) {
