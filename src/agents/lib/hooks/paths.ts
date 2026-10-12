@@ -12,17 +12,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
  * which can include a `.env` a command just wrote, so a user-private directory is the right
  * home for it and world-readable `/tmp` was not.
  *
- * It is a FUNCTION, not a constant: `TMPDIR` is what the test suite and the parity harnesses
- * move to point two implementations at the same tree, and a value frozen at import time
- * would ignore them.
+ * It is a FUNCTION, not a constant: `TMPDIR` is what the test suite moves to keep its captures
+ * private, and a value frozen at import time would ignore it.
  */
 export function hookDataRoot(): string {
-    // The `ai` segment is what the hook this port replaces already writes. Keeping it means
-    // `scripts/hooks-diff-parity.ts` can point both implementations at ONE tree (with
-    // `TMPDIR=/tmp`) and compare their renderings. Renaming it turned every scenario into a
-    // false divergence, because the old side stopped finding the capture and silently fell
-    // back to diffing against HEAD. It says `ai` while the command is `agents`: deliberate
-    // continuity, not an oversight.
+    // The `ai` segment is what the GenesisClaude hook this port replaced wrote, and the parity
+    // harness (retired 2026-10-12) compared both renderings over ONE tree. It stays: renaming it
+    // would orphan every capture already on disk from `gc`. It says `ai` while the command is
+    // `agents`: deliberate continuity, not an oversight.
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "data");
 }
 

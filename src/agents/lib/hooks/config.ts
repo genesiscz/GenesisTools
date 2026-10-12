@@ -544,8 +544,8 @@ function logCommandsOr(value: unknown, fallback: LogCommandsPolicy): LogCommands
 
 /**
  * The config at `path` for a WRITER to build on. A file that exists but cannot be read (bad
- * JSON, no permission) throws instead of falling back to the defaults: `config set` and
- * `config import` would otherwise replace the user's whole hand-edited file with the defaults
+ * JSON, no permission) throws instead of falling back to the defaults: `config set` and the
+ * rule picker would otherwise replace the user's whole hand-edited file with the defaults
  * plus one change. A missing file is the normal first write and proceeds.
  */
 export function loadHooksConfigForWrite(path = hooksConfigPath()): HooksConfig {
