@@ -6,7 +6,7 @@ GenesisTools is a TypeScript CLI toolkit that runs on Bun, with no build step. A
 
 ## Area rules: read them before you work in an area
 
-The detailed rules live in area files. Claude Code loads an area file by itself the first time you read, write or edit a matching file with the Read, Write or Edit tool, or view a single file with `cat`, `head` or `rg <pattern> <file>`. A search loads nothing: the Grep tool, `rg` over a folder, and `cat` piped into another command do not count. Before you change code in an area, or answer a question about it from search results, check that its area file is in your context. If it is not, read it.
+The detailed rules live in area files. Claude Code loads an area file by itself the first time you read, write or edit a matching file with the Read, Write or Edit tool, or view a single file with `cat`, `head` or `rg <pattern> <file>`. A search alone loads nothing (the Grep tool, `rg` over a folder, `cat` piped into another command), so the genesis-tools plugin's `area-rules` hook adds the area file when a search or a shell command touches the area. Without that plugin, or in another harness, check before you change code in an area, or answer a question about it from search results, that its area file is in your context. If it is not, read it.
 
 - Any TypeScript (`**/*.ts`, `**/*.tsx`): `.claude/rules/code.md`. Environment variables, Biome, code style, types, waits and polls, diagnostics that must not mutate.
 - TypeScript under `src/` or `scripts/`: `.claude/rules/tools.md`. Tool structure and CLI patterns, the shared utilities in `src/utils/`, logging and `out`, spawning a tool or calling its library, ports, databases.
