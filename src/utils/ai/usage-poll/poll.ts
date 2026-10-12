@@ -259,6 +259,16 @@ export function failureSnapshot(args: {
 }
 
 /**
+ * A failure warns when it starts a streak or changes its reason; a repeat of the reason the gate
+ * already holds goes to debug. The daemon is a new process every minute, so the gate is the only
+ * memory of the previous round: a codex home timing out round after round warned for every
+ * account every round, 2,098 identical lines between 2026-10-05 and 2026-10-12.
+ */
+function failureLogLevel(previous: GateEntry | undefined, reason: string): "warn" | "debug" {
+    return previous?.reason === reason ? "debug" : "warn";
+}
+
+/**
  * When each account's credential was last written, for the plugins that can say. Failing to
  * stat one is not a poll failure: an unknown stamp only means the gate cannot tell that a
  * re-login happened, which is where it started.
@@ -401,7 +411,7 @@ export async function __fetchProviderSnapshots(
             if (reported !== undefined) {
                 failures.push({ account: account.name, reason: reported, transport: isTransportFailure(reported) });
                 gateDirty = true;
-                logger.warn(
+                logger[failureLogLevel(gate[account.name], reported)](
                     { provider: providerId, account: account.name, reason: reported },
                     "[usage] poll reported a failure"
                 );
@@ -439,7 +449,10 @@ export async function __fetchProviderSnapshots(
         } else {
             failures.push({ account: account.name, reason, transport: isTransportFailure(result.reason) });
             gateDirty = true;
-            logger.warn({ provider: providerId, account: account.name, reason }, "[usage] poll failed");
+            logger[failureLogLevel(gate[account.name], reason)](
+                { provider: providerId, account: account.name, reason },
+                "[usage] poll failed"
+            );
         }
 
         return failureSnapshot({

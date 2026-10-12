@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/p
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaemonAgeMs } from "./daemon-heartbeat";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
@@ -623,6 +624,34 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
 
         expect(polled).toEqual([]);
         expect(snapshots[0].error).toBe("session expired");
+    });
+
+    /**
+     * The daemon is a fresh process every minute, so the gate is the only memory of the last
+     * failure. A codex home timing out every round warned once per account per round: 2,098
+     * identical lines in a week. The first failure of a streak and a changed reason still warn.
+     */
+    test("a failure the gate already holds with the same reason does not warn again", async () => {
+        useTempHome();
+        const message = "codex app-server initialize timed out after 10000ms";
+        const reason = String(new Error(message));
+        await savePollGate(PROVIDER, recordFailure({}, "work", reason, Date.now() - 3_600_000, true));
+        const warn = spyOn(logger, "warn");
+
+        try {
+            const repeat = plugin({ polled: [], stamp: undefined, result: () => Promise.reject(new Error(message)) });
+            await __fetchProviderSnapshots(repeat, [work], {}, new Set());
+            const repeatWarns = warn.mock.calls.filter((call) => call[1] === "[usage] poll failed").length;
+
+            await savePollGate(PROVIDER, recordFailure({}, "work", reason, Date.now() - 3_600_000, true));
+            const changed = plugin({ polled: [], stamp: undefined, result: () => Promise.reject(new Error("other")) });
+            await __fetchProviderSnapshots(changed, [work], {}, new Set());
+            const changedWarns = warn.mock.calls.filter((call) => call[1] === "[usage] poll failed").length;
+
+            expect({ repeatWarns, changedWarns }).toEqual({ repeatWarns: 0, changedWarns: 1 });
+        } finally {
+            warn.mockRestore();
+        }
     });
 });
 
