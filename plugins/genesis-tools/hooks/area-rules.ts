@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { parseLenientJson } from "./agents-talk-hint";
 
 const SafeJSON = JSON;
 
@@ -119,6 +120,57 @@ export function pathTokens(text: string): string[] {
     return [...tokens];
 }
 
+export interface PathAlias {
+    /** Import prefix, e.g. `@genesiscz/utils/`. */
+    from: string;
+    /** Project-relative folder it stands for, e.g. `src/utils/`. */
+    to: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The `compilerOptions.paths` wildcard aliases of the root tsconfig, longest prefix first. Code reached through an
+ * import name (`@genesiscz/utils/database/migrations`) names no folder, so a search that only meets the import
+ * would otherwise miss the area it lives in.
+ */
+export function tsconfigAliases(root: string): PathAlias[] {
+    let config: unknown;
+
+    try {
+        config = parseLenientJson(readFileSync(join(root, "tsconfig.json"), "utf8"));
+    } catch {
+        // No tsconfig, or one this parser cannot read: no aliases.
+        return [];
+    }
+
+    const options = isRecord(config) ? config.compilerOptions : undefined;
+    const paths = isRecord(options) ? options.paths : undefined;
+    if (!isRecord(paths)) {
+        return [];
+    }
+
+    const aliases: PathAlias[] = [];
+    for (const [key, targets] of Object.entries(paths)) {
+        const target = Array.isArray(targets) ? targets[0] : undefined;
+        if (key.endsWith("/*") && typeof target === "string" && target.endsWith("/*")) {
+            aliases.push({ from: key.slice(0, -1), to: target.slice(0, -1).replace(/^\.\//, "") });
+        }
+    }
+
+    return aliases.sort((a, b) => b.from.length - a.from.length);
+}
+
+/** Tokens with a known import prefix rewritten to the folder it stands for; other tokens unchanged. */
+export function unalias(tokens: string[], aliases: PathAlias[]): string[] {
+    return tokens.map((token) => {
+        const alias = aliases.find((candidate) => token.startsWith(candidate.from));
+        return alias ? `${alias.to}${token.slice(alias.from.length)}` : token;
+    });
+}
+
 /** Project-relative paths for tokens that resolve inside the project. */
 export function projectPaths(tokens: string[], options: { root: string; cwd: string }): string[] {
     const paths = new Set<string>();
@@ -204,8 +256,14 @@ export interface Decision {
 }
 
 /** Which area files a tool call should add, given what this agent already has. Pure, for tests. */
-export function decide(input: { payload: HookPayload; root: string; rules: AreaRule[]; seen: string[] }): Decision {
-    const { payload, root, rules, seen } = input;
+export function decide(input: {
+    payload: HookPayload;
+    root: string;
+    rules: AreaRule[];
+    seen: string[];
+    aliases?: PathAlias[];
+}): Decision {
+    const { payload, root, rules, seen, aliases = [] } = input;
     const cwd = payload.cwd ?? root;
     const tool = payload.tool_name ?? "";
     const toolInput = payload.tool_input ?? {};
@@ -226,7 +284,8 @@ export function decide(input: { payload: HookPayload; root: string; rules: AreaR
     }
 
     const namedAreas = areasOf(named, false);
-    const foundAreas = areasOf(projectPaths(pathTokens(textOf(payload.tool_response)), { root, cwd }), false);
+    const found = projectPaths(unalias(pathTokens(textOf(payload.tool_response)), aliases), { root, cwd });
+    const foundAreas = areasOf(found, false);
     const wanted = foundAreas.length <= BROAD_SEARCH_AREAS ? [...namedAreas, ...foundAreas] : namedAreas;
     return { add: [...new Set(wanted)].filter((area) => !seen.includes(area)), native: [] };
 }
@@ -271,7 +330,7 @@ if (import.meta.main) {
     const state = readState(sessionId);
     const agent = payload.agent_id ?? "main";
     const seen = state[agent] ?? [];
-    const decision = decide({ payload, root, rules, seen });
+    const decision = decide({ payload, root, rules, seen, aliases: tsconfigAliases(root) });
     if (decision.add.length === 0 && decision.native.length === 0) {
         process.exit(0);
     }

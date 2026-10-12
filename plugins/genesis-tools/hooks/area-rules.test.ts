@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decide, frontmatterPaths, isBroadGlob, pathTokens, readRules } from "./area-rules.ts";
+import { decide, frontmatterPaths, isBroadGlob, pathTokens, readRules, tsconfigAliases } from "./area-rules.ts";
 
 const root = mkdtempSync(join(tmpdir(), "area-rules-"));
 mkdirSync(join(root, ".git"));
@@ -13,6 +13,10 @@ writeFileSync(join(root, ".claude", "rules", "code.md"), '---\npaths:\n  - "**/*
 writeFileSync(join(root, ".claude", "rules", "ai.md"), '---\npaths: ["src/utils/ai/**", "src/ask/**"]\n---\n\n# AI\n');
 writeFileSync(join(root, "src", "du", "CLAUDE.md"), "# du\n");
 writeFileSync(join(root, "src", "du", "lib", "engine.ts"), "export {};\n");
+writeFileSync(
+    join(root, "tsconfig.json"),
+    '{\n  // comments are allowed\n  "compilerOptions": { "paths": { "@lib/*": ["./src/utils/*"], "@lib": ["./src/utils/index.ts"] } },\n}\n'
+);
 const rules = readRules(root);
 
 afterAll(() => {
@@ -82,6 +86,22 @@ describe("decide", () => {
             seen: read.native,
         });
         expect(search.add).toEqual([]);
+    });
+
+    it("finds the area behind a tsconfig import name in search output", () => {
+        const decision = decide({
+            payload: {
+                cwd: root,
+                tool_name: "Bash",
+                tool_input: { command: "rg -n resolve src/indexer" },
+                tool_response: { stdout: 'src/indexer/store.ts:3:import { bind } from "@lib/ai/providers/bind";' },
+            },
+            root,
+            rules,
+            seen: [],
+            aliases: tsconfigAliases(root),
+        });
+        expect(decision.add).toEqual([".claude/rules/ai.md"]);
     });
 
     it("adds nothing for paths outside the project or without an area", () => {
