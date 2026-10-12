@@ -84,6 +84,7 @@ export class FileIdentityCache<T> {
     private loaded: Promise<void> | undefined;
     private dirty = false;
     private warnedSmall = false;
+    private saving: Promise<void> = Promise.resolve();
 
     constructor(private readonly options: FileIdentityCacheOptions<T>) {}
 
@@ -109,13 +110,22 @@ export class FileIdentityCache<T> {
         this.used.add(path);
         this.dirty = true;
 
-        if (this.entries.size > this.options.limit) {
+        this.evictOverLimit();
+    }
+
+    /** Drops the least recently used entries until the limit holds; `used` only ever names held entries. */
+    private evictOverLimit(): void {
+        while (this.entries.size > this.options.limit) {
             const oldest = this.entries.keys().next().value;
 
-            if (oldest !== undefined) {
-                this.entries.delete(oldest);
-                this.warnIfTooSmall(oldest);
+            if (oldest === undefined) {
+                return;
             }
+
+            this.entries.delete(oldest);
+            this.warnIfTooSmall(oldest);
+            this.used.delete(oldest);
+            this.dirty = true;
         }
     }
 
@@ -132,6 +142,7 @@ export class FileIdentityCache<T> {
     }
 
     delete(path: string): void {
+        this.used.delete(path);
         this.dirty = this.entries.delete(path) || this.dirty;
     }
 
@@ -160,9 +171,13 @@ export class FileIdentityCache<T> {
                     return;
                 }
 
+                // Saved entries are older than anything this process set already, so they go first in recency order,
+                // and a file written under a larger limit is cut down to this one.
+                const held = [...this.entries];
+                this.entries.clear();
+
                 for (const [key, entry] of Object.entries(saved.entries)) {
                     if (
-                        this.entries.has(key) ||
                         !isObject(entry) ||
                         !isObject(entry.identity) ||
                         !isIdentity(entry.identity) ||
@@ -182,6 +197,13 @@ export class FileIdentityCache<T> {
                         value: entry.value,
                     });
                 }
+
+                for (const [key, entry] of held) {
+                    this.entries.delete(key);
+                    this.entries.set(key, entry);
+                }
+
+                this.evictOverLimit();
             } catch (err) {
                 logger.debug({ err, path }, "[identity-cache] saved cache unreadable; starting empty");
             }
@@ -189,8 +211,16 @@ export class FileIdentityCache<T> {
         return this.loaded;
     }
 
-    /** Writes the file when an entry changed: a temporary file renamed into place, so a reader never sees half. */
-    async save(): Promise<void> {
+    /**
+     * Writes the file when an entry changed: a temporary file renamed into place, so a reader never sees half. Saves
+     * run one after another: two at once in one process would share the temporary file name.
+     */
+    save(): Promise<void> {
+        this.saving = this.saving.then(() => this.writeNow());
+        return this.saving;
+    }
+
+    private async writeNow(): Promise<void> {
         const persist = this.options.persist;
 
         if (!persist || !this.dirty) {

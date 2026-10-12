@@ -96,4 +96,46 @@ describe("FileIdentityCache", () => {
 
         expect(cache.get("/y", identity)).toBeUndefined();
     });
+
+    it("loading a file saved under a larger limit keeps only the newest entries up to this limit", async () => {
+        const path = join(dir, "shrunk.json");
+        const big = new FileIdentityCache<string>({
+            limit: 10,
+            persist: { path: () => path, version: 1, isValue: isText },
+        });
+        const id = (n: number) => ({ ino: n, size: n, mtimeMs: n, ctimeMs: n });
+
+        for (const n of [1, 2, 3, 4, 5]) {
+            big.set(`/f${n}`, id(n), `v${n}`);
+        }
+
+        await big.save();
+        const small = new FileIdentityCache<string>({
+            limit: 3,
+            persist: { path: () => path, version: 1, isValue: isText },
+        });
+        await small.load();
+
+        expect([1, 2, 3, 4, 5].map((n) => small.get(`/f${n}`, id(n)) ?? null)).toEqual([null, null, "v3", "v4", "v5"]);
+    });
+
+    it("saves started together write one after the other, and the file ends with the newest entries", async () => {
+        const path = join(dir, "together.json");
+        const cache = cacheAt(path);
+        const id = (n: number) => ({ ino: n, size: n, mtimeMs: n, ctimeMs: n });
+
+        cache.set("/a", id(1), "first");
+        const first = cache.save();
+        cache.set("/b", id(2), "second");
+        const second = cache.save();
+        await Promise.all([first, second]);
+
+        const saved: unknown = SafeJSON.parse(await Bun.file(path).text(), { strict: true });
+        const keys =
+            typeof saved === "object" && saved !== null && "entries" in saved && typeof saved.entries === "object"
+                ? Object.keys(saved.entries ?? {}).sort()
+                : [];
+        expect(keys).toEqual(["/a", "/b"]);
+        expect(await Bun.file(`${path}.${process.pid}.tmp`).exists()).toBe(false);
+    });
 });
