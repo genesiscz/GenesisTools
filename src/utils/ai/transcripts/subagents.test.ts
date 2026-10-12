@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { readTaskNotifications, scanAppendOnly, scanClaudeToolCalls, scanFileMatches } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
 import { listSubagents, SPAWN_PROMPT_CHARS } from "./subagents";
@@ -109,6 +110,26 @@ describe("listSubagents", () => {
         writeFileSync(lonely, "");
         expect(listSubagents({ ...claude, filePath: lonely }).subagents).toEqual([]);
         expect(listSubagents({ ...claude, provider: "codex" }).subagents).toEqual([]);
+    });
+
+    test("a missing sub-agent directory is the normal case and logs nothing; an unreadable one still logs", () => {
+        const lonely = join(root, "99999999-0000-0000-0000-000000000001.jsonl");
+        writeFileSync(lonely, "");
+        const blocked = join(root, "99999999-0000-0000-0000-000000000002.jsonl");
+        writeFileSync(blocked, "");
+        mkdirSync(join(root, "99999999-0000-0000-0000-000000000002"));
+        writeFileSync(join(root, "99999999-0000-0000-0000-000000000002", "subagents"), "not a directory");
+        const debug = spyOn(logger, "debug");
+
+        try {
+            expect(listSubagents({ ...claude, filePath: lonely }).subagents).toEqual([]);
+            expect(debug).not.toHaveBeenCalled();
+
+            expect(listSubagents({ ...claude, filePath: blocked }).subagents).toEqual([]);
+            expect(debug.mock.calls.map((call) => call[1])).toContain("[transcripts] sub-agent directory unreadable");
+        } finally {
+            debug.mockRestore();
+        }
     });
 });
 

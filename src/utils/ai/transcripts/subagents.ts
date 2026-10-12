@@ -393,7 +393,13 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
     try {
         entries = readdirSync(dir);
     } catch (error) {
-        logger.debug({ error, dir }, "[transcripts] no sub-agent directory");
+        // Most sessions never spawn a sub-agent, so a missing directory is the normal case. Logging it with its
+        // stack on every hub poll wrote hundreds of MB a day into the day log.
+        const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+        if (!missing) {
+            logger.debug({ error, dir }, "[transcripts] sub-agent directory unreadable");
+        }
+
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
