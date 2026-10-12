@@ -2,8 +2,9 @@
 
 > **What is in this TypeScript file, what is written twice, and where does the startup time of an entry point go?**
 
-Four command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
-once. `refactors` ranks what to change. `imports` answers the startup-cost question.
+Five command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
+once. `refactors` ranks what to change. `imports` answers the startup-cost question. `profile` answers where
+the CPU time of a whole run goes.
 
 `skeleton`, `duplicates` and `refactors` take `--format text|md|json|json-compact|toon`, with
 `--md`, `--json`, `--json-compact` and `--toon` as shorthands. Asking for two different formats is
@@ -191,6 +192,40 @@ The library is `src/utils/ts/sourcemaps/` (`resolvers/` holds one file per resol
 
 It exists because the question "why does `import("@genesiscz/utils/fs/watcher")` cost 19 ms" used to take a hand-written `performance.now()` script, and that script was wrong the first time because the module cache hid half the cost.
 
+## `tools ts profile <entry> [-- args...]`
+
+> **Where does the CPU time of a command go, function by function, without adding a single timer?**
+
+Runs the entry under `bun --cpu-prof` (a sampling profiler built into Bun 1.3.13 and later), adds the samples up,
+and prints three views, like `pprof top` and `pprof tree` do for Go:
+
+- **Hot functions:** self and total time per function, natives included (`parse` is `JSON.parse`).
+- **Repository functions:** only this checkout's code. "own" is the time with that function as the deepest
+  repository frame, so it includes the library and native calls it makes but not the repository functions it calls.
+- **Repository call tree:** stacks reduced to repository frames, with their share and milliseconds per run.
+
+`<entry>` is a `.ts` file or a tool name (`ai` is `src/ai/index.ts`). Put the entry's own arguments after `--`.
+
+```bash
+tools ts profile ai --runs 3 --threads -- usage sessions --json --hours 24 --min 10 --fresh --no-cache-write
+tools ts profile src/ts/index.ts --focus collect -- skeleton src/utils
+tools ts profile ai --bun /path/to/bun-1.3.13 -- usage sessions --json   # compare Bun versions
+```
+
+Options: `--runs <n>` (added together; CPU and wall are medians), `--interval <us>` (default 250), `--top`,
+`--depth`, `--min-pct`, `--focus <name>` (the tree below matching functions), `--json`, `--bun <path>`.
+`--threads` also samples every thread of the first run with `/usr/bin/sample` (macOS) and lists what busy threads
+were doing, waits removed.
+
+🛑 **Profile milliseconds are sampled time on the JavaScript thread.** A native call that blocks (a `stat`, a file
+read) counts in full, and work on other threads (Bun's I/O pool, the JIT, the garbage collector) does not count at
+all. The header prints the process CPU of all threads next to it. Measured on 2026-10-12: a hand-run profile showed
+`statSync` at 310 ms, which cost 25 ms of CPU; `--threads` then showed file opens on Bun's pool threads as 44% of
+the busy samples, which the JavaScript profile could not show. Confirm a finding with CPU time before acting on it.
+
+The `.cpuprofile` files stay in `~/.genesis-tools/ts/profiles/<time>/` and open in speedscope.app or Chrome DevTools.
+`bun --cpu-prof-md` writes a markdown summary of one run without this tool.
+
 ---
 
 ## Commands
@@ -204,6 +239,7 @@ It exists because the question "why does `import("@genesiscz/utils/fs/watcher")`
 | `imports lazy <entry>` | Static imports whose bindings are only used inside functions, ranked by the startup time `await import()` would save |
 | `imports barrels <entry>` | `import { a } from "<barrel>"` sites where the barrel re-exports far more than `a` needs, priced in real ms |
 | `imports cycles <entry>` | Import cycles on the startup path, with the edges that close them |
+| `profile <entry> [-- args...]` | CPU profile of a whole run: hot functions, repository functions, a repository call tree, optionally every thread |
 
 `<entry>` is a `.ts` file, a directory (its `index.ts`, or every top-level source file when there is none), or a `tsconfig.json` (its directory). Test files and `.d.ts` files never count as entries.
 

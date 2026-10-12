@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { registerDuplicatesCommands } from "./commands/duplicates";
 import { registerImportsCommands } from "./commands/imports";
+import { registerProfileCommands } from "./commands/profile";
 import { registerRefactorsCommands } from "./commands/refactors";
 import { registerSkeletonCommands } from "./commands/skeleton";
 import { registerSourcemapsCommands } from "./commands/sourcemaps";
@@ -14,7 +15,7 @@ const program = new Command();
 program
     .name(`${toolCommand("ts")}`)
     .description(
-        "TypeScript analysis: API skeletons, duplicate code, refactor recommendations, import graphs and cost"
+        "TypeScript analysis: API skeletons, duplicate code, refactor recommendations, import graphs and cost, CPU profiles"
     );
 
 registerImportsCommands(program);
@@ -22,6 +23,7 @@ registerSkeletonCommands(program);
 registerDuplicatesCommands(program);
 registerRefactorsCommands(program);
 registerSourcemapsCommands(program);
+registerProfileCommands(program);
 
 if (import.meta.main) {
     await runTool(program, { tool: "ts" });
