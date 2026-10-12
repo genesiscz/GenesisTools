@@ -224,5 +224,46 @@ describe("git fsmonitor", () => {
             { worktree: worktree("repo"), step: "stop", error: "fsmonitor-daemon is not watching" },
         ]);
         expect(Object.keys(readFsmonitorState(deps.statePath).worktrees)).toEqual([worktree("repo")]);
+        // The saved values stay, so running disable again restores them again instead of unsetting both keys.
+        expect(readFsmonitorState(deps.statePath).previous).toEqual({
+            "core.fsmonitor": null,
+            "core.untrackedCache": null,
+        });
+    });
+
+    test("a running worktree that was never recorded and will not stop is kept for the retry", async () => {
+        const { deps, worktree } = fixture({ running: ["repo"], stopFails: true });
+        await enableFsmonitor(deps);
+
+        await disableFsmonitor(deps);
+
+        expect(readFsmonitorState(deps.statePath).worktrees[worktree("repo")]).toEqual({
+            firstSeen: "2026-10-12T22:00:00.000Z",
+            lastSeen: "2026-10-12T22:00:00.000Z",
+        });
+    });
+
+    test("disable without an earlier enable changes nothing, so a monitor the user set up stays", async () => {
+        const { deps, calls } = fixture({ running: ["repo"] });
+        writeFileSync(deps.globalConfigPath ?? "", "[core]\n\tfsmonitor = /usr/local/bin/my-hook\n");
+
+        const report = await disableFsmonitor(deps);
+
+        expect(report.restored).toBeNull();
+        expect(calls).toEqual([]);
+        expect(await readGlobal(deps, "core.fsmonitor")).toBe("/usr/local/bin/my-hook");
+    });
+
+    test("a second disable leaves the values the first one restored", async () => {
+        const { deps } = fixture({ running: [] });
+        writeFileSync(deps.globalConfigPath ?? "", "[core]\n\tuntrackedCache = keep\n");
+        await enableFsmonitor(deps);
+        await disableFsmonitor(deps);
+
+        const again = await disableFsmonitor(deps);
+
+        expect(again.restored).toBeNull();
+        expect(await readGlobal(deps, "core.untrackedCache")).toBe("keep");
+        expect(await readGlobal(deps, "core.fsmonitor")).toBeNull();
     });
 });

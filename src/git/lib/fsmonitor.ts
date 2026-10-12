@@ -312,7 +312,8 @@ export async function enableFsmonitor(
 }
 
 export interface DisableReport {
-    restored: Record<FsmonitorKey, string | null>;
+    /** The global values put back; null when this tool had not turned the monitor on, so nothing was touched. */
+    restored: Record<FsmonitorKey, string | null> | null;
     stopped: string[];
     cacheRemoved: string[];
     missing: string[];
@@ -322,10 +323,21 @@ export interface DisableReport {
 /**
  * Turns it off and cleans up: puts the global values back FIRST (so no git command starts a new daemon meanwhile),
  * then stops the daemon of every recorded or running worktree and removes the untracked cache from its index.
+ *
+ * Without a saved `enable` (never enabled here, or already disabled) it changes nothing: the global config is then the
+ * user's own. When a step fails, the saved values and the failed worktrees stay, so running it again retries them.
  */
 export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false } = {}): Promise<DisableReport> {
     const state = readFsmonitorState(deps.statePath);
-    const restored = state.previous ?? { "core.fsmonitor": null, "core.untrackedCache": null };
+    const restored = state.previous;
+
+    if (!restored) {
+        logger.debug(
+            { statePath: deps.statePath },
+            "[git fsmonitor] disable: nothing saved by enable, nothing changed"
+        );
+        return { restored: null, stopped: [], cacheRemoved: [], missing: [], failed: [] };
+    }
 
     for (const key of FSMONITOR_KEYS) {
         await writeGlobal(deps, key, restored[key]);
@@ -368,9 +380,20 @@ export async function disableFsmonitor(deps: FsmonitorDeps, { keepCache = false 
         }
     }
 
-    const failedWorktrees = new Set(report.failed.map((failure) => failure.worktree));
-    const kept = Object.fromEntries(Object.entries(state.worktrees).filter(([path]) => failedWorktrees.has(path)));
-    await writeState(deps.statePath, { version: 1, enabledAt: null, previous: null, worktrees: kept });
+    const now = deps.now().toISOString();
+    const kept = Object.fromEntries(
+        [...new Set(report.failed.map((failure) => failure.worktree))].map((worktree) => [
+            worktree,
+            state.worktrees[worktree] ?? { firstSeen: now, lastSeen: now },
+        ])
+    );
+    const done = report.failed.length === 0;
+    await writeState(deps.statePath, {
+        version: 1,
+        enabledAt: null,
+        previous: done ? null : restored,
+        worktrees: kept,
+    });
     logger.debug(
         { stopped: report.stopped.length, cacheRemoved: report.cacheRemoved.length, failed: report.failed },
         "[git fsmonitor] disabled"

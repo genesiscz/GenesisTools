@@ -173,10 +173,21 @@ export function registerFsmonitorCommand(parent: Command): void {
         .option("--json", "Emit the report as JSON")
         .action(async (options: { keepCache?: boolean; json?: boolean }) => {
             const report = await disableFsmonitor(defaultFsmonitorDeps(), { keepCache: Boolean(options.keepCache) });
-            const taskRemoved = await unregisterTask(RECORD_TASK);
+            const taskRemoved = report.restored ? await unregisterTask(RECORD_TASK) : false;
+
+            if (report.failed.length > 0) {
+                process.exitCode = 1;
+            }
 
             if (options.json) {
                 out.result({ ...report, taskRemoved });
+                return;
+            }
+
+            if (!report.restored) {
+                out.println(
+                    `Nothing to restore: the monitor was not turned on by ${toolCommand("git fsmonitor enable")} (or it is already off), so the global config is left as it is.`
+                );
                 return;
             }
 
@@ -193,7 +204,7 @@ export function registerFsmonitorCommand(parent: Command): void {
             }
 
             if (report.failed.length > 0) {
-                process.exitCode = 1;
+                out.println(`  Run ${toolCommand("git fsmonitor disable")} again to retry; the saved values are kept.`);
             }
         });
 }
