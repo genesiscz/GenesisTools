@@ -137,7 +137,10 @@ export function registerFsmonitorCommand(parent: Command): void {
                 every: "every 10 minutes",
                 retries: 0,
                 timeoutMs: 15_000,
-                notify: "failure",
+                // No banner: a failed run is in the daemon's run log, and `status` marks every worktree not recorded
+                // yet. A banner every 10 minutes would be noise, for example while `tools` on PATH is a checkout
+                // that does not have this command yet.
+                notify: false,
                 description: "Record every worktree a git fsmonitor daemon watches, so disable can clean it up",
                 overwrite: true,
             });
