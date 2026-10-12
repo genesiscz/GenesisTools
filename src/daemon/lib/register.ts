@@ -62,8 +62,8 @@ export async function unregisterTask(name: string): Promise<boolean> {
     return removeTask(name);
 }
 
+/** A read: a missing config means no task, and nothing is created (status commands call this). */
 export async function isTaskRegistered(name: string): Promise<boolean> {
-    await ensureStorage();
     const task = await getTask(name);
     return task !== undefined;
 }
