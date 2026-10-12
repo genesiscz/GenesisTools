@@ -72,11 +72,13 @@ func find(pid: pid_t, identifier: String) -> [AXUIElement] {
 }
 
 /// A menu role (`AXMenuItem`, `AXMenuBarItem`) is looked for inside the menu bar too, so `press-titled` reaches
-/// "Settings…" in an app menu.
+/// "Settings…" in an app menu. The title is matched against AXTitle, then AXDescription: a SwiftUI segmented
+/// picker's segments carry their text only as a description.
 func find(pid: pid_t, role: String, title: String) -> [AXUIElement] {
     var matches: [AXUIElement] = []
     _ = walk(AXUIElementCreateApplication(pid), depth: 0, maxDepth: 60, menuBar: role.hasPrefix("AXMenu")) { element, _ in
-        if text(element, kAXRoleAttribute) == role, text(element, kAXTitleAttribute) == title { matches.append(element) }
+        let named = text(element, kAXTitleAttribute) == title || text(element, kAXDescriptionAttribute) == title
+        if text(element, kAXRoleAttribute) == role, named { matches.append(element) }
         return false
     }
     return matches
