@@ -40,3 +40,15 @@ export function withTimeZone(timeZone: string, run: () => void): void {
         process.env.TZ = original;
     }
 }
+
+/** `withTimeZone` for a block that awaits. Tests in one file run one at a time, so the zone holds until it settles. */
+export async function withTimeZoneAsync(timeZone: string, run: () => Promise<void>): Promise<void> {
+    const original = process.env.TZ ?? SYSTEM_TIME_ZONE;
+    process.env.TZ = timeZone;
+
+    try {
+        await run();
+    } finally {
+        process.env.TZ = original;
+    }
+}

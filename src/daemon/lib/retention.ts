@@ -16,8 +16,8 @@ function runLogEpoch(filename: string): number | null {
         return null;
     }
 
-    const iso = `${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`;
-    const t = Date.parse(iso);
+    // Local time without a zone, as the runner writes it (`formatLocalFileTimestamp`); no `Z`.
+    const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}`);
     return Number.isFinite(t) ? t : null;
 }
 

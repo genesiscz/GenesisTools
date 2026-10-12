@@ -2,6 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
+import { withTimeZoneAsync } from "@genesiscz/utils/test/timezone";
 import { pruneTaskRunLogs } from "./retention";
 
 const base = mkdtempSync(join(tmpdir(), "retention-test-"));
@@ -9,10 +11,13 @@ const task = "poll";
 const dir = join(base, task);
 mkdirSync(dir, { recursive: true });
 
+// Named the way the runner names them: local time, no zone.
+function stampAt(ms: number, i: number): string {
+    return `${formatLocalFileTimestamp(ms)}-${String(i).padStart(8, "0")}.jsonl`;
+}
+
 function stamp(daysAgo: number, i: number): string {
-    const d = new Date(Date.now() - daysAgo * 86_400_000);
-    const s = d.toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    return `${s}-${String(i).padStart(8, "0")}.jsonl`;
+    return stampAt(Date.now() - daysAgo * 86_400_000, i);
 }
 // 150 files: 50 are 5 days old, 100 are 1 hour old (newest).
 const old: string[] = [];
@@ -61,6 +66,28 @@ describe("pruneTaskRunLogs", () => {
 
         expect(await pruneTaskRunLogs(b3, task, { maxAgeDays: 3, minRuns: 100 })).toBe(0);
         rmSync(b3, { recursive: true, force: true });
+    });
+
+    // The names carry local time. Read as UTC they looked younger by the zone offset east of Greenwich
+    // (2 h in Prague in summer), so a log past maxAgeDays survived that long. bun test runs in UTC, so pin a zone.
+    test("reads the run-log name as local time, so the age cutoff falls where it should", async () => {
+        const b6 = mkdtempSync(join(tmpdir(), "retention-test6-"));
+        mkdirSync(join(b6, task), { recursive: true });
+
+        try {
+            await withTimeZoneAsync("Asia/Tokyo", async () => {
+                const cutoff = Date.now() - 3 * 86_400_000;
+                const pastCutoff = stampAt(cutoff - 30 * 60_000, 1);
+                const beforeCutoff = stampAt(cutoff + 30 * 60_000, 2);
+                writeFileSync(join(b6, task, pastCutoff), "{}\n");
+                writeFileSync(join(b6, task, beforeCutoff), "{}\n");
+
+                expect(await pruneTaskRunLogs(b6, task, { maxAgeDays: 3, minRuns: 0 })).toBe(1);
+                expect(readdirSync(join(b6, task))).toEqual([beforeCutoff]);
+            });
+        } finally {
+            rmSync(b6, { recursive: true, force: true });
+        }
     });
 
     test("missing task dir returns 0", async () => {
