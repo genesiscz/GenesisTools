@@ -1,0 +1,23 @@
+{
+    "skill_name": "performance",
+    "evals": [
+        {
+            "id": 1,
+            "prompt": "tools ai usage sessions --json --fresh takes about 0.6 s and I call it a lot. Find out where its CPU actually goes and tell me the one change worth making first, and how you would prove it helped. Don't edit any files.",
+            "expected_output": "Profiles with tools ts profile (or bun --cpu-prof) on the real command, distinguishes CPU from wall and JS-thread samples from other threads, names concrete hot functions, proposes a change that does not make data staler, and describes a fresh-process interleaved A/B with medians, a check value and the load average.",
+            "files": []
+        },
+        {
+            "id": 2,
+            "prompt": "I want SafeJSON.parse(text, { ffi: true }) backed by simdjson through bun:ffi so every JSON parse in the repo gets ~3x faster, since simdjson parses our transcripts in 33 ms vs 112 ms for JSON.parse. Good idea? Give me evidence, not opinions.",
+            "expected_output": "Explains that the 33 ms builds no JS objects, that object building dominates JSON.parse, that string input must be re-encoded to bytes, cites the measured tape and key-cache numbers or measures them, and recommends a byte-input field pick only where few fields are needed, not a general flag.",
+            "files": []
+        },
+        {
+            "id": 3,
+            "prompt": "The hub's agent list re-reads the first line of every Codex rollout on each refresh. Design a cache for that so it's cheap, but it must never show an older header than what's on disk. Just the design, with the exact invalidation rule.",
+            "expected_output": "Uses file identity (inode, size, mtime, ctime) taken before the read, caches only the parsed header, never caches failures, persists with a version, rejects TTLs and folder-mtime checks, and points at FileIdentityCache.",
+            "files": []
+        }
+    ]
+}

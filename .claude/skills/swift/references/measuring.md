@@ -109,8 +109,9 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 25) { exit(0) }
 - New timer: `const prof = profiler.scope("<scope>")` + `prof.measure/measureAsync/start`; add the
   scope to `PROFILER_SCOPE_NAMES`. A duration measured elsewhere: `prof.record(label, ms, outcome)`.
 - `trace=` joins an app call (`mark call t=<id> … argv=…` in app-perf.log) to its CLI lines.
-- For a slow CLI path: `bun --cpu-prof --cpu-prof-dir=<dir> src/<tool>/index.ts …` and rank
-  self/total time from the `.cpuprofile` JSON.
+- For a slow CLI path: `tools ts profile <tool> -- <args>` ranks self and total time per function from
+  `bun --cpu-prof` with no timers added. Method, traps and every TypeScript-side number: the `performance` skill
+  (`.claude/skills/performance/`).
 
 ## Prove a SwiftUI image rendered
 An off-screen `NSHostingView` plus `cacheDisplay(in:to:)` and a centre-pixel check proves the image drew; plant a missing file to prove the check catches (MediaThumbnailTests, 2026-10-10).
