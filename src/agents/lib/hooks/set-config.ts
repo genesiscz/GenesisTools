@@ -1,5 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { ruleById } from "@genesiscz/utils/shell/rules";
+import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import {
     type HarnessName,
     type HookOutcome,
@@ -41,6 +41,7 @@ export const SETTABLE_KEYS = [
     "guard.longCommand.lines",
     "guard.longCommand.chars",
     "guard.contextCapPerSession",
+    "guard.customRules",
     "rules.<rule-id>",
     "harnesses.<claude|codex|grok>.<rule-id>",
     "decisions.stopHook",
@@ -177,8 +178,23 @@ function withHarnessDiff(next: HooksConfig, key: string, value: string, harness:
     throw new Error(`cannot set ${field} per harness. Settable: enabled, ${NUMERIC_DIFF.join(", ")}`);
 }
 
+/** The ids a rule key may name: the built-in rules, plus the custom ones when the caller loaded them. */
+export interface RuleIdOptions {
+    ruleIds?: ReadonlySet<string>;
+}
+
+function knownRuleIds(options: RuleIdOptions): ReadonlySet<string> {
+    return options.ruleIds ?? new Set(SHELL_RULES.map((rule) => rule.id));
+}
+
 /** Applies one dotted key to a config, validating the key and the value. Pure. */
-export function applySetting(config: HooksConfig, key: string, value: string): HooksConfig {
+export function applySetting(
+    config: HooksConfig,
+    key: string,
+    value: string,
+    options: RuleIdOptions = {}
+): HooksConfig {
+    const ruleIds = knownRuleIds(options);
     const next: HooksConfig = {
         ...config,
         guard: {
@@ -287,10 +303,19 @@ export function applySetting(config: HooksConfig, key: string, value: string): H
         return next;
     }
 
+    if (key === "guard.customRules") {
+        // A comma list of files or folders; an empty value clears it.
+        next.guard.customRules = value
+            .split(",")
+            .map((path) => path.trim())
+            .filter(Boolean);
+        return next;
+    }
+
     const rule = /^rules\.(.+)$/.exec(key);
 
     if (rule?.[1]) {
-        if (!ruleById(rule[1])) {
+        if (!ruleIds.has(rule[1])) {
             throw new Error(`no such rule: ${rule[1]}`);
         }
 
@@ -308,7 +333,7 @@ export function applySetting(config: HooksConfig, key: string, value: string): H
             throw new Error(`no such harness: ${harness}`);
         }
 
-        if (!ruleById(ruleId)) {
+        if (!ruleIds.has(ruleId)) {
             throw new Error(`no such rule: ${ruleId}`);
         }
 
@@ -327,15 +352,98 @@ export interface SetResult {
     written: boolean;
 }
 
-export function setHooksConfig(key: string, value: string, options: { write: boolean; path?: string }): SetResult {
+export function setHooksConfig(
+    key: string,
+    value: string,
+    options: { write: boolean; path?: string } & RuleIdOptions
+): SetResult {
     const path = options.path ?? hooksConfigPath();
     // Read from the file this writes: loading the default path while writing `options.path`
     // replaced every other setting in that file with whatever the default file held.
-    const config = applySetting(loadHooksConfigForWrite(path), key, value);
+    const config = applySetting(loadHooksConfigForWrite(path), key, value, options);
 
     if (options.write) {
         writeHooksFile({ path, config });
     }
 
     return { path, config, written: options.write };
+}
+
+/**
+ * A rule is ON unless `guard.default` sets it to `allow`. A harness or model override can still
+ * allow it for that harness or model alone; the picker leaves those alone and `rules list` shows them.
+ */
+export function ruleEnabled(config: HooksConfig, ruleId: string): boolean {
+    return config.guard.default[ruleId] !== "allow";
+}
+
+export interface RuleSelection {
+    enable: readonly string[];
+    disable: readonly string[];
+}
+
+export interface RuleSelectionResult {
+    config: HooksConfig;
+    /** Rules this selection switched on or off; the others already were. */
+    enabled: string[];
+    disabled: string[];
+}
+
+/**
+ * Switches rules on and off in `guard.default`. Off is `allow`. On REMOVES an `allow`, so the rule
+ * returns to its own severity, and keeps any other outcome the user set (a `warn` stays a `warn`).
+ * Pure; an unknown id, or an id in both lists, throws.
+ */
+export function applyRuleSelection(
+    config: HooksConfig,
+    selection: RuleSelection,
+    options: RuleIdOptions = {}
+): RuleSelectionResult {
+    const ruleIds = knownRuleIds(options);
+    const unknown = [...selection.enable, ...selection.disable].filter((id) => !ruleIds.has(id));
+
+    if (unknown.length > 0) {
+        throw new Error(`no such rule: ${unknown.join(", ")}`);
+    }
+
+    const both = selection.enable.filter((id) => selection.disable.includes(id));
+
+    if (both.length > 0) {
+        throw new Error(`a rule cannot be enabled and disabled at once: ${both.join(", ")}`);
+    }
+
+    const defaults = { ...config.guard.default };
+    const enabled: string[] = [];
+    const disabled: string[] = [];
+
+    for (const id of selection.enable) {
+        if (defaults[id] === "allow") {
+            delete defaults[id];
+            enabled.push(id);
+        }
+    }
+
+    for (const id of selection.disable) {
+        if (defaults[id] !== "allow") {
+            defaults[id] = "allow";
+            disabled.push(id);
+        }
+    }
+
+    return { config: { ...config, guard: { ...config.guard, default: defaults } }, enabled, disabled };
+}
+
+export function setRuleSelection(
+    selection: RuleSelection,
+    options: { write: boolean; path?: string } & RuleIdOptions
+): RuleSelectionResult & { path: string; written: boolean } {
+    const path = options.path ?? hooksConfigPath();
+    const result = applyRuleSelection(loadHooksConfigForWrite(path), selection, options);
+    const changed = result.enabled.length > 0 || result.disabled.length > 0;
+
+    if (options.write && changed) {
+        writeHooksFile({ path, config: result.config });
+    }
+
+    return { ...result, path, written: options.write && changed };
 }

@@ -20,6 +20,8 @@ import { withSpawnCounter } from "@app/benchmark/lib";
 import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
+import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
     changedOnly,
     DEFAULT_HOOKS_CONFIG,
@@ -33,10 +35,12 @@ import {
     SHIPPED_DEFAULTS_KEY,
     storedOverrides,
 } from "./config";
+import { recentBashCommands } from "./corpus";
+import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRuleSet } from "./custom-rules";
 import { finalReply, type PromptHookOutput, runDecisionInject, runDecisionStop } from "./decisions";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
-import { guardFromLegacy, importedHooksConfig, importGuardConfig } from "./import-config";
+import { lastSeenPerHarness } from "./harnesses";
 import {
     entriesFor,
     hooksDistPath,
@@ -44,6 +48,7 @@ import {
     installHooks,
     pointDist,
     readSettings,
+    repoRoot,
     uninstallHooks,
     wiringStatus,
 } from "./install";
@@ -52,8 +57,8 @@ import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
 import { parseHookPayload } from "./payload";
-import { withPrivateTempDir } from "./private-temp";
-import { applySetting, setHooksConfig } from "./set-config";
+import { checkRuleExamples, replayCorpus } from "./rules-check";
+import { applyRuleSelection, applySetting, ruleEnabled, setHooksConfig, setRuleSelection } from "./set-config";
 import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
 
@@ -565,24 +570,6 @@ describe("applySetting", () => {
     });
 });
 
-describe("guardFromLegacy", () => {
-    it("takes the legacy overrides and keeps the shipped default for what it omits", () => {
-        const guard = guardFromLegacy({
-            harnesses: { codex: { "zsh-glob-qualifier": "allow" } },
-            longCommand: { lines: 12 },
-        });
-
-        expect(guard.harnesses.codex?.["zsh-glob-qualifier"]).toBe("allow");
-        expect(guard.longCommand).toEqual({ lines: 12, chars: 2500 });
-        expect(guard.contextCapPerSession).toBe(3);
-        expect(guard.enabled).toBe(true);
-    });
-
-    it("an empty legacy file changes nothing", () => {
-        expect(guardFromLegacy({})).toEqual(DEFAULT_HOOKS_CONFIG.guard);
-    });
-});
-
 describe("collectStaleCaptures", () => {
     function tree(): string {
         const root = mkdtempSync(join(tmpdir(), "gt-hooks-gc-"));
@@ -926,19 +913,6 @@ describe("the stored config is merged over the shipped one, key by key", () => {
         expect(config.guard.contextCapPerSession).toBe(DEFAULT_HOOKS_CONFIG.guard.contextCapPerSession);
         expect(config.guard.longCommand).toEqual({ lines: DEFAULT_HOOKS_CONFIG.guard.longCommand.lines, chars: 99 });
     });
-
-    it("config import replaces only the guard and keeps every other setting", () => {
-        const to = stored({ shadow: false, logCommands: "never", diff: { maxFiles: 7 } });
-        const from = stored({ default: { "some-rule": "warn" } });
-        const result = importGuardConfig({ from, to, write: true });
-        const written = loadHooksConfig(to);
-
-        expect(result.config.shadow).toBe(false);
-        expect(written.shadow).toBe(false);
-        expect(written.logCommands).toBe("never");
-        expect(written.diff.maxFiles).toBe(7);
-        expect(written.guard.default).toEqual({ "some-rule": "warn" });
-    });
 });
 
 describe("the config writers build on the file they write", () => {
@@ -965,10 +939,6 @@ describe("the config writers build on the file they write", () => {
 
         expect(() => setHooksConfig("shadow", "false", { write: true, path })).toThrow("refusing to write");
         expect(readFileSync(path, "utf8")).toBe("{ not json");
-
-        const from = stored({ default: {} });
-        expect(() => importGuardConfig({ from, to: path, write: true })).toThrow("refusing to write");
-        expect(readFileSync(path, "utf8")).toBe("{ not json");
     });
 
     it("a missing hooks.json is the normal first write and proceeds", () => {
@@ -976,14 +946,6 @@ describe("the config writers build on the file they write", () => {
 
         expect(setHooksConfig("shadow", "false", { write: true, path }).written).toBe(true);
         expect(loadHooksConfig(path).shadow).toBe(false);
-    });
-
-    it("config import keeps a guard the user turned off", () => {
-        const to = stored({ guard: { enabled: false } });
-        const from = stored({ default: { "some-rule": "warn" } });
-
-        expect(importGuardConfig({ from, to, write: true }).config.guard.enabled).toBe(false);
-        expect(loadHooksConfig(to).guard.enabled).toBe(false);
     });
 
     it("hand-edited values of the wrong type fall back to the shipped defaults", () => {
@@ -1078,36 +1040,7 @@ describe("install moves the machine-wide dist link only once settings.json can t
     });
 });
 
-describe("replay helpers the parity scripts share", () => {
-    it("keeps replay files private and removes them, even when the work throws", () => {
-        let seen = "";
-
-        expect(() =>
-            withPrivateTempDir("gt-replay-", (dir) => {
-                seen = dir.path;
-                const file = dir.write("input.json", "[]");
-
-                expect(statSync(dir.path).mode & 0o777).toBe(0o700);
-                expect(statSync(file).mode & 0o777).toBe(0o600);
-                throw new Error("replay failed");
-            })
-        ).toThrow("replay failed");
-        expect(existsSync(seen)).toBe(false);
-    });
-
-    it("importedHooksConfig carries a legacy override and keeps the shipped harness rules", () => {
-        const config = importedHooksConfig({
-            default: { "some-rule": "warn" },
-            harnesses: { claude: { "x-rule": "allow" } },
-        });
-
-        expect(config.guard.default["some-rule"]).toBe("warn");
-        expect(config.guard.harnesses.claude).toEqual({ "x-rule": "allow" });
-        expect(config.guard.harnesses.codex).toEqual({ "zsh-glob-qualifier": "allow" });
-    });
-});
-
-describe("writeJsonFile and config import edge cases", () => {
+describe("writeJsonFile edge cases", () => {
     it("writes through a DANGLING symlink to its target instead of replacing the link", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-json-dangling-"));
         const target = join(dir, "real", "hooks.json");
@@ -1119,15 +1052,6 @@ describe("writeJsonFile and config import edge cases", () => {
 
         expect(lstatSync(link).isSymbolicLink()).toBe(true);
         expect(SafeJSON.parse(readFileSync(target, "utf8"))).toEqual({ shadow: false });
-
-        rmSync(dir, { recursive: true, force: true });
-    });
-
-    it("config import treats a missing legacy file as the empty config it is documented to be", () => {
-        const dir = mkdtempSync(join(tmpdir(), "gt-import-missing-"));
-        const result = importGuardConfig({ from: join(dir, "nope.json"), to: join(dir, "hooks.json"), write: false });
-
-        expect(result.config.guard.default).toEqual(DEFAULT_HOOKS_CONFIG.guard.default);
 
         rmSync(dir, { recursive: true, force: true });
     });
@@ -1824,5 +1748,424 @@ describe("the unpushed reminder", () => {
         expect(applySetting(next, "unpushed.enabled", "false").unpushed.enabled).toBe(false);
         expect(() => applySetting(next, "unpushed.maxAgeMinutes", "0")).toThrow(/at least 1/);
         expect(() => applySetting(next, "unpushed.often", "1")).toThrow(/unknown key/);
+    });
+});
+
+/** A self-contained rule module: fixtures live under /tmp, where `@genesiscz/utils` does not resolve. */
+function ruleModule(rules: string): string {
+    return `export const rules = [${rules}];\n`;
+}
+
+function fixtureRule(id: string, needle: string, extra = ""): string {
+    return `{ id: "${id}", kind: "destructive", severity: "block", title: "fixture rule ${id}", why: "fixture", wrong: "${needle} now", right: "echo fine", detect(scan) { const at = scan.command.indexOf("${needle}"); return at === -1 ? null : { matched: "${needle}", index: at }; }${extra} }`;
+}
+
+function rulesDir(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), "gt-custom-rules-"));
+
+    for (const [name, body] of Object.entries(files)) {
+        writeFileSync(join(dir, name), body);
+    }
+
+    return dir;
+}
+
+function withCustomRules(paths: string[]): typeof DEFAULT_HOOKS_CONFIG {
+    return { ...DEFAULT_HOOKS_CONFIG, guard: { ...DEFAULT_HOOKS_CONFIG.guard, customRules: paths } };
+}
+
+describe("guard.customRules in the config", () => {
+    const stored = (value: unknown): string => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-custom-")), "hooks.json");
+
+        writeFileSync(path, SafeJSON.stringify(value));
+        return path;
+    };
+
+    it("ships empty, so nothing is imported until a path is configured", () => {
+        expect(DEFAULT_HOOKS_CONFIG.guard.customRules).toEqual([]);
+    });
+
+    it("keeps a list of paths and drops blank entries", () => {
+        expect(loadHooksConfig(stored({ guard: { customRules: ["~/rules", " "] } })).guard.customRules).toEqual([
+            "~/rules",
+        ]);
+    });
+
+    it("a value that is not a list of strings falls back and is reported", () => {
+        const config = loadHooksConfig(stored({ guard: { customRules: "~/rules" } }));
+
+        expect(config.guard.customRules).toEqual([]);
+        expect(lastConfigProblems().some((problem) => problem.startsWith("guard.customRules"))).toBe(true);
+    });
+
+    it("config set guard.customRules takes a comma list, and an empty value clears it", () => {
+        const set = applySetting(DEFAULT_HOOKS_CONFIG, "guard.customRules", "~/a, /b/rules.ts");
+
+        expect(set.guard.customRules).toEqual(["~/a", "/b/rules.ts"]);
+        expect(applySetting(set, "guard.customRules", "").guard.customRules).toEqual([]);
+    });
+
+    it("expands ~ and resolves a relative path against the home folder", () => {
+        expect(expandRulePath("~/rules")).toBe(join(homedirOf(), "rules"));
+        expect(expandRulePath("rules")).toBe(join(homedirOf(), "rules"));
+        expect(expandRulePath("/abs/rules")).toBe("/abs/rules");
+    });
+});
+
+function homedirOf(): string {
+    return expandRulePath("~");
+}
+
+describe("loadCustomRules", () => {
+    it("loads every module of a folder in name order and skips tests, _drafts and dotfiles", async () => {
+        const dir = rulesDir({
+            "b.ts": ruleModule(fixtureRule("fixture-b", "zzb")),
+            "a.ts": `export default [${fixtureRule("fixture-a", "zza")}];\n`,
+            "a.test.ts": "throw new Error('a test file must never be imported');\n",
+            "_draft.ts": "throw new Error('a draft must never be imported');\n",
+            ".hidden.ts": "throw new Error('a dotfile must never be imported');\n",
+            "notes.md": "# not a module\n",
+        });
+        const custom = await loadCustomRules([dir]);
+
+        expect(custom.rules.map((rule) => rule.id)).toEqual(["fixture-a", "fixture-b"]);
+        expect(custom.modules.map((module) => [module.status, module.ruleIds])).toEqual([
+            ["loaded", ["fixture-a"]],
+            ["loaded", ["fixture-b"]],
+        ]);
+        expect(custom.missing).toEqual([]);
+    });
+
+    it("a module that throws, exports no array or never finishes is failed with the reason, and the rest still load", async () => {
+        const dir = rulesDir({
+            "good.ts": ruleModule(fixtureRule("fixture-good", "zzg")),
+            "throws.ts": "throw new Error('boom at import');\n",
+            "shape.ts": "export const rules = { not: 'an array' };\n",
+            "hangs.ts": "await new Promise(() => {});\nexport const rules = [];\n",
+        });
+        const custom = await loadCustomRules([dir], { timeoutMs: 300 });
+        const byName = Object.fromEntries(custom.modules.map((module) => [module.file.split("/").pop(), module]));
+
+        expect(custom.rules.map((rule) => rule.id)).toEqual(["fixture-good"]);
+        expect(byName["throws.ts"]).toMatchObject({ status: "failed", reason: "boom at import" });
+        expect(byName["shape.ts"]?.reason).toContain("no `rules` array");
+        expect(byName["hangs.ts"]?.reason).toContain("did not finish within 300 ms");
+    });
+
+    it("refuses an invalid rule and an id that is already taken, and names why", async () => {
+        const dir = rulesDir({
+            "a.ts": ruleModule(
+                [
+                    fixtureRule("Bad_Id", "zz1"),
+                    `{ id: "no-detect", kind: "misread", severity: "block", title: "t", why: "w", wrong: "x", right: "y" }`,
+                    `{ id: "bad-severity", kind: "misread", severity: "deny", title: "t", why: "w", wrong: "x", right: "y", detect() { return null; } }`,
+                    fixtureRule("find-from-root", "zz2"),
+                    fixtureRule("fixture-dup", "zz3"),
+                ].join(", ")
+            ),
+            "b.ts": ruleModule(fixtureRule("fixture-dup", "zz4")),
+        });
+        const custom = await loadCustomRules([dir]);
+        const refused = custom.modules.flatMap((module) => module.refused);
+
+        expect(custom.rules.map((rule) => rule.id)).toEqual(["fixture-dup"]);
+        expect(refused).toEqual([
+            { id: "Bad_Id", reason: "id must be a kebab-case string" },
+            { id: "no-detect", reason: "detect must be a function" },
+            { id: "bad-severity", reason: "severity must be one of block, context, warn" },
+            { id: "find-from-root", reason: "the id is already used by a built-in rule" },
+            { id: "fixture-dup", reason: `the id is already used by ${join(dir, "a.ts")}` },
+        ]);
+    });
+
+    it("names a configured path that holds nothing loadable", async () => {
+        const dir = rulesDir({ "notes.md": "x" });
+        const custom = await loadCustomRules([join(dir, "missing"), join(dir, "notes.md")]);
+
+        expect(custom.missing.map((entry) => entry.reason)).toEqual([
+            expect.stringContaining("cannot read it"),
+            "not a .ts, .mts, .js or .mjs file",
+        ]);
+    });
+
+    it("a rule whose detect throws or returns garbage is skipped for that command and reported", async () => {
+        const dir = rulesDir({
+            "a.ts": ruleModule(
+                [
+                    `{ id: "fixture-throws", kind: "misread", severity: "block", title: "t", why: "w", wrong: "x", right: "y", detect() { throw new Error("detect boom"); } }`,
+                    `{ id: "fixture-garbage", kind: "misread", severity: "block", title: "t", why: "w", wrong: "x", right: "y", detect() { return "yes"; } }`,
+                ].join(", ")
+            ),
+        });
+        const failures: DetectFailure[] = [];
+        const { rules } = await guardRules(withCustomRules([dir]), {
+            onDetectError: (failure) => failures.push(failure),
+        });
+        const verdict = evaluateCommand("git checkout -- a.ts", DEFAULT_HOOKS_CONFIG, { rules });
+
+        expect(verdict.tags).toEqual(["git-checkout-overwrites-file"]);
+        expect(failures.map((failure) => [failure.ruleId, (failure.err as Error).message])).toEqual([
+            ["fixture-throws", "detect boom"],
+            ["fixture-garbage", "detect returned a value that is not a ShellMatch"],
+        ]);
+    });
+});
+
+describe("the guard runs custom rules beside the built-in ones", () => {
+    function payload(command: string): HookPayload {
+        return {
+            event: "PreToolUse",
+            tool: "Bash",
+            cwd: "/repo",
+            command,
+            model: "",
+            harness: "claude",
+            nativeDiffFiles: [],
+            raw: {},
+        };
+    }
+
+    it("imports nothing and returns the built-in registry while no custom rule is configured", async () => {
+        const { rules, custom } = await guardRules(DEFAULT_HOOKS_CONFIG);
+
+        expect(rules).toBe(SHELL_RULES);
+        expect(custom).toBeNull();
+    });
+
+    it("a custom rule blocks, and `guard.default` switches it off like a built-in one", async () => {
+        const dir = rulesDir({ "a.ts": ruleModule(fixtureRule("fixture-stop", "zzstop")) });
+        const config = withCustomRules([dir]);
+        const { rules } = await guardRules(config);
+
+        expect(evaluateGuard(payload("echo zzstop"), config, rules)?.outcome).toBe("block");
+        expect(evaluateGuard(payload("echo zzstop"), config, rules)?.message).toContain("rule fixture-stop");
+
+        const off = { ...config, guard: { ...config.guard, default: { "fixture-stop": "allow" as const } } };
+
+        expect(evaluateGuard(payload("echo zzstop"), off, rules)).toBeNull();
+        // The negative control: without the custom rules the same command passes.
+        expect(evaluateGuard(payload("echo zzstop"), config)).toBeNull();
+    });
+
+    it("loadRuleSet names each rule's source, and loads custom rules even while the guard is off", async () => {
+        const dir = rulesDir({ "a.ts": ruleModule(fixtureRule("fixture-src", "zzsrc")) });
+        const config = withCustomRules([dir]);
+        const set = await loadRuleSet({ ...config, guard: { ...config.guard, enabled: false } });
+
+        expect(set.sources.get("fixture-src")).toBe(join(dir, "a.ts"));
+        expect(set.sources.get("find-from-root")).toBe("built-in");
+        expect((await guardRules({ ...config, guard: { ...config.guard, enabled: false } })).custom).toBeNull();
+    });
+
+    it("config set rules.<id> accepts a custom id only when the caller passes the loaded ids", () => {
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "rules.fixture-x", "warn")).toThrow("no such rule");
+
+        const next = applySetting(DEFAULT_HOOKS_CONFIG, "rules.fixture-x", "warn", {
+            ruleIds: new Set(["fixture-x"]),
+        });
+
+        expect(next.guard.default["fixture-x"]).toBe("warn");
+    });
+});
+
+describe("the rule picker's selection", () => {
+    const ids = { ruleIds: new Set(["rule-a", "rule-b", "rule-c"]) };
+
+    it("off is allow; on removes the allow and keeps any other outcome", () => {
+        const config = {
+            ...DEFAULT_HOOKS_CONFIG,
+            guard: {
+                ...DEFAULT_HOOKS_CONFIG.guard,
+                default: { "rule-a": "allow" as const, "rule-b": "warn" as const },
+            },
+        };
+        const result = applyRuleSelection(config, { enable: ["rule-a", "rule-b"], disable: ["rule-c"] }, ids);
+
+        expect(result.config.guard.default).toEqual({ "rule-b": "warn", "rule-c": "allow" });
+        expect(result.enabled).toEqual(["rule-a"]);
+        expect(result.disabled).toEqual(["rule-c"]);
+        expect(ruleEnabled(result.config, "rule-c")).toBe(false);
+        expect(ruleEnabled(result.config, "rule-b")).toBe(true);
+        // Pure: the input is untouched.
+        expect(config.guard.default).toEqual({ "rule-a": "allow", "rule-b": "warn" });
+    });
+
+    it("refuses an unknown id and an id in both lists", () => {
+        expect(() => applyRuleSelection(DEFAULT_HOOKS_CONFIG, { enable: ["nope"], disable: [] }, ids)).toThrow(
+            "no such rule: nope"
+        );
+        expect(() =>
+            applyRuleSelection(DEFAULT_HOOKS_CONFIG, { enable: ["rule-a"], disable: ["rule-a"] }, ids)
+        ).toThrow("enabled and disabled at once");
+    });
+
+    it("writes the hooks file only with write, and only when something changed", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-picker-")), "hooks.json");
+
+        writeFileSync(path, SafeJSON.stringify({ shadow: false }));
+
+        expect(setRuleSelection({ enable: [], disable: ["rule-a"] }, { write: false, path, ...ids }).written).toBe(
+            false
+        );
+        expect(loadHooksConfig(path).guard.default).toEqual({});
+        expect(setRuleSelection({ enable: [], disable: ["rule-a"] }, { write: true, path, ...ids }).written).toBe(true);
+        expect(loadHooksConfig(path).guard.default).toEqual({ "rule-a": "allow" });
+        expect(loadHooksConfig(path).shadow).toBe(false);
+        expect(setRuleSelection({ enable: [], disable: ["rule-a"] }, { write: true, path, ...ids }).written).toBe(
+            false
+        );
+    });
+});
+
+describe("rules check", () => {
+    it("every built-in rule passes its own examples", () => {
+        const failed = checkRuleExamples(SHELL_RULES, { cwd: repoRoot() }).filter((check) => !check.ok);
+
+        expect(failed).toEqual([]);
+    });
+
+    it("a rule whose wrong example does not fire, or whose right one does, fails", async () => {
+        const dir = rulesDir({
+            "a.ts": ruleModule(
+                [
+                    fixtureRule("fixture-ok", "zzok"),
+                    `{ id: "fixture-silent", kind: "misread", severity: "block", title: "t", why: "w", wrong: "echo nothing", right: "echo zzsilent", detect(scan) { const at = scan.command.indexOf("zzsilent"); return at === -1 ? null : { matched: "zzsilent", index: at }; } }`,
+                ].join(", ")
+            ),
+        });
+        const custom = await loadCustomRules([dir]);
+        const checks = checkRuleExamples(custom.rules);
+
+        expect(checks.map((check) => [check.ruleId, check.ok])).toEqual([
+            ["fixture-ok", true],
+            ["fixture-silent", false],
+        ]);
+    });
+
+    it("replays a corpus: counts per rule and a few first-line samples", () => {
+        const report = replayCorpus(
+            ["git checkout -- a.ts", "ls", "git checkout -- b.ts\necho second line"],
+            SHELL_RULES,
+            {
+                samples: 1,
+            }
+        );
+        const row = report.rows.find((candidate) => candidate.ruleId === "git-checkout-overwrites-file");
+
+        expect(report.commands).toBe(3);
+        expect(row).toEqual({ ruleId: "git-checkout-overwrites-file", fired: 2, samples: ["git checkout -- a.ts"] });
+        expect(report.rows.find((candidate) => candidate.ruleId === "find-from-root")?.fired).toBe(0);
+    });
+
+    it("reads the newest unique Bash commands from transcripts, newest first", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-corpus-"));
+        const line = (command: string): string =>
+            SafeJSON.stringify({
+                message: { content: [{ type: "tool_use", name: "Bash", input: { command } }] },
+            });
+
+        mkdirSync(join(root, "project"));
+        writeFileSync(join(root, "project", "old.jsonl"), [line("echo old-1"), line("echo old-2")].join("\n"));
+        writeFileSync(
+            join(root, "project", "new.jsonl"),
+            [line("echo new-1"), line("echo new-2"), line("echo new-1")].join("\n")
+        );
+        utimesSync(join(root, "project", "old.jsonl"), new Date(1_000_000), new Date(1_000_000));
+
+        expect(recentBashCommands(3, root)).toEqual(["echo new-1", "echo new-2", "echo old-2"]);
+    });
+});
+
+describe("Codex wiring", () => {
+    const timing = {
+        hooks: [{ type: "command", command: "/home/alice/.claude/hooks/timing.sh", timeout: 5 }],
+        matcher: "Bash",
+    };
+
+    function codexFile(value: unknown): string {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-codex-")), "hooks.json");
+
+        writeFileSync(path, SafeJSON.stringify(value));
+        return path;
+    }
+
+    it("appends after every existing entry, so the entries Codex already trusts keep their index", () => {
+        const path = codexFile({ hooks: { PreToolUse: [timing], PostToolUse: [timing] } });
+        const result = installCodexHooks({ dist: "/dist", path, write: true, diff: true });
+        const written = readSettings(path);
+
+        expect(result.added).toEqual(["PreToolUse", "PostToolUse"]);
+        expect(written.hooks?.PreToolUse?.[0]).toEqual(timing);
+        expect(written.hooks?.PreToolUse?.[1]?.hooks[0]?.command).toBe("bun '/dist/src/agents/bin/hook-pre.ts'");
+        expect(written.hooks?.PostToolUse?.[1]?.hooks[0]?.command).toBe("bun '/dist/src/agents/bin/hook-diff-post.ts'");
+        expect(existsSync(`${path}.pre-agents-hooks`)).toBe(true);
+    });
+
+    it("a second run changes nothing; a new dist replaces our entry IN PLACE", () => {
+        const path = codexFile({ hooks: { PreToolUse: [timing] } });
+
+        installCodexHooks({ dist: "/dist", path, write: true, diff: false });
+        expect(installCodexHooks({ dist: "/dist", path, write: true, diff: false }).changed).toBe(false);
+
+        writeFileSync(
+            path,
+            SafeJSON.stringify({
+                hooks: { PreToolUse: [codexEntriesFor("/old", { diff: false })[0]?.entry, timing] },
+            })
+        );
+
+        const result = installCodexHooks({ dist: "/dist", path, write: true, diff: false });
+        const list = readSettings(path).hooks?.PreToolUse ?? [];
+
+        expect(result.updated).toEqual(["PreToolUse"]);
+        expect(list[0]?.hooks[0]?.command).toBe("bun '/dist/src/agents/bin/hook-pre.ts'");
+        expect(list[1]).toEqual(timing);
+    });
+
+    it("the diff off removes our post entry; uninstall removes only ours", () => {
+        const path = codexFile({ hooks: { PreToolUse: [timing], PostToolUse: [timing] } });
+
+        installCodexHooks({ dist: "/dist", path, write: true, diff: true });
+        expect(installCodexHooks({ dist: "/dist", path, write: true, diff: false }).removed).toEqual(["PostToolUse"]);
+        expect(uninstallCodexHooks({ path, write: true }).removed).toBe(1);
+        expect(readSettings(path).hooks).toEqual({ PreToolUse: [timing], PostToolUse: [timing] });
+    });
+
+    it("reports which of our positions config.toml holds a trust entry for, and survives a broken file", () => {
+        const path = codexFile({ hooks: { PreToolUse: [timing] } });
+        const configPath = join(path, "..", "config.toml");
+
+        expect(codexWiring({ dist: "/dist", path, configPath, diff: false }).state).toBe("missing");
+
+        installCodexHooks({ dist: "/dist", path, write: true, diff: false });
+        writeFileSync(configPath, `[hooks.state."${path}:pre_tool_use:1:0"]\ntrusted_hash = "sha256:x"\n`);
+
+        expect(codexWiring({ dist: "/dist", path, configPath, diff: false })).toMatchObject({
+            state: "installed",
+            trust: [{ event: "PreToolUse", key: `${path}:pre_tool_use:1:0`, recorded: true }],
+        });
+        expect(codexWiring({ dist: "/dist", path, configPath, diff: true }).state).toBe("stale");
+
+        writeFileSync(path, "{ not json");
+        expect(codexWiring({ dist: "/dist", path, configPath }).error).toBeDefined();
+    });
+});
+
+describe("lastSeenPerHarness", () => {
+    it("takes the newest record per harness, and reads the rotated generation for a harness the current one lacks", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-seen-"));
+        const log = join(dir, "agents-hooks.jsonl");
+        const record = (harness: string, at: string): string => SafeJSON.stringify({ at, harness, phase: "guard" });
+
+        writeFileSync(
+            log,
+            ["{cut in half", record("claude", "2026-10-12T10:00:00Z"), record("claude", "2026-10-12T11:00:00Z")].join(
+                "\n"
+            )
+        );
+        writeFileSync(`${log}.1`, record("grok", "2026-10-11T09:00:00Z"));
+
+        expect(lastSeenPerHarness(log)).toEqual({ claude: "2026-10-12T11:00:00Z", grok: "2026-10-11T09:00:00Z" });
     });
 });

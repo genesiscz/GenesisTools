@@ -90,8 +90,8 @@ export function entriesFor(
         {
             // ONE process for the whole PreToolUse phase. Two entries cost a second bun
             // start and a second module graph, measured at about 10 ms, on every Bash call.
-            // `hook-guard.ts` and `hook-diff-pre.ts` still exist for the parity harnesses
-            // and for a harness that wants only one half.
+            // `hook-guard.ts` and `hook-diff-pre.ts` still exist for a harness that wants only
+            // one half, and as the latency benchmark's guard-only stage.
             event: "PreToolUse",
             entry: {
                 matcher: "Bash",
@@ -252,12 +252,12 @@ export interface InstallResult {
 }
 
 /** Does this entry belong to this installer? */
-function isOurs(entry: HookEntry): boolean {
+export function isOurs(entry: HookEntry): boolean {
     return Boolean(entry.hooks?.some((hook) => hook.command?.includes(INSTALL_MARKER)));
 }
 
 /** Field-by-field, so a hand-reordered JSON key does not read as a difference. */
-function sameEntry(a: HookEntry, b: HookEntry): boolean {
+export function sameEntry(a: HookEntry, b: HookEntry): boolean {
     if ((a.matcher ?? null) !== (b.matcher ?? null) || a.hooks.length !== b.hooks.length) {
         return false;
     }

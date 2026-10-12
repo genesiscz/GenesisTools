@@ -11,6 +11,7 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { diffFor, keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -33,7 +34,13 @@ if (!payload || normalizeEvent(payload.event) !== "pretooluse" || !isTerminalToo
 }
 
 const at = new Date().toISOString();
-const verdict = evaluateGuard(payload, config);
+// Imports nothing unless `guard.customRules` names something. A module that fails is skipped and
+// logged; the built-in rules still run.
+const { rules, custom } = await guardRules(config);
+
+logCustomRuleProblems(custom);
+
+const verdict = evaluateGuard(payload, config, rules);
 
 logDecision(
     {

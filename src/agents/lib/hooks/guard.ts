@@ -1,5 +1,5 @@
 import { detectShellViolations, renderViolations } from "@genesiscz/utils/shell/rules";
-import type { ShellViolation } from "@genesiscz/utils/shell/rules/types";
+import type { ShellRule, ShellViolation } from "@genesiscz/utils/shell/rules/types";
 import type { HarnessName, HookOutcome, HooksConfig } from "./config";
 import { resolveModel } from "./model";
 import { LONG_MISREAD_DOWNGRADE, resolveOutcome } from "./outcome";
@@ -36,6 +36,8 @@ export interface EvaluateOptions {
     contextCounts?: Record<string, number>;
     /** The folder the command runs in (the payload's `cwd`), for rules that read the project. */
     cwd?: string;
+    /** The rules to run. Default: the built-in registry; the hooks pass it plus the custom rules. */
+    rules?: readonly ShellRule[];
 }
 
 /**
@@ -82,7 +84,7 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
     // The length downgrade lives in `resolveOutcome`, so the `rules test` diagnostic and
     // this hot path can never disagree. `demoted` is read back off the trace rather than
     // re-applied here, which is what a second implementation would silently drift from.
-    const graded = detectShellViolations(command, undefined, { cwd: options.cwd }).map((violation) => {
+    const graded = detectShellViolations(command, options.rules, { cwd: options.cwd }).map((violation) => {
         const resolution = resolveOutcome({
             ruleId: violation.ruleId,
             ruleSeverity: violation.severity,
@@ -175,7 +177,11 @@ function modelFor(payload: HookPayload, config: HooksConfig): string {
 }
 
 /** `null` means the guard has nothing to say: no rule fired, or this is not a shell call. */
-export function evaluateGuard(payload: HookPayload, config: HooksConfig): GuardVerdict | null {
+export function evaluateGuard(
+    payload: HookPayload,
+    config: HooksConfig,
+    rules?: readonly ShellRule[]
+): GuardVerdict | null {
     if (!config.guard.enabled || !isTerminalTool(payload.tool) || payload.command.length === 0) {
         return null;
     }
@@ -190,6 +196,7 @@ export function evaluateGuard(payload: HookPayload, config: HooksConfig): GuardV
         harness: payload.harness,
         contextCounts: sessionId ? readContextCounts(sessionId) : {},
         cwd: payload.cwd,
+        rules,
     });
 
     return verdict.outcome === "allow" ? null : verdict;

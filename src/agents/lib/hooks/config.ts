@@ -138,6 +138,15 @@ export interface GuardConfig {
     longCommand: { lines: number; chars: number };
     /** Context notes shown per rule per session before the rule goes quiet. */
     contextCapPerSession: number;
+    /**
+     * Your own rule modules, loaded beside the built-in ones: files, or folders whose top-level
+     * `.ts`/`.js` files are each one module (`*.test.*` and names starting with `_` or `.` are
+     * skipped). `~/` expands; a relative path resolves against the home folder. Each module
+     * exports `rules` (or a default export): an array of `ShellRule` from
+     * `@genesiscz/utils/shell/rules/types`. A module that fails to load, or a rule that throws, is
+     * skipped and logged; it never blocks a command.
+     */
+    customRules: string[];
 }
 
 /**
@@ -270,6 +279,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         models: {},
         longCommand: { lines: 30, chars: 2500 },
         contextCapPerSession: 3,
+        customRules: [],
     },
     diff: {
         enabled: true,
@@ -418,6 +428,23 @@ function mergeHarnesses(
     }
 
     return merged;
+}
+
+/** A list of paths: anything but an array of strings falls back, and is reported. */
+function pathListOr(field: string, value: unknown, fallback: string[]): string[] {
+    if (value === undefined) {
+        return fallback;
+    }
+
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+        return value.filter((item) => item.trim().length > 0);
+    }
+
+    lastProblems.push(
+        `${field} is ${SafeJSON.stringify(value)}, not a list of paths; using ${SafeJSON.stringify(fallback)}`
+    );
+
+    return fallback;
 }
 
 function boolOr(value: unknown, fallback: boolean): boolean {
@@ -776,6 +803,7 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
                 fallback: base.contextCapPerSession,
                 min: 0,
             }),
+            customRules: pathListOr("guard.customRules", guard?.customRules, base.customRules),
         },
         diff: mergeDiff(stored.diff),
         decisions: mergeDecisions(stored.decisions),

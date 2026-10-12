@@ -2,9 +2,10 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
-import { parseHookPayload } from "../lib/hooks/payload";
+import { isTerminalTool, parseHookPayload } from "../lib/hooks/payload";
 import { bumpContextCounts, safeSessionId } from "../lib/hooks/state";
 
 if (env.agents.areHooksDisabled()) {
@@ -22,7 +23,12 @@ if (!payload) {
     process.exit(0);
 }
 
-const verdict = evaluateGuard(payload, config);
+// Only a shell call can trip a rule, so only a shell call pays for importing the custom ones.
+const { rules, custom } = isTerminalTool(payload.tool) ? await guardRules(config) : { rules: undefined, custom: null };
+
+logCustomRuleProblems(custom);
+
+const verdict = evaluateGuard(payload, config, rules);
 
 logDecision(
     {
