@@ -48,6 +48,7 @@ mock.module("@genesiscz/utils/cmux/session-refs", () => ({
 }));
 
 import {
+    __forgetTailCacheForTests,
     CACHE_TTL_MS,
     CODEX_CACHE_TTL_MS,
     COOLING_THRESHOLD_MS,
@@ -592,4 +593,31 @@ test("usage sessions is registered with --json and --hours", () => {
     expect(help).toContain("--json");
     expect(help).toContain("--hours");
     expect(help).toContain("--min");
+});
+
+describe("the saved tail cache", () => {
+    beforeEach(() => {
+        listing.sessions = [];
+        tails.clear();
+        tailReads.length = 0;
+    });
+
+    test("a new process reads an unchanged tail from the saved cache, and a changed one again", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-tail-saved-")), "session.jsonl");
+        writeFileSync(path, `${OPUS_LINE}\n`);
+        listing.sessions = [record({ filePath: path, sessionId: "saved-id", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE]);
+
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBe("opus");
+        const reads = tailReads.length;
+        __forgetTailCacheForTests();
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBe("opus");
+        expect(tailReads.length).toBe(reads);
+
+        appendFileSync(path, `${SONNET_LINE}\n`);
+        tails.set(path, [OPUS_LINE, SONNET_LINE]);
+        __forgetTailCacheForTests();
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBe("sonnet");
+        expect(tailReads.length).toBeGreaterThan(reads);
+    });
 });

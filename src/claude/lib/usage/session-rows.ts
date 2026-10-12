@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { rename, stat } from "node:fs/promises";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
@@ -6,8 +6,10 @@ import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { loadAllSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { collapsePath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export const CACHE_TTL_MS = 60 * 60 * 1000; // Claude Code 1-hour prompt-cache TTL
 export const CODEX_CACHE_TTL_MS = 30 * 60 * 1000; // GPT-5.6+ / Codex subscription documented minimum
@@ -295,7 +297,115 @@ function parseTailLines(lines: string[], filePath: string): TailUsage {
  * call (`claude-sessions tail` 340 ms of a 2.6 s agents call, 2026-10-08).
  */
 const TAIL_CACHE_LIMIT = 2000;
-const tailCache = new Map<string, { size: number; mtimeMs: number; ino: number; usage: TailUsage }>();
+interface TailCacheEntry {
+    size: number;
+    mtimeMs: number;
+    ino: number;
+    usage: TailUsage;
+}
+const tailCache = new Map<string, TailCacheEntry>();
+
+/**
+ * The tail cache is also kept on disk, so a new process re-parses only the transcripts that changed. A fresh
+ * `ai usage sessions` spent 327 ms per run in `parseTailLines`, 38% of its JavaScript time, re-parsing tails no
+ * one had written to since the last run (`tools ts profile`, 2026-10-12). Bump the version whenever
+ * `parseTailLines` or `TailUsage` changes what an entry means: a file of another version is ignored.
+ */
+const TAIL_CACHE_VERSION = 1;
+let tailCacheLoaded: Promise<void> | undefined;
+let tailCacheDirty = false;
+
+function tailCachePath(): string {
+    return toolDataDir("claude", "cache", "session-tail-usage.json");
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+    return value === null || typeof value === "number";
+}
+
+function isTailCacheEntry(value: unknown): value is TailCacheEntry {
+    if (!isObject(value) || !isObject(value.usage)) {
+        return false;
+    }
+
+    const usage = value.usage;
+    return (
+        typeof value.size === "number" &&
+        typeof value.mtimeMs === "number" &&
+        typeof value.ino === "number" &&
+        typeof usage.totalTokens === "number" &&
+        typeof usage.cacheReadTokens === "number" &&
+        typeof usage.cacheCreateTokens === "number" &&
+        typeof usage.inputTokens === "number" &&
+        (usage.model === null || typeof usage.model === "string") &&
+        (usage.prevModel === null || typeof usage.prevModel === "string") &&
+        isNullableNumber(usage.lastCacheAt) &&
+        isNullableNumber(usage.lastUserAt) &&
+        isNullableNumber(usage.compactedPostTokens)
+    );
+}
+
+/** Reads the saved cache once per process, under the entries this process already holds. */
+function loadTailCache(): Promise<void> {
+    tailCacheLoaded ??= (async () => {
+        const path = tailCachePath();
+
+        try {
+            const file = Bun.file(path);
+
+            if (!(await file.exists())) {
+                return;
+            }
+
+            const saved: unknown = SafeJSON.parse(await file.text(), { strict: true });
+
+            if (!isObject(saved) || saved.version !== TAIL_CACHE_VERSION || !isObject(saved.entries)) {
+                logger.debug({ path }, "session tail cache: another version on disk; starting empty");
+                return;
+            }
+
+            for (const [filePath, entry] of Object.entries(saved.entries)) {
+                if (!tailCache.has(filePath) && isTailCacheEntry(entry)) {
+                    tailCache.set(filePath, entry);
+                }
+            }
+        } catch (err) {
+            logger.debug({ err, path }, "session tail cache unreadable; starting empty");
+        }
+    })();
+    return tailCacheLoaded;
+}
+
+/** Writes the cache when a parse added to it; a temporary file renamed into place, so a reader never sees half. */
+async function saveTailCache(): Promise<void> {
+    if (!tailCacheDirty) {
+        return;
+    }
+
+    tailCacheDirty = false;
+    const path = tailCachePath();
+    const writing = `${path}.${process.pid}.tmp`;
+
+    try {
+        await Bun.write(
+            writing,
+            SafeJSON.stringify(
+                { version: TAIL_CACHE_VERSION, entries: Object.fromEntries(tailCache) },
+                { strict: true }
+            )
+        );
+        await rename(writing, path);
+    } catch (err) {
+        logger.debug({ err, path }, "session tail cache not saved");
+    }
+}
+
+/** A new process, as far as the tail cache knows: the next listing reads the saved file again. For tests. */
+export function __forgetTailCacheForTests(): void {
+    tailCache.clear();
+    tailCacheLoaded = undefined;
+    tailCacheDirty = false;
+}
 
 async function extractTailUsage(filePath: string): Promise<TailUsage> {
     const status = await stat(filePath).catch((err: unknown) => {
@@ -318,6 +428,7 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
         // The stat came first: a write after it leaves a newer mtime, and the next call reads the tail again.
         tailCache.delete(filePath);
         tailCache.set(filePath, { size: status.size, mtimeMs: status.mtimeMs, ino: status.ino, usage: { ...usage } });
+        tailCacheDirty = true;
         if (tailCache.size > TAIL_CACHE_LIMIT) {
             const oldest = tailCache.keys().next().value;
             if (oldest !== undefined) {
@@ -454,11 +565,15 @@ export async function listSessionRowsWithTimings(
             return;
         }
 
+        await loadTailCache();
+
         for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
             const batch = records.slice(i, i + TAIL_BATCH_SIZE);
             const batchUsages = await Promise.all(batch.map((r) => extractTailUsage(r.filePath)));
             usages.push(...batchUsages);
         }
+
+        await saveTailCache();
     });
 
     const tailMs = performance.now() - tailStarted;
