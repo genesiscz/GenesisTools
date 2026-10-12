@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -56,15 +56,21 @@ async function readSummary(options: {
     const unresolved = join(options.directory, "summary.json");
     const key = `${options.worker ? "worker" : "home"}:${unresolved}`;
     let identity: string;
-    let path: string;
+    let path = unresolved;
     try {
-        identity = summaryIdentity(await stat(unresolved));
+        // The folder came from the walk and is canonical, so only a linked summary needs `realpath`, which costs a
+        // syscall per path component.
+        let status = await lstat(unresolved);
+        if (status.isSymbolicLink()) {
+            path = await realpath(unresolved);
+            status = await stat(path);
+        }
+
+        identity = summaryIdentity(status);
         const cached = summaryCache.get(key);
         if (cached?.identity === identity) {
             return cached.read;
         }
-
-        path = await realpath(unresolved);
     } catch (error) {
         summaryCache.delete(key);
         if (error instanceof Error && "code" in error && error.code === "ENOENT") {
