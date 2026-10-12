@@ -167,7 +167,9 @@ async function main(): Promise<void> {
         // and with the poll before it the runner's 60 s timeout SIGTERMed the tick 20 times that day,
         // losing its "completed" line. A walk cut short leaves the previous file for the next tick;
         // `process.exit` below ends it.
-        const budgetMs = TICK_BUDGET_MS - (Date.now() - startedAt);
+        // Counted from process start, not from `main`: the runner's 60 s clock starts at spawn, and on the ticks it
+        // killed on 2026-10-12 the first line of `main` reached it 5-38 s after spawn, which ate the headroom.
+        const budgetMs = TICK_BUDGET_MS - (Date.now() - performance.timeOrigin);
         try {
             const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
             const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
