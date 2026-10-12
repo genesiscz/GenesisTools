@@ -17,6 +17,7 @@ import {
     notifyDir,
     readNotifyConfig,
     repoEvents,
+    repoIntervalMinutes,
     watchedRepoPaths,
 } from "./notify-config";
 import { fetchGithubRepo, fetchGitlabRepo, HostError, type RepoFetch } from "./notify-fetch";
@@ -47,6 +48,8 @@ export interface RepoStatus {
     lastError: string | null;
     lastMs: number | null;
     viewer?: string | null;
+    /** The last poll of this repo, successful or not; its cadence counts from here. */
+    lastAttemptAt?: string;
 }
 
 export interface NotifyState {
@@ -170,6 +173,8 @@ export function testNotification(pr: string | null, bundle = genesisAppBundlePat
 }
 
 export interface PollDeps {
+    /** Test seam: the deadline of one repo job (default `PROJECT_TIMEOUT_MS` on a real timer). */
+    projectDeadline?: (key: string) => ProjectDeadline;
     readConfig: () => NotifyConfig;
     readFacts: (paths: string[]) => Promise<RepoFacts[]>;
     fetchGithub: typeof fetchGithubRepo;
@@ -225,6 +230,200 @@ export function watchedProjects(facts: RepoFacts[]): { projects: WatchedProject[
     return { projects: [...projects.values()], skipped };
 }
 
+/** A repo's cadence has come: its last poll attempt (or never) is a cadence ago, less the tick slack. */
+function repoDue(input: { config: NotifyConfig; state: NotifyState; watched: WatchedProject; now: Date }): boolean {
+    const last = input.state.repos[input.watched.key]?.lastAttemptAt;
+
+    if (!last) {
+        return true;
+    }
+
+    const cadenceMs = repoIntervalMinutes(input.config, input.watched.path) * 60_000;
+    return input.now.getTime() - Date.parse(last) >= cadenceMs - DUE_SLACK_MS;
+}
+
+/** A repo job that has not answered after this long is recorded as failed, so one hung host never holds the poll
+ *  past the daemon task's timeout. */
+export const PROJECT_TIMEOUT_MS = 45_000;
+
+export interface ProjectDeadline {
+    promise: Promise<void>;
+    cancel: () => void;
+}
+
+function realProjectDeadline(): ProjectDeadline {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const promise = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PROJECT_TIMEOUT_MS);
+    });
+    return { promise, cancel: () => clearTimeout(timer) };
+}
+
+type ProjectOutcome =
+    | { kind: "skipped"; reason: string }
+    | { kind: "fetched"; fetched: RepoFetch; ms: number }
+    | { kind: "failed"; err: unknown; ms: number }
+    | { kind: "timeout" };
+
+async function pollProject(input: {
+    watched: WatchedProject;
+    config: NotifyConfig;
+    state: NotifyState;
+    now: Date;
+    at: string;
+    force: boolean;
+    deps: PollDeps;
+}): Promise<ProjectOutcome> {
+    const { watched, config, state, now, force, deps } = input;
+    const status = state.repos[watched.key];
+    const host = state.hosts[watched.project.host];
+
+    if (!force && status?.nextAt && Date.parse(status.nextAt) > now.getTime()) {
+        return { kind: "skipped", reason: `backing off until ${status.nextAt} after ${status.failures} failures` };
+    }
+
+    if (host && host.remaining < RATE_FLOOR && Date.parse(host.resetAt) > now.getTime()) {
+        return { kind: "skipped", reason: `${host.remaining} GraphQL points left until ${host.resetAt}` };
+    }
+
+    const repoStarted = performance.now();
+
+    try {
+        const fetched =
+            watched.project.kind === "github"
+                ? await deps.fetchGithub({ project: watched.project, botLogins: config.botLogins })
+                : await deps.fetchGitlab({
+                      project: watched.project,
+                      botLogins: config.botLogins,
+                      memory: state.prs,
+                      viewer: status?.viewer,
+                  });
+        return { kind: "fetched", fetched, ms: Math.round(performance.now() - repoStarted) };
+    } catch (err) {
+        return { kind: "failed", err, ms: Math.round(performance.now() - repoStarted) };
+    }
+}
+
+/** Records one repo's outcome in the state and the report, and posts its banners (at most `MAX_BANNERS` per poll;
+ *  the rest fold into one summary at the end). */
+async function finishProject(input: {
+    watched: WatchedProject;
+    result: ProjectOutcome;
+    config: NotifyConfig;
+    state: NotifyState;
+    now: Date;
+    at: string;
+    dryRun: boolean;
+    deps: PollDeps;
+    banners: { posted: number; folded: NotifyItem[] };
+    report: PollReport;
+}): Promise<void> {
+    const { watched, result, config, state, now, at, dryRun, deps, banners, report } = input;
+    const status: RepoStatus = state.repos[watched.key] ?? {
+        failures: 0,
+        nextAt: null,
+        lastOkAt: null,
+        lastError: null,
+        lastMs: null,
+    };
+    const base: RepoPollResult = {
+        key: watched.key,
+        path: watched.path,
+        provider: watched.project.kind,
+        prs: 0,
+        requests: 0,
+        ms: 0,
+        error: null,
+        skipped: null,
+    };
+
+    if (result.kind === "skipped") {
+        report.repos.push({ ...base, skipped: result.reason });
+        return;
+    }
+
+    if (result.kind === "failed" || result.kind === "timeout") {
+        const err = result.kind === "failed" ? result.err : null;
+        const message =
+            result.kind === "timeout"
+                ? `no answer within ${PROJECT_TIMEOUT_MS / 1000} s`
+                : err instanceof Error
+                  ? err.message
+                  : String(err);
+        const failures = status.failures + 1;
+        const wait = backoffMinutes(
+            repoIntervalMinutes(config, watched.path),
+            failures,
+            err instanceof HostError && err.rateLimited
+        );
+        const ms = result.kind === "failed" ? result.ms : PROJECT_TIMEOUT_MS;
+        state.repos[watched.key] = {
+            ...status,
+            path: watched.path,
+            failures,
+            nextAt: iso(now.getTime() + wait * 60_000),
+            lastError: message,
+            lastMs: ms,
+            lastAttemptAt: at,
+        };
+        log.warn({ err, repo: watched.key, failures, waitMinutes: wait }, "notify poll: repo failed");
+        report.repos.push({ ...base, error: message, ms, requests: 1 });
+        report.requests += 1;
+        return;
+    }
+
+    const { fetched, ms } = result;
+    const events = repoEvents(config, watched.path);
+    const items: NotifyItem[] = [];
+
+    for (const pr of fetched.prs) {
+        const diff = diffPr({
+            previous: state.prs[pr.key],
+            pr,
+            viewer: fetched.viewer,
+            events,
+            onlyMine: config.onlyMine,
+            now: at,
+        });
+        state.prs[pr.key] = diff.memory;
+        items.push(...diff.items);
+    }
+
+    if (fetched.rate) {
+        state.hosts[watched.project.host] = { remaining: fetched.rate.remaining, resetAt: fetched.rate.resetAt };
+    }
+
+    state.repos[watched.key] = {
+        path: watched.path,
+        failures: 0,
+        nextAt: null,
+        lastOkAt: at,
+        lastError: null,
+        lastMs: ms,
+        viewer: fetched.viewer,
+        lastAttemptAt: at,
+    };
+    report.repos.push({ ...base, prs: fetched.prs.length, requests: fetched.requests, ms });
+    report.requests += fetched.requests;
+    report.items.push(...items);
+
+    if (dryRun) {
+        return;
+    }
+
+    for (const item of items) {
+        if (banners.posted >= MAX_BANNERS) {
+            banners.folded.push(item);
+            continue;
+        }
+
+        banners.posted += 1;
+        const posted = await deps.post(item);
+        report.posted += posted ? 1 : 0;
+        state.recent.push({ ...item, at, posted });
+    }
+}
+
 /** Minutes to wait after `failures` failed polls in a row: the interval doubled per failure, capped. */
 export function backoffMinutes(intervalMinutes: number, failures: number, rateLimited: boolean): number {
     const doubled = intervalMinutes * 2 ** Math.max(0, failures - 1);
@@ -274,136 +473,59 @@ async function pollLocked({
     }
 
     const state = readNotifyState(deps.statePath);
-    const intervalMs = config.intervalMinutes * 60_000;
-
-    if (!force && state.lastPollAt && now.getTime() - Date.parse(state.lastPollAt) < intervalMs - DUE_SLACK_MS) {
-        report.skipped = `not due: the last poll ran at ${state.lastPollAt}, every ${config.intervalMinutes} min`;
-        return finish();
-    }
-
     const { projects, skipped } = watchedProjects(await deps.readFacts(paths));
     report.repos.push(...skipped);
 
-    // One repo at a time: GitHub's secondary limits punish concurrent bursts from one token.
-    for (const watched of projects) {
-        const status: RepoStatus = state.repos[watched.key] ?? {
-            failures: 0,
-            nextAt: null,
-            lastOkAt: null,
-            lastError: null,
-            lastMs: null,
-        };
-        const host = state.hosts[watched.project.host];
-        const base: RepoPollResult = {
-            key: watched.key,
-            path: watched.path,
-            provider: watched.project.kind,
-            prs: 0,
-            requests: 0,
-            ms: 0,
-            error: null,
-            skipped: null,
-        };
+    // Each repo keeps its own cadence (`intervalMinutes` per repo, else the global one): the daemon task ticks every
+    // minute and only the repos whose cadence has come are polled.
+    const due = projects.filter((watched) => force || repoDue({ config, state, watched, now }));
 
-        if (!force && status.nextAt && Date.parse(status.nextAt) > now.getTime()) {
-            report.repos.push({
-                ...base,
-                skipped: `backing off until ${status.nextAt} after ${status.failures} failures`,
-            });
-            continue;
+    if (due.length === 0) {
+        report.skipped = `not due: no watched repo's cadence has come (${projects.length} watched)`;
+        return finish();
+    }
+
+    // The due repos run side by side, each with its own state and backoff, and each posts its own banners as soon as
+    // it is done: a slow or failing repo never holds back another's news. A repo that has not answered by its
+    // deadline is recorded as failed and backs off.
+    const deadline = deps.projectDeadline ?? realProjectDeadline;
+    const banners = { posted: 0, folded: [] as NotifyItem[] };
+    const outcomes = await Promise.allSettled(
+        due.map(async (watched) => {
+            const timer = deadline(watched.key);
+            try {
+                const result = await Promise.race([
+                    pollProject({ watched, config, state, now, at, force, deps }),
+                    timer.promise.then((): ProjectOutcome => ({ kind: "timeout" })),
+                ]);
+                return finishProject({ watched, result, config, state, now, at, dryRun, deps, banners, report });
+            } finally {
+                timer.cancel();
+            }
+        })
+    );
+
+    for (const outcome of outcomes) {
+        if (outcome.status === "rejected") {
+            log.error({ err: outcome.reason }, "notify poll: a repo job failed unexpectedly");
         }
-
-        if (host && host.remaining < RATE_FLOOR && Date.parse(host.resetAt) > now.getTime()) {
-            report.repos.push({ ...base, skipped: `${host.remaining} GraphQL points left until ${host.resetAt}` });
-            continue;
-        }
-
-        const repoStarted = performance.now();
-        let fetched: RepoFetch;
-
-        try {
-            fetched =
-                watched.project.kind === "github"
-                    ? await deps.fetchGithub({ project: watched.project, botLogins: config.botLogins })
-                    : await deps.fetchGitlab({
-                          project: watched.project,
-                          botLogins: config.botLogins,
-                          memory: state.prs,
-                          viewer: status.viewer,
-                      });
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const failures = status.failures + 1;
-            const wait = backoffMinutes(config.intervalMinutes, failures, err instanceof HostError && err.rateLimited);
-            state.repos[watched.key] = {
-                ...status,
-                path: watched.path,
-                failures,
-                nextAt: iso(now.getTime() + wait * 60_000),
-                lastError: message,
-                lastMs: Math.round(performance.now() - repoStarted),
-            };
-            log.warn({ err, repo: watched.key, failures, waitMinutes: wait }, "notify poll: repo failed");
-            report.repos.push({
-                ...base,
-                error: message,
-                ms: Math.round(performance.now() - repoStarted),
-                requests: 1,
-            });
-            report.requests += 1;
-            continue;
-        }
-
-        const events = repoEvents(config, watched.path);
-
-        for (const pr of fetched.prs) {
-            const diff = diffPr({
-                previous: state.prs[pr.key],
-                pr,
-                viewer: fetched.viewer,
-                events,
-                onlyMine: config.onlyMine,
-                now: at,
-            });
-            state.prs[pr.key] = diff.memory;
-            report.items.push(...diff.items);
-        }
-
-        if (fetched.rate) {
-            state.hosts[watched.project.host] = { remaining: fetched.rate.remaining, resetAt: fetched.rate.resetAt };
-        }
-
-        const ms = Math.round(performance.now() - repoStarted);
-        state.repos[watched.key] = {
-            path: watched.path,
-            failures: 0,
-            nextAt: null,
-            lastOkAt: at,
-            lastError: null,
-            lastMs: ms,
-            viewer: fetched.viewer,
-        };
-        report.repos.push({ ...base, prs: fetched.prs.length, requests: fetched.requests, ms });
-        report.requests += fetched.requests;
     }
 
     if (!dryRun) {
-        const shown = report.items.length > MAX_BANNERS + 1 ? report.items.slice(0, MAX_BANNERS) : report.items;
-
-        for (const item of shown) {
-            const posted = await deps.post(item);
+        // One left over still gets its own banner; more fold into one summary.
+        const [only] = banners.folded;
+        if (banners.folded.length === 1 && only) {
+            const posted = await deps.post(only);
             report.posted += posted ? 1 : 0;
-            state.recent.push({ ...item, at, posted });
-        }
+            state.recent.push({ ...only, at, posted });
+        } else if (banners.folded.length > 1) {
+            if (banners.folded[0] && (await deps.post(banners.folded[0], { more: banners.folded.length }))) {
+                report.posted += 1;
+            }
 
-        const folded = report.items.slice(shown.length);
-
-        if (folded.length > 0 && (await deps.post(folded[0], { more: folded.length }))) {
-            report.posted += 1;
-        }
-
-        for (const item of folded) {
-            state.recent.push({ ...item, at, posted: false });
+            for (const item of banners.folded) {
+                state.recent.push({ ...item, at, posted: false });
+            }
         }
 
         state.recent = state.recent.slice(-RECENT_EVENTS);

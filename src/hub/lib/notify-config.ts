@@ -31,12 +31,14 @@ export interface NotifyRepoConfig {
     enabled: boolean;
     /** Per-repo switches; an event missing here follows the global switch. */
     events?: Partial<Record<NotifyEvent, boolean>>;
+    /** Minutes between this repo's polls; missing follows the global `intervalMinutes`. */
+    intervalMinutes?: number;
 }
 
 export interface NotifyConfig {
     /** The master switch: off, a poll does nothing. */
     enabled: boolean;
-    /** Minutes between polls of one repo; errors back off from here. */
+    /** Minutes between polls of a repo without its own cadence; errors back off from the repo's cadence. */
     intervalMinutes: number;
     /** Only PRs I opened. */
     onlyMine: boolean;
@@ -130,6 +132,9 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
             repos[path] = {
                 enabled: value.enabled !== false,
                 ...(Object.keys(events).length > 0 ? { events } : {}),
+                ...(typeof value.intervalMinutes === "number"
+                    ? { intervalMinutes: clampInterval(value.intervalMinutes) }
+                    : {}),
             };
         }
     }
@@ -147,6 +152,11 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
     };
 }
 
+/** Minutes between one repo's polls: its own cadence, else the global one. */
+export function repoIntervalMinutes(config: NotifyConfig, repoPath: string): number {
+    return config.repos[repoPath]?.intervalMinutes ?? config.intervalMinutes;
+}
+
 /** The events one repo posts: its own switches over the global ones. */
 export function repoEvents(config: NotifyConfig, repoPath: string): Record<NotifyEvent, boolean> {
     return { ...config.events, ...config.repos[repoPath]?.events };
@@ -160,6 +170,7 @@ export function watchedRepoPaths(config: NotifyConfig): string[] {
 
 export interface NotifySettingsChange {
     enabled?: boolean;
+    /** The global cadence, or the repo's own when `repo` is set. */
     intervalMinutes?: number;
     onlyMine?: boolean;
     /** Global switches, or the repo's own when `repo` is set. */
@@ -169,6 +180,8 @@ export interface NotifySettingsChange {
     repoEnabled?: boolean;
     /** Drop the repo's own event switches so it follows the global ones again. */
     resetRepoEvents?: boolean;
+    /** Drop the repo's own cadence so it follows the global one again. */
+    resetRepoInterval?: boolean;
     botLogins?: string[];
 }
 
@@ -190,7 +203,7 @@ export function applyNotifySettings(config: NotifyConfig, change: NotifySettings
         next.enabled = change.enabled;
     }
 
-    if (change.intervalMinutes !== undefined) {
+    if (change.intervalMinutes !== undefined && change.repo === undefined) {
         next.intervalMinutes = clampInterval(change.intervalMinutes);
     }
 
@@ -215,6 +228,14 @@ export function applyNotifySettings(config: NotifyConfig, change: NotifySettings
 
     if (change.resetRepoEvents) {
         delete repo.events;
+    }
+
+    if (change.resetRepoInterval) {
+        delete repo.intervalMinutes;
+    }
+
+    if (change.intervalMinutes !== undefined) {
+        repo.intervalMinutes = clampInterval(change.intervalMinutes);
     }
 
     if (change.events && Object.keys(change.events).length > 0) {

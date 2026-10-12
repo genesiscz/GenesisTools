@@ -640,9 +640,11 @@ describe("tools hub notify (the commands)", () => {
         expect(existsSync(script)).toBe(true);
         expect(task?.command).toContain(`'${script}'`);
 
+        expect(task?.every).toBe("every 1 minute");
+        // The cadence lives in the notify config now: the task keeps ticking every minute.
         expect(await runNotify(["set", "--interval", "7"])).toBe(0);
-        const moved = (await loadDaemonConfig()).tasks.find((t) => t.name === NOTIFY_TASK_NAME);
-        expect(moved?.every).toBe("every 7 minutes");
+        const kept = (await loadDaemonConfig()).tasks.find((t) => t.name === NOTIFY_TASK_NAME);
+        expect(kept?.every).toBe("every 1 minute");
 
         expect(await runNotify(["uninstall"])).toBe(0);
         expect((await loadDaemonConfig()).tasks.some((t) => t.name === NOTIFY_TASK_NAME)).toBe(false);
@@ -670,5 +672,166 @@ describe("the argv HubNotify.swift sends", () => {
         expect(config).toMatchObject({ enabled: true, onlyMine: true, intervalMinutes: 60 });
         expect(config.events.ciPassed).toBe(true);
         expect(config.repos[repo]).toEqual({ enabled: true });
+    });
+});
+
+describe("per-project jobs", () => {
+    /** Two watched checkouts of two different repos, each fetch answered by `answer(repo, call)`. */
+    function twoRepos(input: {
+        config: NotifyConfig;
+        answer: (repo: string, call: number) => Promise<RepoFetch> | RepoFetch;
+        posted: string[];
+        deadlines?: Map<string, () => void>;
+    }): PollDeps & { fetched: string[] } {
+        const fetched: string[] = [];
+        const calls = new Map<string, number>();
+        return {
+            readConfig: () => input.config,
+            readFacts: async (paths) =>
+                paths.map((path) => facts(path, `git@github.com:acme/${path.split("/").pop()}.git`)),
+            fetchGithub: async ({ project }) => {
+                const call = calls.get(project.path) ?? 0;
+                calls.set(project.path, call + 1);
+                fetched.push(project.path);
+                return input.answer(project.path, call);
+            },
+            fetchGitlab: async () => {
+                throw new Error("no GitLab here");
+            },
+            post: async (item, summary) => {
+                input.posted.push(summary ? `summary:${summary.more}` : `${item.type}:${item.project}#${item.number}`);
+                return true;
+            },
+            statePath: join(mkdtempSync(join(tmpdir(), "hub-notify-jobs-")), "notify-state.json"),
+            projectDeadline: input.deadlines
+                ? (key) => {
+                      let fire = () => {};
+                      const promise = new Promise<void>((resolve) => {
+                          fire = resolve;
+                      });
+                      input.deadlines?.set(key, fire);
+                      return { promise, cancel: () => {} };
+                  }
+                : undefined,
+            fetched,
+        };
+    }
+
+    function cadences(): NotifyConfig {
+        let config = applyNotifySettings(defaultNotifyConfig(), {
+            repo: "/w/shop",
+            repoEnabled: true,
+            intervalMinutes: 5,
+        });
+        config = applyNotifySettings(config, { repo: "/w/work", repoEnabled: true, intervalMinutes: 10 });
+        return config;
+    }
+
+    const quiet = (repo: string): RepoFetch => ({
+        prs: [snap({ key: `github.com/acme/${repo}#1`, project: `acme/${repo}`, number: 1 })],
+        viewer: "alice",
+        rate: null,
+        requests: 1,
+    });
+
+    test("a 1-minute task polls each repo at its own cadence: shop every 5 minutes, work every 10", async () => {
+        const posted: string[] = [];
+        const deps = twoRepos({ config: cadences(), answer: (repo) => quiet(repo.split("/").pop() ?? repo), posted });
+
+        for (let minute = 0; minute <= 20; minute++) {
+            await pollNotify({ deps, now: new Date(Date.parse(NOW) + minute * 60_000) });
+        }
+
+        const polls = (repo: string) => deps.fetched.filter((path) => path === repo).length;
+        // Minutes 0, 5, 10, 15, 20 and 0, 10, 20.
+        expect(polls("acme/shop")).toBe(5);
+        expect(polls("acme/work")).toBe(3);
+    });
+
+    test("a hung repo does not hold back another repo's banners; at its deadline it fails and backs off", async () => {
+        const posted: string[] = [];
+        const deadlines = new Map<string, () => void>();
+        const merged = (repo: string): RepoFetch => ({
+            prs: [
+                snap({
+                    key: `github.com/acme/${repo}#1`,
+                    project: `acme/${repo}`,
+                    number: 1,
+                    state: "MERGED",
+                    ci: null,
+                }),
+            ],
+            viewer: "alice",
+            rate: null,
+            requests: 1,
+        });
+        const deps = twoRepos({
+            config: cadences(),
+            answer: (repo, call) => {
+                if (repo === "acme/work" && call > 0) {
+                    return new Promise<RepoFetch>(() => {});
+                }
+
+                return call === 0 ? quiet(repo.split("/").pop() ?? repo) : merged(repo.split("/").pop() ?? repo);
+            },
+            posted,
+            deadlines,
+        });
+        await pollNotify({ deps, now: new Date(NOW) });
+
+        const running = pollNotify({ deps, force: true, now: new Date(Date.parse(NOW) + 10 * 60_000) });
+        for (let i = 0; i < 5000 && posted.length === 0; i++) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+
+        // shop's banner is out while work's fetch still hangs.
+        expect(posted).toEqual(["merged:acme/shop#1"]);
+
+        deadlines.get("github.com/acme/work")?.();
+        const report = await running;
+        expect(report.repos.find((r) => r.key === "github.com/acme/work")?.error).toContain("no answer within");
+        expect(readNotifyState(deps.statePath).repos["github.com/acme/work"]).toMatchObject({ failures: 1 });
+        expect(readNotifyState(deps.statePath).repos["github.com/acme/shop"]).toMatchObject({ failures: 0 });
+    });
+
+    test("a repo's event filter drops its filtered events and keeps the other repo's", async () => {
+        const posted: string[] = [];
+        let config = cadences();
+        config = applyNotifySettings(config, { repo: "/w/work", events: { merged: false } });
+        const deps = twoRepos({
+            config,
+            answer: (repo, call) => {
+                const name = repo.split("/").pop() ?? repo;
+                return call === 0
+                    ? quiet(name)
+                    : {
+                          ...quiet(name),
+                          prs: [{ ...quiet(name).prs[0], state: "MERGED" as const, ci: null }],
+                      };
+            },
+            posted,
+        });
+        await pollNotify({ deps, now: new Date(NOW) });
+        await pollNotify({ deps, force: true, now: new Date(Date.parse(NOW) + 10 * 60_000) });
+
+        expect(posted).toEqual(["merged:acme/shop#1"]);
+    });
+
+    test("set --interval with --repo stores that repo's own cadence, and --reset-repo-interval clears it", () => {
+        let config = applyNotifySettings(defaultNotifyConfig(), {
+            repo: "/w/shop",
+            repoEnabled: true,
+            intervalMinutes: 5,
+        });
+        expect(config.intervalMinutes).toBe(3);
+        expect(config.repos["/w/shop"]).toEqual({ enabled: true, intervalMinutes: 5 });
+        config = applyNotifySettings(config, { repo: "/w/shop", resetRepoInterval: true });
+        expect(config.repos["/w/shop"]).toEqual({ enabled: true });
+        expect(
+            normalizeNotifyConfig({ repos: { "/w/shop": { enabled: true, intervalMinutes: 500 } } }).repos["/w/shop"]
+        ).toEqual({
+            enabled: true,
+            intervalMinutes: 60,
+        });
     });
 });

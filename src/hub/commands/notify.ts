@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { getTask } from "@app/daemon/lib/config";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
@@ -14,7 +15,6 @@ import {
     type NotifySettingsChange,
     notifyConfigPath,
     parseIntervalFlag,
-    readNotifyConfig,
     updateNotifyConfig,
 } from "../lib/notify-config";
 import { hubPrRef, notifyStatus, type PollReport, pollNotify, testNotification } from "../lib/notify-poll";
@@ -80,12 +80,14 @@ async function daemonRegistered(): Promise<boolean | null> {
     }
 }
 
-/** The daemon task runs one poll per interval; the poll itself skips a run that is not due. */
-async function registerDaemonTask(intervalMinutes: number): Promise<void> {
+/** The daemon task ticks every minute; each poll polls only the repos whose own cadence has come. */
+export const NOTIFY_TASK_EVERY = daemonEvery(1);
+
+async function registerDaemonTask(): Promise<void> {
     await registerTask({
         name: NOTIFY_TASK_NAME,
         command: shellCommandLine([Bun.which("bun") ?? "bun", "run", DAEMON_SCRIPT]),
-        every: daemonEvery(intervalMinutes),
+        every: NOTIFY_TASK_EVERY,
         retries: 0,
         timeoutMs: 120_000,
         description: `Poll the hub's watched PRs/MRs and post notifications (${toolCommand("hub notify")})`,
@@ -147,14 +149,20 @@ export function registerNotifyCommands(program: Command): void {
 
     notify
         .command("set")
-        .description("Change the config: master switch, interval, only my PRs, event switches (global or per repo)")
+        .description(
+            "Change the config: master switch, cadence, only my PRs, event switches (global, or per repo with --repo)"
+        )
         .option("--enabled <on|off>", "the master switch")
-        .option("--interval <minutes>", "minutes between polls (1 to 60)")
+        .option(
+            "--interval <minutes>",
+            "minutes between polls of a repo (1 to 60); with --repo, that repo's own cadence"
+        )
         .option("--only-mine <on|off>", "only PRs/MRs I opened")
         .option("--event <name=on|off>", `an event switch, repeatable: ${NOTIFY_EVENTS.join(", ")}`, collect)
         .option("--repo <path>", "scope --event to this checkout, and the one --repo-enabled switches")
         .option("--repo-enabled <on|off>", "watch --repo or stop watching it")
         .option("--reset-repo-events", "--repo follows the global event switches again")
+        .option("--reset-repo-interval", "--repo follows the global cadence again")
         .option("--bots <logins>", "comma-separated logins that count as review bots besides the host's bot accounts")
         .option("--json", "print the new config as JSON")
         .action(
@@ -166,6 +174,7 @@ export function registerNotifyCommands(program: Command): void {
                 repo?: string;
                 repoEnabled?: string;
                 resetRepoEvents?: boolean;
+                resetRepoInterval?: boolean;
                 bots?: string;
                 json?: boolean;
             }) => {
@@ -174,8 +183,13 @@ export function registerNotifyCommands(program: Command): void {
                 try {
                     const interval = opts.interval === undefined ? undefined : parseIntervalFlag(opts.interval);
 
-                    if ((opts.repoEnabled !== undefined || opts.resetRepoEvents) && !opts.repo) {
-                        throw new Error("--repo-enabled and --reset-repo-events need --repo <path>");
+                    if (
+                        (opts.repoEnabled !== undefined || opts.resetRepoEvents || opts.resetRepoInterval) &&
+                        !opts.repo
+                    ) {
+                        throw new Error(
+                            "--repo-enabled, --reset-repo-events and --reset-repo-interval need --repo <path>"
+                        );
                     }
 
                     change = {
@@ -187,6 +201,7 @@ export function registerNotifyCommands(program: Command): void {
                         repoEnabled:
                             opts.repoEnabled === undefined ? undefined : onOff(opts.repoEnabled, "--repo-enabled"),
                         resetRepoEvents: opts.resetRepoEvents,
+                        resetRepoInterval: opts.resetRepoInterval,
                         botLogins: opts.bots?.split(","),
                     };
                 } catch (err) {
@@ -198,9 +213,13 @@ export function registerNotifyCommands(program: Command): void {
 
                 const next = await updateNotifyConfig(change);
 
-                // The daemon task's cadence follows the interval, when the task exists.
+                // A task registered before per-repo cadences ticked at the global interval: move it to every minute.
                 if (change.intervalMinutes !== undefined && (await daemonRegistered())) {
-                    await registerDaemonTask(next.intervalMinutes);
+                    const task = await getTask(NOTIFY_TASK_NAME);
+
+                    if (task && task.every !== NOTIFY_TASK_EVERY) {
+                        await registerDaemonTask();
+                    }
                 }
 
                 if (opts.json) {
@@ -255,9 +274,10 @@ export function registerNotifyCommands(program: Command): void {
             `Register the daemon task ${NOTIFY_TASK_NAME} (one poll per interval, under ${toolCommand("daemon")})`
         )
         .action(async () => {
-            const config = readNotifyConfig();
-            await registerDaemonTask(config.intervalMinutes);
-            out.log.success(`Registered ${NOTIFY_TASK_NAME}: every ${config.intervalMinutes} min`);
+            await registerDaemonTask();
+            out.log.success(
+                `Registered ${NOTIFY_TASK_NAME}: a tick every minute; each repo is polled at its own cadence`
+            );
             out.log.info(`The daemon picks it up on its next config read; ${toolCommand("daemon status")} lists it.`);
         });
 
