@@ -2,75 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Common Development Commands
+GenesisTools is a TypeScript CLI toolkit that runs on Bun, with no build step. A tool is a folder `src/<tool>/` holding `index.ts` or `index.tsx` (the tool name is the folder name), or a single `src/<tool>.ts` file. The `tools` executable lists them, or runs `tools <tool> [args]` through `bun run` with inherited stdio. Shared code lives in `src/utils/`, which is the `@genesiscz/utils` package.
 
-### Running Tools
+## Area rules: read them before you work in an area
 
-```bash
-# List all available tools interactively
-tools
+The detailed rules live in area files. Claude Code loads an area file by itself the first time you read, write or edit a matching file with the Read, Write or Edit tool, or view a single file with `cat`, `head` or `rg <pattern> <file>`. A search loads nothing: the Grep tool, `rg` over a folder, and `cat` piped into another command do not count. Before you change code in an area, or answer a question about it from search results, check that its area file is in your context. If it is not, read it.
 
-# Run a specific tool
-tools <tool-name> [args]
+- Any TypeScript (`**/*.ts`, `**/*.tsx`): `.claude/rules/code.md`. Environment variables, Biome, code style, types, waits and polls, diagnostics that must not mutate.
+- TypeScript under `src/` or `scripts/`: `.claude/rules/tools.md`. Tool structure and CLI patterns, the shared utilities in `src/utils/`, logging and `out`, spawning a tool or calling its library, ports, databases.
+- Tests (`*.test.ts`), and before you add a test file: `.claude/rules/tests.md`.
+- AI, accounts, secrets, cost, agent history (`src/utils/ai/`, `src/utils/security/`, `src/utils/agent-sessions/`, `src/ai-proxy/`, `src/ask/`, `src/claude/`, `src/codex/`): `.claude/rules/ai.md`.
+- Web UI (`*.tsx`, `src/*/ui/`, `src/dashboard/`, `src/dev-dashboard/`): `.claude/rules/web-ui.md`.
+- macOS app, notifications, privacy grants (`src/macos/`, `src/utils/macos/`, `src/notify/`): `.claude/rules/macos.md`. Window rules for the Swift app: `src/macos/GenesisTools/CLAUDE.md`.
+- The personal-data probe and the git hooks: `.claude/rules/placeholder-check.md`.
+- Folder files, each loaded with its folder: `src/du/CLAUDE.md` (benchmarks before any change), `src/say/CLAUDE.md` (per-app profiles), `src/utils/database/CLAUDE.md` (storage, migrations, metadata schema), `src/utils/claude/CLAUDE.md` (Agent SDK types), `src/utils/audio/CLAUDE.md` (transcription), `src/azure-devops/CLAUDE.md` (ADO API).
 
-# View a tool's README documentation
-tools <tool-name> --readme
-```
+A new rule goes into the area file it belongs to. Only a rule that every session needs, whatever it touches, goes into this file.
 
-### `tools say` — config v2 with per-app profiles
-
-`tools say` loads voice / volume / provider / model / language / format from a per-app profile (`--app <name>`), inheriting unset fields from a `default` profile. Notable rules:
-
-- `--save` persists explicitly-passed flags to `--app`'s profile (requires `--app`; in TTY without it, prompts; in non-TTY, errors).
-- `--save` with no message text is a save-only invocation (does not speak, does not enter interactive mode).
-- `--mute` / `--unmute` require `--save` to persist (breaking change vs. older builds — they are no longer standalone state-write commands).
-- `--unset <fields>` (comma-separated): without `--save`, ignores those fields for this run; with `--save`, deletes the keys from the saved profile.
-- Run `tools say config` for an interactive profile manager.
-- Config lives at `~/.genesis-tools/say/config.json`; old v1 configs are auto-migrated and the original is backed up once to `config.v1.bak.json`.
-
-So when you write the end-of-task notification, you can typically rely on a saved `claude` profile and just call `tools say "<xxx> done" --app claude` — voice etc. come from the profile.
-
-### Running Tests
-
-**Use `bun run test` (or `bun scripts/test.ts <paths>`), never bare `bun test`.** The wrapper stat-checks the dependency tree first (~1ms) and reinstalls when it is missing, partial or stale, then hands off to `bun test` with argv, output and exit code untouched.
-
-This exists because inside a **git worktree** any `bunx` call creates a partial `node_modules/` that shadows the parent checkout's complete one. Bare `bun test` then fails across a hundred unrelated files with errors like `Cannot find module 'parse5/lib/common/doctype'`, which looks exactly like the branch broke the world. Logic lives in `scripts/test-deps.ts` (`diagnose()` / `lockStamp()`), covered by `scripts/test-deps.test.ts`.
-
-**A run that stops making progress is killed after 15 minutes**, per `bun test` phase, and the wrapper then prints `[test] suite STALLED` INSTEAD of the `[test] suite complete` marker, so a killed run can never read as a finished one. Raise or disable it with `GENESIS_TOOLS_TEST_MAX_MINUTES=<n>` (`0` = off). It exists because bun 1.3.13 hangs `bun test --parallel` in a checkout with tens of thousands of directories (a worktree carrying a generated `ios/Pods` tree): the coordinator loops on `posix_spawn` past the macOS fd ceiling and never starts a worker. One such run burned 5 h 27 m unnoticed. Run a directory-heavy worktree **serially**; the full rationale and the measured arms are in the block comment in `scripts/test.ts`.
-
-**Which file left a process behind? Turn on the worker log** (off by default): `GENESIS_TOOLS_TEST_WORKER_LOG=1 bun run test`, then `bun scripts/test-worker-log.ts`. Each file records its `--parallel` worker and that worker's child processes at its start and end, and the report names the files that left processes alive and the later files that started with them. It exists because bun prints `killed N dangling process` at the LATER file, so a CI log blames the wrong one (`record.test.ts`, 2026-10-08, spawned nothing). On CI set the repository variable `TEST_WORKER_LOG=1`: the job summary gets the report and the log is in the uploaded artifact.
-
-🛑 **CI runs bun 1.4.2 (which has the hang fix); the repo still SUPPORTS 1.3.13, which is what developers run.** Those are different statements. A green CI run does not mean the hang is gone on your machine, and a 1.4-only API must not enter the codebase just because CI accepts it.
-
-**Tests must not use real account names.** Fixture handles, emails, and login ids in `*.test.ts` are invented (`work`, `personal`, `shop`, `side`, `work@shop`, `alice@example.com`). Never copy a live Claude/AI account name, email, or org from this machine into a test. A test that needs several distinct accounts uses those fixtures, not the real ones.
-
-**Before adding a test file, read `.claude/docs/test-runtime.md`** (local-only, not tracked). The ubuntu CI step is a fixed budget that the suite has already outgrown twice. Measured there: `--parallel` implies `--isolate`, so **a new test FILE costs ~368 ms of runner time (~92 ms of wall) before it asserts anything**, while a new test in an existing file costs only its own runtime. The three patterns that make one file expensive, each with a measured example: a real wall-clock wait (`device-flow.test.ts`, 9.6 s of 9.75 s asleep), a child process per assertion (`merged.test.ts`, 1359 `git` spawns for 33 tests), and an on-demand package install inside a test (`chunker.test.ts`, 9836 ms of `bun add`). `scripts/ci/test-runtime-guard.ts` enforces a per-file ceiling on CI; make the test cheap rather than raising the ceiling.
-
-### Personal-data probe (always, before every `git push`)
-
-This is `scripts/ci/placeholder-check.sh`, not `tools ms-teams repair probe` (that one searches live Teams IndexedDB).
+## Running tools
 
 ```bash
-bash scripts/ci/placeholder-check.sh
+tools                       # interactive tool picker
+tools <tool-name> [args]    # run one tool
+tools <tool-name> --readme  # print its README
 ```
 
-The pre-push hook runs it first, before biome; a hit is a push blocker. It is sub-second on 800 needles. CI does not run it: the list would have to reach the runner as a secret, and a hit would echo the matched values into a public log.
+- 🛑 `tools` on PATH runs the MAIN checkout. In a worktree, run `bun run src/<tool>/index.ts`. From code, start a tool with `execTool` / `execToolInteractive` from `@genesiscz/utils/cli`, never with `Bun.spawn(["tools", ...])`.
+- End-of-task notification: `tools say "<task> done" --app claude`. Voice and volume come from the saved `claude` profile.
 
-The needle list is **local only**: `~/.genesis-tools/placeholder-check/markers.txt` (override with `PLACEHOLDER_MARKERS_FILE`). It is not in git. Other clones see "not configured, nothing scanned" and exit 0. Do not copy that file into the repo, tests, commit messages, or CLAUDE.md.
+## Tests
 
-Refresh the Teams-derived block (counts only, no names printed):
+- **Use `bun run test` (or `bun scripts/test.ts <paths>`), never bare `bun test`.** In a worktree, bare `bun test` fails across a hundred unrelated files because of a partial `node_modules/`; the wrapper repairs the dependency tree first.
+- A run that stops making progress is killed after 15 minutes and prints `[test] suite STALLED` instead of `[test] suite complete`. A killed run is never a finished one.
+- Tests never use real account names, emails or orgs. Use invented fixtures (`work`, `personal`, `alice@example.com`).
+- Read `.claude/rules/tests.md` before you add a test file: every new file costs CI runner time before it asserts anything.
 
-```bash
-bun scripts/ci/harvest-placeholder-markers.ts
-```
+## Before every `git push`: the personal-data probe
 
-Wired 2026-09-01 14:08. Run it BY HAND when Teams gained someone new: it reads the ms-teams cache only, so it is a seeding job, not a per-push step. The pre-push hook ran it between 2026-09-02 22:42 and 2026-09-03 21:50 and no longer does — rewriting the needle file on every push added nothing, and the harvester lives on one branch, so the `set -e` hook aborted on branches without it.
+Run `bash scripts/ci/placeholder-check.sh`. The pre-push hook runs it first, and a hit blocks the push. Its needle list is local only (`~/.genesis-tools/placeholder-check/markers.txt`): never copy it into the repo, tests, commit messages or this file. Details: `.claude/rules/placeholder-check.md`.
 
-### Git branch mechanics
-
-`tools git merged` decides merged-ness (by content: squash, rebase and recompose all fool git's own checks); `tools git rebase-cascade` moves a parent with its children; `tools git base` names the base branch and the rule that chose it; `tools git config` reads the per-repo `genesis-tools.config.json`. The `gt:git` plugin skill is the guided workflow on top. Typed git output for any tool: `createGit()` readers and the `porcelain` bundles in `src/utils/git/porcelain.ts`; never re-parse `status` or `for-each-ref` by hand.
-
-### 🛑 Hard rules for agents working in an isolated worktree
+## 🛑 Hard rules for agents working in an isolated worktree
 
 Every teammate/subagent given its own worktree MUST, before ANY other work:
 
@@ -80,7 +51,20 @@ Every teammate/subagent given its own worktree MUST, before ANY other work:
 
 Skipping any of these has cost real sessions hours; there are no exceptions.
 
-### Installation & Setup
+## Data and side effects
+
+- `~/.genesis-tools/claude-history/index.db` holds Claude, Codex and Grok history, plus historical `usage_snapshots` and `spend_snapshots`. Never remove it as a disposable cache, never clear observation tables during a history rebuild, and never run unscoped history SQL across providers.
+- A diagnostic (`doctor`, `test`, `probe`, `health`, `check`, `status`, `list`, `show`, `--dry-run`) never mutates durable state and never spends a single-use credential such as an OAuth refresh token. Details: `.claude/rules/code.md`.
+- An empty result from a permission-gated tool (Calendar, Reminders, Contacts, Full Disk Access) is never proof of empty data. Run `tools macos permissions` first: it exits 1 while a grant is missing.
+- When a tool misbehaves, read `~/.genesis-tools/logs/<today>.log` (day-stamped pino JSON) and `rg` it for the tool name or the error before you form a hypothesis.
+
+## Git branch mechanics
+
+`tools git merged` decides merged-ness (by content: squash, rebase and recompose all fool git's own checks); `tools git rebase-cascade` moves a parent with its children; `tools git base` names the base branch and the rule that chose it; `tools git config` reads the per-repo `genesis-tools.config.json`. The `gt:git` plugin skill is the guided workflow on top. Typed git output for any tool: `createGit()` readers and the `porcelain` bundles in `src/utils/git/porcelain.ts`; never re-parse `status` or `for-each-ref` by hand.
+
+- **Commit messages:** a title line only, no per-file breakdown in the body, focused on the why.
+
+## Installation & Setup
 
 ```bash
 # Initial setup (requires Bun)
@@ -89,403 +73,3 @@ source ~/.zshrc  # or ~/.bashrc
 
 # The install script adds GenesisTools to PATH by modifying shell config files
 ```
-
-## Provider history storage
-
-Claude, Codex and Grok history share `~/.genesis-tools/claude-history/index.db` through `src/utils/agent-sessions/` and `ProviderPlugin.codingAgent`. Reuse the shared service/repositories; keep provider parsing behind readers. Source text stays in native files/projections, with bounded metadata and aggregate contributions in SQLite.
-
-This database also contains historical `usage_snapshots` and `spend_snapshots`. Never remove it as a disposable cache, clear observation tables during history rebuild, or run unscoped history SQL across providers. Cached runtime/title/status lookup must not initialize schemas or discover sources. Ordinary searches refresh metadata automatically; full statistics refresh is separate.
-
-## Architecture Overview
-
-GenesisTools is a TypeScript-based CLI toolkit that runs on Bun. The architecture follows a plugin pattern where each tool is self-contained:
-
-### Core Structure
-
--   **Entry Point**: The `tools` executable is a TypeScript file with a shebang that:
-  -   Without arguments: Shows an interactive tool selector using @inquirer/prompts
-  -   With arguments: Executes the specified tool by running `bun run` on the appropriate file
--   **Tool Discovery**: Tools are discovered by checking `/src/` for:
-  -   Directories containing `index.ts` or `index.tsx` (tool name = directory name)
-  -   Standalone `.ts` or `.tsx` files (tool name = filename without extension)
--   **Execution Model**: Each tool runs in its own process via `bun run`, inheriting stdio for seamless interaction
-
-### Key Components
-
--   **Logger** (`src/logger.ts`): Centralized logging using pino, writes day-stamped files under `~/.genesis-tools/logs/`
--   **MCP Integration**: Several tools implement Model Context Protocol servers for AI assistant integration
--   **No Build Step**: Bun executes TypeScript directly without compilation
-
-### Performance Benchmarks (2026-03-16, hyperfine, Apple Silicon)
-
-| What | Mean | Notes |
-|---|---|---|
-| Bun tool invocation (`tools <cmd>`) | **~86ms** | Baseline for any tool |
-| `osascript` notification | **~120ms** | Unreliable banners on modern macOS |
-| `terminal-notifier` native binary | **~295ms** | Reliable; bypass rbenv shim (adds +120ms) |
-
-When spawning tools from shell hooks, always background (`&`) — 86ms Bun startup is invisible when async.
-
-### Environment variables
-
-Never read `process.env` directly in application code — use `import { env } from "@genesiscz/utils/env"`. Values: `env.getXAIApiKey()` or `env.x.getApiKey()`; resolved key names (for config metadata): `env.getXAIApiEnvKey()` or `env.x.getApiEnvKey()`. Grouped domains: `env.tools`, `env.ai.*`, `env.github`, `env.log`, `env.paths`, `env.device`, `env.test`, etc. Tests that need overrides: `env.testing.set()` / `env.testing.withOverrides()`.
-
-### Utility Convention
-
-When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
-
-**🛑 `src/utils/**` is the `@genesiscz/utils` package and can NEVER import `@app/*`.** That includes every subfolder (`src/utils/claude/`, `src/utils/ai/`, …); there is no exception for a folder named after a tool. If code you are writing under `src/utils/` needs an `@app/<tool>/...` module, that module belongs in `src/utils/**` too: move it there (with its tests) and import it via `@genesiscz/utils/...`. Never solve it by moving YOUR file out to the tool directory, and never by a relative `../../<tool>/` path. `scripts/ci/check-package-boundaries.ts` fails CI on any `@app/*` import under `src/utils/**`; run it before you commit a move.
-
-- `src/utils/format.ts` - Formatting: `formatDuration()`, `formatBytes()`, `formatTokens()`, `formatNumber()`, `formatList()`, `formatTimestamp()`, `createStopwatch()`
-- `src/utils/Stopwatch.ts` - High-res stopwatch class: `elapsed()`, `lap()`, `stamp()` (wall-clock + elapsed), `now()` (HH:MM:SS.mmm)
-- `src/utils/table.ts` - CLI tables: `formatTable()` (plain padded), **`createBoxTable()` / `renderCliHeader()` / `formatDotStatus()`** (port-style boxed inventories via `cli-table3`)
-- `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
-- `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
-- `src/utils/storage/storage.ts` - Config & cache management
-- `src/utils/storage/root.ts` - `toolDataDir(tool, ...)` / `genesisToolsDir(...)`: every `~/.genesis-tools/...` path (honours `GENESIS_TOOLS_HOME`, no logger import). Never hand-join `homedir()` or `env.paths.getHome()` with `".genesis-tools"`
-- `src/utils/async.ts` - Async helpers (concurrency, retry, etc.)
-- `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
-- `src/utils/ai/local/device.ts` - ONNX Runtime device detection: `detectDevice()`, `resolveDevice()` (CoreML/CUDA/DML/CPU)
-- `src/utils/audio/converter.ts` - Audio transcode helpers: `convertToWhisperWav()`, `convertFileToMonoMp3()`, `MONO_MP3_BITRATE_KBPS`, `toFloat32Audio()`
-- `src/utils/audio/detect-format.ts` - Magic-byte audio sniffing: `detectAudioFormat()`, `sniffAudioExt()`
-- `src/utils/cli/quiet-spinner.ts` - No-op spinner for non-TTY (`createQuietSpinner()`); pair with `isQuietOutput()` from `src/utils/cli/output-mode.ts`
-- `src/utils/cli/interrupt.ts` - `withInterrupt(fn)`: Ctrl-C as an AbortSignal. Use it instead of `process.once("SIGINT")`: `./tools` and the app launcher forward each Ctrl-C, and a `once` listener lets the second copy kill the process mid-cleanup
-- `src/utils/repo-context/` - Repository context gatherers (agent instruction files, owning project + package manager + test runner, test commands) over a caller-supplied reader; `gatherRepoContext()`, `defaultGatherers()`
-- `src/utils/ai/evaluation/spend.ts` - All Jev spend from the usage ledger: `jevSpend()`, `jevCalls()` (by feature label, model, day)
-
-Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
-
-### Tool Patterns
-
-Most tools follow these common patterns:
-
-**CLI Argument Parsing**:
-
--   Use `commander` for parsing command-line arguments with subcommands and options
--   **One core, three thin doors.** Business logic lives in `src/<tool>/lib/`. All THREE surfaces are thin adapters that parse input, call lib, and render output: `src/<tool>/commands/*` (CLI), `src/<tool>/lib/server/routes/*` (HTTP) and MCP tool modules. **A behaviour must never exist in a route that the CLI cannot reach**, and vice versa. The rule used to name commands only, which is how the same question came to be answered differently depending on which door you knocked on: the youtube `qa` pipeline stage and `analyze --ask` each indexed and called `qa.ask` inline, skipping the citation enrichment the HTTP route performed.
-
-**Interactive User Experience**:
-
--   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
--   **Non-TTY guard**: Always check `isInteractive()` (from `@genesiscz/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
-
-    ```typescript
-    import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-
-    if (!isInteractive()) {
-        logger.error("--provider required in non-interactive mode.");
-        logger.info(suggestCommand("tools my-tool", { add: ["--provider", "claude"] }));
-        return;
-    }
-    // ... interactive prompt here
-    ```
-
--   **Enumerated flags (closed value set):** If a flag takes a known list (`--detail phases|all`, `--scopes` from `PROFILER_SCOPE_NAMES`), do **not** declare it as `--flag <value>`. Commander then exits with a generic "argument missing" and never lists the values. Declare `--flag [value]` (optional) and handle the empty case yourself:
-    - TTY: prompt with the possible values (`p.select` / `p.multiselect`).
-    - non-TTY, or an invalid value: print `suggestEnumFlag("tools my-tool", "--flag", VALUES)` from `@genesiscz/utils/cli` (possible values plus a filled `suggestCommand` line), set `process.exitCode = 1`, return. Do not prompt.
-    - Reference: `src/config/commands/profiling.ts` (`--scopes`, `--detail`).
-
-**Output Handling**:
-
--   Support multiple output destinations: file, clipboard, stdout
--   Use `clipboardy` for clipboard operations
--   Use `picocolors` (or `chalk`) for colored terminal output (but strip ANSI codes for non-TTY)
--   Respect `--silent` and `--verbose` flags
--   **Human inventory lists (models, accounts, ports, processes, …):** do **not** dump multi-column data via clack `out.log.info`. Use the port-style table helpers from `@genesiscz/utils/table` + `out.println` — see **CLI inventory tables** below.
-
-**Process Execution**:
-
--   Use `Bun.spawn()` for executing external commands
--   Handle stdout/stderr streams properly using `new Response(proc.stdout).text()`
-
-**File Operations**:
-
--   Use Bun's native file APIs (`Bun.write()`) for better performance
-
-## How to Write Tools
-
-See `docs/tool-template.md` for complete templates (@inquirer + @clack/prompts), common patterns, and best practices.
-
-## Building or Restyling Web UI
-
-**Before writing or restyling ANY web UI** (`src/<tool>/ui`, `src/dashboard`, `src/dev-dashboard/ui`), read `docs/design-system.md`. It is the single shared-UI contract: theme tokens + `@ui/components/*` primitives + `wow-components.css` looks. Hard rules: no raw `zinc-*`/`white/NN` palette in app code (use theme tokens), never override a `<Card>`'s surface, pick a rich Button/Card variant on purpose, wrap routes in the shared shell/auth-layout. This doc exists because clarity & shops drifted "flat" by ignoring it while the dashboard didn't — don't repeat that. For per-dashboard design lineage (all 8 dashboards categorized into design families; why youtube/dev-dashboard diverge) see `docs/design-system-dashboards.md`; for the canonical ports/launch registry + conflict detection see `src/utils/ui/dashboards.ts`.
-
-## Working on `tools du` (`src/du/`)
-
-**Before touching ANYTHING under `src/du/`, read `docs/benchmarks-du.md`, and append a new dated section to it for every feature you add.** The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>` (fixed target matrix + hyperfine), record system CPU time as the primary metric (wall time on this machine swings with load average — always note `uptime`), and diff the `--json` byte totals. **Identical totals are required only when the change is meant to preserve scan semantics** (refactors, performance work, validation hardening). Features that deliberately change what is counted — `--changed-within` filtering, cloud-boundary pruning, allocation-vs-mapped reporting — must instead state which totals move, by how much, and why. Unexplained movement is a bug either way.
-
-## Code Style: Biome formatting gotchas (write it right the first time)
-
-- **Imports are auto-sorted by module specifier** (`bun:` / `node:` builtins first, then packages and `@genesiscz/...` aliases alphabetically), and named imports inside braces are sorted case-insensitively — write them pre-sorted or the hook churns your diff.
-- **Line width is 120, 4-space indent.** Don't hand-wrap below that; biome unwraps your "pretty" 3-line call back onto one line.
-- **Long call: biome keeps args inline and expands only the trailing object/array** (`fn(a, b, {\n ... \n})`), not one-arg-per-line.
-- **Long `if`: parenthesized multiline, one clause per line** — `if (\n  a ||\n  b\n ) {`.
-- **`// biome-ignore` must name a rule that actually fires there**, else it becomes a `suppressions/unused` warning itself.
-- **The SafeJSON rule (`noRestrictedGlobals` denying bare `JSON`) is OFF in two zones** — `src/youtube/extension/**` and **all of `plugins/**`** (biome.json overrides). In both, use `JSON` directly with NO biome-ignore (it warns as unused). Everywhere else use `SafeJSON`, never an ignore.
-- **🛑 A plugin file that RUNS must be standalone.** The harness copies `plugins/**` out of this checkout and executes it elsewhere, where the tsconfig paths and `node_modules` do not exist — measured 2026-09-21: `Cannot find module '@genesiscz/utils/json'`. So no runtime plugin file may import `@genesiscz/*` or `@app/*`; inline what it needs, or put it in a sibling file under the same plugin. `bun scripts/ci/check-plugin-standalone.ts` fails CI on a violation and is proven to catch. Tests and `evals/**` fixtures are exempt: they only ever run from this checkout.
-- **The pre-commit hook runs `biome check --write --staged` and then formats the staged blobs themselves** (since 2026-09-03 01:05 it pipes each staged copy biome touched through `biome --stdin-file-path` and writes the result back into the index). The commit always carries the formatted copy, a file with unstaged hunks keeps them unstaged, and nothing written to the working tree during the run is swept in. The working-tree copy is formatted too, so the only thing `git status` shows afterwards is what was unstaged before.
-
-## Code Style Rules
-
-- **Fix bugs at the root, not at every call site.** When the same issue appears in multiple places because of a shared function, fix the shared function — don't patch each caller individually. One fix at the source beats N fixes at the edges.
-- **No file-path comments**: Never add `// src/path/to/file.ts` as first line of files
-- **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
-- **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
-- **Always use `SafeJSON`, never `JSON`**: Import `SafeJSON` from `@genesiscz/utils/json` and use `SafeJSON.parse()` / `SafeJSON.stringify()` everywhere — `JSON` is biome-restricted in this repo. `SafeJSON` is a comment-json wrapper that handles `//` comments, multi-line comments, and trailing commas. For strict JSON behavior, pass `{ strict: true }` or `{ jsonl: true }`.
-
-## Code Style: Conditionals & Spacing
-
-- **No one-line `if` statements** — even for early returns. Always use block form with braces.
-- **Empty line before `if`** — unless the preceding line is a variable declaration used by that `if`.
-- **Empty line after closing `}`** — unless followed by `else`, `catch`, `finally`, or another `}`.
-- Example:
-
-  ```typescript
-  const value = getValue();
-  if (!value) {
-      return;
-  }
-
-  doSomething(value);
-  ```
-
-## Code Style: Function Parameters
-
-- **3+ params or optional params → use an object:** `callLLM({ systemPrompt, userPrompt, providerChoice, streaming })`
-- **1-2 required, obvious params → positional is fine:** `estimateTokens(text)`, `resolve(base, path)`
-- **Mix of required + optional → object with required fields + optional:** `({ session, mode, tokenBudget? })`
-- Rule of thumb: if you'd need to look at the signature to know which arg is which, use an object.
-
-## Code Style: Type Safety
-
-- **No `as any`** — use proper type narrowing, type guards, or explicit interfaces.
-- When working with union types, use discriminant checks (e.g. `entity.className === "User"`).
-- Prefer `error: err` over `error: err instanceof Error ? err.message : String(err)` when the error field accepts unknown.
-
-## 🛑 Never spin: waits, polls and timers
-
-Measured on this machine on 2026-09-16: an app face whose `RunLoop.run(mode:before:)` had no sources returned at once and burned 60% of a core for 1 h 03 m while holding the Launch Services registration, so every notification click went to it and was swallowed; a 50 ms `stat` loop was the whole idle cost of `tools watch`; `Bun.sleepSync` inside `waitFor` froze the event loop for 1055 ms per wait. `docs/benchmarks-cpu.md` has the numbers, the fixes and the harness for the work in this PR (measurement library, lint-rules, `tools doctor cpu`, evented waits, macos-resources batching, lazy CLI). Sibling PRs own youtube WorkerPool, dashboard idle, and the Swift app reap.
-
-- **A wait has a deadline or it is a bug.** Every TS "wait until X" gets a timeout and a defined outcome on expiry (a thrown error, `false`, a logged warning). `waitForPath` requires `timeoutMs` or `signal`. A Swift `.wait()` without `timeout:` fails `bun scripts/ci/lint-rules.ts`.
-- **Wake on the event, never on a timer under 100 ms.** Files: `watchFileFeed`, `waitForPath`, `FileTailer` from `@genesiscz/utils/fs`, an `fs.watch` with a slow safety poll behind it, because on bun 1.3.13 every `fs.watch` created after the first `FSWatcher.close()` in a process goes deaf. A `setInterval` under 100 ms (including a delay bound to a numeric constant) fails lint-rules unless `// lint-rules-ignore: <why this must poll>` names the reason.
-- **Never `sleepSync` in a loop.** It blocks the whole event loop, timers and signal handlers included. Use `await Bun.sleep()` in an async loop and honour the deadline (`Math.min(interval, remaining)`). lint-rules fails the loop form.
-- **One `ps` per refresh, never one per row.** Batch `ps` and `lsof` reads through `@genesiscz/utils/process/ps`; a TUI table renders the visible window, never every row.
-- **Measure before and after.** `bun scripts/benchmarks/<area>/<script>.ts --baseline`, change the code, then `--compare` (`src/benchmark/lib`: `sampleProcess`, `withSpawnCounter`, `withFsCounter`, `monitorLoopStalls`, `compareToBaseline` with `floor`). CPU time and counts are the metrics; wall time on this Mac is noise. `tools doctor cpu` shows what is spinning right now. It is opt-in, not part of the default `tools doctor` suite.
-
-## Side Effects: Diagnostics & Irreversible Operations
-
-The recurring bug shape in this repo is a path that READS like an inspection but MUTATES durable state. Two of them shipped in one week: `tools ai config doctor` and `tools ai config account test` both spent single-use Anthropic refresh tokens, because both reached a shared auth path that refreshed on expiry. Diagnosing an account could brick it.
-
-- **A diagnostic must never mutate.** If the name says it inspects (`doctor`, `test`, `probe`, `health`, `check`, `status`, `list`, `show`, `--dry-run`, `--check`) it may READ durable state and REPORT on it, and nothing else. No writes, no token rotation, no cache mint that changes what a later process observes. When a diagnostic finds a problem it prints the fix command; it does not apply the fix.
-- **Guard above the consuming call, not at the caller.** Single-use credentials (OAuth refresh tokens), machine-global state (the OS keychain), and anything with a rotation counter get their guard in the shared function, immediately BEFORE the line that spends them. A guard at the call site only protects the callers you thought of.
-- **A new safety parameter leaves every existing caller unsafe.** Adding `{ noRefresh: true }` fixes exactly the one caller you pass it to. Prefer inverting the default so the DANGEROUS behavior is the opt-in. When you cannot invert (too many callers, public API), `rg` every call site and classify each one in the same commit — an unclassified caller is an unfixed bug, and "I fixed it at the root" is not a defense if the root still defaults to dangerous.
-- **Ship the negative control.** A test proving the guarded path is safe is half a test. The other half proves normal use still WORKS: `a bind without probe still reaches the refresh call`. Without it, a guard that leaks into the normal path silently breaks every account at token expiry, which is worse than the bug it fixed.
-- **Spy on the irreversible call itself.** Assert against the primitive that spends the resource (the `refresh` call, the keychain `setPassword`, the `DELETE`), not on a symptom downstream. Make the spy THROW as well as record, so a path that reaches it fails loudly instead of passing quietly.
-
-## Debugging & Logging
-
-- **Triage from logs first.** When any tool misbehaves, the FIRST step is to read `~/.genesis-tools/logs/<today>.log` (and recent days) and `rg` for the tool name / error string — *before* forming hypotheses or reproducing. Logs are day-stamped pino JSON. This bug (`sqlite-vec extension failed to load`) was in the logs for weeks before it was triaged; checking them first collapses hours of guessing into one `rg`.
-- **Profiling lines live in their own file:** `~/.genesis-tools/logs/<date>-profiling.log` (e.g. `2026-09-03-profiling.log`), one `[profile:<scope>] <label> <ms>` line per measurement plus a `── <title> ──` summary table per scope. Enable per run with `PROFILE=1`, `PROFILE=*` or `PROFILE=<scope,scope>` (scope names in `src/utils/profile/scopes.ts`); an env `PROFILE` also echoes to stderr, `PROFILE_TO_STDERR=0` silences that. Persistent profiling comes from `tools config profiling`.
-- **To ADD a measurement, use the shared profiler, never a hand-rolled `performance.now()` pair.** `import { profiler } from "@genesiscz/utils/profile"`, then one module-level `const prof = profiler.scope("<scope>")` (see `src/du/lib/engine.ts:21`). Verbs: `prof.measure(label, fn)` / `prof.measureAsync(label, fn)` wrap a call, `prof.start(label)` returns a stop function, `prof.section(label)` works with `using`, `prof.mark(label)` records a point in time, `prof.summary(title)` prints the table at the end. A disabled scope is a no-op, so a timer may sit in a hot path; put only work you would not otherwise do behind `prof.enabled`, and hide per-file or per-item timers behind `profiler.detail === "all"` so `--detail phases` stays readable. **A new scope name must be added to `PROFILER_SCOPE_NAMES` in `src/utils/profile/scopes.ts`**, or `--scopes` cannot offer it and `PROFILE=<name>` is a guess.
-- **Log enough to triage from logs alone.** Every tool must emit enough via `@genesiscz/utils/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
-- **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
-
-## Logging & output
-
-Two cleanly separated layers (the 2026-05 logger+out overhaul):
-
-- **`logger` — diagnostics.** `import { logger } from "@genesiscz/utils/logger"` (named only; there is **no** default export and no `consoleLog` — they were removed). Writes to the day-stamped file **always** (debug+), and to the console **on stderr**, gated by level. `logger.*` is **never** the result channel. Global `-v` promotes file-only `logger.debug` to the console; `-vv` → trace (only on tools that opted into `--trace`).
-- **`out` — user-facing.** `import { out } from "@genesiscz/utils/logger"` (or `const { log, out } = logger.scoped("comp")`). clack-shaped. **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout** (the machine result). `out.log.*` / spinners / notes / prompts → stderr. Never emit a serialized result via `logger.*` — that is `out.result()`'s job (CI guard enforces this).
-- **`const { log, out } = logger.scoped("comp")`:** `log.*` = logger-only (diagnostics); `log.out.*` / `log.tee.*` = both (component-tagged single mirror); destructured `out.*` = only-out (no logger mirror).
-- **Every commander entrypoint** ends with `await runTool(program, { tool })` (from `@genesiscz/utils/cli`) — it owns `-v`/`--readme`/help registration, console-level resolution, and the `{tool}` log binding, then `parseAsync`. The subprocess **spawner** is `execTool` (renamed from the old `runTool`).
-- **`scripts/ci/logging-guard.sh`** enforces this convention repo-wide in CI: no default/extension/relative-path/any-name import of the logger module (root `./tools` and `scripts/` included — not just `src/`), no bare `logger.*(SafeJSON.stringify(…))` result dumps, no reintroduced transitional shims, and that the browser-client isolation test exists. Browser-client trees never value-importing `@genesiscz/utils/logger` is authoritatively enforced by `src/logger/client-isolation.test.ts`.
-- **`@genesiscz/utils/cli/ui` — high-density CLI status.** For tools that emit many short status lines per command (e.g. `tools stash`), clack's `│ ◆ ●` box-drawing is the wrong texture. Import `{ ui }` from `@genesiscz/utils/cli/ui` to get plain stderr writes with chalk decoration (`ui.ok/info/warn/err/dim/header/kv/section/raw`). Use this INSTEAD of `out.log.*` for high-density status; keep `out.log.*` for clack-shaped task lifecycles. `out.print()` / `out.result()` are still the only writers to stdout for machine-readable output.
-- **CLI inventory tables (port-style) — prefer this for multi-column human output.** Canonical helpers live in `@genesiscz/utils/table` (not reimplemented per tool). Reference UIs: `tools port`, `tools ai-proxy models`, `tools macos swap`.
-
-  | Need | API | Notes |
-  |---|---|---|
-  | Boxed inventory table | `createBoxTable(headers)` | `cli-table3` + shared box chars; `table.push(row)` then `out.println(table.toString())` |
-  | Title box | `renderCliHeader(title, subtitle)` | Cyan frame via `out.println` |
-  | Section + key rows | `renderCliSection` / `renderCliKeyRow` | Column legends, detail blocks |
-  | Status cell | `formatDotStatus("ok"\|"warn"\|"err"\|"dim", label)` | `● ok` / `● fail` coloring |
-  | Cell truncate | `truncateDisplay(value, max)` | Em dash for empty; `…` ellipsis |
-  | Plain padded table | `formatTable(rows, headers)` | Dense / non-TTY dumps without box borders |
-  | Machine-readable | `out.result(...)` + `--json` | Never put JSON through the table path |
-
-  Pattern:
-
-  ```typescript
-  import { out } from "@genesiscz/utils/logger";
-  import { suggestCommand } from "@genesiscz/utils/cli";
-  import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
-  import pc from "picocolors";
-
-  renderCliHeader("Proxy Models", "ids clients can call");
-  const table = createBoxTable(["PROXY ID", "PROBE"]);
-  table.push([pc.white(id), formatDotStatus("ok", "ok")]);
-  out.println(table.toString());
-  renderCliSection("Columns");
-  // footer: counts · Next/Debug via suggestCommand("tools <tool>", { replaceCommand: [...] })
-  ```
-
-  **Do not** hand-roll `new Table({ chars: … })` or copy/paste box-drawing from `src/port/` — import from `@genesiscz/utils/table`. Keep domain coloring (framework names, etc.) in the tool's `display.ts`; keep the table chrome shared.
-
-## Database & Migrations
-
-- Per-tool config/cache dirs: `src/utils/storage/storage.ts` → `~/.genesis-tools/<tool>/`; system SQLite (Mail, Messages) read-only via `src/utils/macos/MacDatabase.ts`.
-- Migrations: `src/utils/database/migrations.ts` (`Migration`, `runMigrations()`, `Migrator`); applied IDs persist in `_migrations`; indexer applies `INDEXER_MIGRATIONS` on read-write opens.
-- DB test pattern: in-memory `new Database(":memory:")` in `*.test.ts` beside source. Full map: `src/utils/database/CLAUDE.md`.
-
-## 🛑 Changing Swift under `src/macos/GenesisTools/` — always `bun run app`
-
-**While you work on the app, keep `tools hub dev monitor` running under the Monitor tool** (hangs, stalls,
-layout loops, link-relay trouble and crash reports as events; `src/macos/GenesisTools/CLAUDE.md`).
-
-`swift build` alone proves nothing: it writes `.build/`, and the thing answering on your Mac is the
-installed bundle at `~/Applications/GenesisTools.app`. **After ANY edit to `Sources/**` or
-`Info.plist`, run `bun run app`** (alias of `tools macos permissions build`). It builds, assembles,
-signs, atomically swaps the bundle, re-registers with Launch Services, and then reaps stale
-processes. `bun run app:status` prints what is installed and whether it is stale.
-
-**🛑 A package that uses GenesisKit by path** (`src/macos/GenesisTools`, `GenesisClickyPreview`,
-`GenesisWidgetPreview`) **is built, tested and run with `--disable-build-manifest-caching`**:
-`swift test --package-path src/macos/GenesisTools --disable-build-manifest-caching`. SwiftPM re-plans a build
-only when the ROOT package's own folders, `Package.swift` or `Package.resolved` change, so a Swift file added
-to GenesisKit is never compiled into the dependent, and its first use fails with "cannot find 'X' in scope" on
-correct code. It hit three merges on 2026-10-10 and the Clicky preview twice on 2026-10-12. The flag costs
-about 0.1 s. `bun run app` decides it by itself (a hash of the Swift file list in `app.ts`), and the shell guard
-blocks the bare command (rule `swiftpm-stale-plan`). GenesisKit's own tests do not need it.
-
-**🛑 The reap is the part that matters, and it is why this is a rule rather than a suggestion.**
-macOS delivers a notification click to the bundle's ALREADY-RUNNING instance and only launches a
-fresh one when none exists. So a settings window or an `--rpc` process from an older build keeps
-receiving every click and answers with whatever code it was built from — silently, because it looks
-exactly like a working app. Observed 2026-09-16: a window instance started at 13:48 swallowed every
-click for the rest of the session while three separate "fixes" were written against a process that
-was never running them, and a hung `--rpc` process spun at 60% CPU for an hour doing the same. The
-reap now runs inside `buildApp()` (`src/macos/lib/permissions/app.ts`, `reapStaleAppFaces`), so every
-path gets it; it is proven to catch by planting a `--window` instance and rebuilding.
-
-⚠️ It kills **only** argument-less and flag-argument faces (`--window`, `--rpc`). It never touches
-`GenesisTools <program> [args...]`, which is the launcher running the user's real work — dev servers,
-editor sessions, long builds all run under it.
-
-**Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
-`<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
-(`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,
-so the sha alone does not name the code. A build from before 2026-10-06 shows "unknown": its manifest has only `builtAt`,
-`sourceHash`, `signedWith` and `teamId`, so it records no checkout and no commit; `builtAt` against the `git log` of the
-checkouts you build from is the only lead. `built … (stale: sources
-changed)` compares file contents of THIS checkout with the install, so a stale flag from another worktree's build is expected.
-
-**Before believing an app-face bug report, check what is actually running:**
-`ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry
-with no program argument is a window instance, and its start time tells you which build it is.
-An entry whose only argument is an `https://…` link and that is older than a minute is a STUCK LINK ROUTER:
-macOS hands every later click to it, it has no URL handler, and the click vanishes ("Raycast quicklink opens nothing",
-2026-10-06: one lived 5 h 27 m). Cause that day: an install whose Info.plist declares document types (Recast) made
-AppKit open the link in argv as a file (modal "document could not be opened") and cancel `terminate` ("not all
-documents were closed"; find it with `command log show --predicate 'processID == <pid>' | rg -i terminat`). A router
-now quits with `exit(0)`, never `NSApp.terminate`, and a build is not done until one `open -a ~/Applications/GenesisTools.app
-https://example.org/` leaves no router running after ~8 s.
-
-**Notifications specifically** (`src/macos/GenesisTools/Sources/Notify.swift`, reached from
-`src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then
-`tools notify status`. `alertStyle: banner` means macOS's "Temporary" — the banner fades in ~5 s,
-taking its buttons and attachment with it, and **code cannot change this**
-(`UNNotificationSettings.alertStyle` is read-only by design). The only fix is the user picking
-"Persistent" in System Settings, deep-linked by `tools notify settings`. `timeSensitiveSetting:
-notSupported` is likewise permanent: the entitlement needs a provisioning profile a Developer ID
-signature cannot carry, so `ignoreDnD` is accepted and ignored. First grant on a machine is
-`tools notify authorize` (post will not put up a prompt the 8s RPC deadline cannot survive). Click
-handling logs every launch and action to `~/.genesis-tools/app/notify-clicks.log` — read it before
-theorising, since a click runs in a process with no terminal and a dropped click is otherwise
-indistinguishable from no click at all.
-
-## macOS privacy grants (TCC) live on GenesisTools.app
-
-`tools` runs every tool through `~/Applications/GenesisTools.app` (source `src/macos/GenesisTools/`, built by `tools macos permissions build`, signed with the first Developer ID or Apple Development identity on the machine, ad-hoc as a last resort; an ad-hoc build loses every grant on the next rebuild, and `tools macos permissions` says so). The launcher disclaims responsibility for itself, so macOS attributes Calendar, Reminders, Contacts, Full Disk Access, Accessibility and Automation to `com.genesiscz.genesistools`, not to the terminal. Consequences for agents:
-
-- **An empty result from a permission-gated tool is never proof of empty data.** Run `tools macos permissions` (all grants) or `tools macos calendar doctor` first; both exit 1 while something is missing and print the pane to open.
-- Never read `__CFBundleIdentifier` to name the responsible app; use `responsibleIdentity()` from `@genesiscz/utils/macos/genesis-app`, which knows about the launcher marker.
-- `GENESIS_TOOLS_NO_APP=1` bypasses the launcher (grants then follow the terminal again). Use it only to reproduce the old behaviour. The window (`tools macos permissions ui`) has the same switch as a persistent marker; `tools macos permissions` reports it.
-- darwinkit stays a plain child: never start it with `disclaim: true` from GenesisTools, or the grants split into a second identity (`DarwinKit.app`).
-
-## Spawning a tool vs calling its library
-
-Audited 2026-09-19 across the whole repo: 32 places start a GenesisTools entry point as a child
-process. 28 are correct, 3 were not, and the 32nd is a launcher inconsistency in the interactive
-picker rather than a spawn-or-call question. So the default is NOT "a spawn is waste" — but the
-three that were wrong each had an exported function one import away, and one was a live bug.
-
-**Spawn when:**
-
-1. **The target's IDENTITY matters, not just its code.** Anything touching a TCC-gated resource
-   (Calendar, Contacts, Accessibility, Full Disk Access, notifications) must go through the same
-   `genesisAppLauncher()` path `tools <name>` uses, so macOS attributes the grant to
-   GenesisTools.app. An in-process call inherits the CALLER's TCC identity, which turns a working
-   permission into an empty result with no error.
-2. **The command name is not known until runtime** — automate's presets, jev's routed commands,
-   the Telegram `/tools` bridge. There is no fixed function to import because the target is not
-   fixed.
-3. **The work must outlive the caller, or the caller must not wait on it** — detached speech,
-   daemonised servers, `--detach`, launchd jobs, `tools task run`'s worker.
-4. **A crash in the target must not take the caller down**, especially when it runs user-authored
-   content or is driven by an external actor.
-
-**Do NOT spawn when the target is your own tool's code, reachable through an exported function,
-and none of the above applies.** The tell is a spawn aimed at `src/<same-tool>/...` or at a small
-pure-function module. All three real offenders looked like that: `tools json` for a string
-transform, an MCP server bootstrapping its own transport, and `claude history` re-entering its
-own CLI to reach `summarize`.
-
-🛑 **Never `Bun.spawn(["tools", ...])` directly.** Bare `tools` resolves off `$PATH` to the
-**main checkout**, so a worktree silently runs the main branch's code — the exact trap in
-[[reference_tools_path_runs_main_repo]]. Use `execTool` / `execToolInteractive` from
-`@genesiscz/utils/cli`: they resolve the binary worktree-safely and route through the real
-wrapper, and therefore through the launcher.
-
-## Web servers & ports
-
-- Canonical registry: `src/utils/ui/dashboards.ts` — `DASHBOARDS` (browser UIs, consumed by DashboardApp launchers) + `WEB_SERVICES` (http-api/extension/proxy listeners); ports must be unique across both.
-- Never hardcode a port for a repo web server — look it up there (`registryEntryForPort()`; e.g. dev-dashboard 3042, log viewer 7243).
-
-## Scoped docs (nested CLAUDE.md — auto-loads when working under that directory)
-
-- `src/utils/claude/CLAUDE.md` — Claude Agent SDK types alignment + upstream-diff commands
-- `src/utils/audio/CLAUDE.md` — audio transcription gotchas (`tools transcribe`, `ask --sst`)
-- `src/utils/database/CLAUDE.md` — Storage / MacDatabase / migrations / metadata-schema map
-- `src/azure-devops/CLAUDE.md` — context7 IDs, local `az` docs, ADO API quick reference
-
-## Important Notes
-
--   **Logging**: Check `~/.genesis-tools/logs/` for debug information if tools encounter errors
-
-## AI subsystem (layers, accounts, secrets) — one place, do not add new rate tables
-
-Everything AI lives under `src/utils/ai/` + `src/utils/security/`, in layers that import only DOWNWARD. Adding a provider means adding one plugin folder, not touching six call sites.
-
-- **L0 `src/utils/security/`**: `SecretStore` is an AES-256-GCM vault at `~/.genesis-tools/security/vault.json`, per-entry key via HKDF, written under `Storage.withFileLock`. Credentials in config are `SecureRef`s (`{ type: "secure", path: "ai/<accountId>/<field>" }`), never plaintext. The master key comes off a ladder: `GENESIS_TOOLS_MASTER_KEY` env, then the OS keychain, then an opt-in key file (`keyring/headless.ts`). The keychain rung goes through `@napi-rs/keyring` on every platform and NEVER the `security` CLI: macOS grants silent access by code signature, so the same `bun` that wrote an item reads it back with no prompt, while a second binary gets prompted.
-  - 🛑 **Tests can never reach the real keychain.** Five independent layers stop them (sandboxed service name, under-test rung block, a `@napi-rs/keyring` preload mock, a non-interactive write barrier, dual-signal test detection), pinned by `keyring/keychain-guard.test.ts`.
-- **L1 `src/utils/ai/config/`**: `AiConfigStore` is the single reader/writer of the v4 `~/.genesis-tools/ai/config.json` (accounts with immutable `id` plus renameable `name`, `defaults.{account,task,app}`, aliases). It re-reads on mtime change, so a long-running proxy sees a `tools claude login` from another terminal. Mutate through `mutate()` / `withLock()`, never by writing the file directly. `AIConfig` survives only as a deprecated facade.
-- **L2 `src/utils/ai/providers/`**: one folder per provider implementing `ProviderPlugin` (`kind`, `capabilities`, `credential`, `bind()`, optional `health()`). `resolveCredential` is the ONE chokepoint deciding where a key comes from: the account first, a DECLARED env var second. Ambient env pickup that no account claims is an error naming the fix command, except the grandfathered set, which keeps working through `ephemeralEnvAccounts` (in memory, names the variable, never copies the value).
-- **L3 `src/utils/ai/catalog/`**: `STATIC_CATALOG` plus `byId(id, provider?)` and `pricingFor()` (static, then LiteLLM, then OpenRouter). Pricing supports dated and context-banded `rules`, resolved by the pure `effectivePricing()`.
-- **L4 `src/utils/ai/core/`**: `resolveModel` / `resolveModelTarget` is the ONE resolution ladder (explicit ref, then app default, then task default, then global), and `coreChat` / `callLLM` the one transport. `ModelRef` grammar: `"grok-4-fast"`, `"xai/grok-4-fast"`, `"@account/<id>:<model>"`, `"@proxy/<slug>/<model>"`.
-- **L5 `src/utils/ai/tasks/`**: the `ai.*` facade (`chat`, `embed`, `transcribe`, `speak`, `synthesize`, `summarize`, `translate`, `image`; `realtime` throws a documented `NotImplementedError`). It owns binding lifetime, so a facade verb disposes the binding it resolved. That matters because local runtimes hold native handles.
-- **L6 `src/utils/ai/session/`** and **L7 `src/utils/ai/usage/`**: shared session store plus mini-agent, and `recordUsage` / `queryUsage`. `recordUsage` NEVER throws (it sits in the hot path of every call) and records `costSource` so a derived price is never mistaken for a booked one.
-
-**Codex account ownership:** `src/utils/ai/openai/account-binding.ts` is the shared subscription binding for native terminals, workers, usage and SDK requests. Keep immutable account/workspace identity across refresh and renames. Vault grants have one refresh owner; native auth-file references are read-only. Diagnostics use `AiConfigStore.readOnly()` for metadata too, because ordinary `load()` may run migrations. Native app-server authentication uses external tokens with ephemeral credential storage; never swap the shared home's auth file.
-
-**Native CLI history:** extend `ProviderPlugin.codingAgent` and the readers/index under `src/utils/agent-sessions/`; do not add another provider registry. This derived history index is separate from app-owned `src/utils/ai/session/` conversations. Session identity includes provider, native ID and canonical source home. Import through the provider's native API with source-preserving provenance; never manufacture native SQLite rows or infer historical account ownership from today's login.
-
-**Cost math is `src/utils/ai/llm-cost.ts` only**: `calculateCallCostUsd` (prices cache reads and writes at their own rates) and `estimateLlmCallCostUsd`. No rate table belongs there, or anywhere new.
-
-⚠️ **ai@7's Anthropic provider folds cache tokens into top-level `inputTokens`.** Recording that field as billable input charges cached tokens twice, once at the full rate and again at the cache rate. Use `usageInputNoCacheTokens(usage)` from `@genesiscz/utils/ask/usage-tokens`.
-
-🛑 **Deliberate exception, do not "deduplicate":** `src/ai-proxy/lib/billing/pricing.ts` keeps a STATIC rate table. It is the ai-proxy client-ledger invoicing source of truth: deterministic, offline, and its rates may intentionally differ from list prices. Cost is booked at WRITE time (`recordClientUsage()`), so a later rate edit never rewrites past invoices. Readers print the stored `cost_usd` and never recompute. `pricing.test.ts` asserts every priced prefix still names a known model, never rate equality.
-
-**Guards.** `scripts/ci/ai-credentials-guard.sh` fails the build on argless `createOpenAI(` / `createGroq(`, bare `@ai-sdk` singletons outside `providers/`, and any `new Storage("ai")` outside `src/utils/ai/config/**` (need a path? use `aiDataDir()` from `config/paths.ts`). All three rules skip prose that merely names the pattern, by post-filtering matched output lines whose content begins with `//`, `*` or `#`. A line like `/* keep */ const s = new Storage("ai")` is still caught: only the line's leading marker is checked, never the whole line.
-
-**CLI.** `tools ai config account add|list|show|edit|rm|test`, `default set`, `link ls`, `secret set|rotate|export|import`, and `tools ai config doctor` (per-account credential diagnosis). `tools ai-proxy link` registers the proxy as a real account so `@proxy/...` refs resolve.
-
-🛑 **A diagnostic must never mutate.** See "Side Effects: Diagnostics & Irreversible Operations" above. `doctor` and `account test` pass `probe: true`, and each plugin's shared auth path refuses to spend a single-use refresh token.

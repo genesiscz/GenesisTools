@@ -234,10 +234,12 @@ vercel-skills
 #
 # Per-entry (`.claude/*`) rather than the whole directory (`.claude/`), because
 # git cannot re-include anything inside an excluded directory. Skills and
-# commands are real project config, not session scratch, so they stay tracked.
+# commands are real project config, not session scratch, so they stay tracked. So do the area
+# rules in .claude/rules/, which the root CLAUDE.md routes to.
 .claude/*
 !.claude/skills/
 !.claude/commands/
+!.claude/rules/
 .handoff
 README.json-to-ts.md
 .claude/plans/
