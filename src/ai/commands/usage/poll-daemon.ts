@@ -73,6 +73,73 @@ export function anthropicRows(snapshots: readonly AccountUsageSnapshot[]) {
 
 const prof = profiler.scope("ai-usage");
 
+/**
+ * Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a cold answer walks 3,796
+ * directories and stats 12k files for 1.83 s of CPU. This tick is already awake, so it recomputes the last query
+ * the CLI asked for and the CLI reads the file. It does nothing until something has asked once, and stops an hour
+ * after the last ask, so an idle machine pays nothing.
+ *
+ * Bounded by what is left of the tick: this walk took up to 52.7 s on 2026-09-29 (p99 24 s), and the runner's
+ * 60 s timeout SIGTERMed the tick 20 times that day, losing its "completed" line. A walk cut short leaves the
+ * previous file for the next tick. The budget counts from process start, because the runner's clock starts at
+ * spawn and on 2026-10-12 the first line of `main` reached it 5-38 s after spawn. Never throws.
+ */
+async function refreshSessionRows(): Promise<void> {
+    const budgetMs = TICK_BUDGET_MS - (Date.now() - performance.timeOrigin);
+
+    try {
+        const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
+        const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
+        const { callHubServer } = await import("@app/hub/server/client");
+        // The resident hub server answers with warm caches (directory walk, metadata, rows); this process
+        // starts cold every minute. Its `--fresh` answer is the same `sessionRowsJson` the CLI prints.
+        const remote = async (query: AgentSessionRowsOptions): Promise<AgentSessionRow[] | null> => {
+            if (query.providers && query.providers.length > 0) {
+                return null;
+            }
+
+            // `--journal-only`: these rows go into the cache file, which must never hold a live tmux tab.
+            const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write", "--journal-only"];
+            for (const [flag, value] of [
+                ["--hours", query.hours],
+                ["--min", query.minRows],
+                ["--limit", query.limit],
+            ] as const) {
+                if (value !== undefined) {
+                    argv.push(flag, String(value));
+                }
+            }
+
+            // Short: a stalled server must not eat the budget the local walk needs (a cold walk is ~2 s CPU).
+            const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(5_000, budgetMs / 4)) });
+            if (answer?.exit !== 0) {
+                return null;
+            }
+
+            try {
+                const parsed: unknown = SafeJSON.parse(answer.stdout, { strict: true });
+                const rows = typeof parsed === "object" && parsed !== null && "rows" in parsed ? parsed.rows : null;
+                return Array.isArray(rows) ? rows : null;
+            } catch (err) {
+                logger.debug({ err }, "[ai-usage] hub server rows unreadable; computing locally");
+                return null;
+            }
+        };
+        const outcome = await withTimeout(
+            prof.measureAsync(
+                "tick.session-rows",
+                () => refreshSessionRowsCache(listAgentSessionRows, { remote }),
+                cpuMeta()
+            ),
+            Math.max(0, budgetMs),
+            new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`)
+        );
+        logger.info(outcome, "[ai-usage] session rows cache");
+    } catch (err) {
+        logger.warn({ err }, "[ai-usage] session rows cache refresh failed");
+    }
+}
+
 async function main(): Promise<void> {
     const startedAt = Date.now();
     // CPU the process spent before `main` (bun start and imports), logged on the setup line: a tick's CPU is
@@ -99,6 +166,9 @@ async function main(): Promise<void> {
         // reads its cache for free. Per-provider floors (`usage.minIntervalMs`) still
         // apply inside the shared cache, which is why codex and grok are not refetched on
         // every tick even under force.
+        // The walk reads none of this round's snapshots, so it runs beside the poll and the tick lasts as long as the
+        // slower of the two, not their sum (poll p90 21 s, walk p90 24 s, one after the other on 2026-10-12).
+        const rows = refreshSessionRows();
         const snapshots = await prof.measureAsync("tick.poll-accounts", () => pollAccounts({ force: true }), cpuMeta());
 
         if (snapshots.length === 0) {
@@ -158,70 +228,7 @@ async function main(): Promise<void> {
         }
 
         prof.measure("tick.prune", () => db.pruneOlderThan(dashConfig.dataRetentionDays));
-
-        // Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a cold
-        // answer walks 3,796 directories and stats 12k files for 1.83 s of CPU. This tick is
-        // already awake, so it recomputes the last query the CLI asked for and the CLI reads
-        // the file. It does nothing until something has asked once, and stops an hour after
-        // the last ask, so an idle machine pays nothing.
-        // Bounded by what is left of the tick: this walk took up to 52.7 s on 2026-09-29 (p99 24 s),
-        // and with the poll before it the runner's 60 s timeout SIGTERMed the tick 20 times that day,
-        // losing its "completed" line. A walk cut short leaves the previous file for the next tick;
-        // `process.exit` below ends it.
-        // Counted from process start, not from `main`: the runner's 60 s clock starts at spawn, and on the ticks it
-        // killed on 2026-10-12 the first line of `main` reached it 5-38 s after spawn, which ate the headroom.
-        const budgetMs = TICK_BUDGET_MS - (Date.now() - performance.timeOrigin);
-        try {
-            const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
-            const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
-            const { callHubServer } = await import("@app/hub/server/client");
-            // The resident hub server answers with warm caches (directory walk, metadata, rows); this process
-            // starts cold every minute. Its `--fresh` answer is the same `sessionRowsJson` the CLI prints.
-            const remote = async (query: AgentSessionRowsOptions): Promise<AgentSessionRow[] | null> => {
-                if (query.providers && query.providers.length > 0) {
-                    return null;
-                }
-
-                // `--journal-only`: these rows go into the cache file, which must never hold a live tmux tab.
-                const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write", "--journal-only"];
-                for (const [flag, value] of [
-                    ["--hours", query.hours],
-                    ["--min", query.minRows],
-                    ["--limit", query.limit],
-                ] as const) {
-                    if (value !== undefined) {
-                        argv.push(flag, String(value));
-                    }
-                }
-
-                // Short: a stalled server must not eat the budget the local walk needs (a cold walk is ~2 s CPU).
-                const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(5_000, budgetMs / 4)) });
-                if (answer?.exit !== 0) {
-                    return null;
-                }
-
-                try {
-                    const parsed: unknown = SafeJSON.parse(answer.stdout, { strict: true });
-                    const rows = typeof parsed === "object" && parsed !== null && "rows" in parsed ? parsed.rows : null;
-                    return Array.isArray(rows) ? rows : null;
-                } catch (err) {
-                    logger.debug({ err }, "[ai-usage] hub server rows unreadable; computing locally");
-                    return null;
-                }
-            };
-            const outcome = await withTimeout(
-                prof.measureAsync(
-                    "tick.session-rows",
-                    () => refreshSessionRowsCache(listAgentSessionRows, { remote }),
-                    cpuMeta()
-                ),
-                Math.max(0, budgetMs),
-                new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`)
-            );
-            logger.info(outcome, "[ai-usage] session rows cache");
-        } catch (err) {
-            logger.warn({ err }, "[ai-usage] session rows cache refresh failed");
-        }
+        await rows;
 
         const errorCount = snapshots.filter((s) => s.error).length;
         logger.info(
