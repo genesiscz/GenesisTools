@@ -9,7 +9,7 @@ Both return a getter. The first call loads; every later call returns the same sy
 
 ## Which one to use
 
-1. **The OS has the call you need: use `defineSystemLibrary`.** Example: `src/utils/fs/fast-walk.ts` reads each
+1. **The OS has the call you need: use `defineSystemLibrary`.** Example: `src/utils/fs/native/fast-walk.ts` reads each
    directory with `getattrlistbulk` from `libSystem`. No compiler, no build step, no file to ship.
 2. **You need a tight loop in C** (a struct walk the OS does not expose, a hot loop over millions of items, a C
    library without a callable ABI): **use `defineNativeLibrary`.** Measure first: the TypeScript loop over a system

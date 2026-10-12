@@ -40,7 +40,7 @@ describe.each(["js", "native"] as const)("fastWalk (%s)", (engine) => {
     it.skipIf(skip)(
         "returns matching files at every depth with their size and mtime, and links unfollowed",
         async () => {
-            const result = await fastWalk({ roots: [root], names: ["*.jsonl"], engine });
+            const result = await fastWalk({ roots: [root], endsWith: [".jsonl"], engine });
 
             expect(result.engine).toBe(engine);
             expect(view(result.entries)).toEqual([

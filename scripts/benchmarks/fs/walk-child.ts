@@ -13,7 +13,7 @@ import { stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { walkSourceRoots } from "@genesiscz/utils/agent-sessions/source-discovery";
 import { defineNativeLibrary } from "@genesiscz/utils/bun/compiler";
-import { fastWalk } from "@genesiscz/utils/fs/fast-walk";
+import { fastWalk } from "@genesiscz/utils/fs/native/fast-walk";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { WALK_ARMS, WALK_TREES, type WalkTreeName } from "./walk-trees";
 
@@ -24,8 +24,11 @@ if (!tree || !(WALK_ARMS as readonly string[]).includes(arm)) {
     throw new Error(`usage: walk-child.ts <${WALK_ARMS.join("|")}> <${Object.keys(WALK_TREES).join("|")}>`);
 }
 
-const wanted = (name: string) =>
-    tree.names.some((pattern) => (pattern.startsWith("*") ? name.endsWith(pattern.slice(1)) : name === pattern));
+const names: readonly string[] = tree.names;
+const endings: readonly string[] = tree.endsWith;
+const wanted = (name: string) => names.includes(name) || endings.some((ending) => name.endsWith(ending));
+/** The C fixture's own pattern list: exact names, and `*` before an ending. */
+const cPatterns = [...names, ...endings.map((ending) => `*${ending}`)];
 
 const cWalker = defineNativeLibrary({
     source: join(import.meta.dir, "fastwalk.c"),
@@ -43,7 +46,7 @@ function walkInC(): number {
     const result = symbols.fw_walk(
         Buffer.from(`${tree.roots.join("\n")}\0`),
         tree.maxDepth ?? -1,
-        Buffer.from(`${tree.names.join("\n")}\0`),
+        Buffer.from(`${cPatterns.join("\n")}\0`),
         0,
         ptr(length)
     );
@@ -76,6 +79,7 @@ async function once(): Promise<number> {
     const result = await fastWalk({
         roots: tree.roots,
         names: tree.names,
+        endsWith: tree.endsWith,
         engine: arm === "native" ? "native" : "js",
         ...(tree.maxDepth === undefined ? {} : { maxDepth: tree.maxDepth }),
     });

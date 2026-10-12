@@ -185,10 +185,10 @@
             "types": "./fs/index.ts",
             "default": "./fs/index.ts"
         },
-        "./fs/fast-walk": {
-            "bun": "./fs/fast-walk.ts",
-            "types": "./fs/fast-walk.ts",
-            "default": "./fs/fast-walk.ts"
+        "./fs/native/fast-walk": {
+            "bun": "./fs/native/fast-walk.ts",
+            "types": "./fs/native/fast-walk.ts",
+            "default": "./fs/native/fast-walk.ts"
         },
         "./fs/file-tailer": {
             "bun": "./fs/file-tailer.ts",

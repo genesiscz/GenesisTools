@@ -18,7 +18,7 @@ import { open, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
-import { fastWalk } from "@genesiscz/utils/fs/fast-walk";
+import { fastWalk } from "@genesiscz/utils/fs/native/fast-walk";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { READ_ARMS } from "./walk-trees";
 
@@ -45,7 +45,7 @@ const SEEK_END = 2;
 
 async function files(): Promise<string[]> {
     if (job === "head") {
-        const walked = await fastWalk({ roots: [join(homedir(), ".codex", "sessions")], names: ["*.jsonl"] });
+        const walked = await fastWalk({ roots: [join(homedir(), ".codex", "sessions")], endsWith: [".jsonl"] });
         return walked.entries.filter((entry) => entry.kind === "file").map((entry) => entry.path);
     }
 
@@ -53,7 +53,7 @@ async function files(): Promise<string[]> {
         const since = Date.now() - 24 * 3_600_000;
         const walked = await fastWalk({
             roots: [join(homedir(), ".claude", "projects")],
-            names: ["*.jsonl"],
+            endsWith: [".jsonl"],
             maxDepth: 1,
         });
         return walked.entries
@@ -63,10 +63,12 @@ async function files(): Promise<string[]> {
 
     const walked = await Promise.all(
         [
-            { root: join(homedir(), ".claude", "projects"), names: ["*.jsonl"], maxDepth: 1 },
-            { root: join(homedir(), ".grok", "sessions"), names: ["chat_history.jsonl"], maxDepth: 2 },
-            { root: join(homedir(), ".codex", "sessions"), names: ["*.jsonl"], maxDepth: undefined },
-        ].map((tree) => fastWalk({ roots: [tree.root], names: tree.names, maxDepth: tree.maxDepth }))
+            { root: join(homedir(), ".claude", "projects"), names: [], endsWith: [".jsonl"], maxDepth: 1 },
+            { root: join(homedir(), ".grok", "sessions"), names: ["chat_history.jsonl"], endsWith: [], maxDepth: 2 },
+            { root: join(homedir(), ".codex", "sessions"), names: [], endsWith: [".jsonl"], maxDepth: undefined },
+        ].map((tree) =>
+            fastWalk({ roots: [tree.root], names: tree.names, endsWith: tree.endsWith, maxDepth: tree.maxDepth })
+        )
     );
     return walked.flatMap((result) =>
         result.entries.filter((entry) => entry.kind === "file").map((entry) => entry.path)

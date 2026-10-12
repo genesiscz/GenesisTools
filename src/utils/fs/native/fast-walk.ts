@@ -10,8 +10,13 @@ export interface FastWalkOptions {
     roots: string[];
     /** The root is depth 0; a directory deeper than this is not entered. Unset: no limit. */
     maxDepth?: number;
-    /** Files to return: exact names, or `*suffix` patterns (`*.jsonl`). Unset: every file. */
+    /**
+     * Return files with exactly one of these names, for example `["chat_history.jsonl"]`. With `endsWith` too, a
+     * file that matches either is returned. Neither set: every file is returned.
+     */
     names?: string[];
+    /** Return files whose name ends with one of these, for example `[".jsonl"]` for every JSONL file. */
+    endsWith?: string[];
     /** Also return every directory that was found, with its mtime. */
     includeDirectories?: boolean;
     /** `auto` (default) uses the native walker on macOS and falls back to the JS walker. */
@@ -82,19 +87,18 @@ function errnoNow(calls: LibSystem): number {
     return location ? read.i32(location, 0) : 0;
 }
 
-/** A name pattern as bytes: an exact name, or the suffix of a `*suffix` pattern. */
+/** A name to match as bytes: a whole name (`names`) or an ending (`endsWith`). */
 interface BytePattern {
     suffix: boolean;
     bytes: Uint8Array;
 }
 
-function bytePatterns(names: string[]): BytePattern[] {
+function bytePatterns(options: { names: string[]; endsWith: string[] }): BytePattern[] {
     const encoder = new TextEncoder();
-    return names.map((name) =>
-        name.startsWith("*")
-            ? { suffix: true, bytes: encoder.encode(name.slice(1)) }
-            : { suffix: false, bytes: encoder.encode(name) }
-    );
+    return [
+        ...options.names.map((name) => ({ suffix: false, bytes: encoder.encode(name) })),
+        ...options.endsWith.map((ending) => ({ suffix: true, bytes: encoder.encode(ending) })),
+    ];
 }
 
 function nameMatches(buffer: Uint8Array, start: number, length: number, patterns: BytePattern[]): boolean {
@@ -136,7 +140,7 @@ async function walkNative(
 ): Promise<FastWalkResult> {
     const entries: FastWalkEntry[] = [];
     const errors: FastWalkError[] = [];
-    const patterns = bytePatterns(options.names);
+    const patterns = bytePatterns(options);
     const decoder = new TextDecoder();
     const attributes = new Uint8Array(24);
     const attributeView = new DataView(attributes.buffer);
@@ -229,14 +233,13 @@ async function walkNative(
     return { engine: "native", entries, errors };
 }
 
-function nameMatcher(names: string[]): (name: string) => boolean {
-    if (names.length === 0) {
+function nameMatcher(options: { names: string[]; endsWith: string[] }): (name: string) => boolean {
+    if (options.names.length === 0 && options.endsWith.length === 0) {
         return () => true;
     }
 
-    const exact = new Set(names.filter((name) => !name.startsWith("*")));
-    const suffixes = names.filter((name) => name.startsWith("*")).map((name) => name.slice(1));
-    return (name) => exact.has(name) || suffixes.some((suffix) => name.endsWith(suffix));
+    const exact = new Set(options.names);
+    return (name) => exact.has(name) || options.endsWith.some((ending) => name.endsWith(ending));
 }
 
 function errnoOf(err: unknown): number {
@@ -247,7 +250,7 @@ function errnoOf(err: unknown): number {
 async function walkJs(options: Required<Omit<FastWalkOptions, "engine">>): Promise<FastWalkResult> {
     const entries: FastWalkEntry[] = [];
     const errors: FastWalkError[] = [];
-    const matches = nameMatcher(options.names);
+    const matches = nameMatcher(options);
     const stack = options.roots.map((root) => ({ directory: root, depth: 0 }));
 
     while (stack.length > 0) {
@@ -310,6 +313,7 @@ export async function fastWalk(options: FastWalkOptions): Promise<FastWalkResult
         roots: options.roots,
         maxDepth: options.maxDepth ?? Number.POSITIVE_INFINITY,
         names: options.names ?? [],
+        endsWith: options.endsWith ?? [],
         includeDirectories: options.includeDirectories ?? false,
     };
     const calls = options.engine === "js" ? null : nativeCalls();
