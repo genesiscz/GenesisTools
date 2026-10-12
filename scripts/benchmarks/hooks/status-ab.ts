@@ -29,6 +29,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type BaselineMetrics, withSpawnCounter } from "@app/benchmark/lib";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { finishBench, parseBenchArgs } from "../fs/shared";
@@ -49,13 +50,17 @@ type Shape = (typeof SHAPES)[number];
 
 const SCRATCH = realpathSync(mkdtempSync(join(tmpdir(), "gt-bench-status-")));
 
-// Before any hook module is imported: every path they build reads these at call time.
-process.env.TMPDIR = join(SCRATCH, "tmp");
-process.env.GENESIS_TOOLS_HOME = join(SCRATCH, "home");
-mkdirSync(process.env.TMPDIR, { recursive: true });
-mkdirSync(join(process.env.GENESIS_TOOLS_HOME, ".genesis-tools", "agents"), { recursive: true });
+const SANDBOX_TMP = join(SCRATCH, "tmp");
+const SANDBOX_HOME = join(SCRATCH, "home");
+
+// The sandbox is this whole process's environment on purpose: the hook modules imported below build their paths from
+// it at call time, and every hook child inherits it. A scoped override would reach neither.
+process.env.TMPDIR = SANDBOX_TMP;
+process.env.GENESIS_TOOLS_HOME = SANDBOX_HOME;
+mkdirSync(SANDBOX_TMP, { recursive: true });
+mkdirSync(join(SANDBOX_HOME, ".genesis-tools", "agents"), { recursive: true });
 writeFileSync(
-    join(process.env.GENESIS_TOOLS_HOME, ".genesis-tools", "agents", "hooks.json"),
+    join(SANDBOX_HOME, ".genesis-tools", "agents", "hooks.json"),
     SafeJSON.stringify({ shadow: false, diff: { highlight: "none" } })
 );
 
@@ -130,7 +135,7 @@ function spawnHook(arm: Arm, entry: string, payload: Record<string, unknown>) {
     const started = performance.now();
     const run = Bun.spawnSync(["bun", join(ARMS[arm], "src/agents/bin", entry)], {
         stdin: Buffer.from(SafeJSON.stringify(payload)),
-        env: process.env,
+        env: env.getProcessEnv(),
     });
 
     if (run.exitCode !== 0) {
