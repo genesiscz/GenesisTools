@@ -9,12 +9,10 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
 
     try {
         const { createApi, sendMessage } = await import("@genesiscz/utils/telegram-bot/lib/api");
-        const { escapeMarkdownV2 } = await import("@genesiscz/utils/telegram-bot/lib/formatting");
+        const { formatTelegramNotification } = await import("@genesiscz/utils/telegram-bot/lib/formatting");
         const api = createApi(config.botToken);
 
-        const title = event.title ? `*${escapeMarkdownV2(event.title)}*` : "";
-        const body = escapeMarkdownV2(event.message);
-        const text = title ? `${title}\n${body}` : body;
+        const text = formatTelegramNotification({ title: event.title, message: event.message });
         const chatId = Number(config.chatId);
 
         if (Number.isNaN(chatId)) {
