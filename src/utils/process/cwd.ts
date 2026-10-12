@@ -121,6 +121,18 @@ export function ownLineage(maxDepth = 64): Set<number> {
     return own;
 }
 
+/**
+ * True when {@link readProcessCwd} has a kernel source on this machine (libproc on macOS, `/proc` on Linux). When it
+ * does, a null from it means the pid is gone, a zombie, or another user's: nothing else can read that one either.
+ */
+export function canReadProcessCwd(): boolean {
+    if (process.platform === "darwin") {
+        return loadLibproc() !== null;
+    }
+
+    return process.platform === "linux";
+}
+
 /** Current working directory of `pid` as the kernel sees it right now. */
 export function readProcessCwd(pid: number): string | null {
     if (process.platform === "darwin") {

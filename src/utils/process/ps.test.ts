@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import {
+    batchCwd,
+    batchCwdViaLsof,
     capture,
     chunk,
     collectProcessTree,
@@ -13,11 +18,60 @@ import {
     parsePsTable,
     processBasename,
 } from "@genesiscz/utils/process/ps";
+import { readProcessInfo } from "@genesiscz/utils/process/socket-owner";
 import { parseTopPower, readTopEnergy } from "@genesiscz/utils/process/top";
 
 function fakeRow(pid: number, ppid: number): PsRow {
     return { pid, ppid, user: "alice", stat: "S", cpu: 0, rss: 0, startTime: null, command: `pid-${pid}` };
 }
+
+/** Processes of our own for the live tests: a sleeper in `dir`, a pid that already exited, and a zombie. */
+interface LiveFixture {
+    dir: string;
+    sleeper: Bun.Subprocess;
+    exitedPid: number;
+    zombiePid: number;
+    zombieHolder: Bun.Subprocess;
+}
+
+async function startLiveFixture(): Promise<LiveFixture> {
+    // A space in the folder name: lsof prints the path as the last columns of a space-split line.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "ps live-")));
+    const quiet = { env: process.env, stdin: "ignore", stdout: "ignore", stderr: "ignore" } as const;
+    const sleeper = Bun.spawn(["/bin/sleep", "30"], { ...quiet, cwd: dir });
+    const exited = Bun.spawn(["/usr/bin/true"], quiet);
+    await exited.exited;
+
+    // `sh` backgrounds `sleep 0`, prints its pid, then becomes `sleep 30`, which never reaps the child.
+    const zombieHolder = Bun.spawn(["/bin/sh", "-c", "/bin/sleep 0 & echo $!; exec /bin/sleep 30"], {
+        env: process.env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+    });
+    const { value } = await zombieHolder.stdout.getReader().read();
+    const zombiePid = Number(new TextDecoder().decode(value).trim());
+    const deadline = Date.now() + 5_000;
+
+    // A zombie no longer answers libproc's bsd info, which is how we know `sleep 0` has exited.
+    while (readProcessInfo(zombiePid) !== null) {
+        if (Date.now() > deadline) {
+            throw new Error(`pid ${zombiePid} did not become a zombie within 5 s`);
+        }
+
+        await Bun.sleep(20);
+    }
+
+    return { dir, sleeper, exitedPid: exited.pid, zombiePid, zombieHolder };
+}
+
+async function stopLiveFixture(fixture: LiveFixture): Promise<void> {
+    fixture.sleeper.kill();
+    fixture.zombieHolder.kill();
+    await Promise.all([fixture.sleeper.exited, fixture.zombieHolder.exited]);
+}
+
+const UNUSED_PID = 0x7ffffff;
 
 // Real `ps` and `lsof` output shapes, with invented user names.
 const PS_INFO_LINE = "17512 40508 alice    Ss     0.4   3584 Wed Sep 16 17:58:55 2026 /bin/zsh -c echo hello world";
@@ -152,6 +206,57 @@ describe("parseCpuTime", () => {
         expect(parseCpuTime("not-a-time")).toBeNull();
         expect(parseCpuTime("garbage")).toBeNull();
         expect(parseCpuTime("1:2:3:4")).toBeNull();
+    });
+});
+
+function sortedByPid<T>(map: Map<number, T>): Map<number, T> {
+    return new Map([...map].sort(([a], [b]) => a - b));
+}
+
+/** Both readers must answer exactly this for the live fixture: the old `lsof` path and the libproc one. */
+async function expectLiveCwds(read: (pids: number[]) => Map<number, string>): Promise<void> {
+    const fixture = await startLiveFixture();
+
+    try {
+        const pids = [
+            process.pid,
+            fixture.sleeper.pid,
+            fixture.exitedPid,
+            fixture.zombiePid,
+            1,
+            UNUSED_PID,
+            fixture.zombieHolder.pid,
+        ];
+        const ownCwd = realpathSync(process.cwd());
+        // launchd belongs to root: unreadable unless the suite itself runs as root.
+        const expected = new Map<number, string>([
+            [process.pid, ownCwd],
+            [fixture.sleeper.pid, fixture.dir],
+            [fixture.zombieHolder.pid, ownCwd],
+        ]);
+
+        if (process.getuid?.() === 0) {
+            expected.set(1, "/");
+        }
+
+        expect(sortedByPid(read(pids))).toEqual(sortedByPid(expected));
+    } finally {
+        await stopLiveFixture(fixture);
+    }
+}
+
+describe.skipIf(process.platform !== "darwin")("batchCwd on live processes", () => {
+    test("answers our own and a child's cwd, and leaves exited, zombie, foreign and unknown pids out", async () => {
+        await expectLiveCwds(batchCwd);
+    });
+
+    test("the lsof fallback answers the same set as the kernel read", async () => {
+        await expectLiveCwds(batchCwdViaLsof);
+    });
+
+    test("an empty list answers an empty map, on both paths", () => {
+        expect(batchCwd([]).size).toBe(0);
+        expect(batchCwdViaLsof([]).size).toBe(0);
     });
 });
 

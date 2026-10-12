@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { ownLineage, readParentPid, readProcessCwd, resolveAncestorCwd } from "./cwd";
+import { canReadProcessCwd, ownLineage, readParentPid, readProcessCwd, resolveAncestorCwd } from "./cwd";
 
 const SUPPORTED = process.platform === "darwin" || process.platform === "linux";
 const MODULE = resolve(import.meta.dir, "cwd.ts");
@@ -26,6 +26,7 @@ console.log(resolveAncestorCwd() ?? "");`;
 
 describe.skipIf(!SUPPORTED)("process cwd", () => {
     it("reads our own live cwd", () => {
+        expect(canReadProcessCwd()).toBe(true);
         expect(readProcessCwd(process.pid)).toBe(realpathSync(process.cwd()));
     });
 
@@ -76,6 +77,7 @@ describe.skipIf(!SUPPORTED)("process cwd", () => {
 
 describe.skipIf(SUPPORTED)("process cwd on unsupported platforms", () => {
     it("returns null instead of guessing", () => {
+        expect(canReadProcessCwd()).toBe(false);
         expect(readProcessCwd(process.pid)).toBeNull();
         expect(resolveAncestorCwd()).toBeNull();
     });
