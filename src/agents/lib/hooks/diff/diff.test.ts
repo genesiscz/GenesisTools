@@ -3229,7 +3229,9 @@ describe("characterization: what one call shows, logs and attributes", () => {
     });
 
     it("the status never starts git's threaded index preload, which costs three times the CPU for the same answer", () => {
-        const trace = join(tmpdir(), `gt-status-trace-${process.pid}.log`);
+        // GIT_TRACE2_PERF appends, so the trace goes into a folder this test owns: a stale file could hold lines.
+        const traceDir = mkdtempSync(join(tmpdir(), "gt-status-trace-"));
+        const trace = join(traceDir, "trace.log");
         const saved = { perf: process.env.GIT_TRACE2_PERF, force: process.env.GIT_TEST_PRELOAD_INDEX };
 
         process.env.GIT_TRACE2_PERF = trace;
@@ -3253,7 +3255,7 @@ describe("characterization: what one call shows, logs and attributes", () => {
 
         const text = readFileSync(trace, "utf8");
 
-        rmSync(trace, { force: true });
+        rmSync(traceDir, { recursive: true, force: true });
         // The positive control: the trace did record this status refreshing the index.
         expect(text).toContain("label:refresh");
         expect(text.split("\n").filter((line) => line.includes("label:preload"))).toEqual([]);
