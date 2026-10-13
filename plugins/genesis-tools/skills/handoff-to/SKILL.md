@@ -47,6 +47,8 @@ Index task against $1.05 for gpt-6-sol and $3.26 for gpt-6-astra.
 GPT-6 prompts above 272K input tokens bill 2x input and 1.5x output; grok-4.7 bills 2x above 200K.
 Subscription quota and API-equivalent cost are different measures. Do not infer that a worker is free.
 
+Every worker turn books its cost: the turn report ends with `cost: $X API-equivalent (subscription, billed $0) · as Claude ≈ Opus $Y / Sonnet $Z (estimate)`, and `status --json` carries it under `cost`. `tools ai-spend workers --since 7d --by backend,model` (or `--by label`, `--by name`) shows the spend over time; tag a run with `spawn --label "review-loop pr511"` to group it. The Claude figures price the same tokens at Opus 5.5 and Sonnet 5.5 and are estimates, never measurements.
+
 Launch benchmarks behind the scores (vendor-reported, different harnesses, so read them as tiers, not ranks):
 
 - Terminal-Bench 4.0: opus-5-5 66.4%, gpt-6-astra 57.7%, fable-5-1 55.8%, grok-4.7 37.6%.
