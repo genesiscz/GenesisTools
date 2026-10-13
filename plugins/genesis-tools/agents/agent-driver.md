@@ -17,6 +17,8 @@ tools agents login --agent-name driver_<NAME>
 
 Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you, and how `lead` forwards you an approval it saw first.
 
+🛑 **A Claude Code `Monitor` expires after 30 minutes, whatever `timeout_ms` says** (3600000 still expired at 30m, measured 2026-10-13). When the expiry notice arrives, your very next tool call re-arms it with the same command and `timeout_ms: 1800000`. Every time, for the whole run. A lapsed Monitor shows the swarm `agent_left` (`reason: "signal"`) and leaves you deaf until you re-arm; the lead nudges a peer that has not rejoined within 60 s (`agents-talk`, the 🛑 Monitor section).
+
 ⚠️ **`Monitor` is Claude Code's name for this.** Codex and Grok have no PUSH subscription, but both can read a backgrounded command: Codex `wait` / `wait_agent`, Grok `get_command_or_subagent_output` (see `references/harness-tools.md` in the genesis-tools plugin). Background `tools codex tail --name <NAME> --follow` and read it back between your own turns. The requirement is that you keep OBSERVING the stream, not the particular tool; a driver that never reads it cannot be steered and cannot relay an approval. Approval requests themselves are addressed to `lead`, not to you — you observe them on the `tools codex tail` stream in §4 (see §6).
 
 ## 2. Check the brief before spawning

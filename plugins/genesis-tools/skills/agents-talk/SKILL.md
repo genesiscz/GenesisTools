@@ -36,6 +36,16 @@ In 2.1.280 the harness never injects team mail into a running teammate turn (the
 `teammate_mailbox` attachment producer returns an empty list), so it waits for the turn to end.
 Measured in one real team session: 12 to 33 minutes for working teammates, 0 to 2 s for idle ones.
 
+## 🛑 A Claude Code `Monitor` dies after 30 minutes. Re-arming it is MANDATORY, every time.
+
+<!-- added 2026-10-13 18:30: Martin asked for this rule "strongly enough"; cap measured the same day -->
+
+- **The cap is 30 minutes, whatever you ask for.** Measured on 2026-10-13: `timeout_ms: 3600000` answered "Monitor started ... expires in 30m". Pass `timeout_ms: 1800000` and expect the expiry notice ("Monitor expired after 30m ...") every 30 minutes for as long as you are on the bus.
+- **When the expiry notice arrives, your NEXT tool call is the re-arm**: the same `Monitor` call with the exact same command and `timeout_ms: 1800000`. Not after the current step, not at the end of the turn, not "when mail is expected". Mail queued in between is not lost (the cursor holds it); it reaches you only after the re-arm.
+- **Every peer sees your lapse.** The killed login posts `agent_left` with `reason: "signal"` to everyone, and your re-arm posts `agent_joined`. A lapse is therefore never silent; a missing re-arm is.
+- **The lead (or observer) watches for it.** On `agent_left` `reason: "signal"` for a peer, start a 60-second clock. If no `agent_joined` for that peer arrives within 60 s, nudge it once through its own channel: a payload-free `SendMessage` for a Claude teammate ("Your bus Monitor expired. Re-arm it now with the same command."), `tools codex steer` or `tools grok steer` for a worker, `tools claude message <session>` for a separate Claude session. Then record the nudge; do not loop on it.
+- A `tools codex spawn` worker has no Monitor and no expiry: its daemon's bridge holds the bus for it.
+
 Choose the communication channel before starting receivers. **Codex subagents communicating while they work must use the nonblocking native path below when available.** Do not start a CLI inbox for this path. Use `tools agents` when agents on different hosts or CLI workers need a shared bus. If the user explicitly requires the bus, use a real monitor for asynchronous delivery; without one, explain the capability gap rather than quietly substituting blocking `--once`. No MCP server is required.
 
 ## Choose by tools actually exposed
@@ -238,14 +248,14 @@ Measured 2026-09-30 23:10 to 2026-10-01 00:05 on Claude Code 2.1.280 with in-pro
 - **Busy teammate:** a line on its `Monitor` stream arrives mid-turn, between tool calls. A `tail -F` feed took about 8 s; the real bus (`tools agents login`) took 12 s from `tools agents message` to the teammate's ACK. Native `SendMessage` to the same teammate waited until the turn ended (1 m 42 s in the probe, 12 to 33 minutes in a real team).
 - **Idle teammate:** a Monitor event does **not** wake it (nothing in 45 s, 60 s with the bus). The event is held, not lost.
 - **Waking it:** `SendMessage` wakes an idle teammate in about 2 s. The held Monitor event is then delivered on the teammate's **next tool call**. A teammate that answers the nudge with text only never receives it: observed, the payload arrived only after a second nudge that required one tool call.
-- **Expiry:** a Claude Code `Monitor` lasts at most 30 minutes (`timeout_ms` 1800000). The teammate must re-arm it when the expiry notice arrives, or mail after that point waits for a nudge.
+- **Expiry:** a Claude Code `Monitor` lasts at most 30 minutes, even when `timeout_ms` asks for more (3600000 still expired at 30m on 2026-10-13). Re-arm it as the very next tool call after the expiry notice (see the 🛑 section above), or mail after that point waits for a nudge.
 - **State:** the lead sees each teammate as `running` or `idle` in `ListAgents`.
 - The MAIN session differs: its own Monitor events do re-invoke it between turns.
 - The cursor tracks stdout emission, so `--once` cannot recover lines already emitted to a monitor that dropped them. A receiver that died loses nothing still unread in the feed.
 
 **Protocol for a Claude Code team:**
 
-1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format monitor --kinds message --session <id>`, re-arm it on expiry, and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`.
+1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format monitor --kinds message --session <id>`, re-arm it with the same command as the very next tool call after every 30-minute expiry notice (mandatory, no exceptions), and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`.
 2. The lead sends every payload on the bus: `tools agents message --from lead --to <name> --body '...' --session <id>`. The payload never goes in `SendMessage`, so a busy teammate does not get it twice.
 3. If `ListAgents` shows the teammate `idle`, also send a nudge with no payload that forces a tool call, for example: `SendMessage(to: "<name>", "agents-mail waiting. Run one Bash call now (true), then handle your bus mail.")`. When unsure, send it anyway: a nudge to a busy teammate only costs one short extra turn after its current one.
 4. The lead's own receiver is a `Monitor` on `tools agents login --agent-main --agent-name lead --format monitor --hide-worker-steps --session <id>`. Do not filter this stream with `grep`: in `monitor` format an event is two lines, and a grep that drops the JSON line keeps its headline.

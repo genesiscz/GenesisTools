@@ -30,7 +30,7 @@ Prefer Codex-native collaboration when it provides the required model and accoun
 
 The external worker auto-registers as `codex_<name>` and receives its exact `tools agents` send/receive commands through injected developer instructions. It must not invoke the `agents-talk` skill and must not try to run Claude Code's `Monitor`. The driver watches it through `tools codex status`, `read`, `tail`, and `steer`.
 
-Only a Claude Code orchestrator that relies on bus delivery should start the lead listener using `genesis-tools:agents-talk` and its supported background monitor. A Codex orchestrator uses native collaboration to coordinate its driver. In either host, `tools codex status` and `tools codex read` remain authoritative for the external process.
+Only a Claude Code orchestrator that relies on bus delivery should start the lead listener using `genesis-tools:agents-talk` and its supported background monitor. 🛑 That `Monitor` (and an observer's or driver's) expires after 30 minutes whatever `timeout_ms` asks; re-arm it with the same command as the very next tool call after each expiry notice, and nudge a peer whose `agent_left` (`reason: "signal"`) is not followed by `agent_joined` within 60 s (agents-talk, the 🛑 Monitor section). A Codex orchestrator uses native collaboration to coordinate its driver. In either host, `tools codex status` and `tools codex read` remain authoritative for the external process.
 
 ## 1. Spawn
 
