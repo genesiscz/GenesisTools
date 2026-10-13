@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type FastWalkEntry, fastWalk } from "./fast-walk";
+import { type BulkReadCalls, bulkReadCalls, type FastWalkEntry, fastWalk, walkNative } from "./fast-walk";
+import { libSystem } from "./libsystem";
 
 const root = mkdtempSync(join(tmpdir(), "fast-walk-"));
 const at = new Date("2026-10-01T10:00:00.000Z");
@@ -83,5 +84,60 @@ describe.each(["js", "native"] as const)("fastWalk (%s)", (engine) => {
             "directory /project-b 0",
             "directory /project-b/deep 0",
         ]);
+    });
+});
+
+describe.skipIf(!libSystem())("fastWalk on a filesystem without getattrlistbulk", () => {
+    it("walks a folder that refuses bulk reads with readdir, with the same depth and name rules", async () => {
+        const root = mkdtempSync(join(tmpdir(), "fast-walk-enotsup-"));
+        mkdirSync(join(root, "local"), { recursive: true });
+        mkdirSync(join(root, "share", "deep", "deeper"), { recursive: true });
+        writeFileSync(join(root, "top.jsonl"), "{}\n");
+        writeFileSync(join(root, "local", "a.jsonl"), "{}\n");
+        writeFileSync(join(root, "share", "b.jsonl"), "{}\n");
+        writeFileSync(join(root, "share", "skip.txt"), "x\n");
+        writeFileSync(join(root, "share", "deep", "c.jsonl"), "{}\n");
+        writeFileSync(join(root, "share", "deep", "deeper", "d.jsonl"), "{}\n");
+        const real = libSystem();
+
+        if (!real) {
+            return;
+        }
+
+        const native = bulkReadCalls(real);
+        const opened = new Map<number, string>();
+        const refused = join(root, "share");
+        let lastRefused = false;
+        const fake: BulkReadCalls = {
+            ...native,
+            open: (path, flags) => {
+                const fd = native.open(path, flags);
+                opened.set(fd, path.toString("utf8", 0, path.length - 1));
+                return fd;
+            },
+            getattrlistbulk: (fd, attributes, buffer, size, options) => {
+                lastRefused = opened.get(fd) === refused;
+                return lastRefused ? -1 : native.getattrlistbulk(fd, attributes, buffer, size, options);
+            },
+            errno: () => (lastRefused ? 45 : native.errno()),
+        };
+        const options = { roots: [root], names: [], endsWith: [".jsonl"], includeDirectories: false };
+        const paths = (entries: FastWalkEntry[]) => entries.map((entry) => entry.path).sort();
+
+        try {
+            for (const maxDepth of [Number.POSITIVE_INFINITY, 2]) {
+                const walked = await walkNative(fake, { ...options, maxDepth });
+                const portable = await fastWalk({ ...options, maxDepth, engine: "js" });
+
+                expect(walked.errors).toEqual([]);
+                expect(paths(walked.entries)).toEqual(paths(portable.entries));
+            }
+
+            expect(paths((await walkNative(fake, { ...options, maxDepth: 2 })).entries)).not.toContain(
+                join(root, "share", "deep", "deeper", "d.jsonl")
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });

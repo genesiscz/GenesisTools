@@ -1,5 +1,6 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
+import { constants } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { cPath, errnoNow, type LibSystem, libSystem, O_CLOEXEC, O_DIRECTORY, O_NONBLOCK } from "./libsystem";
@@ -102,14 +103,35 @@ function nameMatches(buffer: Uint8Array, start: number, length: number, patterns
     return false;
 }
 
+/** The calls the native walker makes: an interface, so a test can refuse one folder the way an SMB share does. */
+export interface BulkReadCalls {
+    open(path: Buffer, flags: number): number;
+    getattrlistbulk(fd: number, attributes: Uint8Array, buffer: Uint8Array, size: number, options: number): number;
+    close(fd: number): void;
+    /** The calling thread's errno, read right after the call that failed. */
+    errno(): number;
+}
+
+export function bulkReadCalls(calls: LibSystem): BulkReadCalls {
+    return {
+        open: (path, flags) => calls.open(path, flags),
+        getattrlistbulk: (fd, attributes, buffer, size, options) =>
+            calls.getattrlistbulk(fd, attributes, buffer, size, options),
+        close: (fd) => {
+            calls.close(fd);
+        },
+        errno: () => errnoNow(calls),
+    };
+}
+
 /**
  * The macOS walker: one `getattrlistbulk` call returns the name, type, mtime and size of many entries of a directory,
  * so a directory costs one `open`, a few bulk reads and one `close`, and no file is stat'ed on its own. The calls go
  * straight to `libSystem` through `bun:ffi` and the entries are read in place, decoding a name only for a directory
  * to enter or an entry to return. The arrays go to every call as arrays (see `defineSystemLibrary` for why).
  */
-async function walkNative(
-    calls: LibSystem,
+export async function walkNative(
+    calls: BulkReadCalls,
     options: Required<Omit<FastWalkOptions, "engine">>
 ): Promise<FastWalkResult> {
     const entries: FastWalkEntry[] = [];
@@ -141,9 +163,12 @@ async function walkNative(
         const fd = calls.open(cPath(next.directory), O_DIRECTORY | O_NONBLOCK | O_CLOEXEC);
 
         if (fd < 0) {
-            errors.push({ path: next.directory, errno: errnoNow(calls) });
+            errors.push({ path: next.directory, errno: calls.errno() });
             continue;
         }
+
+        let listedAny = false;
+        let unsupported = false;
 
         for (;;) {
             const count = calls.getattrlistbulk(
@@ -155,13 +180,23 @@ async function walkNative(
             );
 
             if (count < 0) {
-                errors.push({ path: next.directory, errno: errnoNow(calls) });
+                const errno = calls.errno();
+                // A filesystem without bulk reads (SMB, FUSE and the like) refuses it with ENOTSUP before it returns
+                // anything; that folder is walked the portable way instead.
+                unsupported = errno === constants.errno.ENOTSUP && !listedAny;
+
+                if (!unsupported) {
+                    errors.push({ path: next.directory, errno });
+                }
+
                 break;
             }
 
             if (count === 0) {
                 break;
             }
+
+            listedAny = true;
 
             // Entries are packed in attribute bit order and 4-byte aligned: 0 length | 4 returned attributes |
             // 24 name reference (offset, length with NUL) | 32 object type | 36 mtime (s, ns) | 52 data length.
@@ -202,6 +237,20 @@ async function walkNative(
         }
 
         calls.close(fd);
+
+        if (unsupported) {
+            log.debug(
+                { directory: next.directory },
+                "fast-walk: no getattrlistbulk on this filesystem; walking it with readdir"
+            );
+            const portable = await walkJs({
+                ...options,
+                roots: [next.directory],
+                maxDepth: options.maxDepth - next.depth,
+            });
+            entries.push(...portable.entries);
+            errors.push(...portable.errors);
+        }
     }
 
     return { engine: "native", entries, errors };
@@ -278,7 +327,8 @@ async function walkJs(options: Required<Omit<FastWalkOptions, "engine">>): Promi
  * Every file under `roots` whose name matches, with its mtime and size, from one walk. On macOS each directory is
  * read with `getattrlistbulk` through `bun:ffi` (no C, no build step), so no file is stat'ed on its own: 2 to 3 times
  * less CPU than `readdir` plus `stat` on the session trees (`scripts/benchmarks/fs/walk-primitives.ts`). Elsewhere,
- * or when `libSystem` does not load, a JS walk returns the same entries. Order is not defined. A directory that
+ * or when `libSystem` does not load, a JS walk returns the same entries; so does a folder on a filesystem that
+ * refuses `getattrlistbulk` (ENOTSUP), for that folder and everything under it. Order is not defined. A directory that
  * cannot be read is listed in `errors` and the walk goes on. Measurements and the rules it follows:
  * `src/utils/bun/compiler/README.md`.
  */
@@ -293,7 +343,7 @@ export async function fastWalk(options: FastWalkOptions): Promise<FastWalkResult
     const calls = options.engine === "js" ? null : libSystem();
 
     if (calls) {
-        return walkNative(calls, resolved);
+        return walkNative(bulkReadCalls(calls), resolved);
     }
 
     if (options.engine === "native") {
