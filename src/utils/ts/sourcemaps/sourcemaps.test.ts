@@ -18,8 +18,8 @@ import { env } from "@genesiscz/utils/env";
 import { unzip } from "@genesiscz/utils/fs/unzip";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { alignOffset, normalizeIdentifiers } from "./align.ts";
-import { buildAtCommit } from "./build.ts";
-import { SourcemapCache } from "./cache.ts";
+import { buildAtCommit, managedWorktree, releaseBuildWorktrees, removeBuildWorktree } from "./build.ts";
+import { type PruneResult, SourcemapCache } from "./cache.ts";
 import { calibrate, sampleLiterals } from "./calibrate.ts";
 import { carryMap, type EqualRun, encodeMappings, equalRuns } from "./carry.ts";
 import { DirectoryMapSource, debugIdOf, mapsInArtifactBundle, SentryArtifactSource } from "./debug-id.ts";
@@ -220,6 +220,26 @@ describe("CLI arguments", () => {
     });
 });
 
+/** A git repo with one commit of `a.txt`; returns a runner for git in it that throws on failure. */
+function fixtureRepo(dir: string): (...args: string[]) => string {
+    mkdirSync(dir, { recursive: true });
+    const git = (...args: string[]): string => {
+        const result = Bun.spawnSync(["git", "-C", dir, ...args], { env: process.env });
+        if (result.exitCode !== 0) {
+            throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
+        }
+
+        return result.stdout.toString().trim();
+    };
+    git("init", "-q");
+    writeFileSync(join(dir, "a.txt"), "a");
+    git("add", "a.txt");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "one");
+    return git;
+}
+
+const prunedNames = (result: PruneResult): string[] => result.removed.map((item) => item.name);
+
 describe("SourcemapCache", () => {
     const roots: string[] = [];
     afterEach(() => {
@@ -270,7 +290,7 @@ describe("SourcemapCache", () => {
         const metadata = await cache.read();
         metadata.entries.old.lastUsedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
         writeFileSync(cache.metadataPath, SafeJSON.stringify(metadata));
-        expect(await cache.prune()).toEqual(["old"]);
+        expect(prunedNames(await cache.prune())).toEqual(["old"]);
         expect(existsSync(link)).toBe(false);
     });
 
@@ -289,7 +309,7 @@ describe("SourcemapCache", () => {
         const metadata = await cache.read();
         metadata.entries["build-1"].lastUsedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
         writeFileSync(cache.metadataPath, SafeJSON.stringify(metadata));
-        expect(await cache.prune()).toEqual(["build-1"]);
+        expect(prunedNames(await cache.prune())).toEqual(["build-1"]);
         expect(lstatSync(link).isSymbolicLink()).toBe(true);
     });
 
@@ -305,7 +325,7 @@ describe("SourcemapCache", () => {
 
         expect(Object.keys((await cache.read()).entries)).toEqual(["kept"]);
         expect(existsSync(cache.entryDir("kept"))).toBe(true);
-        expect(await cache.prune({ maxAgeDays: 0 })).toEqual(["kept"]);
+        expect(prunedNames(await cache.prune({ maxAgeDays: 0 }))).toEqual(["kept"]);
     });
 
     test("concurrent commits never drop each other's entry", async () => {
@@ -340,35 +360,150 @@ describe("SourcemapCache", () => {
         const metadata = await cache.read();
         metadata.entries.old.lastUsedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
         writeFileSync(cache.metadataPath, SafeJSON.stringify(metadata));
-        expect(await cache.prune()).toEqual(["old"]);
+        expect(prunedNames(await cache.prune())).toEqual(["old"]);
         expect(lstatSync(viaCache).isSymbolicLink()).toBe(true);
         expect(lstatSync(byHand).isSymbolicLink()).toBe(true);
     });
 
-    test("prune removes a build folder a failed run left behind, but not one that may still be building", async () => {
+    test("prune removes a failed build's folder and the build worktree once each is idle, not a build running now", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-cache-"));
         roots.push(root);
-        const cache = new SourcemapCache("app", root);
-        for (const name of ["build-failed-1", "build-running-2", "worktree"]) {
+        const git = fixtureRepo(join(root, "repo"));
+        const cache = new SourcemapCache("app", join(root, "cache"));
+        for (const name of ["build-failed-1", "build-running-2"]) {
             mkdirSync(cache.entryDir(name), { recursive: true });
         }
 
+        writeFileSync(join(cache.entryDir("build-failed-1"), ".build.log"), "12345");
+        const worktree = managedWorktree(cache);
+        git("worktree", "add", "-q", "--detach", worktree, "HEAD");
         const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000);
         utimesSync(cache.entryDir("build-failed-1"), twoHoursAgo, twoHoursAgo);
-        utimesSync(cache.entryDir("worktree"), twoHoursAgo, twoHoursAgo);
-        expect(await cache.prune()).toEqual(["build-failed-1 (unfinished)"]);
-        expect(existsSync(cache.entryDir("build-failed-1"))).toBe(false);
+
+        // The worktree was used in the last hour, so a rebuild may still want its installed dependencies.
+        expect(await cache.prune()).toEqual({
+            removed: [{ name: "build-failed-1", reason: "unfinished", bytes: 5, diskBytes: 5 }],
+            kept: [],
+        });
+        expect(existsSync(worktree)).toBe(true);
+
+        utimesSync(worktree, twoHoursAgo, twoHoursAgo);
+        const pruned = await cache.prune();
+        expect(pruned.removed.map((item) => [item.name, item.reason])).toEqual([["worktree", "idle worktree"]]);
+        expect(existsSync(worktree)).toBe(false);
+        expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(1);
         expect(existsSync(cache.entryDir("build-running-2"))).toBe(true);
-        expect(existsSync(cache.entryDir("worktree"))).toBe(true);
+    });
+
+    test("prune keeps an idle build worktree that is locked, has tracked changes or has a process inside", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-cache-"));
+        roots.push(root);
+        const git = fixtureRepo(join(root, "repo"));
+        const cache = new SourcemapCache("app", join(root, "cache"));
+        const worktree = managedWorktree(cache);
+        git("worktree", "add", "-q", "--detach", worktree, "HEAD");
+        const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000);
+        const pruneIdle = async () => {
+            utimesSync(worktree, twoHoursAgo, twoHoursAgo);
+            const result = await cache.prune();
+            return [...prunedNames(result), ...result.kept.map((kept) => kept.outcome)];
+        };
+
+        git("worktree", "lock", "--reason", "agent session", worktree);
+        expect((await cache.prune()).kept).toEqual([]);
+        expect(await pruneIdle()).toEqual(["locked"]);
+        git("worktree", "unlock", worktree);
+
+        writeFileSync(join(worktree, "a.txt"), "edited");
+        expect(await pruneIdle()).toEqual(["changed"]);
+        writeFileSync(join(worktree, "a.txt"), "a");
+
+        const inside = Bun.spawn(["sleep", "30"], { cwd: worktree, env: process.env });
+        try {
+            expect(await pruneIdle()).toEqual(["in-use"]);
+        } finally {
+            inside.kill();
+            await inside.exited;
+        }
+
+        expect(existsSync(worktree)).toBe(true);
+        // Nothing holds it any more: the same worktree goes.
+        expect(await pruneIdle()).toEqual(["worktree"]);
+        expect(existsSync(worktree)).toBe(false);
     });
 });
 
 describe("buildAtCommit", () => {
     const roots: string[] = [];
-    afterEach(() => {
+    afterEach(async () => {
+        await releaseBuildWorktrees();
         for (const root of roots.splice(0)) {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+
+    test("the command's release removes the managed worktree it built in, never a worktree the caller named", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-build-"));
+        roots.push(root);
+        const git = fixtureRepo(join(root, "repo"));
+        const cache = new SourcemapCache("app", join(root, "cache"));
+        // Untracked, not ignored: the install a real build leaves, which only `git worktree remove --force` takes.
+        const buildCmd = "mkdir -p out node_modules/dep && echo dep > node_modules/dep/index.js && cp a.txt out/a.js";
+        const build = (worktree?: string) =>
+            buildAtCommit({
+                cache,
+                repo: join(root, "repo"),
+                commit: "HEAD",
+                buildCmd,
+                outputDir: "out",
+                worktree,
+                refresh: worktree !== undefined,
+            });
+        await build();
+        const named = join(root, "named");
+        expect((await build(named)).reused).toBe(false);
+
+        const released = await releaseBuildWorktrees();
+        expect(released.map((removal) => [removal.worktree, removal.outcome])).toEqual([
+            [managedWorktree(cache), "removed"],
+        ]);
+        expect(existsSync(managedWorktree(cache))).toBe(false);
+        expect(existsSync(join(named, "node_modules", "dep", "index.js"))).toBe(true);
+        expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(2);
+        // The output stays in the cache.
+        expect((await build()).reused).toBe(true);
+        expect(await releaseBuildWorktrees()).toEqual([]);
+    });
+
+    test("a stopping release ends the running build, waits for it, then removes its worktree", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-build-"));
+        roots.push(root);
+        fixtureRepo(join(root, "repo"));
+        const cache = new SourcemapCache("app", join(root, "cache"));
+        const { promise: started, resolve: onStarted } = Promise.withResolvers<void>();
+        const building = buildAtCommit({
+            cache,
+            repo: join(root, "repo"),
+            commit: "HEAD",
+            buildCmd: "echo started && exec sleep 30",
+            outputDir: "out",
+            onLine: (line) => {
+                if (line === "started") {
+                    onStarted();
+                }
+            },
+        });
+        const failed = building.then(
+            () => null,
+            (error: unknown) => error
+        );
+        await started;
+        expect((await removeBuildWorktree({ cache, worktree: managedWorktree(cache) })).outcome).toBe("busy");
+
+        const released = await releaseBuildWorktrees({ stop: true });
+        expect(String(await failed)).toContain("build command exited");
+        expect(released.map((removal) => removal.outcome)).toEqual(["removed"]);
+        expect(existsSync(managedWorktree(cache))).toBe(false);
     });
 
     test("a refresh replaces the cached output, and a different env is a different build", async () => {

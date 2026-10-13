@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
+import { INTERRUPTED_EXIT_CODE, withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -10,8 +11,20 @@ import { logger } from "@genesiscz/utils/logger";
 import { completeCaChain } from "@genesiscz/utils/net/ca-chain";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
-import { buildAtCommit, buildFilesDir, git } from "@genesiscz/utils/ts/sourcemaps/build";
-import { DEFAULT_MAX_AGE_DAYS, projectSlug, SourcemapCache } from "@genesiscz/utils/ts/sourcemaps/cache";
+import {
+    buildAtCommit,
+    buildFilesDir,
+    git,
+    releaseBuildWorktrees,
+    type WorktreeRemoval,
+} from "@genesiscz/utils/ts/sourcemaps/build";
+import {
+    cacheProjects,
+    DEFAULT_MAX_AGE_DAYS,
+    type PruneResult,
+    projectSlug,
+    SourcemapCache,
+} from "@genesiscz/utils/ts/sourcemaps/cache";
 import { calibrate } from "@genesiscz/utils/ts/sourcemaps/calibrate";
 import { carryMaps } from "@genesiscz/utils/ts/sourcemaps/carry";
 import {
@@ -47,7 +60,7 @@ import {
 } from "@genesiscz/utils/ts/sourcemaps/resolvers/index";
 import { displaySource } from "@genesiscz/utils/ts/sourcemaps/resolvers/shared";
 import { claudeMcpServer, listSentryScopes, sentryFromMcpServer } from "@genesiscz/utils/ts/sourcemaps/sentry-config";
-import type { Command } from "commander";
+import { Command } from "commander";
 import pc from "picocolors";
 
 const { out } = logger.scoped("ts:sourcemaps");
@@ -86,6 +99,7 @@ interface BuildOpts extends CommonOpts {
     env?: string[];
     deployedEnv?: boolean;
     worktree?: string;
+    keepWorktree?: boolean;
     buildCommit?: string;
     deployedCommit?: string;
 }
@@ -307,6 +321,123 @@ function mapStatusLine(snap: { files: DeployedFile[] }): string {
     return [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(" · ");
 }
 
+/**
+ * Wraps the action of a command that can build (`--build-cmd`). However the command ends (done, failed or Ctrl-C), the
+ * managed build worktree it built in is removed afterwards with `git worktree remove`, so the dependencies its build
+ * installed do not stay on disk. A Ctrl-C first stops the running build. `--keep-worktree` leaves all of it as before.
+ */
+function releasesWorktree<A extends unknown[]>(action: (...args: A) => Promise<void>): (...args: A) => Promise<void> {
+    return async (...args: A) => {
+        // Commander passes the command itself after the parsed options.
+        const command = args.at(-1);
+        const opts = command instanceof Command ? command.opts<BuildOpts>() : {};
+        if (opts.keepWorktree) {
+            return action(...args);
+        }
+
+        if (!opts.buildCmd) {
+            // Only an interactive answer can still make it build. No Ctrl-C handler, so Ctrl-C ends it at once as before.
+            try {
+                return await action(...args);
+            } finally {
+                printReleased(await releaseBuildWorktrees());
+            }
+        }
+
+        const ending = await withInterrupt(async (signal) => {
+            const interrupted = new Promise<"interrupted">((resolve) => {
+                signal.addEventListener("abort", () => resolve("interrupted"), { once: true });
+            });
+            try {
+                return await Promise.race([action(...args).then(() => "done" as const), interrupted]);
+            } finally {
+                printReleased(await releaseBuildWorktrees({ stop: signal.aborted }));
+            }
+        });
+        if (ending === "interrupted") {
+            process.exit(INTERRUPTED_EXIT_CODE);
+        }
+    };
+}
+
+/** One line per build worktree a command released: what removing it freed, or why it stayed. */
+function printReleased(removals: WorktreeRemoval[]): void {
+    for (const removal of removals) {
+        if (removal.outcome === "removed") {
+            out.log.info(
+                `removed the build worktree ${removal.worktree} (${sizeText(removal.bytes, removal.diskBytes ?? removal.bytes)}); --keep-worktree keeps it for a faster rebuild`
+            );
+        } else if (removal.outcome !== "absent") {
+            const later =
+                removal.outcome === "locked" || removal.outcome === "changed"
+                    ? ""
+                    : `; ${CMD} cache prune removes it once it is unused for an hour`;
+            out.log.warn(`kept the build worktree ${removal.worktree}: ${removal.detail ?? removal.outcome}${later}`);
+        }
+    }
+}
+
+/** What removing something freed, with its size on disk when clones share part of it (`du` counts those blocks). */
+function sizeText(bytes: number, diskBytes: number): string {
+    return diskBytes > bytes
+        ? `${formatBytes(bytes)} freed of ${formatBytes(diskBytes)} on disk; the rest is shared with clones, e.g. the package manager's cache`
+        : `${formatBytes(bytes)} freed`;
+}
+
+/** `cache prune`: one project's cache, or every project's with --all; prints what it freed. */
+async function pruneCaches(opts: {
+    project?: string;
+    all?: boolean;
+    maxAgeDays: string;
+    json?: boolean;
+}): Promise<void> {
+    const maxAgeDays = Number(opts.maxAgeDays);
+    if (opts.maxAgeDays.trim() === "" || !Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
+        fail(
+            `--max-age-days takes a number of days, 0 or more; got '${opts.maxAgeDays}'`,
+            `${CMD} cache prune --all --max-age-days ${DEFAULT_MAX_AGE_DAYS}`
+        );
+    }
+
+    const projects = opts.all
+        ? await cacheProjects()
+        : opts.project
+          ? [opts.project]
+          : fail("cache prune needs --project <name> or --all", `${CMD} cache prune --all`);
+    const results: (PruneResult & { project: string })[] = [];
+    for (const project of projects) {
+        results.push({ project, ...(await new SourcemapCache(project).prune({ maxAgeDays })) });
+    }
+
+    const items = results.flatMap((result) => result.removed.map((item) => ({ project: result.project, ...item })));
+    const freed = items.reduce((sum, item) => sum + item.bytes, 0);
+    const onDisk = items.reduce((sum, item) => sum + item.diskBytes, 0);
+    if (opts.json) {
+        out.result({ projects: results, freedBytes: freed, diskBytes: onDisk });
+        return;
+    }
+
+    if (items.length > 0) {
+        const table = createBoxTable(["PROJECT", "REMOVED", "WHY", "ON DISK", "FREED"]);
+        for (const item of items) {
+            table.push([item.project, item.name, item.reason, formatBytes(item.diskBytes), formatBytes(item.bytes)]);
+        }
+
+        out.println(table.toString());
+    }
+
+    out.println(
+        items.length > 0
+            ? `${sizeText(freed, onDisk)}: ${items.length} item(s) across ${projects.length} project(s)`
+            : `nothing to prune in ${projects.length} project(s)`
+    );
+    for (const result of results) {
+        for (const kept of result.kept) {
+            out.println(pc.yellow(`⚠ ${result.project}: kept ${kept.worktree}: ${kept.detail ?? kept.outcome}`));
+        }
+    }
+}
+
 /** D5: a finished folder, or the caller's own build command at a commit. Asks in a TTY when neither is given. */
 async function localBuilds(
     cache: SourcemapCache,
@@ -454,7 +585,11 @@ function withBuildFlags(cmd: Command): Command {
             "--deployed-env",
             "also pass the env values the deployment inlined (what `env` prints); an explicit --env wins"
         )
-        .option("--worktree <dir>", "build in this worktree instead of the managed one under the cache")
+        .option("--worktree <dir>", "build in this worktree instead of the managed one under the cache (never removed)")
+        .option(
+            "--keep-worktree",
+            "keep the managed build worktree and its installed dependencies for a faster next build (default: removed when the command ends; cache prune removes it after an hour unused)"
+        )
         .option("--build-commit <ref>", "the commit a --build folder was made from (enables line translation)")
         .option(
             "--deployed-commit <ref>",
@@ -509,42 +644,44 @@ Examples:
   ${CMD} resolve https://app.example.com/static/js/710.f9e49e56.chunk.js:95812 --deployed https://app.example.com/ --build ./web/build
   ${CMD} resolve <url>:<offset> --deployed <base> --repo . --commit v1.2.3 --build-cmd 'bun install && bun run build' --output web/build`
         )
-        .action(async (positions: string[], opts: DeployedOpts & BuildOpts & DebugIdOpts) => {
-            const requests = positions.map((ref) => {
-                try {
-                    return parsePositionRef(ref);
-                } catch (error) {
-                    return fail(error instanceof Error ? error.message : String(error));
+        .action(
+            releasesWorktree(async (positions: string[], opts: DeployedOpts & BuildOpts & DebugIdOpts) => {
+                const requests = positions.map((ref) => {
+                    try {
+                        return parsePositionRef(ref);
+                    } catch (error) {
+                        return fail(error instanceof Error ? error.message : String(error));
+                    }
+                });
+                // A --deployed-dir snapshot still answers https:// positions: its files get URLs under this origin.
+                if (/^https?:/.test(requests[0].url)) {
+                    opts.deployed ??= new URL(requests[0].url).origin;
                 }
-            });
-            // A --deployed-dir snapshot still answers https:// positions: its files get URLs under this origin.
-            if (/^https?:/.test(requests[0].url)) {
-                opts.deployed ??= new URL(requests[0].url).origin;
-            }
 
-            const cache = new SourcemapCache(projectOf(opts));
-            const snap = await deployedSource(cache, opts);
-            const resolvers = await resolverChain(cache, snap, opts);
-            const results: ChainResult[] = [];
-            for (const request of requests) {
-                results.push(await resolvePosition(request, resolvers));
-            }
+                const cache = new SourcemapCache(projectOf(opts));
+                const snap = await deployedSource(cache, opts);
+                const resolvers = await resolverChain(cache, snap, opts);
+                const results: ChainResult[] = [];
+                for (const request of requests) {
+                    results.push(await resolvePosition(request, resolvers));
+                }
 
-            // A script that resolves a position must be able to tell "not found" from an answer by the exit code.
-            if (results.some((chain) => !chain.result)) {
-                process.exitCode = 1;
-            }
+                // A script that resolves a position must be able to tell "not found" from an answer by the exit code.
+                if (results.some((chain) => !chain.result)) {
+                    process.exitCode = 1;
+                }
 
-            if (opts.json) {
-                out.result(results);
-                return;
-            }
+                if (opts.json) {
+                    out.result(results);
+                    return;
+                }
 
-            out.println(pc.dim(`published maps: ${mapStatusLine(snap)}`));
-            for (const chain of results) {
-                printChain(chain);
-            }
-        });
+                out.println(pc.dim(`published maps: ${mapStatusLine(snap)}`));
+                for (const chain of results) {
+                    printChain(chain);
+                }
+            })
+        );
 
     withDeployedFlags(group.command("fetch"))
         .description("snapshot a deployment's JS/CSS into the cache and preflight every file's published .map")
@@ -580,47 +717,62 @@ far as these numbers say. Literal-heavy code is easier than average: read it as 
 Example:
   ${CMD} check --deployed https://app.example.com/ --build ./web/build --files 40`
         )
-        .action(async (opts: DeployedOpts & BuildOpts & DebugIdOpts & { perFile: string; files?: string }) => {
-            const cache = new SourcemapCache(projectOf(opts));
-            const snap = await deployedSource(cache, opts);
-            const resolvers = await resolverChain(cache, snap, opts);
-            const result = await calibrate({
-                deployed: snap,
-                resolvers,
-                perFile: Number(opts.perFile),
-                maxFiles: opts.files ? Number(opts.files) : undefined,
-            });
-            if (opts.json) {
-                out.result(result);
-                return;
-            }
+        .action(
+            releasesWorktree(
+                async (opts: DeployedOpts & BuildOpts & DebugIdOpts & { perFile: string; files?: string }) => {
+                    const cache = new SourcemapCache(projectOf(opts));
+                    const snap = await deployedSource(cache, opts);
+                    const resolvers = await resolverChain(cache, snap, opts);
+                    const result = await calibrate({
+                        deployed: snap,
+                        resolvers,
+                        perFile: Number(opts.perFile),
+                        maxFiles: opts.files ? Number(opts.files) : undefined,
+                    });
+                    if (opts.json) {
+                        out.result(result);
+                        return;
+                    }
 
-            const pct = (part: number, whole: number) => (whole === 0 ? "—" : `${((100 * part) / whole).toFixed(1)}%`);
-            const table = createBoxTable(["CONFIDENCE", "SAMPLES", "NEAR (±3 LINES)", "ELSEWHERE", "NO SOURCE TEXT"]);
-            for (const [confidence, tier] of Object.entries(result.byConfidence)) {
-                table.push([
-                    confidence,
-                    String(tier.samples),
-                    pct(tier.near, tier.samples - tier.unverifiable),
-                    String(tier.elsewhere),
-                    String(tier.unverifiable),
-                ]);
-            }
+                    const pct = (part: number, whole: number) =>
+                        whole === 0 ? "—" : `${((100 * part) / whole).toFixed(1)}%`;
+                    const table = createBoxTable([
+                        "CONFIDENCE",
+                        "SAMPLES",
+                        "NEAR (±3 LINES)",
+                        "ELSEWHERE",
+                        "NO SOURCE TEXT",
+                    ]);
+                    for (const [confidence, tier] of Object.entries(result.byConfidence)) {
+                        table.push([
+                            confidence,
+                            String(tier.samples),
+                            pct(tier.near, tier.samples - tier.unverifiable),
+                            String(tier.elsewhere),
+                            String(tier.unverifiable),
+                        ]);
+                    }
 
-            out.println(table.toString());
-            out.println(
-                `${result.samples} literals in ${result.files} files, ${result.unresolved} unresolved (${pct(result.unresolved, result.samples)}), ${(result.ms / 1000).toFixed(1)} s`
-            );
-            for (const reason of result.reasons.slice(0, 3)) {
-                out.println(pc.yellow(`  unresolved ${reason.count}x: ${truncateDisplay(reason.example, 160)}`));
-            }
+                    out.println(table.toString());
+                    out.println(
+                        `${result.samples} literals in ${result.files} files, ${result.unresolved} unresolved (${pct(result.unresolved, result.samples)}), ${(result.ms / 1000).toFixed(1)} s`
+                    );
+                    for (const reason of result.reasons.slice(0, 3)) {
+                        out.println(
+                            pc.yellow(`  unresolved ${reason.count}x: ${truncateDisplay(reason.example, 160)}`)
+                        );
+                    }
 
-            for (const miss of result.misses.slice(0, 5)) {
-                out.println(
-                    pc.dim(`  miss: "${truncateDisplay(miss.literal, 40)}" -> ${miss.answer} (${miss.confidence})`)
-                );
-            }
-        });
+                    for (const miss of result.misses.slice(0, 5)) {
+                        out.println(
+                            pc.dim(
+                                `  miss: "${truncateDisplay(miss.literal, 40)}" -> ${miss.answer} (${miss.confidence})`
+                            )
+                        );
+                    }
+                }
+            )
+        );
 
     withBuildFlags(withDeployedFlags(group.command("carry")))
         .description("write a source map for every deployed chunk, carried over from a local build, for DevTools")
@@ -640,42 +792,44 @@ Then let DevTools show the real sources while you debug the deployed page:
 Example:
   ${CMD} carry --deployed https://app.example.com/ --build ./web/build --out ./carried-maps`
         )
-        .action(async (opts: DeployedOpts & BuildOpts & { out: string }) => {
-            const cache = new SourcemapCache(projectOf(opts));
-            const snap = await deployedSource(cache, opts);
-            const builds = await localBuilds(cache, opts, snap);
-            const build = builds[0];
-            if (!build) {
-                return fail("carry needs a local build: --build <dir>, or --repo/--commit/--build-cmd/--output");
-            }
+        .action(
+            releasesWorktree(async (opts: DeployedOpts & BuildOpts & { out: string }) => {
+                const cache = new SourcemapCache(projectOf(opts));
+                const snap = await deployedSource(cache, opts);
+                const builds = await localBuilds(cache, opts, snap);
+                const build = builds[0];
+                if (!build) {
+                    return fail("carry needs a local build: --build <dir>, or --repo/--commit/--build-cmd/--output");
+                }
 
-            const outDir = resolve(opts.out);
-            await mkdir(outDir, { recursive: true });
-            const result = await carryMaps({ deployed: snap, build, outDir });
-            if (opts.json) {
-                out.result({ outDir, ...result });
-                return;
-            }
+                const outDir = resolve(opts.out);
+                await mkdir(outDir, { recursive: true });
+                const result = await carryMaps({ deployed: snap, build, outDir });
+                if (opts.json) {
+                    out.result({ outDir, ...result });
+                    return;
+                }
 
-            const segments = result.files.reduce((sum, file) => sum + file.segments, 0);
-            const carried = result.files.reduce((sum, file) => sum + file.carried, 0);
-            out.println(
-                `${result.files.length} maps written to ${outDir} (${((100 * carried) / Math.max(1, segments)).toFixed(1)}% of mappings carried), ${result.skipped.length} deployed file(s) without a local counterpart, ${(result.ms / 1000).toFixed(1)} s`
-            );
-            for (const file of result.files.filter((entry) => entry.carried < entry.segments * 0.9).slice(0, 8)) {
+                const segments = result.files.reduce((sum, file) => sum + file.segments, 0);
+                const carried = result.files.reduce((sum, file) => sum + file.carried, 0);
                 out.println(
-                    pc.yellow(
-                        `  ⚠ ${file.path}: only ${((100 * file.carried) / file.segments).toFixed(0)}% carried (the chunk differs from the build)`
+                    `${result.files.length} maps written to ${outDir} (${((100 * carried) / Math.max(1, segments)).toFixed(1)}% of mappings carried), ${result.skipped.length} deployed file(s) without a local counterpart, ${(result.ms / 1000).toFixed(1)} s`
+                );
+                for (const file of result.files.filter((entry) => entry.carried < entry.segments * 0.9).slice(0, 8)) {
+                    out.println(
+                        pc.yellow(
+                            `  ⚠ ${file.path}: only ${((100 * file.carried) / file.segments).toFixed(0)}% carried (the chunk differs from the build)`
+                        )
+                    );
+                }
+
+                out.println(
+                    pc.dim(
+                        `DevTools: ${toolCommand("chrome-devtools", "intercept", "--match", "<tab>", "--map-dir", outDir)}`
                     )
                 );
-            }
-
-            out.println(
-                pc.dim(
-                    `DevTools: ${toolCommand("chrome-devtools", "intercept", "--match", "<tab>", "--map-dir", outDir)}`
-                )
-            );
-        });
+            })
+        );
 
     withDeployedFlags(group.command("env"))
         .description(
@@ -728,59 +882,72 @@ Only env OBJECTS are recoverable: a value a define replaced one by one has lost 
         .option("--project <name>", "cache folder name (default: the --repo folder name)")
         .option("--out <dir>", "also expose the build output here (a symlink into the cache)")
         .option("--json", "machine-readable result")
-        .action(async (opts: BuildOpts & { out?: string }) => {
-            const cache = new SourcemapCache(projectOf(opts));
-            const builds = await localBuilds(cache, { ...opts, build: [] });
-            const built = builds[0];
-            if (!built) {
-                fail("nothing to build", suggestCommand(CMD, { add: ["build", "--repo", ".", "--commit", "HEAD"] }));
-            }
+        .action(
+            releasesWorktree(async (opts: BuildOpts & { out?: string }) => {
+                const cache = new SourcemapCache(projectOf(opts));
+                const builds = await localBuilds(cache, { ...opts, build: [] });
+                const built = builds[0];
+                if (!built) {
+                    fail(
+                        "nothing to build",
+                        suggestCommand(CMD, { add: ["build", "--repo", ".", "--commit", "HEAD"] })
+                    );
+                }
 
-            const id = basename(resolve(built.dir, ".."));
-            // The view is the build output itself (the folder resolve --build takes), not the entry with its log.
-            const link = opts.out ? await cache.linkOut(id, opts.out, "files") : null;
-            if (opts.json) {
-                out.result({ dir: built.dir, files: built.files.length, link });
-                return;
-            }
+                const id = basename(resolve(built.dir, ".."));
+                // The view is the build output itself (the folder resolve --build takes), not the entry with its log.
+                const link = opts.out ? await cache.linkOut(id, opts.out, "files") : null;
+                if (opts.json) {
+                    out.result({ dir: built.dir, files: built.files.length, link });
+                    return;
+                }
 
-            out.println(
-                `${built.label}: ${built.files.length} JS files in ${built.dir}${link ? `\nlink: ${link}` : ""}`
-            );
-        });
+                out.println(
+                    `${built.label}: ${built.files.length} JS files in ${built.dir}${link ? `\nlink: ${link}` : ""}`
+                );
+            })
+        );
 
     withBuildFlags(withDeployedFlags(group.command("rank")))
         .description(
             "score how much of the deployed code each local build contains (which build matches the deployment)"
         )
-        .action(async (opts: DeployedOpts & BuildOpts) => {
-            const cache = new SourcemapCache(projectOf(opts));
-            const snap = await deployedSource(cache, opts);
-            const builds = await localBuilds(cache, opts, snap);
-            const scores = [];
-            for (const build of builds) {
-                scores.push(await scoreBuild({ deployed: snap, build }));
-            }
+        .action(
+            releasesWorktree(async (opts: DeployedOpts & BuildOpts) => {
+                const cache = new SourcemapCache(projectOf(opts));
+                const snap = await deployedSource(cache, opts);
+                const builds = await localBuilds(cache, opts, snap);
+                const scores = [];
+                for (const build of builds) {
+                    scores.push(await scoreBuild({ deployed: snap, build }));
+                }
 
-            scores.sort((a, b) => a.deployedOnly.length - b.deployedOnly.length || b.rate - a.rate);
-            if (opts.json) {
-                out.result(scores.map(({ chunks: _chunks, ...rest }) => rest));
-                return;
-            }
+                scores.sort((a, b) => a.deployedOnly.length - b.deployedOnly.length || b.rate - a.rate);
+                if (opts.json) {
+                    out.result(scores.map(({ chunks: _chunks, ...rest }) => rest));
+                    return;
+                }
 
-            const table = createBoxTable(["BUILD", "CODE FOUND", "MISSING CHUNKS", "EXTRA CHUNKS", "SAME DEBUG ID"]);
-            for (const score of scores) {
-                table.push([
-                    score.label,
-                    `${(100 * score.rate).toFixed(3)}%`,
-                    String(score.deployedOnly.length),
-                    String(score.localOnly.length),
-                    score.debugIds.compared === 0 ? "—" : `${score.debugIds.equal}/${score.debugIds.compared}`,
+                const table = createBoxTable([
+                    "BUILD",
+                    "CODE FOUND",
+                    "MISSING CHUNKS",
+                    "EXTRA CHUNKS",
+                    "SAME DEBUG ID",
                 ]);
-            }
+                for (const score of scores) {
+                    table.push([
+                        score.label,
+                        `${(100 * score.rate).toFixed(3)}%`,
+                        String(score.deployedOnly.length),
+                        String(score.localOnly.length),
+                        score.debugIds.compared === 0 ? "—" : `${score.debugIds.equal}/${score.debugIds.compared}`,
+                    ]);
+                }
 
-            out.println(table.toString());
-        });
+                out.println(table.toString());
+            })
+        );
 
     withBuildFlags(withDeployedFlags(group.command("find-commit")))
         .description(
@@ -811,173 +978,180 @@ Examples:
       --build-cmd 'bun run build' --output dist --strategy rebuild`
         )
         .action(
-            async (
-                opts: DeployedOpts &
-                    BuildOpts & {
-                        range: string;
-                        base?: string;
-                        strategy?: string | boolean;
-                        verify?: boolean;
-                        maxBuilds: string;
-                        allParents?: boolean;
-                    }
-            ) => {
-                if (!opts.repo || !opts.buildCmd || !opts.output) {
-                    fail("find-commit needs --repo, --build-cmd and --output");
-                }
-
-                const strategy = await pickEnumFlag({
-                    tool: CMD,
-                    subcommand: ["find-commit"],
-                    flag: "--strategy",
-                    given: opts.strategy,
-                    values: FIND_COMMIT_STRATEGIES,
-                    fallback: "tokens",
-                    accepts: (value): value is FindCommitStrategy =>
-                        (FIND_COMMIT_STRATEGIES as readonly string[]).includes(value),
-                });
-                if (!strategy) {
-                    return;
-                }
-
-                const cache = new SourcemapCache(projectOf(opts));
-                const deployed = await deployedSource(cache, opts);
-                const spinner = out.spinner();
-                const started = performance.now();
-                spinner.start("building the reference");
-                const result = await findDeployedCommit({
-                    cache,
-                    deployed,
-                    repo: resolve(opts.repo),
-                    range: opts.range,
-                    base: opts.base,
-                    strategy,
-                    verify: opts.verify,
-                    buildCmd: opts.buildCmd,
-                    outputDir: opts.output,
-                    links: opts.link,
-                    env: await buildEnv(opts, deployed),
-                    worktree: opts.worktree ? resolve(opts.worktree) : undefined,
-                    firstParent: !opts.allParents,
-                    maxBuilds: Number(opts.maxBuilds),
-                    onEvent: (event) => {
-                        if (event.type === "build-start") {
-                            spinner.message(`building ${event.commit.slice(0, 12)}`);
-                        } else if (event.type === "ranked") {
-                            spinner.message(`ranked by ${event.tokens} tokens; confirming the best`);
-                        } else if (event.type === "changed-files") {
-                            spinner.message(
-                                `${event.files.length} source files differ; asking git which commits touched them`
-                            );
-                        } else if (event.type === "scored") {
-                            spinner.message(`${event.commit.slice(0, 12)}: ${(100 * event.rate).toFixed(3)}%`);
+            releasesWorktree(
+                async (
+                    opts: DeployedOpts &
+                        BuildOpts & {
+                            range: string;
+                            base?: string;
+                            strategy?: string | boolean;
+                            verify?: boolean;
+                            maxBuilds: string;
+                            allParents?: boolean;
                         }
-                    },
-                });
-                spinner.stop(`done in ${Math.round((performance.now() - started) / 1000)} s`);
-                if (opts.json) {
-                    out.result({ ...result, candidates: result.candidates.map(({ score: _score, ...rest }) => rest) });
-                    return;
-                }
+                ) => {
+                    if (!opts.repo || !opts.buildCmd || !opts.output) {
+                        fail("find-commit needs --repo, --build-cmd and --output");
+                    }
 
-                renderCliHeader("Deployed commit", `${opts.range} · ${result.strategy}`);
-                if (result.ranking.length > 0) {
-                    const ranking = createBoxTable(["COMMIT", "ERROR", "FILES", "SUBJECT"]);
-                    for (const entry of result.ranking.slice(0, 10)) {
-                        const id = entry.commit.slice(0, 12);
-                        ranking.push([
-                            result.equivalent.includes(entry.commit) ? pc.green(id) : id,
-                            String(entry.error),
-                            `${entry.changedFiles}${entry.lockfileDiffers ? " + lock" : ""}`,
-                            truncateDisplay(await subjectLine(opts.repo, entry.commit), 60),
+                    const strategy = await pickEnumFlag({
+                        tool: CMD,
+                        subcommand: ["find-commit"],
+                        flag: "--strategy",
+                        given: opts.strategy,
+                        values: FIND_COMMIT_STRATEGIES,
+                        fallback: "tokens",
+                        accepts: (value): value is FindCommitStrategy =>
+                            (FIND_COMMIT_STRATEGIES as readonly string[]).includes(value),
+                    });
+                    if (!strategy) {
+                        return;
+                    }
+
+                    const cache = new SourcemapCache(projectOf(opts));
+                    const deployed = await deployedSource(cache, opts);
+                    const spinner = out.spinner();
+                    const started = performance.now();
+                    spinner.start("building the reference");
+                    const result = await findDeployedCommit({
+                        cache,
+                        deployed,
+                        repo: resolve(opts.repo),
+                        range: opts.range,
+                        base: opts.base,
+                        strategy,
+                        verify: opts.verify,
+                        buildCmd: opts.buildCmd,
+                        outputDir: opts.output,
+                        links: opts.link,
+                        env: await buildEnv(opts, deployed),
+                        worktree: opts.worktree ? resolve(opts.worktree) : undefined,
+                        firstParent: !opts.allParents,
+                        maxBuilds: Number(opts.maxBuilds),
+                        onEvent: (event) => {
+                            if (event.type === "build-start") {
+                                spinner.message(`building ${event.commit.slice(0, 12)}`);
+                            } else if (event.type === "ranked") {
+                                spinner.message(`ranked by ${event.tokens} tokens; confirming the best`);
+                            } else if (event.type === "changed-files") {
+                                spinner.message(
+                                    `${event.files.length} source files differ; asking git which commits touched them`
+                                );
+                            } else if (event.type === "scored") {
+                                spinner.message(`${event.commit.slice(0, 12)}: ${(100 * event.rate).toFixed(3)}%`);
+                            }
+                        },
+                    });
+                    spinner.stop(`done in ${Math.round((performance.now() - started) / 1000)} s`);
+                    if (opts.json) {
+                        out.result({
+                            ...result,
+                            candidates: result.candidates.map(({ score: _score, ...rest }) => rest),
+                        });
+                        return;
+                    }
+
+                    renderCliHeader("Deployed commit", `${opts.range} · ${result.strategy}`);
+                    if (result.ranking.length > 0) {
+                        const ranking = createBoxTable(["COMMIT", "ERROR", "FILES", "SUBJECT"]);
+                        for (const entry of result.ranking.slice(0, 10)) {
+                            const id = entry.commit.slice(0, 12);
+                            ranking.push([
+                                result.equivalent.includes(entry.commit) ? pc.green(id) : id,
+                                String(entry.error),
+                                `${entry.changedFiles}${entry.lockfileDiffers ? " + lock" : ""}`,
+                                truncateDisplay(await subjectLine(opts.repo, entry.commit), 60),
+                            ]);
+                        }
+
+                        out.println(ranking.toString());
+                        out.println(
+                            pc.dim(
+                                `ERROR: how far the commit's predicted string and property-name counts are from the deployment (${result.rankingTokens} tokens). FILES: bundled source files that differ from the reference.`
+                            )
+                        );
+                    }
+
+                    const builds = createBoxTable(["BUILD", "CODE FOUND", "MISSING CHUNKS", "SUBJECT"]);
+                    for (const candidate of result.candidates) {
+                        builds.push([
+                            candidate.commit === result.best?.commit
+                                ? pc.green(candidate.commit.slice(0, 12))
+                                : candidate.commit.slice(0, 12),
+                            `${(100 * candidate.rate).toFixed(3)}%`,
+                            String(candidate.deployedOnly),
+                            truncateDisplay(candidate.subject, 60),
                         ]);
                     }
 
-                    out.println(ranking.toString());
-                    out.println(
-                        pc.dim(
-                            `ERROR: how far the commit's predicted string and property-name counts are from the deployment (${result.rankingTokens} tokens). FILES: bundled source files that differ from the reference.`
-                        )
-                    );
-                }
+                    out.println(builds.toString());
+                    if (result.best) {
+                        const span =
+                            result.equivalent.length > 4
+                                ? `${result.equivalent.length} commits, ${result.equivalent.at(-1)?.slice(0, 12)} (oldest) .. ${result.equivalent[0]?.slice(0, 12)} (newest)`
+                                : result.equivalent.map((commit) => commit.slice(0, 12)).join(", ");
+                        out.println(
+                            pc.green(
+                                `best: ${result.best.commit.slice(0, 12)} ${truncateDisplay(result.best.subject, 60)} (${result.confidence}, ${result.buildsUsed} build(s))${result.equivalent.length > 1 ? `\nsame strings in the bundle: ${span}` : ""}`
+                            )
+                        );
+                    }
 
-                const builds = createBoxTable(["BUILD", "CODE FOUND", "MISSING CHUNKS", "SUBJECT"]);
-                for (const candidate of result.candidates) {
-                    builds.push([
-                        candidate.commit === result.best?.commit
-                            ? pc.green(candidate.commit.slice(0, 12))
-                            : candidate.commit.slice(0, 12),
-                        `${(100 * candidate.rate).toFixed(3)}%`,
-                        String(candidate.deployedOnly),
-                        truncateDisplay(candidate.subject, 60),
-                    ]);
+                    for (const note of result.notes) {
+                        out.println(pc.yellow(`⚠ ${note}`));
+                    }
                 }
-
-                out.println(builds.toString());
-                if (result.best) {
-                    const span =
-                        result.equivalent.length > 4
-                            ? `${result.equivalent.length} commits, ${result.equivalent.at(-1)?.slice(0, 12)} (oldest) .. ${result.equivalent[0]?.slice(0, 12)} (newest)`
-                            : result.equivalent.map((commit) => commit.slice(0, 12)).join(", ");
-                    out.println(
-                        pc.green(
-                            `best: ${result.best.commit.slice(0, 12)} ${truncateDisplay(result.best.subject, 60)} (${result.confidence}, ${result.buildsUsed} build(s))${result.equivalent.length > 1 ? `\nsame strings in the bundle: ${span}` : ""}`
-                        )
-                    );
-                }
-
-                for (const note of result.notes) {
-                    out.println(pc.yellow(`⚠ ${note}`));
-                }
-            }
+            )
         );
 
     group
         .command("cache")
         .description(
-            `list or prune the cache (~/.genesis-tools/ts/sourcemaps/<project>/); writes prune entries unused for ${DEFAULT_MAX_AGE_DAYS} days`
+            `list or prune the cache (~/.genesis-tools/ts/sourcemaps/<project>/); prune removes entries unused for ${DEFAULT_MAX_AGE_DAYS} days, folders failed builds left, and a build worktree unused for an hour. Every write prunes its project too`
         )
         .argument("[action]", "list | prune", "list")
-        .requiredOption("--project <name>", "which project's cache")
+        .option("--project <name>", "which project's cache")
+        .option("--all", "prune every project's cache")
         .option("--max-age-days <n>", "prune entries unused for longer than this", String(DEFAULT_MAX_AGE_DAYS))
         .option("--json", "machine-readable result")
-        .action(async (action: string, opts: { project: string; maxAgeDays: string; json?: boolean }) => {
-            const cache = new SourcemapCache(opts.project);
-            if (action === "prune") {
-                const maxAgeDays = Number(opts.maxAgeDays);
-                if (opts.maxAgeDays.trim() === "" || !Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
-                    fail(
-                        `--max-age-days takes a number of days, 0 or more; got '${opts.maxAgeDays}'`,
-                        `${CMD} cache prune --project ${opts.project} --max-age-days ${DEFAULT_MAX_AGE_DAYS}`
+        .action(
+            async (action: string, opts: { project?: string; all?: boolean; maxAgeDays: string; json?: boolean }) => {
+                if (action === "prune") {
+                    await pruneCaches(opts);
+                    return;
+                }
+
+                if (action !== "list") {
+                    fail(`unknown action '${action}'`, `${CMD} cache list --project <name>`);
+                }
+
+                if (!opts.project) {
+                    const known = await cacheProjects();
+                    return fail(
+                        `cache list needs --project <name>${known.length > 0 ? `; cached projects: ${known.join(", ")}` : ""}`,
+                        `${CMD} cache list --project ${known[0] ?? "<name>"}`
                     );
                 }
 
-                const removed = await cache.prune({ maxAgeDays });
-                out.println(removed.length > 0 ? `removed ${removed.join(", ")}` : "nothing to prune");
-                return;
-            }
+                const cache = new SourcemapCache(opts.project);
+                const entries = await cache.list();
+                if (opts.json) {
+                    out.result(entries);
+                    return;
+                }
 
-            if (action !== "list") {
-                fail(`unknown action '${action}'`, `${CMD} cache list --project ${opts.project}`);
-            }
+                const table = createBoxTable(["ID", "KIND", "LABEL", "SIZE", "LAST USED"]);
+                for (const entry of entries) {
+                    table.push([
+                        entry.id,
+                        entry.kind,
+                        entry.label,
+                        formatBytes(entry.bytes),
+                        entry.lastUsedAt.slice(0, 16),
+                    ]);
+                }
 
-            const entries = await cache.list();
-            if (opts.json) {
-                out.result(entries);
-                return;
+                out.println(`${cache.dir}\n${table.toString()}`);
             }
-
-            const table = createBoxTable(["ID", "KIND", "LABEL", "SIZE", "LAST USED"]);
-            for (const entry of entries) {
-                table.push([
-                    entry.id,
-                    entry.kind,
-                    entry.label,
-                    formatBytes(entry.bytes),
-                    entry.lastUsedAt.slice(0, 16),
-                ]);
-            }
-
-            out.println(`${cache.dir}\n${table.toString()}`);
-        });
+        );
 }

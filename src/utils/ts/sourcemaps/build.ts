@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { cp, lstat, mkdir, readFile, rename, rm, stat, symlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { cp, lstat, mkdir, readFile, rename, rm, stat, symlink, utimes } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
+import { canonicalDir } from "@genesiscz/utils/fs/canonical";
+import { measureTree } from "@genesiscz/utils/fs/disk-usage";
+import { parseWorktreeListZ, WORKTREE_LIST_ARGS, type WorktreeEntry } from "@genesiscz/utils/git/porcelain";
 import { logger } from "@genesiscz/utils/logger";
+import { batchCwd, listPsRows } from "@genesiscz/utils/process/ps";
 import { profiler } from "@genesiscz/utils/profile";
-import { withFileLock } from "@genesiscz/utils/storage";
+import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage";
+import type { Subprocess } from "bun";
 import type { CacheEntry, SourcemapCache } from "./cache.ts";
 
 const prof = profiler.scope("sourcemaps");
@@ -12,6 +17,33 @@ const prof = profiler.scope("sourcemaps");
 const BUILD_LOCK_TIMEOUT_MS = 30 * 60_000;
 
 const { log } = logger.scoped("ts:sourcemaps:build");
+
+/**
+ * What this process's builds hold: the managed worktrees they ran in, the build commands still running, and the
+ * builds that hold a worktree lock. A command calls `releaseBuildWorktrees` when it ends, so a worktree with its
+ * installed dependencies (gigabytes for a large app) does not outlive the command.
+ */
+const held = {
+    worktrees: new Map<string, SourcemapCache>(),
+    processes: new Set<Subprocess>(),
+    /** Each settles once its build has ended and released the worktree lock. */
+    builds: new Set<Promise<void>>(),
+    stopping: false,
+};
+
+/** Why `removeBuildWorktree` removed a worktree or left it in place. */
+export type WorktreeOutcome = "removed" | "absent" | "recent" | "busy" | "locked" | "in-use" | "changed" | "failed";
+
+export interface WorktreeRemoval {
+    worktree: string;
+    outcome: WorktreeOutcome;
+    /** Bytes freed: on APFS the bytes no clone shares (what the disk gets back), elsewhere the allocated size. */
+    bytes: number;
+    /** Removed only: its size on disk as `du` counts it, blocks shared with clones (a package manager's cache) included. */
+    diskBytes?: number;
+    /** Why it was kept: the lock reason, the processes inside it, its tracked changes, the git error. */
+    detail?: string;
+}
 
 export interface BuildAtCommitOptions {
     cache: SourcemapCache;
@@ -101,6 +133,16 @@ async function exists(path: string): Promise<boolean> {
     );
 }
 
+/** The worktree a project's builds share when the caller names none. */
+export function managedWorktree(cache: SourcemapCache): string {
+    return join(cache.dir, "worktree");
+}
+
+/** One build at a time holds this lock on `worktree`, across processes; removing the worktree takes it too. */
+function worktreeLockPath(cache: SourcemapCache, worktree: string): string {
+    return join(cache.dir, `.worktree-${createHash("sha1").update(worktree).digest("hex").slice(0, 8)}.lock`);
+}
+
 async function prepareWorktree(options: { repo: string; worktree: string; commit: string }): Promise<void> {
     if (!(await exists(options.worktree))) {
         await mkdir(dirname(options.worktree), { recursive: true });
@@ -129,6 +171,9 @@ async function buildLocked(input: {
 }): Promise<BuildResult> {
     const { options, worktree, commit, id, dir } = input;
     await prepareWorktree({ repo: options.repo, worktree, commit });
+    // `cache prune` removes a worktree idle for an hour; reusing one changes no folder entry, so mark it used.
+    const now = new Date();
+    await utimes(worktree, now, now);
     for (const link of options.links ?? []) {
         const target = join(worktree, link);
         if (!(await exists(target))) {
@@ -141,6 +186,10 @@ async function buildLocked(input: {
     const logPath = join(dir, ".build.log");
     const logFile = createWriteStream(logPath);
     const started = performance.now();
+    if (held.stopping) {
+        throw new Error(`build of ${commit.slice(0, 12)} not started: the command is stopping its builds`);
+    }
+
     log.info({ commit, worktree, buildCmd: options.buildCmd }, "building");
     const proc = Bun.spawn(["sh", "-c", options.buildCmd], {
         cwd: worktree,
@@ -148,6 +197,7 @@ async function buildLocked(input: {
         stdout: "pipe",
         stderr: "pipe",
     });
+    held.processes.add(proc);
     const abort = (): void => proc.kill();
     options.signal?.addEventListener("abort", abort, { once: true });
     const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
@@ -166,6 +216,7 @@ async function buildLocked(input: {
     };
     await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
     const code = await proc.exited;
+    held.processes.delete(proc);
     options.signal?.removeEventListener("abort", abort);
     logFile.end();
     if (code !== 0) {
@@ -211,28 +262,175 @@ export async function buildAtCommit(options: BuildAtCommitOptions): Promise<Buil
             return { entry: existing, dir, commit, reused: true, durationMs: 0 };
         }
 
-        const worktree = options.worktree ?? join(options.cache.dir, "worktree");
+        const worktree = options.worktree ?? managedWorktree(options.cache);
         await mkdir(options.cache.dir, { recursive: true });
-        const lockName = `.worktree-${createHash("sha1").update(worktree).digest("hex").slice(0, 8)}.lock`;
-        // One build at a time per worktree, across processes: a checkout in the middle of another build would cache
-        // one commit's output under the other commit's id.
-        return await withFileLock(
-            join(options.cache.dir, lockName),
-            async () => {
-                // Whoever held the lock may have just built this very recipe.
-                const built = options.refresh ? null : await options.cache.get(id);
-                if (built) {
-                    await options.cache.touch(id);
-                    return { entry: built, dir, commit, reused: true, durationMs: 0 };
-                }
+        let ended: (() => void) | undefined;
+        try {
+            // One build at a time per worktree, across processes: a checkout in the middle of another build would
+            // cache one commit's output under the other commit's id.
+            return await withFileLock(
+                worktreeLockPath(options.cache, worktree),
+                async () => {
+                    // Whoever held the lock may have just built this very recipe.
+                    const built = options.refresh ? null : await options.cache.get(id);
+                    if (built) {
+                        await options.cache.touch(id);
+                        return { entry: built, dir, commit, reused: true, durationMs: 0 };
+                    }
 
-                return buildLocked({ options, worktree, commit, id, dir });
-            },
-            BUILD_LOCK_TIMEOUT_MS
-        );
+                    // A worktree the caller named is theirs; only the managed one is removed when the command ends.
+                    if (!options.worktree) {
+                        held.worktrees.set(worktree, options.cache);
+                    }
+
+                    const { promise, resolve } = Promise.withResolvers<void>();
+                    held.builds.add(promise);
+                    ended = () => {
+                        held.builds.delete(promise);
+                        resolve();
+                    };
+                    return buildLocked({ options, worktree, commit, id, dir });
+                },
+                BUILD_LOCK_TIMEOUT_MS
+            );
+        } finally {
+            // Only now is the lock released, so a release that waits for this build can take it.
+            ended?.();
+        }
     } finally {
         stopProfile();
     }
+}
+
+/**
+ * Removes the managed worktrees this process built in, each through `removeBuildWorktree`, so a command leaves no
+ * installed dependencies behind. It waits until every build has released its worktree. With `stop` (the command was
+ * interrupted) it first ends the running build commands and refuses to start new ones until it returns.
+ */
+export async function releaseBuildWorktrees(options: { stop?: boolean } = {}): Promise<WorktreeRemoval[]> {
+    held.stopping = options.stop === true;
+    try {
+        if (options.stop) {
+            for (const proc of held.processes) {
+                proc.kill();
+            }
+        }
+
+        await Promise.all(held.builds);
+        const removals: WorktreeRemoval[] = [];
+        for (const [worktree, cache] of held.worktrees) {
+            removals.push(await removeBuildWorktree({ cache, worktree }));
+        }
+
+        held.worktrees.clear();
+        return removals;
+    } finally {
+        held.stopping = false;
+    }
+}
+
+/**
+ * Removes a build worktree with `git worktree remove`, never by deleting files itself. It is kept while it may still
+ * be wanted: a build runs in it (the build lock is held), it is locked with `git worktree lock`, a process has its
+ * working directory inside it, or it has tracked changes. With `idleMs` it is also kept when used more recently.
+ */
+export async function removeBuildWorktree(options: {
+    cache: SourcemapCache;
+    worktree: string;
+    idleMs?: number;
+}): Promise<WorktreeRemoval> {
+    const { worktree } = options;
+    const folder = await stat(worktree).catch(() => null);
+    if (!folder?.isDirectory()) {
+        return { worktree, outcome: "absent", bytes: 0 };
+    }
+
+    if (options.idleMs !== undefined && Date.now() - folder.mtimeMs < options.idleMs) {
+        return { worktree, outcome: "recent", bytes: 0 };
+    }
+
+    try {
+        // No waiting: a held lock means a build is running in it right now.
+        return await withFileLock(worktreeLockPath(options.cache, worktree), () => removeUnusedWorktree(worktree), 0);
+    } catch (error) {
+        if (error instanceof LockTimeoutError) {
+            return { worktree, outcome: "busy", bytes: 0, detail: "a build is running in it" };
+        }
+
+        // A command's own error must not be replaced by its cleanup's: report the worktree as kept instead.
+        log.warn({ err: error, worktree }, "could not check the build worktree; left in place");
+        return {
+            worktree,
+            outcome: "failed",
+            bytes: 0,
+            detail: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
+/** The checks and the removal that need the build lock; see `removeBuildWorktree`. */
+async function removeUnusedWorktree(worktree: string): Promise<WorktreeRemoval> {
+    const kept = (outcome: WorktreeOutcome, detail: string): WorktreeRemoval => {
+        log.info({ worktree, outcome, detail }, "kept build worktree");
+        return { worktree, outcome, bytes: 0, detail };
+    };
+    const real = canonicalDir(worktree);
+    let commonDir: string;
+    let listed: WorktreeEntry | undefined;
+    try {
+        commonDir = await git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+        listed = parseWorktreeListZ(await git(commonDir, [...WORKTREE_LIST_ARGS])).find(
+            (entry) => canonicalDir(entry.path) === real
+        );
+    } catch (error) {
+        return kept("failed", `git cannot read it: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (!listed) {
+        return kept("failed", "git does not list it as a worktree");
+    }
+
+    if (listed.locked !== null) {
+        return kept("locked", `locked with git worktree lock: ${listed.locked}`);
+    }
+
+    const rows = await listPsRows();
+    if (rows.length === 0) {
+        return kept("in-use", "the process list is unreadable, so a process may work in it");
+    }
+
+    const cwds = batchCwd(rows.map((row) => row.pid));
+    // The kernel reports a working directory already resolved; canonicalizing 1,300 of them cost 0.6 to 5 s here.
+    const inside = rows.filter((row) => {
+        const cwd = cwds.get(row.pid);
+        return cwd !== undefined && (cwd === real || cwd.startsWith(real + sep));
+    });
+    if (inside.length > 0) {
+        return kept(
+            "in-use",
+            `a process works in it: ${inside
+                .slice(0, 3)
+                .map((row) => `${row.pid} ${row.command.slice(0, 60)}`)
+                .join(", ")}`
+        );
+    }
+
+    const changes = await git(worktree, ["status", "--porcelain", "--untracked-files=no"]);
+    if (changes) {
+        return kept("changed", `it has tracked changes:\n${changes}`);
+    }
+
+    const usage = measureTree(worktree, { exact: false });
+    try {
+        // --force lets untracked build output and --link symlinks go with it; one --force still refuses a locked tree.
+        await git(commonDir, ["worktree", "remove", "--force", worktree]);
+    } catch (error) {
+        return kept("failed", error instanceof Error ? error.message : String(error));
+    }
+
+    const bytes = usage.private ?? usage.allocated;
+    log.info({ worktree, bytes, diskBytes: usage.allocated, files: usage.fileCount }, "removed build worktree");
+    return { worktree, outcome: "removed", bytes, diskBytes: usage.allocated };
 }
 
 /** The folder of a build entry that holds the build output. */

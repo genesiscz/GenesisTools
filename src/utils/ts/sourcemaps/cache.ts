@@ -6,6 +6,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { managedWorktree, removeBuildWorktree, type WorktreeRemoval } from "./build.ts";
 
 const { log } = logger.scoped("ts:sourcemaps:cache");
 
@@ -15,6 +16,8 @@ export const DEFAULT_MAX_AGE_DAYS = 30;
 const UNFINISHED_GRACE_MS = 60 * 60 * 1000;
 /** How long a metadata change waits for another process's change (a prune that removes large folders). */
 const METADATA_LOCK_TIMEOUT_MS = 60_000;
+/** Prune removes the managed build worktree once it has not been used this long (a command removes its own at its end). */
+export const WORKTREE_IDLE_MS = 60 * 60 * 1000;
 
 export type CacheEntryKind = "deployed" | "build";
 
@@ -47,9 +50,37 @@ export interface CacheMetadata {
     entries: Record<string, CacheEntry>;
 }
 
+export interface PrunedItem {
+    /** The entry id, or `worktree` for the build worktree: a folder name in the project's cache. */
+    name: string;
+    reason: "unused" | "unfinished" | "idle worktree";
+    /** Bytes freed; for the worktree, without the blocks it shared with clones (see `WorktreeRemoval`). */
+    bytes: number;
+    /** Size on disk as `du` counts it. */
+    diskBytes: number;
+}
+
+export interface PruneResult {
+    removed: PrunedItem[];
+    /** The build worktree when it was idle past the hour and prune still left it in place, with the reason. */
+    kept: WorktreeRemoval[];
+}
+
 /** `~/.genesis-tools/ts/sourcemaps`. */
 export function sourcemapsRoot(): string {
     return toolDataDir("ts", "sourcemaps");
+}
+
+/** The projects that have a cache folder under `root`, sorted. */
+export async function cacheProjects(root: string = sourcemapsRoot()): Promise<string[]> {
+    const entries = await readdir(root, { withFileTypes: true }).catch((error: unknown) => {
+        log.debug({ err: error, root }, "no sourcemaps cache yet");
+        return [];
+    });
+    return entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
 }
 
 /** A folder-safe project name: lower-case letters, digits, dot, dash and underscore. */
@@ -233,23 +264,44 @@ export class SourcemapCache {
         return resolve(dirname(link), await readlink(link));
     }
 
-    /** Removes entries (folder, metadata row, `--out` symlinks) unused for `maxAgeDays`. Returns their ids. */
-    prune(options: { maxAgeDays?: number; keep?: string[] } = {}): Promise<string[]> {
+    /**
+     * Removes entries (folder, metadata row, `--out` symlinks) unused for `maxAgeDays`, folders that failed builds
+     * left, and the managed build worktree once it has been idle for `WORKTREE_IDLE_MS`.
+     */
+    async prune(options: { maxAgeDays?: number; keep?: string[] } = {}): Promise<PruneResult> {
         const maxAgeDays = options.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS;
         // NaN compares false against every age, so an unparsed value would remove every entry.
         if (!Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
-            return Promise.reject(new RangeError(`maxAgeDays must be a number of days, 0 or more; got ${maxAgeDays}`));
+            throw new RangeError(`maxAgeDays must be a number of days, 0 or more; got ${maxAgeDays}`);
         }
 
-        return profiler
-            .scope("sourcemaps")
-            .measureAsync("cache.prune", () => this.transaction(() => this.pruneNow(options)));
+        return profiler.scope("sourcemaps").measureAsync("cache.prune", async () => {
+            const removed = await this.transaction(() => this.pruneNow(options));
+            // Outside the metadata lock: removing a worktree with its dependencies takes seconds.
+            const worktree = await removeBuildWorktree({
+                cache: this,
+                worktree: managedWorktree(this),
+                idleMs: WORKTREE_IDLE_MS,
+            });
+            if (worktree.outcome === "removed") {
+                removed.push({
+                    name: relative(this.dir, worktree.worktree),
+                    reason: "idle worktree",
+                    bytes: worktree.bytes,
+                    diskBytes: worktree.diskBytes ?? worktree.bytes,
+                });
+            }
+
+            const quiet =
+                worktree.outcome === "removed" || worktree.outcome === "absent" || worktree.outcome === "recent";
+            return { removed, kept: quiet ? [] : [worktree] };
+        });
     }
 
-    private async pruneNow(options: { maxAgeDays?: number; keep?: string[] }): Promise<string[]> {
+    private async pruneNow(options: { maxAgeDays?: number; keep?: string[] }): Promise<PrunedItem[]> {
         const maxAgeMs = (options.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS) * 86_400_000;
         const metadata = await this.read();
-        const removed: string[] = [];
+        const removed: PrunedItem[] = [];
         for (const entry of Object.values(metadata.entries)) {
             if (options.keep?.includes(entry.id) || Date.now() - Date.parse(entry.lastUsedAt) < maxAgeMs) {
                 continue;
@@ -264,13 +316,13 @@ export class SourcemapCache {
 
             await rm(this.entryDir(entry.id), { recursive: true, force: true });
             delete metadata.entries[entry.id];
-            removed.push(entry.id);
+            removed.push({ name: entry.id, reason: "unused", bytes: entry.bytes, diskBytes: entry.bytes });
         }
 
         // A build or fetch that failed or was interrupted leaves its folder without a metadata entry. Such a
         // folder is never reused (the next run starts it over), so it only holds disk. The grace period keeps
         // a build that is running right now.
-        const unfinished: string[] = [];
+        const unfinished: PrunedItem[] = [];
         for (const name of await readdir(this.dir).catch(() => [] as string[])) {
             if (!/^(build|deployed)-/.test(name) || metadata.entries[name] || options.keep?.includes(name)) {
                 continue;
@@ -278,8 +330,9 @@ export class SourcemapCache {
 
             const folder = await stat(this.entryDir(name)).catch(() => null);
             if (folder?.isDirectory() && Date.now() - folder.mtimeMs > UNFINISHED_GRACE_MS) {
+                const size = await folderSize(this.entryDir(name));
                 await rm(this.entryDir(name), { recursive: true, force: true });
-                unfinished.push(name);
+                unfinished.push({ name, reason: "unfinished", bytes: size.bytes, diskBytes: size.bytes });
             }
         }
 
@@ -288,6 +341,6 @@ export class SourcemapCache {
             await this.write(metadata);
         }
 
-        return [...removed, ...unfinished.map((name) => `${name} (unfinished)`)];
+        return [...removed, ...unfinished];
     }
 }
