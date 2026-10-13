@@ -2,14 +2,26 @@
  * The ONE way this repo starts a CDP-enabled browser: build the flags, spawn
  * the app, wait until the port answers. `open`, `restart` and src/youtube's
  * extension browser all come through here, so a launch gotcha is paid for once.
+ * The way back is here too: `quitOwnedBrowser` and `closeBrowserOnPort` quit
+ * through CDP, because a kill signal leaks a 1.4 GB app copy on macOS.
  */
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
-import { type CdpProbe, probe } from "./cdp.ts";
+import { type Browser, browser, type CdpProbe, probe } from "./cdp.ts";
+import {
+    currentPlatform,
+    defaultExec,
+    type ExecFn,
+    listListeningTcpPorts,
+    listProcesses,
+    type Platform,
+} from "./platform.ts";
 import {
     type BrowserId,
     browserById,
     browserExecutable,
+    classifyProcessName,
     freshProfileDir,
     launchBrowser,
     waitForCdp,
@@ -126,6 +138,7 @@ export interface LaunchCdpOpts {
     probe?: (port: number) => Promise<CdpProbe | null>;
     waitFor?: typeof waitForCdp;
     readLog?: (path: string) => Promise<string>;
+    quit?: QuitDeps;
 }
 
 export interface LaunchedCdpBrowser {
@@ -221,7 +234,10 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
         const logTail = opts.logPath
             ? await readLogTail(opts.logPath, opts.readLog ?? ((p) => Bun.file(p).text()))
             : null;
-        kill();
+
+        if (pid !== null) {
+            await quitOwnedBrowser({ port: opts.port, pid, kill, deps: opts.quit });
+        }
 
         throw new CdpLaunchError(
             `${def.app} launched but CDP port ${opts.port} never answered within ${timeoutMs}ms` +
@@ -231,4 +247,175 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
     }
 
     return { pid, port: opts.port, userDataDir, browser: result.browser, pages: result.pages.length };
+}
+
+/** How long a browser gets to exit after `Browser.close` before a caller that owns it falls back to a kill. */
+export const QUIT_TIMEOUT_MS = 3_000;
+/** `close` never kills, so it can afford to wait for a slow quit. */
+export const CLOSE_TIMEOUT_MS = 10_000;
+const EXIT_POLL_MS = 200;
+
+/** Injectable primitives, so a test never reaches a real browser that happens to listen on its port. */
+export interface QuitDeps {
+    connect?: (port: number) => Promise<Pick<Browser, "send" | "close">>;
+    alive?: (pid: number) => boolean;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+}
+
+/**
+ * Asks the browser on `port` to quit over CDP. Returns false when nothing answered.
+ *
+ * Use this, never a kill signal: macOS Chrome and Brave keep a copy of their app bundle for each launch
+ * (`/var/folders/<user>/X/<bundle id>.code_sign_clone/`, about 1.4 GB) and delete it only when they quit on their own.
+ * 102 such copies filled the disk on 2026-10-08; `Browser.close` removed the copy within 2 s.
+ */
+export async function requestBrowserClose(port: number, deps: QuitDeps = {}): Promise<boolean> {
+    let conn: Pick<Browser, "send" | "close">;
+    try {
+        conn = await (deps.connect ?? browser)(port);
+    } catch (error) {
+        log.debug({ error, port }, "Browser.close could not reach the browser");
+        return false;
+    }
+
+    // Chrome drops the socket as it quits, so the reply often never comes.
+    await conn.send("Browser.close", {}, { timeoutMs: QUIT_TIMEOUT_MS }).catch((error: unknown) => {
+        log.debug({ error, port }, "Browser.close got no reply");
+    });
+    conn.close();
+    log.debug({ port }, "Browser.close sent");
+
+    return true;
+}
+
+async function waitForExit(pid: number, timeoutMs: number, deps: QuitDeps): Promise<boolean> {
+    const alive = deps.alive ?? isProcessAlive;
+    const sleep = deps.sleep ?? Bun.sleep;
+    const now = deps.now ?? Date.now;
+    const deadline = now() + timeoutMs;
+
+    while (alive(pid)) {
+        const remaining = deadline - now();
+        if (remaining <= 0) {
+            return false;
+        }
+
+        await sleep(Math.min(EXIT_POLL_MS, remaining));
+    }
+
+    return true;
+}
+
+/**
+ * Quits a browser this process started: `Browser.close` first, and a kill only when the browser is still running
+ * `QUIT_TIMEOUT_MS` later or never answered CDP at all (a launch that timed out has no other way in).
+ */
+export async function quitOwnedBrowser(opts: {
+    port: number;
+    pid: number;
+    kill: () => void;
+    /** The child's exit, when the caller holds it: an exited child that is not reaped yet still answers a pid probe. */
+    exited?: Promise<unknown>;
+    deps?: QuitDeps;
+}): Promise<"closed" | "killed"> {
+    const deps = opts.deps ?? {};
+
+    if (await requestBrowserClose(opts.port, deps)) {
+        const sleep = deps.sleep ?? Bun.sleep;
+        const quit = opts.exited
+            ? await Promise.race([opts.exited.then(() => true), sleep(QUIT_TIMEOUT_MS).then(() => false)])
+            : await waitForExit(opts.pid, QUIT_TIMEOUT_MS, deps);
+
+        if (quit) {
+            return "closed";
+        }
+
+        log.warn(
+            { port: opts.port, pid: opts.pid },
+            "browser did not quit after Browser.close; killing it leaves its app copy behind"
+        );
+    } else {
+        log.warn(
+            { port: opts.port, pid: opts.pid },
+            "browser does not answer CDP; killing it leaves its app copy behind"
+        );
+    }
+
+    opts.kill();
+    return "killed";
+}
+
+export type CloseOnPortResult =
+    | { status: "closed"; pid: number }
+    | { status: "nothing-listening" }
+    | { status: "several-listeners"; pids: number[] }
+    | { status: "not-a-browser"; pid: number; command: string }
+    | { status: "main-profile"; pid: number; command: string }
+    | { status: "unreachable"; pid: number }
+    | { status: "still-running"; pid: number };
+
+export interface CloseOnPortDeps extends QuitDeps {
+    exec?: ExecFn;
+    platform?: Platform;
+}
+
+export interface CloseOnPortOpts {
+    port: number;
+    allowMainProfile?: boolean;
+    timeoutMs?: number;
+    deps?: CloseOnPortDeps;
+}
+
+/**
+ * Quits the browser that listens on `port` through `Browser.close` and waits for its process to exit. It never kills:
+ * a browser still running after `timeoutMs` is reported. It refuses a browser on the user's own profile (no
+ * `--user-data-dir`) unless `allowMainProfile`, and a port two processes listen on (one on 127.0.0.1, one on [::1]),
+ * because CDP would reach only one of them.
+ */
+export async function closeBrowserOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
+    const result = await closeOnPort(opts);
+    log.debug({ port: opts.port, ...result }, "close browser on port");
+
+    return result;
+}
+
+async function closeOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
+    const deps = opts.deps ?? {};
+    const exec = deps.exec ?? defaultExec;
+    const platform = deps.platform ?? currentPlatform();
+    const pids = [
+        ...new Set(
+            listListeningTcpPorts(exec, platform).flatMap((l) =>
+                l.port === opts.port && l.pid !== null ? [l.pid] : []
+            )
+        ),
+    ];
+
+    if (pids.length === 0) {
+        return { status: "nothing-listening" };
+    }
+
+    if (pids.length > 1) {
+        return { status: "several-listeners", pids };
+    }
+
+    const pid = pids[0];
+    const command = listProcesses(exec, platform).find((p) => p.pid === pid)?.command ?? "";
+
+    if (classifyProcessName(command) === null) {
+        return { status: "not-a-browser", pid, command };
+    }
+
+    if (!opts.allowMainProfile && !command.includes("--user-data-dir")) {
+        return { status: "main-profile", pid, command };
+    }
+
+    if (!(await requestBrowserClose(opts.port, deps))) {
+        return { status: "unreachable", pid };
+    }
+
+    const exited = await waitForExit(pid, opts.timeoutMs ?? CLOSE_TIMEOUT_MS, deps);
+
+    return exited ? { status: "closed", pid } : { status: "still-running", pid };
 }
