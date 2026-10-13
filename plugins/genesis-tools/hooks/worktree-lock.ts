@@ -323,74 +323,77 @@ export function parseLockReason(reason: string): LockHolder {
     return { kind: "other", reason: text };
 }
 
-function pidAlive(pid: number): boolean {
-    // kill(0) signals the caller's whole process group, and pid 1 is launchd: neither names a session.
+type ProcessCheck = { state: "gone" } | { state: "unknown" } | { state: "live"; agent: boolean; startMs: number };
+
+/**
+ * What `pid` is now, from one `ps -o etime=,command=` call (about 6 ms): "gone" when no process has it,
+ * "unknown" when ps itself failed, else whether the process is claude, codex or grok and when it started.
+ * A bare kill(pid, 0) cannot tell the lock's agent from a recycled pid that another program now holds.
+ */
+function checkProcess(pid: number, now: number): ProcessCheck {
+    // pid 0 and below are process groups, and pid 1 is launchd: none names a session.
     if (!Number.isInteger(pid) || pid <= 1) {
-        return false;
+        return { state: "gone" };
     }
 
-    try {
-        process.kill(pid, 0);
-
-        return true;
-    } catch (error) {
-        // EPERM: alive, but another user's.
-        return errorCode(error) === "EPERM";
-    }
-}
-
-/** When `pid` started, from `ps -o etime=` (`[[dd-]hh:]mm:ss`), or null when ps cannot say. */
-function processStartMs(pid: number, now: number): number | null {
-    const result = Bun.spawnSync(["ps", "-o", "etime=", "-p", String(pid)], {
+    const result = Bun.spawnSync(["ps", "-o", "etime=,command=", "-p", String(pid)], {
         stdout: "pipe",
         stderr: "ignore",
         timeout: SPAWN_TIMEOUT_MS,
     });
+    const out = result.stdout.toString().trim();
 
-    if (result.exitCode !== 0) {
-        return null;
+    // `ps -p` of a pid no process has prints nothing and exits 1.
+    if (result.exitCode === 1 && out === "") {
+        return { state: "gone" };
     }
 
-    const match = /^\s*(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s*$/.exec(result.stdout.toString());
+    // etime is `[[dd-]hh:]mm:ss`.
+    const match = result.exitCode === 0 ? /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s+(.*)$/s.exec(out) : null;
 
     if (!match) {
-        return null;
+        return { state: "unknown" };
     }
 
-    const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = match;
+    const [, days = "0", hours = "0", minutes = "0", seconds = "0", command = ""] = match;
     const elapsedSeconds = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
 
-    return now - elapsedSeconds * 1000;
+    return { state: "live", agent: agentNamed(command) !== null, startMs: now - elapsedSeconds * 1000 };
+}
+
+/** Whether `pid` is still a running agent. When ps cannot answer, it counts as alive: a wrong "dead" frees a worktree in use. */
+function agentAlive(pid: number, now = Date.now()): boolean {
+    const check = checkProcess(pid, now);
+
+    return check.state === "unknown" || (check.state === "live" && check.agent);
 }
 
 /**
  * Whether a lock's owner is gone. A hand lock never is. A session lock is stale when its pid is dead,
- * or alive but started after the lock was taken, which means the pid was reused. Claude Code's own
- * lock carries no time we can compare, so only its pid counts. When `ps` cannot answer, the lock is
- * kept: a wrong "stale" lets a worktree in use be removed.
- *
- * `checkReuse: false` skips the `ps` call. Locking uses it, because a pid reuse there only delays
- * a takeover, while the stale sweep must not leave a reused pid holding a lock.
+ * when another program now holds the pid, or when the pid started after the lock was taken (a reused
+ * pid). Claude Code's own lock carries no time we can compare, so only its pid and program count. When
+ * `ps` cannot answer, the lock is kept: a wrong "stale" lets a worktree in use be removed.
  */
-export function isLockStale(holder: LockHolder, options: { now?: number; checkReuse?: boolean } = {}): boolean {
-    const { now = Date.now(), checkReuse = true } = options;
+export function isLockStale(holder: LockHolder, options: { now?: number } = {}): boolean {
+    const { now = Date.now() } = options;
 
     if (holder.kind === "other") {
         return false;
     }
 
-    if (!pidAlive(holder.pid)) {
+    const check = checkProcess(holder.pid, now);
+
+    if (check.state !== "live") {
+        return check.state === "gone";
+    }
+
+    if (!check.agent) {
         return true;
     }
 
-    if (holder.kind === "claude-native" || !checkReuse) {
-        return false;
-    }
+    const since = holder.kind === "session" ? Date.parse(holder.since) : Number.NaN;
 
-    const since = Date.parse(holder.since);
-    const started = Number.isNaN(since) ? null : processStartMs(holder.pid, now);
-
-    return started !== null && started > since + START_SLACK_MS;
+    return !Number.isNaN(since) && check.startMs > since + START_SLACK_MS;
 }
 
 function gitEnv(): Record<string, string | undefined> {
@@ -634,15 +637,18 @@ export function findAgentProcess(startPid = process.ppid): AgentProcess | null {
  * worktree turns up that no live owner holds; then one ancestor walk (cached in the session record)
  * and one `git worktree lock` per worktree.
  *
- * `agent` replaces the ancestor walk, for tests and callers that already know the owner.
+ * `agent` replaces the ancestor walk, for tests and callers that already know the owner. `fresh`
+ * makes this session's own lock prove its process is alive (one `ps`), for SessionStart: a resumed
+ * session runs under a new pid and takes its old lock over.
  */
 export function lockWorktreesForPaths(options: {
     sessionId: string;
     paths: string[];
     agent?: AgentProcess;
     now?: number;
+    fresh?: boolean;
 }): Map<string, LockOutcome> {
-    const { sessionId, paths, now = Date.now() } = options;
+    const { sessionId, paths, now = Date.now(), fresh = false } = options;
     const outcomes = new Map<string, LockOutcome>();
 
     if (!SAFE_SESSION_ID.test(sessionId)) {
@@ -668,19 +674,32 @@ export function lockWorktreesForPaths(options: {
         const current = readLockReason(worktree.adminDir);
         const holder = current === null ? null : parseLockReason(current);
 
-        if (holder?.kind === "session" && holder.sessionId === sessionId && pidAlive(holder.pid)) {
-            outcomes.set(worktree.root, "ours");
-            continue;
+        if (holder?.kind === "session" && holder.sessionId === sessionId) {
+            // This session's lock under the pid it recorded: a hook only runs in a live session, so a
+            // repeat call trusts that and spawns nothing.
+            if (!agent && record === undefined) {
+                record = readRecord(sessionId);
+            }
+
+            const owner = agent?.pid ?? record?.pid;
+
+            if (holder.pid === owner && (!fresh || agentAlive(holder.pid, now))) {
+                outcomes.set(worktree.root, "ours");
+                continue;
+            }
         }
 
-        if (holder && !isLockStale(holder, { now, checkReuse: false })) {
+        if (holder && !isLockStale(holder, { now })) {
             outcomes.set(worktree.root, "held");
             continue;
         }
 
         if (!agent) {
             record ??= readRecord(sessionId);
-            agent = record && pidAlive(record.pid) ? { harness: record.harness, pid: record.pid } : findAgentProcess();
+            agent =
+                record && agentAlive(record.pid, now)
+                    ? { harness: record.harness, pid: record.pid }
+                    : findAgentProcess();
         }
 
         if (!agent) {
@@ -761,7 +780,7 @@ export function unlockSessionWorktrees(sessionId: string): string[] {
             reason !== null &&
             holder?.kind === "session" &&
             holder.sessionId === sessionId &&
-            (holder.pid === record.pid || !pidAlive(holder.pid)) &&
+            (holder.pid === record.pid || !agentAlive(holder.pid)) &&
             unlockWorktree(worktree, reason)
         ) {
             unlocked.push(worktree.root);
@@ -873,7 +892,7 @@ export function lockWorktreeAtSessionStart(
 
     clearStaleWorktreeLocks(cwd, options.now);
 
-    return lockWorktreesForPaths({ sessionId: input.session_id, paths: [cwd], ...options });
+    return lockWorktreesForPaths({ sessionId: input.session_id, paths: [cwd], fresh: true, ...options });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
@@ -25,7 +25,11 @@ const base = realpathSync(mkdtempSync(join(tmpdir(), "worktree-lock-")));
 const main = join(base, "main");
 const wt = join(base, "wt");
 const admin = join(main, ".git", "worktrees", "wt");
-const me: AgentProcess = { harness: "claude", pid: process.pid };
+/** A stand-in agent: `sleep` started through a link named `claude`, so `ps` shows an agent program at its pid. */
+const agentLink = join(base, "claude");
+symlinkSync("/bin/sleep", agentLink);
+const fakeAgent = Bun.spawn([agentLink, "600"], { stdout: "ignore", stderr: "ignore" });
+const me: AgentProcess = { harness: "claude", pid: fakeAgent.pid };
 /** Above the macOS pid ceiling (99998), so no process ever has it. */
 const DEAD_PID = 999999;
 const DEAD_LOCK = `claude session gone-session pid ${DEAD_PID} since 2026-10-01T10:00:00.000Z`;
@@ -84,6 +88,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+    fakeAgent.kill();
     rmSync(base, { recursive: true, force: true });
 });
 
@@ -154,6 +159,19 @@ describe("worktree-lock", () => {
         );
         expect(isLockStale(parseLockReason(`claude session x (pid ${DEAD_PID})`))).toBe(true);
         expect(isLockStale(parseLockReason("parked for the release"))).toBe(false);
+    });
+
+    it("a live pid that another program now holds is a recycled pid, so its lock is stale", () => {
+        // This test process is bun, not claude, codex or grok.
+        const now = new Date().toISOString();
+
+        expect(isLockStale(parseLockReason(`claude session other pid ${process.pid} since ${now}`))).toBe(true);
+        expect(
+            isLockStale(parseLockReason(`claude agent a1b2c3 (pid ${process.pid} start Mon Oct 13 20:00:00 2026)`))
+        ).toBe(true);
+        expect(isLockStale(parseLockReason(`claude agent a1b2c3 (pid ${me.pid} start Mon Oct 13 20:00:00 2026)`))).toBe(
+            false
+        );
     });
 
     it("SessionEnd unlocks only this session's locks and drops its record", () => {
