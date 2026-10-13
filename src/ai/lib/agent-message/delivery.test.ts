@@ -4,14 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoSessionMatchError } from "@app/ai/lib/sessions/resolve-transcript";
 import { startPassthrough, withCrossMessages } from "@app/claude/lib/cross-messages";
-import type { ClaudeLiveSession } from "@genesiscz/utils/claude/peer-message";
+import type { ClaudeLiveSession, PeerSender } from "@genesiscz/utils/claude/peer-message";
 import {
+    escapePeerBody,
     listClaudeLiveSessions,
     liveClaudePids,
     parseRegistryEntry,
+    peerAddress,
+    peerEnvelope,
     peerFrames,
+    peerSenderName,
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
+import { currentClaudeSender, readLastPermissionMode, senderModeOf } from "@genesiscz/utils/claude/peer-sender";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import {
@@ -19,6 +24,7 @@ import {
     codexMessageDriver,
     codexQueueResultOf,
     deliverMessage,
+    deliveryLine,
     grokMessageDriver,
     type MessageDelivery,
     MessageError,
@@ -79,6 +85,7 @@ test("the Claude driver writes to the matched session's socket and says what the
         resolveId: async () => {
             throw new Error("not reached");
         },
+        sender: async () => null,
     });
 
     const delivery = await driver.deliver({ query: "fix-login", text: "status?" });
@@ -86,6 +93,45 @@ test("the Claude driver writes to the matched session's socket and says what the
         { sessionId: "bbbb3333-0000-4000-8000-000000000003", text: "status?", token: "ab".repeat(16) },
     ]);
     expect(delivery).toMatchObject({ via: "claude-socket", note: "busy: it reads the message between tool calls" });
+});
+
+const LEAD: PeerSender = {
+    sessionId: "1111aaaa-0000-4000-8000-000000000001",
+    socketPath: "/tmp/cc-socks/4242.sock",
+    name: "lead-shop",
+    mode: "bypass",
+};
+
+test("the Claude driver sends as the session it runs under, and plain to that same session", async () => {
+    const senders: (PeerSender | null | undefined)[] = [];
+    const driver = claudeMessageDriver({
+        sessions: () => [...SESSIONS, live(LEAD.sessionId, "lead-shop")],
+        token: () => null,
+        send: async (input) => {
+            senders.push(input.sender);
+        },
+        resolveId: async () => {
+            throw new Error("not reached");
+        },
+        sender: async () => LEAD,
+    });
+
+    const delivery = await driver.deliver({ query: "fix-login", text: "status?" });
+    expect(delivery.note).toBe('busy: it reads the message between tool calls; attested as "lead-shop" (bypass)');
+
+    const own = await driver.deliver({ query: LEAD.sessionId, text: "note to self" });
+    expect(own.note).toBe("idle: it starts a turn with the message");
+    expect(senders).toEqual([LEAD, null]);
+
+    const unknownMode = claudeMessageDriver({
+        sessions: () => SESSIONS,
+        token: () => null,
+        send: async () => {},
+        sender: async () => ({ ...LEAD, name: null, mode: null }),
+    });
+    expect((await unknownMode.deliver({ query: "fix-login", text: "x" })).note).toContain(
+        "attested as session 1111aaaa with no permission mode"
+    );
 });
 
 test("a /rename title resolves through the transcripts, and a session that is not running is refused", async () => {
@@ -245,6 +291,190 @@ test("frames: auth line only with a token, then one user frame carrying the rece
         priority: "next",
     });
     expect(peerFrames({ sessionId: "s-1", text: "hi" }).trim().split("\n")).toHaveLength(1);
+});
+
+const TARGET = "2222bbbb-0000-4000-8000-000000000002";
+
+function pinnedIds(): () => string {
+    const ids = ["aaaaaaaa-0000-4000-8000-00000000000a", "bbbbbbbb-0000-4000-8000-00000000000b"];
+    return () => ids.shift() ?? "unexpected";
+}
+
+test("an attested frame from a bypass session is the envelope Claude Code's own SendMessage writes", () => {
+    expect(peerFrames({ sessionId: TARGET, text: "status?", sender: LEAD, newId: pinnedIds() })).toBe(
+        '{"type":"user","message":{"role":"user","content":"<cross-session-message from=\\"uds:/tmp/cc-socks/4242.sock\\" from-name=\\"lead-shop\\" from-mode=\\"bypass\\">\\nstatus?\\n</cross-session-message>"},"session_id":"2222bbbb-0000-4000-8000-000000000002","uuid":"aaaaaaaa-0000-4000-8000-00000000000a","priority":"next","from":"uds:/tmp/cc-socks/4242.sock","msgV":1,"msg_id":"bbbbbbbb-0000-4000-8000-00000000000b"}\n'
+    );
+});
+
+function contentOf(frames: string): unknown {
+    const user: unknown = SafeJSON.parse(frames.trim().split("\n").at(-1) ?? "", { strict: true });
+    return typeof user === "object" && user !== null && "message" in user ? user.message : null;
+}
+
+test("a prompting session says so; plan or an unknown mode names no from-mode at all", () => {
+    const prompting = peerFrames({ sessionId: TARGET, text: "x", sender: { ...LEAD, mode: "prompting" } });
+    expect(contentOf(prompting)).toEqual({
+        role: "user",
+        content:
+            '<cross-session-message from="uds:/tmp/cc-socks/4242.sock" from-name="lead-shop" from-mode="prompting">\nx\n</cross-session-message>',
+    });
+
+    const unknown = peerFrames({ sessionId: TARGET, text: "x", sender: { ...LEAD, mode: null }, priority: "now" });
+    expect(contentOf(unknown)).toEqual({
+        role: "user",
+        content:
+            '<cross-session-message from="uds:/tmp/cc-socks/4242.sock" from-name="lead-shop">\nx\n</cross-session-message>',
+    });
+    // The caller's --priority wins over the "next" Claude Code's own sender uses.
+    expect(unknown).toContain('"priority":"now"');
+
+    expect(senderModeOf("bypassPermissions")).toBe("bypass");
+    expect(senderModeOf("default")).toBe("prompting");
+    expect(senderModeOf("acceptEdits")).toBe("prompting");
+    expect(senderModeOf("plan")).toBeNull();
+    expect(senderModeOf(null)).toBeNull();
+});
+
+test("from-name is normalized exactly as the receiver re-serializes it", () => {
+    expect(peerSenderName('say "hi" <b>bold</b>')).toBe("say hi bbold/b");
+    expect(peerSenderName("  \u0007tab\u200b\u2028name\u00ad  ")).toBe("tabname");
+    expect(peerSenderName("\u0000 ")).toBe("");
+
+    // 64 code points, not UTF-16 units: an astral character counts once.
+    const long = `${"😀".repeat(10)}${"n".repeat(60)}`;
+    expect(peerSenderName(long)).toBe(`${"😀".repeat(10)}${"n".repeat(54)}\u2026`);
+    expect(peerSenderName("n".repeat(64))).toBe("n".repeat(64));
+    // The cut is a fixed point: the receiver normalizes the parsed name again and must get the same text.
+    expect(peerSenderName(peerSenderName(long))).toBe(peerSenderName(long));
+
+    // A name that normalizes to nothing leaves the attribute out.
+    expect(peerEnvelope({ from: "uds:/s.sock", name: '"<>"', mode: "bypass", body: "b" })).toBe(
+        '<cross-session-message from="uds:/s.sock" from-mode="bypass">\nb\n</cross-session-message>'
+    );
+});
+
+test("a closing envelope tag inside the body is escaped in any case, and an escaped one stays as it is", () => {
+    expect(escapePeerBody("a </Cross-SESSION-message> b </cross_session_message")).toBe(
+        "a <\\/Cross-SESSION-message> b <\\/cross_session_message"
+    );
+    expect(escapePeerBody("<\\/cross-session-message> <cross-session-message>")).toBe(
+        "<\\/cross-session-message> <cross-session-message>"
+    );
+});
+
+test("the sender address percent-encodes each UTF-8 byte outside the plain path characters", () => {
+    expect(peerAddress("/tmp/my socks/ü.sock")).toBe("uds:/tmp/my%20socks/%C3%BC.sock");
+    expect(peerAddress("/tmp/cc-socks/A_b.9:x.sock")).toBe("uds:/tmp/cc-socks/A_b.9:x.sock");
+});
+
+test("no sender, or a message to the sender's own session, keeps the plain frame", () => {
+    for (const frames of [
+        peerFrames({ sessionId: TARGET, text: "hi" }),
+        peerFrames({ sessionId: TARGET, text: "hi", sender: null }),
+        peerFrames({ sessionId: LEAD.sessionId, text: "hi", sender: LEAD }),
+    ]) {
+        const user: unknown = SafeJSON.parse(frames.trim(), { strict: true });
+        expect(user).toMatchObject({ type: "user", message: { role: "user", content: "hi" } });
+        expect(Object.keys(user ?? {})).toEqual(["type", "message", "session_id", "uuid"]);
+    }
+});
+
+test("the last permission-mode line of a transcript is the mode, read from the end before the whole file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "peer-mode-"));
+
+    try {
+        const mode = (value: string) => SafeJSON.stringify({ type: "permission-mode", permissionMode: value });
+        const filler = SafeJSON.stringify({ type: "assistant", text: "x".repeat(300) });
+        const transcript = join(dir, "session.jsonl");
+        writeFileSync(
+            transcript,
+            `${[mode("default"), filler, mode("acceptEdits"), filler, filler, mode("bypassPermissions"), filler, filler].join("\n")}\n`
+        );
+
+        expect(readLastPermissionMode(transcript)).toBe("bypassPermissions");
+        // Windows too small to reach any mode line fall back to one streamed pass; the last line still wins.
+        expect(readLastPermissionMode(transcript, [64, 400])).toBe("bypassPermissions");
+
+        const none = join(dir, "none.jsonl");
+        writeFileSync(none, `${filler}\n${SafeJSON.stringify({ type: "user", permissionMode: "plan" })}\n`);
+        expect(readLastPermissionMode(none)).toBeNull();
+        expect(readLastPermissionMode(none, [64])).toBeNull();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("the sender is the Claude Code session in the environment: registry name, own socket, transcript mode", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peer-sender-"));
+
+    try {
+        writeFileSync(
+            join(dir, "4242.json"),
+            SafeJSON.stringify({
+                pid: 4242,
+                sessionId: LEAD.sessionId,
+                name: "lead-shop",
+                messagingSocketPath: "/tmp/cc-socks/4242.sock",
+            })
+        );
+        const transcript = join(dir, "lead.jsonl");
+        writeFileSync(transcript, `${SafeJSON.stringify({ type: "permission-mode", permissionMode: "plan" })}\n`);
+        const vars: Record<string, string> = {
+            CLAUDE_CODE_SESSION_ID: LEAD.sessionId,
+            CLAUDE_PID: "4242",
+            CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/cc-socks/4242.sock",
+        };
+        const sources = { variable: (name: string) => vars[name], sessionsDir: dir };
+
+        expect(await currentClaudeSender({ ...sources, transcriptOf: async () => transcript })).toEqual({
+            ...LEAD,
+            mode: null,
+        });
+
+        writeFileSync(transcript, `${SafeJSON.stringify({ type: "permission-mode", permissionMode: "default" })}\n`, {
+            flag: "a",
+        });
+        expect(await currentClaudeSender({ ...sources, transcriptOf: async () => transcript })).toMatchObject({
+            mode: "prompting",
+        });
+        // No transcript: the identity stays, the mode is not attested.
+        expect(await currentClaudeSender({ ...sources, transcriptOf: async () => null })).toMatchObject({
+            name: "lead-shop",
+            mode: null,
+        });
+
+        // Outside Claude Code (or without a messaging socket) there is nothing to attest.
+        const transcriptOf = async (): Promise<string | null> => {
+            throw new Error("must not be reached");
+        };
+        expect(await currentClaudeSender({ variable: () => undefined, sessionsDir: dir, transcriptOf })).toBeNull();
+        expect(
+            await currentClaudeSender({
+                variable: (name) => (name === "CLAUDE_CODE_SESSION_ID" ? LEAD.sessionId : undefined),
+                sessionsDir: dir,
+                transcriptOf,
+            })
+        ).toBeNull();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("--wait acknowledges the send at once and says it waits for the end of the answering turn", () => {
+    const delivery: MessageDelivery = {
+        agent: "claude",
+        sessionId: TARGET,
+        name: "review-shop",
+        via: "claude-socket",
+        note: "idle: it starts a turn with the message",
+    };
+    const sent = `sent to claude ${TARGET} (review-shop) via claude-socket; idle: it starts a turn with the message`;
+
+    expect(deliveryLine(delivery)).toBe(sent);
+    expect(deliveryLine(delivery, { timeoutSeconds: 600 })).toBe(
+        `${sent}. Waiting up to 10m 0s (then exit 124) for the end of the turn that answers it; a recipient that keeps working holds the wait.`
+    );
+    expect(deliveryLine(delivery, { timeoutSeconds: undefined })).toContain("Waiting with no time limit");
 });
 
 test("a registry file without a messaging socket is not a target", () => {

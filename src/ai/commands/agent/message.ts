@@ -1,4 +1,4 @@
-import { deliverMessage, MessageError } from "@app/ai/lib/agent-message/delivery";
+import { deliverMessage, deliveryLine, MessageError } from "@app/ai/lib/agent-message/delivery";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { PeerPriority } from "@genesiscz/utils/claude/peer-message";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -54,12 +54,14 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
     const priority = PRIORITIES.find((value) => value === flags.priority);
 
     // Delivery cannot be undone, so the wait flags are checked first: a retry after a typo would send twice.
+    let timeoutSeconds: number | undefined;
+
     if (flags.wait) {
         try {
-            parseWaitFlags(
+            ({ timeoutSeconds } = parseWaitFlags(
                 { timeout: flags.waitTimeout, stallTimeout: flags.stallTimeout, last: flags.last },
                 { timeoutFlag: "--wait-timeout" }
-            );
+            ));
         } catch (error) {
             if (!(error instanceof UsageError)) {
                 throw error;
@@ -81,13 +83,12 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
             request: { query, text, priority, first: flags.first },
             allowKeystrokes: flags.allowKeystrokes === true,
         });
-        const sentLine = `sent to ${alias} ${delivery.sessionId}${delivery.name ? ` (${delivery.name})` : ""} via ${delivery.via}; ${delivery.note}`;
-
         if (flags.wait) {
-            // The wait owns stdout from here: the reply is the result, the send line is status.
-            if (!flags.json) {
-                out.printlnErr(sentLine);
-            }
+            // The wait owns stdout from here: the reply (or the --json document) is the result. The acknowledgement
+            // goes to stderr at once, with --json too, and is flushed before a wait that can last until the
+            // timeout. A caller that pipes stderr into `tail` still sees it only when the wait ends.
+            out.printlnErr(deliveryLine(delivery, { timeoutSeconds }));
+            await out.flush();
 
             await waitCommand(alias, delivery.sessionId, {
                 timeout: flags.waitTimeout,
@@ -110,7 +111,7 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
         if (flags.json) {
             out.result(delivery);
         } else {
-            out.println(sentLine);
+            out.println(deliveryLine(delivery));
         }
     } catch (error) {
         if (error instanceof MessageError) {
@@ -144,7 +145,7 @@ export function registerAgentMessageCommand(program: Command, alias: TurnProvide
         .option("--json", "Print {agent,sessionId,name,via,note}; with --wait, the wait report with a delivery field")
         .option(
             "--wait",
-            "After sending, wait for the turn that answers it and print the reply (exit codes as in wait)"
+            "After sending, wait for the turn that answers it and print the reply (exit codes as in wait). It waits for the END of that turn, so a recipient that keeps working holds it until --wait-timeout"
         )
         .option("--wait-timeout <seconds>", "With --wait: give up after this long (exit 124)")
         .option(
@@ -161,12 +162,18 @@ export function registerAgentMessageCommand(program: Command, alias: TurnProvide
 <session> is a session id (8+ characters is enough), a session name, a /rename title, or part of the
 cmux tab or workspace title the session runs in ("vybava" finds the tab "vybava - grok").
 <text> is the message; pass - to read it from stdin.
+With --wait, stderr gets one line right after the send (who got it, busy or idle, what it waits
+for); a pipe such as "2>&1 | tail" holds that line back until the wait ends.
 
 Channels:
   claude  its cross-session socket (~/.claude/sessions/<pid>.json -> /tmp/cc-socks/<pid>.sock).
           A busy session reads it between tool calls; an idle one starts a turn. The receiving
-          Claude sees it as a message from another session (advice, not the user's own words), and a
-          session in bypass mode holds it for approval unless its crossSessionInbound setting is accept.
+          Claude sees it as a message from another session (advice, not the user's own words).
+          Sent from inside a Claude Code session, it names that session and its permission mode
+          (bypass or prompting), as Claude's own SendMessage does. The receiver delivers it at once
+          when that mode matches its own and holds it for approval when they differ, unless its
+          crossSessionInbound setting is accept. Sent from a script outside Claude Code it names no
+          mode: a receiver in bypass mode holds it, any other delivers it.
   codex   codex queue on the shared app-server; runs after the current turn. Needs a TUI attached to
           that server (started with --remote or the default daemon).
   grok    no structured channel: the TUI listens on no socket. --allow-keystrokes pastes into its cmux

@@ -127,7 +127,9 @@ Starting the receiver again is a new `agent_joined`; it needs no message.
     tools claude wait <session> --last 3 --tools         # read its last 3 replies and what the last turn ran
 
 - Claude: written to the session's own cross-session socket. A busy session reads it between tool calls; an idle one starts a turn. It is never typed into the terminal, so it cannot land in a half-typed prompt or a dialog.
-- A Claude session in bypass mode holds the message for approval unless it was started with `tools claude run --cross-messages` (sessions from `tools cmux agents new claude` have it by default).
+<!-- updated 2026-10-13 18:03: sender attestation and the --wait acknowledgement -->
+- Sent from inside a Claude Code session, the message names that session and its permission mode, as Claude's own SendMessage does. The receiver delivers it at once when its own mode class (bypass or prompting) matches, and holds it for approval when they differ. A send from outside Claude Code names no mode, so a session in bypass mode holds it. A session started with `tools claude run --cross-messages` accepts everything (sessions from `tools cmux agents new claude` have it by default).
+- `--wait` waits for the END of the turn the message starts, so a recipient that keeps working holds it until `--wait-timeout`. The delivery line on stderr arrives right after the send; do not pipe it through `2>&1 | tail`, which holds it back until the wait ends.
 - The receiver sees a message from another session: write it as a request with context, not as the user's own words. It cannot reply on the bus; ask it to answer with `tools agents message` if it is on a bus, or read its reply with `--wait` on the send (or `tools <agent> wait <session>` later). Do not poll its screen or transcript by hand.
 - Codex: `codex queue` on the shared app-server; it runs after the current turn, and only for a TUI attached to that server.
 - `<session>` may also be part of the cmux tab or workspace title (`vybava` finds the tab "vybava - grok").

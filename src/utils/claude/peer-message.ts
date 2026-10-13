@@ -16,6 +16,11 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
  * The receiver checks `session_id` against its own id and drops a mismatch, which protects against pid
  * reuse. A bare sender binds no reply socket, so an accepted message gets no receipt; silence after a
  * clean write is the success case.
+ *
+ * Sent from inside a Claude Code session, the content is the `cross-session-message` envelope that names that
+ * session (its socket, name and permission class), as Claude Code's own SendMessage writes it (read from 2.1.296).
+ * A receiver in bypass mode delivers only a sender that declares bypass too; a plain frame is held for approval.
+ * The receiver's receipts then go to the parent's socket, which refuses them (the connecting pid is this child).
  */
 
 const { log } = logger.scoped("claude-peer");
@@ -197,13 +202,109 @@ export function readPeerToken(
 
 export type PeerPriority = "now" | "next" | "later";
 
-/** The newline-delimited frames for one message: an optional auth line, then the user frame. */
+/** The permission class a sender declares in `from-mode`; Claude Code knows no other values. */
+export type PeerSenderMode = "bypass" | "prompting";
+
+/**
+ * The Claude Code session a message is sent on behalf of (`peer-sender.ts` reads it from the environment of a
+ * Bash tool child). The receiver trusts `mode` as written and auto-delivers only a sender whose class matches
+ * its own, so `mode` must be the sender's real class, and null whenever that is not known.
+ */
+export interface PeerSender {
+    /** The sending session's id. */
+    sessionId: string;
+    /** The sending session's OWN messaging socket (`$CLAUDE_CODE_MESSAGING_SOCKET`), never the receiver's. */
+    socketPath: string;
+    /** Its registry name, shown by the receiver as `from-name`. */
+    name: string | null;
+    /** Null when the mode is unknown or `plan`: then the envelope carries no `from-mode`. */
+    mode: PeerSenderMode | null;
+}
+
+const ENVELOPE_TAG = "cross-session-message";
+
+/** The sender to attest for a message to `targetSessionId`: none to the sender's own session, which stays as before. */
+export function attestingSender(sender: PeerSender | null | undefined, targetSessionId: string): PeerSender | null {
+    return sender && sender.sessionId !== targetSessionId ? sender : null;
+}
+
+/**
+ * Claude Code's peer address for a socket path (`aV` and `R` in 2.1.296): `uds:` plus the path with each UTF-8
+ * byte of a character outside `[A-Za-z0-9:_/.\-]` (backslash included in that set) written as `%XX`.
+ */
+export function peerAddress(socketPath: string): string {
+    const encoder = new TextEncoder();
+    const encoded = socketPath.replace(/[^A-Za-z0-9:_/.\\-]/gu, (char) =>
+        Array.from(encoder.encode(char), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`).join("")
+    );
+
+    return `uds:${encoded}`;
+}
+
+/**
+ * A `from-name` value exactly as the receiver re-serializes it (`Ny` in 2.1.296): `"`, `<` and `>` removed,
+ * Unicode Cf, Cc, Cs, Zl and Zp removed, trimmed, then cut to 64 code points plus an ellipsis. The receiver
+ * compares its re-serialization with the envelope byte for byte, and any difference hides the whole envelope.
+ */
+export function peerSenderName(name: string): string {
+    const kept = name
+        .replace(/["<>]/g, "")
+        .replace(/[\p{Cf}\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/gu, "")
+        .trim();
+    const points = [...kept];
+
+    return points.length > 64 ? `${points.slice(0, 64).join("")}…` : kept;
+}
+
+/**
+ * The body with a backslash after the `<` of every closing envelope tag, in any case and with `-` or `_`, so the
+ * body cannot end the envelope early. Claude Code also escapes look-alike characters and fillers inside the tag;
+ * a body with those fails the receiver's round-trip check, which then holds the message, as for no attestation.
+ */
+export function escapePeerBody(body: string): string {
+    return body.replace(/<(?=\/cross[-_]session[-_]message)/giu, "<\\");
+}
+
+/** The `cross-session-message` envelope Claude Code's receiver parses (`ldt` in 2.1.296); attribute order is fixed. */
+export function peerEnvelope(input: {
+    from: string;
+    name: string | null;
+    mode: PeerSenderMode | null;
+    body: string;
+}): string {
+    const attributes = [`from="${input.from}"`];
+    const name = input.name === null ? "" : peerSenderName(input.name);
+
+    if (name) {
+        attributes.push(`from-name="${name}"`);
+    }
+
+    if (input.mode) {
+        attributes.push(`from-mode="${input.mode}"`);
+    }
+
+    return `<${ENVELOPE_TAG} ${attributes.join(" ")}>\n${escapePeerBody(input.body)}\n</${ENVELOPE_TAG}>`;
+}
+
+/**
+ * The newline-delimited frames for one message: an optional auth line, then the user frame. With a `sender` (and
+ * a target other than the sender's own session) the content is the attested envelope and the frame carries the
+ * sender's address, `msgV` and `msg_id`, like Claude Code's own SendMessage; without one it is the plain text.
+ */
 export function peerFrames(input: {
     sessionId: string;
     text: string;
     token?: string | null;
     priority?: PeerPriority;
+    sender?: PeerSender | null;
+    /** Tests pin the ids; a random UUID v4 otherwise. */
+    newId?: () => string;
 }): string {
+    const newId = input.newId ?? (() => crypto.randomUUID());
+    const sender = attestingSender(input.sender, input.sessionId);
+    const from = sender ? peerAddress(sender.socketPath) : null;
+    // Claude Code's own sender always says "next"; a plain frame keeps the receiver's default unless asked.
+    const priority = input.priority ?? (sender ? "next" : undefined);
     const lines: string[] = [];
 
     if (input.token) {
@@ -213,10 +314,17 @@ export function peerFrames(input: {
     lines.push(
         SafeJSON.stringify({
             type: "user",
-            message: { role: "user", content: input.text },
+            message: {
+                role: "user",
+                content:
+                    sender && from
+                        ? peerEnvelope({ from, name: sender.name, mode: sender.mode, body: input.text })
+                        : input.text,
+            },
             session_id: input.sessionId,
-            uuid: crypto.randomUUID(),
-            ...(input.priority ? { priority: input.priority } : {}),
+            uuid: newId(),
+            ...(priority ? { priority } : {}),
+            ...(from ? { from, msgV: 1, msg_id: newId() } : {}),
         })
     );
 
@@ -235,6 +343,8 @@ export async function sendClaudePeerMessage(input: {
     text: string;
     token?: string | null;
     priority?: PeerPriority;
+    /** The session the message is sent on behalf of; none sends the plain, unattested frame. */
+    sender?: PeerSender | null;
     timeoutMs?: number;
 }): Promise<void> {
     if (input.text.length > PEER_MESSAGE_MAX_CHARS) {
@@ -246,7 +356,9 @@ export async function sendClaudePeerMessage(input: {
         text: input.text,
         token: input.token,
         priority: input.priority,
+        sender: input.sender,
     });
+    const attested = attestingSender(input.sender, input.session.sessionId);
     const timeoutMs = input.timeoutMs ?? 5_000;
     // Bun sockets do not buffer: `write` takes what the kernel accepts (8 KB on a macOS Unix socket) and
     // returns the count, and the rest goes out from `drain`. Ending after one write cut a long message.
@@ -321,6 +433,7 @@ export async function sendClaudePeerMessage(input: {
             sessionId: input.session.sessionId,
             chars: input.text.length,
             priority: input.priority,
+            attested: attested ? { name: attested.name, mode: attested.mode } : null,
         },
         "peer message written"
     );

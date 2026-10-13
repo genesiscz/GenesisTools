@@ -3,14 +3,18 @@ import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/ses
 import { liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
+    attestingSender,
     type ClaudeLiveSession,
     listClaudeLiveSessions,
     type PeerPriority,
+    type PeerSender,
     readPeerToken,
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
+import { currentClaudeSender } from "@genesiscz/utils/claude/peer-sender";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
+import { formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { childDeadlineTermination } from "@genesiscz/utils/process/child-deadline";
@@ -41,6 +45,25 @@ export interface MessageDelivery {
     via: "claude-socket" | "codex-queue" | "cmux-paste";
     /** What the receiver does with it, in one line. */
     note: string;
+}
+
+/**
+ * The line `tools <agent> message` prints once the message is out. With `--wait` it also says what the command now
+ * waits for: the END of the turn that answers the message, so a recipient that keeps working (a standby task)
+ * holds the wait until the timeout. Without that, a caller cannot tell "delivered and waiting" from "stuck".
+ */
+export function deliveryLine(delivery: MessageDelivery, wait?: { timeoutSeconds: number | undefined }): string {
+    const sent = `sent to ${delivery.agent} ${delivery.sessionId}${delivery.name ? ` (${delivery.name})` : ""} via ${delivery.via}; ${delivery.note}`;
+
+    if (!wait) {
+        return sent;
+    }
+
+    const limit =
+        wait.timeoutSeconds === undefined
+            ? "with no time limit"
+            : `up to ${formatDuration(wait.timeoutSeconds, "s")} (then exit 124)`;
+    return `${sent}. Waiting ${limit} for the end of the turn that answers it; a recipient that keeps working holds the wait.`;
 }
 
 export class MessageError extends Error {
@@ -176,18 +199,33 @@ export function pickClaudeSession(query: string, sessions: readonly ClaudeLiveSe
     throw new MessageError(`no running Claude session matches "${query}"`);
 }
 
+/** What the attestation tells the receiver, for the delivery note; empty when the message went out plain. */
+function attestationNote(sender: PeerSender | null): string {
+    if (!sender) {
+        return "";
+    }
+
+    const who = sender.name ? `"${sender.name}"` : `session ${shortId(sender.sessionId)}`;
+    return sender.mode
+        ? `; attested as ${who} (${sender.mode})`
+        : `; attested as ${who} with no permission mode (a session in bypass mode holds it for approval)`;
+}
+
 export function claudeMessageDriver(
     deps: {
         sessions?: () => ClaudeLiveSession[];
         token?: (session: ClaudeLiveSession) => string | null;
         send?: typeof sendClaudePeerMessage;
         resolveId?: (query: string, first: boolean) => Promise<string>;
+        /** The Claude Code session this process runs under, or null outside one. */
+        sender?: () => Promise<PeerSender | null>;
     } = {}
 ): MessageDriver {
     const sessions = deps.sessions ?? (() => listClaudeLiveSessions());
     const token = deps.token ?? ((session) => readPeerToken(session));
     const send = deps.send ?? sendClaudePeerMessage;
     const resolveId = deps.resolveId ?? ((query, first) => resolveSessionId({ alias: "claude", query, first }));
+    const senderOf = deps.sender ?? (() => currentClaudeSender());
 
     return {
         async deliver(request) {
@@ -234,16 +272,23 @@ export function claudeMessageDriver(
                 target = running;
             }
 
-            await send({ session: target, text: request.text, token: token(target), priority: request.priority });
+            const sender = attestingSender(await senderOf(), target.sessionId);
+            await send({
+                session: target,
+                text: request.text,
+                token: token(target),
+                priority: request.priority,
+                sender,
+            });
             return {
                 agent: "claude",
                 sessionId: target.sessionId,
                 name: target.name,
                 via: "claude-socket",
                 note:
-                    target.status === "busy"
+                    (target.status === "busy"
                         ? "busy: it reads the message between tool calls"
-                        : "idle: it starts a turn with the message",
+                        : "idle: it starts a turn with the message") + attestationNote(sender),
             };
         },
     };

@@ -153,9 +153,14 @@ check is kept behind `DECISION_HEURISTICS` (off) in `turn-wait.ts`. The same ver
 `tools claude message <session> "<text>"` (also `tools codex|grok message`) sends into a RUNNING session
 through the agent's own channel, never by typing into its pane. Claude: the session's cross-session socket
 (`~/.claude/sessions/<pid>.json` names `/tmp/cc-socks/<pid>.sock`); a busy session reads it between tool
-calls, an idle one starts a turn. A session in bypass mode holds such a message for approval unless it was
-started with `tools claude run --cross-messages` (passes `--settings {"crossSessionInbound":"accept"}`;
-`tools cmux agents new claude` adds it unless `--no-cross-messages`). `<session>` is a session id or
+calls, an idle one starts a turn. Sent from inside a Claude Code session, the message carries the
+`cross-session-message` envelope that names that session and its permission mode (bypass or prompting), as
+Claude's own SendMessage does; the receiver delivers it at once when that mode matches its own and holds it
+for approval when they differ. A send from outside Claude Code names no mode, so a session in bypass mode
+holds it. A session started with `tools claude run --cross-messages` accepts everything (passes
+`--settings {"crossSessionInbound":"accept"}`; `tools cmux agents new claude` adds it unless
+`--no-cross-messages`). `--wait` waits for the end of the turn the message starts and prints one delivery
+line on stderr right after the send. `<session>` is a session id or
 8+ character prefix, the session name, or a `/rename` title; several matches fail with each candidate's
 exact command; part of the cmux tab or workspace title also works (`vybava` finds "vybava - grok"). Codex:
 `codex queue` on the shared app-server (a TUI started against it). Grok: no structured channel (the TUI
