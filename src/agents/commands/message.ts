@@ -10,6 +10,7 @@ import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { resolveMany, resolveOne } from "../lib/resolve-token";
 import { resolveSession } from "../lib/session-resolve";
 import { runStaleSweep } from "../lib/slot-lock";
+import { assertOwnerThread } from "../lib/thread-owner";
 import type { AgentRecord, MessageEvent } from "../lib/types";
 
 const log = logger.child({ component: "agents:message" });
@@ -82,6 +83,7 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
         }
 
         const sender = resolveOne(registry, opts.from, "sender");
+        assertOwnerThread(sender);
         const toIds = resolveMany(registry, opts.to, "recipient");
 
         if (opts.reply) {

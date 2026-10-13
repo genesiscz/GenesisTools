@@ -7,6 +7,7 @@ import { readFeed } from "../lib/feed";
 import { announceLeave } from "../lib/leave";
 import { sessionPaths } from "../lib/paths";
 import { resolveSession } from "../lib/session-resolve";
+import { assertOwnerThread } from "../lib/thread-owner";
 
 interface LeaveOpts {
     agentName?: string;
@@ -28,6 +29,8 @@ async function runLeaveImpl(opts: LeaveOpts): Promise<void> {
     if (!record) {
         throw new FriendlyError(`no agent named "${opts.agentName}" in session "${paths.session}"`);
     }
+
+    assertOwnerThread(record);
 
     const event = await announceLeave(paths, {
         agent_id: record.agent_id,

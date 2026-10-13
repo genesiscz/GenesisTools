@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deriveRegistry } from "@app/agents/lib/derived-registry";
 import { appendFeed, readFeed } from "@app/agents/lib/feed";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
+import { assertOwnerThread } from "@app/agents/lib/thread-owner";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -169,4 +171,49 @@ describe("AgentsBridge", () => {
             expect.objectContaining({ event: "turn_completed", turnId: "turn-ok" }),
         ]);
     });
+});
+
+test("the default transport registers in one append with the owner thread, and a respawn keeps the id", async () => {
+    // It used to start `tools agents login --once` and kill it, so every peer saw agent_joined and then
+    // agent_left 100 ms later, and the first turn's events raced the registration.
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-agents-register-"));
+
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const paths = sessionPaths("parent-2");
+        const transport = new CliAgentsTransport();
+
+        const first = await transport.register("codex_reviewer", "parent-2", { codexThreadId: "thread-a" });
+        const again = await transport.register("codex_reviewer", "parent-2", { codexThreadId: "thread-b" });
+        const events = await readFeed(paths);
+
+        expect(again).toBe(first);
+        expect(events.map((event) => event.type)).toEqual(["registered", "registered"]);
+        expect(deriveRegistry(events).find((record) => record.agent_id === first)?.meta).toEqual({
+            codexThreadId: "thread-b",
+        });
+    });
+});
+
+test("a bus identity owned by a Codex thread is refused from any other thread", () => {
+    // A native subagent inherits the worker's seeded bus commands; its `login --once` drained the
+    // worker's mailbox. Codex puts the executing thread's id in CODEX_THREAD_ID for every shell.
+    const record = {
+        agent_id: "agt_0002",
+        agent_name: "codex_reviewer",
+        is_main: false,
+        role: null,
+        registered_at: "now",
+        registered_seq: 1,
+        logged_in_at: null,
+        logged_out_at: null,
+        mode: null,
+        meta: { codexThreadId: "thread-root" },
+    };
+
+    expect(() => assertOwnerThread(record, { CODEX_THREAD_ID: "thread-sub" })).toThrow(
+        '"codex_reviewer" belongs to Codex thread thread-root; this shell runs in thread thread-sub'
+    );
+    expect(() => assertOwnerThread(record, { CODEX_THREAD_ID: "thread-root" })).not.toThrow();
+    expect(() => assertOwnerThread(record, {})).not.toThrow();
+    expect(() => assertOwnerThread({ ...record, meta: {} }, { CODEX_THREAD_ID: "thread-sub" })).not.toThrow();
 });

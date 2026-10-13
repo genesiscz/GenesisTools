@@ -73,6 +73,12 @@ async function run(): Promise<void> {
     const client = new AppServerClient(child, {
         onNotification: async (notification: RpcNotification) => {
             await runtime?.handleNotification(notification);
+
+            // A native subagent's events are its own, and the lead read them as the worker's turns.
+            if (runtime && !runtime.isOwnThreadEvent(notification)) {
+                return;
+            }
+
             void bridge?.publish(notification).catch((err) => {
                 const reason = err instanceof Error ? err.message : String(err);
                 const fields = { err, method: notification.method };
@@ -158,10 +164,10 @@ async function run(): Promise<void> {
     process.on("SIGTERM", () => void shutdown());
 
     try {
-        await runtime.start({ prompt: launch.prompt });
+        await runtime.start({});
 
         if (meta.agentsEnabled) {
-            bridge = new AgentsBridge({
+            const joining = new AgentsBridge({
                 agentName: meta.agentName,
                 rendezvousSession: meta.rendezvousSession,
                 afterSeq: meta.lastAgentSeq,
@@ -171,15 +177,23 @@ async function run(): Promise<void> {
                 onControl: async (control) => {
                     try {
                         const result = await runtime?.execute(control);
-                        await bridge?.publishEvent({ event: "control_result", op: control.op, result });
+                        await joining.publishEvent({ event: "control_result", op: control.op, result });
                     } catch (err) {
                         const message = err instanceof Error ? err.message : String(err);
-                        await bridge?.publishEvent({ event: "error", op: control.op, message });
+                        await joining.publishEvent({ event: "error", op: control.op, message });
                     }
                 },
             });
-            const agentId = await bridge.start();
+            // Registered with the root thread before the first turn starts, and handed to the notification
+            // handler only then: the first turn's events used to race the registration and fail with
+            // "sender not registered", and the thread id is what keeps subagents off this identity.
+            const agentId = await joining.start((await store.readMeta(name))?.threadId);
+            bridge = joining;
             await store.updateMeta(name, { agentId });
+        }
+
+        if (launch.prompt) {
+            await runtime.startTurn(launch.prompt);
         }
 
         const generation = meta.generation ?? meta.startedAt;

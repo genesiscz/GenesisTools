@@ -1,10 +1,9 @@
-import { deriveRegistry } from "@app/agents/lib/derived-registry";
-import { readFeed, withFeedLock } from "@app/agents/lib/feed";
+import { deriveRegistry, findByName, nextSubagentId } from "@app/agents/lib/derived-registry";
+import { withFeedLock } from "@app/agents/lib/feed";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { resolveMany, resolveOne } from "@app/agents/lib/resolve-token";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { OWNER_THREAD_META_KEY } from "@app/agents/lib/thread-owner";
 import { env } from "@genesiscz/utils/env";
-import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RpcNotification } from "./app-server-client";
@@ -18,7 +17,7 @@ export interface AgentsTransportSubscription {
 }
 
 export interface AgentsTransport {
-    register(agentName: string, session: string): Promise<string>;
+    register(agentName: string, session: string, meta?: Record<string, unknown>): Promise<string>;
     send(options: { from: string; to: string; body: string; session: string }): Promise<void>;
     observe(session: string, onLine: (line: string) => void | Promise<void>): Promise<AgentsTransportSubscription>;
 }
@@ -39,11 +38,6 @@ interface MessageFeedEvent {
     from_agent_id: string;
     to_agent_ids: string[];
     body: string;
-}
-
-interface AgentRecord {
-    agent_id: string;
-    agent_name: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -181,8 +175,13 @@ export class AgentsBridge {
         this.maxPendingSends = options.maxPendingSends ?? 256;
     }
 
-    async start(): Promise<string> {
-        this.agentId = await this.transport.register(this.agentName, this.session);
+    /** `ownerThreadId`: the worker's root thread, the only one `tools agents` lets act as this identity. */
+    async start(ownerThreadId?: string): Promise<string> {
+        this.agentId = await this.transport.register(
+            this.agentName,
+            this.session,
+            ownerThreadId ? { [OWNER_THREAD_META_KEY]: ownerThreadId } : {}
+        );
         this.subscription = await this.transport.observe(this.session, async (line) => {
             await this.handleLine(line);
         });
@@ -273,67 +272,35 @@ export class AgentsBridge {
 }
 
 export class CliAgentsTransport implements AgentsTransport {
-    async register(agentName: string, session: string): Promise<string> {
-        const login = Bun.spawn({
-            cmd: [
-                "tools",
-                "agents",
-                "login",
-                "--agent-name",
-                agentName,
-                "--once",
-                "--session",
-                session,
-                "--format",
-                "json",
-            ],
-            env: env.getProcessEnv(),
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "ignore",
-        });
-        // The registration this waits for is written to the session feed by the login child above.
-        // This used to spawn `tools agents discover` every 50 ms to read it, which is 16 whole Bun
-        // processes for one lookup; the same answer comes from the two functions that command is
-        // built on. Waking on the file rather than a timer also drops the wait from up to 50 ms to
-        // the write itself.
+    /**
+     * One `registered` append under the feed lock, like `send`. This used to start a `tools agents login
+     * --once` and kill it, which told every peer agent_joined and, 100 ms later, agent_left (2026-10-13).
+     * Registering a name again keeps its id and replaces its meta, so a respawn records its new thread.
+     */
+    async register(agentName: string, session: string, meta: Record<string, unknown> = {}): Promise<string> {
         const paths = sessionPaths(session);
-        let found: AgentRecord | undefined;
-        const lookUp = async (): Promise<{ done: boolean }> => {
-            const record = deriveRegistry(await readFeed(paths)).find(
-                (candidate) => candidate.agent_name === agentName && candidate.agent_id !== null
-            );
+        ensureSessionDir(paths);
 
-            if (record?.agent_id) {
-                found = { agent_id: record.agent_id, agent_name: record.agent_name };
+        return withFeedLock(paths, ({ events, appendNonMessage }) => {
+            const registry = deriveRegistry(events);
+            const existing = findByName(registry, agentName);
+
+            if (existing?.is_main) {
+                throw new Error(`${agentName} is the main agent of ${session}; a Codex worker cannot take that name`);
             }
 
-            return { done: found !== undefined };
-        };
-
-        try {
-            if (!(await lookUp()).done) {
-                await watchFileFeed({
-                    path: paths.feedPath,
-                    onChange: lookUp,
-                    deadlineAt: Date.now() + 5_000,
-                });
-            }
-        } finally {
-            try {
-                login.kill("SIGTERM");
-            } catch (err) {
-                log.debug({ err, pid: login.pid }, "one-shot agents login already exited");
-            }
-
-            await login.exited;
-        }
-
-        if (!found) {
-            throw new Error(`${toolCommand("agents")} did not register ${agentName} within 5 seconds`);
-        }
-
-        return found.agent_id;
+            const agentId = existing?.agent_id ?? nextSubagentId(registry);
+            appendNonMessage({
+                type: "registered",
+                agent_name: agentName,
+                agent_id: agentId,
+                awaiting_login: false,
+                is_main: false,
+                role: existing?.role ?? null,
+                meta,
+            });
+            return agentId;
+        });
     }
 
     async send(options: { from: string; to: string; body: string; session: string }): Promise<void> {

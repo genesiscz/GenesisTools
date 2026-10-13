@@ -38,6 +38,7 @@ import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { readSessionMeta, type SessionMeta } from "../lib/session-meta";
 import { resolveSession } from "../lib/session-resolve";
 import { readSlotPayload, releaseSlot, runStaleSweep, slotLockPath, tryAcquireSlot } from "../lib/slot-lock";
+import { assertOwnerThread } from "../lib/thread-owner";
 import type { AgentRecord, FeedEvent, SessionPaths, SlotLockPayload } from "../lib/types";
 
 const LISTEN_CAP_MS = 8 * 60 * 60 * 1000;
@@ -529,6 +530,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     }
 
     const record = await findOrRegisterAgent(paths, opts);
+    assertOwnerThread(record);
     const mode: "stream" | "once" = opts.once ? "once" : "stream";
     const loginId = randomUUID();
     const { lockPath } = claimSlot({ paths, record, mode, loginId });

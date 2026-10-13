@@ -49,6 +49,7 @@ function channelLines(input: WorkerContractInput): string[] {
         const sessionFlag = `--session ${bus.rendezvousSession}`;
         return [
             `You are \`${bus.agentName}\`, a headless ${label} worker in a Claude Code agent swarm. The lead agent is \`${bus.leadName}\`.`,
+            `If you are a subagent that another agent of this worker started, these bus lines are not yours: never run \`${toolCommand("agents")}\` as \`${bus.agentName}\` (it is refused), and report to the agent that started you.`,
             "Report progress, findings, and questions with:",
             `${toolCommand("agents message")} --from ${bus.agentName} --to ${bus.leadName} --body '<text>' ${sessionFlag}`,
             "Check for replies or steering from the lead with:",

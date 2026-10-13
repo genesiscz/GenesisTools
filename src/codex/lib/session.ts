@@ -103,6 +103,7 @@ export class CodexSessionRuntime {
     private readonly projectSelector?: string;
     private chosenProject?: CodexProject;
     private filingAttempts = 0;
+    private readonly reviewThreadIds = new Set<string>();
 
     constructor(options: RuntimeOptions) {
         this.account = options.account;
@@ -189,6 +190,15 @@ export class CodexSessionRuntime {
         });
 
         const lastEventAt = new Date().toISOString();
+
+        // A native subagent runs its own thread in this app-server. Its turns are not this worker's:
+        // counting them set activeTurnId to the subagent's turn, overwrote usage with its tokens, and would
+        // report the worker "ready" when only the subagent finished (observed 2026-10-13).
+        if (!this.isOwnThreadEvent(notification)) {
+            await this.updateMeta({ lastEventAt });
+            return;
+        }
+
         await this.fileUnderProject(notification);
 
         if (notification.method === "turn/started") {
@@ -321,6 +331,17 @@ export class CodexSessionRuntime {
         });
     }
 
+    /** False for a notification from another thread in this app-server: a native subagent's. */
+    isOwnThreadEvent(notification: RpcNotification): boolean {
+        const threadId = isRecord(notification.params) ? notification.params.threadId : undefined;
+
+        if (typeof threadId !== "string" || !this.meta.threadId) {
+            return true;
+        }
+
+        return threadId === this.meta.threadId || this.reviewThreadIds.has(threadId);
+    }
+
     /**
      * Put the thread under its Codex Desktop project, where Desktop's sidebar shows it. A thread is not in
      * `thread/list` until its first user message is recorded, so the first try waits for that item, and the
@@ -450,6 +471,7 @@ export class CodexSessionRuntime {
         const target = reviewTarget(control);
         const params: ReviewStartParams = { threadId: this.threadId(), target };
         const result = await this.client.request<ReviewStartResult>("review/start", params);
+        this.reviewThreadIds.add(result.reviewThreadId);
         await this.updateMeta({ activeTurnId: result.turn.id, status: "running" });
         return { turnId: result.turn.id, reviewThreadId: result.reviewThreadId };
     }

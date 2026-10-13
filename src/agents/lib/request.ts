@@ -3,6 +3,7 @@ import { deriveRegistry } from "./derived-registry";
 import { FeedLogCursor, withFeedLock } from "./feed";
 import { ensureSessionDir, sessionPaths } from "./paths";
 import { resolveMany, resolveOne } from "./resolve-token";
+import { assertOwnerThread } from "./thread-owner";
 import type { MessageEvent } from "./types";
 
 export async function sendRequest(options: {
@@ -19,6 +20,7 @@ export async function sendRequest(options: {
     const request = await withFeedLock(paths, ({ events, appendMessageEvent }) => {
         const registry = deriveRegistry(events);
         const sender = resolveOne(registry, options.from, "sender");
+        assertOwnerThread(sender);
         const recipients = resolveMany(registry, options.to, "recipient");
         if (recipients.length !== 1) {
             throw new Error("agents request requires exactly one recipient");

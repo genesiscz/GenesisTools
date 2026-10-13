@@ -562,3 +562,43 @@ test("an unknown --project fails the start before any thread exists", async () =
         expect(client.requests.map((request) => request.method)).toEqual(["initialize", "project/list"]);
     });
 });
+
+test("a native subagent's turns and usage never become the worker's own", async () => {
+    // A subagent's thread shares the worker's app-server. Counting its events moved activeTurnId to the
+    // subagent's turn and would have reported the worker ready when only the subagent finished.
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-subagent-"));
+
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const store = new CodexSessionStore();
+        const meta = makeMeta(home);
+        store.writeMeta(meta);
+        const runtime = new CodexSessionRuntime({ client: new FakeRpcClient(), store, meta });
+        await runtime.start({ prompt: "Begin" });
+
+        const subagent = { method: "turn/started", params: { threadId: "sub-1", turn: { id: "sub-turn" } } };
+        expect(runtime.isOwnThreadEvent(subagent)).toBe(false);
+        await runtime.handleNotification(subagent);
+        await runtime.handleNotification({
+            method: "thread/tokenUsage/updated",
+            params: { threadId: "sub-1", tokenUsage: { total: { inputTokens: 999 } } },
+        });
+        await runtime.handleNotification({
+            method: "turn/completed",
+            params: { threadId: "sub-1", turn: { id: "sub-turn" } },
+        });
+
+        const during = await store.readMeta("reviewer");
+        expect(during?.status).toBe("running");
+        expect(during?.activeTurnId).toBe("turn-1");
+        expect(during?.usage).toBeUndefined();
+
+        await runtime.handleNotification({
+            method: "turn/completed",
+            params: { threadId: "thread-1", turn: { id: "turn-1" } },
+        });
+        expect((await store.readMeta("reviewer"))?.status).toBe("ready");
+        expect((await store.readEvents("reviewer")).filter((event) => event.method === "turn/completed")).toHaveLength(
+            2
+        );
+    });
+});
