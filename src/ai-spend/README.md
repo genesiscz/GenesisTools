@@ -112,6 +112,7 @@ Also reachable as `tools claude spending`, which is an alias for this tool.
 | `session` | All detected sources grouped by session |
 | `blocks` | Claude Code 5-hour billing windows (`--active`, `--recent`) |
 | `statusline` | Compact Claude Code hook line (reads hook JSON from stdin) |
+| `workers` | Spend of headless workers (`tools codex` / `tools grok` / `tools claude worker`) by backend, model, label, day or name, with a Claude Opus/Sonnet estimate. `--backfill [--dry-run]` books past turns |
 | `<source> daily\|monthly\|session` | One source only (`claude` also has `weekly`, `blocks`, `statusline`; `opencode` also has `weekly`) |
 
 ## Quick start
@@ -191,6 +192,34 @@ Line shapes and token arithmetic mirror ccusage's Rust adapters, so the numbers 
 ```
 
 Measured on this machine (11.5k Claude transcripts, 207 Codex rollouts, 2.9k Grok sessions): a warm run is **0.08–0.11s** wall clock, and the 10-minute full sweep costs about **200–270ms** on top.
+
+## Worker spend (`workers`)
+
+```bash
+tools ai-spend workers                              # last 30 days, by backend and model
+tools ai-spend workers --since 7d --by label,day    # one row per spawn --label and day
+tools ai-spend workers --by name --backend codex --json
+tools ai-spend workers --backfill --dry-run         # what past turns would be booked
+tools ai-spend workers --backfill                   # book them (read-only on the session files)
+```
+
+Every worker turn books one row in `~/.genesis-tools/workers/cost-ledger.jsonl`: backend, name,
+`spawn --label`, turn, login (`subscription` | `api-key` | `unknown`), account name, duration, tool
+calls, and the turn's price. The turn report and each backend's `status --json` show the same line:
+`cost: $0.69 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $1.38 / Sonnet $0.69 (estimate)`.
+
+- **API-EQ** is this tool's own price: each request at the worker model's list rate with its long-context
+  band (`priceFor` → `resolvePrice` → `costOf`), and grok's recorded cost for grok, exactly as the reports
+  above price the same session. The stats read the tokens and costs from the workers' transcripts
+  through the same loaders, and take only the name, label, login, turns, duration and tool calls from
+  the ledger. A session whose transcript is gone falls back to the price its turns booked.
+- **BILLED** is $0 on a subscription login and the API-equivalent on an API key. `+?` means some amounts
+  are unknown (no list price, or a login nobody recorded), not zero.
+- **AS OPUS / AS SONNET** prices the same token profile at `claude-opus-5-5` and `claude-sonnet-5-5`
+  from the same table. It is an estimate: Claude's tokenizer counts the same text differently, and a
+  Claude agent would not take the same steps.
+- Worker homes outside the default roots (`--worker-home`, `worker-home-noskills`, a codex `--home`)
+  are read because the worker's own session record names its home.
 
 ## Notes
 

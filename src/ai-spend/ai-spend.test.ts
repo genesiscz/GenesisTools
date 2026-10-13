@@ -30,6 +30,8 @@ import {
     readWorkerCostRows,
     workerCostLedgerPath,
 } from "./lib/workers/ledger";
+import type { WorkerSessionInfo } from "./lib/workers/sessions";
+import { buildWorkerStats } from "./lib/workers/stats";
 
 describe("parseTranscriptLine", () => {
     const assistantLine = SafeJSON.stringify({
@@ -939,5 +941,85 @@ describe("worker cost ledger", () => {
         expect(rows.map((entry) => entry.turn)).toEqual([1, 2]);
         expect(rows[0]).toMatchObject({ durationMs: 90_000, label: "review-loop pr1", account: "work" });
         expect(workerCostLedgerPath()).not.toContain(`${homedir()}/.genesis-tools`);
+    });
+});
+
+describe("worker stats", () => {
+    const session = (name: string, label: string | null): WorkerSessionInfo => ({
+        backend: "codex",
+        name,
+        sessionId: `thread-${name}`,
+        home: null,
+        cwd: "/w",
+        model: "gpt-6.1-sol",
+        effort: null,
+        label,
+        auth: "subscription",
+        account: null,
+        lastActiveAt: "2026-10-13T12:00:00.000Z",
+    });
+    const event = (sessionId: string, timestamp: string): SpendEvent => ({
+        source: "codex",
+        id: `${sessionId}|${timestamp}`,
+        model: "gpt-6.1-sol",
+        timestamp,
+        sessionId,
+        project: "",
+        inputTokens: 100_000,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+    });
+
+    it("prices the transcripts per request and groups by label; a missing transcript falls back to its ledger rows", () => {
+        const ledgerRow = buildWorkerCostRow({
+            backend: "codex",
+            name: "gone",
+            sessionId: "thread-gone",
+            turn: 1,
+            model: "gpt-6.1-sol",
+            auth: "subscription",
+            endedAt: new Date("2026-10-13T11:00:00.000Z"),
+            durationMs: 60_000,
+            toolCalls: 4,
+            parts: [
+                {
+                    model: "gpt-6.1-sol",
+                    tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1_000_000, reasoning: 0 },
+                },
+            ],
+            cwd: "/w",
+        });
+        const report = buildWorkerStats({
+            home: "/nonexistent",
+            timezone: "UTC",
+            sinceDay: "2026-10-13",
+            dimensions: ["label"],
+            sessions: [session("a", "pr1"), session("b", "pr1"), session("gone", null)],
+            rows: [ledgerRow],
+            loadSessionEvents: (worker) =>
+                worker.name === "gone"
+                    ? null
+                    : [
+                          event(`rollout-${worker.name}`, "2026-10-13T10:00:00.000Z"),
+                          event(`rollout-${worker.name}`, "2026-10-12T10:00:00.000Z"),
+                      ],
+        });
+
+        const byLabel = Object.fromEntries(report.groups.map((group) => [group.key.label, group]));
+        // Two in-window requests of 100K input at $2/M; the 10-12 ones are outside the window.
+        expect(byLabel.pr1).toMatchObject({ sessions: 2, requests: 2, turns: 0, billedUsd: 0 });
+        expect(byLabel.pr1.apiEquivalentUsd).toBeCloseTo(0.4, 10);
+        expect(byLabel.pr1.claudeOpusUsd).toBeCloseTo(0.8, 10);
+        expect(byLabel[""]).toMatchObject({
+            sessions: 1,
+            turns: 1,
+            toolCalls: 4,
+            durationMs: 60_000,
+            ledgerOnlySessions: 1,
+        });
+        expect(byLabel[""].apiEquivalentUsd).toBeCloseTo(10, 10);
+        expect(report.total.sessions).toBe(3);
+        expect(report.notes).toEqual(["codex gone: no transcript found, priced from its ledger rows"]);
     });
 });

@@ -19,6 +19,7 @@ import { SOURCE_IDS, type SourceId, type SpendEvent } from "./reports/types";
 import { buildSpendSeries, type TranscriptGrain } from "./series";
 import { resolveSince } from "./since";
 import type { PricingTable, Report, UsageEvent } from "./types";
+import { registerWorkersCommand } from "./workers/command";
 
 /** Grains `buildSpendSeries` accepts. `minute` is call-log only. */
 const TRANSCRIPT_GRAINS: readonly TranscriptGrain[] = ["hour", "day", "week"];
@@ -372,6 +373,7 @@ export function registerSpendCommand(program: Command): Command {
 
     registerCcusageCommands(program);
     registerSeriesCommand(program);
+    registerWorkersCommand(program);
 
     const monitor = program
         .command("monitor")

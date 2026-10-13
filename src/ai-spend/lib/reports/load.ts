@@ -167,7 +167,7 @@ function loadSessionEvents(options: SessionLoadOptions): SpendEvent[] {
     return events;
 }
 
-function dedupEvents(events: SpendEvent[]): SpendEvent[] {
+export function dedupEvents(events: SpendEvent[]): SpendEvent[] {
     const byId = new Map<string, SpendEvent>();
 
     for (const event of events) {
