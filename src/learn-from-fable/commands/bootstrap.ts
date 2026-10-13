@@ -6,7 +6,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@inquirer/prompts";
-import { FABLE_CONFIG_PATH, FABLE_LOCAL_DIR, loadFableConfig, saveFableConfig } from "../lib/config";
+import { bootstrapFableConfig, FABLE_CONFIG_PATH, loadFableConfig } from "../lib/config";
 
 export interface BootstrapOptions {
     packPath?: string;
@@ -42,11 +42,6 @@ export async function bootstrapCommand(options: BootstrapOptions): Promise<void>
     }
 
     packPath = resolve(packPath);
-    saveFableConfig({
-        packPath,
-        sessionsMirrorPath: join(FABLE_LOCAL_DIR, "sessions"),
-        sessionSources: [resolve(homedir(), ".claude", "projects"), join(FABLE_LOCAL_DIR, "sessions")],
-        notes: `Written by ${toolCommand("learn-from-fable bootstrap")}.`,
-    });
+    bootstrapFableConfig({ packPath, notes: `Written by ${toolCommand("learn-from-fable bootstrap")}.` });
     out.log.success(`Config written: ${FABLE_CONFIG_PATH} → packPath ${packPath}`);
 }

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isExtractionOutage, type MineSessionResult } from "./mine";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { Runner } from "../runners";
+import { isExtractionOutage, type MineSessionResult, modelSlug, persistSessionResult } from "./mine";
 import type { Episode } from "./types";
 
 function result(overrides: Partial<MineSessionResult>): MineSessionResult {
@@ -56,5 +61,33 @@ describe("isExtractionOutage", () => {
 
     test("a session with nothing sampled is not treated as an outage", () => {
         expect(isExtractionOutage(result({ windowsSampled: 0, extractorFailures: 0 }))).toBe(false);
+    });
+});
+
+describe("persistSessionResult", () => {
+    test("a raw episode line that does not parse survives a re-mine, and the new episode is merged", () => {
+        const pack = mkdtempSync(join(tmpdir(), "lff-mine-"));
+        const runner: Runner = {
+            id: "ai-proxy:work/grok/grok-4.5",
+            call: async () => {
+                throw new Error("persist makes no model call");
+            },
+        };
+        const dir = join(pack, "meta", "episodes");
+        mkdirSync(dir, { recursive: true });
+        const rawPath = join(dir, `episodes.${modelSlug(runner.id)}.raw.jsonl`);
+        const torn = '{"id":"old","contextPre';
+        writeFileSync(rawPath, `${torn}\n`);
+
+        persistSessionResult(
+            { packPath: pack, sessionsMirrorPath: pack, sessionSources: [] },
+            runner,
+            result({ episodes: episodes(1) })
+        );
+
+        expect(readFileSync(rawPath, "utf-8").trim().split("\n")).toEqual([
+            SafeJSON.stringify(episodes(1)[0], { strict: true }),
+            torn,
+        ]);
     });
 });

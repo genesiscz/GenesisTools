@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export const FABLE_LOCAL_DIR = resolve(env.tools.getHome(), ".genesis-tools", "claude", "fable");
 export const FABLE_CONFIG_PATH = join(FABLE_LOCAL_DIR, "config.json");
@@ -90,37 +92,98 @@ export function packPaths(config: FableConfig): PackPaths {
     };
 }
 
-export function loadFableConfig(): FableConfig | undefined {
-    if (!existsSync(FABLE_CONFIG_PATH)) {
-        return undefined;
-    }
+function defaultSessionSources(): string[] {
+    return [resolve(homedir(), ".claude", "projects"), join(FABLE_LOCAL_DIR, "sessions")];
+}
+
+function isFableConfigDocument(value: unknown): value is Partial<FableConfig> {
+    return isJsonObject(value);
+}
+
+/**
+ * The saved document, `undefined` when there is no file. Throws, naming the path, when the file exists
+ * but is not a JSON object: bootstrap would otherwise write a fresh config over it and drop `models`.
+ */
+function readFableConfigDocument(path: string): Partial<FableConfig> | undefined {
+    let text: string;
 
     try {
-        const raw: Partial<FableConfig> = SafeJSON.parse(readFileSync(FABLE_CONFIG_PATH, "utf-8"));
-        if (!raw?.packPath) {
-            logger.warn({ path: FABLE_CONFIG_PATH }, "fable config missing packPath");
+        text = readFileSync(path, "utf-8");
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
             return undefined;
         }
 
-        return {
-            packPath: raw.packPath,
-            sessionsMirrorPath: raw.sessionsMirrorPath ?? join(FABLE_LOCAL_DIR, "sessions"),
-            sessionSources: raw.sessionSources?.length
-                ? raw.sessionSources
-                : [resolve(homedir(), ".claude", "projects"), join(FABLE_LOCAL_DIR, "sessions")],
-            models: raw.models,
-            notes: raw.notes,
-        };
-    } catch (err) {
-        logger.warn({ path: FABLE_CONFIG_PATH, error: err }, "failed to parse fable config");
-        return undefined;
+        throw err;
     }
+
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(text);
+    } catch (err) {
+        throw new Error(`Fable config ${path} does not parse, so it was left untouched. Fix it, then retry.`, {
+            cause: err,
+        });
+    }
+
+    if (!isFableConfigDocument(parsed)) {
+        throw new Error(`Fable config ${path} is not a JSON object, so it was left untouched. Fix it, then retry.`);
+    }
+
+    return parsed;
 }
 
-export function saveFableConfig(config: FableConfig): void {
-    mkdirSync(FABLE_LOCAL_DIR, { recursive: true });
-    writeFileSync(FABLE_CONFIG_PATH, `${SafeJSON.stringify(config, null, 2)}\n`);
-    logger.info({ path: FABLE_CONFIG_PATH, packPath: config.packPath }, "fable config saved");
+export function loadFableConfig(path = FABLE_CONFIG_PATH): FableConfig | undefined {
+    const raw = readFableConfigDocument(path);
+
+    if (!raw) {
+        return undefined;
+    }
+
+    if (!raw.packPath) {
+        logger.warn({ path }, "fable config missing packPath");
+        return undefined;
+    }
+
+    return {
+        packPath: raw.packPath,
+        sessionsMirrorPath: raw.sessionsMirrorPath ?? join(FABLE_LOCAL_DIR, "sessions"),
+        sessionSources: raw.sessionSources?.length ? raw.sessionSources : defaultSessionSources(),
+        models: raw.models,
+        notes: raw.notes,
+    };
+}
+
+/**
+ * Point the config at `packPath` and save it, keeping every other saved field (`models`, `notes`,
+ * `sessionSources`). Throws, leaving the file untouched, when the existing file does not parse.
+ */
+export function bootstrapFableConfig({
+    packPath,
+    notes,
+    path = FABLE_CONFIG_PATH,
+}: {
+    packPath: string;
+    /** Used only when the saved config has no notes of its own. */
+    notes: string;
+    path?: string;
+}): FableConfig {
+    const existing = readFableConfigDocument(path) ?? {};
+    const config: FableConfig = {
+        ...existing,
+        packPath,
+        sessionsMirrorPath: existing.sessionsMirrorPath ?? join(FABLE_LOCAL_DIR, "sessions"),
+        sessionSources: existing.sessionSources?.length ? existing.sessionSources : defaultSessionSources(),
+        notes: existing.notes ?? notes,
+    };
+    saveFableConfig(config, path);
+    return config;
+}
+
+export function saveFableConfig(config: FableConfig, path = FABLE_CONFIG_PATH): void {
+    atomicWriteFileSync(path, `${SafeJSON.stringify(config, null, 2)}\n`);
+    logger.info({ path, packPath: config.packPath }, "fable config saved");
 }
 
 /** Ensure the meta dirs used by stage runs exist (idempotent). */

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { FABLE_MODEL, type FableConfig, packPaths } from "../lib/config";
 import { readStageRuns } from "../lib/manifest";
 import { loadUnconsolidated } from "../lib/stages/consolidate";
@@ -66,7 +67,8 @@ export async function skillCommand(config: FableConfig, options: { maxLines: num
             return;
         }
 
-        await Bun.write(runtime, readFileSync(canonical, "utf-8"));
+        // The shared writer follows a symlinked SKILL.md to its target, so the link stays a link.
+        atomicWriteFileSync(runtime, readFileSync(canonical, "utf-8"));
         out.log.success(`synced ${canonical} → ${runtime}`);
         return;
     }

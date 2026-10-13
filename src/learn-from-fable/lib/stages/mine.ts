@@ -6,11 +6,12 @@
  * (appended per session as mined) and kept PER MODEL so multiple miners can
  * run over the same corpus without clobbering each other.
  */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { pipeline } from "@genesiscz/utils/pipeline";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { ensureMetaDirs, type FableConfig, packPaths, STAGE_CONCURRENCY } from "../config";
 import type { Runner } from "../runners";
 import {
@@ -362,6 +363,50 @@ export function isExtractionOutage(result: MineSessionResult): boolean {
     return result.extractorFailures * 2 >= result.windowsSampled;
 }
 
+/** An episodes JSONL file: the episodes by id, and every line that did not parse, verbatim. */
+export interface EpisodeFile {
+    byId: Map<string, Episode>;
+    unreadable: string[];
+}
+
+export function readEpisodeFile(path: string): EpisodeFile {
+    const byId = new Map<string, Episode>();
+    const unreadable: string[] = [];
+
+    if (!existsSync(path)) {
+        return { byId, unreadable };
+    }
+
+    for (const line of readFileSync(path, "utf-8").split("\n")) {
+        if (!line.trim()) {
+            continue;
+        }
+
+        try {
+            const ep: Episode = SafeJSON.parse(line, { strict: true });
+            byId.set(ep.id, ep);
+        } catch (err) {
+            unreadable.push(line);
+            logger.debug({ error: err, path }, "bad episode line kept aside");
+        }
+    }
+
+    return { byId, unreadable };
+}
+
+/**
+ * Rewrite an episodes file in one atomic rename. A line that did not parse is still paid LLM output,
+ * so it goes back in verbatim after the episodes: a rewrite never deletes it.
+ */
+export function writeEpisodeFile(path: string, file: EpisodeFile): void {
+    if (file.unreadable.length > 0) {
+        logger.warn({ path, lines: file.unreadable.length }, "episode lines that do not parse were kept as they are");
+    }
+
+    const lines = [...file.byId.values()].map((ep) => SafeJSON.stringify(ep, { strict: true }));
+    atomicWriteFileSync(path, `${[...lines, ...file.unreadable].join("\n")}\n`);
+}
+
 export function persistSessionResult(config: FableConfig, runner: Runner, result: MineSessionResult): void {
     const paths = ensureMetaDirs(config);
     const slug = modelSlug(runner.id);
@@ -371,22 +416,8 @@ export function persistSessionResult(config: FableConfig, runner: Runner, result
     // second mine run silently doubles the corpus and every downstream stage pays
     // to judge the same episode twice (observed: one episode present 5x).
     const episodesPath = join(paths.episodesDir, `episodes.${slug}.raw.jsonl`);
-    const byId = new Map<string, Episode>();
-    if (existsSync(episodesPath)) {
-        for (const line of readFileSync(episodesPath, "utf-8").split("\n")) {
-            if (!line.trim()) {
-                continue;
-            }
-
-            try {
-                const existing: Episode = SafeJSON.parse(line, { strict: true });
-                byId.set(existing.id, existing);
-            } catch (err) {
-                logger.debug({ error: err }, "bad raw episode line skipped");
-            }
-        }
-    }
-
+    const episodes = readEpisodeFile(episodesPath);
+    const byId = episodes.byId;
     const before = byId.size;
     for (const ep of result.episodes) {
         // keep the filter's scores if this episode was already assessed
@@ -394,10 +425,7 @@ export function persistSessionResult(config: FableConfig, runner: Runner, result
         byId.set(ep.id, prior ? { ...ep, ...pickScores(prior) } : ep);
     }
 
-    writeFileSync(
-        episodesPath,
-        `${[...byId.values()].map((ep) => SafeJSON.stringify(ep, { strict: true })).join("\n")}\n`
-    );
+    writeEpisodeFile(episodesPath, episodes);
     logger.debug(
         { slug, before, after: byId.size, mined: result.episodes.length },
         "episodes merged by id (re-mine is idempotent)"

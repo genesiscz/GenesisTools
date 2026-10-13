@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { FableConfig } from "../config";
-import { persistScores } from "./filter";
+import { persistFiltered, persistScores } from "./filter";
 import type { Episode } from "./types";
 
 function episode(id: string, scores?: { referenceScore: number; naiveScore: number }): Episode {
@@ -66,8 +66,39 @@ describe("persistScores", () => {
         expect(readRaw(rawPath).find((e) => e.id === "b")).toEqual(before);
     });
 
+    test("a raw line that does not parse is kept verbatim when scores are written back", () => {
+        const { config, rawPath } = packWithRaw([episode("a"), episode("b")]);
+        const torn = '{"id":"c","sourceSession":"/tmp/session.jsonl","taskTy';
+        writeFileSync(rawPath, `${readFileSync(rawPath, "utf-8")}${torn}\n`);
+
+        persistScores(config, "slug", [{ ...episode("a"), referenceScore: 0.9, naiveScore: 0.1 }]);
+
+        const lines = readFileSync(rawPath, "utf-8").trim().split("\n");
+        expect(lines).toHaveLength(3);
+        expect(lines[2]).toBe(torn);
+    });
+
     test("a missing raw file is a no-op, not a crash", () => {
         const pack = mkdtempSync(join(tmpdir(), "lff-filter-"));
         expect(persistScores({ packPath: pack } as FableConfig, "absent", [episode("a")])).toBe(0);
+    });
+});
+
+describe("persistFiltered", () => {
+    test("a filtered line that does not parse survives the rebuild, and the kept episodes merge", () => {
+        const pack = mkdtempSync(join(tmpdir(), "lff-filter-"));
+        const dir = join(pack, "meta", "episodes");
+        mkdirSync(dir, { recursive: true });
+        const path = join(dir, "episodes.slug.filtered.jsonl");
+        const torn = '{"id":"old","taskTy';
+        writeFileSync(path, `${SafeJSON.stringify(episode("a"), { strict: true })}\n${torn}\n`);
+
+        persistFiltered({ packPath: pack, sessionsMirrorPath: pack, sessionSources: [] }, "slug", [episode("b")]);
+
+        expect(readFileSync(path, "utf-8").trim().split("\n")).toEqual([
+            SafeJSON.stringify(episode("a"), { strict: true }),
+            SafeJSON.stringify(episode("b"), { strict: true }),
+            torn,
+        ]);
     });
 });

@@ -5,14 +5,16 @@
  * teaches nothing. Infra failures are dropped as UNASSESSABLE and counted,
  * never silently treated as headroom (SkillOpt B7).
  */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { pipeline } from "@genesiscz/utils/pipeline";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { ensureMetaDirs, type FableConfig, STAGE_CONCURRENCY } from "../config";
 import type { Runner } from "../runners";
 import { type JudgeItem, judgeBatch } from "./judge";
+import { readEpisodeFile, writeEpisodeFile } from "./mine";
 import type { Episode } from "./types";
 
 /** Flush a partial judge batch after this long with no new bare reply. */
@@ -162,28 +164,13 @@ export async function contrastiveFilter(
 export function persistFiltered(config: FableConfig, slug: string, kept: Episode[]): string {
     const paths = ensureMetaDirs(config);
     const path = join(paths.episodesDir, `episodes.${slug}.filtered.jsonl`);
-    const byId = new Map<string, Episode>();
-
-    if (existsSync(path)) {
-        for (const line of readFileSync(path, "utf-8").split("\n")) {
-            if (!line.trim()) {
-                continue;
-            }
-
-            try {
-                const ep: Episode = SafeJSON.parse(line, { strict: true });
-                byId.set(ep.id, ep);
-            } catch (err) {
-                logger.debug({ error: err }, "bad filtered episode line skipped");
-            }
-        }
-    }
+    const episodes = readEpisodeFile(path);
 
     for (const ep of kept) {
-        byId.set(ep.id, ep);
+        episodes.byId.set(ep.id, ep);
     }
 
-    writeFileSync(path, `${[...byId.values()].map((ep) => SafeJSON.stringify(ep, { strict: true })).join("\n")}\n`);
+    writeEpisodeFile(path, episodes);
     return path;
 }
 
@@ -204,6 +191,7 @@ export function persistScores(config: FableConfig, slug: string, scored: Episode
     const scoresById = new Map(scored.map((ep) => [ep.id, ep]));
     let updated = 0;
     const lines: string[] = [];
+    let unreadable = 0;
 
     for (const line of readFileSync(path, "utf-8").split("\n")) {
         if (!line.trim()) {
@@ -222,11 +210,18 @@ export function persistScores(config: FableConfig, slug: string, scored: Episode
 
             lines.push(SafeJSON.stringify(ep, { strict: true }));
         } catch (err) {
-            logger.debug({ error: err }, "bad raw episode line skipped while writing scores back");
+            // Paid LLM output the parser cannot use: keep it verbatim rather than drop it on rewrite.
+            unreadable += 1;
+            lines.push(line);
+            logger.debug({ error: err, path }, "bad raw episode line kept while writing scores back");
         }
     }
 
-    writeFileSync(path, `${lines.join("\n")}\n`);
+    if (unreadable > 0) {
+        logger.warn({ path, lines: unreadable }, "episode lines that do not parse were kept as they are");
+    }
+
+    atomicWriteFileSync(path, `${lines.join("\n")}\n`);
     return updated;
 }
 
