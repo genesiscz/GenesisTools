@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { SoundChoice } from "@genesiscz/utils/audio/runner.server";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 
 export interface QuestionConfig {
     sinks: {
@@ -56,20 +58,43 @@ export function configPath(): string {
     return env.question.getConfigPath() ?? join(env.tools.getHome(), ".genesis-tools", "question", "config.json");
 }
 
-export function loadConfig(path = configPath()): QuestionConfig {
+/**
+ * The config on disk, for a caller that will write it back. Only a missing file means defaults: a file that
+ * exists but cannot be read or does not parse throws, so a save never replaces the user's settings with defaults.
+ */
+function readConfigForUpdate(path: string): QuestionConfig {
     if (!existsSync(path)) {
         return DEFAULT;
     }
 
+    let parsed: unknown;
+
     try {
-        return { ...DEFAULT, ...(SafeJSON.parse(readFileSync(path, "utf8")) as Partial<QuestionConfig>) };
-    } catch {
+        parsed = SafeJSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+        throw new Error(`Invalid question config at ${path}: it cannot be read or does not parse, left untouched`, {
+            cause: error,
+        });
+    }
+
+    if (!isJsonObject(parsed)) {
+        throw new Error(`Invalid question config at ${path}: expected a JSON object, left untouched`);
+    }
+
+    return { ...DEFAULT, ...(parsed as Partial<QuestionConfig>) };
+}
+
+export function loadConfig(path = configPath()): QuestionConfig {
+    try {
+        return readConfigForUpdate(path);
+    } catch (err) {
+        logger.warn({ err, path }, "question config is unreadable; using defaults until it is fixed");
         return DEFAULT;
     }
 }
 
 export function saveConfig(patch: Partial<QuestionConfig>, path = configPath()): QuestionConfig {
-    const current = loadConfig(path);
+    const current = readConfigForUpdate(path);
     // Deep-merge `sinks` so a partial patch like { sinks: { sound: true } }
     // can't silently drop obsidian/notify (t14 — root fix, not per-caller).
     const next: QuestionConfig = {
@@ -77,7 +102,6 @@ export function saveConfig(patch: Partial<QuestionConfig>, path = configPath()):
         ...patch,
         sinks: patch.sinks ? { ...current.sinks, ...patch.sinks } : current.sinks,
     };
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, SafeJSON.stringify(next, null, 2));
+    atomicWriteFileSync(path, SafeJSON.stringify(next, null, 2));
     return next;
 }

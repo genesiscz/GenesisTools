@@ -1,15 +1,4 @@
-import {
-    appendFileSync,
-    closeSync,
-    existsSync,
-    mkdirSync,
-    openSync,
-    readFileSync,
-    readSync,
-    renameSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { canonicalAgent } from "@app/handoff/targeting";
 import {
@@ -23,6 +12,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
@@ -1165,6 +1155,33 @@ function isStoredDecision(value: unknown): value is DecisionRecord {
     return storedDecisionSchema.safeParse(value).success;
 }
 
+/** The test {@link readDecisions} applies to one line: it parses as strict JSON and has a decision's shape. */
+function isReadableDecisionLine(line: string): boolean {
+    try {
+        return isStoredDecision(SafeJSON.parse(line, { strict: true }));
+    } catch {
+        // Not an error here: the line is one readDecisions skips and warns about, and the caller keeps it.
+        return false;
+    }
+}
+
+/** The raw lines {@link readDecisions} skips (torn, unparseable or the wrong shape), in file order. */
+function unreadableLines(file: string): string[] {
+    let text: string;
+
+    try {
+        text = readFileSync(file, "utf8");
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+
+        throw error;
+    }
+
+    return text.split("\n").filter((line) => line.trim().length > 0 && !isReadableDecisionLine(line));
+}
+
 /**
  * Up to 40 lines of the first ref. A relative ref is resolved against the DECISION's cwd (the
  * agent's), not this process's: the CLI or the MCP server storing it usually runs elsewhere.
@@ -1238,10 +1255,12 @@ function endsTorn(file: string): boolean {
     return last[0] !== 0x0a;
 }
 
-/** Through a temp file and a rename, so a reader never catches a half-written log. */
+/**
+ * Atomic, so a reader never catches a half-written log. The rows come from {@link readDecisions}, which skips
+ * the lines it cannot read; those lines are carried over verbatim at the top, or the rewrite would delete them
+ * for good. Every caller holds the decisions lock, so the file has not changed since that read.
+ */
 function rewrite(file: string, rows: DecisionRecord[]): void {
-    mkdirSync(dirname(file), { recursive: true });
-    const temp = `${file}.tmp-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
-    writeFileSync(temp, rows.map((row) => SafeJSON.stringify(row)).join("\n") + (rows.length > 0 ? "\n" : ""));
-    renameSync(temp, file);
+    const lines = [...unreadableLines(file), ...rows.map((row) => SafeJSON.stringify(row))];
+    atomicWriteFileSync(file, lines.length > 0 ? `${lines.join("\n")}\n` : "");
 }

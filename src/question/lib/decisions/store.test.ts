@@ -193,6 +193,26 @@ describe("decision store", () => {
         expect((await updateDecision(file, events, row.id, { state: "answered", answer: "a" })).state).toBe("answered");
     });
 
+    test("a rewrite keeps the lines it cannot read, byte for byte", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "decisions-"));
+        const file = join(dir, "decisions.jsonl");
+        const events = join(dir, "events.jsonl");
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "one", options: ["a"] }],
+        });
+        const wrongShape = '{"id":"d_9_abc","sessionId":"abc","number":9}';
+        const torn = '{"id":"d_8_abc","sessionId":"abc","prompt":"half';
+        appendFileSync(file, `${wrongShape}\n${torn}`);
+
+        await updateDecision(file, events, row.id, { state: "answered", answer: "a" });
+        const lines = readFileSync(file, "utf8").split("\n");
+
+        expect(lines).toContain(wrongShape);
+        expect(lines).toContain(torn);
+        expect(readDecisions(file).map((item) => [item.id, item.state])).toEqual([[row.id, "answered"]]);
+    });
+
     test("answers are decisions with an answer; a draft without one is not an answer", async () => {
         const dir = mkdtempSync(join(tmpdir(), "decisions-"));
         const file = join(dir, "decisions.jsonl");
