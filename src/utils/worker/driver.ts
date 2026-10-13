@@ -24,6 +24,8 @@ import type { WorkerTurnReport } from "./turn-report";
 export interface WorkerMeta {
     name: string;
     cwd: string;
+    /** The `spawn --label` tag every cost-ledger row of the session carries (`review-loop pr511`). */
+    label?: string;
 }
 
 /**
@@ -43,6 +45,8 @@ export interface WorkerSpawnInput {
     prompt?: string;
     model?: string;
     account?: string;
+    /** Free-text tag for the cost ledger; kept in the session meta. */
+    label?: string;
     surfaces: WorkerSurfaces;
     /** The `extendSpawn` extras, as commander parsed them. */
     extras: Record<string, unknown>;
@@ -116,4 +120,6 @@ export interface WorkerDriver<Meta extends WorkerMeta = WorkerMeta> {
     row(meta: Meta): string[];
     /** `sessions --json` row; default is the meta itself. */
     jsonRow?(meta: Meta): unknown;
+    /** The conversation id the cost ledger books the session under (codex thread, grok/claude session uuid). */
+    costSessionId?(meta: Meta): string | undefined;
 }

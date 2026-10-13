@@ -32,6 +32,8 @@ export interface SpawnOptions {
     agents?: boolean;
     rendezvousSession?: string;
     writableRoots?: string[];
+    /** The `spawn --label` tag every cost-ledger row of the session carries. */
+    label?: string;
     /** A Codex Desktop project id, name or root to show the thread under; the cwd decides without it. */
     project?: string;
 }
@@ -280,6 +282,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         home,
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.label ? { label: options.label } : {}),
         ...policy,
         status: "starting",
         agentName: `codex_${options.name}`,

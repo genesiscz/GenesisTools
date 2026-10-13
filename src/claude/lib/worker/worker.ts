@@ -1,5 +1,7 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
+import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { pinnedLaunchEnv } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -9,10 +11,10 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import { assertWorkerDeliveryTarget, type WorkerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
-import { isText, isTurnCompleted, isTurnFailed, type WorkerEvent } from "@genesiscz/utils/worker/events";
+import { isText, isToolCall, isTurnCompleted, isTurnFailed, type WorkerEvent } from "@genesiscz/utils/worker/events";
 import { workerMetaPath, workerTurnErrPath, workerTurnLogPath } from "./paths";
 import { type ClaudeWorkerMeta, ClaudeWorkerStore, claudeWorkerSourceHome } from "./store";
-import { parseTurnEvents } from "./stream";
+import { claudeTurnUsage, parseTurnEvents } from "./stream";
 
 const log = logger.child({ component: "claude:worker" });
 
@@ -30,6 +32,8 @@ export interface SpawnWorkerOptions {
     model?: string;
     /** Pass claude's --safe-mode so the child skips CLAUDE.md/hooks/MCP. A bare turn in this repo without it cost $0.11 in config cache-writes alone (measured 2026-09-01). */
     safeMode?: boolean;
+    /** The `spawn --label` tag every cost-ledger row of the session carries. */
+    label?: string;
 }
 
 export interface SteerWorkerOptions {
@@ -50,6 +54,8 @@ export interface ClaudeTurnResult {
     exitCode: number | null;
     stderr: string;
     logPath: string;
+    /** The ledger's cost line for the turn; absent when nothing was booked. */
+    costLine?: string;
 }
 
 /**
@@ -215,6 +221,7 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
         delete childEnv.CLAUDE_CODE_ENTRYPOINT;
 
         let exitCode: number | null = null;
+        const startedAt = new Date();
         try {
             const proc = Bun.spawn({
                 cmd: [binary, ...args],
@@ -247,7 +254,38 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
 
         const acknowledgedSessionId =
             parseTurnEvents(transcript, "").filter(isTurnCompleted).at(-1)?.sessionId || undefined;
-        return { meta: updated, turn, events, report, completed, acknowledgedSessionId, exitCode, stderr, logPath };
+        const usage = claudeTurnUsage(transcript);
+        // A pinned worker runs on an `anthropic-sub` long-lived token: always a subscription login.
+        const booked = recordWorkerTurnCost({
+            backend: "claude",
+            name: meta.name,
+            sessionId: meta.sessionId,
+            turn,
+            model: usage.model ?? meta.model ?? null,
+            auth: "subscription",
+            account: account.name,
+            startedAt,
+            endedAt: new Date(),
+            toolCalls: events.filter(isToolCall).length,
+            parts: usage.parts,
+            reportedUsd: usage.reportedUsd,
+            cwd: meta.cwd,
+            label: meta.label,
+            outcome: completed ? "completed" : "failed",
+        });
+
+        return {
+            meta: updated,
+            turn,
+            events,
+            report,
+            completed,
+            acknowledgedSessionId,
+            exitCode,
+            stderr,
+            logPath,
+            ...(booked ? { costLine: formatCostLine(booked.cost, "claude") } : {}),
+        };
     });
 }
 
@@ -262,6 +300,7 @@ export async function spawnWorker(options: SpawnWorkerOptions): Promise<ClaudeTu
         usesDefaultConfig: env.paths.getClaudeConfigDir() === undefined,
         model: options.model,
         safeMode: options.safeMode || undefined,
+        ...(options.label ? { label: options.label } : {}),
         turns: 0,
         createdAt: new Date().toISOString(),
     };

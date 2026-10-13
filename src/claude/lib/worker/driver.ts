@@ -76,6 +76,7 @@ function turnReport(result: ClaudeTurnResult): WorkerTurnReport {
         worktree: null,
         logPath: result.logPath,
         transcriptHint: `${toolCommand("claude worker read")} --name ${result.meta.name} --turn ${result.turn} --format compact`,
+        ...(result.costLine ? { costLine: result.costLine } : {}),
     };
 }
 
@@ -128,6 +129,7 @@ export const claudeWorkerDriver: WorkerDriver<ClaudeWorkerMeta> = {
             cwd: input.cwd,
             prompt: input.prompt ?? "",
             ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.label === undefined ? {} : { label: input.label }),
             safeMode,
         });
 
@@ -175,6 +177,7 @@ export const claudeWorkerDriver: WorkerDriver<ClaudeWorkerMeta> = {
     },
 
     latestTurn: (meta) => meta.turns,
+    costSessionId: (meta) => meta.sessionId,
     turnFile: (meta, turn) => requireTurnLog(meta, turn),
 
     async readDefault(meta, turn) {

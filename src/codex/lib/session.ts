@@ -1,5 +1,8 @@
 import { relative } from "node:path";
+import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
+import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { withTimeout } from "@genesiscz/utils/async";
+import { type CodexFinishedTurn, CodexTurnCostTracker } from "@genesiscz/utils/codex/turn-cost";
 import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
@@ -112,6 +115,10 @@ export class CodexSessionRuntime {
     private readonly reviewThreadIds = new Set<string>();
     /** Paths of the file-change items in flight, by item id: their approval request carries only the id. */
     private readonly fileChangePaths = new Map<string, string[]>();
+    /** Per-turn usage, tool calls and login, for the worker cost ledger. */
+    private readonly costTracker: CodexTurnCostTracker;
+    /** The cost line of the last booked turn, for the lead's `turn_completed` bus event. */
+    private lastTurnCost: { turnId?: string; line: string } | null = null;
 
     constructor(options: RuntimeOptions) {
         this.account = options.account;
@@ -121,6 +128,11 @@ export class CodexSessionRuntime {
         this.onApprovalRequest = options.onApprovalRequest;
         this.unsubscribeTimeoutMs = options.unsubscribeTimeoutMs ?? 1000;
         this.projectSelector = options.project;
+        // A pinned account is a ChatGPT login; `account/updated` confirms or corrects it.
+        this.costTracker = new CodexTurnCostTracker({
+            model: options.meta.model ?? null,
+            auth: options.meta.accountName ? "subscription" : "unknown",
+        });
     }
 
     async start(options: { prompt?: string }): Promise<void> {
@@ -209,6 +221,11 @@ export class CodexSessionRuntime {
 
         await this.fileUnderProject(notification);
         this.trackFileChange(notification);
+
+        const finished = this.costTracker.observe(notification, new Date());
+        if (finished) {
+            this.bookTurnCost(finished);
+        }
 
         if (notification.method === "turn/started") {
             await this.updateMeta({
@@ -468,6 +485,43 @@ export class CodexSessionRuntime {
         } catch (err) {
             log.warn({ err, threadId: this.meta.threadId }, "could not file the thread under a Codex Desktop project");
         }
+    }
+
+    /** Never throws: `recordWorkerTurnCost` logs its own failure and the turn goes on without a cost line. */
+    private bookTurnCost(finished: CodexFinishedTurn): void {
+        const row = recordWorkerTurnCost({
+            backend: "codex",
+            name: this.meta.name,
+            sessionId: this.meta.threadId ?? null,
+            turn: finished.turn,
+            model: finished.model ?? this.meta.model ?? null,
+            effort: this.meta.effort ?? null,
+            auth: finished.auth,
+            account: this.meta.accountName ?? null,
+            startedAt: finished.startedAt,
+            endedAt: finished.endedAt,
+            durationMs: finished.durationMs,
+            toolCalls: finished.toolCalls,
+            parts: finished.parts,
+            cwd: this.meta.cwd,
+            label: this.meta.label,
+            outcome: finished.outcome,
+        });
+
+        this.lastTurnCost = row
+            ? { ...(finished.turnId ? { turnId: finished.turnId } : {}), line: formatCostLine(row.cost, "codex") }
+            : null;
+    }
+
+    /** `{ cost }` for the bus event of the turn just booked; undefined for any other notification. */
+    turnCostEnvelope(notification: RpcNotification): Record<string, unknown> | undefined {
+        const terminal = codexTurnOutcome(notification);
+
+        if (!terminal || !this.lastTurnCost || this.lastTurnCost.turnId !== terminal.turnId) {
+            return undefined;
+        }
+
+        return { cost: this.lastTurnCost.line };
     }
 
     private async updateMeta(update: Partial<CodexSessionMeta>): Promise<void> {

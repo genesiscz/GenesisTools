@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readWorkerCostRows } from "@app/ai-spend/lib/workers/ledger";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
@@ -165,6 +166,86 @@ describe("CodexSessionRuntime", () => {
             expect(persisted?.threadId).toBe("thread-1");
             expect(persisted?.activeTurnId).toBe("turn-1");
             expect(persisted?.status).toBe("running");
+        });
+    });
+
+    test("books each finished turn in the cost ledger from per-call usage, and hands the bus its cost line", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-cost-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), label: "review-loop pr1", effort: "medium" };
+            store.writeMeta(meta);
+            const runtime = new CodexSessionRuntime({ client: new FakeRpcClient(), store, meta });
+            await runtime.start({});
+            const call = (input: number, cached: number, output: number) => ({
+                method: "thread/tokenUsage/updated",
+                params: {
+                    threadId: "thread-1",
+                    tokenUsage: {
+                        last: {
+                            inputTokens: input,
+                            cachedInputTokens: cached,
+                            outputTokens: output,
+                            reasoningOutputTokens: 1,
+                        },
+                    },
+                },
+            });
+
+            await runtime.handleNotification({ method: "account/updated", params: { authMode: "chatgpt" } });
+            await runtime.handleNotification({
+                method: "thread/started",
+                params: { thread: { id: "thread-1", model: "gpt-6.1-sol" } },
+            });
+            await runtime.handleNotification({
+                method: "turn/started",
+                params: { threadId: "thread-1", turn: { id: "turn-1" } },
+            });
+            await runtime.handleNotification(call(100_000, 60_000, 2_000));
+            await runtime.handleNotification(call(150_000, 140_000, 3_000));
+            await runtime.handleNotification({
+                method: "item/completed",
+                params: { threadId: "thread-1", item: { type: "commandExecution", id: "i1" } },
+            });
+            await runtime.handleNotification({
+                method: "item/completed",
+                params: { threadId: "thread-1", item: { type: "agentMessage", id: "i2" } },
+            });
+            // Another thread in the same app-server is a native subagent's: never this worker's cost.
+            await runtime.handleNotification({
+                ...call(900_000, 0, 9_000),
+                params: { ...call(900_000, 0, 9_000).params, threadId: "sub" },
+            });
+            const done = {
+                method: "turn/completed",
+                params: { threadId: "thread-1", turn: { id: "turn-1", durationMs: 42_000 } },
+            };
+            await runtime.handleNotification(done);
+
+            const rows = readWorkerCostRows().filter((row) => row.name === "reviewer");
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                backend: "codex",
+                sessionId: "thread-1",
+                turn: 1,
+                model: "gpt-6.1-sol",
+                effort: "medium",
+                auth: "subscription",
+                durationMs: 42_000,
+                toolCalls: 1,
+                label: "review-loop pr1",
+                outcome: "completed",
+                tokens: { input: 50_000, cacheRead: 200_000, cacheWrite: 0, output: 5_000, reasoning: 2 },
+            });
+            // gpt-6.1-sol per call: 40K x $2 + 60K x $0.10 + 2K x $10, then 10K x $2 + 140K x $0.10 + 3K x $10.
+            expect(rows[0]?.cost.apiEquivalentUsd).toBeCloseTo(0.106 + 0.064, 10);
+            expect(rows[0]?.cost.billedUsd).toBe(0);
+            expect(runtime.turnCostEnvelope(done)).toEqual({
+                cost: expect.stringMatching(
+                    /^cost: \$0\.17 API-equivalent \(subscription, billed \$0\) · as Claude ≈ Opus/
+                ),
+            });
         });
     });
 

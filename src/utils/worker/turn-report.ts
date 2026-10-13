@@ -22,6 +22,8 @@ export interface WorkerTurnReport {
     logPath: string;
     /** The command that renders the transcript, e.g. `tools grok read --name x --format compact`. */
     transcriptHint: string;
+    /** `cost: $0.69 API-equivalent (…)`, as `tools ai-spend` priced the turn; absent when nothing was booked. */
+    costLine?: string;
 }
 
 const STDERR_CHARS = 600;
@@ -98,6 +100,10 @@ export function formatWorkerTurn(report: WorkerTurnReport): FormattedWorkerTurn 
                 text: `turn ${report.turn} changed ${report.worktree.changedThisTurn} path(s); ${report.worktree.dirtyTotal} dirty in total`,
             });
         }
+    }
+
+    if (report.costLine) {
+        status.push({ level: "info", text: report.costLine });
     }
 
     status.push({ level: "dim", text: `transcript: ${report.transcriptHint}` });

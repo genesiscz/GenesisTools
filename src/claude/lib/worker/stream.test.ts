@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseTurnEvents, toWorkerEvents } from "./stream";
+import { claudeTurnUsage, parseTurnEvents, toWorkerEvents } from "./stream";
 
 // Line shapes from a live `claude -p --output-format stream-json --verbose`
 // capture (Claude Code 2.1.238, 2026-09-01); payload text and ids replaced
@@ -60,5 +60,33 @@ describe("claude worker stream", () => {
         const transcript = [init, hook, assistant, assistantToolUse, userToolResult, result].join("\n");
         const kinds = parseTurnEvents(transcript, SESSION).map((event) => event.kind);
         expect(kinds).toEqual(["turn.started", "reasoning", "text", "tool_call", "tool_result", "turn.completed"]);
+    });
+});
+
+describe("claudeTurnUsage", () => {
+    test("one part per model of the result line, and Claude Code's own cost", () => {
+        const resultWithModels = `{"type":"result","subtype":"success","is_error":false,"session_id":"${SESSION}","total_cost_usd":0.5,"usage":{"input_tokens":3},"modelUsage":{"claude-opus-5-5[1m]":{"inputTokens":3,"outputTokens":900,"cacheReadInputTokens":40000,"cacheCreationInputTokens":2000,"thinkingTokens":300,"canonicalModel":"claude-opus-5-5"},"claude-haiku-5-5":{"inputTokens":500,"outputTokens":20,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}`;
+
+        expect(claudeTurnUsage([init, assistant, resultWithModels].join("\n"))).toEqual({
+            model: "claude-opus-5-5",
+            reportedUsd: 0.5,
+            parts: [
+                {
+                    model: "claude-opus-5-5",
+                    tokens: { input: 3, cacheRead: 40000, cacheWrite: 2000, output: 900, reasoning: 300 },
+                },
+                {
+                    model: "claude-haiku-5-5",
+                    tokens: { input: 500, cacheRead: 0, cacheWrite: 0, output: 20, reasoning: 0 },
+                },
+            ],
+        });
+    });
+
+    test("without modelUsage the usage line is one part of an unnamed model; no result line is no usage", () => {
+        expect(claudeTurnUsage(result).parts).toEqual([
+            { model: null, tokens: { input: 10, cacheRead: 0, cacheWrite: 0, output: 121, reasoning: 0 } },
+        ]);
+        expect(claudeTurnUsage([init, assistant].join("\n"))).toEqual({ parts: null });
     });
 });

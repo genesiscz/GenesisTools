@@ -24,6 +24,8 @@ export interface GrokSessionMeta {
     auth?: "subscription" | "api-key";
     /** The user's personal surfaces the worker loads; absent means both on (sessions from before the flag). */
     surfaces?: WorkerSurfaces;
+    /** The `spawn --label` tag every cost-ledger row of the session carries. */
+    label?: string;
     turns: number;
     createdAt: string;
     /** The agents-bus swarm of the session that started this worker, if any. */

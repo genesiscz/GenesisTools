@@ -87,6 +87,15 @@ describe("formatWorkerTurn", () => {
         expect(some.status[1]).toEqual({ level: "info", text: "turn 1 changed 2 path(s); 3 dirty in total" });
     });
 
+    test("the booked cost line sits before the transcript hint, and is absent when nothing was booked", () => {
+        const line =
+            "cost: $0.17 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $0.30 / Sonnet $0.17 (estimate)";
+        const texts = formatWorkerTurn(report({ costLine: line })).status.map((entry) => entry.text);
+
+        expect(texts.indexOf(line)).toBe(texts.findIndex((text) => text.startsWith("transcript:")) - 1);
+        expect(formatWorkerTurn(report({})).status.some((entry) => entry.text.startsWith("cost:"))).toBe(false);
+    });
+
     test("stderr on a completed turn is a warning, not an error", () => {
         const formatted = formatWorkerTurn(report({ stderr: "deprecated flag" }));
         expect(formatted.status[1]).toEqual({ level: "warn", text: "stderr: deprecated flag" });

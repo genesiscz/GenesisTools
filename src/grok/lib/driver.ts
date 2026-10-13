@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
+import { bookedTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { logger } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
@@ -113,6 +115,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
             readOnly: extras.readonly === true,
             ...(extras.workerHome === undefined ? {} : { workerHome: extras.workerHome }),
             ...(auth === undefined ? {} : { auth }),
+            ...(input.label === undefined ? {} : { label: input.label }),
             surfaces: input.surfaces,
         });
 
@@ -179,6 +182,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
     async readDefault(meta, turn) {
         const logPath = requireTurnLog(meta, turn);
         const errPath = turnErrPath(meta.name, turn);
+        const booked = bookedTurnCost({ backend: "grok", name: meta.name, sessionId: meta.sessionId, turn });
         printTurn({
             meta,
             turn,
@@ -189,10 +193,13 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
             errPath,
             // A replay has no before/after snapshot, so it cannot honestly claim one.
             worktree: null,
+            ...(booked ? { costLine: formatCostLine(booked.cost, "grok") } : {}),
         });
 
         return Promise.resolve();
     },
+
+    costSessionId: (meta) => meta.sessionId,
 
     rowHeaders: ["NAME", "TURNS", "MODE", "LAST TURN", "SESSION ID", "CWD"],
 

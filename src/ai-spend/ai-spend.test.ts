@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -23,6 +23,13 @@ import type { SpendEvent } from "./lib/reports/types";
 import { walkFiles } from "./lib/reports/walk";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
+import { formatCostLine, workerCostCard } from "./lib/workers/cost";
+import {
+    appendWorkerCostRows,
+    buildWorkerCostRow,
+    readWorkerCostRows,
+    workerCostLedgerPath,
+} from "./lib/workers/ledger";
 
 describe("parseTranscriptLine", () => {
     const assistantLine = SafeJSON.stringify({
@@ -803,5 +810,134 @@ describe("loadEventsParallel", () => {
         const home = homeWithClaudeAndCodex();
 
         expect((await loadEventsParallel({ home, sources: ["claude"] })).map((event) => event.id)).toEqual(["m-par"]);
+    });
+});
+
+describe("worker cost card", () => {
+    const at = new Date("2026-10-13T22:00:00.000Z");
+    const million = { input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, output: 1_000_000, reasoning: 0 };
+
+    it("prices cache reads at the cache rate and the Claude counterfactual from the same table", () => {
+        // gpt-6.1-sol: $2 input, $0.10 cache read, $10 output. Opus 5.5: $4 / $0.20 / $20. Sonnet 5.5: $2 / $0.10 / $10.
+        const card = workerCostCard({
+            backend: "codex",
+            sessionId: "thread-1",
+            parts: [{ model: "gpt-6.1-sol", tokens: million }],
+            auth: "api-key",
+            at,
+        });
+
+        expect(card.apiEquivalentUsd).toBeCloseTo(12.1, 10);
+        expect(card.billedUsd).toBeCloseTo(12.1, 10);
+        expect(card.claudeEquivalent).toMatchObject({ estimate: true, opusModel: "claude-opus-5-5" });
+        expect(card.claudeEquivalent.opusUsd).toBeCloseTo(24.2, 10);
+        expect(card.claudeEquivalent.sonnetUsd).toBeCloseTo(12.1, 10);
+    });
+
+    it("a subscription login bills 0 while the API-equivalent stays the list price", () => {
+        const card = workerCostCard({
+            backend: "codex",
+            sessionId: "thread-1",
+            parts: [{ model: "gpt-6.1-sol", tokens: million }],
+            auth: "subscription",
+            at,
+        });
+
+        expect(card.billedUsd).toBe(0);
+        expect(card.apiEquivalentUsd).toBeCloseTo(12.1, 10);
+        expect(formatCostLine(card, "codex")).toBe(
+            "cost: $12.10 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $24.20 / Sonnet $12.10 (estimate)"
+        );
+    });
+
+    it("a model with no price is unknown, never 0, and so is what an API key billed", () => {
+        const card = workerCostCard({
+            backend: "grok",
+            sessionId: "s-1",
+            parts: [{ model: "grok-0-unpriced", tokens: million }],
+            auth: "api-key",
+            at,
+        });
+
+        expect(card.apiEquivalentUsd).toBeNull();
+        expect(card.billedUsd).toBeNull();
+        expect(card.unpriced).toBe("no list price for grok-0-unpriced");
+        expect(card.claudeEquivalent.opusUsd).toBeCloseTo(24.2, 10);
+    });
+
+    it("bands one request by its own prompt length, never a sum of requests", () => {
+        // 300K of context in ONE request crosses gpt-6.1-sol's 272K band: $4 / $0.20 / $15.
+        const big = { input: 100_000, cacheRead: 200_000, cacheWrite: 0, output: 10_000, reasoning: 0 };
+        const one = workerCostCard({
+            backend: "codex",
+            sessionId: "t",
+            parts: [{ model: "gpt-6.1-sol", tokens: big, singleRequest: true }],
+            auth: "subscription",
+            at,
+        });
+        const half = { input: 50_000, cacheRead: 100_000, cacheWrite: 0, output: 5_000, reasoning: 0 };
+        const two = workerCostCard({
+            backend: "codex",
+            sessionId: "t",
+            parts: [
+                { model: "gpt-6.1-sol", tokens: half, singleRequest: true },
+                { model: "gpt-6.1-sol", tokens: half, singleRequest: true },
+            ],
+            auth: "subscription",
+            at,
+        });
+
+        expect(one.apiEquivalentUsd).toBeCloseTo(0.1 * 4 + 0.2 * 0.2 + 0.01 * 15, 10);
+        expect(one.longContextRequests).toBe(1);
+        expect(two.apiEquivalentUsd).toBeCloseTo(0.1 * 2 + 0.2 * 0.1 + 0.01 * 10, 10);
+        expect(two.longContextRequests).toBe(0);
+    });
+
+    it("grok's recorded cost is the API-equivalent, as in ai-spend's grok reports", () => {
+        const card = workerCostCard({
+            backend: "grok",
+            sessionId: "s-1",
+            parts: [{ model: "grok-4.7", tokens: million }],
+            auth: "subscription",
+            reportedUsd: 2.44,
+            at,
+        });
+
+        expect(card).toMatchObject({ apiEquivalentUsd: 2.44, basis: "recorded", billedUsd: 0, reportedUsd: 2.44 });
+    });
+});
+
+describe("worker cost ledger", () => {
+    it("appends rows without touching the ones already there", () => {
+        const row = (turn: number) =>
+            buildWorkerCostRow({
+                backend: "claude",
+                name: "ledger-fixture",
+                sessionId: "00000000-0000-4000-8000-0000000000bb",
+                turn,
+                auth: "subscription",
+                account: "work",
+                startedAt: new Date("2026-10-13T10:00:00.000Z"),
+                endedAt: new Date("2026-10-13T10:01:30.000Z"),
+                toolCalls: 3,
+                parts: [
+                    {
+                        model: "claude-sonnet-5-5",
+                        tokens: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5, reasoning: 0 },
+                    },
+                ],
+                cwd: "/w",
+                label: " review-loop pr1 ",
+            });
+        const before = readWorkerCostRows().length;
+
+        appendWorkerCostRows([row(1)]);
+        appendWorkerCostRows([row(2)]);
+        const rows = readWorkerCostRows().filter((entry) => entry.name === "ledger-fixture");
+
+        expect(readWorkerCostRows().length).toBe(before + 2);
+        expect(rows.map((entry) => entry.turn)).toEqual([1, 2]);
+        expect(rows[0]).toMatchObject({ durationMs: 90_000, label: "review-loop pr1", account: "work" });
+        expect(workerCostLedgerPath()).not.toContain(`${homedir()}/.genesis-tools`);
     });
 });

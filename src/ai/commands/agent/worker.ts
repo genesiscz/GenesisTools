@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { sessionCostSummary } from "@app/ai-spend/lib/workers/ledger";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { suggestCommand } from "@genesiscz/utils/cli";
@@ -99,6 +100,7 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         .option("--prompt <text>", "Inline brief")
         .option("--prompt-file <path>", "Read the brief from a file")
         .option("-m, --model <model>", "Model for the session")
+        .option("--label <text>", "Tag every cost-ledger row of the session (e.g. 'review-loop pr511')")
         .option("--skills", "The worker loads your personal skills")
         .option("--no-skills", "The worker hides your personal skills")
         .option("--rules", "The worker loads your personal rules")
@@ -142,6 +144,7 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
                 ...(prompt === undefined ? {} : { prompt }),
                 ...(flags.model === undefined ? {} : { model: flags.model as string }),
                 ...(flags.account === undefined ? {} : { account: flags.account as string }),
+                ...(typeof flags.label === "string" && flags.label.trim() ? { label: flags.label.trim() } : {}),
                 surfaces: surfacesFromFlags({
                     skills: flags.skills as boolean | undefined,
                     rules: flags.rules as boolean | undefined,
@@ -322,11 +325,17 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
             const meta = await requireMeta(flags.name);
             const live = await driver.liveness(meta);
             const row = jsonRow(meta);
+            const cost = sessionCostSummary({
+                backend: driver.backend,
+                name: meta.name,
+                sessionId: driver.costSessionId?.(meta),
+            });
             const payload = {
                 ...(typeof row === "object" && row !== null ? row : { meta: row }),
                 running: live.running,
                 runningPids: live.pids ?? [],
                 ...(live.detail === undefined ? {} : { liveness: live.detail }),
+                cost,
             };
 
             // `--json` has to MEAN something here. Writing the payload unconditionally made the
@@ -344,6 +353,10 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
                 }${live.detail ? pc.dim(` — ${live.detail}`) : ""}`
             );
             out.printlnErr(pc.dim(`cwd ${meta.cwd}`));
+
+            if (cost) {
+                out.printlnErr(pc.dim(`last turn ${cost.lastTurn.line}`));
+            }
         });
 
     parent

@@ -195,7 +195,8 @@ export class AgentsBridge {
         return this.agentId;
     }
 
-    async publish(notification: RpcNotification): Promise<void> {
+    /** `extra` rides on the envelope, e.g. the `cost` line of a finished turn. */
+    async publish(notification: RpcNotification, extra?: Record<string, unknown>): Promise<void> {
         const envelope = eventEnvelope(notification);
         if (!envelope) {
             return;
@@ -204,7 +205,7 @@ export class AgentsBridge {
         await this.enqueue({
             from: this.agentName,
             to: "lead",
-            body: SafeJSON.stringify(envelope, { strict: true }),
+            body: SafeJSON.stringify(extra ? { ...envelope, ...extra } : envelope, { strict: true }),
             session: this.session,
         });
     }

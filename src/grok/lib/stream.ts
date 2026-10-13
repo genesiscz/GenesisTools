@@ -1,1 +1,1 @@
-export { type GrokToolCall, type GrokTurnSummary, parseTurnLog } from "@genesiscz/utils/grok/stream";
+export { type GrokToolCall, type GrokTurnSummary, grokTurnUsage, parseTurnLog } from "@genesiscz/utils/grok/stream";

@@ -74,6 +74,8 @@ export interface CodexSessionMeta {
     lastAgentSeq?: number;
     /** The Codex Desktop project the thread was filed under, once it was. */
     desktopProject?: { id: string; name: string };
+    /** The `spawn --label` tag every cost-ledger row of the session carries. */
+    label?: string;
 }
 
 export interface CodexEventRecord {

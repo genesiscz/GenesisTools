@@ -128,6 +128,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             ...(extras.session === undefined ? {} : { rendezvousSession: extras.session }),
             ...(extras.writableRoot === undefined ? {} : { writableRoots: extras.writableRoot }),
             ...(extras.project === undefined ? {} : { project: extras.project }),
+            ...(input.label === undefined ? {} : { label: input.label }),
         });
         const warning = schemaDriftWarning(meta.codexVersion);
 
@@ -215,4 +216,5 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
     },
 
     jsonRow: (meta) => ({ ...meta, derivedStatus: deriveSessionStatus(meta) }),
+    costSessionId: (meta) => meta.threadId,
 };

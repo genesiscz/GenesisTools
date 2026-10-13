@@ -1,5 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { WorkerUsagePart } from "@genesiscz/utils/worker/cost";
 import type { WorkerEvent, WorkerUsage } from "@genesiscz/utils/worker/events";
 
 const log = logger.child({ component: "claude:worker:stream" });
@@ -162,4 +163,92 @@ export function parseTurnEvents(text: string, sessionId: string): WorkerEvent[] 
     }
 
     return events;
+}
+
+export interface ClaudeTurnUsage {
+    /** One part per model the turn used; null when the turn wrote no `result` line with usage. */
+    parts: WorkerUsagePart[] | null;
+    /** The `result` line's `total_cost_usd`: Claude Code's own figure for this invocation. */
+    reportedUsd?: number;
+    /** The model the turn mostly ran on: the `modelUsage` entry with the most output. */
+    model?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * What one finished `claude -p` turn used, for the cost ledger. The `result` line is per
+ * invocation (a resumed turn reports its own tokens, not the session's), and its `modelUsage`
+ * splits them by model: Claude Code runs side calls on a smaller model, so pricing the whole
+ * turn at the main model would be wrong. Anthropic's `input_tokens` already excludes cache
+ * reads and writes.
+ */
+export function claudeTurnUsage(text: string): ClaudeTurnUsage {
+    let result: Record<string, unknown> | null = null;
+
+    for (const line of text.split("\n")) {
+        if (!line.includes('"type":"result"')) {
+            continue;
+        }
+
+        try {
+            const parsed = SafeJSON.parse(line, { strict: true });
+
+            if (isRecord(parsed) && parsed.type === "result") {
+                result = parsed;
+            }
+        } catch (err) {
+            log.debug({ err, line: line.slice(0, 200) }, "skipping malformed claude result line");
+        }
+    }
+
+    if (!result) {
+        return { parts: null };
+    }
+
+    const reportedUsd = num(result.total_cost_usd);
+    const modelUsage = isRecord(result.modelUsage) ? result.modelUsage : {};
+    const parts: WorkerUsagePart[] = [];
+
+    for (const [key, value] of Object.entries(modelUsage)) {
+        if (!isRecord(value)) {
+            continue;
+        }
+
+        parts.push({
+            model: typeof value.canonicalModel === "string" ? value.canonicalModel : key,
+            tokens: {
+                input: num(value.inputTokens) ?? 0,
+                cacheRead: num(value.cacheReadInputTokens) ?? 0,
+                cacheWrite: num(value.cacheCreationInputTokens) ?? 0,
+                output: num(value.outputTokens) ?? 0,
+                reasoning: num(value.thinkingTokens) ?? 0,
+            },
+        });
+    }
+
+    const usage = isRecord(result.usage) ? result.usage : null;
+
+    if (parts.length === 0 && usage) {
+        parts.push({
+            model: null,
+            tokens: {
+                input: num(usage.input_tokens) ?? 0,
+                cacheRead: num(usage.cache_read_input_tokens) ?? 0,
+                cacheWrite: num(usage.cache_creation_input_tokens) ?? 0,
+                output: num(usage.output_tokens) ?? 0,
+                reasoning: 0,
+            },
+        });
+    }
+
+    const main = [...parts].sort((a, b) => b.tokens.output - a.tokens.output)[0]?.model ?? undefined;
+
+    return {
+        parts: parts.length > 0 ? parts : null,
+        ...(reportedUsd === undefined ? {} : { reportedUsd }),
+        ...(main ? { model: main } : {}),
+    };
 }

@@ -1,6 +1,8 @@
 import { closeSync, existsSync, openSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
+import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -21,7 +23,7 @@ import {
 import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
 import { sessionMetaPath, turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
-import { type GrokTurnSummary, parseTurnLog } from "./stream";
+import { type GrokTurnSummary, grokTurnUsage, parseTurnLog } from "./stream";
 import { type WorktreeDelta, worktreeDelta, worktreeState } from "./worktree";
 
 const log = logger.child({ component: "grok:worker" });
@@ -76,6 +78,8 @@ export interface RunSessionOptions {
     workerHome?: string;
     auth?: GrokAuthMode;
     surfaces?: WorkerSurfaces;
+    /** The `spawn --label` tag every cost-ledger row of the session carries. */
+    label?: string;
     /**
      * Present only so it can be REFUSED. Grok has no account to pin, and both spawn doors pass
      * whatever the user named here so the single guard below sees it.
@@ -103,6 +107,8 @@ export interface TurnResult {
     errPath: string;
     /** What the turn changed in cwd. Null when cwd is not a git repo. */
     worktree: WorktreeDelta | null;
+    /** The ledger's cost line for the turn; absent when nothing was booked (a replay, a failed booking). */
+    costLine?: string;
 }
 
 /**
@@ -370,6 +376,7 @@ async function runTurn({
 
         // Snapshot before the spawn so the report can say whether the turn did anything.
         const worktreeBefore = worktreeState(meta.cwd);
+        const startedAt = new Date();
 
         let exitCode: number | null = null;
         try {
@@ -412,7 +419,8 @@ async function runTurn({
         }
 
         const worktree = worktreeDelta(worktreeBefore, worktreeState(meta.cwd));
-        const summary = parseTurnLog(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+        const transcript = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";
+        const summary = parseTurnLog(transcript);
         const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
         const updated = store.updateMeta(meta.name, {
             lastTurn: { turn, ended: summary.ended, exitCode, at: new Date().toISOString() },
@@ -431,7 +439,35 @@ async function runTurn({
             "grok turn finished"
         );
 
-        return { meta: updated, turn, summary, exitCode, stderr, logPath, errPath, worktree };
+        const usage = grokTurnUsage(transcript);
+        const booked = recordWorkerTurnCost({
+            backend: "grok",
+            name: meta.name,
+            sessionId: meta.sessionId,
+            turn,
+            model: usage.model ?? meta.model ?? null,
+            auth: authMode,
+            startedAt,
+            endedAt: new Date(),
+            toolCalls: summary.toolCalls.length,
+            parts: usage.parts,
+            reportedUsd: usage.reportedUsd,
+            cwd: meta.cwd,
+            label: meta.label,
+            outcome: summary.ended ? "completed" : "failed",
+        });
+
+        return {
+            meta: updated,
+            turn,
+            summary,
+            exitCode,
+            stderr,
+            logPath,
+            errPath,
+            worktree,
+            ...(booked ? { costLine: formatCostLine(booked.cost, "grok") } : {}),
+        };
     });
 }
 
@@ -490,6 +526,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         readOnly: options.readOnly,
         auth: options.auth,
         surfaces: options.surfaces ?? DEFAULT_SURFACES,
+        ...(options.label ? { label: options.label } : {}),
         turns: 0,
         sessionStarted: false,
         createdAt: new Date().toISOString(),
@@ -575,6 +612,7 @@ export function grokTurnReport(result: TurnResult): WorkerTurnReport {
             result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
         logPath: result.logPath,
         transcriptHint: `${toolCommand("grok read")} --name ${result.meta.name} --turn ${result.turn} --format compact`,
+        ...(result.costLine ? { costLine: result.costLine } : {}),
     };
 }
 

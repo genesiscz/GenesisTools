@@ -79,7 +79,7 @@ async function run(): Promise<void> {
                 return;
             }
 
-            void bridge?.publish(notification).catch((err) => {
+            void bridge?.publish(notification, runtime?.turnCostEnvelope(notification)).catch((err) => {
                 const reason = err instanceof Error ? err.message : String(err);
                 const fields = { err, method: notification.method };
 

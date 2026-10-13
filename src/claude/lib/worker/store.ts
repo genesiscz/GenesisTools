@@ -25,6 +25,8 @@ export interface ClaudeWorkerMeta {
     model?: string;
     /** Turn 1 ran with --safe-mode. Every resume repeats it, or the worker's instruction and tool boundary widens silently. */
     safeMode?: boolean;
+    /** The `spawn --label` tag every cost-ledger row of the session carries. */
+    label?: string;
     turns: number;
     createdAt: string;
     lastTurn?: ClaudeWorkerTurnRecord;
