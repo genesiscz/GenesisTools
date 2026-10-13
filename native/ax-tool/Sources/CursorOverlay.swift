@@ -328,7 +328,11 @@ final class CursorOverlayHost {
         let key = [event.label, event.note, event.session, event.button, event.background ? "bg" : "fg", event.target]
             .map { $0 ?? "" }.joined(separator: "\u{1f}")
         scheduleBadgeFade(hasNote: event.note != nil)
-        guard key != badgeKey || badge.opacity == 0 else { return }
+        guard key != badgeKey || badge.opacity == 0 else {
+            // Same text, but the cursor may now be near the other screen edge, so the side is chosen again.
+            badge.frame.origin = badgeOrigin(width: badge.frame.width, height: badge.frame.height)
+            return
+        }
         badgeKey = key
         badge.sublayers?.forEach { $0.removeFromSuperlayer() }
         badge.removeAllAnimations()

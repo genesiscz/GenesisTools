@@ -71,14 +71,14 @@ private func workflowFailure(_ message: String, category: SnapshotRefusal = .ref
     errorExit(message)
 }
 
-private func workflowFailure(_ error: Error) -> Never {
+private func workflowFailure(_ error: Error, extras: [String: Any] = [:]) -> Never {
     if let takeover = error as? UserTakeoverError {
         workflowDispatchState = takeover.dispatched ? "uncertain" : "not_started"
-        workflowFailure(takeover.localizedDescription, category: takeover.category)
+        workflowFailure(takeover.localizedDescription, category: takeover.category, extras: extras)
     }
 
     let category = (error as? SnapshotError)?.category ?? (error as? SnapshotDispatchError)?.category ?? (error as? VisualCaptureError)?.category ?? .refused
-    workflowFailure(error.localizedDescription, category: category)
+    workflowFailure(error.localizedDescription, category: category, extras: extras)
 }
 
 /// A refusal that omits the rectangle it was compared against sends the caller hunting: a window
@@ -421,23 +421,10 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
 /// with no menu while reporting success.
 private func workflowAwaitOpenedMenu(window: ObservedWindow, pid: pid_t, owner: Int, element: AXUIElement,
                                      axAction: String, depth: Int, scope: String) -> [String: Any] {
-    // A contextual menu is not guaranteed to live under the window: Accessibility may expose it
-    // as a direct child of the APPLICATION. Reading the window alone then saw "nothing open", and
-    // the retry pressed again and closed the menu the first press had opened. So the application's
-    // own children are read too, and an application that cannot be read counts as "a menu may be
-    // open", for the same reason an unreadable window tree does.
-    func appLevelMenuOpen() -> Bool {
-        var raw: CFTypeRef?
-        let read = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXChildrenAttribute as CFString, &raw)
-        guard read == .success, let children = raw as? [AXUIElement] else { return true }
-
-        return children.contains { axStringAttribute($0, "AXRole") == "AXMenu" }
-    }
-
     func state() -> (ours: Bool, any: Bool) {
         guard let tree = try? observedTree(window.ax, depth: depth, scope: scope) else { return (false, true) }
 
-        return (openMenuIndex(owner: owner, rows: tree.rows) != nil, treeCarriesOpenMenu(tree.rows) || appLevelMenuOpen())
+        return (openMenuIndex(owner: owner, rows: tree.rows) != nil, treeCarriesOpenMenu(tree.rows) || applicationShowsMenu(pid: pid))
     }
 
     func waitForOurs(_ seconds: TimeInterval) -> (ours: Bool, any: Bool) {
@@ -467,6 +454,41 @@ private func workflowAwaitOpenedMenu(window: ObservedWindow, pid: pid_t, owner: 
     let second = waitForOurs(1.5)
 
     return ["menuOpened": second.ours, "menuPressRetried": true]
+}
+
+/// A contextual menu is not guaranteed to live under the window: Accessibility may expose it as a
+/// direct child of the APPLICATION. Reading the window alone then saw "nothing open", and a retry
+/// pressed again and closed the menu the first press had opened. An application that cannot be read
+/// counts as "a menu may be open", for the same reason an unreadable window tree does.
+private func applicationShowsMenu(pid: pid_t) -> Bool {
+    var raw: CFTypeRef?
+    let read = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXChildrenAttribute as CFString, &raw)
+    guard read == .success, let children = raw as? [AXUIElement] else { return true }
+
+    return children.contains { axStringAttribute($0, "AXRole") == "AXMenu" }
+}
+
+/// Whether a context menu shows after AXShowMenu: at application level, where AppKit puts one, or in
+/// the window. Never retried: a second AXShowMenu is not a way to learn whether the first one worked,
+/// and the AX call itself cannot say, since it returns only when the menu closes.
+private func workflowContextMenuAppears(window: ObservedWindow, pid: pid_t, depth: Int, scope: String,
+                                        within seconds: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while true {
+        if applicationShowsMenu(pid: pid) {
+            return true
+        }
+
+        if let tree = try? observedTree(window.ax, depth: depth, scope: scope), treeCarriesOpenMenu(tree.rows) {
+            return true
+        }
+
+        guard Date() < deadline else {
+            return false
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+    }
 }
 
 /// What `--refresh` is waiting for, when the action it follows is known to start something.
@@ -1171,6 +1193,8 @@ func cmdAct(appName _: String) {
     }
     var actionExtras: [String: Any] = prepared ? ["prepared":true] : [:]
     var actionOK = true
+    // Set when a right-click's AXShowMenu was seen opening a menu, so --refresh waits for that menu.
+    var contextMenuSeen = false
     workflowDispatchState = "uncertain"
     // A menu-opening action must PROVE it opened a menu. Merging `menuOpened: false` into the
     // extras of an otherwise successful payload reported the failure as metadata, so a caller that
@@ -1625,6 +1649,15 @@ func cmdAct(appName _: String) {
                     }
                 })
                 actionExtras["delivery"] = "AXShowMenu"
+                // The timeout above also fires for an app that hangs, so success needs a menu seen open,
+                // as the press path's requireOpenedMenu does.
+                contextMenuSeen = workflowContextMenuAppears(window: window, pid: pid, depth: token.depth,
+                                                             scope: token.effectiveScope, within: 1)
+                actionExtras["menuOpened"] = contextMenuSeen
+                if !contextMenuSeen {
+                    actionOK = false
+                    actionExtras["error"] = "AXShowMenu was dispatched but no menu was seen opening; the outcome is uncertain, inspect before retrying"
+                }
             } else {
                 let button = workflowArgument("--button") ?? "left"
                 let types: [String: (NSEvent.EventType, NSEvent.EventType)] = [
@@ -1842,13 +1875,18 @@ func cmdAct(appName _: String) {
         // so the agent went on to reuse a token that no longer matched the tree.
         // 3 seconds, not the ordinary 1: a menu that has to be built costs more than a label that
         // has to change, and waiting is cheap next to returning a tree the menu is missing from.
-        let awaiting = opensMenu
-            ? SettleExpectation(name: "the opened menu", timeout: 3, holds: { treeCarriesOpenMenu($0) })
+        // A right-click's context menu usually lives at application level, outside the window tree the
+        // refresh reads, so for it a menu there counts as arrived too.
+        let contextMenu = contextMenuSeen
+        let awaiting = opensMenu || contextMenu
+            ? SettleExpectation(name: "the opened menu", timeout: 3, holds: {
+                treeCarriesOpenMenu($0) || (contextMenu && applicationShowsMenu(pid: pid))
+            })
             : nil
         // The refresh is a courtesy after a dispatched action, so it gets a phase budget of its own:
         // a sheet the action opened can make the window's tree slow enough to eat the caller's
         // whole deadline, and the dispatched result must still come back.
-        workflowPhaseDeadline = ProcessInfo.processInfo.systemUptime + (opensMenu ? 5 : 4)
+        workflowPhaseDeadline = ProcessInfo.processInfo.systemUptime + (opensMenu || contextMenu ? 5 : 4)
         let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token,
                                        awaiting: awaiting)
         let refreshed = (after["ok"] as? Bool) ?? false
@@ -1878,7 +1916,9 @@ func cmdAct(appName _: String) {
     if !actionOK { exit(1) }
     }
     } catch {
-        workflowFailure(error)
+        // A right-click that failed after its dispatch (an AX error from AXShowMenu) may still have
+        // let the target activate itself, so the front goes back before the failure is reported.
+        workflowFailure(error, extras: secondaryClick ? secondaryClickFrontGuard(before: activeBefore, target: pid) : [:])
     }
 }
 

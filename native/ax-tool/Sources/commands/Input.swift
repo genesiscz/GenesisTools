@@ -257,7 +257,12 @@ func backgroundRightClick(appName: String, pid: pid_t, double: Bool) {
             // A context menu holds the AX call until it closes; a timeout means the menu is open.
             let error = performActionWithTimeout(el, action: "AXShowMenu", timeoutMs: 600)
             guard error == .success else {
-                errorExit("AXShowMenu failed (AX \(error.rawValue)); a menu may or may not be open, inspect before retrying")
+                // The target may have activated itself before the AX error came back, so the front goes
+                // back first, as it does after a successful right-click.
+                var failure: [String: Any] = ["ok": false, "error": "AXShowMenu failed (AX \(error.rawValue)); a menu may or may not be open, inspect before retrying"]
+                failure.merge(secondaryClickFrontGuard(before: frontBefore, target: pid)) { _, new in new }
+                jsonOutput(failure)
+                exit(1)
             }
             result["delivery"] = "AXShowMenu"
         } else {
