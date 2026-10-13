@@ -101,6 +101,22 @@ describe("hubPrs / hubPr", () => {
         expect(detail).toMatchObject({ number: 7, body: "why", repoRoot: repo.dir, localWorktree: worktree });
     });
 
+    it("skips a clone whose origin is a local folder instead of reporting it as an error", async () => {
+        const source = await TestRepo.create({ prefix: "gt-review-prs-src-" });
+        repos.push(source);
+        await source.git(["remote", "add", "origin", "git@github.com:o/r.git"]);
+        const clone = await TestRepo.create({ prefix: "gt-review-prs-clone-" });
+        repos.push(clone);
+        await clone.git(["remote", "add", "origin", source.dir]);
+        const calls: string[][] = [];
+
+        const result = await hubPrs({ paths: [source.dir, clone.dir], runner: fakeGh(calls) });
+
+        expect(result.repos).toHaveLength(1);
+        expect(result.repos[0].error).toBeNull();
+        expect(result.skipped).toEqual([{ path: clone.dir, reason: `origin is a local folder: ${source.dir}` }]);
+    });
+
     it("passes the search query to the host", async () => {
         const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
         repos.push(repo);

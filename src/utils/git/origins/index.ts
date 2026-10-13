@@ -1,5 +1,5 @@
 export type { OriginInfo } from "./detector";
-export { classifyOriginUrl, detectOrigin, originDriver } from "./detector";
+export { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
 export { ghDriver, parseGhPrList } from "./gh";
 export { glabDriver, parseGlabMrList } from "./glab";
 export type {

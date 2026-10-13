@@ -47,6 +47,14 @@ export function classifyOriginUrl(url: string): OriginInfo {
     return { url: trimmed, host, kind: null };
 }
 
+/**
+ * A remote that is a folder on this machine (`/path/repo`, `~/repo`, `../repo`, `file:///path`, `C:\repo`): a
+ * clone of a local checkout. It has no host, so no forge can list its pull requests.
+ */
+export function isLocalRemoteUrl(url: string): boolean {
+    return /^(\/|~|\.{1,2}[/\\]|file:\/\/|[A-Za-z]:[/\\])/.test(url.trim());
+}
+
 /** The `origin` remote of `cwd`, classified; null when there is no origin. */
 export async function detectOrigin(cwd: string): Promise<OriginInfo | null> {
     const res = await new Executor({ prefix: "git", cwd }).exec(["remote", "get-url", "origin"]);

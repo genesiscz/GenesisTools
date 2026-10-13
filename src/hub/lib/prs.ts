@@ -24,6 +24,7 @@ import {
 } from "@genesiscz/utils/git";
 import { branchMentions, localBranchNames } from "@genesiscz/utils/git/branch-names";
 import { projectRefFromUrl as checkoutProjectRef, rankCheckouts } from "@genesiscz/utils/git/local-checkouts";
+import { isLocalRemoteUrl } from "@genesiscz/utils/git/origins";
 import { type RepoFacts, repoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -208,6 +209,13 @@ function groupByOrigin(facts: RepoFacts[]): { groups: ProjectGroup[]; skipped: H
     for (const fact of facts) {
         if (!fact.root) {
             skipped.push({ path: fact.path, reason: "not a git checkout" });
+            continue;
+        }
+
+        // A clone of a local checkout (a scratch `git clone /path/repo`): no forge lists its pull requests, and the
+        // checkout it came from is listed under its own origin. The PRs view showed it as an error (2026-10-13).
+        if (fact.origin && isLocalRemoteUrl(fact.origin.url)) {
+            skipped.push({ path: fact.path, reason: `origin is a local folder: ${fact.origin.url}` });
             continue;
         }
 
