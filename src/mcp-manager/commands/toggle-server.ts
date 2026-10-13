@@ -93,7 +93,7 @@ async function togglePluginServers(args: {
     }
 
     if (applied) {
-        logger.info("Running Claude Code and Codex sessions keep their MCP servers until they restart.");
+        logger.info("Running Claude Code, Codex and Grok sessions keep their MCP servers until they restart.");
     }
 
     return [...handled];

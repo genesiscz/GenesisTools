@@ -11,6 +11,7 @@ setupStorageSandbox();
 
 const { ClaudeProvider } = await import("@app/mcp-manager/utils/providers/claude.js");
 const { CodexProvider } = await import("@app/mcp-manager/utils/providers/codex.js");
+const { GrokProvider } = await import("@app/mcp-manager/utils/providers/grok.js");
 const { syncServers } = await import("../sync.js");
 const { syncFromProviders } = await import("../sync-from-providers.js");
 const { renameServer } = await import("../rename.js");
@@ -509,6 +510,20 @@ describe("claude provider TRUE global disable", () => {
 
         const readCodexText = (): string => readFileSync(join(homeDir, ".codex", "config.toml"), "utf-8");
 
+        /** Grok loads the Claude-enabled expo plugin through its Claude compatibility; nothing names it in Grok's own file. */
+        const seedGrokConfig = (): string => {
+            const text = TOML.stringify({ disabled_mcp_servers: ["pencil"] });
+            mkdirSync(join(homeDir, ".grok"), { recursive: true });
+            writeFileSync(join(homeDir, ".grok", "config.toml"), text);
+            return text;
+        };
+
+        const readGrok = () =>
+            TOML.parse(readFileSync(join(homeDir, ".grok", "config.toml"), "utf-8")) as {
+                disabled_mcp_servers?: string[];
+                mcp_servers?: Record<string, unknown>;
+            };
+
         it("lists only the servers of enabled plugins, from the user-scope install", async () => {
             seedClaudePlugins();
 
@@ -553,16 +568,20 @@ describe("claude provider TRUE global disable", () => {
             expect(readSettings().deniedMcpServers).toEqual([{ serverUrl: "https://elsewhere.test/*" }]);
         });
 
-        it("disable/enable commands switch the plugin server in Claude and Codex, and sync keeps both switches", async () => {
+        it("disable/enable commands switch the plugin server in Claude, Codex and Grok, and sync keeps every switch", async () => {
             writeClaudeJson(claudeFixture());
             const unified = unifiedFixture();
             unified.mcpServers.serena._meta = { enabled: { claude: true, codex: true } };
             await writeUnified(unified);
             const original = seedClaudePlugins();
             seedCodexPlugin();
-            const providers = () => [new ClaudeProvider(), new CodexProvider()];
+            seedGrokConfig();
+            const providers = () => [new ClaudeProvider(), new CodexProvider(), new GrokProvider()];
 
             await disableCommand("expo", providers(), {});
+
+            expect(readGrok().disabled_mcp_servers).toEqual(["pencil", "expo"]);
+            expect(readGrok().mcp_servers?.expo).toBeUndefined();
 
             expect(readSettings().deniedMcpServers).toEqual([{ serverName: "plugin:expo:expo" }]);
             const codex = TOML.parse(readCodexText()) as {
@@ -588,6 +607,9 @@ describe("claude provider TRUE global disable", () => {
             };
             expect(synced.mcp_servers?.serena).toBeDefined();
             expect(synced.mcp_servers?.expo).toBeUndefined();
+            expect(readGrok().mcp_servers?.serena).toBeDefined(); // the Grok sync ran too
+            expect(readGrok().disabled_mcp_servers).toEqual(["pencil", "expo"]);
+            expect(readGrok().mcp_servers?.expo).toBeUndefined();
             expect(synced.plugins?.["expo@market"]).toEqual({
                 enabled: true,
                 mcp_servers: { expo: { enabled: false } },
@@ -598,6 +620,24 @@ describe("claude provider TRUE global disable", () => {
             expect(readFileSync(settingsPath(), "utf-8")).toBe(original);
             const enabled = TOML.parse(readCodexText()) as { plugins?: Record<string, unknown> };
             expect(enabled.plugins?.["expo@market"]).toEqual({ enabled: true });
+            expect(readGrok().disabled_mcp_servers).toEqual(["pencil"]);
+        });
+
+        it("-p grok switches the plugin server in Grok only", async () => {
+            writeClaudeJson(claudeFixture());
+            await writeUnified(unifiedFixture());
+            const settings = seedClaudePlugins();
+            const grok = seedGrokConfig();
+            const providers = () => [new ClaudeProvider(), new GrokProvider()];
+
+            await disableCommand("expo", providers(), { provider: "grok" });
+
+            expect(readGrok().disabled_mcp_servers).toEqual(["pencil", "expo"]);
+            expect(readFileSync(settingsPath(), "utf-8")).toBe(settings); // Claude untouched
+
+            await enableCommand("expo", providers(), { provider: "grok" });
+
+            expect(readFileSync(join(homeDir, ".grok", "config.toml"), "utf-8")).toBe(grok);
         });
     });
 });

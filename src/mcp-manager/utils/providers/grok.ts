@@ -5,11 +5,28 @@ import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import { expandHarnessHome, resolveHarnessHomes } from "@app/mcp-manager/utils/harnesses.js";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import * as TOML from "@iarna/toml";
 import chalk from "chalk";
 import type { GrokGenericConfig, GrokMCPServerConfig } from "./grok.types.js";
+import {
+    claudeEnabledPluginServers,
+    type DeclaredPluginServer,
+    readClaudeSettings,
+    readJsonFileIfExists,
+    readPluginMcpServers,
+} from "./plugins.js";
 import type { MCPServerInfo, UnifiedMCPConfig, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
+
+function stringList(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** A `[plugins].enabled` or `disabled` entry names a plugin by name, by `<name>@<marketplace>` or by `<scope>/<hash>/<name>`. */
+function namesPlugin(entries: string[], plugin: string): boolean {
+    return entries.some((entry) => entry === plugin || entry.startsWith(`${plugin}@`) || entry.endsWith(`/${plugin}`));
+}
 
 function grokConfigPathForHome(home: string): string {
     const expanded = expandHarnessHome(home);
@@ -95,6 +112,152 @@ export class GrokProvider extends MCPProvider {
         }
 
         return servers;
+    }
+
+    /** Folders of Grok's own plugins: `[plugins].paths` and the repos in `installed-plugins/registry.json`. */
+    private async grokPluginDirs(config: GrokGenericConfig): Promise<string[]> {
+        const plugins = isObject(config.plugins) ? config.plugins : {};
+        const dirs = stringList(plugins.paths).map(expandHarnessHome);
+        const registryPath = path.join(path.dirname(this.configPath), "installed-plugins", "registry.json");
+
+        try {
+            const registry = await readJsonFileIfExists(registryPath);
+            const repos = isObject(registry) && isObject(registry.repos) ? Object.values(registry.repos) : [];
+
+            for (const repo of repos.filter(isObject)) {
+                if (typeof repo.path !== "string") {
+                    continue;
+                }
+
+                const subdir = isObject(repo.marketplace) ? repo.marketplace.plugin_subdir : undefined;
+                const nested = typeof subdir === "string" ? path.join(repo.path, subdir) : null;
+                dirs.push(nested && existsSync(nested) ? nested : repo.path);
+            }
+        } catch (error) {
+            logger.warn({ error, registryPath }, "mcp-manager: could not read the Grok plugin registry");
+        }
+
+        return dirs;
+    }
+
+    /**
+     * MCP servers that plugins bring into Grok. Two sources: the plugins Claude's user settings enable
+     * (Grok's Claude compatibility; see `claudeEnabledPluginServers`), and Grok's own plugins that
+     * `[plugins].enabled` names and `[plugins].disabled` does not.
+     */
+    private async discoverPluginServers(config: GrokGenericConfig): Promise<DeclaredPluginServer[]> {
+        const found: DeclaredPluginServer[] = [];
+        const claudeDir = path.join(env.paths.getHome() || env.paths.getUserProfile() || "~", ".claude");
+
+        try {
+            found.push(...(await claudeEnabledPluginServers(claudeDir, await readClaudeSettings(claudeDir))));
+        } catch (error) {
+            logger.warn({ error, claudeDir }, "mcp-manager: could not read the Claude plugins Grok loads");
+        }
+
+        const plugins = isObject(config.plugins) ? config.plugins : {};
+        const enabled = stringList(plugins.enabled);
+        const disabled = stringList(plugins.disabled);
+
+        for (const dir of await this.grokPluginDirs(config)) {
+            const manifestPath = [".grok-plugin", ".claude-plugin"]
+                .map((folder) => path.join(dir, folder, "plugin.json"))
+                .find((candidate) => existsSync(candidate));
+
+            try {
+                const manifest = manifestPath ? await readJsonFileIfExists(manifestPath) : undefined;
+                const plugin =
+                    isObject(manifest) && typeof manifest.name === "string" ? manifest.name : path.basename(dir);
+
+                if (!namesPlugin(enabled, plugin) || namesPlugin(disabled, plugin)) {
+                    continue;
+                }
+
+                const declared = await readPluginMcpServers(
+                    dir,
+                    manifestPath ?? path.join(dir, ".grok-plugin", "plugin.json")
+                );
+
+                for (const server of declared) {
+                    found.push({ ...server, pluginId: plugin, plugin });
+                }
+            } catch (error) {
+                logger.warn({ error, dir }, "mcp-manager: could not read a Grok plugin's MCP servers");
+            }
+        }
+
+        return found;
+    }
+
+    async listPluginServers(): Promise<MCPServerInfo[]> {
+        let config: GrokGenericConfig;
+
+        try {
+            config = await this.readConfig();
+        } catch (error) {
+            logger.warn({ error, configPath: this.configPath }, "mcp-manager: could not read Grok config");
+            return [];
+        }
+
+        const disabled = stringList(config.disabled_mcp_servers);
+
+        return (await this.discoverPluginServers(config)).map((server) => ({
+            name: server.name,
+            config: server.config,
+            enabled: !disabled.includes(server.name) && config.mcp_servers?.[server.name]?.enabled !== false,
+            provider: this.providerName,
+            plugin: server.pluginId,
+        }));
+    }
+
+    /**
+     * Grok's switch for a plugin server is the top-level `disabled_mcp_servers` list: it stops a
+     * name even when no `[mcp_servers]` table defines it (verified on Grok 1.0.44, whose resolved
+     * disabled list held `chrome-devtools`, a name that exists only in that list and in a plugin).
+     * Enable removes exactly those names, and the key when it ends up empty. Never write a
+     * `[mcp_servers.<server>]` table for this.
+     */
+    async setPluginServersEnabled(serverNames: string[], enabled: boolean): Promise<WriteResult> {
+        const config = await this.readConfig();
+        const names = new Set(
+            (await this.discoverPluginServers(config))
+                .map((server) => server.name)
+                .filter((name) => serverNames.includes(name))
+        );
+
+        if (names.size === 0) {
+            return WriteResult.NoChanges;
+        }
+
+        const current = stringList(config.disabled_mcp_servers);
+
+        if (enabled) {
+            const kept = current.filter((name) => !names.has(name));
+
+            if (kept.length === current.length) {
+                return WriteResult.NoChanges;
+            }
+
+            if (kept.length === 0) {
+                delete config.disabled_mcp_servers;
+            } else {
+                config.disabled_mcp_servers = kept;
+            }
+        } else {
+            const missing = [...names].filter((name) => !current.includes(name));
+
+            if (missing.length === 0) {
+                return WriteResult.NoChanges;
+            }
+
+            config.disabled_mcp_servers = [...current, ...missing];
+        }
+
+        logger.debug(
+            { configPath: this.configPath, names: [...names], enabled },
+            "mcp-manager: Grok plugin MCP switch"
+        );
+        return this.writeConfig(config);
     }
 
     async getServerConfig(serverName: string): Promise<UnifiedMCPServerConfig | null> {

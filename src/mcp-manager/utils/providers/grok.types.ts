@@ -10,5 +10,7 @@ export interface GrokMCPServerConfig {
 
 export interface GrokGenericConfig {
     mcp_servers?: Record<string, GrokMCPServerConfig>;
+    /** Server names Grok never starts, whether or not they have an `[mcp_servers]` table. */
+    disabled_mcp_servers?: string[];
     [key: string]: unknown;
 }

@@ -293,7 +293,7 @@ file shows the paths in use even where they are not configurable.
 -   Only supports stdio transport
 -   Servers are enabled if they exist in config
 
-## Plugin-provided servers (Claude and Codex)
+## Plugin-provided servers (Claude, Codex and Grok)
 
 A plugin can bring its own MCP server. For example, the `expo` plugin brings the
 `expo` server. These servers are not in the unified config, and `sync` never
@@ -309,6 +309,11 @@ leaves them out, because `tools scripts` dials every entry in that payload.
     Its servers come from the newest version folder under
     `<codex home>/plugins/cache/<marketplace>/<plugin>/`. Every `syncTo` and `syncFrom`
     home is read.
+-   Grok: Grok loads the plugins that Claude enables (its Claude compatibility reads
+    `~/.claude/plugins/installed_plugins.json`), so `expo` reaches Grok with no Grok entry.
+    It also loads its own plugins from `[plugins].paths` and
+    `~/.grok/installed-plugins/registry.json` when `[plugins].enabled` names them and
+    `[plugins].disabled` does not.
 
 `tools mcp-manager disable expo` checks the unified config first. If `expo` is
 not there, the command switches the plugin server off in every harness that
@@ -321,11 +326,14 @@ loads it (`-p` limits the harnesses). The plugin itself stays enabled.
     `enabled = false` in every home that enables the plugin. It never writes a bare
     `[mcp_servers.<server>]` table: an entry without a transport stops Codex from
     starting.
+-   Grok: the command adds the server name to the top-level `disabled_mcp_servers`
+    list in `~/.grok/config.toml`. Grok honours a name there even when no
+    `[mcp_servers]` table defines it. The command never adds a table.
 
-`enable expo` removes exactly these entries again. `sync` keeps both switches:
-Claude's sync does not write `settings.json`, and Codex's sync keeps every
-`[plugins.*]` table. A running Claude Code session keeps the server until you
-restart it. The same is true for a running Codex session.
+`enable expo` removes exactly these entries again. `sync` keeps every switch:
+Claude's sync does not write `settings.json`, Codex's sync keeps every
+`[plugins.*]` table, and Grok's sync replaces only `[mcp_servers]`. A running
+Claude Code, Codex or Grok session keeps the server until you restart it.
 
 ## Workflow Example
 

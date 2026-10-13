@@ -11,7 +11,7 @@ import { isObject } from "@genesiscz/utils/object";
 import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
 import type { ClaudeGenericConfig, ClaudeMCPServerConfig } from "./claude.types.js";
-import { readJsonFileIfExists, readPluginMcpServers, splitPluginId } from "./plugins.js";
+import { claudeEnabledPluginServers, readClaudeSettings } from "./plugins.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
 
@@ -189,101 +189,28 @@ export class ClaudeProvider extends MCPProvider {
         return path.join(path.dirname(this.configPath), ".claude", "settings.json");
     }
 
-    /** User settings as parsed JSON. A missing file is `{}`; a file that does not parse throws. */
     private async readSettings(): Promise<Record<string, unknown>> {
-        const settingsPath = this.getSettingsPath();
-        const parsed = await readJsonFileIfExists(settingsPath);
-
-        if (parsed === undefined) {
-            return {};
-        }
-
-        if (!isObject(parsed)) {
-            throw new Error(`${settingsPath} is not a JSON object`);
-        }
-
-        return parsed;
-    }
-
-    /**
-     * Install folder per plugin id, from `~/.claude/plugins/installed_plugins.json`. The user-scope
-     * install is the one a user-settings `enabledPlugins` entry loads; a project-scope copy is a fallback.
-     */
-    private async readInstalledPluginPaths(): Promise<Map<string, string>> {
-        const installedPath = path.join(path.dirname(this.getSettingsPath()), "plugins", "installed_plugins.json");
-        const paths = new Map<string, string>();
-        let parsed: unknown;
-
-        try {
-            parsed = await readJsonFileIfExists(installedPath);
-        } catch (error) {
-            logger.warn({ error, installedPath }, "mcp-manager: could not read Claude installed plugins");
-            return paths;
-        }
-
-        const plugins = isObject(parsed) && isObject(parsed.plugins) ? parsed.plugins : {};
-
-        for (const [pluginId, raw] of Object.entries(plugins)) {
-            const installs = (Array.isArray(raw) ? raw : [raw]).filter(isObject);
-            const chosen = installs.find((install) => install.scope === "user") ?? installs[0];
-
-            if (chosen && typeof chosen.installPath === "string") {
-                paths.set(pluginId, chosen.installPath);
-            }
-        }
-
-        return paths;
+        return readClaudeSettings(path.dirname(this.getSettingsPath()));
     }
 
     private async discoverPluginServers(settings: Record<string, unknown>): Promise<ClaudePluginServer[]> {
-        const enabledPlugins = isObject(settings.enabledPlugins) ? settings.enabledPlugins : {};
-        const enabledIds = Object.keys(enabledPlugins).filter((pluginId) => enabledPlugins[pluginId] === true);
-
-        if (enabledIds.length === 0) {
-            return [];
-        }
-
-        const installPaths = await this.readInstalledPluginPaths();
         const denied = deniedEntries(settings);
-        const found: ClaudePluginServer[] = [];
+        const declared = await claudeEnabledPluginServers(path.dirname(this.getSettingsPath()), settings);
 
-        for (const pluginId of enabledIds) {
-            const parts = splitPluginId(pluginId);
-            const installPath = installPaths.get(pluginId);
+        return declared.map((server) => {
+            const registeredName = claudePluginServerName(server.plugin, server.name);
 
-            if (!parts || !installPath) {
-                logger.debug({ pluginId }, "mcp-manager: enabled Claude plugin has no install path");
-                continue;
-            }
-
-            try {
-                const declared = await readPluginMcpServers(
-                    installPath,
-                    path.join(installPath, ".claude-plugin", "plugin.json")
-                );
-
-                for (const server of declared) {
-                    const registeredName = claudePluginServerName(parts.plugin, server.name);
-                    found.push({
-                        registeredName,
-                        info: {
-                            name: server.name,
-                            config: server.config,
-                            enabled: !isDeniedByClaude(denied, registeredName, server.config.url),
-                            provider: this.providerName,
-                            plugin: pluginId,
-                        },
-                    });
-                }
-            } catch (error) {
-                logger.warn(
-                    { error, pluginId, installPath },
-                    "mcp-manager: could not read a Claude plugin's MCP servers"
-                );
-            }
-        }
-
-        return found;
+            return {
+                registeredName,
+                info: {
+                    name: server.name,
+                    config: server.config,
+                    enabled: !isDeniedByClaude(denied, registeredName, server.config.url),
+                    provider: this.providerName,
+                    plugin: server.pluginId,
+                },
+            };
+        });
     }
 
     async listPluginServers(): Promise<MCPServerInfo[]> {
