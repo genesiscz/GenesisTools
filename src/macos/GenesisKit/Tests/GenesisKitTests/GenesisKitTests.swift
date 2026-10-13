@@ -1336,3 +1336,36 @@ final class ByteFormatTests: XCTestCase {
         XCTAssertTrue(ByteFormat.memory(1_610_612_736).hasSuffix("GB"), ByteFormat.memory(1_610_612_736))
     }
 }
+
+@MainActor
+final class WidgetFormDraftRecoveryTests: XCTestCase {
+    private func model(_ defaults: UserDefaults) -> WidgetModel {
+        let appearance = NativeSettingsAppearance(
+            defaults: defaults, notificationNamespace: "drafts.fixture.\(UUID())", observeExternalChanges: false)
+        return WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults, appearance: appearance)
+    }
+
+    func testUndecodableDraftsAreKeptBeforeTheFirstEditReplacesThem() throws {
+        let suite = "widget-drafts-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stored = Data(#"{"form-1": {"q1": {"itemId": "q1", "freeText": "half a sent"#.utf8)
+        defaults.set(stored, forKey: "widget.formDrafts")
+        let widget = model(defaults)
+        widget.formAnswers["form-2"] = ["q": WidgetFormAnswer(itemId: "q", freeText: "new")]
+        let recovery = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("widget.formDrafts.undecodable.") }
+        XCTAssertEqual(recovery.count, 1)
+        XCTAssertEqual(defaults.data(forKey: try XCTUnwrap(recovery.first)), stored)
+    }
+
+    func testDecodableDraftsRestoreAndLeaveNoRecoveryCopy() throws {
+        let suite = "widget-drafts-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let saved = ["form-1": ["q1": WidgetFormAnswer(itemId: "q1", freeText: "kept")]]
+        defaults.set(try JSONEncoder().encode(saved), forKey: "widget.formDrafts")
+        let widget = model(defaults)
+        XCTAssertEqual(widget.formAnswers, saved)
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
+    }
+}

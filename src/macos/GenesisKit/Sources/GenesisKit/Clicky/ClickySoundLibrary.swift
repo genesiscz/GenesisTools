@@ -75,11 +75,16 @@ final class ClickySoundLibrary: ObservableObject {
         self.defaults = defaults
         self.loader = loader
         bundledURL = bundled
-        if let data = defaults.data(forKey: storageKey), data.count <= 1_048_576,
-            let saved = try? JSONDecoder().decode([ClickyLibraryRecord].self, from: data), saved.count <= 32,
-            Set(saved.map(\.id)).count == saved.count
-        {
-            records = saved.filter { $0.id != Self.bundledID }
+        if let data = defaults.data(forKey: storageKey) {
+            if data.count <= 1_048_576,
+                let saved = try? JSONDecoder().decode([ClickyLibraryRecord].self, from: data), saved.count <= 32,
+                Set(saved.map(\.id)).count == saved.count
+            {
+                records = saved.filter { $0.id != Self.bundledID }
+            } else {
+                // Adding or removing a folder rewrites this key from `records`, so the stored list gets a key of its own first.
+                defaults.set(data, forKey: "\(storageKey).undecodable.\(Int(Date().timeIntervalSince1970))")
+            }
         }
         if bundled != nil {
             records.insert(ClickyLibraryRecord(id: Self.bundledID, displayName: "GenesisTools sounds", bookmark: Data()), at: 0)

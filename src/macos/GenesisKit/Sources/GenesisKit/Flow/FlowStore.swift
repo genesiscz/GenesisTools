@@ -28,6 +28,8 @@ public final class FlowStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private var writeFailure: Error?
+    /// Files that failed to load and could not be moved aside; saves to them are refused.
+    private var keptInPlace: Set<String> = []
     private var committingHistory = false
     var beforeHistoryJournalRemoval: (() throws -> Void)?
     var beforeOwnedWrite: ((String) throws -> Void)?
@@ -268,7 +270,18 @@ public final class FlowStore {
     }
 
     private func load<T: Decodable>(_ url: URL) -> T? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        } catch {
+            // Unreadable is not missing (EACCES, EIO): the next save would write defaults over bytes that may
+            // be intact, so the file is moved aside like a corrupt one.
+            if writesEnabled { backupCorrupt(url) }
+            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) could not be read: \(error.localizedDescription)")
+            return nil
+        }
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
@@ -312,6 +325,9 @@ public final class FlowStore {
         guard writesEnabled else {
             throw FlowFocusMailbox.Failure.unavailable("Only the active Flow and Focus owner can save changes.")
         }
+        guard !keptInPlace.contains(url.lastPathComponent) else {
+            throw FlowFocusMailbox.Failure.unavailable("\(url.lastPathComponent) could not be read or moved aside, so it is not replaced.")
+        }
         try ensureDirectory()
         try beforeOwnedWrite?(url.lastPathComponent)
         let temp = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
@@ -348,6 +364,12 @@ public final class FlowStore {
         let stamp = Int(Date().timeIntervalSince1970)
         let target = url.deletingLastPathComponent()
             .appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)")
-        try? FileManager.default.moveItem(at: url, to: target)
+        do {
+            try FileManager.default.moveItem(at: url, to: target)
+        } catch {
+            // Still in place, so no save may replace it: that would destroy the only copy.
+            keptInPlace.insert(url.lastPathComponent)
+            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) could not be moved aside: \(error.localizedDescription)")
+        }
     }
 }

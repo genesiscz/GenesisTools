@@ -465,6 +465,26 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testUndecodableLibraryListIsKeptBeforeAnAddedFolderReplacesIt() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stored = Data("[{\"id\": \"work\", \"displayName\": \"Work sou".utf8)
+        defaults.set(stored, forKey: "clicky.libraries.v1")
+        let library = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { library.stop() }
+        XCTAssertTrue(library.records.isEmpty)
+        let recovery = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("clicky.libraries.v1.undecodable.") }
+        XCTAssertEqual(recovery.count, 1)
+        XCTAssertEqual(defaults.data(forKey: try XCTUnwrap(recovery.first)), stored)
+
+        defaults.removePersistentDomain(forName: suite)
+        let reopened = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { reopened.stop() }
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
+    }
+
+    @MainActor
     func testDecodablePreferencesLeaveNoRecoveryCopy() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

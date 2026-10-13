@@ -40,6 +40,33 @@ final class FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAnUnreadableFileIsMovedAsideBeforeASaveReplacesIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-unreadable-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("snippets.json")
+        let original = Data("[{\"user\": \"typed this by hand\"}]".utf8)
+        try original.write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        let store = FlowStore(directory: root)
+        XCTAssertTrue(store.loadSnippets().isEmpty)
+        store.saveSnippets([])
+        let aside = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix("snippets.json.corrupt-") }
+        XCTAssertEqual(aside.count, 1)
+        let asideURL = root.appendingPathComponent(try XCTUnwrap(aside.first))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: asideURL.path)
+        XCTAssertEqual(try Data(contentsOf: asideURL), original)
+
+        let fresh = FileManager.default.temporaryDirectory.appendingPathComponent("flow-missing-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: fresh) }
+        let missing = FlowStore(directory: fresh)
+        XCTAssertTrue(missing.loadSnippets().isEmpty)
+        missing.saveSnippets([])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: fresh.path), ["snippets.json"])
+    }
+
+    @MainActor
     func testFailedEventRetentionKeepsHistoryRetryableAfterRepair() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-retention-retry-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
