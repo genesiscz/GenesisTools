@@ -7,6 +7,7 @@ import {
     directReads,
     type FolderReads,
     rescanWorkerTurns,
+    resolveCodexNative,
     resolveTranscript,
     resolveTranscripts,
     resolveTranscriptsWith,
@@ -454,4 +455,35 @@ describe("resolveTranscripts", () => {
         expect(resolveTranscriptsWith({ queries: [], roots: mixedTree().roots, reads }).size).toBe(0);
         expect(listed.size).toBe(0);
     });
+});
+
+test("a codex spawn worker's thread id resolves to the worker log, and resolveCodexNative to its rollout", async () => {
+    // `tools codex wait <thread id>` refused a spawn worker because its newer event log won the id.
+    const root = fixtureRoot();
+    const id = "eeeeeeee-1111-2222-3333-444444444444";
+    const dir = join(root, "codex", "sessions", "2026", "10", "13");
+    mkdirSync(dir, { recursive: true });
+    const rollout = join(dir, `rollout-2026-10-13T17-00-00-${id}.jsonl`);
+    writeFileSync(rollout, "{}\n");
+    const workers = join(root, "codex-w");
+    mkdirSync(workers, { recursive: true });
+    writeFileSync(join(workers, "reviewer.meta.json"), SafeJSON.stringify({ name: "reviewer", threadId: id }));
+    writeFileSync(join(workers, "reviewer.jsonl"), "{}\n");
+    utimesSync(rollout, new Date(1_000_000_000_000), new Date(1_000_000_000_000));
+    const roots = {
+        grokHome: join(root, "empty-grok"),
+        grokWorker: join(root, "empty-worker"),
+        claudeProjects: join(root, "empty-claude"),
+        codexHome: join(root, "codex"),
+        codexWorker: workers,
+    };
+
+    expect((await resolveTranscript(id, roots)).source).toBe("worker");
+    expect(resolveCodexNative(id, roots)).toEqual({
+        provider: "codex",
+        source: "native",
+        sessionId: id,
+        filePath: rollout,
+    });
+    expect(resolveCodexNative("00000000-0000-0000-0000-000000000000", roots)).toBeNull();
 });

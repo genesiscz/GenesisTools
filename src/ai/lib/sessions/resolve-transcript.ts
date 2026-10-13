@@ -1,4 +1,8 @@
-import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import {
+    type ResolvedTranscript,
+    resolveCodexNative,
+    resolveTranscript,
+} from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { logger } from "@genesiscz/utils/logger";
@@ -55,9 +59,18 @@ export async function resolveSessionTranscript(
     }
 
     if (resolved.source === "worker") {
-        throw new Error(
-            `"${query}" is a headless worker session. Use \`tools ${alias} worker\` (or \`tools ${alias} wait\` on a TUI session id).`
-        );
+        // A `tools codex spawn` worker runs a real native thread: its rollout is the transcript to wait on.
+        const rollout = resolved.provider === "codex" ? resolveCodexNative(resolved.sessionId) : null;
+
+        if (rollout) {
+            return rollout;
+        }
+
+        const verbs =
+            alias === "claude"
+                ? "tools claude worker status|tail --name <name>"
+                : `tools ${alias} status|read --name <name>`;
+        throw new Error(`"${query}" is a headless worker session with no native transcript yet. Use \`${verbs}\`.`);
     }
 
     return resolved;

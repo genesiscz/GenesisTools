@@ -526,6 +526,22 @@ export async function resolveTranscript(
 }
 
 /**
+ * The native rollout of a Codex thread, or null. A `tools codex spawn` worker's event log carries the same
+ * thread id and is usually newer, so `resolveTranscript` answers the worker; a caller that needs the thread's
+ * own transcript (waiting for its turn to end) asks here.
+ */
+export function resolveCodexNative(threadId: string, roots: TranscriptRoots = {}): ResolvedTranscript | null {
+    const codexHome = { ...defaultTranscriptRoots(), ...roots }.codexHome;
+    const best = findCodexNative(threadId, codexHome, directReads).sort((a, b) => b.mtime - a.mtime)[0];
+
+    if (!best) {
+        return null;
+    }
+
+    return { provider: best.provider, source: best.source, sessionId: best.sessionId, filePath: best.filePath };
+}
+
+/**
  * Several ids against one read of the session folders, each answered exactly as `resolveTranscript` would answer
  * it alone (a missing id maps to the same Error). For callers that hold a list of ids, such as the stuck check.
  */
