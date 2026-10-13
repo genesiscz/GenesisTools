@@ -20,11 +20,26 @@ import {
 import type { ExecFn } from "./platform.ts";
 import { openRecordingBrowser } from "./recording-browser";
 
+/** An `lsof -nP -iTCP -sTCP:LISTEN` row for `pid` on `port`. */
+const listener = (pid: number, address = "127.0.0.1", port = 9333) =>
+    `Google ${pid} work 50u IPv4 0x1 0t0 TCP ${address}:${port} (LISTEN)`;
+
+/** A fake machine: these listener rows for `lsof`, these `pid ppid command` rows for `ps`. */
+function machine(listeners: string[], processes: string[]): ExecFn {
+    return (argv) => ({
+        exitCode: 0,
+        stdout: (argv[0] === "lsof" ? listeners : processes).join("\n"),
+        stderr: "",
+    });
+}
+
 /** A quit path must never reach a real browser: one listens on 9222 on a developer's Mac. */
 const noBrowser: QuitDeps = {
     connect: async () => {
         throw new Error("no browser in tests");
     },
+    exec: machine([], []),
+    platform: "darwin",
 };
 
 describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", () => {
@@ -424,6 +439,12 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
         throw new Error("kill reached: it leaves the app copy behind");
     };
 
+    /** The machine where `pid` is the one process listening on 9333. */
+    const ownedBy = (pid: number): Pick<QuitDeps, "exec" | "platform"> => ({
+        exec: machine([listener(pid)], []),
+        platform: "darwin",
+    });
+
     test("a browser that exits after Browser.close is never killed", async () => {
         let running = true;
         const browser = fakeBrowser(() => {
@@ -433,7 +454,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             port: 9333,
             pid: 4242,
             kill: killLeaks,
-            deps: { connect: browser.connect, alive: () => running, ...fakeClock() },
+            deps: { connect: browser.connect, alive: () => running, ...fakeClock(), ...ownedBy(4242) },
         });
         expect(result).toBe("closed");
         expect(browser.sent).toEqual(["Browser.close"]);
@@ -448,11 +469,29 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             kill: () => {
                 killed++;
             },
-            deps: { connect: browser.connect, alive: () => true, ...fakeClock() },
+            deps: { connect: browser.connect, alive: () => true, ...fakeClock(), ...ownedBy(4242) },
         });
         expect(result).toBe("killed");
         expect(browser.sent).toEqual(["Browser.close"]);
         expect(killed).toBe(1);
+    });
+
+    test("a port another browser also listens on never gets Browser.close; the owned child is killed", async () => {
+        for (const listeners of [[listener(5353)], [listener(4242), listener(5353, "[::1]")]]) {
+            let killed = 0;
+            const browser = fakeBrowser(() => {});
+            const result = await quitOwnedBrowser({
+                port: 9333,
+                pid: 4242,
+                kill: () => {
+                    killed++;
+                },
+                deps: { connect: browser.connect, exec: machine(listeners, []), platform: "darwin", ...fakeClock() },
+            });
+            expect(result).toBe("killed");
+            expect(browser.sent).toEqual([]);
+            expect(killed).toBe(1);
+        }
     });
 
     test("a browser that never answered CDP is killed without waiting", async () => {
@@ -465,6 +504,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             },
             deps: {
                 ...noBrowser,
+                ...ownedBy(4242),
                 alive: () => {
                     throw new Error("waited on a browser that cannot be asked to quit");
                 },
@@ -487,6 +527,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                     throw new Error("probed the pid although the exit promise was given");
                 },
                 sleep: () => new Promise(() => {}),
+                ...ownedBy(4242),
             },
         });
         expect(result).toBe("closed");
@@ -504,7 +545,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             probe: deadProbe,
             waitFor: neverUp,
             readLog: async () => "",
-            quit: { connect: browser.connect, alive: () => running, ...fakeClock() },
+            quit: { connect: browser.connect, alive: () => running, ...fakeClock(), ...ownedBy(7) },
         }).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(CdpLaunchError);
         expect(browser.sent).toEqual(["Browser.close"]);
@@ -512,17 +553,6 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
 
     describe("closeBrowserOnPort", () => {
         const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-        const listener = (pid: number, address = "127.0.0.1") =>
-            `Google ${pid} work 50u IPv4 0x1 0t0 TCP ${address}:9333 (LISTEN)`;
-
-        function machine(listeners: string[], processes: string[]): ExecFn {
-            return (argv) => ({
-                exitCode: 0,
-                stdout: (argv[0] === "lsof" ? listeners : processes).join("\n"),
-                stderr: "",
-            });
-        }
-
         const throwaway = machine(
             [listener(4242)],
             [`4242 1 ${chrome} --remote-debugging-port=9333 --user-data-dir=/tmp/cdp-profile-9333-a about:blank`]
@@ -546,6 +576,23 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             });
             expect(result).toEqual({ status: "closed", pid: 4242 });
             expect(browser.sent).toEqual(["Browser.close"]);
+        });
+
+        test("the profile flag counts only as an argument of its own, never as text inside a URL", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: machine(
+                        [listener(4242)],
+                        [`4242 1 ${chrome} --remote-debugging-port=9333 https://example.com/?--user-data-dir=x`]
+                    ),
+                    platform: "darwin",
+                    connect: browser.connect,
+                },
+            });
+            expect(result).toMatchObject({ status: "main-profile", pid: 4242 });
+            expect(browser.sent).toEqual([]);
         });
 
         test("reports a browser still running at the deadline and never kills it", async () => {

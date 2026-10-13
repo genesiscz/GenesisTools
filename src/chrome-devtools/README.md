@@ -123,7 +123,8 @@ the copy only on a clean quit, so a `kill <pid>` leaks 1.4 GB each time. It refu
 
 `open` prints the matching `close` line after it starts a browser. The library side is
 `closeBrowserOnPort` in `lib/launch.ts`; a browser this process spawned itself goes through
-`quitOwnedBrowser`, which kills only when `Browser.close` did not end it within 3 s.
+`quitOwnedBrowser`, which sends `Browser.close` only when that browser is the one process
+listening on the port, and kills only when `Browser.close` did not end it within 3 s.
 
 ### The buffer
 

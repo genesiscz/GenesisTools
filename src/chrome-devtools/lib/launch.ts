@@ -261,6 +261,15 @@ export interface QuitDeps {
     alive?: (pid: number) => boolean;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
+    exec?: ExecFn;
+    platform?: Platform;
+}
+
+/** The pids listening on `port`. Two of them means one browser on 127.0.0.1 and another on [::1]. */
+function listenerPids(port: number, deps: QuitDeps): number[] {
+    const listeners = listListeningTcpPorts(deps.exec ?? defaultExec, deps.platform ?? currentPlatform());
+
+    return [...new Set(listeners.flatMap((l) => (l.port === port && l.pid !== null ? [l.pid] : [])))];
 }
 
 /**
@@ -310,6 +319,10 @@ async function waitForExit(pid: number, timeoutMs: number, deps: QuitDeps): Prom
 /**
  * Quits a browser this process started: `Browser.close` first, and a kill only when the browser is still running
  * `QUIT_TIMEOUT_MS` later or never answered CDP at all (a launch that timed out has no other way in).
+ *
+ * `Browser.close` goes out only when `pid` is the one process listening on `port`. CDP connects to 127.0.0.1, and a
+ * browser started while another one holds 127.0.0.1:<port> binds only [::1], so asking the port without that check
+ * could quit the user's other browser.
  */
 export async function quitOwnedBrowser(opts: {
     port: number;
@@ -320,8 +333,14 @@ export async function quitOwnedBrowser(opts: {
     deps?: QuitDeps;
 }): Promise<"closed" | "killed"> {
     const deps = opts.deps ?? {};
+    const owners = listenerPids(opts.port, deps);
 
-    if (await requestBrowserClose(opts.port, deps)) {
+    if (owners.length !== 1 || owners[0] !== opts.pid) {
+        log.warn(
+            { port: opts.port, pid: opts.pid, owners },
+            "the CDP port is not this browser's alone, so it is not asked to quit; killing it leaves its app copy behind"
+        );
+    } else if (await requestBrowserClose(opts.port, deps)) {
         const sleep = deps.sleep ?? Bun.sleep;
         const quit = opts.exited
             ? await Promise.race([opts.exited.then(() => true), sleep(QUIT_TIMEOUT_MS).then(() => false)])
@@ -355,16 +374,11 @@ export type CloseOnPortResult =
     | { status: "unreachable"; pid: number }
     | { status: "still-running"; pid: number };
 
-export interface CloseOnPortDeps extends QuitDeps {
-    exec?: ExecFn;
-    platform?: Platform;
-}
-
 export interface CloseOnPortOpts {
     port: number;
     allowMainProfile?: boolean;
     timeoutMs?: number;
-    deps?: CloseOnPortDeps;
+    deps?: QuitDeps;
 }
 
 /**
@@ -382,15 +396,7 @@ export async function closeBrowserOnPort(opts: CloseOnPortOpts): Promise<CloseOn
 
 async function closeOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
     const deps = opts.deps ?? {};
-    const exec = deps.exec ?? defaultExec;
-    const platform = deps.platform ?? currentPlatform();
-    const pids = [
-        ...new Set(
-            listListeningTcpPorts(exec, platform).flatMap((l) =>
-                l.port === opts.port && l.pid !== null ? [l.pid] : []
-            )
-        ),
-    ];
+    const pids = listenerPids(opts.port, deps);
 
     if (pids.length === 0) {
         return { status: "nothing-listening" };
@@ -401,13 +407,15 @@ async function closeOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
     }
 
     const pid = pids[0];
-    const command = listProcesses(exec, platform).find((p) => p.pid === pid)?.command ?? "";
+    const processes = listProcesses(deps.exec ?? defaultExec, deps.platform ?? currentPlatform());
+    const command = processes.find((p) => p.pid === pid)?.command ?? "";
 
     if (classifyProcessName(command) === null) {
         return { status: "not-a-browser", pid, command };
     }
 
-    if (!opts.allowMainProfile && !command.includes("--user-data-dir")) {
+    // An argument of its own: the text inside a URL or another flag's value must not pass the guard.
+    if (!opts.allowMainProfile && !/(?:^|\s)--user-data-dir(?:=|\s|$)/.test(command)) {
         return { status: "main-profile", pid, command };
     }
 
