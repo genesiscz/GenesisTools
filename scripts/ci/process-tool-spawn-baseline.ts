@@ -1,13 +1,13 @@
 /**
  * The `no-process-tool-spawn` findings that existed when the rule landed (2026-10-14 01:20), counted per file. A file
  * may keep at most this many; one more spawn in a listed file, or any spawn in an unlisted file, fails lint-rules.
- * When you move a call site to `@genesiscz/utils/process`, lower its count or drop its line. Never raise one.
+ * When you move a call site to `@genesiscz/utils/process`, run `bun scripts/ci/lint-rules.ts --update-process-baseline`,
+ * which lowers the counts and refuses to raise one.
  */
 export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
     "plugins/genesis-tools/hooks/native-inbox-hint.ts": 1,
     "plugins/genesis-tools/hooks/record-session-account.ts": 1,
     "plugins/genesis-tools/hooks/record-session-cmux.ts": 1,
-    "plugins/genesis-tools/hooks/worktree-lock.ts": 2,
     "scripts/native/widget-drive.ts": 1,
     "scripts/test-reap.ts": 2,
     "src/benchmark/lib/process-sample.ts": 1,
@@ -19,7 +19,6 @@ export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
     "src/cmux/lib/session-close-live.ts": 2,
     "src/codex/lib/active-writer.ts": 1,
     "src/codex/lib/desktop/app-bundle.ts": 1,
-    "src/control/lib/cursor-context.ts": 1,
     "src/control/lib/decision/frontmost.ts": 1,
     "src/control/lib/peekaboo.ts": 1,
     "src/dev-dashboard/lib/ports/resolve.ts": 1,
@@ -34,11 +33,11 @@ export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
     "src/ms-teams/lib/process.ts": 1,
     "src/port/lib/scanner.ts": 3,
     "src/say/lib/caller.ts": 1,
+    "src/utils/DashboardApp/stopUiServerOnPort.ts": 2,
     "src/utils/ai/active-processes.ts": 3,
     "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts": 2,
     "src/utils/bun/orphan-worker-guard.ts": 1,
     "src/utils/cmux/lib/health.ts": 1,
-    "src/utils/DashboardApp/stopUiServerOnPort.ts": 2,
     "src/utils/network.ts": 1,
     "src/utils/process-identity.ts": 2,
     "src/utils/services/idle.ts": 1,

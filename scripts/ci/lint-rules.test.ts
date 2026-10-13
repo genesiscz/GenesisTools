@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyProcessToolBaseline, checkSource, pluginsDisabledFor } from "./lint-rules";
+import { applyProcessToolBaseline, checkSource, pluginsDisabledFor, renderProcessToolBaseline } from "./lint-rules";
 
 /**
  * These pin the behaviour of the six GritQL plugins this checker replaced.
@@ -271,6 +271,19 @@ describe("no-process-tool-spawn", () => {
         expect(over).toHaveLength(2);
         expect(over[0].message).toContain("over its baseline of 1");
         expect(applyProcessToolBaseline(two, {})).toHaveLength(2);
+    });
+
+    test("the rewritten baseline is sorted, drops files at zero, and is the module the rule imports", () => {
+        const text = renderProcessToolBaseline(
+            new Map([
+                ["src/b.ts", 2],
+                ["src/a.ts", 1],
+                ["src/gone.ts", 0],
+            ])
+        );
+        expect(text).toContain('    "src/a.ts": 1,\n    "src/b.ts": 2,\n};');
+        expect(text).not.toContain("gone");
+        expect(text).toContain("export const PROCESS_TOOL_SPAWN_BASELINE");
     });
 });
 
