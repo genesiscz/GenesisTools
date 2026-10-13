@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGit, listWorktrees } from "@genesiscz/utils/git";
 import { hermeticGitEnv, type ImportedCommit, TEST_REPO_EPOCH, TestRepo } from "@genesiscz/utils/git/test-repo";
@@ -149,6 +150,23 @@ describe("plan (pure)", () => {
                 { name: "b", directParent: "a" },
             ])
         ).toThrow(/cycle/);
+    });
+});
+
+describe("plan file", () => {
+    it("a plan file that does not parse throws instead of reading as no cascade, and keeps its bytes", () => {
+        const commonDir = mkdtempSync(join(tmpdir(), "gt-cascade-state-"));
+        const path = statePath(commonDir);
+        expect(loadState(commonDir)).toBeNull();
+
+        const truncated = '{"parent": "feat/parent", "phase": "children", "backups": {"feat/parent": {"tag": "bkp/cas';
+        writeFileSync(path, truncated);
+        expect(() => loadState(commonDir)).toThrow(`${path} is unreadable`);
+        expect(readFileSync(path, "utf8")).toBe(truncated);
+
+        // Negative control: a plan file that parses still loads.
+        writeFileSync(path, '{"parent": "feat/parent", "phase": "children"}\n');
+        expect(loadState(commonDir)).toMatchObject({ parent: "feat/parent", phase: "children" });
     });
 });
 

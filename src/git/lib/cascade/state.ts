@@ -67,8 +67,12 @@ export function statePath(commonDir: string): string {
     return join(commonDir, CASCADE_STATE_FILENAME);
 }
 
+/**
+ * The plan in progress, or null when there is none. A plan file that exists but does not parse THROWS: it holds
+ * the backup tags and the phase, and reading it as "no cascade in progress" would let a new run overwrite it.
+ */
 export function loadState(commonDir: string): CascadePlan | null {
-    return readStateFile<CascadePlan>(statePath(commonDir));
+    return readStateFile<CascadePlan>(statePath(commonDir), { strict: true });
 }
 
 export function saveState(commonDir: string, plan: CascadePlan): void {

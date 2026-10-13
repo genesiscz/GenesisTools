@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type CaptureResult, capture, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -81,31 +82,46 @@ function isState(value: unknown): value is FsmonitorState {
     );
 }
 
+/**
+ * The saved state; empty only when the file does not exist. A file that exists but cannot be read, does not parse,
+ * or has an unknown shape THROWS: treated as empty, `enable` would save the already-enabled global values as the
+ * ones to restore, and `disable` would then put back "true" instead of the user's own settings.
+ */
 export function readFsmonitorState(path: string): FsmonitorState {
-    if (!existsSync(path)) {
-        return emptyState();
-    }
+    let text: string;
 
     try {
-        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-
-        if (isState(parsed)) {
-            return parsed;
+        text = readFileSync(path, "utf8");
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return emptyState();
         }
 
-        logger.warn({ path }, "[git fsmonitor] state file has an unknown shape; treating it as empty");
-    } catch (error) {
-        logger.warn({ error, path }, "[git fsmonitor] state file unreadable; treating it as empty");
+        throw new Error(`git fsmonitor: cannot read the state file ${path}; it was left untouched`, { cause: error });
     }
 
-    return emptyState();
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(text);
+    } catch (error) {
+        throw new Error(
+            `git fsmonitor: the state file ${path} does not parse; it was left untouched. Fix or move it, then run again`,
+            { cause: error }
+        );
+    }
+
+    if (!isState(parsed)) {
+        throw new Error(
+            `git fsmonitor: the state file ${path} has an unknown shape; it was left untouched. Fix or move it, then run again`
+        );
+    }
+
+    return parsed;
 }
 
-async function writeState(path: string, state: FsmonitorState): Promise<void> {
-    await mkdir(dirname(path), { recursive: true });
-    const temporary = `${path}.${process.pid}.tmp`;
-    await Bun.write(temporary, SafeJSON.stringify(state, null, 2));
-    renameSync(temporary, path);
+function writeState(path: string, state: FsmonitorState): void {
+    atomicWriteFileSync(path, SafeJSON.stringify(state, null, 2));
 }
 
 function gitEnv(deps: FsmonitorDeps): Record<string, string | undefined> | undefined {
@@ -283,7 +299,7 @@ async function recordUnlocked(
     }
 
     if (daemons.some((daemon) => daemon.worktree)) {
-        await writeState(deps.statePath, state);
+        writeState(deps.statePath, state);
     }
 
     return { daemons, added, recorded: Object.keys(state.worktrees).length };
@@ -300,7 +316,7 @@ async function enableUnlocked(
     };
 
     // The state is written first: if a write to the git config fails half way, `disable` still knows what to restore.
-    await writeState(deps.statePath, { ...state, previous, enabledAt: deps.now().toISOString() });
+    writeState(deps.statePath, { ...state, previous, enabledAt: deps.now().toISOString() });
 
     for (const key of FSMONITOR_KEYS) {
         await writeGlobal(deps, key, "true");
@@ -396,7 +412,7 @@ async function disableUnlocked(deps: FsmonitorDeps, keepCache: boolean): Promise
         ])
     );
     const done = report.failed.length === 0 && report.unidentified.length === 0;
-    await writeState(deps.statePath, {
+    writeState(deps.statePath, {
         version: 1,
         enabledAt: null,
         previous: done ? null : restored,

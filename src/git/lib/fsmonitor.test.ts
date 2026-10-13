@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { capture } from "@genesiscz/utils/process/ps";
 import {
@@ -288,6 +288,33 @@ describe("git fsmonitor", () => {
             "core.fsmonitor": null,
             "core.untrackedCache": null,
         });
+    });
+
+    test("a state file that does not parse makes enable, record and disable refuse, and keeps its bytes", async () => {
+        const { deps } = fixture({ running: ["repo"] });
+        // The global config is already enabled: an empty state would save "true" as the value to restore.
+        writeFileSync(deps.globalConfigPath ?? "", "[core]\n\tfsmonitor = true\n\tuntrackedCache = true\n");
+        mkdirSync(dirname(deps.statePath), { recursive: true });
+        const truncated = '{"version": 1, "enabledAt": "2026-10-12T21:00:00.000Z", "previous": {"core.fsmonitor": nu';
+        writeFileSync(deps.statePath, truncated);
+
+        await expect(enableFsmonitor(deps)).rejects.toThrow(`the state file ${deps.statePath} does not parse`);
+        await expect(recordMonitorDaemons(deps)).rejects.toThrow("left untouched");
+        await expect(disableFsmonitor(deps)).rejects.toThrow("left untouched");
+        expect(readFileSync(deps.statePath, "utf8")).toBe(truncated);
+        expect(await readGlobal(deps, "core.fsmonitor")).toBe("true");
+
+        writeFileSync(deps.statePath, SafeJSON.stringify({ version: 2 }));
+        await expect(enableFsmonitor(deps)).rejects.toThrow("has an unknown shape");
+
+        // Negative control: a valid saved state still drives a normal enable, keeping the saved values.
+        const saved = { "core.fsmonitor": null, "core.untrackedCache": "keep" };
+        writeFileSync(
+            deps.statePath,
+            SafeJSON.stringify({ version: 1, enabledAt: null, previous: saved, worktrees: {} })
+        );
+        expect(await enableFsmonitor(deps)).toEqual({ previous: saved, alreadyEnabled: true });
+        expect(readFsmonitorState(deps.statePath).previous).toEqual(saved);
     });
 
     test("a recorder started while disable runs waits for it, so it cannot write back what disable cleared", async () => {
