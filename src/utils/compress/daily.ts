@@ -8,12 +8,16 @@ import { PRESETS } from "./presets";
 import { applyOldFileCompression, type OldFilePlan, type OldFileReport, planOldFileCompression } from "./retention";
 
 /**
- * How many recent days stay plain. Day logs: today and yesterday, so the multi-day readers (`tools daemon stats`
- * reads up to 7 days, `tools jev sessions` one day) mostly read plain files; the A/B numbers are in README.md.
+ * How many recent days stay plain. Day logs: the last 7, because `tools daemon stats --since 7d` scans up to 7 days
+ * with rg, and with five of them compressed it took +87% CPU (3.5 GB to decompress on 2026-10-13, see
+ * `scripts/benchmarks/compress/read-paths.ts`), over the 30% read budget. Older days are read one at a time (jev
+ * sessions, a tail, an rg by hand), which costs the same or less from a `.zst`.
  */
-export const DAY_LOGS_PLAIN_DAYS = 2;
+export const DAY_LOGS_PLAIN_DAYS = 7;
 /** ai-proxy transcripts: today and yesterday in UTC (a realtime session keeps writing its start day after midnight). */
 export const TRANSCRIPTS_PLAIN_DAYS = 2;
+/** The app's hang and stack captures (`logs/hangs/`): today and yesterday stay plain for `tools hub dev monitor`. */
+export const HANGS_PLAIN_DAYS = 2;
 
 const DAY_MS = 86_400_000;
 
@@ -53,6 +57,14 @@ export function dailyTargets({
             // `<UTC day>/<session>.jsonl`; the legacy per-call `.json` files stay as they are.
             dayOf: (relative) => /^(\d{4}-\d{2}-\d{2})\/[^/]+\.jsonl$/.exec(relative)?.[1],
             firstPlainDay: utcDay(now.getTime() - (TRANSCRIPTS_PLAIN_DAYS - 1) * DAY_MS),
+        },
+        {
+            name: "app-hangs",
+            root: join(logsDir, "hangs"),
+            recursive: false,
+            // `hang-<local stamp>.txt` (HangWatch.swift) and `stack-<local stamp>.txt` (MainStackSampler.swift).
+            dayOf: (relative) => /^(?:hang|stack)-(\d{4}-\d{2}-\d{2})-\d{6}\.txt$/.exec(relative)?.[1],
+            firstPlainDay: formatLocalDate(new Date(now.getTime() - (HANGS_PLAIN_DAYS - 1) * DAY_MS)),
         },
     ];
 }

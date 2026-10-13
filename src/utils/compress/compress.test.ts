@@ -387,7 +387,7 @@ describe("day logs", () => {
         expect(chunks.join("")).toBe("c\n");
     });
 
-    it("the daily pass keeps today and yesterday plain, and never starts from a test process", () => {
+    it("the daily pass keeps a week of day logs and two days of transcripts plain, and never starts from a test process", () => {
         const dir = scratch("daily");
         const now = new Date("2026-10-13T12:00:00");
         const targets = planDailyCompression({ now, logsDir: dir }).map(({ target }) => [
@@ -396,9 +396,21 @@ describe("day logs", () => {
         ]);
 
         expect(targets).toEqual([
-            ["logs", "2026-10-12"],
+            ["logs", "2026-10-07"],
             ["ai-proxy-transcripts", new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)],
+            ["app-hangs", "2026-10-12"],
         ]);
+        const hangs = planDailyCompression({ now, logsDir: dir }).find(
+            ({ target }) => target.name === "app-hangs"
+        )!.target;
+        expect(
+            [
+                "hang-2026-10-11-050739.txt",
+                "stack-2026-10-11-050739.txt",
+                "hang-2026-10-11-050739.txt.zst",
+                "app-perf.log",
+            ].map((name) => hangs.dayOf(name))
+        ).toEqual(["2026-10-11", "2026-10-11", undefined, undefined]);
         expect(startDailyCompressionOnce(dir, "2026-10-13")).toBe(false);
         expect(readdirSync(dir)).toEqual([]);
     });

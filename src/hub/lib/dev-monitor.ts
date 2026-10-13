@@ -411,7 +411,8 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     const crashes = new FolderWatch(sources.crashes, (name) => /^Genesis/.test(name) && /\.(ips|crash)$/.test(name));
     // Hang files are announced by their app-perf.log line already; a file with no line means the
     // process could not log any more, which is the case worth a separate event.
-    const hangs = new FolderWatch(sources.hangs, (name) => name.startsWith("hang-"));
+    // `.txt` only: the daily pass stores captures older than yesterday as `hang-….txt.zst`, which is not a new hang.
+    const hangs = new FolderWatch(sources.hangs, (name) => name.startsWith("hang-") && name.endsWith(".txt"));
     const announced = new Set<string>();
     const batcher = new EventBatcher(options.minDelayMs, options.emit);
 

@@ -1,5 +1,34 @@
 import { isZstdPath, readZstdFrames } from "./zstd";
 
+/**
+ * Frames decompressing ahead of the reader. On a 1 GB day log (2026-10-13): 1 ahead peaked at 83 MB RSS, 3 ahead at
+ * 171 MB, with no gain in wall time once rg is the consumer.
+ */
+const FRAMES_AHEAD = 2;
+
+/**
+ * A `.zst` file's content as a pull stream: the next frame decompresses only when the consumer asks for more, so a
+ * slow reader never makes frames queue up (a `FileSink.write` loop held 519 MB for a 3.5 GB week of logs).
+ */
+export function zstdContentStream(path: string, concurrency = FRAMES_AHEAD): ReadableStream<Uint8Array> {
+    const frames = readZstdFrames(path, { concurrency });
+
+    return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            const next = await frames.next();
+
+            if (next.done) {
+                controller.close();
+            } else {
+                controller.enqueue(next.value);
+            }
+        },
+        async cancel() {
+            await frames.return(undefined);
+        },
+    });
+}
+
 export interface RipgrepRun {
     stdout: string;
     stderr: string;
@@ -20,23 +49,12 @@ async function runOne({
     zst?: string;
 }): Promise<RipgrepRun> {
     const proc = Bun.spawn(zst ? [rg, ...args, "-"] : [rg, ...args], {
-        stdin: zst ? "pipe" : "ignore",
+        stdin: zst ? zstdContentStream(zst) : "ignore",
         stdout: "pipe",
         stderr: "pipe",
         timeout: timeoutMs,
     });
     const output = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-
-    if (zst && proc.stdin) {
-        try {
-            for await (const frame of readZstdFrames(zst, { concurrency: 6 })) {
-                proc.stdin.write(frame);
-                await proc.stdin.flush();
-            }
-        } finally {
-            await proc.stdin.end();
-        }
-    }
 
     const [[stdout, stderr], code] = await Promise.all([output, proc.exited]);
     return { stdout, stderr, code, signal: proc.signalCode ?? null };
@@ -60,10 +78,21 @@ export async function ripgrepFiles({
     timeoutMs?: number;
 }): Promise<RipgrepRun> {
     const plain = files.filter((file) => !isZstdPath(file));
-    const runs = await Promise.all([
-        ...(plain.length > 0 ? [runOne({ rg, args: [...args, "--", ...plain], timeoutMs })] : []),
-        ...files.filter(isZstdPath).map((zst) => runOne({ rg, args, timeoutMs, zst })),
-    ]);
+    const compressed = files.filter(isZstdPath);
+    // One compressed file at a time (beside the plain run): five in parallel peaked at 355 MB RSS for a week of logs.
+    const zstRuns = (async () => {
+        const results: RipgrepRun[] = [];
+
+        for (const zst of compressed) {
+            results.push(await runOne({ rg, args, timeoutMs, zst }));
+        }
+
+        return results;
+    })();
+    const runs = [
+        ...(plain.length > 0 ? [await runOne({ rg, args: [...args, "--", ...plain], timeoutMs })] : []),
+        ...(await zstRuns),
+    ];
 
     const codes = runs.map((run) => run.code);
     const failed = Math.max(0, ...codes);

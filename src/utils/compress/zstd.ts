@@ -195,6 +195,27 @@ export function zstdFrames(fd: number, size: number): ZstdFrame[] {
     return readSeekTable(fd, size) ?? walkFrames(fd, size);
 }
 
+/** The decompressed size of a zstd file from its seek table or frame headers, without decompressing; undefined when a frame does not say. */
+export function zstdContentBytes(path: string): number | undefined {
+    const fd = openSync(path, "r");
+
+    try {
+        let total = 0;
+
+        for (const frame of zstdFrames(fd, fstatSync(fd).size)) {
+            if (frame.decompressedSize === undefined) {
+                return undefined;
+            }
+
+            total += frame.decompressedSize;
+        }
+
+        return total;
+    } finally {
+        closeSync(fd);
+    }
+}
+
 export function decompressFrame(fd: number, frame: ZstdFrame): Uint8Array {
     return Bun.zstdDecompressSync(readExactly(fd, frame.compressedSize, frame.offset));
 }

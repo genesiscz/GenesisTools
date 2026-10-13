@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readdirSync, statfsSync, statSync } from "node:f
 import { basename, dirname, join } from "node:path";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { compressFile, decompressFile, digestZstdContent, sourceUnchanged, verifyCompressedFile } from "./file";
-import { type LedgerRecord, recordCompression } from "./ledger";
+import { type LedgerRecord, recordCompression, searchLedger } from "./ledger";
 import {
     type CompressPreset,
     DEFAULT_MIN_SAVING,
@@ -22,7 +22,7 @@ import {
     unpackArchive,
     verifyArchiveAgainstFolder,
 } from "./tar";
-import { ZSTD_SUFFIX } from "./zstd";
+import { ZSTD_SUFFIX, zstdContentBytes } from "./zstd";
 
 /** Room kept free on top of the expected output, so a compression never fills the disk to the last byte. */
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
@@ -311,8 +311,12 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
     let restoredBytes: number;
     let outputSha256: string | undefined;
 
+    // From the seek table, so the archive is decompressed once (the restore), not twice: restoring a 68 MB bundle
+    // took 644 ms with a listing pass first. Every frame's checksum is checked by the decoder on the way.
+    const knownBytes = zstdContentBytes(archive);
+
     if (isTar) {
-        restoredBytes = listArchive(archive).reduce((sum, entry) => sum + entry.size, 0);
+        restoredBytes = knownBytes ?? listArchive(archive).reduce((sum, entry) => sum + entry.size, 0);
         assertRoomFor({ outputDir: into, inputBytes: restoredBytes, keptShare: 1 });
         await unpackArchive({ archive, destination: into });
 
@@ -320,14 +324,19 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
             throw new Error(`${archive} did not restore ${target}: its top folder has another name`);
         }
     } else {
-        const digest = digestZstdContent(archive);
-        restoredBytes = digest.bytes;
-        assertRoomFor({ outputDir: into, inputBytes: restoredBytes, keptShare: 1 });
+        assertRoomFor({ outputDir: into, inputBytes: knownBytes ?? digestZstdContent(archive).bytes, keptShare: 1 });
         const written = await decompressFile({ source: archive, target });
+        restoredBytes = written.bytes;
+        // The ledger knows the original's sha256 when this tool wrote the archive.
+        const original = searchLedger({ path: archive }).find(
+            (record) => record.target === archive && record.inputSha256
+        );
 
-        if (written.sha256 !== digest.sha256) {
+        if (original?.inputSha256 && original.inputSha256 !== written.sha256) {
             removePath(target);
-            throw new Error(`${archive} decompressed differently on the second read; output removed`);
+            throw new Error(
+                `${archive} decompressed to other bytes than the original the ledger recorded; output removed`
+            );
         }
 
         outputSha256 = written.sha256;
