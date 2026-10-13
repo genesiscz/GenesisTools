@@ -99,4 +99,20 @@ function guardSandbox(sandboxRoot: string): void {
     });
 }
 
+/**
+ * Obsidian's own config (`obsidian.json`) lives outside `~/.genesis-tools`, so the sandbox above did not cover it: the
+ * vault discovery read the user's real one and the question tool's Obsidian sink wrote `<fixture>/Questions/<date>.md`
+ * into the real vault on every run (`gt-ask-fixture/`, `project/`, `subdirectory/`, and about 5,000 test entries in the
+ * real `GenesisTools/Questions/` logs, cleaned 2026-10-13). An empty folder answers "no vault"; a test that needs one
+ * passes its own `OBSIDIAN_CONFIG_DIR` or a vault override.
+ */
+function isolateObsidian(): void {
+    if (env.test.allowsRealHome() || env.getTrimmed("OBSIDIAN_CONFIG_DIR")) {
+        return;
+    }
+
+    env.testing.set("OBSIDIAN_CONFIG_DIR", mkdtempSync(join(tmpdir(), "gt-test-obsidian-")));
+}
+
 installSandbox();
+isolateObsidian();

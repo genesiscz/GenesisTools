@@ -19,13 +19,18 @@ export interface ObsidianVault {
     open: boolean;
 }
 
-/** obsidian.json candidate paths, research-confirmed. OBSIDIAN_CONFIG_DIR wins. */
+/**
+ * obsidian.json candidate paths, research-confirmed. OBSIDIAN_CONFIG_DIR, when set, is the only place looked at:
+ * the test sandbox points it at an empty folder, and as a mere first candidate a miss fell through to the user's
+ * real Obsidian config, so the question tests wrote `<fixture>/Questions/<date>.md` into the real vault.
+ */
 export function configCandidates(env: EnvSnapshot): string[] {
+    if (env.OBSIDIAN_CONFIG_DIR) {
+        return [join(env.OBSIDIAN_CONFIG_DIR, "obsidian.json")];
+    }
+
     const home = env.HOME ?? homedir();
     const out: string[] = [];
-    if (env.OBSIDIAN_CONFIG_DIR) {
-        out.push(join(env.OBSIDIAN_CONFIG_DIR, "obsidian.json"));
-    }
 
     if (process.platform === "darwin") {
         out.push(join(home, "Library/Application Support/obsidian/obsidian.json"));
