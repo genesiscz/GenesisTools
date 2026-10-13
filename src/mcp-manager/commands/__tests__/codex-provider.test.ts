@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
 import { CodexProvider } from "@app/mcp-manager/utils/providers/codex.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { env } from "@genesiscz/utils/env";
 import * as TOML from "@iarna/toml";
 
@@ -189,5 +190,130 @@ command = "peekaboo"
             env: { CODEX_HOME: extra },
         });
         expect(extraConfig.mcp_servers?.peekaboo).toEqual({ command: "peekaboo" });
+    });
+});
+
+describe("CodexProvider plugin-provided MCP servers", () => {
+    let homeDir: string;
+    let previousHome: string | undefined;
+
+    beforeEach(() => {
+        previousHome = env.get("HOME");
+        homeDir = mkdtempSync(join(tmpdir(), "mcp-codex-plugins-"));
+        env.testing.set("HOME", homeDir);
+        setGlobalOptions({ yes: true });
+    });
+
+    afterEach(() => {
+        if (previousHome !== undefined) {
+            env.testing.set("HOME", previousHome);
+        } else {
+            env.testing.unset("HOME");
+        }
+        setGlobalOptions({});
+        rmSync(homeDir, { recursive: true, force: true });
+    });
+
+    /** A Codex home whose config.toml names the `expo@market` plugin, with two cached plugin versions. */
+    async function seedHome(home: string, plugin: { enabled: boolean } | null): Promise<string> {
+        const cache = join(home, "plugins", "cache", "market", "expo");
+        // 1.10.0 must win over 1.9.0: version folders sort by number, not by text.
+        mkdirSync(join(cache, "1.9.0"), { recursive: true });
+        await Bun.write(join(cache, "1.9.0", "mcp.json"), '{"mcpServers":{"old_server":{"command":"old"}}}');
+        mkdirSync(join(cache, "1.10.0", ".codex-plugin"), { recursive: true });
+        await Bun.write(
+            join(cache, "1.10.0", ".codex-plugin", "plugin.json"),
+            '{"name":"expo","mcpServers":"./.mcp.json"}'
+        );
+        await Bun.write(
+            join(cache, "1.10.0", ".mcp.json"),
+            '{"mcpServers":{"expo":{"type":"http","url":"https://mcp.example.test/mcp"}}}'
+        );
+
+        const config: TOML.JsonMap = { model: "gpt-test", mcp_servers: { keep: { command: "keep" } } };
+        if (plugin) {
+            config.plugins = { "expo@market": { enabled: plugin.enabled } };
+        }
+
+        const text = TOML.stringify(config);
+        await Bun.write(join(home, "config.toml"), text);
+        return text;
+    }
+
+    const readToml = (home: string) =>
+        TOML.parse(readFileSync(join(home, "config.toml"), "utf-8")) as {
+            mcp_servers?: Record<string, unknown>;
+            plugins?: Record<string, { enabled?: boolean; mcp_servers?: Record<string, { enabled?: boolean }> }>;
+        };
+
+    it("lists the servers of an enabled plugin per home and skips a home where the plugin is off", async () => {
+        const primary = join(homeDir, ".codex");
+        const extra = join(homeDir, ".codex-shop");
+        await seedHome(primary, { enabled: true });
+        await seedHome(extra, { enabled: false });
+
+        const provider = new CodexProvider({ syncToHomes: [primary, extra] });
+        const servers = await provider.listPluginServers();
+
+        expect(servers).toEqual([
+            {
+                name: "expo",
+                config: { type: "http", url: "https://mcp.example.test/mcp" },
+                enabled: true,
+                provider: "codex",
+                plugin: "expo@market",
+                home: primary,
+            },
+        ]);
+        // Plugin servers are not unified-config servers: sync-from-providers must never import them.
+        expect((await provider.listServers()).map((server) => server.name)).toEqual(["keep"]);
+    });
+
+    it("disable writes the per-plugin override in every home with the plugin, and enable restores the file", async () => {
+        const primary = join(homeDir, ".codex");
+        const extra = join(homeDir, ".codex-shop");
+        const without = join(homeDir, ".codex-bare");
+        const primaryText = await seedHome(primary, { enabled: true });
+        const extraText = await seedHome(extra, { enabled: true });
+        const withoutText = await seedHome(without, null);
+        const provider = new CodexProvider({ syncToHomes: [primary, extra, without] });
+
+        expect(await provider.setPluginServersEnabled(["expo"], false)).toBe(WriteResult.Applied);
+
+        for (const home of [primary, extra]) {
+            const config = readToml(home);
+            expect(config.plugins?.["expo@market"]).toEqual({
+                enabled: true,
+                mcp_servers: { expo: { enabled: false } },
+            });
+            // A bare [mcp_servers.expo] has no transport and stops Codex from starting.
+            expect(config.mcp_servers?.expo).toBeUndefined();
+            expect(readFileSync(join(home, "config.toml"), "utf-8")).not.toMatch(/^\[mcp_servers\.expo\]/m);
+        }
+
+        expect(readFileSync(join(without, "config.toml"), "utf-8")).toBe(withoutText);
+        expect((await provider.listPluginServers()).map((server) => server.enabled)).toEqual([false, false]);
+        expect(await provider.setPluginServersEnabled(["expo"], false)).toBe(WriteResult.NoChanges);
+
+        expect(await provider.setPluginServersEnabled(["expo"], true)).toBe(WriteResult.Applied);
+        expect(readFileSync(join(primary, "config.toml"), "utf-8")).toBe(primaryText);
+        expect(readFileSync(join(extra, "config.toml"), "utf-8")).toBe(extraText);
+    });
+
+    it("sync keeps the plugin override and the plugin table", async () => {
+        const primary = join(homeDir, ".codex");
+        await seedHome(primary, { enabled: true });
+        const provider = new CodexProvider({ syncToHomes: [primary] });
+        await provider.setPluginServersEnabled(["expo"], false);
+
+        await provider.syncServers({
+            keep: { command: "keep", _meta: { enabled: { codex: true } } },
+            added: { command: "added", _meta: { enabled: { codex: true } } },
+        });
+
+        const config = readToml(primary);
+        expect(config.mcp_servers?.added).toEqual({ command: "added" });
+        expect(config.plugins?.["expo@market"]?.mcp_servers?.expo).toEqual({ enabled: false });
+        expect(config.mcp_servers?.expo).toBeUndefined();
     });
 });

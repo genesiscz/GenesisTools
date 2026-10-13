@@ -280,6 +280,40 @@ file shows the paths in use even where they are not configurable.
 -   Only supports stdio transport
 -   Servers are enabled if they exist in config
 
+## Plugin-provided servers (Claude and Codex)
+
+A plugin can bring its own MCP server. For example, the `expo` plugin brings the
+`expo` server. These servers are not in the unified config, and `sync` never
+installs them. `list` and `show` read them from the enabled plugins and mark each
+row as `(plugin <plugin id>)`. A Codex row also names its home. `list --json`
+leaves them out, because `tools scripts` dials every entry in that payload.
+
+-   Claude: a plugin is enabled in `~/.claude/settings.json` `enabledPlugins`. Its
+    install folder comes from `~/.claude/plugins/installed_plugins.json` (the user-scope
+    install). The folder declares the servers in `.mcp.json`, `mcp.json` or the
+    `.claude-plugin/plugin.json` `mcpServers` field.
+-   Codex: a plugin is enabled by `[plugins."<plugin>@<marketplace>"]` in `config.toml`.
+    Its servers come from the newest version folder under
+    `<codex home>/plugins/cache/<marketplace>/<plugin>/`. Every `syncTo` and `syncFrom`
+    home is read.
+
+`tools mcp-manager disable expo` checks the unified config first. If `expo` is
+not there, the command switches the plugin server off in every harness that
+loads it (`-p` limits the harnesses). The plugin itself stays enabled.
+
+-   Claude: the command adds `{ "serverName": "plugin:<plugin>:<server>" }` (here
+    `plugin:expo:expo`) to `deniedMcpServers` in `~/.claude/settings.json`. Two plugins
+    with the same short name share one entry. Other keys stay as they are.
+-   Codex: the command writes `[plugins."<plugin id>".mcp_servers.<server>]` with
+    `enabled = false` in every home that enables the plugin. It never writes a bare
+    `[mcp_servers.<server>]` table: an entry without a transport stops Codex from
+    starting.
+
+`enable expo` removes exactly these entries again. `sync` keeps both switches:
+Claude's sync does not write `settings.json`, and Codex's sync keeps every
+`[plugins.*]` table. A running Claude Code session keeps the server until you
+restart it. The same is true for a running Codex session.
+
 ## Workflow Example
 
 ### 1. Create Unified Configuration

@@ -12,9 +12,52 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import * as TOML from "@iarna/toml";
 import chalk from "chalk";
-import type { CodexGenericConfig, CodexMCPServerConfig } from "./codex.types.js";
+import type { CodexGenericConfig, CodexMCPServerConfig, CodexPluginConfig } from "./codex.types.js";
+import { latestVersionDir, readPluginMcpServers, splitPluginId } from "./plugins.js";
 import type { MCPServerInfo, UnifiedMCPConfig, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
+
+interface CodexPluginServer {
+    pluginId: string;
+    name: string;
+    config: UnifiedMCPServerConfig;
+    enabled: boolean;
+}
+
+/**
+ * Codex skips a plugin's MCP server when `[plugins."<id>".mcp_servers.<server>]` says `enabled = false`,
+ * and the plugin itself stays enabled (verified on Codex 0.162.1 with `codex mcp list --json`). Enabling
+ * removes exactly that key and the tables it leaves empty, so the file returns to its earlier shape.
+ * Never write a bare `[mcp_servers.<server>]` for this: an entry without a transport stops Codex starting.
+ */
+function setCodexPluginServerEnabled(plugin: CodexPluginConfig, server: string, enabled: boolean): void {
+    if (!enabled) {
+        if (!plugin.mcp_servers) {
+            plugin.mcp_servers = {};
+        }
+
+        const override = plugin.mcp_servers[server] ?? {};
+        override.enabled = false;
+        plugin.mcp_servers[server] = override;
+        return;
+    }
+
+    const overrides = plugin.mcp_servers;
+    const override = overrides?.[server];
+    if (!overrides || !override) {
+        return;
+    }
+
+    delete override.enabled;
+
+    if (Object.keys(override).length === 0) {
+        delete overrides[server];
+    }
+
+    if (Object.keys(overrides).length === 0) {
+        delete plugin.mcp_servers;
+    }
+}
 
 export interface CodexProviderOptions {
     syncToHomes?: string[];
@@ -273,6 +316,129 @@ export class CodexProvider extends MCPProvider {
                     protectHomeBound: !isPrimary,
                 })
             );
+
+            if (result === WriteResult.Rejected) {
+                return result;
+            }
+
+            if (result === WriteResult.Applied) {
+                applied = true;
+            }
+        }
+
+        return applied ? WriteResult.Applied : WriteResult.NoChanges;
+    }
+
+    /** Every Codex home mcp-manager reads or writes, primary first, each once. */
+    private pluginHomes(): string[] {
+        return [...new Set([...this.syncToHomes, ...this.syncFromHomes].map(codexHomeDir))];
+    }
+
+    /** Servers declared by the plugins one home's config.toml enables, from that home's plugin cache. */
+    private async discoverPluginServers(config: CodexGenericConfig, home: string): Promise<CodexPluginServer[]> {
+        const found: CodexPluginServer[] = [];
+
+        for (const [pluginId, pluginConfig] of Object.entries(config.plugins ?? {})) {
+            if (pluginConfig.enabled === false) {
+                continue;
+            }
+
+            const parts = splitPluginId(pluginId);
+            const pluginDir = parts
+                ? latestVersionDir(path.join(home, "plugins", "cache", parts.marketplace, parts.plugin))
+                : null;
+
+            if (!pluginDir) {
+                logger.debug(
+                    { pluginId, home },
+                    "mcp-manager: Codex plugin has no cached copy; its MCP servers are unknown"
+                );
+                continue;
+            }
+
+            try {
+                const declared = await readPluginMcpServers(
+                    pluginDir,
+                    path.join(pluginDir, ".codex-plugin", "plugin.json")
+                );
+
+                for (const server of declared) {
+                    found.push({
+                        pluginId,
+                        name: server.name,
+                        config: server.config,
+                        enabled: pluginConfig.mcp_servers?.[server.name]?.enabled !== false,
+                    });
+                }
+            } catch (error) {
+                logger.warn({ error, pluginId, pluginDir }, "mcp-manager: could not read a Codex plugin's MCP servers");
+            }
+        }
+
+        return found;
+    }
+
+    async listPluginServers(): Promise<MCPServerInfo[]> {
+        const servers: MCPServerInfo[] = [];
+
+        for (const home of this.pluginHomes()) {
+            const configPath = codexConfigPathForHome(home);
+            if (!existsSync(configPath)) {
+                continue;
+            }
+
+            let config: CodexGenericConfig;
+            try {
+                config = await this.readConfigAt(configPath);
+            } catch (error) {
+                logger.warn({ error, configPath }, "mcp-manager: could not read Codex config for plugin servers");
+                continue;
+            }
+
+            for (const server of await this.discoverPluginServers(config, home)) {
+                servers.push({
+                    name: server.name,
+                    config: server.config,
+                    enabled: server.enabled,
+                    provider: this.providerName,
+                    plugin: server.pluginId,
+                    home,
+                });
+            }
+        }
+
+        return servers;
+    }
+
+    async setPluginServersEnabled(serverNames: string[], enabled: boolean): Promise<WriteResult> {
+        let applied = false;
+
+        for (const home of this.pluginHomes()) {
+            const configPath = codexConfigPathForHome(home);
+            if (!existsSync(configPath)) {
+                continue;
+            }
+
+            const config = await this.readConfigAt(configPath);
+            let changed = false;
+
+            for (const server of await this.discoverPluginServers(config, home)) {
+                const plugin = config.plugins?.[server.pluginId];
+
+                if (!plugin || !serverNames.includes(server.name) || server.enabled === enabled) {
+                    continue;
+                }
+
+                setCodexPluginServerEnabled(plugin, server.name, enabled);
+                changed = true;
+            }
+
+            if (!changed) {
+                continue;
+            }
+
+            logger.debug({ configPath, serverNames, enabled }, "mcp-manager: writing Codex plugin MCP overrides");
+            const result = await this.withConfigPath(configPath, () => this.writeConfig(config));
 
             if (result === WriteResult.Rejected) {
                 return result;

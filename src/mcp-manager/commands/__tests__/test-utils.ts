@@ -12,6 +12,7 @@ export class MockMCPProvider extends MCPProvider {
     public configExistsResult: boolean = true;
     public readConfigResult: unknown = {};
     public listServersResult: MCPServerInfo[] = [];
+    public listPluginServersResult: MCPServerInfo[] = [];
     public getServerConfigResult: UnifiedMCPServerConfig | null = null;
     public getProjectsResult: string[] = [];
     public enableServerCalls: Array<{ serverName: string; projectPath?: string | null }> = [];
@@ -59,6 +60,10 @@ export class MockMCPProvider extends MCPProvider {
             throw this.errors.get("listServers")!;
         }
         return this.listServersResult;
+    }
+
+    async listPluginServers(): Promise<MCPServerInfo[]> {
+        return this.listPluginServersResult;
     }
 
     async getServerConfig(_serverName: string): Promise<UnifiedMCPServerConfig | null> {
@@ -164,6 +169,7 @@ export class MockMCPProvider extends MCPProvider {
         this.configExistsResult = true;
         this.readConfigResult = {};
         this.listServersResult = [];
+        this.listPluginServersResult = [];
         this.getServerConfigResult = null;
         this.getProjectsResult = [];
         this.enableServerCalls = [];

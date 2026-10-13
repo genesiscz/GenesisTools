@@ -100,6 +100,10 @@ export interface MCPServerInfo {
     config: UnifiedMCPServerConfig;
     enabled: boolean;
     provider: string;
+    /** Plugin id (`<plugin>@<marketplace>`) when an enabled plugin provides this server, not the unified config. */
+    plugin?: string;
+    /** Harness home the plugin entry was read from, for a provider with several homes (Codex). */
+    home?: string;
 }
 
 import { BackupManager } from "@app/mcp-manager/utils/backup.js";
@@ -315,4 +319,21 @@ export abstract class MCPProvider {
      * Providers with a single config path ignore this.
      */
     applyHarnessConfig(_config: UnifiedMCPConfig): void {}
+
+    /**
+     * MCP servers that an enabled plugin brings into this harness. They never enter the
+     * unified config, so `listServers`, `sync` and `sync-from-providers` do not see them.
+     * `enabled` is false when this harness's own per-server switch turned the server off.
+     */
+    async listPluginServers(): Promise<MCPServerInfo[]> {
+        return [];
+    }
+
+    /**
+     * Turn plugin-provided servers off (or back on) with this harness's own switch, keeping
+     * the plugin itself enabled. Names this harness has no plugin server for are ignored.
+     */
+    async setPluginServersEnabled(_serverNames: string[], _enabled: boolean): Promise<WriteResult> {
+        return WriteResult.NoChanges;
+    }
 }

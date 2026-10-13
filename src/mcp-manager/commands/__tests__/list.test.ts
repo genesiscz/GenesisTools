@@ -111,7 +111,8 @@ describe("listServers", () => {
 
     // Regression test: #446 item 10 — the empty state said "No MCP servers
     // found." with no hint about which files were read or what is excluded.
-    it("names the providers it scanned and excludes claude.ai connectors and plugins in the empty state", async () => {
+    // Plugin-provided servers are listed since 2026-10-13, so the empty state no longer excludes them.
+    it("names the providers it scanned and excludes claude.ai connectors in the empty state", async () => {
         mockProvider.listServersResult = [];
 
         spyOn(logger, "info");
@@ -120,7 +121,30 @@ describe("listServers", () => {
 
         expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("claude"));
         expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("claude.ai connectors"));
-        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("plugin-provided servers"));
+        expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("plugin-provided servers"));
+    });
+
+    it("lists a plugin-provided server with its plugin id and Codex home, and keeps it out of --json", async () => {
+        const codex = new MockMCPProvider("codex", "/mock/codex.toml");
+        const expo = { type: "http" as const, url: "https://mcp.example.test/mcp" };
+        mockProvider.listPluginServersResult = [
+            { name: "expo", config: expo, enabled: true, provider: "claude", plugin: "expo@market" },
+        ];
+        codex.listPluginServersResult = [
+            { name: "expo", config: expo, enabled: false, provider: "codex", plugin: "expo@market", home: "/w/.codex" },
+        ];
+        spyOn(logger, "info");
+
+        await listServers([mockProvider, codex]);
+
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("expo"));
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("claude (plugin expo@market)"));
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("codex (plugin expo@market, /w/.codex)"));
+
+        const resultSpy = spyOn(out, "result").mockImplementation(() => {});
+        await listServers([mockProvider, codex], { json: true });
+        const payload = resultSpy.mock.calls[0]?.[0] as ListJsonOutput;
+        expect(payload.servers.map((server) => server.name)).not.toContain("expo");
     });
 
     it("should handle errors when reading provider configs", async () => {

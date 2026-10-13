@@ -7,6 +7,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import chalk from "chalk";
 import { redactMcpValue } from "../lib/auth/redact.ts";
+import { providerLabel } from "./list.js";
 
 /**
  * Show the full configuration of an MCP server. With no name: a TTY picks from
@@ -48,12 +49,22 @@ export async function showServerConfig(serverName: string | undefined, providers
     }
 
     const configs: Array<{ provider: string; config: UnifiedMCPServerConfig | null }> = [];
+    const unified = await readUnifiedConfigReadOnly();
 
     for (const provider of providers) {
+        provider.applyHarnessConfig(unified);
+
         if (await provider.configExists()) {
             const config = await provider.getServerConfig(finalServerName);
             if (config) {
                 configs.push({ provider: provider.getName(), config });
+            }
+        }
+
+        for (const server of await provider.listPluginServers()) {
+            if (server.name === finalServerName) {
+                const state = server.enabled ? "" : " [disabled]";
+                configs.push({ provider: `${providerLabel(server)}${state}`, config: server.config });
             }
         }
     }

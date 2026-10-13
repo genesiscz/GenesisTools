@@ -1,14 +1,47 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
+import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
 import type { ClaudeGenericConfig, ClaudeMCPServerConfig } from "./claude.types.js";
+import { readJsonFileIfExists, readPluginMcpServers, splitPluginId } from "./plugins.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
+
+interface ClaudePluginServer {
+    info: MCPServerInfo;
+    /** The name Claude Code registers the server under: `plugin:<plugin>:<server>`. */
+    registeredName: string;
+}
+
+/** The name Claude Code gives a plugin's MCP server, e.g. `plugin:expo:expo`. */
+export function claudePluginServerName(plugin: string, server: string): string {
+    return `plugin:${plugin}:${server}`;
+}
+
+function deniedEntries(settings: Record<string, unknown>): unknown[] {
+    return Array.isArray(settings.deniedMcpServers) ? settings.deniedMcpServers : [];
+}
+
+/** True when a `deniedMcpServers` entry names the server, or a `serverUrl` pattern matches its URL. */
+function isDeniedByClaude(denied: unknown[], registeredName: string, url: string | undefined): boolean {
+    return denied.some((entry) => {
+        if (!isObject(entry)) {
+            return false;
+        }
+
+        if (entry.serverName === registeredName) {
+            return true;
+        }
+
+        return typeof entry.serverUrl === "string" && url !== undefined && matchGlob(url, entry.serverUrl);
+    });
+}
 
 /**
  * Claude Desktop MCP provider.
@@ -141,6 +174,194 @@ export class ClaudeProvider extends MCPProvider {
         }
 
         return servers;
+    }
+
+    /** `~/.claude/settings.json`: user settings, home of `enabledPlugins` and the `deniedMcpServers` denylist. */
+    getSettingsPath(): string {
+        return path.join(path.dirname(this.configPath), ".claude", "settings.json");
+    }
+
+    /** User settings as parsed JSON. A missing file is `{}`; a file that does not parse throws. */
+    private async readSettings(): Promise<Record<string, unknown>> {
+        const settingsPath = this.getSettingsPath();
+        const parsed = await readJsonFileIfExists(settingsPath);
+
+        if (parsed === undefined) {
+            return {};
+        }
+
+        if (!isObject(parsed)) {
+            throw new Error(`${settingsPath} is not a JSON object`);
+        }
+
+        return parsed;
+    }
+
+    /**
+     * Install folder per plugin id, from `~/.claude/plugins/installed_plugins.json`. The user-scope
+     * install is the one a user-settings `enabledPlugins` entry loads; a project-scope copy is a fallback.
+     */
+    private async readInstalledPluginPaths(): Promise<Map<string, string>> {
+        const installedPath = path.join(path.dirname(this.getSettingsPath()), "plugins", "installed_plugins.json");
+        const paths = new Map<string, string>();
+        let parsed: unknown;
+
+        try {
+            parsed = await readJsonFileIfExists(installedPath);
+        } catch (error) {
+            logger.warn({ error, installedPath }, "mcp-manager: could not read Claude installed plugins");
+            return paths;
+        }
+
+        const plugins = isObject(parsed) && isObject(parsed.plugins) ? parsed.plugins : {};
+
+        for (const [pluginId, raw] of Object.entries(plugins)) {
+            const installs = (Array.isArray(raw) ? raw : [raw]).filter(isObject);
+            const chosen = installs.find((install) => install.scope === "user") ?? installs[0];
+
+            if (chosen && typeof chosen.installPath === "string") {
+                paths.set(pluginId, chosen.installPath);
+            }
+        }
+
+        return paths;
+    }
+
+    private async discoverPluginServers(settings: Record<string, unknown>): Promise<ClaudePluginServer[]> {
+        const enabledPlugins = isObject(settings.enabledPlugins) ? settings.enabledPlugins : {};
+        const enabledIds = Object.keys(enabledPlugins).filter((pluginId) => enabledPlugins[pluginId] === true);
+
+        if (enabledIds.length === 0) {
+            return [];
+        }
+
+        const installPaths = await this.readInstalledPluginPaths();
+        const denied = deniedEntries(settings);
+        const found: ClaudePluginServer[] = [];
+
+        for (const pluginId of enabledIds) {
+            const parts = splitPluginId(pluginId);
+            const installPath = installPaths.get(pluginId);
+
+            if (!parts || !installPath) {
+                logger.debug({ pluginId }, "mcp-manager: enabled Claude plugin has no install path");
+                continue;
+            }
+
+            try {
+                const declared = await readPluginMcpServers(
+                    installPath,
+                    path.join(installPath, ".claude-plugin", "plugin.json")
+                );
+
+                for (const server of declared) {
+                    const registeredName = claudePluginServerName(parts.plugin, server.name);
+                    found.push({
+                        registeredName,
+                        info: {
+                            name: server.name,
+                            config: server.config,
+                            enabled: !isDeniedByClaude(denied, registeredName, server.config.url),
+                            provider: this.providerName,
+                            plugin: pluginId,
+                        },
+                    });
+                }
+            } catch (error) {
+                logger.warn(
+                    { error, pluginId, installPath },
+                    "mcp-manager: could not read a Claude plugin's MCP servers"
+                );
+            }
+        }
+
+        return found;
+    }
+
+    async listPluginServers(): Promise<MCPServerInfo[]> {
+        try {
+            return (await this.discoverPluginServers(await this.readSettings())).map((server) => server.info);
+        } catch (error) {
+            logger.warn({ error, path: this.getSettingsPath() }, "mcp-manager: could not read Claude user settings");
+            return [];
+        }
+    }
+
+    /**
+     * Claude Code's global switch for one plugin server is the user-settings denylist:
+     * `deniedMcpServers: [{ "serverName": "plugin:<plugin>:<server>" }]`. The plugin stays enabled
+     * (verified on Claude Code 2.1.296: `claude mcp get plugin:expo:expo` no longer finds it).
+     * Enabling removes exactly those `serverName` entries, and the key when it ends up empty.
+     */
+    async setPluginServersEnabled(serverNames: string[], enabled: boolean): Promise<WriteResult> {
+        const settings = await this.readSettings();
+        const registered = new Set(
+            (await this.discoverPluginServers(settings))
+                .filter((server) => serverNames.includes(server.info.name))
+                .map((server) => server.registeredName)
+        );
+
+        if (registered.size === 0) {
+            return WriteResult.NoChanges;
+        }
+
+        const current = deniedEntries(settings);
+        const namedIn = (entry: unknown): boolean =>
+            isObject(entry) && typeof entry.serverName === "string" && registered.has(entry.serverName);
+
+        if (enabled) {
+            const kept = current.filter((entry) => !namedIn(entry));
+
+            if (kept.length === current.length) {
+                return WriteResult.NoChanges;
+            }
+
+            if (kept.length === 0) {
+                delete settings.deniedMcpServers;
+            } else {
+                settings.deniedMcpServers = kept;
+            }
+        } else {
+            const present = new Set(
+                current
+                    .filter(isObject)
+                    .flatMap((entry) => (typeof entry.serverName === "string" ? [entry.serverName] : []))
+            );
+            const missing = [...registered].filter((name) => !present.has(name));
+
+            if (missing.length === 0) {
+                return WriteResult.NoChanges;
+            }
+
+            settings.deniedMcpServers = [...current, ...missing.map((serverName) => ({ serverName }))];
+        }
+
+        return this.writeSettings(settings);
+    }
+
+    /** Same flow as every harness write (diff, confirm or --yes, backup), aimed at settings.json. */
+    private async writeSettings(settings: Record<string, unknown>): Promise<WriteResult> {
+        const settingsPath = this.getSettingsPath();
+        const oldContent = existsSync(settingsPath) ? await readFile(settingsPath, "utf-8") : "";
+        const body = SafeJSON.stringify(settings, null, 2);
+        const newContent = oldContent === "" || oldContent.endsWith("\n") ? `${body}\n` : body;
+
+        if (oldContent === newContent) {
+            return WriteResult.NoChanges;
+        }
+
+        await this.backupManager.showDiff(oldContent, newContent, settingsPath);
+        const confirmed = await this.backupManager.askConfirmation();
+
+        if (!confirmed) {
+            return WriteResult.Rejected;
+        }
+
+        await this.backupManager.createBackup(settingsPath, this.providerName);
+        await mkdir(path.dirname(settingsPath), { recursive: true });
+        await writeFile(settingsPath, newContent, "utf-8");
+        logger.info(chalk.green(`✓ Configuration written to ${settingsPath}`));
+        return WriteResult.Applied;
     }
 
     async getServerConfig(serverName: string): Promise<UnifiedMCPServerConfig | null> {

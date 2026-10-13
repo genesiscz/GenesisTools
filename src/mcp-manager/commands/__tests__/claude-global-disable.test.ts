@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
@@ -10,6 +10,7 @@ setupInquirerMock();
 setupStorageSandbox();
 
 const { ClaudeProvider } = await import("@app/mcp-manager/utils/providers/claude.js");
+const { CodexProvider } = await import("@app/mcp-manager/utils/providers/codex.js");
 const { syncServers } = await import("../sync.js");
 const { syncFromProviders } = await import("../sync-from-providers.js");
 const { renameServer } = await import("../rename.js");
@@ -20,10 +21,12 @@ import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
 import type { ClaudeGenericConfig } from "@app/mcp-manager/utils/providers/claude.types.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import * as TOML from "@iarna/toml";
 
 /**
  * Fixture tests for the TRUE global-disable scheme of the Claude provider.
@@ -350,6 +353,173 @@ describe("claude provider TRUE global disable", () => {
 
             const unifiedAfter = await readUnified();
             expect(unifiedAfter.mcpServers.serena._meta?.enabled?.claude).toBe(true);
+        });
+    });
+
+    describe("plugin-provided servers", () => {
+        const PLUGIN_URL = "https://mcp.example.test/mcp";
+
+        const settingsPath = () => join(homeDir, ".claude", "settings.json");
+
+        /**
+         * Two enabled plugins that share the short name `expo` (one server, one denylist entry),
+         * one disabled plugin, and a user settings file with unrelated keys that must survive.
+         */
+        const seedClaudePlugins = (settings: Record<string, unknown> = {}): string => {
+            const pluginsDir = join(homeDir, ".claude", "plugins");
+            const userCopy = join(pluginsDir, "cache", "market", "expo", "1.2.0");
+            const projectCopy = join(pluginsDir, "cache", "market", "expo", "1.0.0");
+            const otherCopy = join(pluginsDir, "cache", "other", "expo", "2.0.0");
+            const offCopy = join(pluginsDir, "cache", "market", "off", "1.0.0");
+            mkdirSync(join(userCopy, ".claude-plugin"), { recursive: true });
+            mkdirSync(projectCopy, { recursive: true });
+            mkdirSync(join(otherCopy, ".claude-plugin"), { recursive: true });
+            mkdirSync(offCopy, { recursive: true });
+            writeFileSync(join(userCopy, ".mcp.json"), `{"mcpServers":{"expo":{"type":"http","url":"${PLUGIN_URL}"}}}`);
+            writeFileSync(join(projectCopy, ".mcp.json"), '{"mcpServers":{"stale":{"command":"stale"}}}');
+            writeFileSync(
+                join(otherCopy, ".claude-plugin", "plugin.json"),
+                `{"name":"expo","mcpServers":{"expo":{"type":"http","url":"${PLUGIN_URL}"}}}`
+            );
+            writeFileSync(join(offCopy, "mcp.json"), '{"mcpServers":{"off":{"command":"off"}}}');
+            writeFileSync(
+                join(pluginsDir, "installed_plugins.json"),
+                SafeJSON.stringify(
+                    {
+                        version: 2,
+                        plugins: {
+                            "expo@market": [
+                                { scope: "local", projectPath: "/proj/a", installPath: projectCopy },
+                                { scope: "user", installPath: userCopy },
+                            ],
+                            "expo@other": [{ scope: "user", installPath: otherCopy }],
+                            "off@market": [{ scope: "user", installPath: offCopy }],
+                        },
+                    },
+                    null,
+                    2
+                )
+            );
+
+            const text = `${SafeJSON.stringify(
+                {
+                    theme: "dark",
+                    permissions: { allow: ["Bash(ls)"] },
+                    enabledPlugins: { "expo@market": true, "expo@other": true, "off@market": false },
+                    ...settings,
+                },
+                null,
+                2
+            )}\n`;
+            writeFileSync(settingsPath(), text);
+            return text;
+        };
+
+        const readSettings = (): Record<string, unknown> =>
+            SafeJSON.parse(readFileSync(settingsPath(), "utf-8")) as Record<string, unknown>;
+
+        const seedCodexPlugin = (): void => {
+            const codexHome = join(homeDir, ".codex");
+            const pluginDir = join(codexHome, "plugins", "cache", "market", "expo", "1.2.0");
+            mkdirSync(pluginDir, { recursive: true });
+            writeFileSync(
+                join(pluginDir, ".mcp.json"),
+                `{"mcpServers":{"expo":{"type":"http","url":"${PLUGIN_URL}"}}}`
+            );
+            writeFileSync(join(codexHome, "config.toml"), '[plugins."expo@market"]\nenabled = true\n');
+        };
+
+        const readCodexText = (): string => readFileSync(join(homeDir, ".codex", "config.toml"), "utf-8");
+
+        it("lists only the servers of enabled plugins, from the user-scope install", async () => {
+            seedClaudePlugins();
+
+            const servers = await new ClaudeProvider().listPluginServers();
+
+            expect(servers.map((server) => `${server.plugin}:${server.name}:${server.enabled}`).sort()).toEqual([
+                "expo@market:expo:true",
+                "expo@other:expo:true",
+            ]);
+            expect(servers[0]?.config).toEqual({ type: "http", url: PLUGIN_URL });
+        });
+
+        it("disable adds one deniedMcpServers entry and keeps the rest; enable restores the file", async () => {
+            const original = seedClaudePlugins();
+            const provider = new ClaudeProvider();
+
+            expect(await provider.setPluginServersEnabled(["expo"], false)).toBe(WriteResult.Applied);
+
+            const settings = readSettings();
+            expect(settings.deniedMcpServers).toEqual([{ serverName: "plugin:expo:expo" }]);
+            expect(settings.theme).toBe("dark");
+            expect(settings.permissions).toEqual({ allow: ["Bash(ls)"] });
+            expect(readFileSync(settingsPath(), "utf-8").endsWith("}\n")).toBe(true);
+            expect((await provider.listPluginServers()).every((server) => !server.enabled)).toBe(true);
+            expect(await provider.setPluginServersEnabled(["expo"], false)).toBe(WriteResult.NoChanges);
+            // The plugin itself stays enabled, and ~/.claude.json is not touched.
+            expect(readSettings().enabledPlugins).toMatchObject({ "expo@market": true, "expo@other": true });
+
+            expect(await provider.setPluginServersEnabled(["expo"], true)).toBe(WriteResult.Applied);
+            expect(readFileSync(settingsPath(), "utf-8")).toBe(original);
+        });
+
+        it("enable removes only its own entry and keeps a deny entry it did not write", async () => {
+            seedClaudePlugins({
+                deniedMcpServers: [{ serverUrl: "https://elsewhere.test/*" }, { serverName: "plugin:expo:expo" }],
+            });
+            const provider = new ClaudeProvider();
+
+            expect((await provider.listPluginServers()).every((server) => !server.enabled)).toBe(true);
+            await provider.setPluginServersEnabled(["expo"], true);
+
+            expect(readSettings().deniedMcpServers).toEqual([{ serverUrl: "https://elsewhere.test/*" }]);
+        });
+
+        it("disable/enable commands switch the plugin server in Claude and Codex, and sync keeps both switches", async () => {
+            writeClaudeJson(claudeFixture());
+            const unified = unifiedFixture();
+            unified.mcpServers.serena._meta = { enabled: { claude: true, codex: true } };
+            await writeUnified(unified);
+            const original = seedClaudePlugins();
+            seedCodexPlugin();
+            const providers = () => [new ClaudeProvider(), new CodexProvider()];
+
+            await disableCommand("expo", providers(), {});
+
+            expect(readSettings().deniedMcpServers).toEqual([{ serverName: "plugin:expo:expo" }]);
+            const codex = TOML.parse(readCodexText()) as {
+                mcp_servers?: Record<string, unknown>;
+                plugins?: Record<string, unknown>;
+            };
+            expect(codex.plugins?.["expo@market"]).toEqual({
+                enabled: true,
+                mcp_servers: { expo: { enabled: false } },
+            });
+            expect(readCodexText()).not.toMatch(/^\[mcp_servers\.expo\]/m);
+            // A plugin server never enters the unified config or ~/.claude.json.
+            expect((await readUnified()).mcpServers.expo).toBeUndefined();
+            expect(readClaudeJson().mcpServers?.expo).toBeUndefined();
+
+            await syncServers(providers(), { provider: "all" });
+
+            expect(readClaudeJson().mcpServers?.serena).toBeDefined(); // the sync really ran
+            expect(readSettings().deniedMcpServers).toEqual([{ serverName: "plugin:expo:expo" }]);
+            const synced = TOML.parse(readCodexText()) as {
+                mcp_servers?: Record<string, unknown>;
+                plugins?: Record<string, unknown>;
+            };
+            expect(synced.mcp_servers?.serena).toBeDefined();
+            expect(synced.mcp_servers?.expo).toBeUndefined();
+            expect(synced.plugins?.["expo@market"]).toEqual({
+                enabled: true,
+                mcp_servers: { expo: { enabled: false } },
+            });
+
+            await enableCommand("expo", providers(), {});
+
+            expect(readFileSync(settingsPath(), "utf-8")).toBe(original);
+            const enabled = TOML.parse(readCodexText()) as { plugins?: Record<string, unknown> };
+            expect(enabled.plugins?.["expo@market"]).toEqual({ enabled: true });
         });
     });
 });

@@ -1,5 +1,6 @@
-import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import { readUnifiedConfig, readUnifiedConfigReadOnly } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, MCPServerInfo, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { REDACTED } from "../lib/auth/constants.ts";
@@ -150,7 +151,15 @@ function pickConfig(instances: MCPServerInfo[]): UnifiedMCPServerConfig | undefi
     );
 }
 
-async function collect(providers: MCPProvider[]): Promise<{
+/**
+ * `includePlugins` adds plugin-provided servers (the human listing). The `--json` payload leaves
+ * them out: `tools scripts` dials every enabled entry there, and a plugin server is the harness's
+ * to start, not ours.
+ */
+async function collect(
+    providers: MCPProvider[],
+    options: { includePlugins?: boolean } = {}
+): Promise<{
     byName: Map<string, MCPServerInfo[]>;
     scanned: string[];
     failed: { provider: string; error: string }[];
@@ -165,6 +174,10 @@ async function collect(providers: MCPProvider[]): Promise<{
                 const servers = await provider.listServers();
                 allServers.push(...servers);
                 scanned.push(provider.getName());
+            }
+
+            if (options.includePlugins) {
+                allServers.push(...(await provider.listPluginServers()));
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -252,6 +265,21 @@ export async function buildListJson(providers: MCPProvider[], options: ListOptio
     return { servers, providersScanned: scanned, providersFailed: failed };
 }
 
+/** `claude`, or `codex (plugin expo@claude-plugins-official, ~/.codex-work)` for a plugin-provided server. */
+export function providerLabel(server: MCPServerInfo): string {
+    if (!server.plugin) {
+        return server.provider;
+    }
+
+    const home = server.home ? `, ${abbreviateHome(server.home)}` : "";
+    return `${server.provider} (plugin ${server.plugin}${home})`;
+}
+
+function abbreviateHome(dir: string): string {
+    const home = env.paths.getHome();
+    return home && (dir === home || dir.startsWith(`${home}/`)) ? `~${dir.slice(home.length)}` : dir;
+}
+
 /**
  * List all MCP servers across all providers.
  *
@@ -272,18 +300,22 @@ export async function listServers(providers: MCPProvider[], options: ListOptions
         return;
     }
 
-    const { byName, scanned, failed } = await collect(providers);
+    // Harness homes decide which Codex homes are read, plugin servers included.
+    const unified = await readUnifiedConfigReadOnly();
+    for (const provider of providers) {
+        provider.applyHarnessConfig(unified);
+    }
+
+    const { byName, scanned, failed } = await collect(providers, { includePlugins: true });
 
     if (byName.size === 0) {
         // Name the sources that were actually read (#446 item 10): an empty
-        // result here says nothing about a claude.ai connector or a
-        // plugin-provided server, which this listing never sees. A provider
-        // whose read threw was tried too, so it is named, not dropped.
+        // result here says nothing about a claude.ai connector, which this
+        // listing never sees. A provider whose read threw was tried too, so it
+        // is named, not dropped.
         const tried = [...scanned, ...failed.map(({ provider }) => `${provider} (read failed)`)];
         const sources = tried.length > 0 ? tried.join(", ") : "no provider config files";
-        logger.info(
-            `No MCP servers found (checked ${sources}). claude.ai connectors and plugin-provided servers are not included.`
-        );
+        logger.info(`No MCP servers found (checked ${sources}). claude.ai connectors are not included.`);
         return;
     }
 
@@ -299,14 +331,14 @@ export async function listServers(providers: MCPProvider[], options: ListOptions
 
             // Claude: a globally-disabled server can be re-enabled per project
             // via a project-scope override entry — surface that on the global row.
-            if (!instance.enabled && instance.provider === "claude") {
+            if (!instance.enabled && instance.provider === "claude" && !instance.plugin) {
                 const overrideCount = instances.filter((s) => s.provider.startsWith("claude:") && s.enabled).length;
                 if (overrideCount > 0) {
                     providerStatus = chalk.yellow(`disabled globally, enabled in ${overrideCount} project(s)`);
                 }
             }
 
-            logger.info(`  └─ ${instance.provider}: ${providerStatus}`);
+            logger.info(`  └─ ${providerLabel(instance)}: ${providerStatus}`);
         }
 
         logger.info("");

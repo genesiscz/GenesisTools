@@ -1,6 +1,11 @@
-import { getServerNames, promptForProjects, promptForProviders } from "@app/mcp-manager/utils/command.utils.js";
+import {
+    getServerNames,
+    parseServerNames,
+    promptForProjects,
+    promptForProviders,
+} from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
-import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProvider, MCPServerInfo, UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -9,6 +14,89 @@ import { logger } from "@genesiscz/utils/logger";
 export interface ToggleOptions {
     provider?: string; // Provider name(s) for non-interactive mode ("all" or comma-separated)
     project?: string[]; // Project path(s) for per-project enable/disable (providers with project support)
+}
+
+/**
+ * Switch plugin-provided servers off or on in every harness that loads them (only the `--provider`
+ * ones when given), each with that harness's own switch. Nothing goes into the unified config.
+ * Returns the names at least one harness provides through a plugin.
+ */
+async function togglePluginServers(args: {
+    enabled: boolean;
+    names: string[];
+    providers: MCPProvider[];
+    options: ToggleOptions;
+    config: UnifiedMCPConfig;
+}): Promise<string[]> {
+    const { enabled, names, options, config } = args;
+    const action = enabled ? "enable" : "disable";
+    const actionPast = enabled ? "Enabled" : "Disabled";
+    const requested = (options.provider ?? "")
+        .split(",")
+        .map((name) => name.trim().toLowerCase())
+        .filter(Boolean);
+    const providers =
+        requested.length === 0 || requested.includes("all")
+            ? args.providers
+            : args.providers.filter((provider) => requested.includes(provider.getName().toLowerCase()));
+    const handled = new Set<string>();
+    let applied = false;
+
+    for (const provider of providers) {
+        const providerName = provider.getName();
+        provider.applyHarnessConfig(config);
+
+        let pluginServers: MCPServerInfo[];
+        try {
+            pluginServers = await provider.listPluginServers();
+        } catch (error) {
+            logger.error(
+                `✗ Failed to read plugin servers of ${providerName}: ${error instanceof Error ? error.message : String(error)}`
+            );
+            continue;
+        }
+
+        const matching = pluginServers.filter((server) => names.includes(server.name));
+        if (matching.length === 0) {
+            continue;
+        }
+
+        const matched = [...new Set(matching.map((server) => server.name))];
+        const plugins = [...new Set(matching.map((server) => server.plugin))].join(", ");
+
+        for (const name of matched) {
+            handled.add(name);
+        }
+
+        logger.info(`'${matched.join(", ")}' comes from plugin ${plugins} in ${providerName}`);
+
+        if (options.project && options.project.length > 0) {
+            logger.warn(`--project does not apply to a plugin server: ${providerName} switches it globally.`);
+        }
+
+        try {
+            const result = await provider.setPluginServersEnabled(matched, enabled);
+
+            if (result === WriteResult.Applied) {
+                applied = true;
+                logger.info(`✓ ${actionPast} plugin server(s) ${matched.join(", ")} in ${providerName}`);
+            } else if (result === WriteResult.NoChanges) {
+                logger.info(`→ ${matched.join(", ")} already ${action}d in ${providerName} — no changes needed`);
+            } else {
+                logger.info(`Skipped ${providerName} - user rejected confirmation`);
+            }
+        } catch (error) {
+            logger.error(
+                `✗ Failed to ${action} plugin server(s) in ${providerName}: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
+    }
+
+    if (applied) {
+        logger.info("Running Claude Code and Codex sessions keep their MCP servers until they restart.");
+    }
+
+    return [...handled];
 }
 
 /**
@@ -31,13 +119,33 @@ export async function toggleServer(
     // Read unified config to get available servers
     const config = await readUnifiedConfig();
 
+    // A name the unified config does not know may be a plugin-provided server (`expo`).
+    // Those switch off per harness, with no unified-config entry; the rest keep today's path.
+    const requestedNames = parseServerNames(serverNameArg);
+    const unknownNames = requestedNames.filter((name) => !config.mcpServers[name]);
+    let unifiedServerArg = serverNameArg;
+
+    if (unknownNames.length > 0) {
+        const handled = await togglePluginServers({ enabled, names: unknownNames, providers, options, config });
+
+        if (handled.length > 0) {
+            const rest = requestedNames.filter((name) => !handled.includes(name));
+
+            if (rest.length === 0) {
+                return;
+            }
+
+            unifiedServerArg = rest.join(",");
+        }
+    }
+
     if (Object.keys(config.mcpServers).length === 0) {
         logger.warn(`No servers found in unified config. Run '${toolCommand("mcp-manager config")}' to add servers.`);
         return;
     }
 
     // Get server names from args or prompt
-    const finalServerNames = await getServerNames(serverNameArg, config, `Select servers to ${action}:`);
+    const finalServerNames = await getServerNames(unifiedServerArg, config, `Select servers to ${action}:`);
     if (!finalServerNames || finalServerNames.length === 0) {
         logger.info("No servers selected.");
         return;
