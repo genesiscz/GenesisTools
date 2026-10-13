@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compressFile } from "@genesiscz/utils/compress/file";
 import {
     basePid,
     countByStatus,
@@ -6,7 +10,9 @@ import {
     errorsOf,
     groupSessions,
     type JevLogRow,
+    logDays,
     parseLogLine,
+    readSessions,
     transcriptOf,
 } from "./sessions";
 
@@ -76,5 +82,34 @@ describe("jev session log reader", () => {
         expect(errorsOf(session)).toEqual([
             { time: "2026-09-18T21:00:01.000Z", msg: "jev command failed", error: "AX tree exceeds --depth 20" },
         ]);
+    });
+});
+describe("jev sessions across compressed day logs", () => {
+    test("an older day stored as .log.zst is listed and read like a plain one", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "jev-days-"));
+
+        try {
+            const rows = [
+                line(
+                    10,
+                    "2026-09-17T21:00:00.000Z",
+                    "jev listen starting",
+                    `,"app":"Calculator","provider":"deepgram"`
+                ),
+                line(10, "2026-09-17T21:00:02.000Z", "listen decision", `,"status":"act","transcript":"Press 7."`),
+            ].join("\n");
+            writeFileSync(join(dir, "2026-09-18.log"), rows);
+            writeFileSync(join(dir, "2026-09-17.log"), rows);
+            await compressFile({ source: join(dir, "2026-09-17.log") });
+            rmSync(join(dir, "2026-09-17.log"));
+            writeFileSync(join(dir, "2026-09-17-profiling.log"), "not a day log\n");
+
+            expect(logDays(dir)).toEqual(["2026-09-18", "2026-09-17"]);
+            const [plain, compressed] = [await readSessions("2026-09-18", dir), await readSessions("2026-09-17", dir)];
+            expect(compressed).toHaveLength(1);
+            expect(compressed).toEqual(plain.map((session) => ({ ...session, day: "2026-09-17" })));
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

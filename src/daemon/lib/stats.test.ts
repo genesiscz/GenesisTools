@@ -2,11 +2,15 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressFile } from "@genesiscz/utils/compress/file";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import {
     collectDaemonStats,
+    readDaemonHealth,
     readRunOutput,
     readStderrTail,
     resolveWindow,
@@ -334,6 +338,31 @@ describe("summarizeHealthLines", () => {
             ["sampledLate", null, 600_000],
             ["wedged", null, 300_000],
         ]);
+    });
+
+    test.skipIf(!ripgrepBinary())("reads a compressed day log (`.log.zst`) beside a plain one", async () => {
+        const logs = genesisToolsDir("logs");
+        mkdirSync(logs, { recursive: true });
+        const plain = join(logs, "2026-10-10.log");
+        const older = join(logs, "2026-10-09.log");
+        writeFileSync(
+            plain,
+            `${record("2026-10-10T07:00:00.000Z", "[daemon] task timed out, sending SIGTERM", { task: "a" })}\n`
+        );
+        writeFileSync(older, `${record("2026-10-09T07:00:00.000Z", "[daemon] scheduler wedged", { silentMs: 1 })}\n`);
+        await compressFile({ source: older });
+        rmSync(older);
+
+        try {
+            const health = await readDaemonHealth(
+                resolveWindow({ since: "2026-10-09", until: "2026-10-10T23:00:00", now: NOW })
+            );
+            expect(health).toMatchObject({ wedged: 1, taskTimedOut: 1, error: null });
+            expect(health.files).toEqual([`${older}.zst`, plain]);
+        } finally {
+            rmSync(plain, { force: true });
+            rmSync(`${older}.zst`, { force: true });
+        }
     });
 
     test("a burst of newer timeouts does not push an older wedge out of the event list", () => {

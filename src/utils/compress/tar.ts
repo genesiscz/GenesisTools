@@ -245,7 +245,7 @@ export class TarLister {
     private consumeData(bytes: Uint8Array): void {
         if (this.meta) {
             if (this.meta.kind !== "skip") {
-                this.meta.chunks.push(Uint8Array.from(bytes));
+                this.meta.chunks.push(new Uint8Array(bytes));
             }
 
             return;

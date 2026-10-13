@@ -1,7 +1,8 @@
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { readTextChunks } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
 
 /** One parsed pino row from a day log. Everything beyond these keys is kept as-is. */
 export interface JevLogRow {
@@ -49,20 +50,9 @@ export function logsDirectory(): string {
     return join(env.tools.getHome(), ".genesis-tools", "logs");
 }
 
-/** Day files only, newest first; the `-profiling` siblings are a different format. */
+/** Day files only (plain or compressed), newest first; the `-profiling` siblings are a different format. */
 export function logDays(directory = logsDirectory()): string[] {
-    let names: string[];
-    try {
-        names = readdirSync(directory);
-    } catch {
-        return [];
-    }
-
-    return names
-        .filter((name) => /^\d{4}-\d{2}-\d{2}\.log$/.test(name))
-        .map((name) => name.slice(0, 10))
-        .sort()
-        .reverse();
+    return listDayLogs({ dir: directory }).map((file) => file.day);
 }
 
 export function parseLogLine(line: string): JevLogRow | null {
@@ -156,8 +146,8 @@ function absorb(row: JevLogRow, day: string, open: Map<number, JevSession>, sess
  * lines that can belong to a Jev session: a start marker, or a pid one is already open for.
  */
 export async function readSessions(day: string, directory = logsDirectory()): Promise<JevSession[]> {
-    const file = Bun.file(join(directory, `${day}.log`));
-    if (!(await file.exists())) {
+    const file = dayLogPath(day, { dir: directory });
+    if (!file) {
         return [];
     }
 
@@ -179,7 +169,7 @@ export async function readSessions(day: string, directory = logsDirectory()): Pr
         absorb(row, day, open, sessions);
     };
 
-    for await (const chunk of file.stream()) {
+    for await (const chunk of readTextChunks(file)) {
         pending += decoder.decode(chunk, { stream: true });
         let cut = pending.indexOf("\n");
         while (cut !== -1) {

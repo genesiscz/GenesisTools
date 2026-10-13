@@ -1,5 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { isZstdPath, readZstdFramesSync } from "@genesiscz/utils/compress/zstd";
+import { isZstdPath, readZstdFrames, readZstdFramesSync } from "@genesiscz/utils/compress/zstd";
 import {
     cPath,
     errnoError,
@@ -52,6 +52,19 @@ export function* readTextChunksSync(path: string, { chunkBytes = CHUNK_BYTES }: 
     }
 
     yield* plainChunksSync(path, chunkBytes);
+}
+
+/**
+ * {@link readTextChunksSync} for async readers: a plain file as `Bun.file().stream()` chunks, a `.zst` file as its
+ * frames, the next ones decompressing on the thread pool while the caller works on the current one.
+ */
+export async function* readTextChunks(path: string): AsyncGenerator<Uint8Array> {
+    if (isZstdPath(path)) {
+        yield* readZstdFrames(path);
+        return;
+    }
+
+    yield* Bun.file(path).stream();
 }
 
 /**

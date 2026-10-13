@@ -222,6 +222,36 @@ export function* readZstdFramesSync(
     }
 }
 
+/**
+ * {@link readZstdFramesSync} with up to `concurrency` frames decompressing at once on the thread pool, yielded in file
+ * order: the next frames decompress while the caller works on the current one. Memory holds about `concurrency`
+ * frames.
+ */
+export async function* readZstdFrames(
+    path: string,
+    { concurrency = 4, fromEnd = false }: { concurrency?: number; fromEnd?: boolean } = {}
+): AsyncGenerator<Uint8Array> {
+    const fd = openSync(path, "r");
+
+    try {
+        const frames = zstdFrames(fd, fstatSync(fd).size);
+        const ordered = fromEnd ? [...frames].reverse() : frames;
+        const window: Array<Promise<Uint8Array>> = [];
+        let next = 0;
+
+        while (next < ordered.length || window.length > 0) {
+            while (next < ordered.length && window.length < Math.max(1, concurrency)) {
+                window.push(Bun.zstdDecompress(readExactly(fd, ordered[next]!.compressedSize, ordered[next]!.offset)));
+                next += 1;
+            }
+
+            yield await window.shift()!;
+        }
+    } finally {
+        closeSync(fd);
+    }
+}
+
 function encodeSeekTable(frames: Array<{ compressedSize: number; decompressedSize: number }>): Uint8Array {
     const tableBytes = frames.length * 8 + SEEK_FOOTER_BYTES;
     const out = Buffer.alloc(8 + tableBytes);
@@ -330,8 +360,9 @@ export class SeekableZstdWriter {
             return;
         }
 
-        // Copied: callers reuse their read buffer for the next chunk.
-        this.pending.push(Uint8Array.from(bytes));
+        // Copied (a memcpy; `Uint8Array.from` iterates byte by byte and cost 1.5 s of CPU per 100 MB): callers
+        // reuse their read buffer for the next chunk.
+        this.pending.push(new Uint8Array(bytes));
         this.pendingBytes += bytes.length;
         this.stats.inputBytes += bytes.length;
 

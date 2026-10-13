@@ -1,9 +1,11 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
+import { ripgrepFiles } from "@genesiscz/utils/compress/search";
 import { formatLocalDate, formatLocalFileTimestamp, parseSince, parseUntil, startOfDay } from "@genesiscz/utils/date";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { dayLogPath } from "@genesiscz/utils/logger/day-logs";
 import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -677,8 +679,9 @@ export function summarizeHealthLines(opts: {
 }
 
 /**
- * The daemon's health lines from the day logs (`~/.genesis-tools/logs/<local date>.log`) that overlap the
- * window, at most the last 7. A day log can pass 1 GB, so `rg` filters it and only matching lines reach here.
+ * The daemon's health lines from the day logs (`~/.genesis-tools/logs/<local date>.log`, or `.log.zst` once the daily
+ * pass compressed the day) that overlap the window, at most the last 7. A day log can pass 1 GB, so `rg` filters it
+ * and only matching lines reach here; a compressed day is decompressed frame by frame into rg's stdin.
  */
 export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealth> {
     const logsDir = genesisToolsDir("logs");
@@ -690,9 +693,9 @@ export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealt
     const files: string[] = [];
 
     for (const day = new Date(firstDay); day.getTime() <= lastDay.getTime(); day.setDate(day.getDate() + 1)) {
-        const file = join(logsDir, `${formatLocalDate(day)}.log`);
+        const file = dayLogPath(formatLocalDate(day), { dir: logsDir });
 
-        if (existsSync(file)) {
+        if (file) {
             files.push(file);
         }
     }
@@ -710,25 +713,18 @@ export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealt
     }
 
     const patterns = HEALTH_MESSAGES.flatMap((entry) => ["-e", entry.prefix]);
-    const proc = Bun.spawn(
-        [rg, "--no-config", "--no-filename", "--no-line-number", "-F", ...patterns, "--", ...files],
-        {
-            stdout: "pipe",
-            stderr: "pipe",
-            timeout: HEALTH_SCAN_TIMEOUT_MS,
-        }
-    );
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    const { stdout, stderr, code, signal } = await ripgrepFiles({
+        rg,
+        args: ["--no-config", "--no-filename", "--no-line-number", "-F", ...patterns],
+        files,
+        timeoutMs: HEALTH_SCAN_TIMEOUT_MS,
+    });
 
-    logger.debug({ files, code, signal: proc.signalCode, bytes: stdout.length }, "[daemon-stats] day-log health scan");
+    logger.debug({ files, code, signal, bytes: stdout.length }, "[daemon-stats] day-log health scan");
 
     // rg exits 1 when nothing matched.
-    if (proc.signalCode || code > 1) {
-        const reason = proc.signalCode ? `was stopped by ${proc.signalCode}` : `exited ${code}: ${stderr.trim()}`;
+    if (signal || code > 1) {
+        const reason = signal ? `was stopped by ${signal}` : `exited ${code}: ${stderr.trim()}`;
         return { ...empty, error: `rg ${reason}` };
     }
 

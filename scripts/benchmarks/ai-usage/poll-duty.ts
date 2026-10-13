@@ -28,11 +28,12 @@
  * were produced with the two landing times of cfc1dc0b7 and bb07e6fa9).
  */
 
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 
 interface Poll {
@@ -56,15 +57,14 @@ const NOMINAL_TICK_SECONDS = 60;
 
 async function readDay(logDir: string, day: string): Promise<Poll[]> {
     const polls: Poll[] = [];
-    const file = Bun.file(join(logDir, `${day}.log`));
+    const file = dayLogPath(day, { dir: logDir });
 
-    if (!(await file.exists())) {
+    if (!file) {
         return polls;
     }
 
-    const text = await file.text();
-
-    for (const line of text.split("\n")) {
+    // Line by line: a day log can pass 1 GB, and an older day is `.log.zst`.
+    for (const line of readLinesSync(file)) {
         if (!line.includes("[ai-usage] daemon poll")) {
             continue;
         }
@@ -167,9 +167,8 @@ function summarize(label: string, polls: Poll[]): Summary | null {
 }
 
 function discoverDays(logDir: string): string[] {
-    return readdirSync(logDir)
-        .filter((name) => /^\d{4}-\d{2}-\d{2}\.log$/.test(name))
-        .map((name) => name.replace(/\.log$/, ""))
+    return listDayLogs({ dir: logDir })
+        .map((file) => file.day)
         .sort();
 }
 

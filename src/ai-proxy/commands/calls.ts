@@ -7,12 +7,13 @@
  * print the matching transcript, so debugging is "filter, then open", never
  * "re-run and hope it happens again".
  */
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { formatTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, renderCliSection, truncateDisplay } from "@genesiscz/utils/table";
@@ -146,16 +147,26 @@ interface TranscriptEntry {
     };
 }
 
+/** The transcript file on disk: the recorded path, or `<path>.zst` once the daily pass compressed an older day. */
+function transcriptOnDisk(file: string): string | undefined {
+    if (existsSync(file)) {
+        return file;
+    }
+
+    return existsSync(`${file}.zst`) ? `${file}.zst` : undefined;
+}
+
 /** Pull one call's entries out of its session JSONL and print prompt, thinking, answer. */
 function printTranscript(record: UsageRequestRecord): void {
     const ref = record.transcript;
-    if (!ref || !existsSync(ref.file)) {
+    const file = ref ? transcriptOnDisk(ref.file) : undefined;
+    if (!ref || !file) {
         out.println(pc.yellow(`no transcript on disk for ${record.ts} (${record.proxyModel})`));
         return;
     }
 
     const entries: TranscriptEntry[] = [];
-    for (const line of readFileSync(ref.file, "utf-8").split("\n")) {
+    for (const line of readLinesSync(file)) {
         if (!line.trim()) {
             continue;
         }
@@ -176,7 +187,7 @@ function printTranscript(record: UsageRequestRecord): void {
         `${record.tags?.label ?? "call"} · ${(record.elapsedMs / 1000).toFixed(1)}s`,
         `${record.proxyModel} · ${record.ts}`
     );
-    out.println(pc.dim(`${ref.file}  (uuid ${ref.uuid})`));
+    out.println(pc.dim(`${file}  (uuid ${ref.uuid})`));
     if (record.timeline) {
         out.println(pc.cyan(formatTimeline(record.timeline)));
     }

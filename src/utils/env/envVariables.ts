@@ -297,6 +297,8 @@ export const env = {
         getConsoleLevel: () => getTrimmed("LOG_CONSOLE_LEVEL"),
         shouldIncludePid: () => isFlag("LOG_PID") || isFlag("DEBUG"),
         getDashboardPort: () => parseIntEnv("LOG_DASHBOARD_PORT", 7243),
+        /** `GENESIS_TOOLS_NO_DAILY_COMPRESS=1`: the logger never starts the daily compression pass (`logger/daily-trigger.ts`). */
+        isDailyCompressionDisabled: () => isFlag("GENESIS_TOOLS_NO_DAILY_COMPRESS"),
         // Generic DEBUG flag used outside logging (azure-devops stack traces, mcp-tsc, etc.)
         isDebugEnabled: () => {
             const raw = getTrimmed("DEBUG");

@@ -28,7 +28,7 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     text: {
         name: "text",
         description: "logs, JSON, JSONL, CSV, source files: line-aligned 4 MiB frames for cheap tail reads",
-        level: 9,
+        level: 3,
         long: false,
         frameBytes: 4 * MiB,
         lineAligned: true,

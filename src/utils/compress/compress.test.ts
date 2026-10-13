@@ -17,7 +17,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFirstLines, readLastLines, readLinesSync } from "@genesiscz/utils/fs/read-lines";
+import { readFirstLines, readLastLines, readLinesSync, readTextChunks } from "@genesiscz/utils/fs/read-lines";
+import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
+import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
+import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
+import { planDailyCompression } from "./daily";
 import { compressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
 import { compressPath, expandPath, verifyPath } from "./operations";
@@ -28,6 +32,7 @@ import {
     planFolderRetention,
     planOldFileCompression,
 } from "./retention";
+import { ripgrepFiles } from "./search";
 import { listArchive, packDirectory, unpackArchive, verifyArchiveAgainstFolder } from "./tar";
 import { readSeekTable, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
 
@@ -308,5 +313,75 @@ describe("retention", () => {
             ].sort()
         );
         expect([...readLinesSync(join(dir, "2026-10-11.log.zst"))].join("\n")).toBe(logText(300));
+    });
+});
+
+describe("day logs", () => {
+    it("lists plain and compressed days newest first, a plain file winning while both exist", async () => {
+        const dir = scratch("daylogs");
+        writeFileSync(join(dir, "2026-10-12.log"), "a\n");
+        writeFileSync(join(dir, "2026-10-11.log"), "b\n");
+        await compressFile({ source: join(dir, "2026-10-11.log") });
+        writeFileSync(join(dir, "2026-10-10.log.zst"), Bun.zstdCompressSync(Buffer.from("c\n")));
+        writeFileSync(join(dir, "2026-10-10-profiling.log"), "p\n");
+        writeFileSync(join(dir, "continuity-watch.log"), "x\n");
+
+        expect(listDayLogs({ dir }).map((file) => [file.day, file.compressed])).toEqual([
+            ["2026-10-12", false],
+            ["2026-10-11", false],
+            ["2026-10-10", true],
+        ]);
+        expect(listDayLogs({ dir, profiling: true }).map((file) => file.day)).toEqual(["2026-10-10"]);
+        expect(dayLogPath("2026-10-10", { dir })).toBe(join(dir, "2026-10-10.log.zst"));
+        expect(dayLogPath("2026-10-09", { dir })).toBeUndefined();
+
+        const chunks: string[] = [];
+
+        for await (const chunk of readTextChunks(join(dir, "2026-10-10.log.zst"))) {
+            chunks.push(Buffer.from(chunk).toString());
+        }
+
+        expect(chunks.join("")).toBe("c\n");
+    });
+
+    it("the daily pass keeps today and yesterday plain, and never starts from a test process", () => {
+        const dir = scratch("daily");
+        const now = new Date("2026-10-13T12:00:00");
+        const targets = planDailyCompression({ now, logsDir: dir }).map(({ target }) => [
+            target.name,
+            target.firstPlainDay,
+        ]);
+
+        expect(targets).toEqual([
+            ["logs", "2026-10-12"],
+            ["ai-proxy-transcripts", new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)],
+        ]);
+        expect(startDailyCompressionOnce(dir, "2026-10-13")).toBe(false);
+        expect(readdirSync(dir)).toEqual([]);
+    });
+
+    it.skipIf(!ripgrepBinary())("ripgrepFiles finds the same lines in a .zst as in its plain twin", async () => {
+        const dir = scratch("rg");
+        const plain = join(dir, "a.log");
+        writeFileSync(plain, logText(5000));
+        const twin = join(dir, "b.log");
+        writeFileSync(twin, logText(5000));
+        await compressFile({ source: twin, frameBytes: 16 * 1024 });
+        const args = ["--no-config", "--no-filename", "--no-line-number", "-F", "-e", '"n":42,', "-e", "line 4999"];
+
+        const plainRun = await ripgrepFiles({ rg: ripgrepBinary()!, args, files: [plain] });
+        const zstRun = await ripgrepFiles({ rg: ripgrepBinary()!, args, files: [`${twin}.zst`] });
+        const both = await ripgrepFiles({ rg: ripgrepBinary()!, args, files: [plain, `${twin}.zst`] });
+        const absent = await ripgrepFiles({
+            rg: ripgrepBinary()!,
+            args: ["--no-config", "-F", "absent"],
+            files: [`${twin}.zst`],
+        });
+
+        expect(zstRun.code).toBe(0);
+        expect(zstRun.stdout).toBe(plainRun.stdout);
+        expect(zstRun.stdout.split("\n").filter(Boolean)).toHaveLength(2);
+        expect(both.stdout).toBe(plainRun.stdout + zstRun.stdout);
+        expect(absent.code).toBe(1);
     });
 });

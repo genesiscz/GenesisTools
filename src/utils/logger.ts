@@ -4,6 +4,7 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
+import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import pc from "picocolors";
@@ -173,6 +174,7 @@ function createDailyFileStream(resolveLogDir: () => string): Writable {
             const midnight = new Date(day);
             midnight.setHours(24, 0, 0, 0);
             nextRolloverAt = midnight.getTime();
+            startDailyCompressionOnce(logDir, formatLocalDate(day));
         }
 
         return fd;

@@ -3,6 +3,7 @@ import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { formatDuration, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { dayLogPath } from "@genesiscz/utils/logger/day-logs";
 import {
     createBoxTable,
     formatDotStatus,
@@ -133,6 +134,17 @@ function formatFullWhen(ts: number): string {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
+/** An `rg` line for one day's log: `rg -z` (needs the `zstd` CLI) once the daily pass compressed the day. */
+function dayLogSearchHint(pattern: string, day: string): string {
+    const file = dayLogPath(day);
+
+    if (file?.endsWith(".zst")) {
+        return `rg -z '${pattern}' ${file}`;
+    }
+
+    return `rg '${pattern}' ${file ?? `~/.genesis-tools/logs/${day}.log`}`;
+}
+
 function dayOf(ts: number): string {
     const d = new Date(ts);
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -261,10 +273,7 @@ function renderCallDetail(record: SayCallRecord, names: Map<string, string>, now
     renderCliKeyRow("via", describeAncestry(c.ancestry) || pc.dim("—"));
     renderCliKeyRow("speech", speechLabel(record));
     renderCliKeyRow("pids", `say ${record.pid} · speaker ${record.speakerPid ?? "—"} · shell ${c.callerPid}`);
-    renderCliKeyRow(
-        "day log",
-        pc.dim(`rg '"pid":${record.speakerPid ?? record.pid}' ~/.genesis-tools/logs/${dayOf(record.ts)}.log`)
-    );
+    renderCliKeyRow("day log", pc.dim(dayLogSearchHint(`"pid":${record.speakerPid ?? record.pid}`, dayOf(record.ts))));
 
     if (c.sessionId) {
         renderCliKeyRow("jump", pc.dim(`${toolCommand("claude cmux focus")} ${c.sessionId.slice(0, 8)}`));
