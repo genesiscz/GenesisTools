@@ -1501,6 +1501,35 @@ extension ClickyPackTests {
         return records
     }
 
+    /// The shipped library is listed first, loads like a folder, is never stored and cannot be removed.
+    @MainActor
+    func testTheShippedLibraryIsBuiltInNeverStoredAndNeverRemoved() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = ClickySoundLibrary(defaults: defaults, bundled: fixture.root)
+        defer { library.stop() }
+        XCTAssertEqual(library.records.map(\.id), [ClickySoundLibrary.bundledID])
+        await library.refresh()
+        XCTAssertNil(library.error)
+        XCTAssertEqual(library.rows.map(\.reference.libraryID), [ClickySoundLibrary.bundledID])
+        XCTAssertEqual(library.rows.first?.entry.id, fixture.entry.id)
+
+        library.remove(ClickySoundLibrary.bundledID)
+        XCTAssertEqual(library.records.map(\.id), [ClickySoundLibrary.bundledID], "the shipped library cannot be removed")
+        await library.register(fixture.root)
+        let stored = try XCTUnwrap(defaults.data(forKey: "clicky.libraries.v1"))
+        let saved = try JSONDecoder().decode([ClickyLibraryRecord].self, from: stored)
+        XCTAssertEqual(saved.count, 1, "only the added folder is stored")
+        XCTAssertFalse(saved.contains { $0.id == ClickySoundLibrary.bundledID })
+
+        let reopened = ClickySoundLibrary(defaults: defaults, bundled: fixture.root)
+        defer { reopened.stop() }
+        XCTAssertEqual(reopened.records.first?.id, ClickySoundLibrary.bundledID)
+        XCTAssertEqual(reopened.records.count, 2)
+    }
+
     @MainActor
     func testIntegrationNewestSelectionWinsWhenCancelledPreparationReturnsLate() async throws {
         let fixture = try Fixture()
