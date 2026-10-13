@@ -92,6 +92,15 @@ export interface UnifiedMCPConfig {
     [key: string]: unknown;
 }
 
+/** Extra behaviour of a global enable. */
+export interface EnableServersOptions {
+    /**
+     * Claude: also take the server off every `.projects[<path>].disabledMcpServers` list that
+     * still names it. Without it a global enable writes only the global switch.
+     */
+    clearProjectOverrides?: boolean;
+}
+
 /**
  * Information about an MCP server including its status
  */
@@ -197,9 +206,14 @@ export abstract class MCPProvider {
      * Enable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to enable
      * @param projectPath - Optional project path for project-specific enabling
+     * @param options - Extra behaviour of a global enable; a provider without project lists ignores it
      * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult>;
+    abstract enableServers(
+        serverNames: string[],
+        projectPath?: string | null,
+        options?: EnableServersOptions
+    ): Promise<WriteResult>;
 
     /**
      * Disable multiple MCP servers in a single batch operation

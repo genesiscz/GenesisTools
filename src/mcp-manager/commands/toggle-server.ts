@@ -14,6 +14,8 @@ import { logger } from "@genesiscz/utils/logger";
 export interface ToggleOptions {
     provider?: string; // Provider name(s) for non-interactive mode ("all" or comma-separated)
     project?: string[]; // Project path(s) for per-project enable/disable (providers with project support)
+    /** Global enable only: also take the server off every project's disabled list (Claude). */
+    clearProjectOverrides?: boolean;
 }
 
 /**
@@ -237,6 +239,12 @@ export async function toggleServer(
         const isPerProjectOp =
             !!projectChoices && projectChoices.length > 0 && projectChoices.every((c) => c.projectPath !== null);
 
+        if (enabled && options.clearProjectOverrides && projects.length === 0) {
+            logger.info(`--clear-project-overrides does not apply to ${providerName}: it has no project lists.`);
+        } else if (enabled && options.clearProjectOverrides && isPerProjectOp) {
+            logger.info("--clear-project-overrides applies to a global enable; --project already writes those lists.");
+        }
+
         // Collect servers to toggle
         const serversToToggle: string[] = [];
         for (const serverName of finalServerNames) {
@@ -387,7 +395,9 @@ export async function toggleServer(
                 if (projectChoices) {
                     for (const projectChoice of projectChoices) {
                         const result = enabled
-                            ? await provider.enableServers(serversToToggle, projectChoice.projectPath)
+                            ? await provider.enableServers(serversToToggle, projectChoice.projectPath, {
+                                  clearProjectOverrides: options.clearProjectOverrides,
+                              })
                             : await provider.disableServers(serversToToggle, projectChoice.projectPath);
 
                         if (result === WriteResult.Rejected) {
@@ -418,7 +428,9 @@ export async function toggleServer(
                     }
                 } else {
                     const result = enabled
-                        ? await provider.enableServers(serversToToggle)
+                        ? await provider.enableServers(serversToToggle, null, {
+                              clearProjectOverrides: options.clearProjectOverrides,
+                          })
                         : await provider.disableServers(serversToToggle);
 
                     if (result === WriteResult.Rejected) {

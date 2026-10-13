@@ -170,7 +170,8 @@ all**.
 
 **Global means the global switch only.** A global disable, a global enable,
 an install and a `sync` never write the per-project `disabledMcpServers` lists
-in `~/.claude.json`. Only a named project writes its own list. A dry run of
+in `~/.claude.json`. Only a named project writes its own list. The one opt-in
+exception is `enable --clear-project-overrides` (below). A dry run of
 `sync` once wanted to add one disabled server to the lists of all 98 projects
 (about 640 diff lines). That is why the old sweep was removed on 2026-10-13.
 
@@ -187,8 +188,16 @@ mcp-manager therefore implements a TRUE global disable for Claude:
 -   **Global enable** restores the entry into `mcpServers` from the unified
     config and drops the top-level marker. It does not change project lists.
     When some projects still list the server (old entries from the removed
-    sweep, or a per-project disable), one warning gives the count and the
-    command for one project:
+    sweep, or a per-project disable), the server stays off in those projects,
+    and one warning gives the count and the two commands below.
+-   **Global enable with `--clear-project-overrides`**
+    (`tools mcp-manager enable <server> -p claude --clear-project-overrides`)
+    also takes the name off every `.projects[<path>].disabledMcpServers` list
+    that still names it, and prints how many lists it changed. Other names on
+    those lists stay. A project with a project-scope entry counts too, because
+    its list switches the server off there as well. The flag applies only to a
+    global Claude enable: with `--project`, or for a provider without project
+    lists, the command says that it does not apply. For one project, use
     `tools mcp-manager enable <server> -p claude --project <path>`.
 -   **Per-project disable or enable** (`--project <path>`) is the only command
     that writes a project's `disabledMcpServers` list, and only for the named

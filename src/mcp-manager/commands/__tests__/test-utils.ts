@@ -1,4 +1,5 @@
 import type {
+    EnableServersOptions,
     MCPServerInfo,
     UnifiedMCPConfig,
     UnifiedMCPServerConfig,
@@ -17,7 +18,11 @@ export class MockMCPProvider extends MCPProvider {
     public getProjectsResult: string[] = [];
     public enableServerCalls: Array<{ serverName: string; projectPath?: string | null }> = [];
     public disableServerCalls: Array<{ serverName: string; projectPath?: string | null }> = [];
-    public enableServersCalls: Array<{ serverNames: string[]; projectPath?: string | null }> = [];
+    public enableServersCalls: Array<{
+        serverNames: string[];
+        projectPath?: string | null;
+        options?: EnableServersOptions;
+    }> = [];
     public disableServersCalls: Array<{ serverNames: string[]; projectPath?: string | null }> = [];
     public installServerCalls: Array<{ serverName: string; config: UnifiedMCPServerConfig }> = [];
     public removeServersCalls: Array<{ serverNames: string[] }> = [];
@@ -93,11 +98,15 @@ export class MockMCPProvider extends MCPProvider {
         }
     }
 
-    async enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
+    async enableServers(
+        serverNames: string[],
+        projectPath?: string | null,
+        options?: EnableServersOptions
+    ): Promise<WriteResult> {
         if (this.errors.has("enableServers")) {
             throw this.errors.get("enableServers")!;
         }
-        this.enableServersCalls.push({ serverNames, projectPath });
+        this.enableServersCalls.push({ serverNames, projectPath, options });
         return WriteResult.Applied;
     }
 

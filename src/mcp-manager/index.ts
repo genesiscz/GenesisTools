@@ -188,12 +188,17 @@ program
         collectProjects,
         []
     )
+    .option(
+        "--clear-project-overrides",
+        "Claude, global enable: also take the server off every project's disabledMcpServers list that still names it"
+    )
     .action(async (servers, cmdOptions) => {
         const opts = program.opts();
         const providers = parseProviderArg(opts.provider, getProviders());
         await enableServer(servers, providers, {
             provider: opts.provider,
             project: cmdOptions.project?.length > 0 ? cmdOptions.project : undefined,
+            clearProjectOverrides: cmdOptions.clearProjectOverrides === true,
         });
     });
 

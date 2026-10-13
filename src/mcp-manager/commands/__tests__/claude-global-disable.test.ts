@@ -193,22 +193,31 @@ describe("claude provider TRUE global disable", () => {
     });
 
     describe("enableServer(name, null) — global", () => {
-        // Intended change 2026-10-13: a global enable no longer cleans the project lists; it
-        // warns with the count instead and names the per-project command.
-        it("restores the entry, drops the top-level marker, leaves project lists and warns with the count", async () => {
+        /**
+         * serena globally disabled (absent) and still on three project lists, one of them a project
+         * with a project-scope entry: the list switches it off there too, so it counts.
+         */
+        const listedEverywhere = async () => {
             const claude = claudeFixture();
             delete (claude.mcpServers as Record<string, unknown>).serena; // globally disabled = absent
             claude.disabledMcpServers = ["serena"];
             const projects = claude.projects as Record<string, Record<string, unknown>>;
-            projects["/proj/a"].disabledMcpServers = ["serena"];
+            projects["/proj/a"].disabledMcpServers = ["github", "serena"];
             projects["/proj/b"].disabledMcpServers = ["serena"];
-            // A project with a project-scope entry is an override, not a stale list: not counted.
             projects["/proj/c"] = { mcpServers: { serena: { ...SERENA } }, disabledMcpServers: ["serena"] };
+            projects["/proj/d"] = { mcpServers: {}, disabledMcpServers: ["github"] };
             writeClaudeJson(claude);
 
             const unified = unifiedFixture();
             unified.mcpServers.serena._meta = { enabled: { claude: false } };
             await writeUnified(unified);
+            return projects;
+        };
+
+        // Intended change 2026-10-13: a global enable no longer cleans the project lists; it
+        // warns with the count instead and names --clear-project-overrides and --project.
+        it("restores the entry, drops the top-level marker, leaves project lists and warns with the count", async () => {
+            const projects = await listedEverywhere();
 
             const provider = new ClaudeProvider();
             await provider.enableServer("serena", null);
@@ -219,10 +228,47 @@ describe("claude provider TRUE global disable", () => {
             expect((result.mcpServers?.serena as Record<string, unknown> | undefined)?._meta).toBeUndefined(); // no _meta leak
             expect(result.disabledMcpServers).not.toContain("serena");
             expect(result.projects).toEqual(projects as ClaudeGenericConfig["projects"]); // lists untouched
-            expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("2 project(s)"));
+            expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("3 project(s)"));
+            expect(logger.warn).toHaveBeenCalledWith(
+                expect.stringContaining("tools mcp-manager enable serena -p claude --clear-project-overrides")
+            );
             expect(logger.warn).toHaveBeenCalledWith(
                 expect.stringContaining("tools mcp-manager enable serena -p claude --project <path>")
             );
+        });
+
+        it("enable --clear-project-overrides takes the name off every project list and counts them", async () => {
+            const projects = await listedEverywhere();
+            const provider = new ClaudeProvider();
+
+            await enableCommand("serena", [provider], { provider: "claude", clearProjectOverrides: true });
+
+            const result = readClaudeJson();
+            expect(result.mcpServers?.serena).toBeDefined(); // the global switch is on as well
+            expect(result.projects?.["/proj/a"].disabledMcpServers).toEqual(["github"]); // other names stay
+            expect(result.projects?.["/proj/b"].disabledMcpServers).toEqual([]);
+            expect(result.projects?.["/proj/c"].disabledMcpServers).toEqual([]);
+            expect(result.projects?.["/proj/c"].mcpServers?.serena).toBeDefined(); // entry kept
+            expect(result.projects?.["/proj/d"]).toEqual(projects["/proj/d"] as never); // never listed it
+            expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("list of 3 project(s)"));
+            expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("still list it"));
+            expect((await readUnified()).mcpServers.serena._meta?.enabled?.claude).toBe(true);
+        });
+
+        it("--clear-project-overrides does not widen a per-project enable", async () => {
+            await listedEverywhere();
+            const provider = new ClaudeProvider();
+
+            await enableCommand("serena", [provider], {
+                provider: "claude",
+                project: ["/proj/a"],
+                clearProjectOverrides: true,
+            });
+
+            const result = readClaudeJson();
+            expect(result.projects?.["/proj/a"].disabledMcpServers).toEqual(["github"]);
+            expect(result.projects?.["/proj/b"].disabledMcpServers).toEqual(["serena"]); // untouched
+            expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("applies to a global enable"));
         });
 
         it("does not warn when no project lists the server", async () => {

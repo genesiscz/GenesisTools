@@ -19,6 +19,26 @@ describe("toggleServer", () => {
     });
 
     describe("enable (enabled = true)", () => {
+        it("--clear-project-overrides reaches the global enable and is reported as not applying without project lists", async () => {
+            const codex = new MockMCPProvider("codex", "/mock/codex.toml");
+
+            spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(createMockUnifiedConfig());
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
+            spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
+            spyOn(logger, "info");
+            spyOn(logger, "warn");
+            spyOn(logger, "error");
+
+            await toggleServer(true, "test-server", [codex], { provider: "codex", clearProjectOverrides: true });
+
+            expect(codex.enableServersCalls).toEqual([
+                { serverNames: ["test-server"], projectPath: null, options: { clearProjectOverrides: true } },
+            ]);
+            expect(logger.info).toHaveBeenCalledWith(
+                "--clear-project-overrides does not apply to codex: it has no project lists."
+            );
+        });
+
         it("should enable server when provided via args", async () => {
             const mockConfig = createMockUnifiedConfig();
 

@@ -12,7 +12,7 @@ import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
 import type { ClaudeGenericConfig, ClaudeMCPServerConfig } from "./claude.types.js";
 import { claudeEnabledPluginServers, readClaudeSettings } from "./plugins.js";
-import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
+import type { EnableServersOptions, MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
 
 interface ClaudePluginServer {
@@ -64,6 +64,8 @@ function isDeniedByClaude(denied: unknown[], registeredName: string, url: string
  * server to all 98 project lists (about 640 diff lines). Only a named project
  * writes its own list: `enable|disable --project <path>`, or a sync of a
  * per-project `_meta.enabled.claude` map, for exactly the projects it names.
+ * The one opt-in exception is `enable --clear-project-overrides`, which takes
+ * the name off every project list that still names it.
  */
 export class ClaudeProvider extends MCPProvider {
     constructor() {
@@ -406,11 +408,15 @@ export class ClaudeProvider extends MCPProvider {
         await this.disableServer(serverName, null);
     }
 
-    async enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
+    async enableServers(
+        serverNames: string[],
+        projectPath?: string | null,
+        options: EnableServersOptions = {}
+    ): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (projectPath === null || projectPath === undefined) {
-            await this.applyGlobalEnable(serverNames, config);
+            await this.applyGlobalEnable(serverNames, config, options);
         } else {
             await this.applyProjectEnable(serverNames, projectPath, config);
         }
@@ -553,10 +559,15 @@ export class ClaudeProvider extends MCPProvider {
     /**
      * Apply a global enable to the in-memory Claude config: restore the entry
      * into `mcpServers` from the unified config (a TRUE global disable removed
-     * it) and drop the top-level marker. Project lists stay as they are; when
-     * some still name the server, one warning says how to enable it there.
+     * it) and drop the top-level marker. Project lists stay as they are unless
+     * `clearProjectOverrides` asks to take the name off every list that still
+     * names it; without it, one warning gives the count and the flag.
      */
-    private async applyGlobalEnable(serverNames: string[], config: ClaudeGenericConfig): Promise<void> {
+    private async applyGlobalEnable(
+        serverNames: string[],
+        config: ClaudeGenericConfig,
+        options: EnableServersOptions = {}
+    ): Promise<void> {
         await this.restoreServersFromUnifiedConfig(serverNames, config);
 
         for (const serverName of serverNames) {
@@ -564,18 +575,30 @@ export class ClaudeProvider extends MCPProvider {
                 config.disabledMcpServers = config.disabledMcpServers.filter((name) => name !== serverName);
             }
 
-            const stillListed = Object.values(config.projects ?? {}).filter(
-                (project) =>
-                    !project.mcpServers?.[serverName] && project.disabledMcpServers?.includes(serverName) === true
-            ).length;
+            const listing = Object.values(config.projects ?? {}).filter((project) =>
+                project.disabledMcpServers?.includes(serverName)
+            );
 
-            if (stillListed > 0) {
-                logger.warn(
-                    chalk.yellow(
-                        `⚠ '${serverName}' is enabled globally, but ${stillListed} project(s) still list it in their disabledMcpServers. A global enable changes only the global switch. To enable it in a project: ${toolCommand("mcp-manager enable", serverName, "-p", "claude", "--project", "<path>")}`
-                    )
-                );
+            if (listing.length === 0) {
+                continue;
             }
+
+            if (options.clearProjectOverrides) {
+                for (const project of listing) {
+                    project.disabledMcpServers = project.disabledMcpServers?.filter((name) => name !== serverName);
+                }
+
+                logger.info(
+                    `'${serverName}': taking it off the disabledMcpServers list of ${listing.length} project(s) (--clear-project-overrides)`
+                );
+                continue;
+            }
+
+            logger.warn(
+                chalk.yellow(
+                    `⚠ '${serverName}' is enabled globally, but ${listing.length} project(s) still list it in their disabledMcpServers, so it stays off there. A global enable changes only the global switch. To turn it on in all of them: ${toolCommand("mcp-manager enable", serverName, "-p", "claude", "--clear-project-overrides")}. For one project: ${toolCommand("mcp-manager enable", serverName, "-p", "claude", "--project", "<path>")}`
+                )
+            );
         }
     }
 
