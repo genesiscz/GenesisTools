@@ -1,9 +1,20 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import {
+    chmodSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { atomicWriteIo, readJsonFileForUpdateSync } from "./atomic-file";
 import { genesisToolsDir, toolDataDir } from "./root";
 import { atomicWriteFileSync, Storage } from "./storage";
 
@@ -285,5 +296,200 @@ describe("Storage cache writes", () => {
 
         expect(read).toEqual({ accounts: { work: 2 } });
         expect(readdirSync(storage.getCacheDir())).toEqual(["poll-gate.json"]);
+    });
+});
+
+/**
+ * The disk on the author's Mac ran full several times on 2026-10-13. A config write that fails must leave
+ * the user's file exactly as it was: never truncated, never replaced by defaults. Claude Code once
+ * rewrote its own config to defaults after a write failed; these tests pin that GenesisTools cannot.
+ */
+describe("a failed write never costs the user the stored file", () => {
+    const USER_CONFIG = `{\n  "accounts": { "work": { "token": "keep-me" } },\n  "theme": "dark"\n}\n`;
+    let dir: string;
+    let saved: ReturnType<typeof env.testing.snapshot>;
+
+    function enospc(): Error {
+        return Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+    }
+
+    /** Writes the first half of what it is given, as a full disk does, then fails. */
+    function failHalfway(): ReturnType<typeof spyOn> {
+        return spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            writeSync(fd, bytes, offset, Math.floor(length / 2));
+            throw enospc();
+        });
+    }
+
+    beforeEach(() => {
+        saved = env.testing.snapshot();
+        dir = mkdtempSync(join(tmpdir(), "storage-failure-"));
+        env.testing.set("GENESIS_TOOLS_HOME", dir);
+    });
+
+    afterEach(() => {
+        env.testing.restore(saved);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("keeps the target byte-identical when the disk fills halfway through the write", () => {
+        const target = join(dir, "config.json");
+        writeFileSync(target, USER_CONFIG);
+        const spy = failHalfway();
+
+        try {
+            expect(() => atomicWriteFileSync(target, `{ "theme": "light" }`)).toThrow(/ENOSPC/);
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(readFileSync(target, "utf8")).toBe(USER_CONFIG);
+        expect(readdirSync(dir)).toEqual(["config.json"]);
+    });
+
+    it("keeps the target byte-identical when fsync fails", () => {
+        const target = join(dir, "config.json");
+        writeFileSync(target, USER_CONFIG);
+        const spy = spyOn(atomicWriteIo, "fsyncSync").mockImplementation(() => {
+            throw Object.assign(new Error("EIO: i/o error, fsync"), { code: "EIO" });
+        });
+
+        try {
+            expect(() => atomicWriteFileSync(target, `{}`)).toThrow(/EIO/);
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(readFileSync(target, "utf8")).toBe(USER_CONFIG);
+        expect(readdirSync(dir)).toEqual(["config.json"]);
+    });
+
+    // NEGATIVE CONTROL: a write that succeeds replaces the content and keeps the file's restricted mode.
+    it("replaces the content on a normal write and keeps a 0600 file at 0600", () => {
+        const target = join(dir, "config.json");
+        writeFileSync(target, USER_CONFIG);
+        chmodSync(target, 0o600);
+
+        atomicWriteFileSync(target, `{ "theme": "light" }`);
+
+        expect(readFileSync(target, "utf8")).toBe(`{ "theme": "light" }`);
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+        expect(readdirSync(dir)).toEqual(["config.json"]);
+    });
+
+    it("keeps one backup of the replaced content when asked, and refuses the write when it cannot", () => {
+        const target = join(dir, "other-app.json");
+        writeFileSync(target, USER_CONFIG);
+
+        atomicWriteFileSync(target, `{ "v": 2 }`, { backup: true });
+
+        expect(readFileSync(`${target}.bak`, "utf8")).toBe(USER_CONFIG);
+        expect(readFileSync(target, "utf8")).toBe(`{ "v": 2 }`);
+
+        // A directory where the backup must go makes the copy fail: the write must not happen without it.
+        rmSync(`${target}.bak`);
+        mkdirSync(`${target}.bak`);
+        writeFileSync(join(`${target}.bak`, "child"), "x");
+
+        expect(() => atomicWriteFileSync(target, `{ "v": 3 }`, { backup: true })).toThrow();
+        expect(readFileSync(target, "utf8")).toBe(`{ "v": 2 }`);
+        expect(readdirSync(dir).sort()).toEqual(["other-app.json", "other-app.json.bak"]);
+    });
+
+    it("copies a truncated file aside before anything can replace it", () => {
+        const target = join(dir, "state.json");
+        const truncated = USER_CONFIG.slice(0, 30);
+        writeFileSync(target, truncated);
+
+        const read = readJsonFileForUpdateSync(target);
+
+        expect(read.state).toBe("corrupt");
+
+        if (read.state !== "corrupt") {
+            return;
+        }
+
+        expect(readFileSync(read.preservedAt, "utf8")).toBe(truncated);
+        expect(readFileSync(target, "utf8")).toBe(truncated);
+        expect(read.preservedAt).toMatch(/state\.json\.corrupt-\d{8}-\d{6}-\d{3}$/);
+    });
+
+    // NEGATIVE CONTROL: a missing file and a valid file read normally, and nothing is copied.
+    it("reads a missing file as missing and a valid file as ok, copying nothing", () => {
+        const target = join(dir, "state.json");
+
+        expect(readJsonFileForUpdateSync(target)).toEqual({ state: "missing" });
+
+        writeFileSync(target, USER_CONFIG);
+
+        expect(readJsonFileForUpdateSync(target)).toEqual({
+            state: "ok",
+            value: { accounts: { work: { token: "keep-me" } }, theme: "dark" },
+        });
+        expect(readdirSync(dir)).toEqual(["state.json"]);
+    });
+
+    it("atomicConfigUpdate refuses a config that does not parse and leaves it byte-identical", async () => {
+        const storage = new Storage("failure-tool");
+        await storage.ensureDirs();
+        const truncated = USER_CONFIG.slice(0, 30);
+        writeFileSync(storage.getConfigPath(), truncated);
+
+        await expect(
+            storage.atomicConfigUpdate<Record<string, unknown>>((config) => {
+                config.theme = "light";
+            })
+        ).rejects.toThrow(/does not parse, left untouched/);
+
+        expect(readFileSync(storage.getConfigPath(), "utf8")).toBe(truncated);
+    });
+
+    it("setConfig keeps a copy of an unreadable config before a caller's defaults replace it", async () => {
+        // The shape that bit Claude Code: load fails, the caller falls back to defaults and saves them.
+        const storage = new Storage("failure-tool");
+        await storage.ensureDirs();
+        const truncated = USER_CONFIG.slice(0, 30);
+        writeFileSync(storage.getConfigPath(), truncated);
+
+        const loaded = await storage.getConfig().catch(() => null);
+        await storage.setConfig(loaded ?? { theme: "default" });
+
+        const aside = readdirSync(storage.getBaseDir()).filter((name) => name.startsWith("config.json.corrupt-"));
+
+        expect(aside).toHaveLength(1);
+        expect(readFileSync(join(storage.getBaseDir(), aside[0]), "utf8")).toBe(truncated);
+    });
+
+    it("atomicUpdate keeps a copy of a corrupt file before the updater starts over", async () => {
+        const storage = new Storage("failure-tool");
+        await storage.ensureDirs();
+        const path = join(storage.getCacheDir(), "import.json");
+        const truncated = USER_CONFIG.slice(0, 30);
+        writeFileSync(path, truncated);
+        let seen: unknown = "not called";
+
+        await storage.atomicUpdate<{ v: number }>("import.json", (current) => {
+            seen = current;
+            return { v: 1 };
+        });
+
+        const aside = readdirSync(storage.getCacheDir()).filter((name) => name.startsWith("import.json.corrupt-"));
+
+        expect(seen).toBeNull();
+        expect(aside).toHaveLength(1);
+        expect(readFileSync(join(storage.getCacheDir(), aside[0]), "utf8")).toBe(truncated);
+    });
+
+    // NEGATIVE CONTROL: a valid file reaches the updater and nothing is copied aside.
+    it("atomicUpdate passes a valid file to the updater and copies nothing", async () => {
+        const storage = new Storage("failure-tool");
+        await storage.atomicUpdate<{ v: number }>("import.json", () => ({ v: 1 }));
+
+        const result = await storage.atomicUpdate<{ v: number }>("import.json", (current) => ({
+            v: (current?.v ?? 0) + 1,
+        }));
+
+        expect(result).toEqual({ v: 2 });
+        expect(readdirSync(storage.getCacheDir()).filter((name) => name.includes(".corrupt-"))).toEqual([]);
     });
 });

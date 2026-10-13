@@ -1,16 +1,8 @@
-import {
-    chmodSync,
-    existsSync,
-    mkdirSync,
-    readdirSync,
-    renameSync,
-    statSync,
-    unlinkSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isJsonObject, readJsonFileForUpdateSync } from "./atomic-file";
 import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
 import { assertTestSafePath } from "./real-home-guard";
 import { toolDataDir } from "./root";
@@ -22,60 +14,7 @@ import { toolDataDir } from "./root";
  */
 export type TTLString = string;
 
-/** Best-effort removal of an abandoned temp file; never masks the failure that caused it. */
-function removeTempFile(tmp: string): void {
-    try {
-        unlinkSync(tmp);
-    } catch (cleanupErr) {
-        logger.debug({ err: cleanupErr, tmp }, "[storage] tmp-file cleanup after a failed atomic write");
-    }
-}
-
-/**
- * Write data to a file atomically via write-to-sibling-tmp + renameSync.
- * Safe under concurrent writers — each gets a unique tmp name and rename is atomic on POSIX.
- *
- * `mode` applies from the temp file's birth, so a file holding secrets is never
- * briefly published at the umask default: the rename carries the restricted mode
- * with it. Chmod'ing after the rename cannot close that window, and `writeFileSync`'s
- * own `mode` is masked by umask (umask 0600 yields a 000 file), so it is re-applied
- * to the temp file before it becomes visible under the real name.
- */
-export function atomicWriteFileSync(filePath: string, data: string, options?: { mode?: number }): void {
-    assertTestSafePath(filePath, "write");
-
-    const dir = dirname(filePath);
-
-    if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-    }
-
-    const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-
-    // Every step after the temp path may exist shares one cleanup path: a
-    // half-written or unchmod'd temp file must never be left behind, least of
-    // all when it holds the secret `mode` was requested for.
-    try {
-        writeFileSync(tmp, data, options?.mode === undefined ? undefined : { mode: options.mode });
-
-        if (options?.mode !== undefined) {
-            chmodSync(tmp, options.mode);
-        }
-    } catch (err) {
-        removeTempFile(tmp);
-        throw err;
-    }
-
-    try {
-        renameSync(tmp, filePath);
-    } catch (err) {
-        removeTempFile(tmp);
-        // The errno is the whole diagnosis here: EXDEV (tmp and target on
-        // different mounts), ENOSPC, EACCES and ENOTEMPTY all need different
-        // answers and would otherwise collapse into one opaque message.
-        throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`, { cause: err });
-    }
-}
+export { atomicWriteFileSync } from "./atomic-file";
 
 export interface StorageOptions {
     /**
@@ -253,6 +192,9 @@ export class Storage {
      */
     async setConfig<T extends object>(config: T, options?: { mode?: number }): Promise<void> {
         await this.ensureDirs();
+        // A caller that could not read the config may be about to save defaults over it. The replace
+        // goes ahead (the caller asked for it), but never before an unreadable file has a copy aside.
+        readJsonFileForUpdateSync(this.configPath, { accepts: isJsonObject });
         this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2), {
             mode: options?.mode ?? this.configFileMode,
         });
@@ -573,18 +515,10 @@ export class Storage {
         return this.withFileLock({
             file: filePath,
             fn: async () => {
-                let current: T | null = null;
-
-                try {
-                    if (existsSync(filePath)) {
-                        const content = await Bun.file(filePath).text();
-                        current = SafeJSON.parse(content) as T;
-                    }
-                } catch (error) {
-                    logger.debug(`atomicUpdate: Could not read existing file at ${filePath}: ${error}`);
-                    current = null;
-                }
-
+                // An unparseable file is copied aside before the updater starts over from null, and a
+                // read error (EACCES, EIO) throws: an update must never be built on top of a bad read.
+                const existing = readJsonFileForUpdateSync<T>(filePath);
+                const current = existing.state === "ok" ? existing.value : null;
                 const updated = updater(current);
 
                 const dir = dirname(filePath);
@@ -674,9 +608,19 @@ export class Storage {
 
                 if (existsSync(this.configPath)) {
                     const content = await Bun.file(this.configPath).text();
-                    const parsed = SafeJSON.parse(content);
+                    let parsed: unknown;
 
-                    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                    // Refuse, never start over from {}: a read-modify-write on a file that does not parse
+                    // would save one changed key over the user's whole config.
+                    try {
+                        parsed = SafeJSON.parse(content);
+                    } catch (error) {
+                        throw new Error(`Invalid config at ${this.configPath}: it does not parse, left untouched`, {
+                            cause: error,
+                        });
+                    }
+
+                    if (!isJsonObject(parsed)) {
                         throw new Error(`Invalid config at ${this.configPath}: expected JSON object`);
                     }
 
@@ -746,7 +690,7 @@ export class Storage {
             mkdirSync(dir, { recursive: true });
         }
 
-        await Bun.write(filePath, content);
+        this.atomicWrite(filePath, content);
         logger.debug(`Raw file written: ${filePath}`);
     }
 
