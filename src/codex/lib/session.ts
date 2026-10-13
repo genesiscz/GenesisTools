@@ -14,6 +14,7 @@ import type {
 } from "./_generated/protocol";
 import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
+import { isOwnBusCommand } from "./bus-approval";
 import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import { buildAgentInstructions } from "./seed-instructions";
@@ -278,6 +279,15 @@ export class CodexSessionRuntime {
             return approvalResponse(request.method, false);
         }
 
+        if (this.isOwnBusRequest(request)) {
+            this.store.appendEvent(this.meta.name, {
+                source: "daemon",
+                method: "approval/auto-accepted",
+                params: { reason: "the worker's own seeded bus command", detail: approvalDetail(request.params) },
+            });
+            return approvalResponse(request.method, true);
+        }
+
         const requestId = String(request.id);
         const pendingApprovals = {
             ...this.meta.pendingApprovals,
@@ -329,6 +339,19 @@ export class CodexSessionRuntime {
             lastEventAt: new Date().toISOString(),
             pendingApprovals: {},
         });
+    }
+
+    /** A command approval for this worker's own seeded `tools agents` command, from its own thread. */
+    private isOwnBusRequest(request: RpcServerRequest): boolean {
+        const command = isRecord(request.params) ? request.params.command : undefined;
+
+        return (
+            request.method === "item/commandExecution/requestApproval" &&
+            this.meta.agentsEnabled &&
+            typeof command === "string" &&
+            this.isOwnThreadEvent(request) &&
+            isOwnBusCommand(command, { agentName: this.meta.agentName, session: this.meta.rendezvousSession })
+        );
     }
 
     /** False for a notification from another thread in this app-server: a native subagent's. */

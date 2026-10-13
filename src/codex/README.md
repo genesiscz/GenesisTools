@@ -274,6 +274,10 @@ With `--write ask`, Codex uses its `untrusted` approval policy: commands outside
 set, sandbox escalations, and file-change approval requests pause and are forwarded to `lead` as `approval_request`
 messages. Resolve one with `tools codex approve --name <n> --request <id>` or `deny`. Codex 0.144.5 has no protocol
 mode that pauses its built-in trusted read-only commands; `untrusted` is its strictest supported command policy.
+The one exception the daemon accepts itself is the worker's own seeded bus command (`tools agents message`, `login`,
+`request` or `leave` as `codex_<name>` with its own `--session`, from its own thread, holding no shell operator,
+redirection or expansion), recorded in the event log as `approval/auto-accepted`. Without it every `ask` worker's
+first action, its "received; starting" report, waited for the lead.
 
 The driver joins the parent Claude Code swarm through `tools agents`. Use `--no-agents` to disable that integration,
 or `--session <id>` when the parent session cannot be discovered from `CLAUDE_CODE_SESSION_ID`.

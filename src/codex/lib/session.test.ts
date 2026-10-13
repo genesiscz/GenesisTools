@@ -7,6 +7,7 @@ import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { CodexAccountBinding } from "./account";
+import { isOwnBusCommand } from "./bus-approval";
 import type { RpcClient } from "./session";
 import { CodexSessionRuntime } from "./session";
 import { type CodexSessionMeta, CodexSessionStore } from "./store";
@@ -600,5 +601,96 @@ test("a native subagent's turns and usage never become the worker's own", async 
         expect((await store.readEvents("reviewer")).filter((event) => event.method === "turn/completed")).toHaveLength(
             2
         );
+    });
+});
+
+describe("an ask worker's own bus commands", () => {
+    const own = (args: string) => `/bin/zsh -lc "tools agents ${args} --session parent-123"`;
+
+    test("the seeded verbs, run as the worker in its swarm, are its own", () => {
+        const bus = { agentName: "codex_reviewer", session: "parent-123" };
+
+        expect(isOwnBusCommand(own("message --from codex_reviewer --to lead --body 'received; starting'"), bus)).toBe(
+            true
+        );
+        expect(isOwnBusCommand(own("login --agent-name codex_reviewer --once"), bus)).toBe(true);
+        expect(isOwnBusCommand(own("message --from codex_reviewer --reply 0007 --body='done, see x=1'"), bus)).toBe(
+            true
+        );
+        expect(
+            isOwnBusCommand(
+                "tools agents request --from codex_reviewer --to lead --body plan --session parent-123",
+                bus
+            )
+        ).toBe(true);
+    });
+
+    test("anything chained, expanded, redirected, another identity or another swarm is not", () => {
+        const bus = { agentName: "codex_reviewer", session: "parent-123" };
+
+        for (const command of [
+            own("message --from codex_reviewer --to lead --body x; touch /tmp/pwned"),
+            own("message --from codex_reviewer --to lead --body x && echo hi"),
+            own("message --from codex_reviewer --to lead --body x > /tmp/out"),
+            `/bin/zsh -lc "tools agents message --from codex_reviewer --to lead --body \\"$(id)\\" --session parent-123"`,
+            own("message --from codex_reviewer --to lead --body `id`"),
+            own("message --from lead --to codex_reviewer --body x"),
+            own("login --agent-name codex_reviewer --once --observer"),
+            own("message --from codex_reviewer --to lead --body x --session other"),
+            "tools agents message --from codex_reviewer --to lead --body x",
+            "tools hub message --from codex_reviewer --session parent-123",
+            own("message --from codex_reviewer --to lead --body x\nrm -rf ~"),
+        ]) {
+            expect({ command, own: isOwnBusCommand(command, bus) }).toEqual({ command, own: false });
+        }
+    });
+
+    test("the runtime accepts them itself and still forwards everything else to the lead", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-bus-approval-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), writePolicy: "ask" as const, approvalPolicy: "untrusted" as const };
+            store.writeMeta(meta);
+            const notices: unknown[] = [];
+            const runtime = new CodexSessionRuntime({
+                client: new FakeRpcClient(),
+                store,
+                meta,
+                onApprovalRequest: (notice) => {
+                    notices.push(notice);
+                },
+            });
+            await runtime.start({});
+            const method = "item/commandExecution/requestApproval";
+
+            await expect(
+                runtime.handleServerRequest({
+                    id: 1,
+                    method,
+                    params: { threadId: "thread-1", command: own("message --from codex_reviewer --to lead --body hi") },
+                })
+            ).resolves.toEqual({ decision: "accept" });
+            expect(notices).toEqual([]);
+
+            // A subagent's copy of the same command is not the worker's: tools agents refuses it anyway.
+            const fromSubagent = runtime.handleServerRequest({
+                id: 2,
+                method,
+                params: { threadId: "sub-1", command: own("message --from codex_reviewer --to lead --body hi") },
+            });
+            const other = runtime.handleServerRequest({
+                id: 3,
+                method,
+                params: { threadId: "thread-1", command: "touch x" },
+            });
+            await Bun.sleep(0);
+            expect(notices).toHaveLength(2);
+
+            await runtime.execute({ op: "deny", requestId: "2" });
+            await runtime.execute({ op: "deny", requestId: "3" });
+            await expect(fromSubagent).resolves.toEqual({ decision: "decline" });
+            await expect(other).resolves.toEqual({ decision: "decline" });
+        });
     });
 });

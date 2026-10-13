@@ -141,7 +141,7 @@ Repeat the negative constraints in every steering message — the correction is 
 
 ## 4. Approvals
 
-With `--write ask`, out-of-policy commands and file changes pause and arrive on the bus as `approval_request` messages to `lead`:
+With `--write ask`, out-of-policy commands and file changes pause and arrive on the bus as `approval_request` messages to `lead`. The worker's own seeded `tools agents` commands (its identity, its `--session`, its root thread, no shell operators or expansions) are accepted by the daemon itself and never reach you:
 
 ```bash
 tools codex approve --name <task> --request <id>
