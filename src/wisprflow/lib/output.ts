@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { renderUnifiedDiff } from "@genesiscz/utils/diff";
 import { splitFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const { log } = logger.scoped("wisprflow-output");
 
@@ -85,7 +86,9 @@ export function writeGuarded(options: {
         return { status: "differs", path, diff: renderUnifiedDiff({ before, after, label: path.replace(/^\//, "") }) };
     }
 
-    writeFileSync(path, after);
+    // Atomic, so a full disk or a crash cannot truncate the user's note. The shared writer follows a note that is
+    // a symlink into a vault, so the link itself stays.
+    atomicWriteFileSync(path, after);
     log.debug({ path }, "replaced output file");
     return { status: "replaced", path };
 }

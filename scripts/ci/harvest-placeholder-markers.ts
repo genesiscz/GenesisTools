@@ -4,7 +4,7 @@
  * Teams people/conversation cache. Prints COUNTS only. Never prints a name
  * or email. The markers file is outside git on purpose.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { cacheDbPath } from "@app/ms-teams/lib/paths";
@@ -12,6 +12,7 @@ import { TeamsCache } from "@app/ms-teams/lib/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const log = logger.scoped("placeholder-check").log;
 
@@ -261,7 +262,7 @@ export function harvestToFile(opts: { cachePath: string; markersFile: string }):
         }
 
         mkdirSync(dirname(opts.markersFile), { recursive: true, mode: 0o700 });
-        writeFileSync(opts.markersFile, spliceAutoBlock(existing, autoLines), { encoding: "utf8", mode: 0o600 });
+        atomicWriteFileSync(opts.markersFile, spliceAutoBlock(existing, autoLines), { mode: 0o600 });
 
         return { ...counts, refused: false };
     } finally {

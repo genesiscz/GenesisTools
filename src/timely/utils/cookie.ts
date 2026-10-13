@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * app.timelyapp.com (memories / suggested entries / entries) authenticates with
@@ -51,20 +52,19 @@ export async function saveCookie(storage: Storage, cookie: string): Promise<Save
 }
 
 /**
- * Write the credential and report whether the result is genuinely owner-only.
- * `mode` on writeFileSync applies only when the file is created, so an existing
- * world-readable file needs the explicit chmod; the stat afterwards is what makes
- * the answer honest on filesystems that accept chmod and ignore it.
+ * Write the credential atomically and report whether the result is genuinely owner-only.
+ * The temp file gets the mode before it is renamed over the old cookie, so an existing
+ * world-readable file is replaced, never reused; the stat afterwards is what makes the
+ * answer honest on filesystems that accept chmod and ignore it.
  */
 function writeCookieFile(path: string, cookie: string): boolean {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    writeFileSync(path, `${cookie}\n`, { encoding: "utf-8", mode: COOKIE_FILE_MODE });
+    atomicWriteFileSync(path, `${cookie}\n`, { mode: COOKIE_FILE_MODE });
 
     try {
-        chmodSync(path, COOKIE_FILE_MODE);
         return (statSync(path).mode & 0o777) === COOKIE_FILE_MODE;
     } catch (err) {
-        logger.warn({ err, path }, "Could not restrict the Timely cookie file to owner-only (0600)");
+        logger.warn({ err, path }, "Could not confirm the Timely cookie file is owner-only (0600)");
         return false;
     }
 }

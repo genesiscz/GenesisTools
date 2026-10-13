@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 const API_PORT = WEB_SERVICES["youtube-server"].port;
@@ -125,7 +126,7 @@ export class YoutubeConfig {
         await withFileLock(`${this.path}.lock`, async () => {
             const current = await this.readFresh();
             const merged = mergeConfig(current, partial);
-            await Bun.write(this.path, `${SafeJSON.stringify(merged, { strict: true }, 2)}\n`);
+            atomicWriteFileSync(this.path, `${SafeJSON.stringify(merged, { strict: true }, 2)}\n`);
             this.cache = merged;
             logger.debug({ path: this.path }, "youtube config updated");
         });
@@ -135,7 +136,7 @@ export class YoutubeConfig {
         await this.ensureDir();
         await withFileLock(`${this.path}.lock`, async () => {
             const defaults = structuredClone(DEFAULT_YOUTUBE_CONFIG);
-            await Bun.write(this.path, `${SafeJSON.stringify(defaults, { strict: true }, 2)}\n`);
+            atomicWriteFileSync(this.path, `${SafeJSON.stringify(defaults, { strict: true }, 2)}\n`);
             this.cache = defaults;
             logger.debug({ path: this.path }, "youtube config reset");
         });

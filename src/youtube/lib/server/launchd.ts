@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SERVER_BASE_DIR } from "@app/youtube/lib/server/port-file";
 import { launchdProgramArgumentsXml } from "@genesiscz/utils/macos/genesis-app";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 export const LAUNCHD_LABEL = "com.genesis-tools.youtube-server";
@@ -43,7 +44,8 @@ export async function installLaunchd(opts: InstallLaunchdOptions): Promise<void>
     const entryPath = opts.entryPath ?? resolve(import.meta.dir, "index.ts");
     mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
     mkdirSync(SERVER_BASE_DIR, { recursive: true });
-    await Bun.write(PLIST_PATH, generateLaunchdPlist({ port: opts.port, bunPath, entryPath }));
+    // A plist cut short by a full disk or a crash makes `launchctl load` fail, and the server then never restarts.
+    atomicWriteFileSync(PLIST_PATH, generateLaunchdPlist({ port: opts.port, bunPath, entryPath }));
     const proc = Bun.spawn(["launchctl", "load", "-w", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
     const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
 
