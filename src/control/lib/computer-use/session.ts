@@ -1701,6 +1701,7 @@ export class ComputerUse {
             try {
                 return await fillForm({
                     data: options.data,
+                    background: !options.activate,
                     driver: new NativeControlDriver({
                         app: options.app,
                         windowId: options.window_id,

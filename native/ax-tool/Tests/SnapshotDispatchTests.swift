@@ -392,6 +392,11 @@ final class CursorFeedbackTests: XCTestCase {
         XCTAssertEqual(CursorFeedbackText.detail(action: "set", text: "zzqx", secure: false), "“zzqx”")
         XCTAssertEqual(CursorFeedbackText.detail(action: "paste", text: "one\ntwo", secure: false), "“one ⏎ two”")
         XCTAssertEqual(CursorFeedbackText.detail(action: "set", text: "", secure: false), "(empty: clears the field)")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "paste", text: "", secure: false), "(empty: writes nothing)")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "type", text: "", secure: false), "(empty: writes nothing)")
+        // Spaces at either end are part of what was written, so they stay inside the quotes.
+        XCTAssertEqual(CursorFeedbackText.detail(action: "set", text: " padded ", secure: false), "“ padded ”")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "type", text: "   ", secure: false), "“   ”")
         XCTAssertEqual(CursorFeedbackText.detail(action: "type", text: "hunter2", secure: true),
                        "••••••• (7 characters, hidden)")
         let password = CursorFeedbackText.detail(action: "set", text: "correct horse battery staple", secure: true)

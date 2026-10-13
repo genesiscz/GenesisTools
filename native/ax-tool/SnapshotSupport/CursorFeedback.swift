@@ -216,12 +216,16 @@ public enum CursorFeedbackText {
             }
 
             if text.isEmpty {
-                return "(empty: clears the field)"
+                // Only set replaces the value; an empty paste or type inserts nothing.
+                return action == "set" ? "(empty: clears the field)" : "(empty: writes nothing)"
             }
 
             let flat = text.replacingOccurrences(of: "\r\n", with: " ⏎ ")
                 .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).joined(separator: " ⏎ ")
-            return "“" + truncate(flat, to: detailLimit - 2) + "”"
+            // Cut without trimming: a space at either end is part of what was written, and the quotes
+            // make it visible.
+            let room = detailLimit - 2
+            return "“" + (flat.count > room ? String(flat.prefix(room - 1)) + "…" : flat) + "”"
         case "key", "hotkey":
             // Key by key into a password field is the password, so on a secure target every part that types
             // a character is a bullet, named ones too (apostrophe, kp_1); modifiers and keys that type

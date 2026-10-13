@@ -372,6 +372,73 @@ test("a background form fill writes a web field with a plain set, never a prepar
     expect(paste[paste.indexOf("--action") + 1]).toBe("paste");
     expect(paste).toContain("--prepare");
 });
+function choosing(identifier: string): Evaluator {
+    return async (call) => {
+        const target = evaluationSchema.parse(call.input).questions.target;
+        if (target.type !== "choice") {
+            throw new Error("Expected a target choice.");
+        }
+        const entries = Object.entries(target.criteria);
+        const choice =
+            entries.find(([, value]) => SafeJSON.stringify(value).toLowerCase().includes(identifier))?.[0] ?? "abstain";
+        return evaluation({
+            target: {
+                type: "choice",
+                choice,
+                probabilities: Object.fromEntries(entries.map(([key]) => [key, key === choice ? 1 : 0])),
+            },
+        });
+    };
+}
+test("a background form fill stops at a native dropdown instead of opening its menu", async () => {
+    const f = fixture({ evaluate: choosing("priority") });
+    f.snapshot.elements.push({
+        index: 4,
+        depth: 1,
+        role: "AXPopUpButton",
+        AXIdentifier: "priority",
+        AXDescription: "Priority",
+        AXValue: "Low",
+        valueSettable: false,
+        actions: ["AXPress"],
+    });
+    const result = await f.computer.fill_form({
+        app: "Fixture",
+        data: { priority: "High" },
+        jev: true,
+        activate: false,
+    });
+    expect(result.status).toBe("stopped");
+    expect(result.reason).toContain("native dropdown");
+    expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(0);
+    expect(f.snapshot.elements[4].AXValue).toBe("Low");
+});
+test("a background fill that empties a rich-text editor counts its read-back newline as empty", async () => {
+    const f = fixture({ evaluate: choosing("message") });
+    f.snapshot.elements.push(
+        { index: 4, depth: 1, role: "AXWebArea", AXTitle: "Fixture page", actions: [] },
+        { index: 5, depth: 2, role: "AXTextArea", AXIdentifier: "message", AXValue: "draft", valueSettable: true }
+    );
+    const run = f.native.run;
+    f.native.run = async (call) => {
+        const result = await run(call);
+        const { args } = call;
+        if (args[0] !== "act" || args[args.indexOf("--value") + 1] !== "") {
+            return result;
+        }
+        // An emptied Lexical editor reads back as one newline.
+        const row = f.snapshot.elements.find(
+            (element) => element.index === Number(args[args.indexOf("--element") + 1])
+        );
+        if (row) {
+            row.AXValue = "\n";
+        }
+        return { ...result, after: structuredClone(f.snapshot) };
+    };
+    const result = await f.computer.fill_form({ app: "Fixture", data: { message: "" }, jev: true, activate: false });
+    expect(result.status).toBe("filled");
+    expect(f.snapshot.elements[5].AXValue).toBe("\n");
+});
 test("structured fill admits dropdowns once and never sends selected or supplied values to Jev", async () => {
     const inputs: unknown[] = [];
     const f = fixture({

@@ -30,7 +30,13 @@ function validationError(field: Observation["elements"][number] | undefined): bo
 }
 function readback(observation: Observation, binding: string, value: string): boolean {
     const field = observedField(observation, binding);
-    return field !== undefined && String(field.AXValue ?? "") === value;
+    if (field === undefined) {
+        return false;
+    }
+
+    // An empty rich-text editor (Lexical) reads back as one newline; native set counts that as empty too.
+    const read = String(field.AXValue ?? "");
+    return read === value || (value === "" && read === "\n");
 }
 
 export async function fillForm(options: {
@@ -39,6 +45,11 @@ export async function fillForm(options: {
     evaluate: Evaluator;
     signal?: AbortSignal;
     limits?: OperationLimits;
+    /**
+     * The app stays in the background. A native dropdown is then refused: selecting from it opens
+     * its menu, which no plain AXValue write can avoid.
+     */
+    background?: boolean;
 }) {
     const data = fillDataSchema.parse(options.data);
     const session = new ControlSession(options);
@@ -84,6 +95,10 @@ export async function fillForm(options: {
             );
             if (!candidate) {
                 throw new Error("Selected field disappeared.");
+            }
+            if (options.background && candidate.role === "AXPopUpButton") {
+                reason = `The field for ${key} is a native dropdown, which opens its menu to select; fill it with activate:true. No further fields were written.`;
+                break;
             }
             const dispatched = await session.dispatch({ observation, candidate, value });
             observation = dispatched.after;
