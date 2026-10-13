@@ -119,12 +119,14 @@ the copy only on a clean quit, so a `kill <pid>` leaks 1.4 GB each time. It refu
 
 - a browser on the user's own profile (no `--user-data-dir`), unless `--main-profile`;
 - a port two processes listen on (one on 127.0.0.1, one on [::1]), since CDP reaches only one;
-- a listener that is not a browser, and an empty port.
+- a listener that is not a browser (judged by its executable alone, not its arguments), and an
+  empty port.
 
 `open` prints the matching `close` line after it starts a browser. The library side is
 `closeBrowserOnPort` in `lib/launch.ts`; a browser this process spawned itself goes through
 `quitOwnedBrowser`, which sends `Browser.close` only when that browser is the one process
-listening on the port, and kills only when `Browser.close` did not end it within 3 s.
+listening on the port. It kills the browser in three cases: another process also listens on the
+port, the browser does not answer CDP, or `Browser.close` did not end it within 3 s.
 
 ### The buffer
 

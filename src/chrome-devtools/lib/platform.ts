@@ -125,6 +125,29 @@ export function listProcesses(exec: ExecFn = defaultExec, platform: Platform = c
     return r.exitCode === 0 ? parsePsProcesses(r.stdout) : [];
 }
 
+/**
+ * One process's executable without its arguments: the full path on macOS, the task name on Linux (at most 15
+ * characters), the image name on Windows. Null when the process is gone.
+ */
+export function processExecutable(
+    pid: number,
+    exec: ExecFn = defaultExec,
+    platform: Platform = currentPlatform()
+): string | null {
+    const r =
+        platform === "win32"
+            ? exec([
+                  "powershell",
+                  "-NoProfile",
+                  "-Command",
+                  `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").Name`,
+              ])
+            : exec(["ps", "-o", "comm=", "-p", String(pid)]);
+    const executable = r.stdout.trim();
+
+    return r.exitCode === 0 && executable ? executable : null;
+}
+
 export interface ListeningPort {
     port: number;
     pid: number | null;

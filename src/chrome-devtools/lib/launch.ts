@@ -16,6 +16,7 @@ import {
     listListeningTcpPorts,
     listProcesses,
     type Platform,
+    processExecutable,
 } from "./platform.ts";
 import {
     type BrowserId,
@@ -103,12 +104,15 @@ export class CdpLaunchError extends Error {
     readonly stage: LaunchStage;
     /** Tail of the browser's own log, when the launch owned its stdio. */
     readonly logTail: string | null;
+    /** The launch already quit the browser it spawned, so the caller must not quit it again. */
+    readonly childQuit: boolean;
 
-    constructor(message: string, opts: { stage: LaunchStage; logTail?: string | null }) {
+    constructor(message: string, opts: { stage: LaunchStage; logTail?: string | null; childQuit?: boolean }) {
         super(message);
         this.name = "CdpLaunchError";
         this.stage = opts.stage;
         this.logTail = opts.logTail ?? null;
+        this.childQuit = opts.childQuit ?? false;
     }
 }
 
@@ -242,7 +246,7 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
         throw new CdpLaunchError(
             `${def.app} launched but CDP port ${opts.port} never answered within ${timeoutMs}ms` +
                 (opts.logPath ? `\n--- ${opts.logPath} (last ${LOG_TAIL_LINES} lines) ---\n${logTail}` : ""),
-            { stage: "timeout", logTail }
+            { stage: "timeout", logTail, childQuit: pid !== null }
         );
     }
 
@@ -407,10 +411,14 @@ async function closeOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
     }
 
     const pid = pids[0];
-    const processes = listProcesses(deps.exec ?? defaultExec, deps.platform ?? currentPlatform());
-    const command = processes.find((p) => p.pid === pid)?.command ?? "";
+    const exec = deps.exec ?? defaultExec;
+    const platform = deps.platform ?? currentPlatform();
+    const command = listProcesses(exec, platform).find((p) => p.pid === pid)?.command ?? "";
+    // The executable's own name, never its arguments: a proxy started with a browser's path as an argument is
+    // not a browser.
+    const executable = processExecutable(pid, exec, platform)?.split(/[/\\]/).pop() ?? "";
 
-    if (classifyProcessName(command) === null) {
+    if (classifyProcessName(executable) === null) {
         return { status: "not-a-browser", pid, command };
     }
 

@@ -24,13 +24,23 @@ import { openRecordingBrowser } from "./recording-browser";
 const listener = (pid: number, address = "127.0.0.1", port = 9333) =>
     `Google ${pid} work 50u IPv4 0x1 0t0 TCP ${address}:${port} (LISTEN)`;
 
-/** A fake machine: these listener rows for `lsof`, these `pid ppid command` rows for `ps`. */
+/**
+ * A fake machine: these listener rows for `lsof`, these `pid ppid command` rows for `ps`. `ps -o comm= -p <pid>`
+ * answers the row's executable, which these rows keep before their first ` --` flag.
+ */
 function machine(listeners: string[], processes: string[]): ExecFn {
-    return (argv) => ({
-        exitCode: 0,
-        stdout: (argv[0] === "lsof" ? listeners : processes).join("\n"),
-        stderr: "",
-    });
+    return (argv) => {
+        const pidAt = argv.indexOf("-p");
+
+        if (argv[0] === "ps" && pidAt !== -1) {
+            const row = processes.find((r) => r.trim().split(/\s+/)[0] === argv[pidAt + 1]);
+            const executable = row?.replace(/^\s*\d+\s+\d+\s+/, "").split(" --")[0];
+
+            return { exitCode: executable ? 0 : 1, stdout: executable ?? "", stderr: "" };
+        }
+
+        return { exitCode: 0, stdout: (argv[0] === "lsof" ? listeners : processes).join("\n"), stderr: "" };
+    };
 }
 
 /** A quit path must never reach a real browser: one listens on 9222 on a developer's Mac. */
@@ -208,6 +218,7 @@ describe("launchCdpBrowser", () => {
         expect(killed).toBe(true);
         expect(err).toBeInstanceOf(CdpLaunchError);
         expect((err as CdpLaunchError).stage).toBe("timeout");
+        expect((err as CdpLaunchError).childQuit).toBe(true);
         expect((err as CdpLaunchError).logTail).toContain("could not load extension");
         expect((err as CdpLaunchError).message).toContain("could not load extension");
     });
@@ -386,6 +397,28 @@ describe("separate recording browser onboarding", () => {
             },
         });
         await expect(pending).rejects.toThrow();
+        expect(killed).toBe(1);
+    });
+    test("a readiness timeout quits the owned browser once: the cleanup does not quit it again", async () => {
+        let killed = 0;
+        const err = await openRecordingBrowser({
+            browserId: "chrome",
+            dependencies: {
+                installed,
+                freePort: async () => 45678,
+                timeoutMs: 0,
+                probe: async () => null,
+                spawnLogged: () => ({
+                    pid: 4242,
+                    kill: () => {
+                        killed++;
+                    },
+                }),
+                quit: noBrowser,
+            },
+        }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(CdpLaunchError);
+        expect((err as CdpLaunchError).stage).toBe("timeout");
         expect(killed).toBe(1);
     });
     test("spawn refusal reaches the caller without starting a replacement browser", async () => {
@@ -670,6 +703,23 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                     },
                 })
             ).toMatchObject({ status: "not-a-browser", pid: 4242 });
+            expect(browser.sent).toEqual([]);
+        });
+
+        test("only the executable counts: a process whose arguments name a browser is not one", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: machine(
+                        [listener(4242)],
+                        [`4242 1 /usr/local/bin/cdp-proxy --target=${chrome} --user-data-dir=/tmp/cdp-profile-9333-a`]
+                    ),
+                    platform: "darwin",
+                    connect: browser.connect,
+                },
+            });
+            expect(result).toMatchObject({ status: "not-a-browser", pid: 4242 });
             expect(browser.sent).toEqual([]);
         });
     });

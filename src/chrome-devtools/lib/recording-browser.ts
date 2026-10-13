@@ -7,6 +7,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { redactBrowserText } from "./action-recording";
 import { targets } from "./cdp";
 import {
+    CdpLaunchError,
     defaultSpawnLogged,
     type LaunchCdpOpts,
     launchCdpBrowser,
@@ -47,6 +48,7 @@ interface RecordingBrowserDependencies {
     spawnLogged?: SpawnLoggedFn;
     probe?: LaunchCdpOpts["probe"];
     quit?: QuitDeps;
+    timeoutMs?: number;
 }
 export function recordingBrowsers(): RecordingBrowser[] {
     const installed = new Set(installedBrowsers());
@@ -136,6 +138,7 @@ export async function openRecordingBrowser(options: {
             logPath,
             probe: dependencies.probe,
             quit: dependencies.quit,
+            timeoutMs: dependencies.timeoutMs,
             spawnLogged: (command, output) => {
                 options.signal?.throwIfAborted();
                 owned = (dependencies.spawnLogged ?? defaultSpawnLogged)(command, output);
@@ -164,6 +167,9 @@ export async function openRecordingBrowser(options: {
         );
         return { ...result, pid: result.pid, userDataDir: result.userDataDir, browserId: options.browserId, logPath };
     } catch (error) {
+        if (error instanceof CdpLaunchError && error.childQuit) {
+            owned = undefined;
+        }
         await cancelOwned();
         await rm(directory, { recursive: true, force: true }).catch((cleanupError) => {
             logger.debug({ error: cleanupError, directory }, "recording browser directory cleanup failed");
