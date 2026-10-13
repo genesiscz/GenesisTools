@@ -57,6 +57,7 @@ Never read `process.env` directly in application code — use `import { env } fr
 ## Code Style: Type Safety
 
 - **No `as any`** — use proper type narrowing, type guards, or explicit interfaces.
+- **No inline casts** such as `as Array<{ id: string; score: number }>`. Make the function return the right type, or add a named interface in the nearest `types.ts`.
 - When working with union types, use discriminant checks (e.g. `entity.className === "User"`).
 - Prefer `error: err` over `error: err instanceof Error ? err.message : String(err)` when the error field accepts unknown.
 

@@ -257,3 +257,8 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
 - After a rebuild, restart a running hub without stealing focus, by its pid only (a `pkill -f` pattern also
   killed other agents' snapshot runs, 2026-09-24): `kill <pid of MacOS/GenesisTools --hub>` if the build did not
   reap it, then `tools hub open --no-activate` with the flags it had.
+
+## Tests that need a picture or a screen
+
+- **A SwiftUI view in a test has no accessibility tree.** `NSHostingView` walked with `accessibilityChildren()` returns nothing, in or out of a window. Assert what a view shows by rendering it: `ImageRenderer(content:)` with `scale = 2`, then `VNRecognizeTextRequest` (`.accurate`, language correction off) on `renderer.cgImage`. About 0.3 s, and no window.
+- **Five GenesisKit window-animation and transcript-scroll tests fail while the screen is locked** (`tools control window --app <pid> --json` prints `"screenLocked": true`). Run the same filter at a known green commit as a control before you blame a change.

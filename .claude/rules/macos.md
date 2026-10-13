@@ -83,3 +83,7 @@ indistinguishable from no click at all.
 - Never read `__CFBundleIdentifier` to name the responsible app; use `responsibleIdentity()` from `@genesiscz/utils/macos/genesis-app`, which knows about the launcher marker.
 - `GENESIS_TOOLS_NO_APP=1` bypasses the launcher (grants then follow the terminal again). Use it only to reproduce the old behaviour. The window (`tools macos permissions ui`) has the same switch as a persistent marker; `tools macos permissions` reports it.
 - darwinkit stays a plain child: never start it with `disclaim: true` from GenesisTools, or the grants split into a second identity (`DarwinKit.app`).
+
+## Retired app copies answer links
+
+`open -b com.genesiscz.genesistools <url>` can reach a RETIRED copy of the app: Spotlight indexes `~/.genesis-tools` and registers every bundle it finds, and an old copy with an old router then loops or drops links. Retired copies live in `~/.genesis-tools/app/retired.noindex/` (Spotlight skips `*.noindex`), and every build unregisters them. Check: `lsregister -dump | rg "^path: .*GenesisTools\.app"` must list only `~/Applications/GenesisTools.app`. A test that runs the real `install.sh` under a temporary HOME registers one too.

@@ -40,6 +40,10 @@ When creating a new tool and writing helper functions, check if the utility is *
 
 Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
 
+**Code in `src/utils/` handles Windows paths** (match separators with `[/\\]`, not `/`). These are shared utilities, so missing Windows support there is a critical review finding.
+
+**A bound belongs where the data is read.** When a command takes `--hours`, `--since`, `--limit` or `--min`, the bound must reach every stage: discovery, refresh, the SQL `WHERE` and hydration. Filtering in JavaScript after loading everything scales with the corpus, not the answer, and the corpora here are large (12 GB of transcripts). Prove it with a fixture test that counts what was parsed.
+
 ## Tool Patterns
 
 Most tools follow these common patterns:
@@ -52,6 +56,7 @@ Most tools follow these common patterns:
 **Interactive User Experience**:
 
 -   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
+-   **Prompts go through the `p` facade** (`p.text`, `p.select`, `p.multiselect`, `p.password`, … from `@genesiscz/utils/prompts/p`). Set the backend once at the tool's entry point with `p.setBackend`; never call `inquirerBackend.*` or `clackBackend.*` in tool code, so cancel handling stays the same on both backends.
 -   **Non-TTY guard**: Always check `isInteractive()` (from `@genesiscz/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
 
     ```typescript
@@ -108,6 +113,8 @@ When spawning tools from shell hooks, always background (`&`) — 86ms Bun start
 - **To ADD a measurement, use the shared profiler, never a hand-rolled `performance.now()` pair.** `import { profiler } from "@genesiscz/utils/profile"`, then one module-level `const prof = profiler.scope("<scope>")` (see `src/du/lib/engine.ts:21`). Verbs: `prof.measure(label, fn)` / `prof.measureAsync(label, fn)` wrap a call, `prof.start(label)` returns a stop function, `prof.section(label)` works with `using`, `prof.mark(label)` records a point in time, `prof.summary(title)` prints the table at the end. A disabled scope is a no-op, so a timer may sit in a hot path; put only work you would not otherwise do behind `prof.enabled`, and hide per-file or per-item timers behind `profiler.detail === "all"` so `--detail phases` stays readable. **A new scope name must be added to `PROFILER_SCOPE_NAMES` in `src/utils/profile/scopes.ts`**, or `--scopes` cannot offer it and `PROFILE=<name>` is a guess.
 - **Log enough to triage from logs alone.** Every tool must emit enough via `@genesiscz/utils/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
 - **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
+
+- **Day-log lines from before 2026-10-12 include test output**: until #490 every `bun test` process wrote into the real day log. Before fixing a logged error from then, check whether its pid also logged a `gt-test-tmp` path or a `*.test.ts:<line>` frame that day; if so it is a fixture.
 
 ## Logging & output
 
