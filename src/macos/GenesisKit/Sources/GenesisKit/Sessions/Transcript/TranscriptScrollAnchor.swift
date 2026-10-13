@@ -61,6 +61,11 @@ public final class TranscriptScrollAnchor: ObservableObject {
     private var animatingToEnd = false
     /// The follow glides instead of jumping; off under Reduce Motion.
     private static let followDuration: TimeInterval = 0.2
+    /// Until then the content's growth keeps gliding to its new end: the "N new" pill asks for the end itself, and
+    /// the rows below the viewport measure taller (and arrive) while the glide runs. A reader's scroll ends it.
+    private var chaseEndUntil: CFAbsoluteTime = 0
+    private static let chaseWindow: CFAbsoluteTime = 2
+    private var chasingEnd: Bool { CFAbsoluteTimeGetCurrent() < chaseEndUntil }
     /// The content's width at the last resize. A change (a pane opened beside the list) wraps the rows
     /// again; at the latest turn the follow then jumps to the end instead of gliding there, since nothing
     /// new arrived (`--bench` `panes`, 2026-10-02: 644 pt in one step, not four frames of glide).
@@ -275,7 +280,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
         }
         // Also while the reader scrolls: the anchor is the row their last scroll step left at the top, and
         // content that arrives mid-scroll (a turn above, a tool call's changes) must not move it.
-        if Self.rowAnchoring, before > Self.endSlack, !animatingToEnd, !listMoving, let anchor = rowAnchor, anchor.view != nil {
+        if Self.rowAnchoring, before > Self.endSlack, !animatingToEnd, !chasingEnd, !listMoving, let anchor = rowAnchor, anchor.view != nil {
             // One turn later, outside the resize. Moved inside it, the rows on screen lost their height listener
             // and needed `remeasureVisibleRows`, which resets EVERY row to its estimated height: a live 18-row
             // window fell from 5207 to 1115 pt, the viewport was clamped and thrown, the rows measured again,
@@ -293,7 +298,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
             keep(held)
             // Only this move inside the resize costs the rows on screen their height listener.
             scheduleRemeasure()
-        } else if follow == nil, before <= Self.endSlack || animatingToEnd, !readerIsChanging, !readerMoving {
+        } else if follow == nil, before <= Self.endSlack || animatingToEnd || chasingEnd, chasingEnd || !readerIsChanging, !readerMoving {
             // Not while the reader scrolls: a row arriving as they left the end glided them back down, again and
             // again, while their trackpad went up (Martin, 2026-10-07: "jumping like CRAZY", both directions).
             scheduleFollow(animatingToEnd ? 0 : max(0, before))
@@ -307,6 +312,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// one, and a reader who scrolled up mid-stream was pulled back down.
     private func stopFollowing() {
         follow = nil
+        chaseEndUntil = 0
         guard animatingToEnd, let clip = scrollView?.contentView else { return }
         animatingToEnd = false
         NSAnimationContext.runAnimationGroup { context in
@@ -315,9 +321,15 @@ public final class TranscriptScrollAnchor: ObservableObject {
         }
     }
 
-    /// Glides to the content's end (the "N new" pill); instant under Reduce Motion.
+    /// Glides to the content's end (the "N new" pill), and keeps gliding while the content below grows; instant
+    /// under Reduce Motion. The pill sits inside the list, so its own click counted as the reader's: for 1.5 s every
+    /// growth was theirs and never followed, and the glide stopped at the end the list had at the click (Martin,
+    /// 2026-10-13: "scrolls me down … but doesnt scroll me to the bottom entirely").
     public func scrollToEnd() {
         releaseHold()
+        readerClickAt = nil
+        pressInList = false
+        chaseEndUntil = CFAbsoluteTimeGetCurrent() + Self.chaseWindow
         keep(0, animated: true)
     }
 
@@ -528,6 +540,11 @@ public final class TranscriptScrollAnchor: ObservableObject {
                     guard let self else { return }
                     self.animatingToEnd = false
                     scroll.reflectScrolledClipView(clip)
+                    // Rows that measured after the glide's last frame moved the end further: go on to it.
+                    if self.chasingEnd, let document = scroll.documentView, document.frame.height - clip.bounds.maxY > 0.5 {
+                        self.keep(0, animated: true)
+                        return
+                    }
                     self.updateAtEnd()
                 }
             })

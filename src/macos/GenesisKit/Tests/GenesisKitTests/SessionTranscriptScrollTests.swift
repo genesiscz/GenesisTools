@@ -276,6 +276,26 @@ final class SessionTranscriptScrollTests: XCTestCase {
         XCTAssertEqual(list.contentView.bounds.origin.y, before, accuracy: 0.5, "an arriving row moved a reader who scrolled up")
     }
 
+    // Martin, 2026-10-13: the "N new" pill scrolled down, but not to the bottom. Its click counted as the reader's
+    // own (it sits inside the list), so the rows that measured during the glide were never followed.
+    func testTheNewRowsPillGlidesAllTheWayToTheEnd() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(0.8)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        rig.notches(at: rig.center(of: list), dx: 0, dy: 10, count: 30)
+        rig.settle(3.5)
+        let document = try XCTUnwrap(list.documentView)
+        XCTAssertGreaterThan(document.frame.height - list.contentView.bounds.maxY, 300, "the reader is not scrolled up")
+        // The pill: bottom trailing, 14 pt in.
+        let frame = list.convert(list.bounds, to: nil)
+        rig.click(at: NSPoint(x: frame.maxX - 40, y: frame.minY + 26))
+        rig.settle(2.5)
+        let gap = document.frame.height - list.contentView.bounds.maxY
+        XCTAssertLessThan(gap, 40, "the pill left the reader \(Int(gap)) pt above the end")
+    }
+
     // GenesisTools adaptation: Martin, 2026-10-11: a working agent looked idle until its rows landed. The live
     // activity row is the transcript's last row and changes with every step; the scroll rules hold with it: the
     // reader at the end stays at the end, one who scrolled up is never moved, and the row never counts as new.
