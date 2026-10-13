@@ -53,6 +53,35 @@ final class FieldCommitTests: XCTestCase {
         XCTAssertTrue(commitKeyCodes.contains(try NativeKeyChord("enter").code))
     }
 
+    func testAWriteThatLandsLateStillReadsBack() {
+        // Chromium applies an AX write after the call returns: the first read holds the old text.
+        var time: TimeInterval = 0
+        var reads = ["old", "old", "new"]
+        XCTAssertTrue(valueReadBackAfterWrite(written: "new", now: { time }, wait: { time += $0 },
+                                              read: { reads.isEmpty ? "new" : reads.removeFirst() }))
+        XCTAssertLessThan(time, 0.2)
+        time = 0
+        XCTAssertTrue(valueReadBackAfterWrite(written: "new", now: { time }, wait: { time += $0 }, read: { "new" }))
+        XCTAssertEqual(time, 0)
+    }
+
+    func testAnEmptyRichTextEditorCountsAsEmptyOnlyForAnEmptyWrite() {
+        var time: TimeInterval = 0
+        XCTAssertTrue(valueReadBackAfterWrite(written: "", now: { time }, wait: { time += $0 }, read: { "\n" }))
+        time = 0
+        XCTAssertFalse(valueReadBackAfterWrite(written: "new", now: { time }, wait: { time += $0 }, read: { "new\n" }))
+        time = 0
+        XCTAssertNil(valueRewrittenAfterWrite(written: "", now: { time }, wait: { time += $0 }, read: { "\n" }))
+    }
+
+    func testAWriteThatNeverLandsIsReportedAfterTheTimeout() {
+        var time: TimeInterval = 0
+        XCTAssertFalse(valueReadBackAfterWrite(written: "new", now: { time }, wait: { time += $0 }, read: { "old" }))
+        XCTAssertEqual(time, 1, accuracy: 0.0001)
+        time = 0
+        XCTAssertFalse(valueReadBackAfterWrite(written: "new", now: { time }, wait: { time += $0 }, read: { nil }))
+    }
+
     func testARewriteShortlyAfterTheWriteIsReported() {
         var time: TimeInterval = 0
         var reads = ["full", "full", "ful"]

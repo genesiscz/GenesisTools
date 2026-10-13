@@ -46,23 +46,22 @@ private enum CursorChannel {
 }
 
 enum ActionCursor {
-    /// 🛑 --no-activate implies no feedback, and that is not a preference — it is the difference
-    /// between the flag working and not. Measured on 2026-09-21 with an identical `act --action key
-    /// --no-activate` against the same window, twice: with feedback the frontmost app went
-    /// cmux -> ax-tool and STAYED there; with --no-cursor it stayed cmux. Showing the overlay
-    /// window activates this process, so a caller who asked not to take the focus took it anyway,
-    /// and `frontmostChanged` reported false because the activation lands after the payload is
-    /// written. A bare `cursor preview` does NOT do this, which is why the overlay alone was not
-    /// the suspect until the two act runs were compared side by side.
-    /// Set when the target is a non-activating panel. Showing the overlay activates THIS process,
-    /// which is the same disturbance the panel exists to avoid, so feedback is dropped for it on
-    /// the same reasoning as --no-activate. Measured: one of three coordinate clicks on such a
-    /// panel left ax-tool frontmost with feedback on; none did with it off.
+    /// Set when the target is a non-activating panel. Measured before the helper ran with the
+    /// .prohibited policy: one of three coordinate clicks on such a panel left ax-tool frontmost
+    /// with feedback on, none with it off. Kept until the same three clicks are measured again.
     static var suppressedForNonActivatingPanel = false
     /// What the label beside the cursor names. Set where a command resolves its target.
     private static var targetApp: String?
     private static var targetRole: String?
     private static var targetName: String?
+    private static var targetSecure = false
+    /// The line under the label: the text a set, paste or type writes, or the keys a key act sends.
+    private static var detail: String?
+
+    /// Names what this act writes, after `describe(_:)` has said whether the field is secure.
+    static func describeInput(action: String, text: String?) {
+        detail = CursorFeedbackText.detail(action: action, text: text, secure: targetSecure)
+    }
 
     /// Names the app a pointer-only act goes to, when no element is known.
     static func describe(pid: pid_t) {
@@ -78,6 +77,7 @@ enum ActionCursor {
         targetRole = axStringAttribute(element, "AXRole")
         targetName = [axStringAttribute(element, "AXTitle"), axStringAttribute(element, "AXDescription")]
             .compactMap { $0 }.first { !$0.isEmpty }
+        targetSecure = [targetRole, axStringAttribute(element, "AXSubrole")].contains("AXSecureTextField")
     }
     static var enabled: Bool {
         !suppressedForNonActivatingPanel
@@ -108,6 +108,7 @@ enum ActionCursor {
                                                         limit: CursorFeedbackText.noteLimit)
         event.session = CursorFeedbackText.fromEnvironment(environment["GENESIS_CONTROL_CURSOR_SESSION"],
                                                            limit: CursorFeedbackText.sessionLimit)
+        event.detail = detail
         if let point {
             var id: CGDirectDisplayID = 0
             var count: UInt32 = 0
@@ -325,9 +326,10 @@ final class CursorOverlayHost {
     /// border. It is rebuilt only when its text changes; a drag's samples only extend its life.
     private func showBadge(_ event: CursorFeedbackEvent) {
         let kind = CursorClickKind(button: event.button, clickCount: event.clickCount)
-        let key = [event.label, event.note, event.session, event.button, event.background ? "bg" : "fg", event.target]
+        let key = [event.label, event.detail, event.note, event.session, event.button,
+                   event.background ? "bg" : "fg", event.target]
             .map { $0 ?? "" }.joined(separator: "\u{1f}")
-        scheduleBadgeFade(hasNote: event.note != nil)
+        scheduleBadgeFade(hasNote: event.note != nil || event.detail != nil)
         guard key != badgeKey || badge.opacity == 0 else {
             // Same text, but the cursor may now be near the other screen edge, so the side is chosen again.
             badge.frame.origin = badgeOrigin(width: badge.frame.width, height: badge.frame.height)
@@ -340,17 +342,29 @@ final class CursorOverlayHost {
         let rgb = event.action == "click" ? kind.accent : CursorClickKind.primary.accent
         let accent = NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
         let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        func font(_ size: CGFloat) -> NSFont { NSFont(name: "Inter", size: size) ?? NSFont.systemFont(ofSize: size) }
+        func font(_ size: CGFloat, mono: Bool = false) -> NSFont {
+            mono ? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+                : NSFont(name: "Inter", size: size) ?? NSFont.systemFont(ofSize: size)
+        }
         let place = event.target == "pixel" ? "pixel" : event.target == "ax" ? "AX" : "desktop"
         let context = [event.session, event.background ? "background" : "foreground", place]
             .compactMap { $0 }.joined(separator: " · ")
-        var lines: [(text: String, size: CGFloat, color: NSColor)] = [(event.label ?? "GenesisTools", 12, .white)]
-        if let note = event.note {
-            lines.append((note, 11, NSColor.white.withAlphaComponent(contrast ? 1 : 0.86)))
+        var lines: [(text: String, size: CGFloat, color: NSColor, mono: Bool)] = [
+            (event.label ?? "GenesisTools", 12, .white, false),
+        ]
+        // The written text sits right under what was written to, in a typewriter face, so a person
+        // reads it as data rather than as part of the sentence.
+        if let detail = event.detail {
+            lines.append((detail, 11, contrast ? .white : NSColor(srgbRed: 0.80, green: 0.93, blue: 1, alpha: 1), true))
         }
-        lines.append((context, 10, contrast ? .white : (accent.blended(withFraction: 0.3, of: .white) ?? accent)))
-        let widest = lines.map { ($0.text as NSString).size(withAttributes: [.font: font($0.size)]).width }.max() ?? 0
-        let width = min(400, ceil(widest) + 32)
+        if let note = event.note {
+            lines.append((note, 11, NSColor.white.withAlphaComponent(contrast ? 1 : 0.86), false))
+        }
+        lines.append((context, 10, contrast ? .white : (accent.blended(withFraction: 0.3, of: .white) ?? accent), false))
+        let widest = lines.map {
+            ($0.text as NSString).size(withAttributes: [.font: font($0.size, mono: $0.mono)]).width
+        }.max() ?? 0
+        let width = min(event.detail == nil ? 400 : 480, ceil(widest) + 32)
         let heights = lines.map { ceil($0.size * 1.34) }
         let height = heights.reduce(0, +) + 12
         badge.frame = CGRect(origin: badgeOrigin(width: width, height: height), size: CGSize(width: width, height: height))
@@ -378,7 +392,7 @@ final class CursorOverlayHost {
             let label = CATextLayer()
             label.frame = CGRect(x: 23, y: y, width: width - 31, height: heights[index])
             label.string = line.text
-            label.font = font(line.size)
+            label.font = font(line.size, mono: line.mono)
             label.fontSize = line.size
             label.foregroundColor = line.color.cgColor
             label.isWrapped = false
@@ -509,8 +523,8 @@ final class CursorOverlayHost {
     }
 
     /// 🛑 The overlay must never be the app in front. A panel that cannot become key still left this
-    /// helper frontmost (measured 2026-09-21, the reason --no-activate turns feedback off), so the
-    /// front goes straight back to the app the user had.
+    /// helper frontmost (measured 2026-09-21). The .prohibited policy now stops that at the source;
+    /// this hand-back stays as the second line, should macOS ever activate the helper anyway.
     private func handBackFront() {
         guard let previous = previousFront, !previous.isTerminated else {
             NSApp.deactivate()
@@ -774,7 +788,12 @@ func runCursorFeedbackCommand() {
         // Read before this process becomes an app at all, so the hand-back knows where the front was.
         let previousFront = NSWorkspace.shared.frontmostApplication
         _ = NSApplication.shared
-        NSApp.setActivationPolicy(.accessory)
+        // 🛑 .prohibited, not .accessory: an accessory app can still be made active, and this one
+        // was, twice per cold start (measured 2026-10-13, an NSWorkspace activation log: cmux ->
+        // ax-tool -> cmux -> ax-tool -> cmux within 100 ms of one background set). Keys typed in
+        // those gaps went to the helper. A prohibited app is never activated, and its borderless
+        // panel still draws above every app.
+        NSApp.setActivationPolicy(.prohibited)
         NSApp.finishLaunching()
         let host = try CursorOverlayHost(initial:event)
         host.run(initial: event, previousFront: previousFront.flatMap { $0.processIdentifier == getpid() ? nil : $0 })

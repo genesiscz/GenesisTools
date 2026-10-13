@@ -1039,6 +1039,8 @@ func cmdAct(appName _: String) {
     }
     let element = tree.elements[elementIndex]
     ActionCursor.describe(element)
+    ActionCursor.describeInput(action: action, text: workflowArgument(
+        action == "set" ? "--value" : action == "key" ? "--keys" : "--text"))
     if action != "get", !(action == "focus" && elementIndex == 0) {
         let coordinates = rawCoords?.split(separator: ",").compactMap { Double($0) }
         let point = coordinates?.count == 2 ? CGPoint(x: coordinates![0], y: coordinates![1]) : nil
@@ -1277,7 +1279,7 @@ func cmdAct(appName _: String) {
         guard result == .success else {
             workflowFailure("AXValue write failed (\(result.rawValue)); inspect before retrying")
         }
-        guard axStringAttribute(element, "AXValue") == value else {
+        guard valueReadBackAfterWrite(written: value, read: { axStringAttribute(element, "AXValue") }) else {
             workflowFailure("AXValue read-back differs; inspect actual state before retrying")
         }
         if let rewritten = valueRewrittenAfterWrite(written: value, read: { axStringAttribute(element, "AXValue") }) {

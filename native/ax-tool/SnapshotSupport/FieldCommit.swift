@@ -50,6 +50,28 @@ public func commitRefusal(role: String?, code: CGKeyCode, observed: String?, liv
     return nil
 }
 
+/// Whether a field reads as the text written to it. An empty rich-text editor (T3 Code's Lexical
+/// composer, measured 2026-10-13) reads as one empty paragraph, "\n", so that counts as empty.
+public func valueMatchesWrite(written: String, read value: String?) -> Bool {
+    value == written || (written.isEmpty && value == "\n")
+}
+
+/// Whether an AXValue write reads back, read again for up to `timeout`. Chromium applies an
+/// accessibility write after the call returns: measured 2026-10-13 on T3 Code (Electron) in the
+/// background, the first read still held the old text while the write had landed and React had
+/// seen it. Returns false only when the value never read back within the time.
+public func valueReadBackAfterWrite(written: String, timeout: TimeInterval = 1,
+                                    now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+                                    wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                                    read: () -> String?) -> Bool {
+    let deadline = now() + timeout
+    while !valueMatchesWrite(written: written, read: read()) {
+        guard now() < deadline else { return false }
+        wait(min(0.05, max(0, deadline - now())))
+    }
+    return true
+}
+
 /// A value an app rewrote after it accepted an AXValue write (an omnibox reacting to autocomplete),
 /// read for `duration` after the write. Returns the rewritten value, or nil when it held.
 public func valueRewrittenAfterWrite(written: String, duration: TimeInterval = 0.3,
@@ -60,7 +82,7 @@ public func valueRewrittenAfterWrite(written: String, duration: TimeInterval = 0
     while now() < deadline {
         wait(min(0.05, max(0, deadline - now())))
         let current = read()
-        if current != written { return current ?? "unreadable" }
+        if !valueMatchesWrite(written: written, read: current) { return current ?? "unreadable" }
     }
     return nil
 }

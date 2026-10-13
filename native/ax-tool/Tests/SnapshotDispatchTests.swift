@@ -388,6 +388,33 @@ final class CursorFeedbackTests: XCTestCase {
         event.note = String(repeating: "n", count: CursorFeedbackText.noteLimit + 1)
         XCTAssertFalse(event.valid)
     }
+    func testTheDetailLineShowsTheWrittenTextAndHidesASecureOne() {
+        XCTAssertEqual(CursorFeedbackText.detail(action: "set", text: "zzqx", secure: false), "“zzqx”")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "paste", text: "one\ntwo", secure: false), "“one ⏎ two”")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "set", text: "", secure: false), "(empty: clears the field)")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "type", text: "hunter2", secure: true),
+                       "••••••• (7 characters, hidden)")
+        let password = CursorFeedbackText.detail(action: "set", text: "correct horse battery staple", secure: true)
+        XCTAssertFalse(password?.contains("horse") ?? true)
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "cmd, a", secure: false), "keys cmd+a")
+        XCTAssertNil(CursorFeedbackText.detail(action: "click", text: "ignored", secure: false))
+        XCTAssertNil(CursorFeedbackText.detail(action: "set", text: nil, secure: false))
+        let long = CursorFeedbackText.detail(action: "set", text: String(repeating: "/path", count: 40), secure: false)
+        XCTAssertEqual(long?.count, CursorFeedbackText.detailLimit)
+        XCTAssertTrue(long?.hasSuffix("…”") ?? false)
+    }
+    func testAFullDetailStillFitsTheHelperDatagram() {
+        var event = CursorFeedbackEvent(action: "text", point: .zero)
+        event.label = String(repeating: "x", count: CursorFeedbackText.labelLimit)
+        event.note = String(repeating: "n", count: CursorFeedbackText.noteLimit)
+        event.session = String(repeating: "s", count: CursorFeedbackText.sessionLimit)
+        // Four bytes per character is the worst case UTF-8 has.
+        event.detail = CursorFeedbackText.detail(action: "set", text: String(repeating: "😀", count: 300), secure: false)
+        XCTAssertTrue(event.valid)
+        XCTAssertLessThan(try JSONEncoder().encode(event).count, 2048)
+        event.detail = String(repeating: "d", count: CursorFeedbackText.detailLimit + 1)
+        XCTAssertFalse(event.valid)
+    }
     func testCursorMappingTracksDisplaysAboveLeftAndRightAndChangedPrimaryHeight() {
         let laptop = CGRect(x:0,y:0,width:2056,height:1329)
         let left = CGRect(x:-1488,y:1329,width:2560,height:1440)

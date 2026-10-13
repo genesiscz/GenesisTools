@@ -330,6 +330,48 @@ test("standalone semantic form fill requires Jev, keeps supplied values local an
     expect(f.calls.find((args) => args.includes("--action") && args.includes("set"))).not.toContain("--prepare");
     expect(() => f.computer.find({ app: "Fixture", query: "name" })).toThrow("get_app_state");
 });
+test("a background form fill writes a web field with a plain set, never a prepared paste", async () => {
+    const evaluate: Evaluator = async (call) => {
+        const target = evaluationSchema.parse(call.input).questions.target;
+        if (target.type !== "choice") {
+            throw new Error("Expected a target choice.");
+        }
+        const entries = Object.entries(target.criteria);
+        const choice = entries.find(([, value]) => SafeJSON.stringify(value).includes("email"))?.[0] ?? "abstain";
+        return evaluation({
+            target: {
+                type: "choice",
+                choice,
+                probabilities: Object.fromEntries(entries.map(([key]) => [key, key === choice ? 1 : 0])),
+            },
+        });
+    };
+    const webForm = () => {
+        const f = fixture({ evaluate });
+        f.snapshot.elements.push(
+            { index: 4, depth: 1, role: "AXWebArea", AXTitle: "Fixture page", actions: [] },
+            { index: 5, depth: 2, role: "AXTextField", AXIdentifier: "email", AXValue: "", valueSettable: true }
+        );
+        return f;
+    };
+    const background = webForm();
+    const result = await background.computer.fill_form({
+        app: "Fixture",
+        data: { email: "alice@example.com" },
+        jev: true,
+        activate: false,
+    });
+    expect(result.status).toBe("filled");
+    const write = background.calls.find((args) => args[0] === "act")!;
+    expect(write[write.indexOf("--action") + 1]).toBe("set");
+    expect(write).not.toContain("--prepare");
+    // The default keeps the prepared paste for a web field, which brings the app to the front.
+    const foreground = webForm();
+    await foreground.computer.fill_form({ app: "Fixture", data: { email: "alice@example.com" }, jev: true });
+    const paste = foreground.calls.find((args) => args[0] === "act")!;
+    expect(paste[paste.indexOf("--action") + 1]).toBe("paste");
+    expect(paste).toContain("--prepare");
+});
 test("structured fill admits dropdowns once and never sends selected or supplied values to Jev", async () => {
     const inputs: unknown[] = [];
     const f = fixture({

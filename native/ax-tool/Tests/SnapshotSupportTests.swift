@@ -195,11 +195,13 @@ extension SnapshotSupportTests {
 }
 
 final class CursorFeedbackGateTests: XCTestCase {
-    func testNoActivateSwitchesTheOverlayOff() {
-        // 🛑 This is the regression test for the no-focus-steal requirement. Showing the overlay
-        // activates this process, so feedback during a --no-activate act took the focus the caller
-        // explicitly asked to keep. Measured: cmux -> ax-tool with feedback, cmux -> cmux without.
-        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--no-activate"], environment: [:]))
+    func testNoActivateKeepsTheOverlay() {
+        // --no-activate used to switch the overlay off, because the helper was activated when it
+        // showed (cmux -> ax-tool, 2026-09-21). The helper now runs with the .prohibited activation
+        // policy and can never be the active app: an NSWorkspace activation log over a background
+        // set on 2026-10-13 showed no activation at all, where .accessory showed two per cold start.
+        // So a background fill shows who is writing what, as every other act does.
+        XCTAssertTrue(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--no-activate"], environment: [:]))
     }
 
     func testNoCursorAndTheEnvironmentSwitchStillWork() {

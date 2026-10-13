@@ -83,6 +83,12 @@ export const computerSchemas = {
             max_requests: z.number().int().min(1).max(20).default(20),
             max_fields: z.number().int().min(1).max(20).default(20),
             timeout_ms: z.number().int().min(1).max(120000).default(60000),
+            /**
+             * false: fill in the background. Every field is written with an AXValue write inside the
+             * app, which stays where it is: no activation, no clipboard, no keys. A web field then
+             * gets a plain set instead of a prepared paste.
+             */
+            activate: z.boolean().default(true),
         })
         .strict(),
     press_sequence: nativeSequenceSchema,

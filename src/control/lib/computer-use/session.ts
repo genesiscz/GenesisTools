@@ -1706,7 +1706,7 @@ export class ComputerUse {
                         windowId: options.window_id,
                         scope: options.scope,
                         image: false,
-                        prepare: "auto",
+                        prepare: options.activate ? "auto" : false,
                         expectedURL: options.expected_url,
                         run: (call) => this.native.run(call),
                     }),

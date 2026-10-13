@@ -4,16 +4,12 @@ import CoreText
 
 /// Whether the animated cursor overlay may be shown for this invocation.
 ///
-/// 🛑 `--no-activate` turns it OFF, and that is load-bearing rather than cosmetic. Showing the
-/// overlay window activates this process: measured 2026-09-21 with an identical
-/// `act --action key --no-activate` run twice against the same window, the frontmost app went
-/// cmux -> ax-tool and stayed there with feedback on, and stayed cmux with it off. So feedback
-/// silently undid the one thing the caller asked for, and `frontmostChanged` reported false
-/// because the activation lands after the payload is written. This function is the assertion that
-/// keeps the no-focus-steal requirement true.
+/// `--no-activate` keeps it. It used to switch it off: on 2026-09-21 showing the overlay made the
+/// helper the active app (cmux -> ax-tool), which undid the one thing the caller asked for. The
+/// helper now runs with the .prohibited activation policy (`runCursorFeedbackCommand`), so it can
+/// never be activated, and a background fill shows who writes what like every other act.
 public func cursorFeedbackEnabled(arguments: [String], environment: [String: String]) -> Bool {
     return !arguments.contains("--no-cursor")
-        && !arguments.contains("--no-activate")
         && environment["GENESIS_CONTROL_CURSOR"] != "off"
 }
 
@@ -37,6 +33,8 @@ public struct CursorFeedbackEvent: Codable {
     public var note: String?
     /// Who drives it: "Claude · 1b4001ba", plus an agent name when one is known.
     public var session: String?
+    /// What a text act writes or a key act sends: "“zzqx”", "•••• (12 characters, hidden)", "keys cmd+a".
+    public var detail: String?
     public var displayPoint: CGPoint? {
         guard displayID != nil, let x=displayX, let y=displayY, x.isFinite, y.isFinite, x >= 0, y >= 0, x < 100000, y < 100000 else { return nil }
         return CGPoint(x:x,y:y)
@@ -60,7 +58,8 @@ public struct CursorFeedbackEvent: Codable {
             (clickCount == nil || (1...3).contains(clickCount!)) &&
             (label?.count ?? 0) <= CursorFeedbackText.labelLimit &&
             (note?.count ?? 0) <= CursorFeedbackText.noteLimit &&
-            (session?.count ?? 0) <= CursorFeedbackText.sessionLimit
+            (session?.count ?? 0) <= CursorFeedbackText.sessionLimit &&
+            (detail?.count ?? 0) <= CursorFeedbackText.detailLimit
     }
     public static let actions: Set<String> = ["idle", "click", "drag", "scroll", "text", "key", "navigate", "app", "transfer", "system", "hide"]
     public static func semantic(_ verb: String) -> String? {
@@ -115,6 +114,7 @@ public enum CursorFeedbackText {
     public static let labelLimit = 72
     public static let noteLimit = 120
     public static let sessionLimit = 48
+    public static let detailLimit = 64
     /// An element name longer than this is cut, so the app and the verb stay on the line.
     static let nameLimit = 32
 
@@ -199,6 +199,35 @@ public enum CursorFeedbackText {
         }
 
         return String(flat.prefix(max(1, limit - 1))).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// The line under the label for an act that writes text or sends keys, or nil for any other act.
+    /// A secure field shows bullets and a count, never the text: the label is on screen for anyone
+    /// watching, and in every screen recording.
+    public static func detail(action: String, text: String?, secure: Bool) -> String? {
+        guard let text else {
+            return nil
+        }
+
+        switch action {
+        case "set", "paste", "type":
+            if secure {
+                return "\(String(repeating: "•", count: min(text.count, 8))) (\(text.count) characters, hidden)"
+            }
+
+            if text.isEmpty {
+                return "(empty: clears the field)"
+            }
+
+            let flat = text.replacingOccurrences(of: "\r\n", with: " ⏎ ")
+                .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).joined(separator: " ⏎ ")
+            return "“" + truncate(flat, to: detailLimit - 2) + "”"
+        case "key", "hotkey":
+            let keys = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "+")
+            return keys.isEmpty ? nil : truncate("keys \(keys)", to: detailLimit)
+        default:
+            return nil
+        }
     }
 
     /// The caller's note or session from the environment, trimmed and cut, or nil when empty.
