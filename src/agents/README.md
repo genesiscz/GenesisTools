@@ -20,7 +20,8 @@ tools agents login --agent-name X --once --timeout 300         # same, but give 
 tools agents login --agent-name X --format json                # JSON lines only (piped default is monitor, below)
 tools agents leave --agent-name X --note "done"                # announce leaving: every other agent gets agent_left
 tools agents login --agent-name lead --kinds message,error     # receiver-side verbosity filter
-tools agents login --agent-name lead --kinds message,-item     # a -kind excludes: mail and approvals, no Codex item events
+tools agents login --agent-name lead --hide-worker-steps       # drop a Codex worker's per-step "item" events (each finished command, reply, file change); keep its mail, approvals, turn events
+tools agents login --agent-name lead --exclude-kinds item,turn_started   # the general form: never emit these feed types or op/event kinds
 tools agents login --agent-name lead --filter '.op=="approval_request"'
 tools agents message --from X --to Y --body '...'
 tools agents message --from X --body '...'                     # broadcast (no --to)

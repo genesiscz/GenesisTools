@@ -82,4 +82,16 @@ describe("agents listener filter", () => {
         expect(createListenerFilter({ kinds: "-item" })(message('{"event":"item"}'))).toBe(false);
         expect(createListenerFilter({ kinds: "-item" })(message("plain text"))).toBe(true);
     });
+
+    test("--exclude-kinds (and --hide-worker-steps, which passes item) drops the kind and keeps everything else", () => {
+        const filter = createListenerFilter({ kinds: "message", excludeKinds: "item" });
+
+        expect(filter(message("plain text"))).toBe(true);
+        expect(filter(message('{"op":"approval_request"}'))).toBe(true);
+        expect(filter(message('{"event":"item","itemType":"agentMessage"}'))).toBe(false);
+        expect(createListenerFilter({ excludeKinds: "item,turn_started" })(message('{"event":"turn_started"}'))).toBe(
+            false
+        );
+        expect(createListenerFilter({ excludeKinds: "" })(message('{"event":"item"}'))).toBe(true);
+    });
 });

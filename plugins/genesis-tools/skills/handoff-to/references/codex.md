@@ -106,6 +106,14 @@ Worker records live in `~/.genesis-tools/codex/sessions/<name>.*` (event log, me
 
 The session auto-registers on the bus as `codex_<name>`. **Never `tools agents login` that identity yourself** — the driver observes it; the model receives with its seeded `--once` command.
 
+The daemon publishes the worker's progress to `lead` as structured messages: `turn_started`, `turn_completed`, `error`, `approval_request`, and `item`, one event per finished step of the app-server turn (an `agentMessage` reply, a `commandExecution` with its exit code, a `fileChange`, a tool call). The items are most of the volume. The lead's receiver keeps everything else with:
+
+```bash
+tools agents login --agent-main --agent-name lead --format monitor --hide-worker-steps --session <id>
+```
+
+`--hide-worker-steps` is `--exclude-kinds item`. The steps stay readable with `tools codex tail --name <task>`.
+
 ## 2. Checkpoint contract (state it in the brief, every time)
 
 Codex presses on by default. The brief must say where it stops. The generic contract (ask before new files, dependencies, interface changes or git operations; stop after two failed verifies; paths character for character; the `RESULT/AT/CHANGED/VERIFY/OPEN` report lines; the bus commands) is injected by the harness (`src/utils/worker/contract.ts`, see § The worker's own instructions below), so the brief carries only the task-specific lines, filled in:

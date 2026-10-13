@@ -24,7 +24,7 @@ import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
 import { announceLeave, leaveReasonOf, logInAndAnnounceJoin } from "../lib/leave";
 import { onShutdown } from "../lib/lifecycle";
-import { createListenerFilter } from "../lib/listener-filter";
+import { createListenerFilter, WORKER_STEP_KIND } from "../lib/listener-filter";
 import {
     type FeedFormat,
     formatReadyEvent,
@@ -60,6 +60,8 @@ interface LoginOpts {
     observer?: boolean;
     format?: string;
     kinds?: string;
+    excludeKinds?: string;
+    hideWorkerSteps?: boolean;
     filter?: string;
 }
 
@@ -556,7 +558,13 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             names: format === "monitor" ? agentNamesFrom(await readFeed(paths)) : new Map(),
             cursorSeq,
             feedCursor: new FeedLogCursor({ paths, sinceSeq: cursorSeq }),
-            listenerFilter: createListenerFilter({ kinds: opts.kinds, expression: opts.filter }),
+            listenerFilter: createListenerFilter({
+                kinds: opts.kinds,
+                excludeKinds: [opts.excludeKinds, opts.hideWorkerSteps ? WORKER_STEP_KIND : ""]
+                    .filter(Boolean)
+                    .join(","),
+                expression: opts.filter,
+            }),
         };
 
         await emitLoggedIn({ paths, record, mode, loginId });
@@ -705,6 +713,11 @@ export function registerLoginCommand(program: Command): void {
             "monitor | json | pretty (default: monitor when stdout is not a terminal, i.e. a headline line, then the json line; in a terminal json, or pretty with --observer)"
         )
         .option("--kinds <csv>", "Only emit feed types or structured message op/event kinds")
+        .option("--exclude-kinds <csv>", "Never emit these feed types or op/event kinds (wins over --kinds)")
+        .option(
+            "--hide-worker-steps",
+            `Hide a tools codex spawn worker's per-step events (kind "${WORKER_STEP_KIND}": each finished command, reply or file change); keep its mail, approvals and turn events`
+        )
         .option("--filter <expr>", 'Filter structured bodies, e.g. .op=="approval_request"')
         .action(async (opts: LoginOpts) => {
             await runLogin(opts);

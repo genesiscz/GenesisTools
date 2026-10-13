@@ -6,7 +6,19 @@ const log = logger.child({ component: "agents:listener-filter" });
 
 interface ListenerFilterOptions {
     kinds?: string;
+    /** Feed types or body kinds never to emit; wins over `kinds`. */
+    excludeKinds?: string;
     expression?: string;
+}
+
+/** The body kind a Codex worker's bridge gives its per-step events (a finished command, message or file change). */
+export const WORKER_STEP_KIND = "item";
+
+function csv(value: string | undefined): string[] {
+    return (value ?? "")
+        .split(",")
+        .map((kind) => kind.trim())
+        .filter(Boolean);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,14 +73,15 @@ function compileExpression(expression: string): (event: FeedEvent) => boolean {
 }
 
 export function createListenerFilter(options: ListenerFilterOptions): (event: FeedEvent) => boolean {
-    const entries = (options.kinds ?? "")
-        .split(",")
-        .map((kind) => kind.trim())
-        .filter(Boolean);
-    // `-item` excludes a kind and wins over any inclusion, so `--kinds message,-item` keeps a Codex worker's
-    // mail and approvals while dropping the item events its bridge publishes to the lead for every step.
+    const entries = csv(options.kinds);
+    // An exclusion wins over any inclusion, so `--kinds message --exclude-kinds item` keeps a Codex worker's mail
+    // and approvals while dropping the per-step events its bridge publishes to the lead. A `-kind` entry inside
+    // `--kinds` is the older spelling of the same exclusion and still works.
     const kinds = new Set(entries.filter((kind) => !kind.startsWith("-")));
-    const excluded = new Set(entries.filter((kind) => kind.startsWith("-")).map((kind) => kind.slice(1)));
+    const excluded = new Set([
+        ...entries.filter((kind) => kind.startsWith("-")).map((kind) => kind.slice(1)),
+        ...csv(options.excludeKinds),
+    ]);
     const expressionFilter = options.expression ? compileExpression(options.expression) : null;
 
     return (event) => {
