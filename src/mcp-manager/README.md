@@ -164,30 +164,43 @@ The tool uses a unified configuration file at `~/.genesis-tools/mcp-manager/conf
 Verified against the Claude Code binary: Claude Code reads `disabledMcpServers`
 **only** from per-project entries (`.projects[<cwd>].disabledMcpServers`). The
 **top-level `disabledMcpServers` key is never read by Claude Code** — it is an
-mcp-manager-only marker. A per-project sweep covers only projects registered at
-sweep time; a project registered later would load the server again. The only
-mechanism Claude Code honors globally (including future projects) is the server
-**not existing in `mcpServers` at all**.
+mcp-manager-only marker. The only mechanism Claude Code honors globally
+(including future projects) is the server **not existing in `mcpServers` at
+all**.
+
+**Global means the global switch only.** A global disable, a global enable,
+an install and a `sync` never write the per-project `disabledMcpServers` lists
+in `~/.claude.json`. Only a named project writes its own list. A dry run of
+`sync` once wanted to add one disabled server to the lists of all 98 projects
+(about 640 diff lines). That is why the old sweep was removed on 2026-10-13.
 
 mcp-manager therefore implements a TRUE global disable for Claude:
 
 -   **Global disable** (`tools mcp-manager disable <server> --provider claude`):
     1. Preserves the server's full config in the unified config with
        `_meta.enabled.claude = false` (imports it there first if missing —
-       the entry is never removed unless it is safely preserved).
-    2. Keeps the top-level marker + per-project sweep for back-compat.
+       the entry is never removed unless it is safely preserved). If the
+       config cannot be preserved, the entry stays and Claude Code still loads
+       the server everywhere; a warning says so.
+    2. Keeps the top-level marker.
     3. **Removes the entry from `mcpServers`** in `~/.claude.json`.
 -   **Global enable** restores the entry into `mcpServers` from the unified
-    config and cleans the top-level + all per-project disabled lists.
--   **Per-project disable** is unchanged: the entry stays in `mcpServers` and
-    the project's `disabledMcpServers` list is updated (this is the mechanism
-    Claude Code actually reads).
+    config and drops the top-level marker. It does not change project lists.
+    When some projects still list the server (old entries from the removed
+    sweep, or a per-project disable), one warning gives the count and the
+    command for one project:
+    `tools mcp-manager enable <server> -p claude --project <path>`.
+-   **Per-project disable or enable** (`--project <path>`) is the only command
+    that writes a project's `disabledMcpServers` list, and only for the named
+    projects. The global entry stays in `mcpServers`.
 -   **`list`** shows globally-disabled servers (absent from `~/.claude.json`)
     as `disabled` for claude — sourced from the unified config — instead of
     "not installed".
 -   **`sync`** treats `_meta.enabled.claude === false` as disabled-by-absence:
     such servers are never (re)installed into `mcpServers`, and drifted
-    entries are removed.
+    entries are removed. For `true`, `false` or an unset state, `sync` writes
+    no project list. For a per-project map (`{ "/abs/path": false }`), it writes
+    only the lists of the projects the map names, and creates no project entry.
 -   **`sync-from-providers`** does not interpret the absence of a
     globally-disabled server as "user deleted it" — the unified config entry
     and its `_meta.enabled.claude = false` flag are preserved.
@@ -209,10 +222,10 @@ tools mcp-manager enable <server> -p claude --project /abs/path [--project /othe
     `mcpServers` and `_meta.enabled.claude` stays `false`. The override is
     tracked solely by the presence of the project-scope entry — no extra
     metadata.
--   **Override-awareness:** the per-project sweep (global disable) and `sync`
-    SKIP projects that have a project-scope entry for that server — they never
-    re-add the name to that project's `disabledMcpServers` and never delete
-    the entry (its config is refreshed from the unified config on sync).
+-   **Override-awareness:** a global disable and `sync` never delete the
+    project-scope entry, and never put the name back on that project's
+    `disabledMcpServers` list (a per-project map in `sync` skips that project
+    too). `sync` refreshes the entry's config from the unified config.
     `sync-from-providers` keeps `_meta.enabled.claude === false` even though
     the override projects report the server as enabled.
 -   `list` shows such servers as `disabled globally, enabled in N project(s)`.

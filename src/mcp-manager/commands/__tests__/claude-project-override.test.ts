@@ -30,7 +30,7 @@ import { Storage } from "@genesiscz/utils/storage";
  * project-scope entry at `.projects[<path>].mcpServers.<name>` (which Claude
  * Code honors — same storage as `claude mcp add -s local`) while the global
  * state stays disabled (`_meta.enabled.claude === false`, absent from global
- * mcpServers). The override must survive global-disable sweeps and `sync`.
+ * mcpServers). The override must survive a later global disable and `sync`.
  */
 
 const SERENA: UnifiedMCPServerConfig = { type: "stdio", command: "uvx", args: ["serena"] };
@@ -146,20 +146,20 @@ describe("claude per-project enable override for globally-disabled servers", () 
         expect(claude.mcpServers?.github).toBeDefined();
     });
 
-    it("a later global disable sweep SKIPS projects with an override entry", async () => {
+    // Intended change 2026-10-13: a global disable no longer sweeps project lists at all.
+    it("a later global disable leaves every project entry alone, the override included", async () => {
         writeClaudeJson(globallyDisabledFixture());
         await writeUnified(unifiedFixture());
 
         const provider = new ClaudeProvider();
         await installOverride(provider);
+        const projectsBefore = readClaudeJson().projects;
 
-        // Re-run the global disable — the sweep must not clobber the override
         await provider.disableServer("serena", null);
 
         const claude = readClaudeJson();
         expect(claude.projects?.["/proj/a"].mcpServers?.serena).toBeDefined(); // entry kept
-        expect(claude.projects?.["/proj/a"].disabledMcpServers).not.toContain("serena"); // not re-added
-        expect(claude.projects?.["/proj/b"].disabledMcpServers).toContain("serena"); // sweep still works elsewhere
+        expect(claude.projects).toEqual(projectsBefore); // no list written, here or elsewhere
     });
 
     it("CRITICAL INVARIANT: the override survives `sync`", async () => {
@@ -177,9 +177,9 @@ describe("claude per-project enable override for globally-disabled servers", () 
         expect(claude.projects?.["/proj/a"].mcpServers?.serena.command).toBe("uvx");
         // Name NOT re-added to the override project's disabled list
         expect(claude.projects?.["/proj/a"].disabledMcpServers).not.toContain("serena");
-        // Global disable still enforced
+        // Global disable still enforced (absent from mcpServers); other project lists untouched
         expect(claude.mcpServers?.serena).toBeUndefined();
-        expect(claude.projects?.["/proj/b"].disabledMcpServers).toContain("serena");
+        expect(claude.projects?.["/proj/b"].disabledMcpServers).toEqual(["serena"]);
         // Enabled sibling unaffected
         expect(claude.mcpServers?.github).toBeDefined();
     });

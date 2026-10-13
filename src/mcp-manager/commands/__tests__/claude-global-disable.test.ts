@@ -111,7 +111,9 @@ describe("claude provider TRUE global disable", () => {
     });
 
     describe("disableServer(name, null) — global", () => {
-        it("removes the entry from mcpServers, keeps markers, preserves unknown keys", async () => {
+        // Intended change 2026-10-13: a global disable no longer sweeps the name into every
+        // project's disabledMcpServers list. Global means the global switch only.
+        it("removes the entry from mcpServers, keeps the top-level marker, leaves every project alone", async () => {
             writeClaudeJson(claudeFixture());
             await writeUnified(unifiedFixture());
 
@@ -121,9 +123,8 @@ describe("claude provider TRUE global disable", () => {
             const claude = readClaudeJson();
             expect(claude.mcpServers?.serena).toBeUndefined(); // TRUE global disable
             expect(claude.mcpServers?.github).toBeDefined(); // untouched sibling
-            expect(claude.disabledMcpServers).toContain("serena"); // legacy marker
-            expect(claude.projects?.["/proj/a"].disabledMcpServers).toContain("serena"); // sweep
-            expect(claude.projects?.["/proj/b"].disabledMcpServers).toContain("serena");
+            expect(claude.disabledMcpServers).toContain("serena"); // mcp-manager marker
+            expect(claude.projects).toEqual(claudeFixture().projects as ClaudeGenericConfig["projects"]); // no sweep
             // Unrelated state preserved (read-modify-write)
             expect(claude.numStartups).toBe(5);
             expect((claude.projects?.["/proj/a"] as Record<string, unknown> | undefined)?.history).toEqual([
@@ -164,8 +165,10 @@ describe("claude provider TRUE global disable", () => {
 
             const claude = readClaudeJson();
             expect(claude.mcpServers?.serena).toBeDefined(); // kept — no data loss
-            expect(claude.disabledMcpServers).toContain("serena"); // markers still applied
+            expect(claude.disabledMcpServers).toContain("serena"); // marker still applied
+            expect(claude.projects).toEqual(claudeFixture().projects as ClaudeGenericConfig["projects"]);
             expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("NOT removed"));
+            expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("still loads it in every project"));
         });
     });
 
@@ -189,13 +192,17 @@ describe("claude provider TRUE global disable", () => {
     });
 
     describe("enableServer(name, null) — global", () => {
-        it("restores the entry from the unified config and cleans all disabled lists", async () => {
+        // Intended change 2026-10-13: a global enable no longer cleans the project lists; it
+        // warns with the count instead and names the per-project command.
+        it("restores the entry, drops the top-level marker, leaves project lists and warns with the count", async () => {
             const claude = claudeFixture();
             delete (claude.mcpServers as Record<string, unknown>).serena; // globally disabled = absent
             claude.disabledMcpServers = ["serena"];
-            (claude.projects as Record<string, { disabledMcpServers: string[] }>)["/proj/a"].disabledMcpServers = [
-                "serena",
-            ];
+            const projects = claude.projects as Record<string, Record<string, unknown>>;
+            projects["/proj/a"].disabledMcpServers = ["serena"];
+            projects["/proj/b"].disabledMcpServers = ["serena"];
+            // A project with a project-scope entry is an override, not a stale list: not counted.
+            projects["/proj/c"] = { mcpServers: { serena: { ...SERENA } }, disabledMcpServers: ["serena"] };
             writeClaudeJson(claude);
 
             const unified = unifiedFixture();
@@ -210,7 +217,25 @@ describe("claude provider TRUE global disable", () => {
             expect(result.mcpServers?.serena.command).toBe("uvx");
             expect((result.mcpServers?.serena as Record<string, unknown> | undefined)?._meta).toBeUndefined(); // no _meta leak
             expect(result.disabledMcpServers).not.toContain("serena");
-            expect(result.projects?.["/proj/a"].disabledMcpServers).not.toContain("serena");
+            expect(result.projects).toEqual(projects as ClaudeGenericConfig["projects"]); // lists untouched
+            expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("2 project(s)"));
+            expect(logger.warn).toHaveBeenCalledWith(
+                expect.stringContaining("tools mcp-manager enable serena -p claude --project <path>")
+            );
+        });
+
+        it("does not warn when no project lists the server", async () => {
+            const claude = claudeFixture();
+            delete (claude.mcpServers as Record<string, unknown>).serena;
+            writeClaudeJson(claude);
+            const unified = unifiedFixture();
+            unified.mcpServers.serena._meta = { enabled: { claude: false } };
+            await writeUnified(unified);
+
+            await new ClaudeProvider().enableServer("serena", null);
+
+            expect(readClaudeJson().mcpServers?.serena).toBeDefined();
+            expect(logger.warn).not.toHaveBeenCalled();
         });
     });
 
@@ -250,6 +275,59 @@ describe("claude provider TRUE global disable", () => {
             expect(claude.mcpServers?.github).toBeDefined();
             expect(claude.disabledMcpServers).toContain("serena");
             expect(claude.disabledMcpServers).not.toContain("github");
+        });
+    });
+
+    describe("sync and project lists", () => {
+        /** Lists that hold old sweep entries, a project with no list, and an override project. */
+        const projectsFixture = () => ({
+            "/proj/a": { mcpServers: {}, disabledMcpServers: ["github", "serena"], history: ["precious"] },
+            "/proj/b": { mcpServers: {}, disabledMcpServers: [] },
+            "/proj/c": { mcpServers: {} },
+            "/proj/o": { mcpServers: { serena: { type: "stdio", command: "old" } }, disabledMcpServers: [] },
+        });
+
+        it("a boolean or unset claude state changes no project list, even when the server gets installed", async () => {
+            // github is enabled but not installed, so the sync command runs installServer for it.
+            writeClaudeJson({ numStartups: 5, mcpServers: {}, disabledMcpServers: [], projects: projectsFixture() });
+            const unified = unifiedFixture();
+            unified.mcpServers.serena._meta = { enabled: { claude: false } };
+            unified.mcpServers.unset = { type: "stdio", command: "unset-mcp" };
+            await writeUnified(unified);
+
+            await syncServers([new ClaudeProvider()], { provider: "claude" });
+
+            const claude = readClaudeJson();
+            expect(claude.mcpServers?.github).toBeDefined(); // the sync really ran
+            expect(claude.mcpServers?.unset).toBeDefined();
+            expect(claude.mcpServers?.serena).toBeUndefined();
+            // The only project change: the override entry is refreshed from the unified config.
+            const expected = {
+                ...projectsFixture(),
+                "/proj/o": { mcpServers: { serena: { ...SERENA } }, disabledMcpServers: [] },
+            };
+            expect(claude.projects).toEqual(expected as ClaudeGenericConfig["projects"]);
+        });
+
+        it("a per-project map writes only the projects it names", async () => {
+            writeClaudeJson({
+                mcpServers: { serena: { ...SERENA }, github: { ...GITHUB } },
+                projects: projectsFixture(),
+            });
+            const unified = unifiedFixture();
+            unified.mcpServers.serena._meta = {
+                enabled: { claude: { "/proj/a": true, "/proj/b": false, "/proj/o": false, "/proj/missing": false } },
+            };
+            await writeUnified(unified);
+
+            await new ClaudeProvider().syncServers((await readUnified()).mcpServers);
+
+            const projects = readClaudeJson().projects ?? {};
+            expect(projects["/proj/a"].disabledMcpServers).toEqual(["github"]); // true: taken off
+            expect(projects["/proj/b"].disabledMcpServers).toEqual(["serena"]); // false: put on
+            expect(projects["/proj/c"]).toEqual({ mcpServers: {} }); // not named: no list created
+            expect(projects["/proj/o"].disabledMcpServers).toEqual([]); // override wins over the map
+            expect(projects["/proj/missing"]).toBeUndefined(); // never created
         });
     });
 
