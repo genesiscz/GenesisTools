@@ -3,6 +3,7 @@ import { fstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { syncConfigToProvider } from "@app/mcp-manager/commands/sync.ts";
 import { GATEWAY_HEADER } from "@app/mcp-manager/lib/auth/constants.ts";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -49,6 +50,127 @@ describe("GrokProvider.fromUnifiedConfig", () => {
 });
 
 describe("GrokProvider.syncServers", () => {
+    let home: string;
+    let previousHome: string | undefined;
+
+    // A sync reads ~/.claude.json, ~/.cursor/mcp.json and Claude's plugins; keep them invented.
+    beforeEach(() => {
+        previousHome = env.get("HOME");
+        home = mkdtempSync(join(tmpdir(), "grok-sync-home-"));
+        env.testing.set("HOME", home);
+    });
+
+    afterEach(() => {
+        if (previousHome !== undefined) {
+            env.testing.set("HOME", previousHome);
+        } else {
+            env.testing.unset("HOME");
+        }
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    const tomlAt = (configPath: string) =>
+        TOML.parse(readFileSync(configPath, "utf-8")) as { mcp_servers?: Record<string, Record<string, unknown>> };
+
+    /** A Grok config with one table per case, written by the provider's own TOML writer. */
+    const seedGrok = (tables: Record<string, Record<string, unknown>>): string => {
+        const configPath = join(home, ".grok", "config.toml");
+        mkdirSync(join(home, ".grok"), { recursive: true });
+        writeFileSync(configPath, TOML.stringify({ mcp_servers: tables } as TOML.JsonMap));
+        return configPath;
+    };
+
+    const seedClaudeJson = (mcpServers: Record<string, unknown>) => {
+        writeFileSync(join(home, ".claude.json"), SafeJSON.stringify({ mcpServers }, null, 2));
+    };
+
+    test("a server with no grok decision keeps its table exactly, and gets none when it has none", async () => {
+        // Regression 2026-10-13: genesis-tools had `_meta.enabled` without grok; the sync wrote
+        // `enabled = false` over a table Grok was running, extra capability header included.
+        const own = {
+            url: "http://127.0.0.1:8318/mcp/tool",
+            headers: { "X-Capabilities": "a,b,extra" },
+            enabled: true,
+        };
+        const configPath = seedGrok({ tool: own });
+        const provider = providerWritingTo(configPath);
+
+        await provider.syncServers({
+            tool: { type: "http", url: "http://127.0.0.1:8318/mcp/tool", _meta: { enabled: { claude: true } } },
+            fresh: { command: "fresh", _meta: { enabled: { claude: true } } },
+        });
+
+        expect(tomlAt(configPath).mcp_servers?.tool).toEqual(own);
+        expect(tomlAt(configPath).mcp_servers?.fresh).toBeUndefined();
+    });
+
+    test("an enabled server Grok already loads from ~/.claude.json gets no copy; a different one does", async () => {
+        seedClaudeJson({
+            same: { type: "stdio", command: "same-mcp", args: ["--x"] },
+            differs: { type: "stdio", command: "claude-build" },
+            off: { type: "stdio", command: "off-mcp" },
+        });
+        const configPath = seedGrok({ keep: { command: "keep" } });
+        const provider = providerWritingTo(configPath);
+
+        await provider.syncServers({
+            same: { command: "same-mcp", args: ["--x"], _meta: { enabled: { grok: true } } },
+            differs: { command: "grok-build", _meta: { enabled: { grok: true } } },
+            off: { command: "off-mcp", _meta: { enabled: { grok: false } } },
+        });
+
+        const tables = tomlAt(configPath).mcp_servers ?? {};
+        expect(tables.same).toBeUndefined(); // Grok runs the ~/.claude.json copy already
+        expect(tables.differs).toEqual({ command: "grok-build", enabled: true }); // wins over the Claude copy
+        expect(tables.off).toEqual({ command: "off-mcp", enabled: false }); // a disabled table stops the Claude copy
+        expect(tables.keep).toEqual({ command: "keep" });
+    });
+
+    test("disable and enable reach a server Grok takes from ~/.claude.json through the list, never a copy", async () => {
+        seedClaudeJson({ brave: { type: "stdio", command: "brave" } });
+        const configPath = join(home, ".grok", "config.toml");
+        mkdirSync(join(home, ".grok"), { recursive: true });
+        writeFileSync(
+            configPath,
+            TOML.stringify({ disabled_mcp_servers: ["own"], mcp_servers: { own: { command: "own", enabled: false } } })
+        );
+        const provider = providerWritingTo(configPath);
+
+        await provider.disableServers(["brave"]);
+
+        const off = TOML.parse(readFileSync(configPath, "utf-8")) as {
+            disabled_mcp_servers?: string[];
+            mcp_servers?: Record<string, unknown>;
+        };
+        expect(off.disabled_mcp_servers).toEqual(["own", "brave"]);
+        expect(off.mcp_servers?.brave).toBeUndefined();
+        expect((await provider.listCompatServers()).find((row) => row.name === "brave")?.enabled).toBe(false);
+
+        await provider.enableServers(["brave", "own"]);
+
+        const on = TOML.parse(readFileSync(configPath, "utf-8")) as {
+            disabled_mcp_servers?: string[];
+            mcp_servers?: Record<string, unknown>;
+        };
+        expect(on.disabled_mcp_servers).toBeUndefined(); // the list kept "own" off despite its table
+        expect(on.mcp_servers).toEqual({ own: { command: "own", enabled: true } });
+        await expect(provider.enableServers(["ghost"])).rejects.toThrow("Servers do not exist: ghost");
+    });
+
+    test("the sync command installs nothing up front for Grok", async () => {
+        const configPath = seedGrok({ keep: { command: "keep" } });
+        const provider = providerWritingTo(configPath);
+
+        await syncConfigToProvider(
+            { mcpServers: { unset: { command: "unset-mcp", _meta: { enabled: {} } } } },
+            provider
+        );
+
+        expect(provider.shouldBeInstalled({ command: "x", _meta: { enabled: { grok: true } } })).toBe(false);
+        expect(tomlAt(configPath).mcp_servers).toEqual({ keep: { command: "keep" } });
+    });
+
     test("keeps every key that is not mcp_servers", async () => {
         const dir = mkdtempSync(join(tmpdir(), "grok-sync-"));
         const configPath = join(dir, "config.toml");
@@ -87,9 +209,10 @@ describe("GrokProvider.syncServers", () => {
         expect(written).toContain("disabled_mcp_servers");
         expect(written).toContain("[features]");
         expect(written).toContain("[telemetry]");
-        // The servers themselves are still fully replaced by the sync.
         expect(written).toContain("rohlik");
-        expect(written).not.toContain("stale");
+        // Intended change 2026-10-13: a table the sync does not name stays, like in Claude and
+        // Codex. Replacing the whole map made a one-server sync (`gateway`'s `only`) drop the rest.
+        expect(written).toContain("[mcp_servers.stale]");
     });
 
     test.each([true, false])("config credentials are private before publication, existing=%s", async (existing) => {
@@ -229,6 +352,42 @@ describe("GrokProvider plugin-provided MCP servers", () => {
             mcp_servers?: Record<string, unknown>;
             plugins?: unknown;
         };
+
+    test("lists what Grok takes from ~/.claude.json and ~/.cursor/mcp.json, minus shadowed names", async () => {
+        seed();
+        writeFileSync(
+            join(home, ".claude.json"),
+            SafeJSON.stringify({
+                mcpServers: {
+                    "claude-only": { type: "stdio", command: "c" },
+                    keep: { type: "stdio", command: "shadowed-by-table" },
+                    expo: { type: "stdio", command: "shadowed-by-plugin" },
+                    pencil: { type: "stdio", command: "on-the-disabled-list" },
+                },
+            })
+        );
+        writeJson(join(home, ".cursor", "mcp.json"), {
+            mcpServers: { "cursor-only": { command: "k" }, "claude-only": { command: "loses-to-claude" } },
+        });
+        const provider = providerWritingTo(configPath());
+
+        const rows = await provider.listCompatServers();
+
+        expect(rows.map((r) => `${r.name}:${r.via}:${r.enabled}:${r.config.command}`).sort()).toEqual([
+            "claude-only:~/.claude.json:true:c",
+            "cursor-only:~/.cursor/mcp.json:true:k",
+            "pencil:~/.claude.json:false:on-the-disabled-list",
+        ]);
+        expect((await provider.listServers()).map((r) => `${r.name}:${r.via}`)).toEqual(["keep:config.toml"]);
+
+        // `[compat.claude] mcps = false` stops Grok reading ~/.claude.json: claude-only now comes from Cursor.
+        const text = readFileSync(configPath(), "utf-8");
+        writeFileSync(configPath(), `${text}\n[compat.claude]\nmcps = false\n`);
+        expect((await provider.listCompatServers()).map((r) => `${r.name}:${r.via}`).sort()).toEqual([
+            "claude-only:~/.cursor/mcp.json",
+            "cursor-only:~/.cursor/mcp.json",
+        ]);
+    });
 
     test("lists Claude-enabled plugin servers and Grok's own enabled plugins", async () => {
         seed();

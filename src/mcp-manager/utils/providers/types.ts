@@ -113,6 +113,11 @@ export interface MCPServerInfo {
     plugin?: string;
     /** Harness home the plugin entry was read from, for a provider with several homes (Codex). */
     home?: string;
+    /**
+     * The file this harness loads the server from when that is not its own config, e.g.
+     * `~/.claude.json` for a server Grok takes over through its Claude compatibility.
+     */
+    via?: string;
 }
 
 import { BackupManager } from "@app/mcp-manager/utils/backup.js";
@@ -340,6 +345,15 @@ export abstract class MCPProvider {
      * `enabled` is false when this harness's own per-server switch turned the server off.
      */
     async listPluginServers(): Promise<MCPServerInfo[]> {
+        return [];
+    }
+
+    /**
+     * MCP servers this harness loads from ANOTHER harness's config (Grok reads `~/.claude.json`
+     * and `~/.cursor/mcp.json`), minus the names its own config or a plugin already defines.
+     * Display only: they never enter the unified config, so `sync-from-providers` does not see them.
+     */
+    async listCompatServers(): Promise<MCPServerInfo[]> {
         return [];
     }
 

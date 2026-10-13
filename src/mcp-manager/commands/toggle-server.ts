@@ -288,9 +288,14 @@ export async function toggleServer(
                     // Strip _meta before syncing to provider
                     const configToSync = stripMeta(serverConfig!);
 
-                    // Check if server is installed globally in provider - if not, install it automatically
+                    // Check if server is installed globally in provider - if not, install it automatically.
+                    // A server the harness already loads from another harness's file (Grok reading
+                    // ~/.claude.json) needs no copy of its own: enableServers switches it on in place.
                     const existingServerConfig = await provider.getServerConfig(serverName);
-                    if (!existingServerConfig) {
+                    const loadedElsewhere =
+                        !existingServerConfig &&
+                        (await provider.listCompatServers()).some((server) => server.name === serverName);
+                    if (!existingServerConfig && !loadedElsewhere) {
                         // Server not installed globally - install it first
                         logger.info(`Installing '${serverName}' globally in ${providerName}...`);
                         const installResult = await provider.installServer(serverName, configToSync);

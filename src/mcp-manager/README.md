@@ -296,6 +296,48 @@ fills every harness on the next `sync` or save — Claude `~/.claude.json`, Gemi
 `~/.gemini/settings.json`, Cursor `~/.cursor/mcp.json`, Codex `~/.codex` — so the
 file shows the paths in use even where they are not configurable.
 
+### Grok (`~/.grok/config.toml`)
+
+Grok runs more than its own `[mcp_servers]` tables. Measured on Grok 1.0.44
+(2026-10-13) with `grok inspect --json` and `grok mcp doctor --json` in an
+isolated home:
+
+-   Sources, highest priority first: a `config.toml` table, a plugin server
+    (Claude-enabled plugins and Grok's own), `~/.claude.json` top-level
+    `mcpServers`, then `~/.cursor/mcp.json` and a project `.mcp.json`. On a name
+    clash Grok runs one server: the highest source wins. A `config.toml` table
+    wins even with `enabled = false`, so such a table switches the Claude copy
+    off as well.
+-   Grok also reads `~/.claude.json` `projects[<cwd>].mcpServers` for the folder
+    it starts in (a project-scoped server needs a trusted folder).
+    `[compat.claude] mcps = false` stops every `~/.claude.json` source, and
+    `[compat.cursor] mcps = false` stops `~/.cursor/mcp.json`.
+-   Claude's own switches do not reach Grok: a project's `disabledMcpServers`
+    and the `deniedMcpServers` setting leave the server running in Grok. Only
+    `disabled_mcp_servers` in `config.toml`, or a table with `enabled = false`,
+    keeps a server off there.
+
+mcp-manager follows that model:
+
+-   `list` and `show` name the source of each Grok row: `grok (config.toml)`,
+    `grok (~/.claude.json)`, `grok (~/.cursor/mcp.json)` or
+    `grok (plugin <id>)`. A row that a higher source shadows is not shown.
+    Project-scoped Claude servers are not shown, because they depend on the
+    folder Grok starts in.
+-   `sync` writes a table only for a server with an explicit grok decision in
+    the unified config (`_meta.enabled.grok` true or false). With no grok
+    decision, the existing table stays exactly as it is and no table is
+    created, so a sync never turns off a server Grok runs. An enabled server
+    that Grok already gets with the same definition from a plugin,
+    `~/.claude.json` or `~/.cursor/mcp.json` gets no `config.toml` copy. A
+    different definition (for example the Grok gateway projection) does get a
+    table, and that table wins. Tables that the sync does not name stay.
+-   `disable <server> -p grok` sets `enabled = false` on a table. For a server
+    that Grok takes from another file, it adds the name to
+    `disabled_mcp_servers` instead. `enable` reverses both, and also removes the
+    name from that list when a table exists, because the list would keep the
+    server off.
+
 ### Cursor (`~/.cursor/mcp.json`)
 
 -   JSON-based configuration

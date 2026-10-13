@@ -95,9 +95,18 @@ export async function readPluginMcpServers(pluginDir: string, manifestPath: stri
             return [];
         }
 
-        const parsed = await readJsonFileIfExists(file);
-        servers = isObject(parsed) && isObject(parsed.mcpServers) ? parsed.mcpServers : parsed;
+        servers = await readJsonFileIfExists(file);
     }
+
+    return mcpServersFromJson(servers);
+}
+
+/**
+ * The servers in a parsed MCP JSON file: `{ "mcpServers": { … } }` or the bare map. Entries
+ * without a `command` or a `url` are skipped.
+ */
+export function mcpServersFromJson(parsed: unknown): PluginMcpDeclaration[] {
+    const servers = isObject(parsed) && isObject(parsed.mcpServers) ? parsed.mcpServers : parsed;
 
     if (!isObject(servers)) {
         return [];

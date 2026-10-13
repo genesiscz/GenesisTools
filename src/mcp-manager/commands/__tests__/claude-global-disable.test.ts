@@ -617,7 +617,8 @@ describe("claude provider TRUE global disable", () => {
         it("disable/enable commands switch the plugin server in Claude, Codex and Grok, and sync keeps every switch", async () => {
             writeClaudeJson(claudeFixture());
             const unified = unifiedFixture();
-            unified.mcpServers.serena._meta = { enabled: { claude: true, codex: true } };
+            // grok false: the Grok sync writes a disabled table. github has no grok decision: no table.
+            unified.mcpServers.serena._meta = { enabled: { claude: true, codex: true, grok: false } };
             await writeUnified(unified);
             const original = seedClaudePlugins();
             seedCodexPlugin();
@@ -653,7 +654,8 @@ describe("claude provider TRUE global disable", () => {
             };
             expect(synced.mcp_servers?.serena).toBeDefined();
             expect(synced.mcp_servers?.expo).toBeUndefined();
-            expect(readGrok().mcp_servers?.serena).toBeDefined(); // the Grok sync ran too
+            expect(readGrok().mcp_servers?.serena).toEqual({ command: "uvx", args: ["serena"], enabled: false });
+            expect(readGrok().mcp_servers?.github).toBeUndefined();
             expect(readGrok().disabled_mcp_servers).toEqual(["pencil", "expo"]);
             expect(readGrok().mcp_servers?.expo).toBeUndefined();
             expect(synced.plugins?.["expo@market"]).toEqual({
@@ -667,6 +669,17 @@ describe("claude provider TRUE global disable", () => {
             const enabled = TOML.parse(readCodexText()) as { plugins?: Record<string, unknown> };
             expect(enabled.plugins?.["expo@market"]).toEqual({ enabled: true });
             expect(readGrok().disabled_mcp_servers).toEqual(["pencil"]);
+        });
+
+        it("enable -p grok of a server Grok takes from ~/.claude.json writes no Grok copy", async () => {
+            writeClaudeJson(claudeFixture()); // github is in ~/.claude.json mcpServers
+            await writeUnified(unifiedFixture()); // github has no grok decision yet
+            const grok = seedGrokConfig();
+
+            await enableCommand("github", [new GrokProvider()], { provider: "grok" });
+
+            expect(readFileSync(join(homeDir, ".grok", "config.toml"), "utf-8")).toBe(grok);
+            expect((await readUnified()).mcpServers.github._meta?.enabled?.grok).toBe(true);
         });
 
         it("-p grok switches the plugin server in Grok only", async () => {

@@ -152,8 +152,9 @@ function pickConfig(instances: MCPServerInfo[]): UnifiedMCPServerConfig | undefi
 }
 
 /**
- * `includePlugins` adds plugin-provided servers (the human listing). The `--json` payload leaves
- * them out: `tools scripts` dials every enabled entry there, and a plugin server is the harness's
+ * `includePlugins` adds plugin-provided servers and the servers a harness takes from another
+ * harness's config (Grok reads ~/.claude.json), for the human listing. The `--json` payload leaves
+ * them out: `tools scripts` dials every enabled entry there, and those servers are the harness's
  * to start, not ours.
  */
 async function collect(
@@ -177,7 +178,7 @@ async function collect(
             }
 
             if (options.includePlugins) {
-                allServers.push(...(await provider.listPluginServers()));
+                allServers.push(...(await provider.listPluginServers()), ...(await provider.listCompatServers()));
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -265,8 +266,15 @@ export async function buildListJson(providers: MCPProvider[], options: ListOptio
     return { servers, providersScanned: scanned, providersFailed: failed };
 }
 
-/** `claude`, or `codex (plugin expo@claude-plugins-official, ~/.codex-work)` for a plugin-provided server. */
+/**
+ * `claude`; `grok (config.toml)` or `grok (~/.claude.json)` for the file a harness reads the server from;
+ * `codex (plugin expo@claude-plugins-official, ~/.codex-work)` for a plugin-provided server.
+ */
 export function providerLabel(server: MCPServerInfo): string {
+    if (server.via && !server.plugin) {
+        return `${server.provider} (${server.via})`;
+    }
+
     if (!server.plugin) {
         return server.provider;
     }

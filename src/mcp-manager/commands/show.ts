@@ -61,7 +61,7 @@ export async function showServerConfig(serverName: string | undefined, providers
             }
         }
 
-        for (const server of await provider.listPluginServers()) {
+        for (const server of [...(await provider.listPluginServers()), ...(await provider.listCompatServers())]) {
             if (server.name === finalServerName) {
                 const state = server.enabled ? "" : " [disabled]";
                 configs.push({ provider: `${providerLabel(server)}${state}`, config: server.config });
