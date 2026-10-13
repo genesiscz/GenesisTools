@@ -217,3 +217,24 @@ test("a bus identity owned by a Codex thread is refused from any other thread", 
     expect(() => assertOwnerThread(record, {})).not.toThrow();
     expect(() => assertOwnerThread({ ...record, meta: {} }, { CODEX_THREAD_ID: "thread-sub" })).not.toThrow();
 });
+
+test("the bridge publishes one event per finished step, never the prompt echo, the reasoning or a started item", async () => {
+    const transport = new FakeAgentsTransport();
+    const bridge = new AgentsBridge({
+        agentName: "codex_reviewer",
+        rendezvousSession: "parent-1",
+        transport,
+        onControl: async () => {},
+    });
+    await bridge.start();
+
+    const item = (method: string, type: string) => ({ method, params: { item: { type, id: `${type}-1`, text: "x" } } });
+    await bridge.publish(item("item/started", "commandExecution"));
+    await bridge.publish(item("item/completed", "userMessage"));
+    await bridge.publish(item("item/completed", "reasoning"));
+    await bridge.publish(item("item/completed", "agentMessage"));
+
+    expect(transport.sent.map((sent) => SafeJSON.parse(sent.body, { strict: true }))).toEqual([
+        { event: "item", phase: "completed", itemId: "agentMessage-1", itemType: "agentMessage", summary: "x" },
+    ]);
+});

@@ -61,12 +61,14 @@ function compileExpression(expression: string): (event: FeedEvent) => boolean {
 }
 
 export function createListenerFilter(options: ListenerFilterOptions): (event: FeedEvent) => boolean {
-    const kinds = new Set(
-        (options.kinds ?? "")
-            .split(",")
-            .map((kind) => kind.trim())
-            .filter(Boolean)
-    );
+    const entries = (options.kinds ?? "")
+        .split(",")
+        .map((kind) => kind.trim())
+        .filter(Boolean);
+    // `-item` excludes a kind and wins over any inclusion, so `--kinds message,-item` keeps a Codex worker's
+    // mail and approvals while dropping the item events its bridge publishes to the lead for every step.
+    const kinds = new Set(entries.filter((kind) => !kind.startsWith("-")));
+    const excluded = new Set(entries.filter((kind) => kind.startsWith("-")).map((kind) => kind.slice(1)));
     const expressionFilter = options.expression ? compileExpression(options.expression) : null;
 
     return (event) => {
@@ -74,11 +76,16 @@ export function createListenerFilter(options: ListenerFilterOptions): (event: Fe
         // per-login noise) must not hide the moment a peer starts or stops listening.
         const presence = event.type === "agent_joined" || event.type === "agent_left";
 
-        if (kinds.size > 0 && !presence) {
+        if ((kinds.size > 0 || excluded.size > 0) && !presence) {
             const body = messageBody(event);
             const bodyKind =
                 typeof body?.op === "string" ? body.op : typeof body?.event === "string" ? body.event : null;
-            if (!kinds.has(event.type) && (!bodyKind || !kinds.has(bodyKind))) {
+
+            if (excluded.has(event.type) || (bodyKind && excluded.has(bodyKind))) {
+                return false;
+            }
+
+            if (kinds.size > 0 && !kinds.has(event.type) && (!bodyKind || !kinds.has(bodyKind))) {
                 return false;
             }
         }

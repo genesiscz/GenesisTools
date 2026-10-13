@@ -71,4 +71,15 @@ describe("agents listener filter", () => {
             "Unsupported --filter expression"
         );
     });
+    test("a -kind excludes that kind and wins over an inclusion", () => {
+        // A Codex worker's bridge publishes an item event per step; the lead wants its mail without them.
+        const filter = createListenerFilter({ kinds: "message,-item" });
+
+        expect(filter(message("plain text"))).toBe(true);
+        expect(filter(message('{"op":"approval_request"}'))).toBe(true);
+        expect(filter(message('{"event":"turn_completed"}'))).toBe(true);
+        expect(filter(message('{"event":"item","itemType":"commandExecution"}'))).toBe(false);
+        expect(createListenerFilter({ kinds: "-item" })(message('{"event":"item"}'))).toBe(false);
+        expect(createListenerFilter({ kinds: "-item" })(message("plain text"))).toBe(true);
+    });
 });

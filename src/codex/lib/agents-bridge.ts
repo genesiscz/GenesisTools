@@ -110,6 +110,8 @@ function itemSummary(item: Record<string, unknown>): string {
     return compactText(item.type) ?? "Codex item";
 }
 
+const UNPUBLISHED_ITEM_TYPES = new Set(["userMessage", "reasoning", "hookPrompt"]);
+
 function eventEnvelope(notification: RpcNotification): Record<string, unknown> | null {
     if (notification.method === "turn/started") {
         return { event: "turn_started", turnId: nestedRecord(notification.params, "turn")?.id };
@@ -134,9 +136,11 @@ function eventEnvelope(notification: RpcNotification): Record<string, unknown> |
         return { event: "error", detail: notification.params };
     }
 
-    if (notification.method === "item/started" || notification.method === "item/completed") {
+    // One event per finished step. `item/started` repeated what `item/completed` says a moment later, and the
+    // prompt echo and the reasoning tell the lead nothing; together they were most of the lead's stream.
+    if (notification.method === "item/completed") {
         const item = nestedRecord(notification.params, "item");
-        if (!item) {
+        if (!item || UNPUBLISHED_ITEM_TYPES.has(String(item.type))) {
             return null;
         }
 
