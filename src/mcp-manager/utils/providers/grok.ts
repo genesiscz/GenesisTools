@@ -75,52 +75,6 @@ function grokConfigPathForHome(home: string): string {
     return path.join(expanded, "config.toml");
 }
 
-/**
- * Of `names`, the ones Grok would START if they appeared in `~/.claude.json` top-level `mcpServers`:
- * Grok reads that list (unless `[compat.claude] mcps = false`), Claude's `deniedMcpServers` does not
- * reach Grok, a config.toml table shadows the Claude copy, and `disabled_mcp_servers` stops it.
- * Checked in every Grok home the unified config names; a home without a config.toml has no Grok.
- * A config.toml that does not parse counts as "would start", the safe answer for the caller.
- */
-export async function namesGrokWouldStartFromClaudeJson(
-    names: string[],
-    unified: UnifiedMCPConfig
-): Promise<Set<string>> {
-    const result = new Set<string>();
-
-    for (const home of resolveHarnessHomes(unified, "grok", "syncTo")) {
-        const configPath = grokConfigPathForHome(home);
-        if (!existsSync(configPath)) {
-            continue;
-        }
-
-        let config: GrokGenericConfig;
-        try {
-            config = TOML.parse(await readFile(configPath, "utf-8")) as GrokGenericConfig;
-        } catch (error) {
-            logger.warn({ error, configPath }, "mcp-manager: could not read a Grok config; assuming Grok would start");
-            for (const name of names) {
-                result.add(name);
-            }
-
-            continue;
-        }
-
-        if (!compatMcpsOn(config, "claude")) {
-            continue;
-        }
-
-        const disabled = stringList(config.disabled_mcp_servers);
-        for (const name of names) {
-            if (!config.mcp_servers?.[name] && !disabled.includes(name)) {
-                result.add(name);
-            }
-        }
-    }
-
-    return result;
-}
-
 export class GrokProvider extends MCPProvider {
     constructor() {
         const home = path.join(env.paths.getHome() || env.paths.getUserProfile() || "~", ".grok");
