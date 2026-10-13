@@ -1,4 +1,3 @@
-import { chmod } from "node:fs/promises";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
@@ -29,6 +28,11 @@ export type ClarityConfig = z.infer<typeof ClarityConfigSchema>;
 
 const storage = new Storage("clarity");
 
+/**
+ * `null` means no config file: first-time setup. A file that does not parse (Storage throws) or does not
+ * match the schema throws too, naming the path. Callers treat `null` as "start fresh with no mappings",
+ * so returning it for a damaged file let the next save replace the user's mappings with `[]`.
+ */
 export async function getConfig(): Promise<ClarityConfig | null> {
     const raw = await storage.getConfig<ClarityConfig>();
 
@@ -37,16 +41,21 @@ export async function getConfig(): Promise<ClarityConfig | null> {
     }
 
     const result = ClarityConfigSchema.safeParse(raw);
-    return result.success ? result.data : null;
+
+    if (!result.success) {
+        const issues = result.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`);
+        throw new Error(
+            `Clarity config ${storage.getConfigPath()} is not valid (${issues.join("; ")}), so it was left untouched. Fix or move it, then run ${toolCommand("clarity configure auth")}.`
+        );
+    }
+
+    return result.data;
 }
 
 export async function saveConfig(config: ClarityConfig): Promise<void> {
     ClarityConfigSchema.parse(config);
-    await storage.ensureDirs();
-    await storage.setConfig(config);
-    if (process.platform !== "win32") {
-        await chmod(storage.getConfigPath(), 0o600);
-    }
+    // Atomic, and 0600 from the temp file's birth: the file holds the auth token and session id.
+    await storage.setConfig(config, { mode: process.platform === "win32" ? undefined : 0o600 });
 }
 
 export async function requireConfig(): Promise<ClarityConfig> {

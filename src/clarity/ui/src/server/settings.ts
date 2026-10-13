@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Api } from "@app/azure-devops/api";
 import { extractOrgName, findConfigPath, loadConfig as loadAdoConfig } from "@app/azure-devops/config";
@@ -12,6 +12,7 @@ import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export type { AuthStatus, ServiceAuthState };
 
@@ -295,7 +296,7 @@ export async function configureTimeLogKey(): Promise<{ success: boolean; message
             parsed.timelog.functionsKey = functionsKey;
         }
 
-        writeFileSync(configPath, SafeJSON.stringify(parsed, null, 2));
+        atomicWriteFileSync(configPath, SafeJSON.stringify(parsed, null, 2));
 
         return { success: true, message: "TimeLog API key configured" };
     } catch (err) {
@@ -355,7 +356,7 @@ export async function setTimeLogDefaultUser(user: {
             parsed.timelog.defaultUser = user;
         }
 
-        writeFileSync(configPath, SafeJSON.stringify(parsed, null, 2));
+        atomicWriteFileSync(configPath, SafeJSON.stringify(parsed, null, 2));
 
         return { success: true, message: `Default user set to ${user.userName}` };
     } catch (err) {

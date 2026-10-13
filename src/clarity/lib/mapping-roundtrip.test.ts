@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { WorkItemNode } from "@app/azure-devops/lib/ancestors";
-import { requireConfig, saveConfig, storage } from "@app/clarity/config";
+import { getConfig, requireConfig, saveConfig, storage } from "@app/clarity/config";
 import { applyAssignments, buildAssignmentRows, removeAssignments } from "@app/clarity/lib/assignments";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -126,5 +127,60 @@ describe("mapping round trip through the config file", () => {
                 .map((pair) => pair.workItemId)
                 .sort()
         ).toEqual([510001, 510002]);
+    });
+});
+describe("a config file that exists but fails the schema", () => {
+    // getConfig returned null for it, and every caller read null as first-time setup: `configure auth`
+    // and the UI's updateAuth then saved `mappings: []` over the user's mappings. Only a missing file
+    // may read as first-time; a damaged one must throw, naming the path, and keep its bytes.
+    const PLANTED = SafeJSON.stringify(
+        {
+            ...BASE_CONFIG,
+            sessionId: 42,
+            mappings: [
+                {
+                    clarityTaskId: 700002,
+                    clarityTaskName: "Sample task",
+                    clarityTaskCode: "00070705",
+                    clarityInvestmentName: "Sample",
+                    clarityInvestmentCode: "P100001",
+                    adoWorkItemId: 510001,
+                    adoWorkItemTitle: "Sample work item",
+                },
+            ],
+        },
+        null,
+        2
+    );
+
+    afterEach(() => {
+        const path = storage.getConfigPath();
+
+        if (existsSync(path)) {
+            unlinkSync(path);
+        }
+    });
+
+    test("getConfig and requireConfig throw instead of reporting first-time setup", async () => {
+        const path = storage.getConfigPath();
+        await storage.ensureDirs();
+        writeFileSync(path, PLANTED);
+
+        await expect(getConfig()).rejects.toThrow(path);
+        await expect(getConfig()).rejects.toThrow(/left untouched/);
+        await expect(requireConfig()).rejects.toThrow(/sessionId/);
+        expect(readFileSync(path, "utf8")).toBe(PLANTED);
+    });
+
+    test("a missing file is still first-time setup, and a save is 0600", async () => {
+        expect(await getConfig()).toBeNull();
+
+        await saveConfig({ ...BASE_CONFIG, mappings: [] });
+
+        expect((await requireConfig()).baseUrl).toBe(BASE_CONFIG.baseUrl);
+
+        if (process.platform !== "win32") {
+            expect(statSync(storage.getConfigPath()).mode & 0o777).toBe(0o600);
+        }
     });
 });
