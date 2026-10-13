@@ -272,6 +272,12 @@ describe("retention", () => {
         expect(report.packed.map((item) => item.archive.split("/").pop())).toEqual(["r3.zst"]);
         expect(retired).toEqual(["r3", "r4"]);
         expect(readdirSync(dir).sort()).toEqual(["r1", "r2", "r3.zst"]);
+        // A kept folder older than keepMaxAgeDays is packed anyway (cloned backup runs free nothing one by one).
+        expect(
+            planFolderRetention({ root: dir, keep: 2, keepMaxAgeDays: 1.5, now }).pack.map((item) =>
+                item.folder.split("/").pop()
+            )
+        ).toEqual(["r2"]);
         expect(listArchive(join(dir, "r3.zst")).some((entry) => entry.path === "r3/data.jsonl")).toBe(true);
     });
 

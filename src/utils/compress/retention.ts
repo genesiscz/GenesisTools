@@ -31,6 +31,12 @@ export interface FolderRetentionOptions {
     root: string;
     /** The newest folders kept as they are (quick rollback). */
     keep: number;
+    /**
+     * A kept folder older than this is packed anyway: a month-old rollback copy is rarely worth its full size. Needed
+     * where the runs are APFS clones of each other (`cp -c` backups): removing one run while a newer clone of the same
+     * data stays frees almost nothing, so only packing the old ones together reclaims space.
+     */
+    keepMaxAgeDays?: number;
     /** Archives whose folder is older than this are deleted. Unset: never by age. */
     maxArchiveAgeDays?: number;
     /** At most this many archives stay, newest first. Unset: no count cap. */
@@ -63,7 +69,7 @@ export interface FolderRetentionPlan {
 
 /** What a retention run would do. Reads only: this is the dry run. */
 export function planFolderRetention(options: FolderRetentionOptions): FolderRetentionPlan {
-    const { root, keep, maxArchiveAgeDays, maxArchives } = options;
+    const { root, keep, keepMaxAgeDays, maxArchiveAgeDays, maxArchives } = options;
     const include = options.include ?? ((name: string) => !name.startsWith("."));
     const timeOf = options.timeOf ?? ((entry: { mtimeMs: number }) => entry.mtimeMs);
     const now = (options.now ?? new Date()).getTime();
@@ -103,8 +109,10 @@ export function planFolderRetention(options: FolderRetentionOptions): FolderRete
     }
 
     folders.sort((a, b) => b.timeMs - a.timeMs || b.name.localeCompare(a.name));
-    plan.kept = folders.slice(0, Math.max(0, keep)).map((folder) => folder.path);
-    const older = folders.slice(Math.max(0, keep));
+    const keepable = (folder: { timeMs: number }, index: number) =>
+        index < keep && (keepMaxAgeDays === undefined || now - folder.timeMs <= keepMaxAgeDays * DAY_MS);
+    plan.kept = folders.filter(keepable).map((folder) => folder.path);
+    const older = folders.filter((folder, index) => !keepable(folder, index));
     const repacked = new Set(older.map((folder) => `${folder.path}${FOLDER_ARCHIVE_SUFFIX}`));
     // A folder and its own archive both present means an earlier run stopped between packing and removing: the
     // folder is packed again (the rename replaces the archive), so the archive is not counted twice.

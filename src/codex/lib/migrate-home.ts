@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync 
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type OpenFilesQuery, type OpenFilesResult, openFiles } from "@genesiscz/utils/process/open-files";
@@ -195,12 +196,50 @@ export interface MigrateHomeReport {
         skippedLive: number;
     };
     backups: { sessions?: string; globalState?: string; state?: string[] };
+    /** After an applied run: older backup runs packed into `<stamp>.zst` ({@link retainBackups}). */
+    backupRetention?: BackupRetention;
     desktop: DesktopReport[];
     /** Thread names carried from each source's `session_index.jsonl`. */
     sessionNames: SessionNameReport[];
     refusals: Refusal[];
     reindexCommand: string;
     provenanceNote: string;
+}
+
+/** Backup runs kept as folders for a quick rollback: the newest two, while they are at most two weeks old. */
+export const BACKUP_KEEP_RUNS = 2;
+export const BACKUP_KEEP_MAX_AGE_DAYS = 14;
+
+export interface BackupRetention {
+    root: string;
+    kept: string[];
+    packed: Array<{ folder: string; archive: string; archiveBytes: number; tarBytes: number }>;
+    failed: Array<{ folder: string; reason: string }>;
+}
+
+/**
+ * Packs every backup run except the newest {@link BACKUP_KEEP_RUNS} recent ones into `<run>.zst` (tar inside seekable
+ * zstd, checked file by file against the folder before the folder goes). The runs are APFS clones of each other, so
+ * only packing the old ones together frees their space. Restore one with `tools compress unpack <run>.zst`.
+ */
+export async function retainBackups(root: string, now = new Date()): Promise<BackupRetention> {
+    const plan = planFolderRetention({ root, keep: BACKUP_KEEP_RUNS, keepMaxAgeDays: BACKUP_KEEP_MAX_AGE_DAYS, now });
+    const report = await applyFolderRetention(plan, { caller: "codex-migrate-home" });
+    log.info(
+        { root, kept: plan.kept.length, packed: report.packed.length, failed: report.failed.length },
+        "backup retention"
+    );
+    return {
+        root,
+        kept: plan.kept,
+        packed: report.packed.map(({ folder, archive, archiveBytes, tarBytes }) => ({
+            folder,
+            archive,
+            archiveBytes,
+            tarBytes,
+        })),
+        failed: report.failed,
+    };
 }
 
 export interface MigrateHomeOptions {
@@ -1135,7 +1174,8 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         return report;
     }
 
-    const backupRoot = join(options.backupRoot ?? defaultBackupRoot(), stamp);
+    const backupBase = options.backupRoot ?? defaultBackupRoot();
+    const backupRoot = join(backupBase, stamp);
     mkdirSync(backupRoot, { recursive: true });
 
     if (existsSync(destinationSessions)) {
@@ -1222,6 +1262,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         }
     }
 
+    report.backupRetention = await retainBackups(backupBase);
     return report;
 }
 

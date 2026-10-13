@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { expandTilde } from "@genesiscz/utils/paths";
 import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
@@ -202,6 +204,26 @@ function renderReport(report: MigrateHomeReport): void {
         }
 
         renderCliKeyRow("source", "untouched; the copy never unlinks", 14);
+    }
+
+    const retention = report.backupRetention;
+
+    if (retention && (retention.packed.length > 0 || retention.failed.length > 0)) {
+        renderCliSection("Older backups");
+
+        for (const item of retention.packed) {
+            renderCliKeyRow(
+                "packed",
+                `${item.archive} (${formatBytes(item.tarBytes)} → ${formatBytes(item.archiveBytes)})`,
+                14
+            );
+        }
+
+        for (const item of retention.failed) {
+            renderCliKeyRow("kept", pc.yellow(`${item.folder}: ${item.reason}`), 14);
+        }
+
+        renderCliKeyRow("restore", `${toolCommand("compress unpack")} <run>.zst`, 14);
     }
 
     for (const source of report.sources) {

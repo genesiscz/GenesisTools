@@ -153,6 +153,12 @@ Safety rules, all of them load-bearing:
 - **The destination is backed up first** by APFS clone into
   `~/.genesis-tools/codex/migrate-home/<stamp>/`, both `sessions/` and
   `.codex-global-state.json`. The source needs no backup because it is never touched.
+- **Older backups are packed after each applied run.** The newest two runs stay folders while
+  they are at most 14 days old; every other run becomes `<stamp>.zst` (tar inside seekable
+  zstd, checked file by file against the folder before the folder is removed). The runs are
+  APFS clones of each other, so removing one run while a newer one stays frees almost nothing;
+  packing the old ones together is what frees their space. Restore a run with
+  `tools compress unpack ~/.genesis-tools/codex/migrate-home/<stamp>.zst`.
 - **Every copy is verified** by size and SHA-256 before the run counts it.
 - **The date tree is preserved verbatim.** Paths are never re-derived from the rollout header
   timestamp, which differs from the filename timestamp.

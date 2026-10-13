@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { listArchive } from "@genesiscz/utils/compress/tar";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
 import {
@@ -188,6 +189,36 @@ describe("migrateHome transcripts", () => {
         expect(second.refusals).toEqual([]);
         expect(second.totals).toMatchObject({ rollouts: 3, toCopy: 0, alreadyPresent: 3, collisions: 0, copied: 0 });
         expect(treeFingerprint(destination)).toBe(after);
+    });
+
+    test("keeps the newest two backup runs as folders and packs an older one into <stamp>.zst", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", [{ date: "2026-08-01", uuid: uuid("0101") }]);
+        const backups = join(root, "backups");
+        const stamps = ["20260909-221500", "20260909-221600", "20260909-221700"];
+        let last: Awaited<ReturnType<typeof migrateHome>> | undefined;
+
+        for (const [index, stamp] of stamps.entries()) {
+            const source = makeHome(root, `.codex-run${index}`, [{ date: "2026-09-07", uuid: uuid(`020${index}`) }]);
+            last = await migrateHome({
+                from: [source],
+                to: destination,
+                apply: true,
+                backupRoot: backups,
+                stamp,
+                inspectOpenFiles: clear,
+            });
+        }
+
+        expect(readdirSync(backups).sort()).toEqual(["20260909-221500.zst", "20260909-221600", "20260909-221700"]);
+        expect(last?.backupRetention?.packed.map((item) => item.archive)).toEqual([
+            join(backups, "20260909-221500.zst"),
+        ]);
+        expect(
+            listArchive(join(backups, "20260909-221500.zst")).some((entry) =>
+                entry.path.startsWith("20260909-221500/sessions/2026/08/01/")
+            )
+        ).toBe(true);
     });
 
     test("preserves the source date tree rather than re-deriving it from the header timestamp", async () => {
