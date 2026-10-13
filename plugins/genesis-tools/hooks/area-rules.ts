@@ -15,6 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseLenientJson } from "./agents-talk-hint";
+import { lockWorktreesForToolUse } from "./worktree-lock";
 
 const SafeJSON = JSON;
 
@@ -310,6 +311,10 @@ if (import.meta.main) {
         // Not a hook payload: nothing to do.
         process.exit(0);
     }
+
+    // The worktree lock rides in this process because it already starts on every Bash and edit call; a
+    // hook of its own would cost a second `bun` start on each of them. It never throws and never prints.
+    lockWorktreesForToolUse(payload);
 
     const sessionId = payload.session_id;
     if (!sessionId) {
