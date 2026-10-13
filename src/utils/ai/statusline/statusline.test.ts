@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
@@ -14,11 +14,13 @@ import {
 import { env } from "@genesiscz/utils/env";
 import * as gitCore from "@genesiscz/utils/git/core";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { isolatedPreviewCache, isolatedPreviewCacheDir, StatuslineCache } from "./cache";
 import {
     defaultStatuslineConfig,
     formatStatuslineInstallCommand,
     loadStatuslineConfig,
+    loadStatuslineConfigForUpdate,
     mergeStatuslineConfig,
     PREVIEW_SESSION_ID,
     previewRenderConfig,
@@ -376,6 +378,20 @@ describe("install previousCommand", () => {
         expect((await loadStatuslineConfig(path)).previousCommand).toBe("bash /old/statusline.sh");
     });
 
+    test("a save refuses to replace a config that does not parse, so the old statusline survives", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "statusline-cfg-")), "config.json");
+        const planted = '{"previousCommand": "bash /old/statusline.sh", "showDelta": tr';
+        writeFileSync(path, planted);
+
+        await expect(loadStatuslineConfigForUpdate(path)).rejects.toThrow(path);
+        await expect(saveStatuslineConfig(defaultStatuslineConfig(), path)).rejects.toThrow("left untouched");
+
+        expect(readFileSync(path, "utf8")).toBe(planted);
+        // Rendering still works: the display load falls back to defaults without writing.
+        expect((await loadStatuslineConfig(path)).previousCommand).toBeNull();
+        expect(readFileSync(path, "utf8")).toBe(planted);
+    });
+
     test("the direct install command quotes paths that contain spaces", () => {
         const command = formatStatuslineInstallCommand({
             host: "claude",
@@ -436,5 +452,40 @@ describe("installed command settings", () => {
             parseInstalledCommand('{"statusLine":{"type":"command","command":"tools ai statusline run --claude"}}')
         ).toBe("tools ai statusline run --claude");
         expect(() => parseInstalledCommand("{")).toThrow(/unreadable JSON/);
+    });
+
+    test("writing the command refuses settings that are not an object and leaves them byte-identical", async () => {
+        // `null` parses, and saving `{ statusLine }` in its place would replace the user's whole Claude Code settings.
+        const dir = mkdtempSync(join(tmpdir(), "statusline-settings-"));
+        const settings = join(dir, "settings.json");
+        writeFileSync(settings, "null\n");
+
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, async () => {
+            await expect(claudeCodeStatusline().writeInstalledCommand("tools ai statusline run")).rejects.toThrow(
+                /not a JSON object; left untouched/
+            );
+        });
+
+        expect(readFileSync(settings, "utf8")).toBe("null\n");
+    });
+
+    // NEGATIVE CONTROL: a valid settings file gets the command, keeps its other keys, its link and one backup.
+    test("writing the command keeps the other settings, a symlinked file's link, and the previous copy as .bak", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "statusline-settings-"));
+        const real = join(dir, "dotfiles-settings.json");
+        const original = `{\n  "theme": "dark"\n}\n`;
+        writeFileSync(real, original);
+        symlinkSync(real, join(dir, "settings.json"));
+
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, async () => {
+            await claudeCodeStatusline().writeInstalledCommand("tools ai statusline run");
+        });
+
+        expect(lstatSync(join(dir, "settings.json")).isSymbolicLink()).toBe(true);
+        expect(SafeJSON.parse(readFileSync(real, "utf8"))).toEqual({
+            theme: "dark",
+            statusLine: { type: "command", command: "tools ai statusline run" },
+        });
+        expect(readFileSync(`${real}.bak`, "utf8")).toBe(original);
     });
 });

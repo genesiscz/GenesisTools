@@ -8,6 +8,7 @@ import {
     formatStatuslineInstallCommand,
     isStatuslineInstallCommand,
     loadStatuslineConfig,
+    loadStatuslineConfigForUpdate,
     PREVIEW_SESSION_ID,
     previewRenderConfig,
     rememberPreviousCommand,
@@ -154,7 +155,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
     const feature = requireFeature(host);
     const previewCache = isolatedPreviewCache();
     const previewFeature = claudeCodeStatusline(previewCache);
-    let config = await loadStatuslineConfig();
+    let config = await loadStatuslineConfigForUpdate();
     const columns = process.stdout.columns ?? config.fallbackColumns;
     const showPreview = async () => {
         const lines = await previewLines(config, previewFeature, columns, previewCache);
@@ -321,7 +322,7 @@ async function installStatusline(
     existing?: StatuslineConfig
 ): Promise<StatuslineConfig> {
     const feature = requireFeature(host);
-    let config = existing ?? (await loadStatuslineConfig());
+    let config = existing ?? (await loadStatuslineConfigForUpdate());
     const current = await feature.readInstalledCommand();
 
     if (!viaTools) {
@@ -346,7 +347,7 @@ async function installStatusline(
 
 async function uninstallStatusline(host: StatuslineHost): Promise<void> {
     const feature = requireFeature(host);
-    const config = await loadStatuslineConfig();
+    const config = await loadStatuslineConfigForUpdate();
     const current = await feature.readInstalledCommand();
 
     if (!isOurs(current)) {

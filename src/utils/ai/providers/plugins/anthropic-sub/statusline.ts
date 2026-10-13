@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { accountEnvVar, accountFromEnv } from "@genesiscz/utils/ai/account-env";
@@ -14,7 +14,7 @@ import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage/storage";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 /**
  * Claude Code's statusline, as the host feature the generic renderer drives.
@@ -450,14 +450,25 @@ function readSettingsRecord(path: string): Record<string, unknown> {
         throw new Error(`Claude Code settings at ${path} could not be read`, { cause: error });
     }
 
+    let parsed: unknown;
+
     try {
-        return asRecord(SafeJSON.parse(text)) ?? {};
+        parsed = SafeJSON.parse(text);
     } catch (error) {
         throw new Error(
             `Claude Code settings at ${path} are unreadable JSON; refusing to treat that as no statusline`,
             { cause: error }
         );
     }
+
+    const settings = asRecord(parsed);
+
+    // `null` or `[]` parse, but saving `{}` in their place would wipe the file: refuse instead.
+    if (!settings) {
+        throw new Error(`Claude Code settings at ${path} are not a JSON object; left untouched`);
+    }
+
+    return settings;
 }
 
 async function readInstalledCommand(): Promise<string | null> {
@@ -483,7 +494,8 @@ async function writeInstalledCommand(command: string | null): Promise<void> {
         settings.statusLine = { type: "command", command };
     }
 
-    writeFileSync(path, `${SafeJSON.stringify(settings, null, 2)}\n`);
+    // Claude Code owns this file: replace it atomically and keep the previous copy as settings.json.bak.
+    atomicWriteFileSync(path, `${SafeJSON.stringify(settings, null, 2)}\n`, { backup: true });
     logger.info({ path, command }, "statusline: Claude Code settings updated");
 }
 

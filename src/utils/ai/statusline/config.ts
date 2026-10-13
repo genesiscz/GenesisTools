@@ -1,11 +1,13 @@
-import { mkdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { StatuslineConfig } from "./types";
 
 /** Synthetic session id for preview/configure so a diagnostic never writes a live session file. */
@@ -36,26 +38,73 @@ export function statuslineConfigPath(): string {
     return aiDataDir("statusline", "config.json");
 }
 
-export async function loadStatuslineConfig(path = statuslineConfigPath()): Promise<StatuslineConfig> {
-    const file = Bun.file(path);
+function isStatuslineConfigPatch(value: unknown): value is Partial<StatuslineConfig> {
+    return isJsonObject(value);
+}
 
-    if (!(await file.exists())) {
-        return defaultStatuslineConfig();
-    }
+/**
+ * The saved fields, `{}` when there is no file. Throws, naming the path, when the file exists but is
+ * not a JSON object: install and uninstall save what they load, and defaults saved over it would
+ * erase `previousCommand`, the user's old statusline.
+ */
+function readSavedStatuslineConfig(path: string): Partial<StatuslineConfig> {
+    let text: string;
 
     try {
-        const parsed = SafeJSON.parse(await file.text(), { unbox: true }) as Partial<StatuslineConfig> | undefined;
+        text = readFileSync(path, "utf8");
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return {};
+        }
 
-        return mergeStatuslineConfig(defaultStatuslineConfig(), parsed ?? {});
+        throw error;
+    }
+
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(text, { unbox: true });
+    } catch (error) {
+        throw new Error(`Statusline config ${path} does not parse, so it was left untouched. Fix it, then retry.`, {
+            cause: error,
+        });
+    }
+
+    if (parsed === null) {
+        return {};
+    }
+
+    if (!isStatuslineConfigPatch(parsed)) {
+        throw new Error(
+            `Statusline config ${path} is not a JSON object, so it was left untouched. Fix it, then retry.`
+        );
+    }
+
+    return parsed;
+}
+
+/** For rendering and display: a config that cannot be read renders with the defaults. */
+export async function loadStatuslineConfig(path = statuslineConfigPath()): Promise<StatuslineConfig> {
+    try {
+        return await loadStatuslineConfigForUpdate(path);
     } catch (error) {
         logger.warn({ err: error, path }, "statusline config unreadable, using defaults");
         return defaultStatuslineConfig();
     }
 }
 
+/** For a caller that saves what it loads (install, uninstall, configure): throws on a config that cannot be read. */
+export async function loadStatuslineConfigForUpdate(path = statuslineConfigPath()): Promise<StatuslineConfig> {
+    return mergeStatuslineConfig(defaultStatuslineConfig(), readSavedStatuslineConfig(path));
+}
+
+/**
+ * Atomic, so a crash or a full disk cannot truncate `previousCommand`. Refuses, leaving the file as it
+ * is, when the file on disk does not parse: the caller then holds defaults, not what the file says.
+ */
 export async function saveStatuslineConfig(config: StatuslineConfig, path = statuslineConfigPath()): Promise<void> {
-    mkdirSync(dirname(path), { recursive: true });
-    await Bun.write(path, `${SafeJSON.stringify(config, { strict: true }, 2)}\n`);
+    readSavedStatuslineConfig(path);
+    atomicWriteFileSync(path, `${SafeJSON.stringify(config, { strict: true }, 2)}\n`);
     logger.debug({ path }, "statusline config saved");
 }
 
