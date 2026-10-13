@@ -203,9 +203,11 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
         const start = Math.max(0, size - maxBytes - 1);
         const buffer = bufferOf(size - start);
         const read = reader.read(fd, buffer, size - start, start);
+        // A file one byte longer than the window also starts at 0; its first byte is then the byte before the window.
+        const wholeFile = size <= maxBytes;
         let from = 0;
 
-        if (start > 0) {
+        if (!wholeFile) {
             const newline = buffer.indexOf(10);
 
             if (newline === -1 || newline >= read) {
@@ -215,7 +217,7 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
             from = newline + 1;
         }
 
-        return { lines: linesBetween(buffer, from, read), wholeFile: start === 0 };
+        return { lines: linesBetween(buffer, from, read), wholeFile };
     } finally {
         reader.close(fd);
     }

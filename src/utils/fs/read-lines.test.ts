@@ -79,3 +79,25 @@ for (const method of ["fs", "ffi"] as const) {
         });
     });
 }
+
+describe("readLastLines window bound", () => {
+    it.each(["fs", "ffi"] as const)(
+        "keeps only lines inside the last maxBytes, also one byte short of the whole file (%s)",
+        (method) => {
+            const path = join(dir, `bound-${method}.txt`);
+            writeFileSync(path, "abc\ndef\n");
+
+            expect(readLastLines(path, { maxBytes: 7, method })).toEqual({ lines: ["def"], wholeFile: false });
+            expect(readLastLines(path, { maxBytes: 6, method })).toEqual({ lines: ["def"], wholeFile: false });
+            expect(readLastLines(path, { maxBytes: 8, method })).toEqual({ lines: ["abc", "def"], wholeFile: true });
+            expect(readLastLines(path, { maxBytes: 4, method })).toEqual({ lines: ["def"], wholeFile: false });
+        }
+    );
+
+    it("keeps the first line when the byte before the window is a newline", () => {
+        const path = join(dir, "bound-newline.txt");
+        writeFileSync(path, "\nabc\ndef\n");
+
+        expect(readLastLines(path, { maxBytes: 8 })).toEqual({ lines: ["abc", "def"], wholeFile: false });
+    });
+});
