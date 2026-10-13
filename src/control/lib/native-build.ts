@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 
 const REQUIRED_SOURCES = ["Package.swift", "Sources", "SnapshotSupport"] as const;
@@ -101,10 +102,7 @@ export function recordNativeBuild({
         throw new Error("native sources changed during build; receipt not recorded");
     }
     const receipt: NativeBuildReceipt = { version: RECEIPT_VERSION, sources: after, binary: binarySignature(binary) };
-    const path = receiptPath(binary);
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, SafeJSON.stringify(receipt));
-    renameSync(temporary, path);
+    atomicWriteFileSync(receiptPath(binary), SafeJSON.stringify(receipt));
 }
 
 export function nativeNeedsBuild({ binary, sourceDir }: { binary: string; sourceDir: string }): boolean {

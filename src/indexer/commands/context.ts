@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { ContextConfig } from "../lib/context-artifacts";
@@ -146,7 +147,7 @@ export function registerContextCommand(program: Command): void {
                         description: opts.description,
                     });
 
-                    writeFileSync(configPath, `${SafeJSON.stringify(config, null, 2)}\n`);
+                    atomicWriteFileSync(configPath, `${SafeJSON.stringify(config, null, 2)}\n`);
                     p.log.success(`Added artifact "${opts.name}" to ${CONFIG_FILENAME}`);
 
                     if (opts.sync) {
@@ -202,7 +203,7 @@ export function registerContextCommand(program: Command): void {
                 }
 
                 config.artifacts.splice(idx, 1);
-                writeFileSync(configPath, `${SafeJSON.stringify(config, null, 2)}\n`);
+                atomicWriteFileSync(configPath, `${SafeJSON.stringify(config, null, 2)}\n`);
                 p.log.success(`Removed artifact "${opts.name}" from ${CONFIG_FILENAME}`);
 
                 if (opts.sync) {
