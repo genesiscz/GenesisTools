@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 // PURE cloudflared CLI helpers + thin `Bun.spawn` wrappers. The pure arg/config
 // builders (buildCreateArgs/buildRouteDnsArgs/buildRunArgs/buildConfigYaml/parseTunnelId)
@@ -129,7 +130,7 @@ export async function routeDns(name: string, hostname: string): Promise<Cloudfla
  */
 export async function writeConfig(input: TunnelConfigInput): Promise<string> {
     const path = join(cloudflaredHome(), `${input.tunnelId}.yml`);
-    await Bun.write(path, buildConfigYaml(input));
+    atomicWriteFileSync(path, buildConfigYaml(input));
     logger.info({ path, hostname: input.hostname }, "dev-dashboard: cloudflared config written");
 
     return path;

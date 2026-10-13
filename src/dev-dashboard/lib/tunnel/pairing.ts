@@ -1,8 +1,8 @@
-import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 // Agent-side pairing: re-export the PURE codec from the contract (the source of truth
 // for the `devdashboard://pair?…` wire shape) and add ONLY the disk-touching persistence
@@ -31,8 +31,7 @@ export function tunnelConfigPath(): string {
 }
 
 export async function persistTunnelConfig(config: PersistedTunnelConfig): Promise<void> {
-    await Bun.write(TUNNEL_CONFIG_PATH, SafeJSON.stringify(config, null, 2));
-    chmodSync(TUNNEL_CONFIG_PATH, 0o600);
+    atomicWriteFileSync(TUNNEL_CONFIG_PATH, SafeJSON.stringify(config, null, 2), { mode: 0o600 });
     logger.info(
         { path: TUNNEL_CONFIG_PATH, tunnel: config.tunnelName },
         "dev-dashboard: tunnel config persisted (0600)"

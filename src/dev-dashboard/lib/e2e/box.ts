@@ -1,9 +1,9 @@
-import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import type { BoxCipher, KeyPair } from "@app/dev-dashboard/contract/box-types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
 
@@ -54,8 +54,9 @@ export async function loadOrCreateAgentKeys(
         publicKey: toBase64(kp.publicKey),
         secretKey: toBase64(kp.secretKey),
     } satisfies StoredKeys);
-    await Bun.write(keyPath, serialized);
-    chmodSync(keyPath, 0o600);
+    // Atomic, and 0600 from the temp file's birth: a crash mid-write can never leave a short secret key
+    // under the real name, which the next start would load and fail on for good.
+    atomicWriteFileSync(keyPath, serialized, { mode: 0o600 });
     logger.info({ path: keyPath }, "dev-dashboard: generated Agent E2E keypair (0600)");
 
     return kp;

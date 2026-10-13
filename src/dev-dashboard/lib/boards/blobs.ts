@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const EXT_BY_MIME: Record<string, string> = {
     "image/png": "png",
@@ -51,8 +52,10 @@ export async function putBlob(data: Uint8Array, mime: string): Promise<string> {
         mkdirSync(dir, { recursive: true });
     }
     const path = join(dir, key);
+    // Atomic: the name is the content's hash, so a half-written file under it would pass for the blob
+    // forever, because this check never rewrites a name that exists.
     if (!existsSync(path)) {
-        await Bun.write(path, data);
+        atomicWriteFileSync(path, data);
     }
     return key;
 }

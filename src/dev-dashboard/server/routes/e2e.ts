@@ -1,4 +1,3 @@
-import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { verifyAndConsumePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
@@ -6,6 +5,7 @@ import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 // The managed-tier pairing store. Holds device PUBLIC keys ONLY (0600 file) — there is
 // nothing here the vendor relay could misuse even if it logged the pairing POST, because
@@ -30,8 +30,7 @@ export async function loadPeers(): Promise<Record<string, PeerRecord>> {
 async function addPeer(publicKeyB64: string): Promise<void> {
     const peers = await loadPeers();
     peers[publicKeyB64] = { publicKey: publicKeyB64, pairedAt: new Date().toISOString() };
-    await Bun.write(PEERS_PATH, SafeJSON.stringify(peers, null, 2));
-    chmodSync(PEERS_PATH, 0o600);
+    atomicWriteFileSync(PEERS_PATH, SafeJSON.stringify(peers, null, 2), { mode: 0o600 });
     logger.info(
         { path: PEERS_PATH, peers: Object.keys(peers).length },
         "dev-dashboard: paired E2E device (public key stored)"

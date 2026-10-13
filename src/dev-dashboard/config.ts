@@ -1,4 +1,4 @@
-import { chmod } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import {
     createBasicAuthCredentials,
     type DashboardAuthConfig,
@@ -6,6 +6,7 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
 import { z } from "zod";
@@ -89,22 +90,62 @@ export async function getConfig(): Promise<DevDashboardConfig> {
     }
 
     logger.warn(
-        { issues: parsed.error.issues },
-        "dev-dashboard config failed schema validation; falling back to defaults"
+        { issues: parsed.error.issues, path: getDevDashboardStorage().getConfigPath() },
+        "dev-dashboard config failed schema validation; serving defaults, and every save is refused until it is fixed"
     );
 
     const fallback = DevDashboardConfigSchema.parse({});
     return { ...fallback, obsidianVault: resolveDashboardVault(fallback.obsidianVault) ?? "" };
 }
 
+/**
+ * Every write of the config goes through here, and it refuses to replace a file that exists but does
+ * not parse or fails the schema. getConfig serves defaults for such a file, so each caller (auth
+ * provisioning, ttyd sessions, publishedNotes, allowedHosts) would otherwise save those defaults plus
+ * its one change over the user's auth hash and published notes.
+ */
 export async function saveConfig(config: DevDashboardConfig): Promise<void> {
     DevDashboardConfigSchema.parse(config);
     const storage = getDevDashboardStorage();
-    await storage.ensureDirs();
-    await storage.setConfig(config);
+    assertExistingConfigReplaceable(storage.getConfigPath());
+    // Atomic, and 0600 from the temp file's birth: the file holds the dashboard's password hash.
+    await storage.setConfig(config, { mode: process.platform === "win32" ? undefined : 0o600 });
+}
 
-    if (process.platform !== "win32") {
-        await chmod(storage.getConfigPath(), 0o600);
+function assertExistingConfigReplaceable(path: string): void {
+    let text: string;
+
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return;
+        }
+
+        throw err;
+    }
+
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(text);
+    } catch (err) {
+        logger.error({ err, path }, "dev-dashboard config does not parse; refusing to save over it");
+        throw new Error(`dev-dashboard config ${path} does not parse, so it was left untouched. Fix or move it.`, {
+            cause: err,
+        });
+    }
+
+    const parsed = DevDashboardConfigSchema.safeParse(raw);
+
+    if (!parsed.success) {
+        logger.error(
+            { issues: parsed.error.issues, path },
+            "dev-dashboard config fails schema validation; refusing to save over it"
+        );
+        throw new Error(
+            `dev-dashboard config ${path} fails schema validation, so it was left untouched. Fix or move it.`
+        );
     }
 }
 

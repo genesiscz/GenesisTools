@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { normalizeObsidianBaseName } from "@genesiscz/utils/obsidian/filename";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 function resolveUnderVault(vaultRoot: string, ...segments: string[]): string {
     const root = resolve(vaultRoot);
@@ -68,7 +69,7 @@ export async function saveToObsidianUnique(opts: {
         const existing = await readExistingMarkdown(path);
         const sep = existing && !existing.endsWith("\n") ? "\n\n" : existing ? "\n" : "";
 
-        await writeFile(path, existing + sep + opts.content);
+        atomicWriteFileSync(path, existing + sep + opts.content);
 
         return { path };
     }
