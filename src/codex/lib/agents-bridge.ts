@@ -4,12 +4,12 @@ import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { resolveMany, resolveOne } from "@app/agents/lib/resolve-token";
 import { OWNER_THREAD_META_KEY } from "@app/agents/lib/thread-owner";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RpcNotification } from "./app-server-client";
 import { type CodexControl, parseControlBody } from "./control";
-import { codexTurnOutcome } from "./terminal-outcome";
 
 const log = logger.child({ component: "codex:agents-bridge" });
 

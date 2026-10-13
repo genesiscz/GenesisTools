@@ -1,4 +1,4 @@
-import type { RpcNotification } from "./app-server-client";
+import type { RpcNotification } from "@genesiscz/utils/ai/openai/app-server-client";
 
 export type CodexTurnOutcome = "completed" | "failed" | "interrupted";
 

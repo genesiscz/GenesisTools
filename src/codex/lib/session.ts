@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
+import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
@@ -24,7 +25,6 @@ import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import { buildAgentInstructions } from "./seed-instructions";
 import type { CodexSessionMeta, CodexSessionStore } from "./store";
-import { codexTurnOutcome } from "./terminal-outcome";
 
 const log = logger.child({ component: "codex:session" });
 
