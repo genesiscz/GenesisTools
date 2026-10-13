@@ -2,7 +2,25 @@ import { GATEWAY_HEADER, REDACTED } from "./constants.ts";
 
 const HEADER_KEYS = new Set(["authorization", GATEWAY_HEADER.toLowerCase(), "x-api-key", "proxy-authorization"]);
 
-const SECRET_KEY = `(?:${[...HEADER_KEYS].map((key) => key.replace(/[-]/g, "\\-")).join("|")}|[A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?config)[A-Za-z0-9_-]*)`;
+const SECRET_NAME =
+    "[A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?config)[A-Za-z0-9_-]*";
+
+const SECRET_KEY = `(?:${[...HEADER_KEYS].map((key) => key.replace(/[-]/g, "\\-")).join("|")}|${SECRET_NAME})`;
+
+/**
+ * Secrets that ride in a server's `args` rather than under a secret-looking key: `--access-token=<value>`, a
+ * `"--access-token", "<value>"` pair, and a bare token whose prefix names its issuer. On 2026-10-13 a sync diff
+ * printed two Sentry tokens (`--access-token=sntryu_…`) and a Supabase token (`sbp_…`) in clear, and the logger
+ * copied them into the day log.
+ */
+const TOKEN_PREFIX =
+    "(?:sbp_|sntryu_|sntrys_|ghp_|gho_|ghu_|ghs_|github_pat_|glpat-|xai-|sk-ant-|sk-proj-|sk-|xox[abpr]-|AIza)";
+const SECRET_FLAG_WITH_VALUE = new RegExp(`(--?${SECRET_NAME}=)[^"'\\s,\\]]+`, "gi");
+const SECRET_FLAG_THEN_VALUE = new RegExp(`(["']--?${SECRET_NAME}["']\\s*,\\s*)(["'])[^"'\\n]*\\2`, "gi");
+const PREFIXED_TOKEN = new RegExp(`(["'])${TOKEN_PREFIX}[A-Za-z0-9_-]{8,}\\1`, "g");
+const SECRET_FLAG = new RegExp(`^--?${SECRET_NAME}$`, "i");
+const SECRET_FLAG_ASSIGNMENT = new RegExp(`^(--?${SECRET_NAME}=).+$`, "i");
+const BARE_PREFIXED_TOKEN = new RegExp(`^${TOKEN_PREFIX}[A-Za-z0-9_-]{8,}$`);
 
 /**
  * `"<key>": "<value>"` (JSON) or `<key> = "<value>"` / `<key> = '<value>'` (TOML) where the key is a
@@ -23,10 +41,37 @@ const SECRET_VALUE_IN_TEXT = new RegExp(
  * logger writes it to the day log too.
  */
 export function redactConfigText(text: string): string {
-    return text.replace(SECRET_VALUE_IN_TEXT, (match: string, prefix: string) => {
-        const value = match.slice(prefix.length);
-        const quote = value.startsWith('"""') || value.startsWith("'''") ? value.slice(0, 3) : value.slice(0, 1);
-        return `${prefix}${quote}${REDACTED}${quote}`;
+    return text
+        .replace(SECRET_VALUE_IN_TEXT, (match: string, prefix: string) => {
+            const value = match.slice(prefix.length);
+            const quote = value.startsWith('"""') || value.startsWith("'''") ? value.slice(0, 3) : value.slice(0, 1);
+            return `${prefix}${quote}${REDACTED}${quote}`;
+        })
+        .replace(SECRET_FLAG_WITH_VALUE, `$1${REDACTED}`)
+        .replace(SECRET_FLAG_THEN_VALUE, `$1$2${REDACTED}$2`)
+        .replace(PREFIXED_TOKEN, `$1${REDACTED}$1`);
+}
+
+/** One `args` list with its secrets hidden: a secret flag's value, inline or in the next element, and bare tokens. */
+function redactArgs(items: unknown[]): unknown[] {
+    return items.map((item, index) => {
+        if (typeof item !== "string") {
+            return item;
+        }
+
+        const previous = items[index - 1];
+
+        if (typeof previous === "string" && SECRET_FLAG.test(previous)) {
+            return REDACTED;
+        }
+
+        const assignment = item.match(SECRET_FLAG_ASSIGNMENT);
+
+        if (assignment) {
+            return `${assignment[1]}${REDACTED}`;
+        }
+
+        return BARE_PREFIXED_TOKEN.test(item) ? REDACTED : item;
     });
 }
 
@@ -84,7 +129,7 @@ export function safeTokenErrorCode(error: unknown, status: number): string {
 
 function walk(value: unknown, key: string | undefined): unknown {
     if (Array.isArray(value)) {
-        return value.map((item) => walk(item, key));
+        return redactArgs(value).map((item) => walk(item, key));
     }
 
     if (value && typeof value === "object") {

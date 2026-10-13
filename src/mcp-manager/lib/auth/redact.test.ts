@@ -38,6 +38,38 @@ describe("redactConfigText", () => {
     });
 });
 
+describe("redactConfigText and redactMcpValue: secrets inside args", () => {
+    // A sync diff printed two Sentry tokens and a Supabase token in clear on 2026-10-13: they sat in `args`.
+    const json = `{"args": ["-y", "--access-token=sntryu_invented0123456789", "--access-token", "sbp_invented0123456789abcd", "--port=3000", "--headless"]}`;
+    const toml = 'args = [ "--api-key=invented-key-value", "ghp_invented0123456789abcdef", "--verbose" ]';
+
+    test("the text form hides a flag's value, the value after a secret flag and a prefixed token; plain flags stay", () => {
+        const redactedJson = redactConfigText(json);
+        expect(redactedJson).not.toContain("sntryu_invented");
+        expect(redactedJson).not.toContain("sbp_invented");
+        expect(redactedJson).toContain('"--access-token=•••"');
+        expect(redactedJson).toContain('"--port=3000", "--headless"');
+
+        const redactedToml = redactConfigText(toml);
+        expect(redactedToml).not.toContain("invented-key-value");
+        expect(redactedToml).not.toContain("ghp_invented");
+        expect(redactedToml).toContain('"--verbose"');
+    });
+
+    test("the object form does the same for an args array", () => {
+        const args = [
+            "-y",
+            "--access-token=sntryu_invented0123456789",
+            "--access-token",
+            "sbp_invented0123456789abcd",
+            "--port=3000",
+        ];
+        expect(redactMcpValue({ args })).toEqual({
+            args: ["-y", "--access-token=•••", "--access-token", "•••", "--port=3000"],
+        });
+    });
+});
+
 describe("redactMcpValue", () => {
     test("redacts Authorization and the gateway header, leaves url", () => {
         const redacted = redactMcpValue({
