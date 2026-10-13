@@ -6,7 +6,10 @@
  * ARMS, interleaved per run:
  *   - `cli.fresh`: the whole command with `--fresh --no-cache-write`, as the daemon's per-minute refresh runs it
  *     when the hub server does not answer. CPU is the child's own rusage.
- *   - `cli.cached`: the whole command without `--fresh`, as a reader that hits the rows cache pays it.
+ *   - `cli.cached`: the whole command without `--fresh`, as a reader that hits the rows cache pays it. It runs under
+ *     a scratch `GENESIS_TOOLS_HOME` whose rows cache is written from the fresh arm's own answer just before, so it
+ *     never stamps the live cache the usage daemon keeps warm, and it cannot miss because the live one is stale. A
+ *     run that is not a cache hit stops the benchmark.
  *   - `discover-child.ts`: each provider's discovery in a fresh process, cold (first pass, what a CLI process
  *     pays) and warm (second pass, what the resident hub server pays with its folder-listing cache).
  *
@@ -18,29 +21,62 @@
  *   bun scripts/benchmarks/agent-sessions/session-listing.ts --compare
  *   bun scripts/benchmarks/agent-sessions/session-listing.ts --runs 7 --json
  */
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { finishBench, parseBenchArgs } from "../fs/shared";
 
 const BASELINE_NAME = "agent-sessions-listing";
 const REPO = join(import.meta.dir, "..", "..", "..");
 const LISTING = ["usage", "sessions", "--json", "--hours", "24", "--min", "10"];
+/** The query LISTING asks, as the rows cache keys it. */
+const QUERY = { hours: 24, minRows: 10 };
+const SCRATCH_HOME = mkdtempSync(join(tmpdir(), "gt-bench-listing-"));
+/** Where `sessionRowsCachePath()` points under `GENESIS_TOOLS_HOME=SCRATCH_HOME`. */
+const SCRATCH_CACHE = join(SCRATCH_HOME, ".genesis-tools", "ai", "usage-sessions.json");
 
-async function cliRun(extra: string[]): Promise<{ cpuMs: number; wallMs: number }> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+async function cliRun(
+    extra: string[],
+    home?: string
+): Promise<{ cpuMs: number; wallMs: number; answer: Record<string, unknown> }> {
     const started = performance.now();
     const proc = Bun.spawn(["bun", "run", join(REPO, "src/ai/index.ts"), ...LISTING, ...extra], {
         cwd: REPO,
-        stdout: "ignore",
+        env: home ? { ...env.getProcessEnv(), GENESIS_TOOLS_HOME: home } : env.getProcessEnv(),
+        stdout: "pipe",
         stderr: "ignore",
     });
-    const exitCode = await proc.exited;
+    const [text, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
     if (exitCode !== 0) {
         throw new Error(`usage sessions ${extra.join(" ")} exited ${exitCode}`);
     }
 
-    return { cpuMs: Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000, wallMs: performance.now() - started };
+    const answer: unknown = SafeJSON.parse(text, { strict: true });
+
+    if (!isRecord(answer) || !Array.isArray(answer.rows)) {
+        throw new Error(`usage sessions ${extra.join(" ")} printed no rows`);
+    }
+
+    return {
+        cpuMs: Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000,
+        wallMs: performance.now() - started,
+        answer,
+    };
+}
+
+/** The scratch rows cache, written in the format `writeSessionRowsCache` uses, fresh enough to be served. */
+async function seedScratchCache(rows: unknown): Promise<void> {
+    mkdirSync(dirname(SCRATCH_CACHE), { recursive: true });
+    const now = Date.now();
+    await Bun.write(SCRATCH_CACHE, SafeJSON.stringify({ query: QUERY, fetchedAt: now, lastRequestedAt: now, rows }));
 }
 
 async function discoverSample(): Promise<Record<string, number>> {
@@ -61,19 +97,31 @@ async function discoverSample(): Promise<Record<string, number>> {
 const args = parseBenchArgs(process.argv.slice(2));
 const runs: BaselineMetrics[] = [];
 
-for (let i = 0; i < args.warmup + args.runs; i++) {
-    const fresh = await cliRun(["--fresh", "--no-cache-write"]);
-    const cached = await cliRun([]);
-    const metrics: BaselineMetrics = {
-        "cli.fresh.cpuMs": fresh.cpuMs,
-        "cli.fresh.wallMs": fresh.wallMs,
-        "cli.cached.cpuMs": cached.cpuMs,
-        ...(await discoverSample()),
-    };
+try {
+    for (let i = 0; i < args.warmup + args.runs; i++) {
+        const fresh = await cliRun(["--fresh", "--no-cache-write"]);
+        await seedScratchCache(fresh.answer.rows);
+        const cached = await cliRun([], SCRATCH_HOME);
 
-    if (i >= args.warmup) {
-        runs.push(metrics);
+        if (cached.answer.cached !== true) {
+            throw new Error(
+                `the cached arm missed the scratch rows cache at ${SCRATCH_CACHE}; its numbers would be a fresh listing`
+            );
+        }
+
+        const metrics: BaselineMetrics = {
+            "cli.fresh.cpuMs": fresh.cpuMs,
+            "cli.fresh.wallMs": fresh.wallMs,
+            "cli.cached.cpuMs": cached.cpuMs,
+            ...(await discoverSample()),
+        };
+
+        if (i >= args.warmup) {
+            runs.push(metrics);
+        }
     }
+} finally {
+    rmSync(SCRATCH_HOME, { recursive: true, force: true });
 }
 
 await finishBench({
