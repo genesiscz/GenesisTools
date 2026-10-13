@@ -38,6 +38,7 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     tree: {
         name: "tree",
         description: "folders of source, node_modules, backups of transcripts: 32 MiB frames with long mode",
+        // Long mode at level 6 saved 88.9% against 84.4% without it on node_modules/typescript, at 160 MB/s.
         level: 6,
         long: true,
         frameBytes: 32 * MiB,
@@ -48,7 +49,8 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     binary: {
         name: "binary",
         description: "app bundles, executables, libraries, other binary formats",
-        level: 6,
+        // Level 6 saved 68.9% against 66.5% at level 3 on a 60 MB executable, at a third of the speed.
+        level: 3,
         long: true,
         frameBytes: 32 * MiB,
         lineAligned: false,
@@ -58,7 +60,8 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     database: {
         name: "database",
         description: "SQLite and other page-structured stores (copy the database closed or with .backup first)",
-        level: 6,
+        // Level 6 saved 86.2% against 83.5% at level 3 on a 22 MB SQLite file, at 2.6 times the CPU.
+        level: 3,
         long: false,
         frameBytes: 16 * MiB,
         lineAligned: false,

@@ -1,0 +1,20 @@
+{
+    "name": "compress-restore",
+    "capturedAt": "2026-10-13T20:12:54.871Z",
+    "commit": "e8e0eb2c1",
+    "loadAvg": [
+        9.0380859375,
+        25.53515625,
+        30.65625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "unpack.wallMs": 531.489292,
+        "unpack.cpuMs": 467.189,
+        "cp-copy.wallMs": 306.233708,
+        "cp-copy.cpuMs": 216.319,
+        "cp-clone.wallMs": 100.78320800000029,
+        "cp-clone.cpuMs": 94.095
+    },
+    "notes": "archive /Users/Martin/.genesis-tools/app/retired.noindex/1791816376076.zst; fresh processes, arms interleaved and reversed every other run | commit e8e0eb2c1 | uptime 22:12  up 1 day,  9:29, 10 users, load averages: 9.04 25.54 30.66"
+}
