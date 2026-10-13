@@ -90,7 +90,7 @@ So `text`, `binary` and `database` use level 3 (the next levels add 1 to 3 point
 uses level 6 with long mode (+4.5 points on `node_modules/typescript`, where files repeat), `max` is level 19 long
 for archives kept for long. On a 1 GB day log level 3 compressed x20.0 at 646 MB/s and level 9 x22.2 at 251 MB/s.
 
-**Media, measured by Martin on his own files** (zstd -19 --long=27 and --ultra -22 --long=31 nearly identical):
+**Media, measured on the owner's own photos, video and documents** (zstd -19 --long=27 and --ultra -22 --long=31 nearly identical):
 .mov 1.05%, .mp4 0.2-0.9% for camera and phone video (13.9% for CleanShot screen recordings, 35.5% for three
 screen-recording-like files), .png 0.0-5.4%, .heic 0.2-1.9%, .jpg 0.2-4.4%, .webp/.tgs/.pkpasses about 0%, .wav 7.2%,
 .m4a 4.9%, .mp3 1.0%, .pdf 19-29%, .docx 4-8%, .xlsx 13.8%; text .html 93.7%, .css 79%, .js 72%, .py 74%, .md 57%,

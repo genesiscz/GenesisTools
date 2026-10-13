@@ -108,7 +108,7 @@ export function isPresetName(value: string): value is PresetName {
 export const MIN_USEFUL_SAVING = 0.03;
 /**
  * `tools compress pack` refuses below this saving unless forced: a second copy that is barely smaller is not worth
- * the risk and the time (Martin's rule, 2026-10-13: compress only when it saves at least 30%).
+ * the risk and the time (the owner's rule, 2026-10-13: compress only when it saves at least 30%).
  */
 export const DEFAULT_MIN_SAVING = 0.3;
 /** The measured savings behind the media default, quoted in every refusal so the reader sees why. */
