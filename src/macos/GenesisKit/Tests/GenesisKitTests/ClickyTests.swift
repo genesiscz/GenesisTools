@@ -1959,6 +1959,45 @@ extension ClickyPackTests {
 }
 
 extension ClickyTests {
+    /// Clicky left on comes back on at the next launch, silently; turned off it stays off; a shutdown is not "off".
+    @MainActor
+    func testClickyLeftOnComesBackOnAfterARelaunch() {
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        model.activate()
+        XCTAssertTrue(model.enabled)
+        model.shutdown()
+        XCTAssertTrue(defaults.bool(forKey: ClickyModel.enabledKey), "a shutdown keeps the user's choice")
+
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
+        func relaunch() -> ClickyModel {
+            ClickyModel(
+                defaults: defaults, appearance: appearance, inputMonitor: monitor, observeSystemEvents: false,
+                presentPermission: { _ in monitor.permissionDialogs += 1 })
+        }
+        let again = relaunch()
+        again.restoreEnabled()
+        XCTAssertTrue(again.enabled, "left on, it comes back on")
+        again.deactivate()
+        again.shutdown()
+
+        let off = relaunch()
+        off.restoreEnabled()
+        XCTAssertFalse(off.enabled, "turned off, it stays off")
+        off.shutdown()
+
+        defaults.set(true, forKey: ClickyModel.enabledKey)
+        monitor.granted = false
+        let denied = relaunch()
+        denied.restoreEnabled()
+        XCTAssertFalse(denied.enabled)
+        XCTAssertEqual(monitor.permissionDialogs, 0, "a launch never asks for the permission")
+        XCTAssertEqual(denied.status, "Input Monitoring permission needed")
+        denied.shutdown()
+    }
+
     @MainActor
     func testIntegrationLegacyPreferencesRestoreEveryExistingFieldWithoutExternalSelection() throws {
         var original = ClickyPreferences()

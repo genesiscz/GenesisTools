@@ -154,7 +154,23 @@ public final class ClickyModel: ObservableObject {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
     }
 
+    /// Whether the user last turned Clicky on. Every rebuild of GenesisTools closes the Clicky face and opens it again,
+    /// and Clicky came back off each time (Martin, 2026-10-13: "i heard the clicking sounds and now i dont").
+    static let enabledKey = "clicky.enabled.v1"
+
+    /// The user turns Clicky on: remembered for the next launch.
     public func activate() {
+        activate(restoring: false)
+    }
+
+    /// On launch: turns Clicky back on when the user left it on. Silent: no notification, and no permission dialog
+    /// when Input Monitoring is missing (the status says so instead).
+    public func restoreEnabled() {
+        guard !previewOnly, defaults.bool(forKey: Self.enabledKey) else { return }
+        activate(restoring: true)
+    }
+
+    private func activate(restoring: Bool) {
         guard !previewOnly else {
             error = "Live input is disabled during snapshot capture. Sound previews still work."
             return
@@ -163,12 +179,12 @@ public final class ClickyModel: ObservableObject {
         error = nil
         // The permission dialog asks macOS and opens System Settings, so no second prompt comes from here.
         guard inputMonitor.hasPermission else {
-            permissionNeeded()
+            restoring ? restoreNeedsPermission() : permissionNeeded()
             return
         }
         switch inputMonitor.start(handler: { [weak self] type, event in self?.receive(type: type, event: event) }) {
         case .permissionRequired:
-            permissionNeeded()
+            restoring ? restoreNeedsPermission() : permissionNeeded()
             return
         case .unavailable:
             status = "Input Monitoring could not start"
@@ -180,14 +196,21 @@ public final class ClickyModel: ObservableObject {
         }
         if audio == nil { audio = ClickyAudio() }
         enabled = true
+        if !restoring { defaults.set(true, forKey: Self.enabledKey) }
         if preferences.collectStats && statisticsLoadError == nil {
             statistics.sessions += 1
             analytics.flush(statistics)
             pendingStats = true
         }
         refreshContext()
-        notify("Clicky enabled", body: "Your selected switch is \(selectedSoundName).")
-        log.notice("Input feedback activated; no input content is retained")
+        if !restoring { notify("Clicky enabled", body: "Your selected switch is \(selectedSoundName).") }
+        log.notice("Input feedback activated\(restoring ? " (restored at launch)" : ""); no input content is retained")
+    }
+
+    private func restoreNeedsPermission() {
+        status = "Input Monitoring permission needed"
+        stateDidChange?()
+        log.notice("Clicky was on, but Input Monitoring is not granted; it stays off until the user enables it")
     }
 
     private func permissionNeeded() {
@@ -209,7 +232,14 @@ public final class ClickyModel: ObservableObject {
             onGranted: retry)
     }
 
+    /// The user turns Clicky off: remembered for the next launch.
     public func deactivate() {
+        deactivate(remember: true)
+    }
+
+    /// `remember: false` for a shutdown: the app quitting is not the user turning Clicky off.
+    public func deactivate(remember: Bool) {
+        if remember && !previewOnly { defaults.set(false, forKey: Self.enabledKey) }
         previewGeneration &+= 1
         inputMonitor.stop()
         inputState.clear()
@@ -223,7 +253,7 @@ public final class ClickyModel: ObservableObject {
 
     public func shutdown() {
         soundLibrary.stop()
-        deactivate()
+        deactivate(remember: false)
         boundaryTimer?.invalidate()
         persistenceWork?.cancel()
         for observer in observers {
@@ -473,7 +503,8 @@ public final class ClickyModel: ObservableObject {
             return
         }
         if type == .tapDisabledByUserInput {
-            deactivate()
+            // macOS paused the tap, the user did not turn Clicky off: the next launch turns it back on.
+            deactivate(remember: false)
             error = "macOS paused input monitoring. Click Enable Clicky to restart it."
             return
         }

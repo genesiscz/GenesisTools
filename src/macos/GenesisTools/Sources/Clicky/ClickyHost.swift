@@ -25,6 +25,7 @@ final class ClickyHost: NSObject {
             self.item?.button?.toolTip = "Clicky · \(self.model.status)"
             self.item?.button?.appearsDisabled = !self.model.enabled
         }
+        model.restoreEnabled()
     }
 
     @discardableResult
@@ -86,7 +87,7 @@ final class ClickyHost: NSObject {
         popover?.close()
         popover = nil
         settings.close()
-        model.deactivate()
+        model.deactivate(remember: false)
         model.stateDidChange = nil
         if let item { NSStatusBar.system.removeStatusItem(item) }
         item = nil
