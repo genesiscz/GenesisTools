@@ -1,3 +1,4 @@
+import { relative } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
@@ -18,7 +19,7 @@ import type {
 } from "./_generated/protocol";
 import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
-import { isOwnBusCommand } from "./bus-approval";
+import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import { buildAgentInstructions } from "./seed-instructions";
@@ -109,6 +110,8 @@ export class CodexSessionRuntime {
     private chosenProject?: CodexProject;
     private filingAttempts = 0;
     private readonly reviewThreadIds = new Set<string>();
+    /** Paths of the file-change items in flight, by item id: their approval request carries only the id. */
+    private readonly fileChangePaths = new Map<string, string[]>();
 
     constructor(options: RuntimeOptions) {
         this.account = options.account;
@@ -205,6 +208,7 @@ export class CodexSessionRuntime {
         }
 
         await this.fileUnderProject(notification);
+        this.trackFileChange(notification);
 
         if (notification.method === "turn/started") {
             await this.updateMeta({
@@ -292,13 +296,23 @@ export class CodexSessionRuntime {
             return approvalResponse(request.method, true);
         }
 
+        if (this.isReadOnlyRequest(request)) {
+            this.store.appendEvent(this.meta.name, {
+                source: "daemon",
+                method: "approval/auto-accepted",
+                params: { reason: "a read-only command", detail: approvalDetail(request.params) },
+            });
+            return approvalResponse(request.method, true);
+        }
+
         const requestId = String(request.id);
+        const detail = this.describeApproval(request);
         const pendingApprovals = {
             ...this.meta.pendingApprovals,
             [requestId]: {
                 rpcId: request.id,
                 method: request.method,
-                detail: approvalDetail(request.params),
+                detail,
                 requestedAt: new Date().toISOString(),
             },
         };
@@ -312,7 +326,7 @@ export class CodexSessionRuntime {
             op: "approval_request",
             requestId,
             method: request.method,
-            detail: approvalDetail(request.params),
+            detail,
         });
         return response;
     }
@@ -356,6 +370,55 @@ export class CodexSessionRuntime {
             this.isOwnThreadEvent(request) &&
             isOwnBusCommand(command, { agentName: this.meta.agentName, session: this.meta.rendezvousSession })
         );
+    }
+
+    /** A command approval, from this worker's own thread, for a command that only reads (`isReadOnlyCommand`). */
+    private isReadOnlyRequest(request: RpcServerRequest): boolean {
+        const command = isRecord(request.params) ? request.params.command : undefined;
+
+        return (
+            request.method === "item/commandExecution/requestApproval" &&
+            typeof command === "string" &&
+            this.isOwnThreadEvent(request) &&
+            isReadOnlyCommand(command)
+        );
+    }
+
+    /** Keeps a file-change item's paths from its start to its end, for the approval asked in between. */
+    private trackFileChange(notification: RpcNotification): void {
+        const item = isRecord(notification.params) ? notification.params.item : undefined;
+
+        if (!isRecord(item) || item.type !== "fileChange" || typeof item.id !== "string") {
+            return;
+        }
+
+        if (notification.method === "item/completed") {
+            this.fileChangePaths.delete(item.id);
+            return;
+        }
+
+        if (notification.method === "item/started" && Array.isArray(item.changes)) {
+            const paths = item.changes.flatMap((change) =>
+                isRecord(change) && typeof change.path === "string"
+                    ? [relative(this.meta.cwd, change.path) || change.path]
+                    : []
+            );
+            this.fileChangePaths.set(item.id, paths);
+        }
+    }
+
+    /** What the lead reads for an approval: a file change names the files it writes, not its item id. */
+    private describeApproval(request: RpcServerRequest): string {
+        const params = isRecord(request.params) ? request.params : {};
+        const paths = typeof params.itemId === "string" ? this.fileChangePaths.get(params.itemId) : undefined;
+
+        if (request.method === "item/fileChange/requestApproval" && paths && paths.length > 0) {
+            const reason = typeof params.reason === "string" && params.reason ? ` (${params.reason})` : "";
+
+            return `edit ${paths.join(", ")}${reason}`;
+        }
+
+        return approvalDetail(request.params);
     }
 
     /** False for a notification from another thread in this app-server: a native subagent's. */

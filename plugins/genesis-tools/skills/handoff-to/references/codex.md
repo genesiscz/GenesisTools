@@ -49,7 +49,7 @@ Write policy — the only real safety dial:
 | `--write` | sandbox | approvals | use for |
 |---|---|---|---|
 | omitted / `deny` | read-only | none possible | INLINE-only review. No file to write. |
-| `ask` | workspace-write | untrusted → forwarded to `lead` | **default for implementation** |
+| `ask` | workspace-write | untrusted → forwarded to `lead`; the daemon accepts read-only commands itself | **default for implementation** |
 | `allow` | workspace-write | never prompts | tightly bounded folder: vault note, disposable worktree |
 
 ### 🛑 File deliverables: never `--write deny`
@@ -150,7 +150,7 @@ Repeat the negative constraints in every steering message — the correction is 
 
 ## 4. Approvals
 
-With `--write ask`, out-of-policy commands and file changes pause and arrive on the bus as `approval_request` messages to `lead`. The worker's own seeded `tools agents` commands (its identity, its `--session`, its root thread, no shell operators or expansions) are accepted by the daemon itself and never reach you:
+With `--write ask`, out-of-policy commands and file changes pause and arrive on the bus as `approval_request` messages to `lead`. The worker's own seeded `tools agents` commands (its identity, its `--session`, its root thread, no shell operators or expansions) and plainly read-only commands (`cat`, `sed -n '<a>,<b>p'`, `rg`, read-only `git`, …; `src/codex/README.md` lists them) are accepted by the daemon itself and never reach you. A file-change request names its files (`edit src/a.ts, README.md`). Answer what still reaches you:
 
 ```bash
 tools codex approve --name <task> --request <id>

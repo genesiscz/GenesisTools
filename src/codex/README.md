@@ -280,6 +280,14 @@ The one exception the daemon accepts itself is the worker's own seeded bus comma
 redirection or expansion), recorded in the event log as `approval/auto-accepted`. Without it every `ask` worker's
 first action, its "received; starting" report, waited for the lead.
 
+The daemon also accepts a command that only reads (`isReadOnlyCommand` in `lib/bus-approval.ts`): every segment of
+the script is `cat`, `head`, `tail`, `wc`, `nl`, `ls`, `pwd`, `stat`, `cd`, `grep`, `rg` (not `--pre`), `find`
+(not `-exec` or `-delete`), `sed -n '<a>,<b>p'`, or a read-only `git` subcommand (no `-c`, no `--output`), with no
+redirection, expansion or background job. Codex's own read-only set does not parse a `zsh -lc` script, so before
+this an `ask` worker sent every `cat` and `sed -n` to the lead (44 approvals in one 9-minute turn, 2026-10-14). A
+file-change approval names the files it writes (`edit src/a.ts, README.md`); the request itself carries only an
+item id.
+
 The driver joins the parent Claude Code swarm through `tools agents`. Use `--no-agents` to disable that integration,
 or `--session <id>` when the parent session cannot be discovered from `CLAUDE_CODE_SESSION_ID`.
 

@@ -8,7 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ThreadTurnsListParams, Turn } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
-import { isOwnBusCommand } from "./bus-approval";
+import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import type { RpcClient } from "./session";
 import { CodexSessionRuntime } from "./session";
 import { type CodexSessionMeta, CodexSessionStore } from "./store";
@@ -838,6 +838,101 @@ describe("an ask worker's own bus commands", () => {
             await runtime.execute({ op: "deny", requestId: "3" });
             await expect(fromSubagent).resolves.toEqual({ decision: "decline" });
             await expect(other).resolves.toEqual({ decision: "decline" });
+        });
+    });
+});
+describe("an ask worker's read-only commands", () => {
+    const zsh = (script: string) => `/bin/zsh -lc '${script}'`;
+
+    test("reads, searches and read-only git need no approval, as Codex's own safe set intends", () => {
+        for (const command of [
+            zsh("cat CLAUDE.md"),
+            zsh("sed -n '\"'\"'140,410p'\"'\"' src/a.ts"),
+            zsh("nl -ba src/a.ts | head -430\nnl -ba README.md | head -75"),
+            `/bin/zsh -lc "rg -n 'background|openBackground' src/a.test.ts | head -40"`,
+            zsh("git diff --stat\ngit diff --cached --name-only\ngit branch --show-current"),
+            zsh("git show origin/feature:src/a.ts | sed -n 315,380p"),
+            zsh("cd src && ls -la && wc -l a.ts"),
+            zsh("find src -name '\"'\"'*.ts'\"'\"' -newer a.ts"),
+        ]) {
+            expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: true });
+        }
+    });
+
+    test("a write, a program run, a redirection, an expansion or a background job still asks the lead", () => {
+        for (const command of [
+            zsh("cat a.ts > b.ts"),
+            zsh("sed -i '\"'\"''\"'\"' s/a/b/ a.ts"),
+            zsh("sed -n '\"'\"'w out'\"'\"' a.ts"),
+            zsh("sed -n 1,5p -i a.ts"),
+            zsh("rg --pre ./run.sh x src"),
+            zsh("git -c core.pager=./run.sh log"),
+            zsh("git diff --output=patch.diff"),
+            zsh("git branch new-branch"),
+            zsh("git commit -m x"),
+            zsh("find . -name x -delete"),
+            zsh("find . -exec rm {} ;"),
+            zsh("cat a.ts\nrm -rf src"),
+            zsh("cat a.ts & touch x"),
+            `/bin/zsh -lc "cat $(echo a.ts)"`,
+            zsh("cat `echo a.ts`"),
+            zsh("bun scripts/test.ts"),
+            zsh("FOO=1 cat a.ts"),
+            zsh("cat 'unclosed"),
+            "",
+        ]) {
+            expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: false });
+        }
+    });
+
+    test("the runtime accepts a read-only command itself and names the files of a file change it forwards", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-read-only-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), writePolicy: "ask" as const, approvalPolicy: "untrusted" as const };
+            store.writeMeta(meta);
+            const notices: Array<{ detail?: string }> = [];
+            const runtime = new CodexSessionRuntime({
+                client: new FakeRpcClient(),
+                store,
+                meta,
+                onApprovalRequest: (notice) => {
+                    notices.push(notice);
+                },
+            });
+            await runtime.start({});
+
+            await expect(
+                runtime.handleServerRequest({
+                    id: 1,
+                    method: "item/commandExecution/requestApproval",
+                    params: { threadId: "thread-1", command: zsh("cat CLAUDE.md") },
+                })
+            ).resolves.toEqual({ decision: "accept" });
+            expect(notices).toEqual([]);
+
+            await runtime.handleNotification({
+                method: "item/started",
+                params: {
+                    threadId: "thread-1",
+                    item: {
+                        type: "fileChange",
+                        id: "exec-1",
+                        changes: [{ path: join(meta.cwd, "src", "a.ts") }, { path: join(meta.cwd, "README.md") }],
+                    },
+                },
+            });
+            const edit = runtime.handleServerRequest({
+                id: 2,
+                method: "item/fileChange/requestApproval",
+                params: { threadId: "thread-1", itemId: "exec-1" },
+            });
+            await Bun.sleep(0);
+
+            expect(notices.map((notice) => notice.detail)).toEqual([`edit ${join("src", "a.ts")}, README.md`]);
+            await runtime.execute({ op: "approve", requestId: "2" });
+            await expect(edit).resolves.toEqual({ decision: "accept" });
         });
     });
 });

@@ -147,3 +147,154 @@ export function isOwnBusCommand(command: string, bus: { agentName: string; sessi
 
     return values.get(IDENTITY_FLAG[verb]) === bus.agentName && values.get("--session") === bus.session;
 }
+/**
+ * The segments of a shell script, split at a newline, `;`, `|`, `||` and `&&` outside quotes, or null when it
+ * runs anything in the background (`&`) or leaves a quote open. Each segment still goes through
+ * {@link strictShellWords}, which refuses redirections and expansions.
+ */
+function scriptSegments(script: string): string[] | null {
+    const segments: string[] = [];
+    let current = "";
+    let quote: string | null = null;
+
+    for (let index = 0; index < script.length; index += 1) {
+        const char = script[index];
+
+        if (quote) {
+            current += char;
+
+            if (char === quote) {
+                quote = null;
+            }
+
+            continue;
+        }
+
+        if (char === "'" || char === '"') {
+            quote = char;
+            current += char;
+            continue;
+        }
+
+        const pair = script.slice(index, index + 2);
+
+        if (pair === "&&" || pair === "||") {
+            segments.push(current);
+            current = "";
+            index += 1;
+            continue;
+        }
+
+        if (char === "&") {
+            return null;
+        }
+
+        if (char === "\n" || char === ";" || char === "|") {
+            segments.push(current);
+            current = "";
+            continue;
+        }
+
+        current += char;
+    }
+
+    if (quote) {
+        return null;
+    }
+
+    segments.push(current);
+
+    return segments.map((segment) => segment.trim()).filter(Boolean);
+}
+
+/** `sed -n` with one line-range print script (`sed -n '120,180p' file`): nothing else that sed can write with. */
+function readOnlySed(args: string[]): boolean {
+    const [flag, script, ...files] = args;
+
+    return (
+        flag === "-n" && /^(\d+|\$)(,(\d+|\$))?p$/.test(script ?? "") && files.every((file) => !file.startsWith("-"))
+    );
+}
+
+const READ_ONLY_GIT = new Set([
+    "status",
+    "diff",
+    "log",
+    "show",
+    "blame",
+    "rev-parse",
+    "ls-files",
+    "grep",
+    "describe",
+    "merge-base",
+    "rev-list",
+    "cat-file",
+    "shortlog",
+]);
+const READ_ONLY_GIT_BRANCH_FLAGS = new Set(["--show-current", "--list", "-a", "-r", "-v", "-vv"]);
+
+/** A git subcommand that only reads, with no `-c` (a config value can name a program) and no `--output=<file>`. */
+function readOnlyGit(args: string[]): boolean {
+    let index = 0;
+
+    while (args[index] === "-C" || args[index] === "--no-pager") {
+        index += args[index] === "-C" ? 2 : 1;
+    }
+
+    const [subcommand, ...rest] = args.slice(index);
+
+    if (!subcommand || rest.some((arg) => arg.startsWith("--output"))) {
+        return false;
+    }
+
+    if (subcommand === "branch") {
+        return rest.every((arg) => READ_ONLY_GIT_BRANCH_FLAGS.has(arg));
+    }
+
+    return READ_ONLY_GIT.has(subcommand);
+}
+
+/** Commands that only read, each with the arguments that would make it write or run another program. */
+const READ_ONLY_COMMANDS: Record<string, (args: string[]) => boolean> = {
+    cat: () => true,
+    head: () => true,
+    tail: () => true,
+    wc: () => true,
+    nl: () => true,
+    ls: () => true,
+    pwd: () => true,
+    stat: () => true,
+    cd: () => true,
+    grep: () => true,
+    // `--pre` runs a program on every file it searches.
+    rg: (args) => !args.some((arg) => arg.startsWith("--pre")),
+    find: (args) => !args.some((arg) => /^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$/.test(arg)),
+    sed: readOnlySed,
+    git: readOnlyGit,
+};
+
+/**
+ * True when `command` (usually `/bin/zsh -lc '<script>'`) only reads: every segment of the script is a command from
+ * {@link READ_ONLY_COMMANDS} with plain words, no redirection, expansion or background job. Codex's own read-only set
+ * does not recognise a zsh-wrapped script, so `untrusted` sent every `cat` and `sed -n` to the lead (44 approvals in
+ * one 9-minute turn on 2026-10-14).
+ */
+export function isReadOnlyCommand(command: string): boolean {
+    const outer = strictShellWords(command);
+    const script =
+        outer?.length === 3 && SHELL_WRAPPER.test(outer[0]) && (outer[1] === "-lc" || outer[1] === "-c")
+            ? outer[2]
+            : command;
+    const segments = scriptSegments(script);
+
+    if (!segments || segments.length === 0) {
+        return false;
+    }
+
+    return segments.every((segment) => {
+        const words = strictShellWords(segment);
+        const check = words?.[0] === undefined ? undefined : READ_ONLY_COMMANDS[words[0]];
+
+        return check !== undefined && words !== null && check(words.slice(1));
+    });
+}
