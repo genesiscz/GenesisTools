@@ -104,6 +104,22 @@ describe("decide", () => {
         expect(decision.add).toEqual([".claude/rules/ai.md"]);
     });
 
+    it("resolves an import name from the project root when the session runs in a subfolder", () => {
+        const decision = decide({
+            payload: {
+                cwd: join(root, "src", "du"),
+                tool_name: "Bash",
+                tool_input: { command: "rg -n bind ." },
+                tool_response: { stdout: 'store.ts:3:import { bind } from "@lib/ai/providers/bind";' },
+            },
+            root,
+            rules,
+            seen: [],
+            aliases: tsconfigAliases(root),
+        });
+        expect(decision.add).toEqual([".claude/rules/ai.md"]);
+    });
+
     it("adds nothing for paths outside the project or without an area", () => {
         const decision = decide({
             payload: {

@@ -163,11 +163,14 @@ export function tsconfigAliases(root: string): PathAlias[] {
     return aliases.sort((a, b) => b.from.length - a.from.length);
 }
 
-/** Tokens with a known import prefix rewritten to the folder it stands for; other tokens unchanged. */
-export function unalias(tokens: string[], aliases: PathAlias[]): string[] {
+/**
+ * Tokens with a known import prefix rewritten to the absolute folder it stands for; other tokens unchanged. The
+ * folder is resolved from the project root, because an import name means the same folder from any cwd.
+ */
+export function unalias(tokens: string[], options: { aliases: PathAlias[]; root: string }): string[] {
     return tokens.map((token) => {
-        const alias = aliases.find((candidate) => token.startsWith(candidate.from));
-        return alias ? `${alias.to}${token.slice(alias.from.length)}` : token;
+        const alias = options.aliases.find((candidate) => token.startsWith(candidate.from));
+        return alias ? join(options.root, `${alias.to}${token.slice(alias.from.length)}`) : token;
     });
 }
 
@@ -284,7 +287,7 @@ export function decide(input: {
     }
 
     const namedAreas = areasOf(named, false);
-    const found = projectPaths(unalias(pathTokens(textOf(payload.tool_response)), aliases), { root, cwd });
+    const found = projectPaths(unalias(pathTokens(textOf(payload.tool_response)), { aliases, root }), { root, cwd });
     const foundAreas = areasOf(found, false);
     const wanted = foundAreas.length <= BROAD_SEARCH_AREAS ? [...namedAreas, ...foundAreas] : namedAreas;
     return { add: [...new Set(wanted)].filter((area) => !seen.includes(area)), native: [] };
