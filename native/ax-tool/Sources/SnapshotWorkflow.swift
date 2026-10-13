@@ -456,39 +456,54 @@ private func workflowAwaitOpenedMenu(window: ObservedWindow, pid: pid_t, owner: 
     return ["menuOpened": second.ours, "menuPressRetried": true]
 }
 
-/// A contextual menu is not guaranteed to live under the window: Accessibility may expose it as a
-/// direct child of the APPLICATION. Reading the window alone then saw "nothing open", and a retry
-/// pressed again and closed the menu the first press had opened. An application that cannot be read
-/// counts as "a menu may be open", for the same reason an unreadable window tree does.
-private func applicationShowsMenu(pid: pid_t) -> Bool {
+/// Whether an AXMenu is among the APPLICATION's own children, or nil when the application cannot be
+/// read. A contextual menu is not guaranteed to live under the window: Accessibility may expose it
+/// there instead, and reading the window alone saw "nothing open", so a retry pressed again and closed
+/// the menu the first press had opened. `timeout` bounds the read for an app that hangs.
+private func applicationMenuState(pid: pid_t, timeout: TimeInterval? = nil) -> Bool? {
+    let app = AXUIElementCreateApplication(pid)
+    if let timeout {
+        AXUIElementSetMessagingTimeout(app, Float(max(0.05, timeout)))
+    }
     var raw: CFTypeRef?
-    let read = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXChildrenAttribute as CFString, &raw)
-    guard read == .success, let children = raw as? [AXUIElement] else { return true }
+    let read = AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &raw)
+    guard read == .success, let children = raw as? [AXUIElement] else { return nil }
 
     return children.contains { axStringAttribute($0, "AXRole") == "AXMenu" }
 }
 
+/// Before a press is retried, an application that cannot be read counts as "a menu may be open", for
+/// the same reason an unreadable window tree does: pressing again could close it.
+private func applicationShowsMenu(pid: pid_t) -> Bool {
+    applicationMenuState(pid: pid) ?? true
+}
+
 /// Whether a context menu shows after AXShowMenu: at application level, where AppKit puts one, or in
 /// the window. Never retried: a second AXShowMenu is not a way to learn whether the first one worked,
-/// and the AX call itself cannot say, since it returns only when the menu closes.
+/// and the AX call itself cannot say, since it returns only when the menu closes. Only a menu seen
+/// counts: an application that cannot be read proves nothing here. The wait has its own phase
+/// deadline, so one slow tree read cannot outlast it, and the caller's deadline comes back after.
 private func workflowContextMenuAppears(window: ObservedWindow, pid: pid_t, depth: Int, scope: String,
                                         within seconds: TimeInterval) -> Bool {
-    let deadline = Date().addingTimeInterval(seconds)
-    while true {
-        if applicationShowsMenu(pid: pid) {
+    let deadline = ProcessInfo.processInfo.systemUptime + seconds
+    let callerPhase = workflowPhaseDeadline
+    workflowPhaseDeadline = min(callerPhase ?? deadline, deadline)
+    defer { workflowPhaseDeadline = callerPhase }
+    func left() -> TimeInterval { deadline - ProcessInfo.processInfo.systemUptime }
+
+    while left() > 0 {
+        if applicationMenuState(pid: pid, timeout: min(left(), 0.5)) == true {
             return true
         }
 
-        if let tree = try? observedTree(window.ax, depth: depth, scope: scope), treeCarriesOpenMenu(tree.rows) {
+        if left() > 0, let tree = try? observedTree(window.ax, depth: depth, scope: scope), treeCarriesOpenMenu(tree.rows) {
             return true
         }
 
-        guard Date() < deadline else {
-            return false
-        }
-
-        Thread.sleep(forTimeInterval: 0.1)
+        Thread.sleep(forTimeInterval: min(0.1, max(0, left())))
     }
+
+    return false
 }
 
 /// What `--refresh` is waiting for, when the action it follows is known to start something.
@@ -1876,11 +1891,11 @@ func cmdAct(appName _: String) {
         // 3 seconds, not the ordinary 1: a menu that has to be built costs more than a label that
         // has to change, and waiting is cheap next to returning a tree the menu is missing from.
         // A right-click's context menu usually lives at application level, outside the window tree the
-        // refresh reads, so for it a menu there counts as arrived too.
+        // refresh reads, so for it a menu seen there counts as arrived too (an unreadable app does not).
         let contextMenu = contextMenuSeen
         let awaiting = opensMenu || contextMenu
             ? SettleExpectation(name: "the opened menu", timeout: 3, holds: {
-                treeCarriesOpenMenu($0) || (contextMenu && applicationShowsMenu(pid: pid))
+                treeCarriesOpenMenu($0) || (contextMenu && applicationMenuState(pid: pid, timeout: 0.5) == true)
             })
             : nil
         // The refresh is a courtesy after a dispatched action, so it gets a phase budget of its own:
