@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Executor } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import pc from "picocolors";
 import { porcelain } from "./porcelain";
 
@@ -214,18 +215,20 @@ export async function getCurrentBranch(cwd?: string): Promise<string | null> {
  * 1. If `.gitignore` contains `.claude/worktrees` → use `<repoRoot>/.claude/worktrees/`
  * 2. If `.gitignore` contains `.worktrees/` → use `<repoRoot>/.worktrees/`
  * 3. Otherwise: use `.claude/worktrees/` and append the pattern to `.gitignore`
+ *
+ * Only a missing `.gitignore` reads as empty. Any other read error throws: appending the pattern to
+ * content that was never read would replace the user's whole `.gitignore` with one line.
  */
 export async function resolveWorktreeBasePath(repoRoot: string): Promise<string> {
     const gitignorePath = join(repoRoot, ".gitignore");
-
     let gitignoreContent = "";
+
     try {
-        const file = Bun.file(gitignorePath);
-        if (await file.exists()) {
-            gitignoreContent = await file.text();
+        gitignoreContent = readFileSync(gitignorePath, "utf8");
+    } catch (err) {
+        if (!isMissingFileError(err)) {
+            throw new Error(`Cannot read ${gitignorePath}; it was left untouched`, { cause: err });
         }
-    } catch {
-        // No .gitignore — that's fine
     }
 
     const lines = gitignoreContent.split("\n").map((l) => l.trim());
@@ -246,7 +249,7 @@ export async function resolveWorktreeBasePath(repoRoot: string): Promise<string>
         const newContent = gitignoreContent.endsWith("\n")
             ? `${gitignoreContent}${entry}\n`
             : `${gitignoreContent}\n${entry}\n`;
-        await Bun.write(gitignorePath, newContent);
+        atomicWriteFileSync(gitignorePath, newContent);
     }
 
     return basePath;

@@ -108,6 +108,32 @@ describe("loadRepoConfig lookup order", () => {
         expect(readFileSync(path, "utf8").endsWith("}\n")).toBe(true);
         expect(parseRepoConfig(readFileSync(path, "utf8"), path).config).toEqual(SAMPLE);
     });
+
+    it("refuses to write over a local file that does not parse, and leaves its bytes alone", async () => {
+        const r = await repo();
+        const path = join(r.dir, ".git", REPO_CONFIG_FILENAME);
+        const truncated = '{\n    "git": {\n        "mainPrBranch": "develop",\n        "branches": [\n';
+        writeFileSync(path, truncated);
+        const loaded = await loadRepoConfig(r.dir);
+        expect(loaded.config).toEqual({});
+
+        await expect(writeLocalRepoConfig(r.dir, { ...loaded.config, other: { keep: 1 } })).rejects.toThrow(path);
+        expect(readFileSync(path, "utf8")).toBe(truncated);
+
+        writeFileSync(path, "[1, 2]\n");
+        await expect(writeLocalRepoConfig(r.dir, SAMPLE)).rejects.toThrow(/not a JSON object/);
+        expect(readFileSync(path, "utf8")).toBe("[1, 2]\n");
+    });
+
+    it("replaces a local file that parses, even one with validation problems", async () => {
+        const r = await repo();
+        const path = join(r.dir, ".git", REPO_CONFIG_FILENAME);
+        writeFileSync(path, '{ "git": { "mainPrBranch": "" } }\n');
+        expect((await loadRepoConfig(r.dir)).problems.length).toBe(1);
+
+        await writeLocalRepoConfig(r.dir, SAMPLE);
+        expect(parseRepoConfig(readFileSync(path, "utf8"), path).config).toEqual(SAMPLE);
+    });
 });
 
 describe("validateRepoConfig", () => {

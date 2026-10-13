@@ -134,6 +134,22 @@ describe("tools git worktree config, the guided edit", () => {
         expect(readFileSync(localPath, "utf8")).toBe(before);
     });
 
+    test("a local file that does not parse is refused before the first question, and keeps its bytes", async () => {
+        const truncated = '{ "git": { "worktrees": { "base": ".worktrees", "install": "npm';
+        writeFileSync(localPath, truncated);
+        // The answers a full run from the defaults would take, so a wizard that does not refuse writes them.
+        answers.push(".worktrees", "pnpm i", true, true);
+
+        try {
+            expect(await runConfig({ cwd: repo.dir })).toBe(1);
+
+            expect(readFileSync(localPath, "utf8")).toBe(truncated);
+            expect(asked).toEqual([]);
+        } finally {
+            unlinkSync(localPath);
+        }
+    });
+
     test("a versioned policy is refused, because the local write would be shadowed and look successful", async () => {
         await seed({ git: { worktrees: { base: ".worktrees", install: "npm i", plansSync: true } } });
         const before = readFileSync(localPath, "utf8");

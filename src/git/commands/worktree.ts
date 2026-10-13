@@ -16,6 +16,7 @@ import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
+    assertLocalRepoConfigReplaceable,
     createGit,
     formatRepoConfig,
     loadRepoConfig,
@@ -103,6 +104,15 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
             `The worktree policy of this repository is the versioned ${loaded.path}. It shadows the local file this wizard writes, so a change made here would not take effect.`
         );
         out.log.info("Edit that file instead.");
+        return 1;
+    }
+
+    // A local file that does not parse loads as `{}`, and the wizard would write its answers over it.
+    // Say so before the first question, not after the last one.
+    try {
+        assertLocalRepoConfigReplaceable(loaded.paths.gitDir);
+    } catch (err) {
+        out.log.error(err instanceof Error ? err.message : String(err));
         return 1;
     }
 

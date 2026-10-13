@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { createGit } from "./core";
 
 /**
@@ -340,10 +341,47 @@ export function formatRepoConfig(config: RepoConfig): string {
     return `${SafeJSON.stringify(config, null, 4)}\n`;
 }
 
-/** Write the local (common dir) copy; the `.claude/` copy is a versioned file people edit by hand. */
+/**
+ * Throws when the local file exists but cannot be read, or is not a JSON object. `loadRepoConfig` turns such
+ * a file into `{}` plus a problem, so a caller that merges its change into the loaded config and writes it
+ * back would replace everything the user had with that one change.
+ */
+export function assertLocalRepoConfigReplaceable(path: string): void {
+    let text: string;
+
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (err) {
+        if (isMissingFileError(err)) {
+            return;
+        }
+
+        throw new Error(`Cannot read ${path}; it was left untouched`, { cause: err });
+    }
+
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(text, { unbox: true });
+    } catch (err) {
+        throw new Error(`${path} does not parse, so it was left untouched. Fix or move it, then run this again.`, {
+            cause: err,
+        });
+    }
+
+    if (!isRecord(raw)) {
+        throw new Error(`${path} is not a JSON object, so it was left untouched. Fix or move it, then run this again.`);
+    }
+}
+
+/**
+ * Write the local (common dir) copy; the `.claude/` copy is a versioned file people edit by hand. Refuses to
+ * replace an existing local file that does not parse ({@link assertLocalRepoConfigReplaceable}).
+ */
 export async function writeLocalRepoConfig(cwd: string, config: RepoConfig): Promise<string> {
     const paths = await repoConfigPaths(cwd);
-    writeFileSync(paths.gitDir, formatRepoConfig(config));
+    assertLocalRepoConfigReplaceable(paths.gitDir);
+    atomicWriteFileSync(paths.gitDir, formatRepoConfig(config));
     logger.debug({ path: paths.gitDir }, "repo-config: wrote local config");
     return paths.gitDir;
 }

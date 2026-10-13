@@ -1,9 +1,14 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getMainRepoRootSync, listWorktrees, worktreeByBranch } from "@genesiscz/utils/git/worktree";
+import {
+    getMainRepoRootSync,
+    listWorktrees,
+    resolveWorktreeBasePath,
+    worktreeByBranch,
+} from "@genesiscz/utils/git/worktree";
 
 /** `getMainRepoRootSync` answers "which checkout owns this directory" for two
  *  consumers that resolve durable state from it: the clones daemon registers
@@ -92,5 +97,53 @@ describe("worktreeByBranch", () => {
             ["feat/x", "/work/app-x"],
             ["feat/y", "/work/app-y"],
         ]);
+    });
+});
+
+describe("resolveWorktreeBasePath", () => {
+    let repo: string;
+    let gitignore: string;
+
+    beforeEach(() => {
+        repo = realpathSync(mkdtempSync(join(tmpdir(), "gt-worktree-base-")));
+        gitignore = join(repo, ".gitignore");
+    });
+
+    afterEach(() => {
+        rmSync(repo, { recursive: true, force: true });
+    });
+
+    // Write-only (0200): reading fails with EACCES while a write would still succeed, which is exactly
+    // when the old code appended the pattern to "" and replaced every line the user had.
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "a .gitignore that cannot be read is left byte-identical instead of being replaced by one line",
+        async () => {
+            const original = "node_modules/\n.env\ndist/\n";
+            writeFileSync(gitignore, original);
+            chmodSync(gitignore, 0o200);
+
+            try {
+                await expect(resolveWorktreeBasePath(repo)).rejects.toThrow(gitignore);
+            } finally {
+                chmodSync(gitignore, 0o644);
+            }
+
+            expect(readFileSync(gitignore, "utf8")).toBe(original);
+        }
+    );
+
+    it("a readable .gitignore keeps every line and gains the pattern once", async () => {
+        writeFileSync(gitignore, "node_modules/\n.env");
+
+        expect(await resolveWorktreeBasePath(repo)).toBe(join(repo, ".claude", "worktrees"));
+        expect(readFileSync(gitignore, "utf8")).toBe("node_modules/\n.env\n.claude/worktrees/\n");
+
+        await resolveWorktreeBasePath(repo);
+        expect(readFileSync(gitignore, "utf8")).toBe("node_modules/\n.env\n.claude/worktrees/\n");
+    });
+
+    it("a missing .gitignore is created with the pattern", async () => {
+        expect(await resolveWorktreeBasePath(repo)).toBe(join(repo, ".claude", "worktrees"));
+        expect(readFileSync(gitignore, "utf8")).toBe("\n.claude/worktrees/\n");
     });
 });
