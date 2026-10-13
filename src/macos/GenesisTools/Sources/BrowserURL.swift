@@ -711,7 +711,13 @@ private func setDefaultBrowser() -> Never {
 
     if !keepRecorded, let chosen, let data = try? JSONSerialization.data(withJSONObject: ["appPath": chosen.path]) {
         try? FileManager.default.createDirectory(at: configDirectory(), withIntermediateDirectories: true)
-        try? data.write(to: recorded)
+        // A record that exists but does not read may still name the browser to restore: it moves aside, and if it
+        // cannot, it is not replaced.
+        let unreadable = recordedPath == nil && FileManager.default.fileExists(atPath: recorded.path)
+        let aside = configDirectory().appendingPathComponent("previous.json.corrupt-\(Int(Date().timeIntervalSince1970))")
+        if !unreadable || (try? FileManager.default.moveItem(at: recorded, to: aside)) != nil {
+            try? data.write(to: recorded, options: .atomic)
+        }
     }
     let errors = setHandler(ours)
     let https = workspace.urlForApplication(toOpen: URL(string: "https://example.com")!)
