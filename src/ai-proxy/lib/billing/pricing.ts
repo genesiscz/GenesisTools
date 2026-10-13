@@ -78,6 +78,15 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
     { ids: ["claude-sonnet-5-5", "claude-sonnet-5"], rate: { inputUsdPerMTok: 2, outputUsdPerMTok: 10 } },
     { ids: ["claude-sonnet-4-6"], rate: SONNET_4_FLAT },
     { ids: ["claude-sonnet-4-5"], rate: SONNET_4_LONG_CTX },
+    {
+        // Every rate is 5x for a prompt over 100,000 tokens, applied to the whole request.
+        ids: ["claude-haiku-5-5"],
+        rate: {
+            inputUsdPerMTok: 0.1,
+            outputUsdPerMTok: 0.5,
+            rules: [{ contextFrom: 100_000, inputUsdPerMTok: 0.5, outputUsdPerMTok: 2.5 }],
+        },
+    },
     { ids: ["claude-haiku-4-5"], rate: HAIKU_4_5 },
     // GPT-6 and GPT-5.6 bill the whole request at 2x input / 1.5x output above 272K input tokens.
     {

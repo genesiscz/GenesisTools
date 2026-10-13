@@ -83,7 +83,7 @@ describe("AnthropicSubscriptionProvider", () => {
             system: Array<{ text: string }>;
             messages: unknown[];
         };
-        expect(sentBody.model).toBe("claude-haiku-4-5-20251001");
+        expect(sentBody.model).toBe("claude-haiku-5-5");
         expect(sentBody.system[0]?.text.startsWith("x-anthropic-billing-header")).toBe(true);
         expect(sentBody.system[1]?.text).toContain("You are Claude Code");
         expect(sentBody.messages).toHaveLength(1);

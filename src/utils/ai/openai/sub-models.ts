@@ -14,18 +14,20 @@ export interface WhamModelRecord {
 /**
  * Codex/ChatGPT (WHAM backend) models, newest first. Verified live against
  * GET wham/models (2026-07-12, plan "plus"); Astra's default context window
- * verified from the native Codex model catalogue on 2026-09-07. Refresh via fetchWhamModels().
- * `gpt-5-codex` is not served on Plus but higher plans do serve it —
+ * verified from the native Codex model catalogue on 2026-09-07. The GPT-6 and GPT-5.6 windows were
+ * re-read from the native Codex cache (`~/.codex/models_cache.json`) on 2026-10-13: 6.1 Sol has 500K,
+ * the others 272K. Refresh via fetchWhamModels().
+ * `gpt-5.4*` and `gpt-5-codex` were absent from that list, but higher plans may still serve them —
  * unsupported ids surface WHAM's own 400 to the caller.
  */
 export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
     { slug: "gpt-6-astra", displayName: "GPT-6-Astra", contextWindow: 272_000, visibility: "list" },
-    { slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", contextWindow: 272_000, visibility: "list" },
+    { slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", contextWindow: 500_000, visibility: "list" },
     { slug: "gpt-6-sol", displayName: "GPT-6-Sol", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-6-luna", displayName: "GPT-6-Luna", contextWindow: 272_000, visibility: "list" },
-    { slug: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", contextWindow: 372_000, visibility: "list" },
-    { slug: "gpt-5.6-terra", displayName: "GPT-5.6-Terra", contextWindow: 372_000, visibility: "list" },
-    { slug: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", contextWindow: 372_000, visibility: "list" },
+    { slug: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", contextWindow: 272_000, visibility: "list" },
+    { slug: "gpt-5.6-terra", displayName: "GPT-5.6-Terra", contextWindow: 272_000, visibility: "list" },
+    { slug: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-5.5", displayName: "GPT-5.5", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-5.4", displayName: "GPT-5.4", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-5.4-mini", displayName: "GPT-5.4-Mini", contextWindow: 272_000, visibility: "list" },

@@ -153,11 +153,13 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         contextWindow: 1_000_000,
         thinking: "reasoning",
         // Sonnet 5's $2/$10 carried over (platform.claude.com/docs/en/models/sonnet-5-5, 2026-09-28).
+        // Cache reads halved to $0.10 on 2026-10-07, with the Haiku 5.5 launch (anthropic.com/claude-haiku-5-5).
         pricing: {
             inputPer1M: 2,
             outputPer1M: 10,
             cachedCreatePer1M: 2.5,
-            cachedReadPer1M: 0.2,
+            cachedReadPer1M: 0.1,
+            rules: [{ to: "2026-10-06", cachedReadPer1M: 0.2 }],
         },
         aliases: ["sonnet"],
         releasedAt: "2026-09-28",
@@ -247,13 +249,39 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         flags: { cli: { id: "claude-opus-4-5", label: "Opus 4.5" } },
     }),
     anthropic({
+        id: "claude-haiku-5-5",
+        family: "haiku",
+        displayName: "Claude Haiku 5.5",
+        contextWindow: 1_000_000,
+        thinking: "reasoning",
+        // platform.claude.com/docs/en/models/haiku-5-5 (2026-10-07): every rate is 5x for a prompt over
+        // 100,000 tokens, applied to the whole request.
+        pricing: {
+            inputPer1M: 0.1,
+            outputPer1M: 0.5,
+            cachedCreatePer1M: 0.125,
+            cachedReadPer1M: 0.01,
+            rules: [
+                {
+                    ctxFrom: 100_001,
+                    inputPer1M: 0.5,
+                    outputPer1M: 2.5,
+                    cachedCreatePer1M: 0.625,
+                    cachedReadPer1M: 0.05,
+                },
+            ],
+        },
+        aliases: ["haiku"],
+        releasedAt: "2026-10-07",
+        flags: { native1m: true, cli: { label: "Haiku 5.5 (1M native)" } },
+    }),
+    anthropic({
         id: "claude-haiku-4-5-20251001",
         family: "haiku",
         displayName: "Claude Haiku 4.5",
         contextWindow: 200_000,
         thinking: "none",
         pricing: { inputPer1M: 1, outputPer1M: 5, cachedCreatePer1M: 1.25, cachedReadPer1M: 0.1 },
-        aliases: ["haiku"],
         flags: { cli: { id: "claude-haiku-4-5", label: "Haiku 4.5" } },
     }),
     anthropic({

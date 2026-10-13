@@ -55,6 +55,17 @@ describe("estimateCostUsd", () => {
         ).toBeCloseTo(30, 10);
     });
 
+    it("bills Haiku 5.5 at $0.10/$0.50, and 5x for the whole request above 100K prompt tokens", () => {
+        expect(estimateCostUsd("claude-haiku-5-5", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
+            0.06,
+            10
+        );
+        expect(estimateCostUsd("claude-haiku-5-5", { prompt_tokens: 200_000, completion_tokens: 100_000 })).toBeCloseTo(
+            0.1 + 0.25,
+            10
+        );
+    });
+
     it("folds dated / -latest variant ids onto their base model", () => {
         const cost = estimateCostUsd("claude-haiku-4-5-20251001", {
             prompt_tokens: 2_000_000,

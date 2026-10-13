@@ -49,6 +49,25 @@ describe("pricing ladder", () => {
      * the live feeds (here disabled, so: unknown), never the static entry of a
      * DIFFERENT provider.
      */
+    test("Haiku 5.5 bills 5x above 100K prompt tokens, and Sonnet 5.5 cache reads halved on 2026-10-07", async () => {
+        const haiku = await pricingFor("anthropic", "claude-haiku-5-5");
+        const sonnet = await pricingFor("anthropic", "claude-sonnet-5-5");
+
+        expect(haiku && effectivePricing(haiku, { contextTokens: 100_000 })).toMatchObject({
+            inputPer1M: 0.1,
+            outputPer1M: 0.5,
+            cachedReadPer1M: 0.01,
+        });
+        expect(haiku && effectivePricing(haiku, { contextTokens: 100_001 })).toMatchObject({
+            inputPer1M: 0.5,
+            outputPer1M: 2.5,
+            cachedReadPer1M: 0.05,
+            cachedCreatePer1M: 0.625,
+        });
+        expect(sonnet && effectivePricing(sonnet, { at: new Date("2026-10-06T12:00:00Z") }).cachedReadPer1M).toBe(0.2);
+        expect(sonnet && effectivePricing(sonnet, { at: new Date("2026-10-07T12:00:00Z") }).cachedReadPer1M).toBe(0.1);
+    });
+
     test("a static entry never prices another provider's route", async () => {
         expect(await pricingFor("openrouter", "claude-opus-5")).toBeUndefined();
         expect(await pricingFor("openai", "claude-opus-5")).toBeUndefined();

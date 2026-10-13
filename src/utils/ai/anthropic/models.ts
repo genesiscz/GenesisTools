@@ -54,7 +54,18 @@ export function inferAnthropicContextWindow(id: string): number {
         return known.contextWindow;
     }
 
-    return /sonnet-5|fable-5|opus-5|opus-4-[678]|sonnet-4-6/.test(id) ? 1_000_000 : 200_000;
+    return /sonnet-5|fable-5|opus-5|haiku-5|opus-4-[678]|sonnet-4-6/.test(id) ? 1_000_000 : 200_000;
+}
+
+/** Registry first; an unknown id thinks unless it is a pre-5 Haiku, the last line without thinking. */
+function inferAnthropicThinking(id: string): AnthropicSubModelRecord["thinking"] {
+    const known = byId(id);
+
+    if (known) {
+        return known.thinking === "none" ? "none" : "reasoning";
+    }
+
+    return /haiku-[34]|3-5-haiku|3-haiku/.test(id) ? "none" : "reasoning";
 }
 
 export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -68,7 +79,7 @@ export interface AnthropicRequestRules {
     thinking: "adaptive" | "budget";
     /** `temperature` / `top_p` are accepted (removed from Opus 4.7 on). */
     sampling: boolean;
-    /** `tool_choice` `any` / `tool` are accepted (removed on 5.5+ (Opus, Sonnet) and Fable 5.1). */
+    /** `tool_choice` `any` / `tool` are accepted (removed on Opus and Sonnet 5.5+ and Fable 5.1; Haiku 5.5 keeps it). */
     forcedToolChoice: boolean;
     /** A trailing assistant turn (prefill) is accepted (removed from Opus 4.6 / Sonnet 4.6 on). */
     prefill: boolean;
@@ -90,7 +101,7 @@ function claudeVersion(id: string): { family: string; version: number } | null {
 export function anthropicRequestRules(id: string): AnthropicRequestRules {
     const parsed = claudeVersion(id);
 
-    if (!parsed || parsed.family === "haiku") {
+    if (!parsed || (parsed.family === "haiku" && parsed.version < 5)) {
         return { thinking: "budget", sampling: true, forcedToolChoice: true, prefill: true, effortCeiling: "high" };
     }
 
@@ -100,7 +111,8 @@ export function anthropicRequestRules(id: string): AnthropicRequestRules {
     return {
         thinking: fableTier || version >= 4.6 ? "adaptive" : "budget",
         sampling: !fableTier && version < 4.7,
-        forcedToolChoice: fableTier ? version < 5.1 : version < 5.5,
+        // Haiku 5.5 still accepts a forced tool; it then calls the tool without thinking first.
+        forcedToolChoice: fableTier ? version < 5.1 : family === "haiku" || version < 5.5,
         prefill: !fableTier && version < 4.6,
         effortCeiling: fableTier || version >= 4.7 ? "xhigh" : "high",
     };
@@ -135,7 +147,7 @@ export async function tryFetchAnthropicSubModels(token: string): Promise<Anthrop
             id: m.id,
             displayName: m.display_name,
             contextWindow: inferAnthropicContextWindow(m.id),
-            thinking: m.id.includes("haiku") ? "none" : "reasoning",
+            thinking: inferAnthropicThinking(m.id),
         }));
     } catch (err) {
         logger.debug({ err }, "anthropic: live model fetch failed");

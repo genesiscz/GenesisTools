@@ -41,7 +41,7 @@ describe("listAnthropicSubProxyModels", () => {
         expect(byAlias.sonnet).toBe(1_000_000);
         expect(byAlias.opus).toBe(1_000_000);
         expect(byAlias.fable).toBe(1_000_000);
-        expect(byAlias.haiku).toBe(200_000);
+        expect(byAlias.haiku).toBe(1_000_000);
 
         for (const alias of ANTHROPIC_SUB_ALIASES) {
             expect(models.some((model) => model.upstreamId === alias)).toBe(true);

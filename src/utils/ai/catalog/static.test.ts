@@ -64,6 +64,8 @@ describe("static catalog", () => {
         expect(byId("sonnet")?.id).toBe("claude-sonnet-5-5");
         expect(byId("claude-sonnet-5")?.displayName).toBe("Claude Sonnet 5");
         expect(byId("claude-sonnet-5-5")?.pricing).toMatchObject({ inputPer1M: 2, outputPer1M: 10 });
+        expect(byId("haiku")?.id).toBe("claude-haiku-5-5");
+        expect(byId("claude-haiku-4-5-20251001")?.displayName).toBe("Claude Haiku 4.5");
         // 6.1 Sol keeps 6 Sol's list price and halves cached input.
         expect(byId("gpt-6.1-sol", "openai")?.pricing).toMatchObject({
             inputPer1M: 2,
@@ -78,7 +80,7 @@ describe("static catalog", () => {
     });
 
     test("aliases map per provider and never leak across providers", () => {
-        expect(aliasMapFor("anthropic")).toMatchObject({ opus: "claude-opus-5-5", haiku: "claude-haiku-4-5-20251001" });
+        expect(aliasMapFor("anthropic")).toMatchObject({ opus: "claude-opus-5-5", haiku: "claude-haiku-5-5" });
         expect(aliasMapFor("xai")).toEqual({});
     });
 
@@ -161,6 +163,7 @@ describe("static catalog", () => {
             "claude-opus-5",
             "claude-sonnet-5-5",
             "claude-sonnet-5",
+            "claude-haiku-5-5",
             "claude-fable-5",
             "claude-fable-5-1",
         ]) {

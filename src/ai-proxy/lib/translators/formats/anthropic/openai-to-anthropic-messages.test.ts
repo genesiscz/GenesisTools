@@ -218,6 +218,22 @@ describe("openAiChatToAnthropicMessages", () => {
             }
         });
 
+        it("sends Haiku 5.5 adaptive thinking without sampling params, and keeps its forced tool choice", () => {
+            const thinking = openAiChatToAnthropicMessages(
+                { messages: [{ role: "user", content: "yo" }], reasoning_effort: "xhigh", temperature: 0 },
+                { model: "claude-haiku-5-5" }
+            );
+            const forced = openAiChatToAnthropicMessages(
+                { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice: "required" },
+                { model: "claude-haiku-5-5" }
+            );
+
+            expect(thinking.thinking).toEqual({ type: "adaptive" });
+            expect(thinking.output_config).toEqual({ effort: "xhigh" });
+            expect(thinking.temperature).toBeUndefined();
+            expect(forced.tool_choice).toEqual({ type: "any" });
+        });
+
         it("keeps a forced tool choice on Opus 5, which still accepts it", () => {
             const body = openAiChatToAnthropicMessages(
                 { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice: "required" },
