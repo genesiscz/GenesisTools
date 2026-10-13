@@ -60,7 +60,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             .option("--writable-root <path...>", "Additional writable roots")
             .option(
                 "--project <project>",
-                "Codex Desktop project (id, name or root) to show the thread under; default: the project owning the cwd"
+                "app-server project (id, name or root) for the thread; default: the project owning the cwd. Codex Desktop groups by cwd and ignores it while its project-membership flag is off"
             );
     },
 

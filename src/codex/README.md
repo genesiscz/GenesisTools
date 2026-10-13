@@ -283,8 +283,18 @@ first action, its "received; starting" report, waited for the lead.
 The driver joins the parent Claude Code swarm through `tools agents`. Use `--no-agents` to disable that integration,
 or `--session <id>` when the parent session cannot be discovered from `CLAUDE_CODE_SESSION_ID`.
 
-Codex Desktop shows a thread only under the project its stored `projectId` names; it never places one by cwd. A spawned
-worker's thread is filed once its first message is recorded: under `--project <id|name|root>` when given, otherwise
-under the project whose root holds the cwd (a linked worktree falls back to its main checkout). Pass `--project` when
-two projects share a root. An unknown or ambiguous `--project` fails the spawn; `tools codex status` shows the result
-as `desktopProject`.
+A spawned worker's thread gets an app-server `projectId` once its first message is recorded: the project named by
+`--project <id|name|root>`, otherwise the project whose root holds the cwd (a linked worktree falls back to its main
+checkout). An unknown or ambiguous `--project` fails the spawn; `tools codex status` shows the result as
+`desktopProject`.
+
+⚠️ That id does not decide where Codex Desktop (26.930) shows the thread. Read from its bundle on 2026-10-13:
+
+- Its sidebar lists its own thread index, which only Desktop's own app-server events, a window load or a reconnect
+  refresh. A worker runs its own app-server, so its thread appears after Desktop next re-reads the list (reload the
+  window, or restart Desktop).
+- It places a thread by cwd (a project root, or a folder below one) and by assignments it wrote itself. A root that
+  two projects list belongs to one of them: a single-root project first, then the project that lists it first. Desktop
+  reads the app-server `projectId` only behind its `localProjectTaskMembership` flag, which was off.
+
+To land a worker under a project in Desktop today, start it in a folder that project owns by those rules.
