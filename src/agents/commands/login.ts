@@ -11,14 +11,29 @@ import type { Command } from "commander";
 import { readCursor, writeCursor } from "../lib/cursor";
 import { deriveRegistry, findById, findByName, nextSubagentId } from "../lib/derived-registry";
 import { FriendlyError, runWithFriendlyErrors } from "../lib/errors";
-import { FeedLogCursor, withFeedLock } from "../lib/feed";
+import { FeedLogCursor, readFeed, withFeedLock } from "../lib/feed";
 import { isVisibleToAgent } from "../lib/filter";
+import {
+    type AgentNames,
+    agentNamesFrom,
+    type BatchPosition,
+    formatEventMonitor,
+    learnAgentNames,
+} from "../lib/format-monitor";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
 import { announceLeave, leaveReasonOf, logInAndAnnounceJoin } from "../lib/leave";
 import { onShutdown } from "../lib/lifecycle";
 import { createListenerFilter } from "../lib/listener-filter";
-import { formatReadyEvent, loginStderrAllowed, writeLoginJsonLine } from "../lib/login-io";
+import {
+    type FeedFormat,
+    formatReadyEvent,
+    type LoginReadyEvent,
+    type LoginTimeoutEvent,
+    loginStderrAllowed,
+    resolveFeedFormat,
+    writeLoginJsonLine,
+} from "../lib/login-io";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { readSessionMeta, type SessionMeta } from "../lib/session-meta";
 import { resolveSession } from "../lib/session-resolve";
@@ -42,7 +57,7 @@ interface LoginOpts {
     timeout?: string;
     session?: string;
     observer?: boolean;
-    format?: "pretty" | "json";
+    format?: string;
     kinds?: string;
     filter?: string;
 }
@@ -54,7 +69,9 @@ interface ActiveLogin {
     mode: "stream" | "once";
     meta: SessionMeta;
     observer: boolean;
-    format: "pretty" | "json";
+    format: FeedFormat;
+    /** Names the recipients in `monitor` headlines; kept current from every event read. */
+    names: AgentNames;
     cursorSeq: number;
     feedCursor: FeedLogCursor;
     listenerFilter: (event: FeedEvent) => boolean;
@@ -116,7 +133,6 @@ async function findOrRegisterAgent(paths: SessionPaths, opts: LoginOpts): Promis
         // pickAgent()'s prompt (which can wait indefinitely on user input) never
         // holds the feed lock and blocks every other agent's send/login/lifecycle
         // append for the session.
-        const { readFeed } = await import("../lib/feed");
         const registry = deriveRegistry(await readFeed(paths));
         const picked = await pickAgent(registry);
 
@@ -298,32 +314,48 @@ function claimSlot({
     return { lockPath };
 }
 
-async function emitVisibleEvent(event: FeedEvent, active: ActiveLogin): Promise<boolean> {
+function isDeliverable(event: FeedEvent, active: ActiveLogin): boolean {
     if (!active.observer && !isVisibleToAgent(event, active.record, active.meta)) {
         return false;
     }
 
-    if (!active.listenerFilter(event)) {
-        return false;
+    return active.listenerFilter(event);
+}
+
+async function writeFeedEvent(active: ActiveLogin, event: FeedEvent, position: BatchPosition): Promise<void> {
+    if (active.format === "monitor") {
+        await writeStdout(asResult(formatEventMonitor(event, active.names, position)));
+        return;
     }
 
     if (active.format === "pretty") {
         await writeStdout(asResult(formatEventPretty(event)));
-    } else {
-        await writeLoginJsonLine(event);
+        return;
     }
 
-    return true;
+    await writeLoginJsonLine(event);
+}
+
+/** The ready and timeout lines are JSON in every format; `monitor` puts its headline first. */
+async function writeLoginLine(active: ActiveLogin, line: LoginReadyEvent | LoginTimeoutEvent): Promise<void> {
+    if (active.format === "monitor") {
+        await writeStdout(asResult(formatEventMonitor(line, active.names)));
+        return;
+    }
+
+    await writeLoginJsonLine(line);
 }
 
 async function drainPending(active: ActiveLogin): Promise<number> {
     const events = await active.feedCursor.readAppended();
     let lastSeq = active.cursorSeq;
-    let emitted = 0;
+    const deliverable: FeedEvent[] = [];
 
     for (const event of events) {
-        if (await emitVisibleEvent(event, active)) {
-            emitted += 1;
+        learnAgentNames(active.names, event);
+
+        if (isDeliverable(event, active)) {
+            deliverable.push(event);
         }
 
         if (event.seq > lastSeq) {
@@ -331,12 +363,16 @@ async function drainPending(active: ActiveLogin): Promise<number> {
         }
     }
 
+    for (const [index, event] of deliverable.entries()) {
+        await writeFeedEvent(active, event, { index: index + 1, total: deliverable.length });
+    }
+
     if (lastSeq > active.cursorSeq) {
         active.cursorSeq = lastSeq;
         writeCursor(active.paths, active.record.agent_id, lastSeq);
     }
 
-    return emitted;
+    return deliverable.length;
 }
 
 async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitOnFirst: boolean): Promise<boolean> {
@@ -467,6 +503,11 @@ function emitResumeHint(record: AgentRecord, mode: "stream" | "once"): void {
 
 async function runLoginImpl(opts: LoginOpts): Promise<void> {
     const timeoutSeconds = parseTimeoutSeconds(opts);
+    const format = resolveFeedFormat({
+        format: opts.format,
+        terminalDefault: opts.observer ? "pretty" : "json",
+        stdoutIsTTY: Boolean(process.stdout.isTTY),
+    });
     const resolved = resolveSession(opts.session);
 
     if (resolved.note) {
@@ -500,7 +541,6 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
 
     try {
         const meta = readSessionMeta(paths);
-        const format: "pretty" | "json" = opts.format ?? (opts.observer && process.stdout.isTTY ? "pretty" : "json");
         const cursorSeq = readCursor(paths, record.agent_id);
         active = {
             paths,
@@ -510,13 +550,15 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             meta,
             observer: Boolean(opts.observer),
             format,
+            // Only a monitor headline names recipients, so only that format reads the whole feed for names.
+            names: format === "monitor" ? agentNamesFrom(await readFeed(paths)) : new Map(),
             cursorSeq,
             feedCursor: new FeedLogCursor({ paths, sinceSeq: cursorSeq }),
             listenerFilter: createListenerFilter({ kinds: opts.kinds, expression: opts.filter }),
         };
 
         await emitLoggedIn({ paths, record, mode, loginId });
-        await writeLoginJsonLine(formatReadyEvent(record, paths.session, mode));
+        await writeLoginLine(active, formatReadyEvent(record, paths.session, mode));
     } catch (err) {
         releaseSlot(lockPath);
         throw err;
@@ -599,7 +641,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                     timedOut = true;
                     process.exitCode = LOGIN_TIMEOUT_EXIT;
 
-                    await writeLoginJsonLine({
+                    await writeLoginLine(active, {
                         type: "timeout",
                         agent_name: record.agent_name,
                         session: paths.session,
@@ -656,7 +698,10 @@ export function registerLoginCommand(program: Command): void {
         )
         .option("--session <id>", "Override session resolution")
         .option("--observer", "Read-only: bypass per-agent visibility filter and see ALL events")
-        .option("--format <fmt>", "pretty | json (default: json; observer in TTY → pretty)")
+        .option(
+            "--format <fmt>",
+            "monitor | json | pretty (default: monitor when stdout is not a terminal, i.e. a headline line, then the json line; in a terminal json, or pretty with --observer)"
+        )
         .option("--kinds <csv>", "Only emit feed types or structured message op/event kinds")
         .option("--filter <expr>", 'Filter structured bodies, e.g. .op=="approval_request"')
         .action(async (opts: LoginOpts) => {

@@ -180,9 +180,15 @@ describe("agents login stream (monitor contract)", () => {
     }, 30_000);
 });
 describe("agents login --once --timeout", () => {
-    async function runOnce(home: string, args: string[]): Promise<{ code: number; lines: JsonLine[] }> {
-        const proc = spawnAgents(home, ["login", "--once", "--format", "json", ...args]);
+    async function readOnce(home: string, args: string[]): Promise<{ code: number; text: string }> {
+        const proc = spawnAgents(home, ["login", "--once", ...args]);
         const [code, text] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+
+        return { code, text };
+    }
+
+    async function runOnce(home: string, args: string[]): Promise<{ code: number; lines: JsonLine[] }> {
+        const { code, text } = await readOnce(home, ["--format", "json", ...args]);
         const lines = text
             .split("\n")
             .filter((line) => line.startsWith("{"))
@@ -191,7 +197,7 @@ describe("agents login --once --timeout", () => {
         return { code, lines };
     }
 
-    test("an empty mailbox exits 124 with a timeout line; queued mail still exits 0 without one", async () => {
+    test("an empty mailbox exits 124 with a timeout line; queued mail still exits 0 without one; piped output without --format puts a headline before each JSON line", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-agents-login-timeout-"));
         const session = `timeout-${Date.now()}`;
 
@@ -219,6 +225,34 @@ describe("agents login --once --timeout", () => {
         expect(queued.code).toBe(0);
         expect(queued.lines.some((line) => line.type === "message" && line.body === "queued")).toBe(true);
         expect(queued.lines.some((line) => line.type === "timeout")).toBe(false);
+
+        const multiLine = spawnAgents(home, [
+            "message",
+            "--from",
+            "alpha",
+            "--to",
+            "beta",
+            "--body",
+            "line one\nline two",
+            "--session",
+            session,
+        ]);
+        expect(await multiLine.exited).toBe(0);
+
+        // A pipe is what a Monitor gives the login, so no --format means `monitor`.
+        const piped = await readOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "30"]);
+        expect(piped.code).toBe(0);
+        const lines = piped.text.trimEnd().split("\n");
+        expect(lines.length % 2).toBe(0);
+        expect(lines.map((line) => line.startsWith("{"))).toEqual(lines.map((_, index) => index % 2 === 1));
+        expect(lines[0]).toBe(`ready: beta is listening (once) · session ${session}`);
+
+        const at = lines.findIndex((line) => /^(\[\d+\/\d+\] )?message: alpha → beta: line one ⏎ line two$/.test(line));
+        expect(at).toBeGreaterThan(0);
+        expect(SafeJSON.parse(lines[at + 1] ?? "", { strict: true })).toMatchObject({
+            type: "message",
+            body: "line one\nline two",
+        });
     }, 30_000);
 
     test("--timeout without --once is refused", async () => {

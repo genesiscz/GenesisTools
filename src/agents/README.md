@@ -17,6 +17,7 @@ tools agents login --agent-name researcher                     # auto-registers 
 tools agents login --agent-id agt_xxx --agent-name X            # attach with a chosen id
 tools agents login --agent-name X --once                       # drain queued batch, or block for mail
 tools agents login --agent-name X --once --timeout 300         # same, but give up after 300 s: {"type":"timeout"}, exit 124
+tools agents login --agent-name X --format json                # JSON lines only (piped default is monitor, below)
 tools agents leave --agent-name X --note "done"                # announce leaving: every other agent gets agent_left
 tools agents login --agent-name lead --kinds message,error     # receiver-side verbosity filter
 tools agents login --agent-name lead --filter '.op=="approval_request"'
@@ -53,7 +54,13 @@ Resolves in order:
 
 The **main** agent's login stream is the swarm inbox: it receives every `message` except its own sends, so a parent `monitor` on `tools agents login --agent-main` sees peer-to-peer hops. Non-main agents still only see mail addressed to them (plus broadcasts).
 
-`login` prints one stdout-only `{type:"ready",...}` JSON line as soon as the slot is attached (not written to the feed). After that, stdout is feed events only. When stderr is not a TTY (piped into a harness monitor), login stays silent on stderr so diagnostics cannot be mistaken for events.
+`login` prints one stdout-only `{type:"ready",...}` event as soon as the slot is attached (not written to the feed). After that, stdout is feed events only. When stderr is not a TTY (piped into a harness monitor), login stays silent on stderr so diagnostics cannot be mistaken for events.
+
+**Output formats** (`--format`, also on `listen`):
+
+- `monitor`, the default when stdout is not a terminal: each event is a one-line headline, then the event's JSON line, the same text `json` prints. Claude Code draws the first line of a Monitor event as its row, so the row reads `Monitor event: message: reviewer → lead: Review done. ⏎ Two findings: …` instead of a cut-off JSON object, and the model still gets the JSON. The headline never starts with `{`, repeats at most 200 characters of a body on one line, and names agents by name (unique per session). Events written together start with `[i/N]`, because the row shows only the first headline.
+- `json`: one JSON object per line. Use it when a program parses every line.
+- `pretty`: colored text for a terminal (the `listen` default, and `login --observer` in a terminal). A plain `login` in a terminal prints `json`.
 
 ## Codex and hosts without a monitor
 

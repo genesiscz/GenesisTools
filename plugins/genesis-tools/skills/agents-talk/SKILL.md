@@ -44,7 +44,7 @@ Host names alone do not establish capabilities. Inspect the current tool invento
 
 | Available capability | Receive and wake strategy |
 |---|---|
-| A real `monitor` / `Monitor` that subscribes to command stdout | Use it on `tools agents login --format json` itself. Enable persistent mode when supported. Verify delivery in this host, especially for idle children. |
+| A real `monitor` / `Monitor` that subscribes to command stdout | Use it on `tools agents login` itself. Piped, it prints `--format monitor`: each event is a one-line headline, then the event's JSON line, so a Claude Code row reads `Monitor event: message: reviewer → lead: …`. Pass `--format json` where a program parses every line. Enable persistent mode when supported. Verify delivery in this host, especially for idle children. |
 | Codex native collaboration within one agent tree | Prefer native messages and its documented task/resume tool. No bus receiver is needed. |
 | No monitor, but terminal execution with resumable output | `login --once` can await mail only when blocking is acceptable. It does not satisfy nonblocking communication. A terminal handle is not a push subscription. |
 | No native wake mechanism and an idle child | The parent must resume the child using the host's supported operation. The bus cannot schedule model turns. |
@@ -170,10 +170,12 @@ Every agent is symmetric: anyone can message anyone, anyone can broadcast. The "
 # With a real monitor available (otherwise use --once as described above):
 # 1. Attach as main. login auto-registers on first use — no separate register
 #    step. Wrap this command with the harness monitor tool (persistent) so
-#    each stdout JSONL line wakes you. Main sees EVERY swarm message except
+#    each stdout event wakes you. Main sees EVERY swarm message except
 #    its own sends — peer hops land here, not only mail addressed to lead.
-tools agents login --agent-main --agent-name lead --format json
-# First stdout line is {type:"ready",...}. Then feed events.
+tools agents login --agent-main --agent-name lead --format monitor
+# Each event is a headline line, then its JSON line. The first is the ready
+# event ("ready: lead is listening (stream, main) · session <id>"), then feed
+# events ("message: reviewer → lead: …"). --format json prints the JSON lines only.
 # Optional: --kinds message to hide lifecycle and keep only hops.
 
 # 2. Spawn each subagent (via the Agent tool with run_in_background:true).
@@ -215,7 +217,7 @@ Your spawn prompt should already include your `--agent-name`. The very first thi
 # Any host exposing a real monitor / Monitor tool: stream mode.
 # Point the harness monitor at this command. Do NOT tee it to a file.
 # Do NOT poll the file. Do NOT Read feed.jsonl. The monitor lines ARE the inbox.
-tools agents login --agent-name researcher --format json
+tools agents login --agent-name researcher --format monitor
 #
 # No monitor: --once blocks for mail; it is not a nonblocking check.
 tools agents login --agent-name researcher --once
@@ -223,7 +225,7 @@ tools agents login --agent-name researcher --once
 
 With a monitored stream, keep working after `ready` and react when a message arrives. With `--once`, await matching mail through that same receive call before treating it as complete. Send with `tools agents message`. Do not sit in a sleep/discover poll loop waiting for mail.
 
-> ⚠️ **Monitor the login command itself.** `login` stdout is the JSONL event stream. When stderr is a TTY it may print diagnostics; when piped (Grok `monitor` merges streams) login keeps stderr quiet. Still do not `2>&1` on purpose. Do not redirect stdout to a file and then poll that file.
+> ⚠️ **Monitor the login command itself.** `login` stdout is the event stream: in `monitor` format (the default when piped) a headline line, then the JSON line, for each event; in `json` format the JSON lines alone. When stderr is a TTY it may print diagnostics; when piped (Grok `monitor` merges streams) login keeps stderr quiet. Still do not `2>&1` on purpose. Do not redirect stdout to a file and then poll that file.
 
 ## Claude Code agent teams: busy teammates get bus mail, idle ones need a nudge
 
@@ -241,10 +243,10 @@ Measured 2026-09-30 23:10 to 2026-10-01 00:05 on Claude Code 2.1.280 with in-pro
 
 **Protocol for a Claude Code team:**
 
-1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format json --kinds message --session <id>`, re-arm it on expiry, and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`.
+1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format monitor --kinds message --session <id>`, re-arm it on expiry, and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`.
 2. The lead sends every payload on the bus: `tools agents message --from lead --to <name> --body '...' --session <id>`. The payload never goes in `SendMessage`, so a busy teammate does not get it twice.
 3. If `ListAgents` shows the teammate `idle`, also send a nudge with no payload that forces a tool call, for example: `SendMessage(to: "<name>", "agents-mail waiting. Run one Bash call now (true), then handle your bus mail.")`. When unsure, send it anyway: a nudge to a busy teammate only costs one short extra turn after its current one.
-4. The lead's own receiver is a `Monitor` on `tools agents login --agent-main --agent-name lead`. A Codex worker on the same bus publishes every lifecycle event to main, so filter those out: `... | grep --line-buffered -v '\\"event\\":'`.
+4. The lead's own receiver is a `Monitor` on `tools agents login --agent-main --agent-name lead --format monitor`. Do not filter this stream with `grep`: in `monitor` format an event is two lines, and a grep that drops the JSON line keeps its headline.
 
 A plain background agent (`Agent` without `name`) needs none of this: its `SendMessage` arrives between tool calls on its own.
 
@@ -283,7 +285,7 @@ A teammate that received no shutdown at all answered with eight
   from anywhere. Do not infer one rule from the other.
 - Ordinary `tools agents login` treats bodies as opaque strings. **Downstream bridges can interpret them as commands.** In particular, `tools codex spawn` subscribes through `AgentsBridge`, which parses addressed bodies with `parseControlBody`. Stop, interrupt, rollback, and approval operations are live controls there. Use ordinary relay prose for delivery tests; do not send control-shaped probe payloads to a `codex_<name>` worker.
 
-`login` writes received events to stdout as JSONL lines. Each line is one event you should react to.
+`login` writes each received event to stdout. In `monitor` format (the default when piped) that is a headline line, then the event's JSON line; with `--format json` it is the JSON line alone. Each event is one you should react to; the JSON line is the source of truth (`message_id`, the full `body`).
 
 ```bash
 # B. Send a message to a specific peer:

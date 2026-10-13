@@ -7,9 +7,12 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
+import { runWithFriendlyErrors } from "../lib/errors";
 import { FeedLogCursor, readFeed } from "../lib/feed";
+import { type AgentNames, formatEventMonitor, learnAgentNames } from "../lib/format-monitor";
 import { formatEventPretty } from "../lib/format-pretty";
 import { onShutdown } from "../lib/lifecycle";
+import { type FeedFormat, resolveFeedFormat } from "../lib/login-io";
 import { agentsRoot, ensureSessionDir, sessionPaths } from "../lib/paths";
 import { runStaleSweep } from "../lib/slot-lock";
 import type { FeedEvent } from "../lib/types";
@@ -23,7 +26,7 @@ interface ListenOpts {
     session?: string;
     sessionName?: string;
     recentHour?: boolean;
-    format?: "pretty" | "json";
+    format?: string;
 }
 
 interface SessionSummary {
@@ -145,15 +148,28 @@ function nextListenerId(): string {
     return `obs_${randomBytes(3).toString("hex")}`;
 }
 
-function emitPretty(event: FeedEvent, format: "pretty" | "json"): void {
+function emitEvent(event: FeedEvent, format: FeedFormat, names: AgentNames): void {
+    learnAgentNames(names, event);
+
     if (format === "json") {
         out.println(SafeJSON.stringify(event, { strict: true }));
-    } else {
-        out.println(formatEventPretty(event));
+        return;
     }
+
+    if (format === "monitor") {
+        out.println(formatEventMonitor(event, names));
+        return;
+    }
+
+    out.println(formatEventPretty(event));
 }
 
 export async function runListen(opts: ListenOpts): Promise<void> {
+    const format = resolveFeedFormat({
+        format: opts.format,
+        terminalDefault: "pretty",
+        stdoutIsTTY: Boolean(process.stdout.isTTY),
+    });
     const session = await pickSession(opts);
 
     if (!session) {
@@ -166,7 +182,7 @@ export async function runListen(opts: ListenOpts): Promise<void> {
     ensureSessionDir(paths);
     await runStaleSweep(paths);
 
-    const format = opts.format ?? (process.stdout.isTTY ? "pretty" : "json");
+    const names: AgentNames = new Map();
     const listenerId = nextListenerId();
     let lastSeq = 0;
 
@@ -180,7 +196,7 @@ export async function runListen(opts: ListenOpts): Promise<void> {
     const initial = await readFeed(paths);
 
     for (const event of initial) {
-        emitPretty(event, format);
+        emitEvent(event, format, names);
 
         if (event.seq > lastSeq) {
             lastSeq = event.seq;
@@ -202,7 +218,7 @@ export async function runListen(opts: ListenOpts): Promise<void> {
             const next = await feedCursor.readAppended();
 
             for (const event of next) {
-                emitPretty(event, format);
+                emitEvent(event, format, names);
 
                 if (event.seq > lastSeq) {
                     lastSeq = event.seq;
@@ -219,8 +235,11 @@ export function registerListenCommand(program: Command): void {
         .option("--session <id>", "Session id to follow")
         .option("--session-name <name>", "Pick session whose main agent has this name")
         .option("--recent-hour", "Only consider sessions active in the last hour when picking")
-        .option("--format <fmt>", "pretty (default in TTY) or json")
+        .option(
+            "--format <fmt>",
+            "monitor | json | pretty (default: pretty in a terminal, monitor otherwise: a headline line, then the json line)"
+        )
         .action(async (opts: ListenOpts) => {
-            await runListen(opts);
+            await runWithFriendlyErrors(() => runListen(opts));
         });
 }
