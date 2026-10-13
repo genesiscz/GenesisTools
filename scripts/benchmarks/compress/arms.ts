@@ -15,14 +15,15 @@ import {
     symlinkSync,
     writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressFile, decompressFile } from "@genesiscz/utils/compress/file";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 export const BENCH_ROOT = join(tmpdir(), "gt-bench-compress");
-export const REAL_HOME = join(homedir(), ".genesis-tools");
+export const REAL_HOME = genesisToolsDir();
 export const ARMS = ["plain", "zst"] as const;
 export type Arm = (typeof ARMS)[number];
 

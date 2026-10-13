@@ -14,12 +14,13 @@
  */
 import { createHash } from "node:crypto";
 import { closeSync, createReadStream, fstatSync, openSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+
 import { join } from "node:path";
 import { createZstdDecompress } from "node:zlib";
 import { readZstdFrames, zstdContentBytes, zstdFrames } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const ARMS = ["walker", "native", "oneshot"] as const;
 type Arm = (typeof ARMS)[number];
@@ -89,7 +90,7 @@ function frameCount(file: string): number {
 
 /** The largest seekable (multi-frame) day log, a transcript day and a migrate-home archive, all real and read-only. */
 function pickFiles(): { label: string; file: string }[] {
-    const home = join(homedir(), ".genesis-tools");
+    const home = genesisToolsDir();
     const largest = (dir: string, match: RegExp) =>
         readdirSync(dir, { recursive: true, encoding: "utf8" })
             .filter((name) => match.test(name))
