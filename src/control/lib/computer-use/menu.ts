@@ -111,7 +111,14 @@ export class NativeMenuSession {
             truncated: items.length > options.limit,
         };
     }
-    async act(options: { app: string; menu_ref: string; action: string; timeout_ms?: number; signal?: AbortSignal }) {
+    async act(options: {
+        app: string;
+        menu_ref: string;
+        action: string;
+        timeout_ms?: number;
+        note?: string;
+        signal?: AbortSignal;
+    }) {
         const record = this.records.get(options.app);
         if (!record) {
             throw new Error("Inspect the menu before acting.");
@@ -147,6 +154,7 @@ export class NativeMenuSession {
                 ],
                 timeoutMs: options.timeout_ms ?? 10000,
                 signal: options.signal,
+                note: options.note,
             });
             const actMs = stopAct();
             if (result.ok) {

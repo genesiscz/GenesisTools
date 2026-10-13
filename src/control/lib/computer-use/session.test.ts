@@ -9,6 +9,7 @@ import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
 import type { AxResult } from "../runner";
 import { ComputerReplEngine } from "./repl";
+import { computerSchemas } from "./schemas";
 import { ComputerUse, type NativeBridge } from "./session";
 
 function fixture(options: { evaluate?: Evaluator } = {}) {
@@ -1566,4 +1567,92 @@ test("retained pages preserve projection and masking while reading only returned
     expect(actionReads).toBe(1);
     expect(f.calls).toHaveLength(1);
     f.computer.close_session();
+});
+
+test("a right-click is never prepared and never in front, even where a left click would be", async () => {
+    const f = fixture();
+    f.snapshot.elements.push(
+        { index: 4, depth: 1, role: "AXWebArea", AXTitle: "Fixture page", actions: [] },
+        { index: 5, depth: 2, role: "AXLink", AXTitle: "Docs", actions: [] }
+    );
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    const link = f.computer.find({ app: "Fixture", query: "Docs", role: "AXLink" }).elements[0];
+    // A left pointer click on a page element without AXPress is prepared in front (the page ignores a
+    // background click); that same treatment for a right-click activated the browser.
+    await f.computer.click({ app: "Fixture", element_ref: link.ref });
+    expect(f.calls.at(-1)).toContain("--prepare");
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    const again = f.computer.find({ app: "Fixture", query: "Docs", role: "AXLink" }).elements[0];
+    await f.computer.click({ app: "Fixture", element_ref: again.ref, mouse_button: "right", prepare: true });
+    const right = f.calls.at(-1)!;
+    expect(right[right.indexOf("--action") + 1]).toBe("click");
+    expect(right[right.indexOf("--button") + 1]).toBe("right");
+    expect(right).toContain("--background");
+    expect(right).not.toContain("--prepare");
+    f.computer.close_session();
+});
+
+test("a right-click is one background click shape for page and native rows; native code picks AXShowMenu", async () => {
+    const f = fixture();
+    f.snapshot.elements.push(
+        { index: 4, depth: 1, role: "AXWebArea", AXTitle: "Fixture page", actions: [] },
+        { index: 5, depth: 2, role: "AXButton", AXTitle: "Reload", actions: ["AXScrollToVisible", "AXShowMenu"] }
+    );
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    const reload = f.computer.find({ app: "Fixture", query: "Reload", role: "AXButton" }).elements[0];
+    await f.computer.click({ app: "Fixture", element_ref: reload.ref, mouse_button: "r" });
+    const dispatch = f.calls.at(-1)!;
+    expect(dispatch[dispatch.indexOf("--action") + 1]).toBe("click");
+    expect(dispatch[dispatch.indexOf("--button") + 1]).toBe("right");
+    expect(dispatch).toContain("--background");
+    expect(dispatch).not.toContain("--prepare");
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    const save = f.computer.find({ app: "Fixture", query: "Save", role: "AXButton" }).elements[0];
+    await f.computer.click({ app: "Fixture", element_ref: save.ref, mouse_button: "right", click_count: 2 });
+    const native = f.calls.at(-1)!;
+    expect(native[native.indexOf("--action") + 1]).toBe("click");
+    expect(native).toContain("--double");
+    expect(native).toContain("--background");
+    f.computer.close_session();
+});
+
+test("a coordinate right-click stays in the background even when the caller asks for the front", async () => {
+    const f = fixture();
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    await f.computer.click({
+        app: "Fixture",
+        revision: state.revision,
+        x: 10,
+        y: 20,
+        mouse_button: "right",
+        background: false,
+    });
+    expect(f.calls.at(-1)).toContain("--background");
+    const left = await f.computer.get_app_state({ app: "Fixture", image: false });
+    await f.computer.click({ app: "Fixture", revision: left.revision, x: 10, y: 20, background: false });
+    expect(f.calls.at(-1)).not.toContain("--background");
+    f.computer.close_session();
+});
+
+test("an action's note reaches the native call that draws the cursor label", async () => {
+    const f = fixture();
+    const notes: (string | undefined)[] = [];
+    const computer = new ComputerUse({
+        native: {
+            run: async (call) => {
+                if (call.args[0] === "act") {
+                    notes.push(call.note);
+                }
+                return f.native.run(call);
+            },
+        },
+    });
+    const state = await computer.get_app_state({ app: "Fixture", image: false });
+    await computer.click({ app: "Fixture", element_ref: state.elements[1].ref, note: "  save the draft  " });
+    expect(notes).toEqual(["save the draft"]);
+    expect(() => computerSchemas.click.parse({ app: "Fixture", note: "x".repeat(201) })).toThrow();
+    expect(computerSchemas.perform_menu_action.parse({ app: "Fixture", menu_ref: "r:1", note: "why" }).note).toBe(
+        "why"
+    );
+    computer.close_session();
 });

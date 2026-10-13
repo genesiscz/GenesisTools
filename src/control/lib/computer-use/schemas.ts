@@ -9,10 +9,16 @@ import { nativeSequenceSchema } from "../decision/sequence";
 import { bindingSchema, workflowPlanSchema } from "../decision/workflow";
 
 export const appSchema = z.string().trim().min(1).max(300);
+/**
+ * Why this act happens, in a few words. It is shown on the cursor overlay's label under the action
+ * and its target, next to the agent session that drives it. Reads ignore it.
+ */
+export const noteSchema = z.string().trim().min(1).max(200).optional();
 const common = {
     app: appSchema,
     revision: z.string().min(1).max(80).optional(),
     timeout_ms: z.number().int().min(1).max(120000).optional(),
+    note: noteSchema,
 };
 const target = {
     ...common,
@@ -99,6 +105,7 @@ export const computerSchemas = {
                 .max(100)
                 .default("AXPress"),
             timeout_ms: z.number().int().min(1).max(120000).optional(),
+            note: noteSchema,
         })
         .strict(),
     list_windows: z.object({ app: appSchema }).strict(),
@@ -158,6 +165,9 @@ export const computerSchemas = {
              * Window-addressed delivery without activation. Unset means true, except for a pointer click
              * on a browser-page element (one without AXPress, or physical:true): the page ignores a
              * background click there, so that click is delivered in front, after the hit test.
+             * A right-click is always delivered in the background and never prepared: a context menu
+             * needs neither the app in front nor the pointer. On an element that offers AXShowMenu it
+             * opens the menu through that action, with no mouse event at all.
              */
             background: z.boolean().optional(),
             physical: z.boolean().default(false),

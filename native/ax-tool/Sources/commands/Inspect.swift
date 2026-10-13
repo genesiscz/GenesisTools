@@ -57,7 +57,11 @@ func cmdPerform(appName: String, action: String) {
     if !available.contains(action) {
         errorExit("action '\(action)' not available. Available: \(available.joined(separator: ", "))")
     }
-    ActionCursor.element("perform", el, background: frontmostPid() != pid)
+    if action == "AXShowMenu" {
+        ActionCursor.element("showmenu", el, background: frontmostPid() != pid, button: "right")
+    } else {
+        ActionCursor.element("perform", el, background: frontmostPid() != pid)
+    }
     let err = performActionWithTimeout(el, action: action)
     if err != .success {
         errorExit("perform '\(action)' failed: AXError \(err.rawValue)")

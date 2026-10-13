@@ -13,6 +13,15 @@ import {
     moveSoftwareCursor,
     saveCursor,
 } from "./cursor";
+import {
+    AGENT_NAME_ENV,
+    ancestorNames,
+    CURSOR_NOTE_ENV,
+    CURSOR_SESSION_ENV,
+    cursorEnvironment,
+    cursorSessionLabel,
+    parseProcessRows,
+} from "./cursor-context";
 
 let testHome = "";
 type MoveOptions = Omit<MoveSoftwareCursorOptions, "dependencies">;
@@ -300,4 +309,49 @@ test("click rejects saved token metadata inconsistent with cursor state before d
 
     expect(result).toEqual({ ok: false, error: "saved snapshot metadata does not match cursor toolbar" });
     expect(calls).toEqual([]);
+});
+
+test("the overlay label names the agent host and a short session id, plus an agent name when one is set", () => {
+    expect(
+        cursorSessionLabel({ environment: { CLAUDE_CODE_SESSION_ID: "1b4001ba-d479-40f2-9e25-b13cb2ef5a13" } })
+    ).toBe("Claude · 1b4001ba");
+    expect(cursorSessionLabel({ environment: { CODEX_THREAD_ID: "0199aa11-2233", [AGENT_NAME_ENV]: "fixer-2" } })).toBe(
+        "Codex · 0199aa11 · fixer-2"
+    );
+    // A host id never needs the process table.
+    let looked = false;
+    cursorSessionLabel({
+        environment: { GROK_SESSION_ID: "grok-1234567890" },
+        ancestors: () => {
+            looked = true;
+            return [];
+        },
+    });
+    expect(looked).toBe(false);
+});
+
+test("without an agent host the label falls back to the nearest ancestor that is not a shell or a runtime", () => {
+    expect(cursorSessionLabel({ environment: {}, ancestors: () => ["bun", "zsh", "cmux", "launchd"] })).toBe("cmux");
+    expect(cursorSessionLabel({ environment: { [AGENT_NAME_ENV]: "reviewer" }, ancestors: () => ["zsh"] })).toBe(
+        "reviewer"
+    );
+    expect(cursorSessionLabel({ environment: {}, ancestors: () => ["zsh", "bash"] })).toBeUndefined();
+    const rows = parseProcessRows(
+        [
+            "    1     0 /sbin/launchd",
+            "  500     1 /Applications/cmux.app/Contents/MacOS/cmux",
+            "  600   500 -zsh",
+            "  700   600 bun",
+            "",
+        ].join("\n")
+    );
+    expect(ancestorNames({ rows, pid: 700 })).toEqual(["-zsh", "cmux"]);
+});
+
+test("the overlay environment carries only the note and session that have text", () => {
+    expect(cursorEnvironment({ note: "  open the sidebar menu ", session: "Claude · 1b4001ba" })).toEqual({
+        [CURSOR_NOTE_ENV]: "open the sidebar menu",
+        [CURSOR_SESSION_ENV]: "Claude · 1b4001ba",
+    });
+    expect(cursorEnvironment({ note: "   ", session: undefined })).toEqual({});
 });

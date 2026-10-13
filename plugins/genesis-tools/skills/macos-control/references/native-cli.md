@@ -60,7 +60,7 @@ tools control act --app APP --by-identifier focus-hud-primary --action press
 | `perform` | `--ax-action` from observed action list | Depends on the exposed action |
 | `set` | `--value` | Exact AXValue/native popup selection; no keyboard fallback |
 | `focus` | selected element/window | Explicit activation |
-| `click` | `--button`, `--double`, `--modifiers cmd,alt,shift,ctrl`, `--background`, `--coords` | Foreground unless explicitly background |
+| `click` | `--button`, `--double`, `--modifiers cmd,alt,shift,ctrl`, `--background`, `--coords` | Foreground unless explicitly background; `--button right` is always background (AXShowMenu when the element offers it) |
 | `move`, `drag`, `scroll` | Fresh geometry; see help for direction/destination | Window-addressed; no hardware-pointer assumption |
 | `select` | unique `--text`, context, range or selection mode | AX selection must actually be settable; preparation may be needed |
 | `paste` | `--text`, `--format`; `--replace --prepare` for replacement | Focused field, clipboard restoration, exact replacement readback |

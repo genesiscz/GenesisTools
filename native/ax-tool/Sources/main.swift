@@ -26,7 +26,8 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool act --app <name> --snapshot TOKEN --element N --action ACTION
                       ACTION: get|press|click|move|drag|set|perform|focus|scroll|type|key|select|paste
                       set: --value TEXT; perform: --ax-action AXName; type: --text TEXT (single line, max 256 UTF-16 units); key: --keys cmd,a
-                      click: --button left|right|middle; --double
+                      click: --button left|right|middle; --double. --button right is always background and never
+                             activates: AXShowMenu when the element offers it, else a window-addressed right click
                       drag: --to x,y [--duration 0.1–5]; left-button only, destination in the snapshot window
                       click/move/drag/scroll: --coords x,y replaces --element; --background skips explicit activation and pointer movement
                       move sends a window-addressed hover event; named cursor storage is provided by tools control cursor
@@ -64,6 +65,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool focus   --app <name> [<target>] [--no-activate] Activate app + focus element
                       --no-activate: focus WITHOUT raising the app (never steals the user's window)
       ax-tool click   --app <name> <target>                   CGEvent click at element center
+                      --right: background only (AXShowMenu, else a window-addressed event); never activates or moves the pointer
       ax-tool type    --app <name> --text <str> [<target>]    Type + HARD VERIFY ([--clear] [--end] [--return])
                       (inserts at the CURRENT cursor; --end jumps to end first, --clear replaces all)
       ax-tool scroll  --app <name> [<target>|--coords x,y] --direction up|down|left|right [--amount n]

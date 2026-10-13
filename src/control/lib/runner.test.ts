@@ -15,12 +15,14 @@ import {
     DEFAULT_AX_RUN_BOUNDARY,
     ensureBinary,
     getBinaryPath,
+    nativeEnvironment,
     REAL_AX_TOOL_IN_TESTS,
     RealMachineInTestError,
     runAx,
     runAxAsync,
     runAxAsyncWithRecovery,
     runAxWithBoundary,
+    setCursorNote,
     withNativeBudget,
 } from "./runner";
 
@@ -718,4 +720,26 @@ test("peekaboo's own spawns, which bypass runner.ts, refuse under test too", asy
     expect(() => runCmd(["osascript", "-e", "guard-probe"])).toThrow(RealMachineInTestError);
     expect(() => runCmdFull([getBinaryPath(), "guard-probe"])).toThrow(RealMachineInTestError);
     expect(() => runPeekabooJson(["guard-probe"])).toThrow(RealMachineInTestError);
+});
+
+test("every ax-tool spawn carries the overlay note: one call's note over the command's --note over the inherited variable", async () => {
+    await env.testing.withOverrides(
+        {
+            CLAUDE_CODE_SESSION_ID: "abcdef12-0000-4000-8000-000000000000",
+            GENESIS_CONTROL_CURSOR_NOTE: "inherited",
+            GENESIS_CONTROL_CURSOR_SESSION: undefined,
+        },
+        () => {
+            try {
+                expect(nativeEnvironment().GENESIS_CONTROL_CURSOR_NOTE).toBe("inherited");
+                setCursorNote("from --note");
+                expect(nativeEnvironment().GENESIS_CONTROL_CURSOR_NOTE).toBe("from --note");
+                expect(nativeEnvironment("this call").GENESIS_CONTROL_CURSOR_NOTE).toBe("this call");
+                expect(nativeEnvironment().GENESIS_CONTROL_CURSOR_SESSION).toBeTruthy();
+                expect(nativeEnvironment().PATH).toBeDefined();
+            } finally {
+                setCursorNote(undefined);
+            }
+        }
+    );
 });

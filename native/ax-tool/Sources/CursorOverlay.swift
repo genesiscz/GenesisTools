@@ -59,12 +59,33 @@ enum ActionCursor {
     /// the same reasoning as --no-activate. Measured: one of three coordinate clicks on such a
     /// panel left ax-tool frontmost with feedback on; none did with it off.
     static var suppressedForNonActivatingPanel = false
+    /// What the label beside the cursor names. Set where a command resolves its target.
+    private static var targetApp: String?
+    private static var targetRole: String?
+    private static var targetName: String?
+
+    /// Names the app a pointer-only act goes to, when no element is known.
+    static func describe(pid: pid_t) {
+        targetApp = NSRunningApplication(processIdentifier: pid)?.localizedName
+    }
+
+    /// Names the element an act goes to: its role and title, never its value, which can be a password.
+    static func describe(_ element: AXUIElement) {
+        var pid: pid_t = 0
+        if AXUIElementGetPid(element, &pid) == .success {
+            describe(pid: pid)
+        }
+        targetRole = axStringAttribute(element, "AXRole")
+        targetName = [axStringAttribute(element, "AXTitle"), axStringAttribute(element, "AXDescription")]
+            .compactMap { $0 }.first { !$0.isEmpty }
+    }
     static var enabled: Bool {
         !suppressedForNonActivatingPanel
             && cursorFeedbackEnabled(arguments: CommandLine.arguments,
                                      environment: ProcessInfo.processInfo.environment)
     }
-    static func emit(_ verb: String, point: CGPoint?, background: Bool = false, target: String = "ax", waitForPresentation: Bool = true) {
+    static func emit(_ verb: String, point: CGPoint?, background: Bool = false, target: String = "ax",
+                     waitForPresentation: Bool = true, button: String? = nil, clickCount: Int = 1) {
         guard let action = CursorFeedbackEvent.semantic(verb) else { return }
         guard enabled else {
             if ProcessInfo.processInfo.environment["GENESIS_CONTROL_CURSOR_WAIT"] == "required" {
@@ -76,6 +97,17 @@ enum ActionCursor {
             errorExit("Required cursor feedback needs observed target geometry; input was stopped.")
         }
         var event = CursorFeedbackEvent(action: action, point: point, background: background, target: target)
+        event.button = button == "left" ? nil : button
+        event.clickCount = clickCount > 1 ? clickCount : nil
+        event.label = CursorFeedbackText.label(
+            verb: CursorFeedbackText.verb(verb, button: button, clickCount: clickCount),
+            target: CursorFeedbackText.target(app: targetApp, role: targetRole, name: targetName))
+        // The TypeScript wrapper puts the caller's --note and the driving agent session here.
+        let environment = ProcessInfo.processInfo.environment
+        event.note = CursorFeedbackText.fromEnvironment(environment["GENESIS_CONTROL_CURSOR_NOTE"],
+                                                        limit: CursorFeedbackText.noteLimit)
+        event.session = CursorFeedbackText.fromEnvironment(environment["GENESIS_CONTROL_CURSOR_SESSION"],
+                                                           limit: CursorFeedbackText.sessionLimit)
         if let point {
             var id: CGDirectDisplayID = 0
             var count: UInt32 = 0
@@ -91,13 +123,14 @@ enum ActionCursor {
             errorExit("Cursor presentation was not acknowledged; input was stopped. Inspect current state before retrying.")
         }
     }
-    static func element(_ verb: String, _ element: AXUIElement, background: Bool = false) {
+    static func element(_ verb: String, _ element: AXUIElement, background: Bool = false, button: String? = nil) {
+        describe(element)
         guard let p = axPointValue(element, "AXPosition"), let size = axSizeValue(element, "AXSize"),
               size.width > 0, size.height > 0 else {
-            emit(verb, point: nil, background: background)
+            emit(verb, point: nil, background: background, button: button)
             return
         }
-        emit(verb, point: CGPoint(x: p.x+size.width/2, y: p.y+size.height/2), background: background)
+        emit(verb, point: CGPoint(x: p.x+size.width/2, y: p.y+size.height/2), background: background, button: button)
     }
     static func hide() {
         guard let data = try? JSONEncoder().encode(CursorFeedbackEvent(action: "hide", point: nil)) else { return }
@@ -159,6 +192,14 @@ final class CursorOverlayHost {
     private let floating = CALayer()
     private let graphic = CALayer()
     private let badge = CALayer()
+    /// The click mark at the hotspot: rings, plus a menu glyph for a right-click. It does not float.
+    private let marker = CALayer()
+    private var markerWork: DispatchWorkItem?
+    private var lastMarker: (kind: CursorClickKind, point: CGPoint?, time: CFTimeInterval)?
+    private var badgeKey = ""
+    /// The app that was in front before this helper drew anything, kept current as the user switches.
+    private var previousFront: NSRunningApplication?
+    private var activationObserver: NSObjectProtocol?
     private var currentPoint: CGPoint?
     private var action = ""
     private var lastEventTime = Date.timeIntervalSinceReferenceDate
@@ -185,6 +226,7 @@ final class CursorOverlayHost {
         root.bounds = view.bounds
         panel.contentView = view
         root.addSublayer(moving)
+        moving.addSublayer(marker)
         moving.addSublayer(floating)
         floating.addSublayer(graphic)
         floating.addSublayer(badge)
@@ -276,51 +318,83 @@ final class CursorOverlayHost {
         graphic.sublayers?.forEach { $0.removeFromSuperlayer() }
         graphic.addSublayer(artwork.layer(action: name, reduced: reduced))
     }
+    /// The label beside the cursor: what and where, the caller's note, and who drives it.
+    ///
+    /// One plain dark plate with a text hierarchy (size and weight, not boxes), so it stays legible
+    /// on any wallpaper and with Reduce Transparency. Increase Contrast makes it opaque with a light
+    /// border. It is rebuilt only when its text changes; a drag's samples only extend its life.
     private func showBadge(_ event: CursorFeedbackEvent) {
+        let kind = CursorClickKind(button: event.button, clickCount: event.clickCount)
+        let key = [event.label, event.note, event.session, event.button, event.background ? "bg" : "fg", event.target]
+            .map { $0 ?? "" }.joined(separator: "\u{1f}")
+        scheduleBadgeFade(hasNote: event.note != nil)
+        guard key != badgeKey || badge.opacity == 0 else { return }
+        badgeKey = key
         badge.sublayers?.forEach { $0.removeFromSuperlayer() }
         badge.removeAllAnimations()
         badge.opacity = 1
-        let accent = NSColor(srgbRed: 94.0/255, green: 192.0/255, blue: 232.0/255, alpha: 1)
-        let title = "GenesisTools"
-        let font = NSFont(name: "Inter", size: 11.5) ?? NSFont.systemFont(ofSize: 11.5)
-        let width = min(188, (title as NSString).size(withAttributes: [.font: font]).width + 83)
-        badge.frame = CGRect(x: 25, y: 25, width: width, height: 28)
+        let rgb = event.action == "click" ? kind.accent : CursorClickKind.primary.accent
+        let accent = NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+        let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        func font(_ size: CGFloat) -> NSFont { NSFont(name: "Inter", size: size) ?? NSFont.systemFont(ofSize: size) }
+        let place = event.target == "pixel" ? "pixel" : event.target == "ax" ? "AX" : "desktop"
+        let context = [event.session, event.background ? "background" : "foreground", place]
+            .compactMap { $0 }.joined(separator: " · ")
+        var lines: [(text: String, size: CGFloat, color: NSColor)] = [(event.label ?? "GenesisTools", 12, .white)]
+        if let note = event.note {
+            lines.append((note, 11, NSColor.white.withAlphaComponent(contrast ? 1 : 0.86)))
+        }
+        lines.append((context, 10, contrast ? .white : (accent.blended(withFraction: 0.3, of: .white) ?? accent)))
+        let widest = lines.map { ($0.text as NSString).size(withAttributes: [.font: font($0.size)]).width }.max() ?? 0
+        let width = min(400, ceil(widest) + 32)
+        let heights = lines.map { ceil($0.size * 1.34) }
+        let height = heights.reduce(0, +) + 12
+        badge.frame = CGRect(origin: badgeOrigin(width: width, height: height), size: CGSize(width: width, height: height))
         let background = CAGradientLayer()
         background.frame = badge.bounds
         background.cornerRadius = 9
-        background.borderWidth = 1
-        background.borderColor = accent.withAlphaComponent(0.45).cgColor
-        background.colors = [NSColor(srgbRed: 0.08, green: 0.19, blue: 0.25, alpha: 0.98).cgColor,
-                             NSColor(srgbRed: 0.05, green: 0.07, blue: 0.10, alpha: 0.98).cgColor]
+        background.borderWidth = contrast ? 1.5 : 1
+        background.borderColor = (contrast ? NSColor.white : accent.withAlphaComponent(0.5)).cgColor
+        background.colors = contrast
+            ? [NSColor.black.cgColor, NSColor.black.cgColor]
+            : [NSColor(srgbRed: 0.08, green: 0.13, blue: 0.17, alpha: 0.97).cgColor,
+               NSColor(srgbRed: 0.05, green: 0.07, blue: 0.10, alpha: 0.97).cgColor]
         background.startPoint = .zero
         background.endPoint = CGPoint(x: 1, y: 1)
         badge.addSublayer(background)
         let dot = CAShapeLayer()
-        dot.path = CGPath(ellipseIn: CGRect(x: 8, y: 10, width: 8, height: 8), transform: nil)
+        let dotY = 6 + (heights[0] - 8) / 2
+        dot.path = kind == .secondary && event.action == "click"
+            ? CGPath(roundedRect: CGRect(x: 9, y: dotY, width: 8, height: 8), cornerWidth: 2, cornerHeight: 2, transform: nil)
+            : CGPath(ellipseIn: CGRect(x: 9, y: dotY, width: 8, height: 8), transform: nil)
         dot.fillColor = accent.cgColor
         badge.addSublayer(dot)
-        func text(_ value: String, frame: CGRect, color: NSColor, size: CGFloat) {
+        var y: CGFloat = 6
+        for (index, line) in lines.enumerated() {
             let label = CATextLayer()
-            label.frame = frame
-            label.string = value
-            label.font = font
-            label.fontSize = size
-            label.foregroundColor = color.cgColor
+            label.frame = CGRect(x: 23, y: y, width: width - 31, height: heights[index])
+            label.string = line.text
+            label.font = font(line.size)
+            label.fontSize = line.size
+            label.foregroundColor = line.color.cgColor
+            label.isWrapped = false
+            label.truncationMode = .end
             label.contentsScale = panel.backingScaleFactor
             badge.addSublayer(label)
+            y += heights[index]
         }
-        text(title, frame: CGRect(x: 22, y: 6, width: width-76, height: 18), color: .white, size: 11.5)
-        for (offset, value) in [event.background ? "BG" : "FG", event.target == "pixel" ? "PX" : event.target == "ax" ? "AX" : "OS"].enumerated() {
-            let chip = CALayer()
-            chip.frame = CGRect(x: width - 47 + CGFloat(offset)*22, y: 5, width: 18, height: 18)
-            chip.cornerRadius = 4
-            chip.backgroundColor = offset == 0 ? accent.cgColor : NSColor.clear.cgColor
-            chip.borderColor = accent.cgColor
-            chip.borderWidth = 1
-            badge.addSublayer(chip)
-            text(value, frame: CGRect(x: chip.frame.minX+2, y: 8, width: 16, height: 12),
-                 color: offset == 0 ? .black : accent, size: 8)
-        }
+    }
+
+    /// Below and right of the hotspot, flipped to the other side when that would leave the screen.
+    private func badgeOrigin(width: CGFloat, height: CGFloat) -> CGPoint {
+        let point = currentPoint ?? .zero
+        let room = root.bounds.size
+        let x: CGFloat = point.x + 25 + width > room.width - 4 ? -25 - width : 25
+        let y: CGFloat = point.y + 25 + height > room.height - 4 ? -25 - height : 25
+        return CGPoint(x: x, y: y)
+    }
+
+    private func scheduleBadgeFade(hasNote: Bool) {
         fadeWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -333,7 +407,120 @@ final class CursorOverlayHost {
             self.badge.add(fade, forKey: "fade")
         }
         fadeWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now()+2, execute: work)
+        // A note is a sentence to read, so it stays a little longer than a verb and a target.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (hasNote ? 3.5 : 2.4), execute: work)
+    }
+
+    /// Marks the click at the hotspot once the glide arrives: one ring for a click, two for a double
+    /// click, and an amber ring with a menu glyph for a right-click. Every animation is one-shot and
+    /// the layers are removed afterwards, so an idle overlay draws nothing new.
+    private func showMarker(_ event: CursorFeedbackEvent, after delay: Double) {
+        guard event.action == "click", event.point != nil else { return }
+        let kind = CursorClickKind(button: event.button, clickCount: event.clickCount)
+        let now = CACurrentMediaTime()
+        // The second event of a double click lands on the same spot a moment later: one mark is enough.
+        if let last = lastMarker, last.kind == kind, last.point == currentPoint, now - last.time < 0.4 {
+            return
+        }
+
+        lastMarker = (kind, currentPoint, now)
+        markerWork?.cancel()
+        marker.sublayers?.forEach { $0.removeFromSuperlayer() }
+        let rgb = kind.accent
+        let accent = NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+        let begin = marker.convertTime(now, from: nil) + delay
+        for index in 0..<kind.rings {
+            let ring = CAShapeLayer()
+            ring.path = CGPath(ellipseIn: CGRect(x: -10, y: -10, width: 20, height: 20), transform: nil)
+            ring.fillColor = kind == .secondary ? accent.withAlphaComponent(0.22).cgColor : nil
+            ring.strokeColor = accent.cgColor
+            ring.lineWidth = 2
+            marker.addSublayer(ring)
+            if reduced {
+                ring.opacity = 0.9
+                continue
+            }
+
+            ring.opacity = 0
+            let grow = CABasicAnimation(keyPath: "transform.scale")
+            grow.fromValue = 0.5
+            grow.toValue = 1.8
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [0, 1, 0]
+            fade.keyTimes = [0, 0.2, 1]
+            let pulse = CAAnimationGroup()
+            pulse.animations = [grow, fade]
+            pulse.duration = 0.55
+            pulse.beginTime = begin + Double(index) * 0.16
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            pulse.fillMode = .backwards
+            ring.add(pulse, forKey: "pulse")
+        }
+        if kind.showsMenuGlyph {
+            let glyph = menuGlyph(accent)
+            // Left of the hotspot: the arrow and the label sit below and right of it.
+            glyph.position = CGPoint(x: -24, y: 2)
+            marker.addSublayer(glyph)
+            if !reduced {
+                glyph.opacity = 0
+                let show = CAKeyframeAnimation(keyPath: "opacity")
+                show.values = [0, 1, 1, 0]
+                show.keyTimes = [0, 0.12, 0.75, 1]
+                show.duration = 1.3
+                show.beginTime = begin
+                show.fillMode = .backwards
+                glyph.add(show, forKey: "show")
+            }
+        }
+        let work = DispatchWorkItem { [weak self] in
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self?.marker.sublayers?.forEach { $0.removeFromSuperlayer() }
+            CATransaction.commit()
+        }
+        markerWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay + (reduced ? 1.2 : 1.4), execute: work)
+    }
+
+    /// A small menu symbol: a rounded plate with three lines.
+    private func menuGlyph(_ accent: NSColor) -> CALayer {
+        let glyph = CAShapeLayer()
+        glyph.path = CGPath(roundedRect: CGRect(x: -8, y: -7, width: 16, height: 14), cornerWidth: 3.5, cornerHeight: 3.5,
+                            transform: nil)
+        glyph.fillColor = accent.cgColor
+        glyph.strokeColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        glyph.lineWidth = 0.5
+        let lines = CAShapeLayer()
+        let path = CGMutablePath()
+        for y in [-3.0, 0.0, 3.0] {
+            path.move(to: CGPoint(x: -4.5, y: y))
+            path.addLine(to: CGPoint(x: 4.5, y: y))
+        }
+        lines.path = path
+        lines.strokeColor = NSColor(white: 0.08, alpha: 0.9).cgColor
+        lines.lineWidth = 1.4
+        lines.lineCap = .round
+        glyph.addSublayer(lines)
+        return glyph
+    }
+
+    /// 🛑 The overlay must never be the app in front. A panel that cannot become key still left this
+    /// helper frontmost (measured 2026-09-21, the reason --no-activate turns feedback off), so the
+    /// front goes straight back to the app the user had.
+    private func handBackFront() {
+        guard let previous = previousFront, !previous.isTerminated else {
+            NSApp.deactivate()
+            return
+        }
+
+        if #available(macOS 14.0, *) {
+            NSApp.yieldActivation(to: previous)
+            previous.activate()
+        } else {
+            previous.activate(options: [.activateIgnoringOtherApps])
+        }
+        fputs("Cursor overlay became frontmost; handed the front back to "
+            + "\(previous.localizedName ?? "pid \(previous.processIdentifier)").\n", stderr)
     }
 
     private func receive(_ event: CursorFeedbackEvent) {
@@ -370,9 +557,13 @@ final class CursorOverlayHost {
         root.opacity = 1
         root.removeAnimation(forKey: "hide")
         showArtwork(event.action)
-        if !sameAction { showBadge(event) }
+        showBadge(event)
+        showMarker(event, after: glideDuration)
         CATransaction.commit()
         panel.orderFrontRegardless()
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() {
+            handBackFront()
+        }
         panel.displayIfNeeded()
         CATransaction.flush()
         if let id = event.receiptID {
@@ -445,13 +636,15 @@ final class CursorOverlayHost {
         if let link = displayLink { CVDisplayLinkStop(link) }
         source?.cancel()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
         if socketFD >= 0 { close(socketFD) }
         unlink(CursorChannel.socketPath)
         if lockFD >= 0 { close(lockFD) }
         panel.orderOut(nil)
         exit(0)
     }
-    func run(initial: CursorFeedbackEvent) {
+    func run(initial: CursorFeedbackEvent, previousFront: NSRunningApplication?) {
+        self.previousFront = previousFront
         guard CursorChannel.prepare() else { return }
         lockFD = open(CursorChannel.directory+"/owner.lock", O_CREAT|O_RDWR|O_NOFOLLOW, 0o600)
         guard lockFD >= 0 else { return }
@@ -491,6 +684,21 @@ final class CursorOverlayHost {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.panel.orderOut(nil); self?.currentPoint = nil }
+        // Event-driven, no polling: remember whichever app the user brings forward, and if this helper
+        // is ever the one activated, give the front back at once.
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                return
+            }
+
+            if app.processIdentifier == getpid() {
+                self.handBackFront()
+            } else {
+                self.previousFront = app
+            }
+        }
         read.resume()
         receive(initial)
         DispatchQueue.main.asyncAfter(deadline: .now()+600) { self.finish() }
@@ -526,7 +734,12 @@ func runCursorFeedbackCommand() {
         guard ["ax", "pixel", "desktop"].contains(target) else {
             errorExit("cursor-feedback --target must be ax, pixel or desktop")
         }
-        ActionCursor.emit(verb, point: point, background: args.contains("--background"), target: target)
+        let button = argValue("--button")
+        guard button == nil || ["left", "right", "middle"].contains(button!) else {
+            errorExit("cursor-feedback --button must be left, right or middle")
+        }
+        ActionCursor.emit(verb, point: point, background: args.contains("--background"), target: target,
+                          button: button, clickCount: args.contains("--double") ? 2 : 1)
         jsonOutput(["ok": true, "action": action, "overlay": true, "inputDispatched": false])
         return
     }
@@ -554,11 +767,13 @@ func runCursorFeedbackCommand() {
     do {
         let event = try JSONDecoder().decode(CursorFeedbackEvent.self, from: data)
         guard event.valid else { errorExit("invalid cursor feedback") }
+        // Read before this process becomes an app at all, so the hand-back knows where the front was.
+        let previousFront = NSWorkspace.shared.frontmostApplication
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
         NSApp.finishLaunching()
         let host = try CursorOverlayHost(initial:event)
-        host.run(initial: event)
+        host.run(initial: event, previousFront: previousFront.flatMap { $0.processIdentifier == getpid() ? nil : $0 })
     } catch {
         fputs("Cursor overlay could not start: \(error.localizedDescription)\n", stderr)
     }

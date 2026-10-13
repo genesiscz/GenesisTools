@@ -150,7 +150,8 @@ interface AppRecord {
     query?: { text: string; role?: string };
 }
 export interface NativeBridge {
-    run(options: { args: string[]; timeoutMs?: number; signal?: AbortSignal }): Promise<AxResult>;
+    /** `note` is shown on the cursor overlay's label for this one call. */
+    run(options: { args: string[]; timeoutMs?: number; signal?: AbortSignal; note?: string }): Promise<AxResult>;
 }
 function normalizeAction(name: string): string {
     return name
@@ -250,6 +251,36 @@ function rowPin(row: Observation["elements"][number], rows: Observation["element
               ...targetOrdinalArgs({ rows, row, key: pin, fields: ["targetKey", "stableKey"] }),
           ]
         : [];
+}
+
+/**
+ * A right-click on an observed row. 🛑 Never `--prepare` and never in front: a context menu needs
+ * neither the app in front nor the pointer, and preparing activated the target, which took the
+ * user's focus every time an agent opened a menu (Martin, 2026-10-13). Native code opens the menu
+ * through the element's own AXShowMenu when it has one, with no mouse event at all, and otherwise
+ * addresses a right click to the element's window.
+ */
+export function secondaryClickArgs({
+    row,
+    rows,
+    options,
+}: {
+    row: Observation["elements"][number];
+    rows: Observation["elements"];
+    options: { click_count: number; modifiers: string[] };
+}): string[] {
+    return [
+        "--action",
+        "click",
+        "--element",
+        String(row.index),
+        "--button",
+        "right",
+        ...(options.click_count === 2 ? ["--double"] : []),
+        ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
+        "--background",
+        ...rowPin(row, rows),
+    ];
 }
 
 /** `--prepare` with the row's targetKey, and its position when identical twins share that key. */
@@ -1018,6 +1049,7 @@ export class ComputerUse {
             app: string;
             revision?: string;
             timeout_ms?: number;
+            note?: string;
         };
         build: (record: AppRecord) => string[];
         signal?: AbortSignal;
@@ -1046,7 +1078,12 @@ export class ComputerUse {
             record.implicitActionAllowed = false;
             let result: AxResult;
             try {
-                result = await this.native.run({ args, timeoutMs: input.timeout_ms ?? this.timeoutMs, signal });
+                result = await this.native.run({
+                    args,
+                    timeoutMs: input.timeout_ms ?? this.timeoutMs,
+                    signal,
+                    note: input.note,
+                });
             } catch (error) {
                 logger.warn({ error, app: input.app }, "Native action transport failed; no retry");
                 result = {
@@ -1166,7 +1203,7 @@ export class ComputerUse {
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
                         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                        ...((options.background ?? true) ? ["--background"] : []),
+                        ...((options.background ?? true) || button === "right" ? ["--background"] : []),
                     ];
                 }
                 if (options.x !== undefined || options.y !== undefined) {
@@ -1198,13 +1235,16 @@ export class ComputerUse {
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
                         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                        ...((options.background ?? true) ? ["--background"] : []),
+                        ...((options.background ?? true) || button === "right" ? ["--background"] : []),
                     ];
                 }
                 const row = this.select({
                     record,
                     input: options,
                 });
+                if (button === "right") {
+                    return secondaryClickArgs({ row, rows: safeRows(record.snapshot.elements), options });
+                }
                 if (
                     !options.physical &&
                     button === "left" &&

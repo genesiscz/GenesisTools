@@ -27,6 +27,16 @@ public struct CursorFeedbackEvent: Codable {
     public var displayX: Double?
     public var displayY: Double?
     public var receiptID: String?
+    /// "right" or "middle" for a secondary click. Nil is the primary button.
+    public var button: String?
+    /// 2 for a double click. Nil is a single one.
+    public var clickCount: Int?
+    /// What and where, for the label beside the cursor: "Right-click · TextEdit › text area".
+    public var label: String?
+    /// Why, in the caller's own words (`--note` on the CLI, `note` in the API).
+    public var note: String?
+    /// Who drives it: "Claude · 1b4001ba", plus an agent name when one is known.
+    public var session: String?
     public var displayPoint: CGPoint? {
         guard displayID != nil, let x=displayX, let y=displayY, x.isFinite, y.isFinite, x >= 0, y >= 0, x < 100000, y < 100000 else { return nil }
         return CGPoint(x:x,y:y)
@@ -45,12 +55,17 @@ public struct CursorFeedbackEvent: Codable {
     public var valid: Bool {
         Self.actions.contains(action) && (x == nil && y == nil || point != nil) && ["ax", "pixel", "desktop"].contains(target) &&
             (displayID == nil && displayX == nil && displayY == nil || displayPoint != nil) &&
-            (receiptID == nil || UUID(uuidString: receiptID!) != nil)
+            (receiptID == nil || UUID(uuidString: receiptID!) != nil) &&
+            (button == nil || ["left", "right", "middle"].contains(button!)) &&
+            (clickCount == nil || (1...3).contains(clickCount!)) &&
+            (label?.count ?? 0) <= CursorFeedbackText.labelLimit &&
+            (note?.count ?? 0) <= CursorFeedbackText.noteLimit &&
+            (session?.count ?? 0) <= CursorFeedbackText.sessionLimit
     }
     public static let actions: Set<String> = ["idle", "click", "drag", "scroll", "text", "key", "navigate", "app", "transfer", "system", "hide"]
     public static func semantic(_ verb: String) -> String? {
         switch verb {
-        case "press", "click", "perform": return "click"
+        case "press", "click", "perform", "showmenu": return "click"
         case "move": return "idle"
         case "drag": return "drag"
         case "scroll": return "scroll"
@@ -61,6 +76,135 @@ public struct CursorFeedbackEvent: Codable {
         case "window", "resize", "minimize", "maximize", "close": return "app"
         default: return nil
         }
+    }
+}
+
+/// How a click is marked at the cursor, so a watcher tells a context menu from a press at a glance.
+public enum CursorClickKind: Equatable {
+    case primary
+    case double
+    case secondary
+    case middle
+
+    public init(button: String?, clickCount: Int?) {
+        switch button {
+        case "right": self = .secondary
+        case "middle": self = .middle
+        default: self = (clickCount ?? 1) > 1 ? .double : .primary
+        }
+    }
+
+    /// sRGB accent: the overlay's cyan for a press, amber for a context menu, violet for the middle button.
+    public var accent: (red: Double, green: Double, blue: Double) {
+        switch self {
+        case .primary, .double: return (94.0 / 255, 192.0 / 255, 232.0 / 255)
+        case .secondary: return (245.0 / 255, 166.0 / 255, 35.0 / 255)
+        case .middle: return (176.0 / 255, 140.0 / 255, 1)
+        }
+    }
+
+    /// Expanding rings at the hotspot: two for a double click, one otherwise.
+    public var rings: Int { self == .double ? 2 : 1 }
+
+    /// A context menu also gets a small menu glyph beside the ring.
+    public var showsMenuGlyph: Bool { self == .secondary }
+}
+
+/// The words on the label beside the cursor. Pure, so the text is tested without a display.
+public enum CursorFeedbackText {
+    public static let labelLimit = 72
+    public static let noteLimit = 120
+    public static let sessionLimit = 48
+    /// An element name longer than this is cut, so the app and the verb stay on the line.
+    static let nameLimit = 32
+
+    /// The verb a person would say for this act.
+    public static func verb(_ verb: String, button: String?, clickCount: Int) -> String {
+        if verb == "showmenu" {
+            return "Context menu"
+        }
+
+        switch button {
+        case "right": return clickCount > 1 ? "Double right-click" : "Right-click"
+        case "middle": return "Middle-click"
+        default: break
+        }
+
+        switch verb {
+        case "click": return clickCount > 1 ? "Double-click" : "Click"
+        case "press": return "Press"
+        case "perform": return "Perform"
+        case "move", "hover": return "Move"
+        case "drag": return "Drag"
+        case "scroll": return "Scroll"
+        case "set": return "Set value"
+        case "type": return "Type"
+        case "select": return "Select text"
+        case "paste": return "Paste"
+        case "key", "hotkey": return "Key"
+        case "focus": return "Focus"
+        case "window", "resize", "minimize", "maximize", "close": return "Window"
+        default: return verb.prefix(1).uppercased() + verb.dropFirst()
+        }
+    }
+
+    /// "text area" from AXTextArea, "pop up button" from AXPopUpButton.
+    public static func role(_ role: String?) -> String? {
+        guard var raw = role, !raw.isEmpty else {
+            return nil
+        }
+
+        if raw.hasPrefix("AX") {
+            raw.removeFirst(2)
+        }
+
+        var words: [String] = []
+        var current = ""
+        for character in raw {
+            if character.isUppercase, !current.isEmpty {
+                words.append(current)
+                current = ""
+            }
+            current.append(character)
+        }
+        if !current.isEmpty {
+            words.append(current)
+        }
+        let text = words.joined(separator: " ").lowercased()
+        return text.isEmpty ? nil : text
+    }
+
+    /// "TextEdit › “Save” button". The element's value is never used: it can be a password.
+    public static func target(app: String?, role: String?, name: String?) -> String? {
+        let roleText = Self.role(role)
+        let trimmedName = truncate(name ?? "", to: nameLimit)
+        let element = trimmedName.isEmpty ? roleText : "“\(trimmedName)”" + (roleText.map { " \($0)" } ?? "")
+        let appName = truncate(app ?? "", to: nameLimit)
+        let parts = [appName.isEmpty ? nil : appName, element].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " › ")
+    }
+
+    /// "Right-click · TextEdit › text area", cut to fit the label.
+    public static func label(verb: String, target: String?) -> String {
+        truncate(target.map { "\(verb) · \($0)" } ?? verb, to: labelLimit)
+    }
+
+    /// One line, at most `limit` characters, ending in an ellipsis when cut. Counts characters as a
+    /// person sees them, so an emoji or an accented letter is never split.
+    public static func truncate(_ text: String, to limit: Int) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard flat.count > limit else {
+            return flat
+        }
+
+        return String(flat.prefix(max(1, limit - 1))).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// The caller's note or session from the environment, trimmed and cut, or nil when empty.
+    public static func fromEnvironment(_ value: String?, limit: Int) -> String? {
+        let text = truncate(value ?? "", to: limit)
+        return text.isEmpty ? nil : text
     }
 }
 

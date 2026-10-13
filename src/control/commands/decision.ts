@@ -8,7 +8,7 @@ import { z } from "zod";
 import { judgeOutcome, resolveIntent } from "../lib/decision/decisions";
 import { type ControlDriver, NativeControlDriver } from "../lib/decision/native";
 import { observationSchema } from "../lib/decision/observation";
-import { setCursorFeedbackEnabled } from "../lib/runner";
+import { setCursorFeedbackEnabled, setCursorNote } from "../lib/runner";
 import { SimulatorControlDriver } from "../lib/simulator/driver";
 
 export interface ControlOptions {
@@ -99,7 +99,12 @@ export function exactExpectation(options: ControlOptions) {
 export function registerDecisionCommands(program: Command): void {
     addProviderOption(program);
     program.option("--no-cursor", "Disable animated visual feedback for this command");
-    program.hook("preAction", () => setCursorFeedbackEnabled(program.optsWithGlobals().cursor !== false));
+    program.option("--note <text>", "Say why on the cursor overlay's label, under the action and its target");
+    program.hook("preAction", () => {
+        const options = program.optsWithGlobals();
+        setCursorFeedbackEnabled(options.cursor !== false);
+        setCursorNote(typeof options.note === "string" ? options.note : undefined);
+    });
     observationOptions(
         program.command("resolve").description("Read-only intent resolution over observed native targets")
     )

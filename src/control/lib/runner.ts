@@ -14,6 +14,13 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import {
+    ancestorNamesOfThisProcess,
+    CURSOR_NOTE_ENV,
+    CURSOR_SESSION_ENV,
+    cursorEnvironment,
+    cursorSessionLabel,
+} from "./cursor-context";
 import { NATIVE_BUILD_WORKER_TIMEOUT_MS, nativeNeedsBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -372,6 +379,7 @@ export const DEFAULT_AX_RUN_BOUNDARY: AxRunBoundary = {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
             maxBuffer: maxBufferBytes,
+            env: nativeEnvironment(),
         });
         return {
             status: result.status,
@@ -574,6 +582,33 @@ let cursorFeedbackEnabled = true;
 export function setCursorFeedbackEnabled(enabled: boolean): void {
     cursorFeedbackEnabled = enabled;
 }
+
+let cursorNote: string | undefined;
+/** The `--note` of this command: shown under the action on the cursor overlay's label. */
+export function setCursorNote(note: string | undefined): void {
+    cursorNote = note?.trim() || undefined;
+}
+
+let sessionLabel: string | null | undefined;
+/**
+ * The environment every ax-tool spawn gets: this process's own, plus the overlay label's note and
+ * session. A note passed for one call wins over the command's `--note`; a variable the caller set
+ * itself wins over the computed session.
+ */
+export function nativeEnvironment(note?: string): NodeJS.ProcessEnv {
+    const environment = env.getProcessEnv();
+    if (sessionLabel === undefined) {
+        sessionLabel = cursorSessionLabel({ environment, ancestors: ancestorNamesOfThisProcess }) ?? null;
+    }
+
+    return {
+        ...environment,
+        ...cursorEnvironment({
+            note: note ?? cursorNote ?? environment[CURSOR_NOTE_ENV],
+            session: environment[CURSOR_SESSION_ENV] ?? sessionLabel ?? undefined,
+        }),
+    };
+}
 function nativeArguments(args: string[]): string[] {
     const mutating = [
         "act",
@@ -599,6 +634,8 @@ export async function runAxAsync(options: {
     args: string[];
     timeoutMs?: number;
     signal?: AbortSignal;
+    /** Shown on the cursor overlay's label for this one call. */
+    note?: string;
 }): Promise<AxResult> {
     const clock = new Stopwatch();
     const timeoutMs = Math.floor(options.timeoutMs ?? 10000);
@@ -638,6 +675,7 @@ export async function runAxAsync(options: {
                         timeoutMs: attemptTimeoutMs,
                         maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
                         signal: options.signal,
+                        environment: nativeEnvironment(options.note),
                     })
                 );
                 return interpretNativeResult({ args, result, timeoutMs: attemptTimeoutMs });

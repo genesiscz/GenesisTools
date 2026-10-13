@@ -335,6 +335,59 @@ final class CursorFeedbackTests: XCTestCase {
         XCTAssertEqual(CursorMotion.viewPoint(CGPoint(x: -100, y: 400), desktop: desktop, primaryTop: 1080),
                        CGPoint(x: 1820, y: 400))
     }
+    func testRightAndDoubleClicksAreMarkedApartFromAPlainClick() {
+        XCTAssertEqual(CursorClickKind(button: nil, clickCount: nil), .primary)
+        XCTAssertEqual(CursorClickKind(button: "left", clickCount: 2), .double)
+        XCTAssertEqual(CursorClickKind(button: "right", clickCount: 1), .secondary)
+        XCTAssertEqual(CursorClickKind(button: "right", clickCount: 2), .secondary)
+        XCTAssertEqual(CursorClickKind(button: "middle", clickCount: nil), .middle)
+        XCTAssertTrue(CursorClickKind.secondary.showsMenuGlyph)
+        XCTAssertFalse(CursorClickKind.primary.showsMenuGlyph)
+        XCTAssertEqual(CursorClickKind.double.rings, 2)
+        XCTAssertEqual(CursorClickKind.primary.rings, 1)
+        XCTAssertNotEqual(CursorClickKind.secondary.accent.red, CursorClickKind.primary.accent.red)
+        XCTAssertEqual(CursorFeedbackEvent.semantic("showmenu"), "click")
+    }
+    func testTheLabelSaysWhatWhereAndNeverTheValue() {
+        XCTAssertEqual(CursorFeedbackText.verb("click", button: "right", clickCount: 1), "Right-click")
+        XCTAssertEqual(CursorFeedbackText.verb("click", button: nil, clickCount: 2), "Double-click")
+        XCTAssertEqual(CursorFeedbackText.verb("showmenu", button: "right", clickCount: 1), "Context menu")
+        XCTAssertEqual(CursorFeedbackText.verb("press", button: nil, clickCount: 1), "Press")
+        XCTAssertEqual(CursorFeedbackText.role("AXTextArea"), "text area")
+        XCTAssertEqual(CursorFeedbackText.role("AXPopUpButton"), "pop up button")
+        XCTAssertNil(CursorFeedbackText.role(""))
+        let target = CursorFeedbackText.target(app: "Finder", role: "AXRow", name: "Sidebar row")
+        XCTAssertEqual(target, "Finder › “Sidebar row” row")
+        XCTAssertEqual(CursorFeedbackText.label(verb: "Right-click", target: target), "Right-click · Finder › “Sidebar row” row")
+        XCTAssertEqual(CursorFeedbackText.target(app: "TextEdit", role: "AXTextArea", name: nil), "TextEdit › text area")
+        XCTAssertNil(CursorFeedbackText.target(app: nil, role: nil, name: "  "))
+        XCTAssertEqual(CursorFeedbackText.label(verb: "Key", target: nil), "Key")
+    }
+    func testLabelPartsAreCutToOneShortLineWithoutSplittingACharacter() {
+        let long = String(repeating: "é", count: 200)
+        let cut = CursorFeedbackText.truncate(long, to: 10)
+        XCTAssertEqual(cut.count, 10)
+        XCTAssertTrue(cut.hasSuffix("…"))
+        XCTAssertEqual(CursorFeedbackText.truncate("two\nlines", to: 40), "two lines")
+        XCTAssertNil(CursorFeedbackText.fromEnvironment("   ", limit: 10))
+        XCTAssertEqual(CursorFeedbackText.fromEnvironment(" why ", limit: 10), "why")
+        let label = CursorFeedbackText.label(verb: "Right-click", target: String(repeating: "x", count: 300))
+        XCTAssertEqual(label.count, CursorFeedbackText.labelLimit)
+        var event = CursorFeedbackEvent(action: "click", point: .zero)
+        event.button = "right"
+        event.clickCount = 2
+        event.label = label
+        event.note = CursorFeedbackText.fromEnvironment(String(repeating: "n", count: 500), limit: CursorFeedbackText.noteLimit)
+        event.session = "Claude · 1b4001ba"
+        XCTAssertTrue(event.valid)
+        // The datagram the helper reads holds 4096 bytes; a full label, note and session fit.
+        XCTAssertLessThan(try JSONEncoder().encode(event).count, 2048)
+        event.button = "secondary"
+        XCTAssertFalse(event.valid)
+        event.button = "right"
+        event.note = String(repeating: "n", count: CursorFeedbackText.noteLimit + 1)
+        XCTAssertFalse(event.valid)
+    }
     func testCursorMappingTracksDisplaysAboveLeftAndRightAndChangedPrimaryHeight() {
         let laptop = CGRect(x:0,y:0,width:2056,height:1329)
         let left = CGRect(x:-1488,y:1329,width:2560,height:1440)

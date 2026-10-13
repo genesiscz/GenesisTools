@@ -913,6 +913,12 @@ func cmdAct(appName _: String) {
     // read, so a caller who knows what an element is called never runs `see` at all.
     let byIdentifier = workflowArgument("--by-identifier")
     let action = workflowArgument("--action")!
+    // 🛑 A right-click opens a context menu, and a context menu needs neither the app in front nor the
+    // real pointer. So it is always delivered to the window in the background, and --prepare skips
+    // its focus step for it: a foreground right-click activated the target, which took the user's
+    // focus every time an agent opened a menu (Martin, 2026-10-13).
+    let secondaryClick = action == "click" && workflowArgument("--button") == "right"
+    let activeBefore = secondaryClick ? activeApplicationPid() : nil
     // The user stops an agent by putting the pointer in the menu-bar corner. Checked before anything
     // that changes the UI, the activation --prepare does included; the gate checks again per event.
     if action != "get" {
@@ -995,6 +1001,7 @@ func cmdAct(appName _: String) {
         workflowFailure(error)
     }
     let element = tree.elements[elementIndex]
+    ActionCursor.describe(element)
     if action != "get", !(action == "focus" && elementIndex == 0) {
         let coordinates = rawCoords?.split(separator: ",").compactMap { Double($0) }
         let point = coordinates?.count == 2 ? CGPoint(x: coordinates![0], y: coordinates![1]) : nil
@@ -1007,7 +1014,9 @@ func cmdAct(appName _: String) {
             workflowFailure("selected target is disabled")
         }
         let before = tree.rows[elementIndex]
-        workflowFocus(window, pid:pid, element:window.ax)
+        if !secondaryClick {
+            workflowFocus(window, pid:pid, element:window.ax)
+        }
         if axActionNames(element).contains("AXScrollToVisible") || tree.rows[elementIndex]["visible"] as? Bool != true {
             guard tryScrollIntoView(element,app:AXUIElementCreateApplication(pid)) else {
                 workflowFailure("selected element could not scroll into view")
@@ -1033,7 +1042,9 @@ func cmdAct(appName _: String) {
         catch { workflowFailure(error) }
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
             digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query,truncate:token.truncates)
-        workflowFrontWindow(window,pid:pid)
+        if !secondaryClick {
+            workflowFrontWindow(window,pid:pid)
+        }
         prepared = true
     }
     if token.effectiveScope == "chrome", action != "get",
@@ -1051,7 +1062,7 @@ func cmdAct(appName _: String) {
     switch action {
     case "get": operation = .read
     case "focus": operation = .focus
-    case "click", "move", "drag", "scroll": operation = .pointer(background: workflowFlag("--background"))
+    case "click", "move", "drag", "scroll": operation = .pointer(background: workflowFlag("--background") || secondaryClick)
     case "type", "key", "paste": operation = .input
     default: operation = .mutation
     }
@@ -1147,7 +1158,11 @@ func cmdAct(appName _: String) {
         let frame = tree.frames[elementIndex]
         let center = CGPoint(x: frame.midX, y: frame.midY)
         if frame.width > 0, frame.height > 0, window.bounds.contains(center) {
-            ActionCursor.emit(action, point: center, background: frontmostPid() != pid)
+            if action == "perform", axActionRequested == "AXShowMenu" {
+                ActionCursor.emit("showmenu", point: center, background: frontmostPid() != pid, button: "right")
+            } else {
+                ActionCursor.emit(action, point: center, background: frontmostPid() != pid)
+            }
             // Presentation can span a cold helper launch or glide. Revalidate after that wait.
             try validateAfterFeedback()
         } else {
@@ -1260,7 +1275,7 @@ func cmdAct(appName _: String) {
     case "focus":
         workflowFocus(window, pid:pid, element:element)
     case "scroll", "click", "move", "drag", "hover":
-        let background = workflowFlag("--background")
+        let background = workflowFlag("--background") || secondaryClick
         let frame = tree.frames[elementIndex]
         // 🛑 The default stays `screen`, NOT `window` as the spec asked. Flipping it would silently
         // reinterpret every coordinate an existing caller already passes: a global point read as
@@ -1589,6 +1604,27 @@ func cmdAct(appName _: String) {
                                      inputGate.deliver { event.postToPid(pid) }
                                  })
                 Thread.sleep(forTimeInterval: 0.05)
+            } else if secondaryClick, rawCoords == nil, !workflowFlag("--double"), workflowArgument("--modifiers") == nil,
+                      axActionNames(element).contains("AXShowMenu") {
+                // The element opens its own context menu: no synthetic mouse event at all, so nothing for
+                // the window server to route and no pointer to move. A pixel target, a double click, a
+                // modifier or an element without AXShowMenu gets the window-addressed event below. Both
+                // left a background AppKit probe inactive (measured 2026-10-13); the front guard at the
+                // end covers an app that activates itself anyway.
+                try dispatchAfterPresentation(present: {
+                    ActionCursor.emit("showmenu", point: point, background: true, target: "ax", button: "right")
+                }, validate: {
+                    try validateAfterFeedback()
+                    try inputGate.check()
+                }, dispatch: {
+                    // A context menu runs its tracking loop inside the AX request, so the call returns
+                    // only when the menu closes; a timeout here means the menu is open.
+                    let error = performActionWithTimeout(element, action: "AXShowMenu", timeoutMs: 600)
+                    guard error == .success else {
+                        throw WindowEventError.unavailable("AXShowMenu failed (AX \(error.rawValue)); a menu may or may not be open, inspect before retrying")
+                    }
+                })
+                actionExtras["delivery"] = "AXShowMenu"
             } else {
                 let button = workflowArgument("--button") ?? "left"
                 let types: [String: (NSEvent.EventType, NSEvent.EventType)] = [
@@ -1613,7 +1649,8 @@ func cmdAct(appName _: String) {
                         up.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                     }
                     let held = try dispatchAfterPresentation(present: {
-                        ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
+                        ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel",
+                                          button: button, clickCount: workflowFlag("--double") ? 2 : 1)
                     }, validate: {
                         if click == 1 { try validateAfterFeedback() }
                         _ = try verifyPoint(point, pin: .element)
@@ -1622,6 +1659,9 @@ func cmdAct(appName _: String) {
                     Thread.sleep(forTimeInterval: 0.03)
                     inputGate.release(held)
                     Thread.sleep(forTimeInterval: 0.03)
+                }
+                if secondaryClick {
+                    actionExtras["delivery"] = "window-event"
                 }
             }
         } catch {
@@ -1824,6 +1864,15 @@ func cmdAct(appName _: String) {
     } else {
         payload["refreshRequired"] = true
         payload["note"] = "action dispatched; use see to verify the resulting UI"
+    }
+    if secondaryClick {
+        // Long enough for an app that activates itself from its menu handler to have done it.
+        if !workflowFlag("--refresh") {
+            Thread.sleep(forTimeInterval: 0.12)
+        }
+        payload.merge(secondaryClickFrontGuard(before: activeBefore, target: pid)) { _, new in new }
+        // The active app, for the reason activeApplicationPid gives: an open menu holds keyboard focus.
+        payload["frontmostChanged"] = activeApplicationPid() != activeBefore
     }
     jsonOutput(payload)
     if !actionOK { exit(1) }

@@ -70,7 +70,7 @@ func postClick(at point: CGPoint, right: Bool, double: Bool) {
                                   mouseCursorPosition: point, mouseButton: button),
               let up = CGEvent(mouseEventSource: nil, mouseType: upType,
                                 mouseCursorPosition: point, mouseButton: button) else { return }
-        ActionCursor.emit("click", point: point, target: "pixel")
+        ActionCursor.emit("click", point: point, target: "pixel", button: right ? "right" : nil, clickCount: count)
         down.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
         up.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
         let held = down.pressRouted(release: up)
@@ -84,6 +84,14 @@ func cmdClick(appName: String) {
     let pid = resolveApp(appName)
     let right = args.contains("--right")
     let double = args.contains("--double")
+
+    // 🛑 A right-click opens a context menu, which needs neither the app in front nor the real
+    // pointer. This path used to activate the app, raise its window and post at the global HID tap,
+    // which moves the user's pointer: every agent that opened a menu took the user's focus.
+    if right {
+        backgroundRightClick(appName: appName, pid: pid, double: double)
+        return
+    }
 
     _ = bringFrontmost(pid)
 
@@ -138,6 +146,136 @@ func cmdClick(appName: String) {
         postClick(at: point, right: right, double: double)
     }
 
+    jsonOutput(result)
+}
+
+/// The front-most on-screen window of `pid` that contains `point`, in CG global coordinates.
+func windowOwning(pid: pid_t, point: CGPoint) -> (id: Int, bounds: CGRect)? {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[CFString: Any]] ?? []
+    for window in list {
+        guard (window[kCGWindowOwnerPID] as? Int32) == pid, (window[kCGWindowLayer] as? Int) == 0,
+              let id = window[kCGWindowNumber] as? Int,
+              let raw = window[kCGWindowBounds] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
+              bounds.contains(point) else { continue }
+        return (id, bounds)
+    }
+    return nil
+}
+
+/// Right mouse down and up, addressed to one window of `pid`. The events never pass the global HID
+/// tap, so the pointer stays where the user left it and no app is activated by us.
+func postBackgroundRightClick(pid: pid_t, window: (id: Int, bounds: CGRect), point: CGPoint, double: Bool) {
+    let factory: WindowEventFactory
+    do { factory = try WindowEventFactory(windowID: window.id, bounds: window.bounds) } catch { errorExit(error.localizedDescription) }
+    for click in 1...(double ? 2 : 1) {
+        let down: CGEvent
+        let up: CGEvent
+        do {
+            down = try factory.mouse(type: .rightMouseDown, point: point, clickCount: click)
+            up = try factory.mouse(type: .rightMouseUp, point: point, clickCount: click)
+        } catch { errorExit(error.localizedDescription) }
+        let held = gatedOrExit { try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) }) }
+        Thread.sleep(forTimeInterval: 0.03)
+        inputGate.release(held)
+        Thread.sleep(forTimeInterval: 0.03)
+    }
+}
+
+/// The app macOS shows as active (its menu bar), after letting NSWorkspace take in pending changes.
+///
+/// Not `frontmostPid()`: that asks Accessibility for the FOCUSED application, and an open context
+/// menu holds keyboard focus for its own app while it shows, although that app is not activated.
+/// Read that way, every right-click that opened a menu looked like an activation (measured
+/// 2026-10-13), and handing the front back closed the menu the click had just opened.
+func activeApplicationPid() -> pid_t? {
+    CFRunLoopRunInMode(.defaultMode, 0.05, false)
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier
+}
+
+/// A right-click must leave the user's app in front. Nothing here activates the target, but an app
+/// may still bring itself forward from its own menu handler; then the front goes back to the app
+/// the user had, and the result says so. `before` is the active pid read before the click.
+///
+/// While the menu is open it takes the keyboard (that is what a context menu is), so the result
+/// reports `menuHoldsKeyboard` when the target holds focus without being active.
+func secondaryClickFrontGuard(before: pid_t?, target: pid_t) -> [String: Any] {
+    guard let before, before != target else {
+        return [:]
+    }
+
+    guard activeApplicationPid() == target else {
+        return ["frontmostRestored": false, "menuHoldsKeyboard": frontmostPid() == target]
+    }
+
+    let restored = bringFrontmost(before)
+    let name = NSRunningApplication(processIdentifier: before)?.localizedName ?? "pid \(before)"
+    return ["frontmostRestored": restored,
+            "focusNote": restored
+                ? "the target brought itself to the front after the right-click; \(name) was put back in front"
+                : "the target brought itself to the front after the right-click and \(name) could not be put back"]
+}
+
+/// `click --right`: AXShowMenu on the element when it offers one, else a right click addressed to the
+/// element's window. Never activates, never raises, never moves the pointer.
+func backgroundRightClick(appName: String, pid: pid_t, double: Bool) {
+    let frontBefore = activeApplicationPid()
+    let pointerBefore = CGEvent(source: nil)?.location
+    var result: [String: Any] = ["ok": true, "action": "click", "right": true, "double": double, "activated": false]
+
+    if let coordStr = argValue("--coords") {
+        let parts = coordStr.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2 else { errorExit("--coords format: x,y") }
+        let point = CGPoint(x: parts[0], y: parts[1])
+        guard let window = windowOwning(pid: pid, point: point) else {
+            errorExit("no on-screen window of \(appName) contains \(parts[0]),\(parts[1]); a right-click is delivered to one of the app's own windows, never to whatever is on top")
+        }
+        ActionCursor.describe(pid: pid)
+        ActionCursor.emit("click", point: point, background: true, target: "pixel", button: "right",
+                          clickCount: double ? 2 : 1)
+        postBackgroundRightClick(pid: pid, window: window, point: point, double: double)
+        result["x"] = parts[0]
+        result["y"] = parts[1]
+        result["delivery"] = "window-event"
+    } else {
+        let el = resolveElement(AXUIElementCreateApplication(pid), appName)
+        result.merge(elementInfo(el)) { _, new in new }
+        ActionCursor.describe(el)
+        let center: CGPoint? = {
+            guard let pos = axPointValue(el, "AXPosition"), let size = axSizeValue(el, "AXSize"),
+                  size.width > 0, size.height > 0 else { return nil }
+            return CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+        }()
+        if let center {
+            result["x"] = center.x
+            result["y"] = center.y
+        }
+        if !double, axActionNames(el).contains("AXShowMenu") {
+            // The semantic form: the element opens its own context menu, no event and no pointer.
+            ActionCursor.emit("showmenu", point: center, background: true, button: "right")
+            // A context menu holds the AX call until it closes; a timeout means the menu is open.
+            let error = performActionWithTimeout(el, action: "AXShowMenu", timeoutMs: 600)
+            guard error == .success else {
+                errorExit("AXShowMenu failed (AX \(error.rawValue)); a menu may or may not be open, inspect before retrying")
+            }
+            result["delivery"] = "AXShowMenu"
+        } else {
+            guard let center, let window = windowOwning(pid: pid, point: center) else {
+                errorExit("the element offers no AXShowMenu and is not inside an on-screen window of \(appName); scroll it into view, or use act with a fresh see")
+            }
+            ActionCursor.emit("click", point: center, background: true, button: "right", clickCount: double ? 2 : 1)
+            postBackgroundRightClick(pid: pid, window: window, point: center, double: double)
+            result["delivery"] = "window-event"
+        }
+    }
+
+    // Long enough for an app that activates itself from its menu handler to have done it.
+    Thread.sleep(forTimeInterval: 0.12)
+    result.merge(secondaryClickFrontGuard(before: frontBefore, target: pid)) { _, new in new }
+    if let pointerBefore, let pointerAfter = CGEvent(source: nil)?.location {
+        result["pointerMoved"] = hypot(pointerAfter.x - pointerBefore.x, pointerAfter.y - pointerBefore.y) > 0.5
+    }
     jsonOutput(result)
 }
 
