@@ -157,16 +157,30 @@ The tool uses a unified configuration file at `~/.genesis-tools/mcp-manager/conf
 
 -   Supports global and project-specific server configurations
 -   Supports stdio, SSE, and HTTP transports
--   **Global disable = removal from `mcpServers`** (see below)
+-   **Global disable = a `deniedMcpServers` entry in `~/.claude/settings.json`**
+    (see below); the config stays in `mcpServers`
 
 #### Claude enable/disable semantics
 
-Verified against the Claude Code binary: Claude Code reads `disabledMcpServers`
-**only** from per-project entries (`.projects[<cwd>].disabledMcpServers`). The
-**top-level `disabledMcpServers` key is never read by Claude Code** — it is an
-mcp-manager-only marker. The only mechanism Claude Code honors globally
-(including future projects) is the server **not existing in `mcpServers` at
-all**.
+Verified on Claude Code 2.1.296 (research note
+`2026-10-13-ClaudeCodeGlobalMcpSwitch.md`): the only
+global switch for one server is a `deniedMcpServers: [{ "serverName": "<name>" }]`
+entry in `~/.claude/settings.json`. It covers every project, also one registered
+later, and the config stays in `mcpServers`. Claude Code reads
+`disabledMcpServers` **only** from the current project entry
+(`.projects[<cwd>].disabledMcpServers`); the **top-level `disabledMcpServers` key
+in `~/.claude.json` is never read**. mcp-manager no longer writes it, and `sync`
+removes it.
+
+What a denied server looks like in Claude Code:
+
+-   It is ABSENT from `claude mcp list` and `/mcp`, not shown as "disabled";
+    `claude mcp get <name>` says `No MCP server named "<name>"`.
+-   `/mcp` cannot turn it back on: the error blames "enterprise managed policy",
+    although the entry is in your user settings. Use `tools mcp-manager enable`.
+-   The deny matches the name in every scope, so a project-scope entry or a
+    `.mcp.json` server of the same name is blocked too. A per-project enable
+    therefore cannot override a global disable; the command warns about this.
 
 **Global means the global switch only.** A global disable, a global enable,
 an install and a `sync` never write the per-project `disabledMcpServers` lists
@@ -175,21 +189,22 @@ exception is `enable --clear-project-overrides` (below). A dry run of
 `sync` once wanted to add one disabled server to the lists of all 98 projects
 (about 640 diff lines). That is why the old sweep was removed on 2026-10-13.
 
-mcp-manager therefore implements a TRUE global disable for Claude:
-
 -   **Global disable** (`tools mcp-manager disable <server> --provider claude`):
-    1. Preserves the server's full config in the unified config with
-       `_meta.enabled.claude = false` (imports it there first if missing —
-       the entry is never removed unless it is safely preserved). If the
-       config cannot be preserved, the entry stays and Claude Code still loads
-       the server everywhere; a warning says so.
-    2. Keeps the top-level marker.
-    3. **Removes the entry from `mcpServers`** in `~/.claude.json`.
--   **Global enable** restores the entry into `mcpServers` from the unified
-    config and drops the top-level marker. It does not change project lists.
-    When some projects still list the server (old entries from the removed
-    sweep, or a per-project disable), the server stays off in those projects,
-    and one warning gives the count and the two commands below.
+    1. Adds `{ "serverName": "<server>" }` to `deniedMcpServers` in
+       `~/.claude/settings.json` (once; other keys and entries stay). This write
+       comes first: if you reject it, nothing else is written.
+    2. Records `_meta.enabled.claude = false` in the unified config (imports the
+       config there first if it is missing).
+    3. Keeps the entry in `mcpServers`. An entry that an older delete-based
+       disable removed is put back from the unified config, with one exception
+       for Grok (below).
+    4. Drops the name from the top-level marker.
+-   **Global enable** puts the entry back into `mcpServers` when it is missing,
+    then removes exactly the `serverName` deny entry (a `serverUrl` pattern is
+    never touched; the key goes when the list is empty). It does not change
+    project lists. When some projects still list the server (old entries from
+    the removed sweep, or a per-project disable), the server stays off in those
+    projects, and one warning gives the count and the two commands below.
 -   **Global enable with `--clear-project-overrides`**
     (`tools mcp-manager enable <server> -p claude --clear-project-overrides`)
     also takes the name off every `.projects[<path>].disabledMcpServers` list
@@ -202,42 +217,52 @@ mcp-manager therefore implements a TRUE global disable for Claude:
 -   **Per-project disable or enable** (`--project <path>`) is the only command
     that writes a project's `disabledMcpServers` list, and only for the named
     projects. The global entry stays in `mcpServers`.
--   **`list`** shows globally-disabled servers (absent from `~/.claude.json`)
-    as `disabled` for claude — sourced from the unified config — instead of
-    "not installed".
--   **`sync`** treats `_meta.enabled.claude === false` as disabled-by-absence:
-    such servers are never (re)installed into `mcpServers`, and drifted
-    entries are removed. For `true`, `false` or an unset state, `sync` writes
-    no project list. For a per-project map (`{ "/abs/path": false }`), it writes
-    only the lists of the projects the map names, and creates no project entry.
--   **`sync-from-providers`** does not interpret the absence of a
-    globally-disabled server as "user deleted it" — the unified config entry
-    and its `_meta.enabled.claude = false` flag are preserved.
+-   **`list` and `show`** read the global state from `deniedMcpServers`. A server
+    that is still absent from `~/.claude.json` with `_meta.enabled.claude = false`
+    shows as `disabled`, sourced from the unified config.
+-   **`sync`**: `_meta.enabled.claude === false` puts the config into
+    `mcpServers` and denies the name; `true` removes its `serverName` deny entry;
+    an unset state or a per-project map leaves the denylist as it is. The first
+    sync after this change therefore migrates every server the old
+    delete-based disable removed: config back, deny added, no change in what
+    Claude Code loads. The denylist is written first; if you reject that write,
+    `~/.claude.json` is not written either. For `true`, `false` or an unset
+    state, `sync` writes no project list. For a per-project map
+    (`{ "/abs/path": false }`), it writes only the lists of the projects the map
+    names, and creates no project entry.
+-   **Grok.** Grok loads `~/.claude.json` top-level `mcpServers` too, and
+    Claude's deny does not reach Grok. So an entry for a server that stays off in
+    Claude is put back only when Grok would not start it: Grok has its own
+    `config.toml` table for the name, lists it in `disabled_mcp_servers`, has
+    `[compat.claude] mcps = false`, or the unified config enables it for Grok.
+    Otherwise the entry stays out of `mcpServers` with a warning, and the deny
+    still keeps it off in Claude. A global ENABLE restores the entry
+    regardless: the server is meant to run, and Grok sees it as it always did.
+-   **`sync-from-providers`** keeps `_meta.enabled.claude = false` for a denied
+    server, and does not interpret a missing entry as "user deleted it".
+-   **`remove`** also removes the server's `serverName` deny entry, so a later
+    server of the same name is not blocked. **`rename`** moves the deny to the
+    new name.
 
 #### Per-project enable override (claude)
-
-A global disable can be overridden for individual projects:
 
 ```bash
 tools mcp-manager enable <server> -p claude --project /abs/path [--project /other] [-y]
 ```
 
 -   Installs the server's claude-format config into
-    `.projects[<path>].mcpServers.<name>` in `~/.claude.json` — Claude Code
-    DOES honor project-scope entries there (it's the same storage
-    `claude mcp add -s local` uses) — and removes the name from that project's
+    `.projects[<path>].mcpServers.<name>` in `~/.claude.json` when the global
+    entry is missing, and removes the name from that project's
     `disabledMcpServers` list.
--   The global state stays disabled: the server remains absent from the global
-    `mcpServers` and `_meta.enabled.claude` stays `false`. The override is
-    tracked solely by the presence of the project-scope entry — no extra
-    metadata.
--   **Override-awareness:** a global disable and `sync` never delete the
+-   ⚠️ Against a global disable this no longer helps: the deny blocks the name in
+    every scope, project-scope entries included, and the command warns. To run a
+    server in some projects only, enable it globally and disable it with
+    `--project` where you do not want it.
+-   The override is tracked solely by the presence of the project-scope entry —
+    no extra metadata. A global disable and `sync` never delete the
     project-scope entry, and never put the name back on that project's
     `disabledMcpServers` list (a per-project map in `sync` skips that project
     too). `sync` refreshes the entry's config from the unified config.
-    `sync-from-providers` keeps `_meta.enabled.claude === false` even though
-    the override projects report the server as enabled.
--   `list` shows such servers as `disabled globally, enabled in N project(s)`.
 -   Undo with `tools mcp-manager disable <server> -p claude --project <path>` —
     removes the project-scope entry and puts the name back on that project's
     disabled list.

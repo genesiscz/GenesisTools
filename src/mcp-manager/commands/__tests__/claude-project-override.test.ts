@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
@@ -48,6 +48,13 @@ describe("claude per-project enable override for globally-disabled servers", () 
 
     const readClaudeJson = (): ClaudeGenericConfig & Record<string, unknown> => {
         return SafeJSON.parse(readFileSync(claudeJsonPath(), "utf-8")) as ClaudeGenericConfig & Record<string, unknown>;
+    };
+
+    const readDenied = (): unknown => {
+        const settingsPath = join(homeDir, ".claude", "settings.json");
+        return existsSync(settingsPath)
+            ? (SafeJSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>).deniedMcpServers
+            : undefined;
     };
 
     const writeUnified = async (config: UnifiedMCPConfig) => {
@@ -147,6 +154,27 @@ describe("claude per-project enable override for globally-disabled servers", () 
     });
 
     // Intended change 2026-10-13: a global disable no longer sweeps project lists at all.
+    it("a later global disable keeps the older switch for an overridden server: no deny, entry absent", async () => {
+        writeClaudeJson({
+            mcpServers: { serena: { ...SERENA }, github: { ...GITHUB } },
+            projects: {
+                "/proj/a": { mcpServers: { serena: { ...SERENA } }, disabledMcpServers: [] },
+                "/proj/b": { mcpServers: {}, disabledMcpServers: [] },
+            },
+        });
+        await writeUnified(unifiedFixture());
+
+        await new ClaudeProvider().disableServers(["serena", "github"], null);
+
+        const claude = readClaudeJson();
+        expect(claude.mcpServers?.serena).toBeUndefined(); // overridden: absence is the switch
+        expect(claude.projects?.["/proj/a"].mcpServers?.serena).toBeDefined(); // the override keeps working
+        expect(claude.mcpServers?.github).toBeDefined(); // not overridden: kept and denied
+        expect(readDenied()).toEqual([{ serverName: "github" }]);
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("'serena' keeps the older global switch"));
+        expect((await readUnified()).mcpServers.serena.command).toBe("uvx"); // config preserved
+    });
+
     it("a later global disable leaves every project entry alone, the override included", async () => {
         writeClaudeJson(globallyDisabledFixture());
         await writeUnified(unifiedFixture());
@@ -177,8 +205,10 @@ describe("claude per-project enable override for globally-disabled servers", () 
         expect(claude.projects?.["/proj/a"].mcpServers?.serena.command).toBe("uvx");
         // Name NOT re-added to the override project's disabled list
         expect(claude.projects?.["/proj/a"].disabledMcpServers).not.toContain("serena");
-        // Global disable still enforced (absent from mcpServers); other project lists untouched
+        // Global disable still enforced by absence: a deny (V-2) would match the project-scope
+        // entry too and switch /proj/a off, so an overridden server keeps the older switch.
         expect(claude.mcpServers?.serena).toBeUndefined();
+        expect(readDenied()).toBeUndefined();
         expect(claude.projects?.["/proj/b"].disabledMcpServers).toEqual(["serena"]);
         // Enabled sibling unaffected
         expect(claude.mcpServers?.github).toBeDefined();
@@ -218,6 +248,23 @@ describe("claude per-project enable override for globally-disabled servers", () 
         expect(unified.mcpServers.serena._meta?.enabled?.claude).toBe(false); // global state untouched
     });
 
+    it("a per-project enable of a DENIED server warns that the deny wins in every project", async () => {
+        writeClaudeJson({
+            mcpServers: { serena: { ...SERENA }, github: { ...GITHUB } },
+            projects: { "/proj/a": { mcpServers: {}, disabledMcpServers: [] } },
+        });
+        await writeUnified(unifiedFixture());
+        mkdirSync(join(homeDir, ".claude"), { recursive: true });
+        writeFileSync(
+            join(homeDir, ".claude", "settings.json"),
+            SafeJSON.stringify({ deniedMcpServers: [{ serverName: "serena" }] })
+        );
+
+        await enableCommand("serena", [new ClaudeProvider()], { provider: "claude", project: ["/proj/a"] });
+
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("a per-project enable cannot turn it on"));
+    });
+
     it("listServers reports the global disable AND the per-project override", async () => {
         writeClaudeJson(globallyDisabledFixture());
         await writeUnified(unifiedFixture());
@@ -254,7 +301,8 @@ describe("claude per-project enable override for globally-disabled servers", () 
         await disableCommand("github", [provider, cursorProvider], { provider: "all" });
 
         const claude = readClaudeJson();
-        expect(claude.mcpServers?.github).toBeUndefined(); // globally disabled = removed
+        expect(claude.mcpServers?.github).toBeDefined(); // globally disabled = denied, config kept
+        expect(readDenied()).toEqual([{ serverName: "github" }]);
 
         const cursor = SafeJSON.parse(readFileSync(join(homeDir, ".cursor", "mcp.json"), "utf-8")) as {
             mcpServers?: Record<string, unknown>;

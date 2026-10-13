@@ -284,8 +284,10 @@ async function renameServerInProvider(
     }
 
     // IMPORTANT: syncServers only adds/updates servers, it doesn't remove servers not in the map
-    // We need to explicitly remove the old server name from the provider config after syncing
-    if (hasOldServer && oldName !== newName) {
+    // We need to explicitly remove the old server name from the provider config after syncing.
+    // Claude can hold the old name only as a deny entry in ~/.claude/settings.json (an older
+    // delete-based disable left no config), so Claude always gets the removal.
+    if (oldName !== newName && (hasOldServer || provider.getName() === "claude")) {
         await removeServerFromProvider(provider, oldName);
     }
 
@@ -327,6 +329,9 @@ async function removeServerFromProvider(provider: MCPProvider, serverName: strin
                 }
             }
             await provider.writeConfig(claudeConfig);
+            // The old name's deny entry in ~/.claude/settings.json would block a later server of
+            // that name; removeServers lifts it (the entries above are already gone).
+            await provider.removeServers([serverName]);
             break;
         }
         case "codex": {
