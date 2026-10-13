@@ -1,6 +1,8 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { expandSetToPairs } from "./audit";
 import { type ApplyPlanResult, applyReclaimPlan, type PlanRunResult, runReclaimPlan } from "./plan-runner";
 import {
     listPresets,
@@ -10,7 +12,7 @@ import {
     touchPreset,
     updatePresetAuto,
 } from "./presets";
-import type { ReclaimPlan, ReclaimSelector } from "./reclaim";
+import { fixedStoreRoots, type ReclaimPlan, type ReclaimSelector } from "./reclaim";
 import type { DuplicateSet } from "./render/types";
 
 // Plans (presets) the daily scan task runs on its own. Only a preset marked `auto` runs, and every run is guarded:
@@ -48,10 +50,10 @@ export function parseByteLimit(raw: string): number | null {
     return Number.isFinite(value) && value >= 1 ? Math.floor(value) : null;
 }
 
-/** Files one set rewrites: every copy except the kept one and the store copies that stay as they are. */
-function filesOf(set: DuplicateSet): number {
-    const store = new Set(set.storeMembers ?? []);
-    return set.members.filter((member) => member !== set.keep && !store.has(member)).length;
+/** Files one set rewrites, counted from the same (keep, replace) pairs apply clones: a folder set counts every file
+ *  under each replaced folder, and copies under a fixed store root stay as they are. */
+function filesOf(set: DuplicateSet, keepOnlyRoots: readonly string[]): number {
+    return expandSetToPairs(set, keepOnlyRoots).length;
 }
 
 export interface LimitedPlan {
@@ -65,15 +67,17 @@ export interface LimitedPlan {
 /** The plan cut to the limits: the biggest sets first, each kept only while the run's bytes and files still fit. */
 export function limitPlan(plan: ReclaimPlan, limits: { maxBytes: number; maxFiles: number }): LimitedPlan {
     const ordered = [...plan.sets].sort((a, b) => b.reclaimable - a.reclaimable);
+    const keepOnlyRoots = fixedStoreRoots(plan);
     const kept: DuplicateSet[] = [];
     let bytes = 0;
     let files = 0;
     let droppedBytes = 0;
 
     for (const set of ordered) {
-        const setFiles = filesOf(set);
+        const fitsBytes = bytes + set.reclaimable <= limits.maxBytes;
+        const setFiles = fitsBytes ? filesOf(set, keepOnlyRoots) : 0;
 
-        if (bytes + set.reclaimable <= limits.maxBytes && files + setFiles <= limits.maxFiles) {
+        if (fitsBytes && files + setFiles <= limits.maxFiles) {
             kept.push(set);
             bytes += set.reclaimable;
             files += setFiles;
@@ -139,6 +143,37 @@ export async function runAutoReclaims({
     return outcomes;
 }
 
+/**
+ * Why the saved preset no longer authorizes this run, or null when its arming, limits and selector are unchanged. The
+ * plan can scan for minutes, and a `presets auto --off`, a removal, new limits or a re-arm in that time must win over
+ * the settings the run started with.
+ */
+function authorizationChange(armed: AutoPreset, saved: Preset[]): string | null {
+    const current = saved.find((preset) => preset.id === armed.id);
+    if (current === undefined) {
+        return "the preset was removed while the plan ran";
+    }
+
+    const auto = current.auto;
+    if (auto?.enabled !== true) {
+        return "auto was turned off while the plan ran";
+    }
+
+    if (
+        auto.maxBytes !== armed.auto.maxBytes ||
+        auto.maxFiles !== armed.auto.maxFiles ||
+        auto.dryRunAt !== armed.auto.dryRunAt
+    ) {
+        return "the preset's auto settings changed while the plan ran; the next run uses them";
+    }
+
+    if (SafeJSON.stringify(selectorFromPreset(current)) !== SafeJSON.stringify(selectorFromPreset(armed))) {
+        return "the preset's folders or filters changed while the plan ran; the next run plans them";
+    }
+
+    return null;
+}
+
 type AutoPreset = Preset & { auto: PresetAuto };
 
 async function runOne(input: {
@@ -180,6 +215,12 @@ async function runOne(input: {
 
         if (dryRun) {
             return { ...outcome, action: "dry-run", why: "the scan task ran with --auto-dry-run" };
+        }
+
+        const changed = authorizationChange(preset, deps.presets());
+        if (changed !== null) {
+            log.info({ preset: preset.id, why: changed }, "auto reclaim skipped: preset changed during the plan");
+            return { ...outcome, action: "nothing", why: changed };
         }
 
         if (auto.dryRunAt === undefined) {

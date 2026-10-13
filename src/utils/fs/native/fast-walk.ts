@@ -243,13 +243,19 @@ export async function walkNative(
                 { directory: next.directory },
                 "fast-walk: no getattrlistbulk on this filesystem; walking it with readdir"
             );
-            const portable = await walkJs({
-                ...options,
-                roots: [next.directory],
-                maxDepth: options.maxDepth - next.depth,
-            });
-            entries.push(...portable.entries);
-            errors.push(...portable.errors);
+            const portable = await walkJs(
+                { ...options, roots: [next.directory], maxDepth: options.maxDepth - next.depth },
+                { recheck: { roots: next.depth > 0 } }
+            );
+
+            // A loop, not a spread: a big share would pass more arguments than JavaScriptCore allows.
+            for (const entry of portable.entries) {
+                entries.push(entry);
+            }
+
+            for (const error of portable.errors) {
+                errors.push(error);
+            }
         }
     }
 
@@ -269,18 +275,44 @@ function errnoOf(err: unknown): number {
     return err instanceof Error && "errno" in err && typeof err.errno === "number" ? Math.abs(err.errno) : 0;
 }
 
-/** The portable walker: `readdir` with types, and an `lstat` only for what is returned. */
-async function walkJs(options: Required<Omit<FastWalkOptions, "engine">>): Promise<FastWalkResult> {
+/**
+ * False when `path` stopped being a directory itself since it was listed (a folder replaced by a link), so the walk
+ * never follows it out of its root. A failed lstat returns true: readdir then records the error.
+ */
+async function stillPlainDirectory(path: string): Promise<boolean> {
+    try {
+        return (await lstat(path)).isDirectory();
+    } catch (err) {
+        log.debug({ err, path }, "fast-walk: lstat before descending failed; readdir reports it");
+        return true;
+    }
+}
+
+/**
+ * The portable walker: `readdir` with types, and an `lstat` only for what is returned. `recheck` is for the native
+ * walker's ENOTSUP fallback, which hands over a folder it already listed: every folder below the root, and the root
+ * itself when `roots` is set, is checked with `lstat` right before `readdir`, so one replaced by a link is not followed
+ * out of the root. That narrows the window; Node has no no-follow opendir to close it. A plain walk checks nothing.
+ */
+async function walkJs(
+    options: Required<Omit<FastWalkOptions, "engine">>,
+    { recheck }: { recheck?: { roots: boolean } } = {}
+): Promise<FastWalkResult> {
     const entries: FastWalkEntry[] = [];
     const errors: FastWalkError[] = [];
     const matches = nameMatcher(options);
-    const stack = options.roots.map((root) => ({ directory: root, depth: 0 }));
+    const stack = options.roots.map((root) => ({ directory: root, depth: 0, check: recheck?.roots === true }));
 
     while (stack.length > 0) {
         const next = stack.pop();
 
         if (!next) {
             break;
+        }
+
+        if (next.check && !(await stillPlainDirectory(next.directory))) {
+            log.debug({ path: next.directory }, "fast-walk: a listed folder is now a link; not following it");
+            continue;
         }
 
         let listed: Dirent[];
@@ -315,7 +347,7 @@ async function walkJs(options: Required<Omit<FastWalkOptions, "engine">>): Promi
             }
 
             if (dirent.isDirectory() && next.depth + 1 <= options.maxDepth) {
-                stack.push({ directory: path, depth: next.depth + 1 });
+                stack.push({ directory: path, depth: next.depth + 1, check: recheck !== undefined });
             }
         }
     }

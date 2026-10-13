@@ -35,9 +35,27 @@ export interface RestackBranchInput {
     /**
      * The tips this branch's base had before each force push, newest first. A branch whose base a previous merge
      * restacked still sits on one of them, not on `oldBaseSha`, so the first of these in its history marks where its
-     * own commits start.
+     * own commits start. Null when the lookup failed: a branch that needs a rebase is then refused (see
+     * `unknownBaseRefusal`).
      */
-    priorBaseShas?: string[];
+    priorBaseShas?: string[] | null;
+}
+
+/**
+ * The error for a branch that needs a rebase while its base's earlier tips are unknown, or null when the restack may
+ * go on. Without them the merge-base fallback can replay the parent's old commits into the branch and push it.
+ */
+export function unknownBaseRefusal(
+    input: Pick<RestackBranchInput, "branch" | "newBase" | "priorBaseShas">
+): Error | null {
+    if (input.priorBaseShas !== null) {
+        return null;
+    }
+
+    return new Error(
+        `Could not read the earlier tips of ${input.branch}'s base, so the commits it must drop are unknown. ` +
+            `Refusing to rebase it onto ${input.newBase}; retry the merge, or rebase ${input.branch} by hand.`
+    );
 }
 
 /**
@@ -173,6 +191,11 @@ export function createGitStackRestack(options?: { log?: RestackLog }): StackRest
                         log?.(`  restack: ${branch} already linear after parent land (no rewrite needed)`);
                         return { headSha: remoteHead, rebased: false, alreadyLinear: true };
                     }
+                }
+
+                const refusal = unknownBaseRefusal(input);
+                if (refusal) {
+                    throw refusal;
                 }
 
                 await gitOrThrow(g, ["checkout", "-q", "-B", "restack-work", remoteBranch], "checkout head");

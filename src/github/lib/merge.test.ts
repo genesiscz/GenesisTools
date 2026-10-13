@@ -409,7 +409,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         });
     });
 
-    test("a failed base force-push lookup is logged and the restack still runs without earlier tips", async () => {
+    test("a failed base force-push lookup is logged and every restack gets null, so a needed rebase stops", async () => {
         const logs: string[] = [];
         const { client } = makeMock({
             pr: basePr(),
@@ -431,8 +431,27 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         });
 
         expect(result.dependentsRestacked[0].ok).toBe(true);
-        expect(restackCalls.every((c) => c.priorBaseShas?.length === 0)).toBe(true);
+        expect(restackCalls.length).toBeGreaterThan(0);
+        expect(restackCalls.every((c) => c.priorBaseShas === null)).toBe(true);
         expect(logs.some((l) => l.includes("could not read the earlier base tips of #2"))).toBe(true);
+    });
+
+    test("a client without the base force-push lookup passes null, so a needed rebase stops", async () => {
+        const { client } = makeMock({ pr: basePr(), dependents: [] });
+        const { listBaseForcePushTips: _unused, ...withoutLookup } = client;
+        const { restack, calls: restackCalls } = makeRestackMock();
+
+        await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: false,
+            client: withoutLookup,
+            restack,
+        });
+
+        expect(restackCalls.map((c) => c.priorBaseShas)).toEqual([null]);
     });
 
     test("--rebase --no-restack uses GitHub rewrite merge API", async () => {

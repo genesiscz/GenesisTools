@@ -278,11 +278,8 @@ function retargetRow(input: {
 }
 
 /**
- * Create the default Octokit-backed client.
- */
-/**
- * The PR's earlier base tips (`listBaseForcePushTips`); none when the client has no such call or the query fails.
- * Without them a branch on a replaced base tip falls back to the merge-base and replays its parents' commits.
+ * The PR's earlier base tips (`listBaseForcePushTips`), or null when the client has no such call or the query fails,
+ * so a restack that needs a rebase stops instead of falling back to the merge-base and replaying its parents' commits.
  */
 async function earlierBaseTips({
     client,
@@ -296,19 +293,24 @@ async function earlierBaseTips({
     repo: string;
     number: number;
     log?: (message: string) => void;
-}): Promise<string[]> {
+}): Promise<string[] | null> {
     if (!client.listBaseForcePushTips) {
-        return [];
+        logLine(log, `  this client cannot read the earlier base tips of #${number}; a rebase of it stops`);
+        return null;
     }
 
     try {
         return await client.listBaseForcePushTips(owner, repo, number);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logLine(log, `  could not read the earlier base tips of #${number}: ${message}`);
-        return [];
+        logLine(log, `  could not read the earlier base tips of #${number}: ${message}; a rebase of it stops`);
+        return null;
     }
 }
+
+/**
+ * Create the default Octokit-backed client.
+ */
 
 export function createOctokitMergeClient(): MergeGitHubClient {
     // Write path: prefer gh OAuth over limited env PATs (merge needs contents:write).

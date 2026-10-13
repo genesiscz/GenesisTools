@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createNoopStackRestack, pickOldBase } from "./stack-restack";
+import { createNoopStackRestack, pickOldBase, unknownBaseRefusal } from "./stack-restack";
 
 describe("pickOldBase", () => {
     const inHistory = (shas: string[]) => async (sha: string) => shas.includes(sha);
@@ -17,6 +17,17 @@ describe("pickOldBase", () => {
     test("is null when the branch carries none of them", async () => {
         expect(await pickOldBase(["new-tip", "old-tip"], inHistory([]))).toBeNull();
         expect(await pickOldBase([], inHistory(["x"]))).toBeNull();
+    });
+});
+
+describe("unknownBaseRefusal", () => {
+    test("refuses a rebase only when the earlier base tips could not be read", () => {
+        const input = { branch: "feat", newBase: "main" };
+
+        expect(unknownBaseRefusal({ ...input, priorBaseShas: null })?.message).toContain("Refusing to rebase it");
+        expect(unknownBaseRefusal({ ...input, priorBaseShas: [] })).toBeNull();
+        expect(unknownBaseRefusal({ ...input, priorBaseShas: ["old-tip"] })).toBeNull();
+        expect(unknownBaseRefusal(input)).toBeNull();
     });
 });
 

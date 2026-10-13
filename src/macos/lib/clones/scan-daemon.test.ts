@@ -242,6 +242,63 @@ describe("auto reclaim", () => {
         expect(formatScanReport(on).join("\n")).toContain("work: dry run, nothing cloned");
     });
 
+    it("a folder set counts every file apply clones, not one per folder", () => {
+        const root = mkdtempSync(join(tmpdir(), "auto-reclaim-dir-"));
+        try {
+            const keep = join(root, "a");
+            mkdirSync(keep);
+            for (const name of ["1.bin", "2.bin", "3.bin"]) {
+                writeFileSync(join(keep, name), "x");
+            }
+
+            const folders: DuplicateSet = {
+                kind: "dir",
+                what: "folders",
+                copies: 3,
+                eachBytes: GB,
+                reclaimable: 2 * GB,
+                members: [keep, join(root, "b"), join(root, "c")],
+                keep,
+            };
+            const plan = fakePlan([root], [folders]);
+
+            expect(limitPlan(plan, { maxBytes: 100 * GB, maxFiles: 5 }).plan.sets).toEqual([]);
+            expect(limitPlan(plan, { maxBytes: 100 * GB, maxFiles: 6 }).files).toBe(6);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a preset turned off, re-limited, re-scoped or removed while its plan runs is neither cloned nor marked", async () => {
+        const fresh: PresetAuto = { enabled: true, maxBytes: 4 * GB, maxFiles: 10 };
+        const changes: Array<{ why: string; after: (auto: PresetAuto) => Preset[] }> = [
+            { why: "turned off", after: (auto) => [preset("work", { ...auto, enabled: false })] },
+            { why: "auto settings changed", after: (auto) => [preset("work", { ...auto, maxFiles: 1 })] },
+            { why: "folders or filters changed", after: (auto) => [{ ...preset("work", auto), exclude: ["cache"] }] },
+            { why: "removed", after: () => [] },
+        ];
+
+        for (const auto of [ARMED, fresh]) {
+            for (const { why, after } of changes) {
+                const presets = [preset("work", auto)];
+                const { deps, applied, saved } = autoDeps(presets, sets);
+                const plan = deps.plan;
+                deps.plan = async (selector) => {
+                    const result = await plan(selector);
+                    presets.splice(0, presets.length, ...after(auto));
+                    return result;
+                };
+
+                const outcomes = await runAutoReclaims({ deps });
+
+                expect(outcomes[0]?.action).toBe("nothing");
+                expect(outcomes[0]?.why).toContain(why);
+                expect(applied).toEqual([]);
+                expect(saved).toEqual([]);
+            }
+        }
+    });
+
     it("limits and sizes", () => {
         const limited = limitPlan(fakePlan(["/w/x"], sets), { maxBytes: 100 * GB, maxFiles: 2 });
         expect(limited.plan.sets.map((set) => set.what)).toEqual(["big", "mid"]);

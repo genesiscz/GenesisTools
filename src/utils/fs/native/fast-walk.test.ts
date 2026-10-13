@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BulkReadCalls, bulkReadCalls, type FastWalkEntry, fastWalk, walkNative } from "./fast-walk";
@@ -138,6 +138,61 @@ describe.skipIf(!libSystem())("fastWalk on a filesystem without getattrlistbulk"
             );
         } finally {
             rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("never follows a refused folder that became a link after it was listed", async () => {
+        const root = mkdtempSync(join(tmpdir(), "fast-walk-swap-"));
+        const outside = mkdtempSync(join(tmpdir(), "fast-walk-outside-"));
+        const share = join(root, "share");
+        mkdirSync(share);
+        writeFileSync(join(outside, "secret.jsonl"), "{}\n");
+        const real = libSystem();
+
+        if (!real) {
+            return;
+        }
+
+        const native = bulkReadCalls(real);
+        let refusedFd = -1;
+        let lastRefused = false;
+        const fake: BulkReadCalls = {
+            ...native,
+            open: (path, flags) => {
+                const opening = path.toString("utf8", 0, path.length - 1);
+                if (opening === share) {
+                    renameSync(share, `${share}.moved`);
+                    symlinkSync(outside, share);
+                }
+
+                const fd = native.open(path, flags);
+                if (opening === share) {
+                    refusedFd = fd;
+                }
+
+                return fd;
+            },
+            getattrlistbulk: (fd, attributes, buffer, size, options) => {
+                lastRefused = fd === refusedFd;
+                return lastRefused ? -1 : native.getattrlistbulk(fd, attributes, buffer, size, options);
+            },
+            errno: () => (lastRefused ? 45 : native.errno()),
+        };
+
+        try {
+            const walked = await walkNative(fake, {
+                roots: [root],
+                names: [],
+                endsWith: [".jsonl"],
+                includeDirectories: false,
+                maxDepth: Number.POSITIVE_INFINITY,
+            });
+
+            expect(refusedFd).toBeGreaterThanOrEqual(0);
+            expect(walked.entries.map((entry) => entry.path)).not.toContain(join(share, "secret.jsonl"));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+            rmSync(outside, { recursive: true, force: true });
         }
     });
 });
