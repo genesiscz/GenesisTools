@@ -73,6 +73,7 @@ Recipe for a note under the notes vault:
 
 - **The worker cannot write a report file.** A brief that says "write your findings to `<path>.md`" fails. Codex refused with *"Blocked from writing the requested report: the sandbox is read-only"* and dumped about 4 KB inline. In `deny` mode the deliverable is that inline answer. Do not add the report directory as `--writable-root` and keep deny. That was the 2026-08-31 miss.
 - **The worker cannot run most test runners.** Observed: Jest's Watchman probe failed (`fchmod` in a read-only temp), then haste-map persist under `/private/var/…/T` hit EPERM. Zero assertions ran, and the worker still wrote a confident "Test quality" section.
+- **Jest needs `--watchman=false` in every Codex sandbox, `ask` and `allow` included.** Observed 2026-10-13 in a `workspace-write` worker: Jest failed before any test on `fchmod` of `~/.local/state/watchman/<user>-state`. The injected contract now tells every sandboxed Codex worker to pass the flag. Do NOT add that directory as a `--writable-root` instead: it also holds watchman's triggers, which run commands outside the sandbox, so a writable state directory is a sandbox escape. The flag costs only a slower Jest start (it crawls the tree itself).
 
 `--writable-root /tmp` and `"$TMPDIR"` under deny exist so Jest can persist a haste map. They are not a report-file hatch:
 

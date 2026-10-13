@@ -108,6 +108,21 @@ function reportShapeLines(): string[] {
     ];
 }
 
+/**
+ * A codex sandbox denies watchman's state directory (`~/.local/state/watchman`), so Jest failed before any test on
+ * its `fchmod` (2026-10-13). The flag, not a writable root: that directory also holds watchman triggers, which run
+ * commands outside the sandbox, so making it writable would let a worker escape.
+ */
+function sandboxLines(input: WorkerContractInput): string[] {
+    if (input.backend !== "codex" || input.sandbox === "none") {
+        return [];
+    }
+
+    return [
+        "Run Jest with `--watchman=false`: your sandbox blocks watchman's state directory, and Jest then fails before any test runs.",
+    ];
+}
+
 function surfaceLines(input: WorkerContractInput): string[] {
     const surfaces = input.surfaces;
     if (!surfaces || (!surfaces.skills && !surfaces.rules)) {
@@ -131,5 +146,11 @@ function surfaceLines(input: WorkerContractInput): string[] {
  * constraints and the verify command.
  */
 export function buildWorkerContract(input: WorkerContractInput): string {
-    return [...channelLines(input), ...checkpointLines(), ...reportShapeLines(), ...surfaceLines(input)].join("\n");
+    return [
+        ...channelLines(input),
+        ...checkpointLines(),
+        ...sandboxLines(input),
+        ...reportShapeLines(),
+        ...surfaceLines(input),
+    ].join("\n");
 }

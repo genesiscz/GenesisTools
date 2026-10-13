@@ -35,6 +35,13 @@ describe("buildWorkerContract", () => {
         expect(text).toContain("--body 'received; starting' --session s-1");
     });
 
+    test("a sandboxed codex worker is told to run Jest without watchman; other backends are not", () => {
+        // The sandbox denies ~/.local/state/watchman, and Jest failed on its fchmod before any test (2026-10-13).
+        expect(buildWorkerContract({ backend: "codex", sandbox: "workspace-write" })).toContain("--watchman=false");
+        expect(buildWorkerContract({ backend: "codex", sandbox: "read-only" })).toContain("--watchman=false");
+        expect(buildWorkerContract({ backend: "grok", sandbox: "workspace-write" })).not.toContain("watchman");
+    });
+
     test("bus: a codex worker receives through its daemon, never with a blocking login --once", () => {
         // The daemon delivers mail as turn input; a model-side --once blocked the turn and held the slot 3+ min.
         const codex = buildWorkerContract({ backend: "codex", bus, sandbox: "workspace-write" });
