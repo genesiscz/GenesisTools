@@ -202,8 +202,8 @@ public enum CursorFeedbackText {
     }
 
     /// The line under the label for an act that writes text or sends keys, or nil for any other act.
-    /// A secure field shows bullets and a count, never the text: the label is on screen for anyone
-    /// watching, and in every screen recording.
+    /// A secure field shows bullets and a count, never the text, and a bullet for every key that types
+    /// a character: the label is on screen for anyone watching, and in every screen recording.
     public static func detail(action: String, text: String?, secure: Bool) -> String? {
         guard let text else {
             return nil
@@ -223,7 +223,11 @@ public enum CursorFeedbackText {
                 .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).joined(separator: " ⏎ ")
             return "“" + truncate(flat, to: detailLimit - 2) + "”"
         case "key", "hotkey":
-            let keys = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "+")
+            // Key by key into a password field is the password, so a key that types a character is hidden;
+            // modifiers and named keys (tab, return) stay readable.
+            let keys = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { secure && ($0.count == 1 || $0.lowercased() == "space") ? "•" : $0 }
+                .joined(separator: "+")
             return keys.isEmpty ? nil : truncate("keys \(keys)", to: detailLimit)
         default:
             return nil

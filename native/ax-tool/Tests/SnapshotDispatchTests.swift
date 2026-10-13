@@ -403,6 +403,13 @@ final class CursorFeedbackTests: XCTestCase {
         XCTAssertEqual(long?.count, CursorFeedbackText.detailLimit)
         XCTAssertTrue(long?.hasSuffix("…”") ?? false)
     }
+    func testTheDetailLineHidesAKeyThatTypesIntoASecureField() {
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: true), "keys •")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "shift, 7", secure: true), "keys shift+•")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "hotkey", text: "space", secure: true), "keys •")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "tab", secure: true), "keys tab")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: false), "keys q")
+    }
     func testAFullDetailStillFitsTheHelperDatagram() {
         var event = CursorFeedbackEvent(action: "text", point: .zero)
         event.label = String(repeating: "x", count: CursorFeedbackText.labelLimit)
