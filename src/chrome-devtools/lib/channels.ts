@@ -8,6 +8,9 @@
  *   derived from what the buffer already holds.
  */
 
+import { localNetworkBlockOf } from "@genesiscz/utils/chrome-devtools/permissions";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 export const CAPTURE_CHANNELS = ["net", "console", "ws", "body", "storage"] as const;
 export type CaptureChannel = (typeof CAPTURE_CHANNELS)[number];
 
@@ -92,7 +95,7 @@ export interface RecordedEvent {
     t: number;
 }
 
-function fmtTime(epochMs: number): string {
+export function fmtTime(epochMs: number): string {
     const d = new Date(epochMs);
     const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 
@@ -200,7 +203,11 @@ export function renderEventLines(
 
         case "Network.loadingFailed": {
             if (on.has("error") || on.has("xhr")) {
-                emit("fail", `${p.errorText} type=${p.type} (${p.requestId})`);
+                const blocked = localNetworkBlockOf(p);
+                emit(
+                    "fail",
+                    `${p.errorText} type=${p.type} (${p.requestId})${blocked ? `  blocked by Local Network Access (${blocked}); allow it for this tab: ${toolCommand("chrome-devtools", "grant", "--match", "<tab>")}` : ""}`
+                );
             }
 
             break;

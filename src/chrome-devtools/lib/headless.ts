@@ -18,12 +18,17 @@ export interface HeadlessChrome {
 /**
  * A HEADLESS Chrome on a throwaway profile with a debugger port Chrome picks itself. It never
  * touches the user's browser, profile or screen, which is what a check or a benchmark needs.
+ *
+ * `userDataDir` runs it on a profile the CALLER prepared (for example a copied IndexedDB). That
+ * directory must be new to every browser, and `close()` leaves it in place: only a profile this
+ * function created is removed.
  */
 export async function launchHeadlessChrome(
-    options: { binary?: string; timeoutMs?: number; extraArgs?: string[] } = {}
+    options: { binary?: string; timeoutMs?: number; extraArgs?: string[]; userDataDir?: string } = {}
 ): Promise<HeadlessChrome> {
     const binary = options.binary ?? DEFAULT_CHROME;
-    const profile = mkdtempSync(join(tmpdir(), "gt-headless-chrome-"));
+    const ownsProfile = options.userDataDir === undefined;
+    const profile = options.userDataDir ?? mkdtempSync(join(tmpdir(), "gt-headless-chrome-"));
     const chrome = Bun.spawn(
         [
             binary,
@@ -40,6 +45,10 @@ export async function launchHeadlessChrome(
     let port: number | undefined;
     const close = async () => {
         await quitChrome(chrome, port);
+        if (!ownsProfile) {
+            return;
+        }
+
         try {
             rmSync(profile, { recursive: true, force: true });
         } catch (error) {

@@ -1,6 +1,13 @@
 ---
 name: chrome-devtools
-description: Drive a REAL running browser (Brave/Chrome) over the Chrome DevTools Protocol via `tools chrome-devtools` to debug things that only break in the user's own browser — auth/SSO redirect loops, OAuth and OIDC failures, "works in incognito but not for me", cookie/session corruption, stuck SPAs, CORS errors, and captured .har files. Use this WHENEVER the user says "hook into my browser", "use chrome devtools", "attach to my brave", "why does this loop", "I get redirected forever", "login fails only for me", "unknown_error", "check my cookies/localStorage/session", "trace the redirects", "read this HAR", "download the HAR", or shares a URL that misbehaves while logged in. Also use it when the user's OWN Network tab shows requests no other log has — "my network tab has 600 rows but you see nothing", "read what's already in my devtools", "I had devtools open the whole time" — that history lives only in the panel's NetworkLog and `net-panel` is the only way to read it. Also use it PROACTIVELY when a bug reproduces for the user but not on a clean profile — the differential (broken browser vs fresh profile) is the fastest root cause there is. Covers launching a CDP endpoint, retroactive HAR capture, live channel following, CDP scripting, and HAR analysis via tools har-analyzer.
+description: >-
+  Drive the user's real Chrome or Brave over the DevTools Protocol with `tools chrome-devtools`: auth and SSO redirect
+  loops, cookie and session bugs that happen only in their browser, HAR capture and their open Network tab, CORS and
+  local-network blocks. Also use it for front-end performance and live app state without chrome-devtools-mcp: long
+  frames (LoAF), INP, CPU and network throttling, A/B loads with response rewrites, IndexedDB and storage dumps,
+  React, Redux and TanStack Query state, and mapping a minified deployed position to its source line. Use it whenever
+  a page misbehaves while the user is logged in, a bug reproduces only in their profile, or they say "hook into my
+  browser", "use chrome devtools" or "why is this page slow".
 ---
 
 # Chrome DevTools debugging harness
@@ -69,7 +76,9 @@ process and ignores the flag. ⚠️ Chrome ≥136 refuses the flag on the DEFAU
 time) and `open --user-data-dir ~/.genesis-tools/chrome-devtools/<browser>/profile` (a persistent
 separate profile, one directory per browser, logins survive between runs; the only way to keep
 sessions on Chrome ≥136). The persistent profile keeps Chrome's local-network checks; only
-`--fresh` and `--extension` run with them disabled.
+`--fresh` and `--extension` run with them disabled. To unblock one page there instead, keep
+`tools chrome-devtools grant --match <tab>` running (it grants `local-network` / `loopback-network` to the tab's
+origin until it exits). A `follow` FAIL line that says `blocked by Local Network Access` is this case.
 
 ## Start here, every time
 
@@ -247,13 +256,34 @@ The tool runs on macOS, Linux and Windows; on Windows the capture root is
 | Surgical cookie delete | `rm-cookie --name X --domain Y --path /cas` |
 | Pixel-coordinate grid over a screenshot | `grid /tmp/g.png [--region x,y,w,h] [--step 60]` |
 | The real MCP tools, against ANY port | `mcp list` · `mcp navigate_page '{"url":"…"}'` |
+| Main-thread cost of a load: long frames by invoker with script position, CLS, lag, marks; CPU/network throttled | `perf load <url> --runs 3 --cpu 6 --mark 'ready=<selector>'` |
+| INP and the slowest events while a person interacts | `perf record --seconds 20 [--cpu 4]` |
+| A/B two builds or settings, interleaved, with per-variant p50/p90 | `perf ab spec.json` |
+| Throttle, or rewrite/block responses, while you work (holds until Ctrl-C) | `emulate --cpu 4 --network slow-4g` · `intercept --url '*/config.js*' --replace 'a=>b'` |
+| IndexedDB / Web Storage, also from a browser that has no debug port | `storage idb [--db --store --key]` · `storage web` · `storage idb --from-profile <dir> --origin <url>` |
+| App state that has no global (QueryClient, Redux store) | `react find --function client.getQueryCache --expose __qc`, then `eval` |
+| Change the route without a reload | `nav /path --spa --wait-for <selector>` |
+| Minified `url:offset` (LoAF) or `url:line:col` to a source line | `tools ts sourcemaps resolve <url>:<offset> --deployed <base> --build <dir>` (strategies, costs, order: `references/sourcemaps.md`) |
+| Which commit a deployment was built from | `tools ts sourcemaps find-commit --deployed <base> --repo . --range A..B --build-cmd '…' --output <dir>` |
+| Real sources in DevTools for a deployed build without maps | `tools ts sourcemaps carry --deployed <base> --build <dir> --out <maps>`, then `intercept --map-dir <maps>` |
 | CDP scratch script | `scaffold <name> --recipe redirect-chain\|cookie-diff\|storage-snapshot\|body-fetch\|console-trap\|blank` |
+| Perf scratch script (custom multi-step flow) | `scaffold <name> --recipe perf-load\|perf-ab\|spa-steps\|interaction\|idb-dump` |
 | The scripting API | `cheatsheet` (or `references/cdp-cheatsheet.md`) |
 
 Page verbs take `--match <substr|/regex/>` to pick a tab by URL or title, and ERROR within
 a second when nothing matches, listing the closest open tabs; they never grab a random tab.
 No tab to reuse? `nav <url> --new` opens one. `targets --match <substr>` filters the tab
 list instead of printing one 40 KB JSON blob (`--json` gives the same list as JSON).
+
+## Performance and app state
+
+For a slow or stuck UI, read `references/perf-investigation.md` before measuring. It explains why the
+`perf` verbs use in-page observers instead of a DevTools trace (a trace at 6x CPU distorts what it
+measures), how to read the invoker groups, how to A/B without leaking state between runs, and how to get
+from a minified chunk offset to a source line. For that last step read `references/sourcemaps.md`: it
+orders the strategies (published maps, debug ids and Sentry, a local build, find-commit, check, carry) by
+cost and gives each one's measured hit rate. Two rules up front: measure in a visible tab (a background
+tab throttles timers and skips frames), and never conclude from one run.
 
 ## The method that actually finds these bugs
 
@@ -263,7 +293,9 @@ fingerprint.
 
 1. **Reproduce while a recorder runs.** `attach` starts one; the buffer holds the last 4
    hours. An empty `har` means the recorder started after the action, not that nothing
-   happened.
+   happened. For a suspected loop, `follow --channels nav,redirect --loops` prints a `LOOP` line
+   (the page, how often, how fast, and the cycle of pages) on the third lap, with `code`/`state`
+   values ignored.
 2. **Read the raw 302 chain, not the MCP request list.** `redirectResponse` carries the
    `Location` and `Set-Cookie` that a flat list hides. The bug is usually one hop whose
    `Location` is wrong (missing `?code=`/`?state=`, or pointing back at the app instead of

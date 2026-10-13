@@ -2,6 +2,7 @@
  * HAR assembly on top of the capture buffer (retroactive) or a live window.
  * The conversion itself is the chrome-har port in ./har/build.ts.
  */
+import { localNetworkBlockOf } from "@genesiscz/utils/chrome-devtools/permissions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attach, type Page } from "./cdp.ts";
@@ -33,6 +34,11 @@ export function parseDuration(raw: string): number | null {
 export function countDroppedFailures(events: { method: string; params: Record<string, unknown> }[]): number {
     return events.filter((e) => e.method === "Network.loadingFailed" && e.params.errorText !== "net::ERR_ABORTED")
         .length;
+}
+
+/** Count requests that Local Network Access blocked (the page needs `local-network` / `loopback-network`). */
+export function countLocalNetworkBlocks(events: { method: string; params: Record<string, unknown> }[]): number {
+    return events.filter((e) => e.method === "Network.loadingFailed" && localNetworkBlockOf(e.params) !== null).length;
 }
 
 /**
@@ -72,6 +78,8 @@ export interface BufferHarResult {
     har: HarFile;
     eventCount: number;
     droppedFailed: number;
+    /** Requests Local Network Access blocked; `grant` allows them. */
+    localNetworkBlocked: number;
     stitchedBodies: number;
     /** Event-time coverage of the WHOLE buffer, so an empty window is diagnosable. */
     coverage: { totalEvents: number; oldestT: number | null; newestT: number | null };
@@ -128,6 +136,7 @@ export function buildHarFromBuffer(opts: {
         har,
         eventCount: events.length,
         droppedFailed: countDroppedFailures(events),
+        localNetworkBlocked: countLocalNetworkBlocks(events),
         stitchedBodies,
         coverage,
     };
@@ -138,6 +147,8 @@ export interface LiveWindowResult {
     bodiesGot: number;
     bodiesMiss: number;
     droppedFailed: number;
+    /** Requests Local Network Access blocked; `grant` allows them. */
+    localNetworkBlocked: number;
     pageUrl: string;
 }
 
@@ -210,7 +221,14 @@ export async function captureLiveWindow(opts: {
     const pageUrl = page.target.url;
     page.close();
 
-    return { har, bodiesGot, bodiesMiss, droppedFailed: countDroppedFailures(messages), pageUrl };
+    return {
+        har,
+        bodiesGot,
+        bodiesMiss,
+        droppedFailed: countDroppedFailures(messages),
+        localNetworkBlocked: countLocalNetworkBlocks(messages),
+        pageUrl,
+    };
 }
 
 /** Redact Cookie / Set-Cookie / Authorization headers, cookie values, and credential-shaped POST params. */

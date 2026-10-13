@@ -292,6 +292,8 @@ export async function ensureStoreScaffold(root = storeRoot()): Promise<void> {
                 "@gt/scripts/*": [join(LIB_DIR, "*")],
                 // chrome-devtools scaffold recipes import the cdp lib this way
                 "@gt/chrome-devtools/*": [join(LIB_DIR, "..", "..", "chrome-devtools", "lib", "*")],
+                // and the shared browser/perf library (@genesiscz/utils) this way
+                "@gt/utils/*": [join(LIB_DIR, "..", "..", "utils", "*")],
             },
         },
     };

@@ -27,6 +27,17 @@ Only the throwaway `--fresh` and `--extension` profiles get
 `--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks`; a persistent profile
 holds credentials, so it keeps Chrome's network protections like the real profile does.
 
+To let one public page reach a private or loopback address in a protected profile, hold a grant with
+`tools chrome-devtools grant --match <tab>` (default `local-network loopback-network`, for the tab's own
+origin; `--origin` and `--seconds` change that). `follow` marks a request this blocks: its FAIL line ends
+with `blocked by Local Network Access (LocalNetworkAccessPermissionDenied)` and the grant command. The
+mechanism, measured on Chrome 154: `Browser.setPermission` with the descriptor name
+`local-network` (private addresses) or `loopback-network` (127.0.0.1, localhost), or
+`Browser.grantPermissions` with `localNetwork` / `loopbackNetwork`. The old `local-network-access` is
+accepted but unblocks nothing since Chrome 145, the grant needs an HTTPS origin, and it ends when the CDP
+session that made it detaches. With the checks disabled, an HTTPS page still cannot call an HTTP private
+address (mixed content); a grant can.
+
 ## Quick start
 
 ```bash
@@ -45,7 +56,7 @@ fixes, `--help` examples) already carries the right path for the running platfor
 | Piece | What it is |
 |---|---|
 | `record` | The only capture engine. One detached process per port, attaches browser-wide (or `--match`-scoped), appends HAR-grade metadata to a rolling buffer. `attach` starts it automatically. |
-| `follow` | The live view. Renders chosen channels as human lines, prints Monitor-ready commands. Rotation-aware — the only sanctioned way to tail the buffer. |
+| `follow` | The live view. Renders chosen channels as human lines, prints Monitor-ready commands. Rotation-aware — the only sanctioned way to tail the buffer. `--loops [n]` adds a `LOOP` line when one page (path + query names) is visited n times within `--loop-window` seconds, with the cycle of pages between visits. |
 | `har` | The retroactive view. Builds a DevTools-grade HAR 1.2 from the buffer (`--last 30m`), or records a live window on one tab (`--now --reload`, with bodies). |
 
 The old skill's `watch` verb is gone; invoking it explains the split.
@@ -162,12 +173,37 @@ browser): `.claude/work/research/2026-08-26-CdpNativeHarExport.md`.
   that kill before this guard existed). Kills are never batched: `--yes` applies only the
   safe fixes. Files are MOVED to a /tmp trash dir, never destroyed in place.
 
+## Performance and app state
+
+Measured with in-page observers installed before the page's own scripts (long-animation-frame with
+script attribution, longtask, layout-shift sources, event timing, a lag sampler, marks), not with a
+DevTools trace: a trace at 6x CPU distorts what it measures. The logic lives in
+`@genesiscz/utils/chrome-devtools/` (every helper takes a `CdpLike` session, so another project can
+vendor it and drive it with a playwright `CDPSession`); the verbs here are thin.
+
+| Verb | What it does |
+|---|---|
+| `perf load [url]` | Load N times (`--cpu`, `--network`, `--mark name=sel[@text]`, `--until`); blocking by invoker, worst frames with script position, CLS, lag, marks, p50/p90 |
+| `perf record` | Observe the current document while a person interacts: INP, slowest events |
+| `perf ab <spec.json>` | Interleaved A/B (ABBA), per-variant response rewrites, storage reset before each load, samples saved after every run |
+| `emulate` / `intercept` | Hold a CPU/network override, or rewrite/replace/block responses, until Ctrl-C (overrides end with the CDP session); `intercept --map-dir <dir>` attaches carried source maps so DevTools shows real sources |
+| `storage idb` / `storage web` | IndexedDB (read-only, never creates a database) and Web Storage; `--from-profile` reads a browser that has no debug port |
+| `react find` | Structured matchers over every React root; `--expose` keeps the live object on `window` |
+| `nav --spa` | `pushState` + `popstate`, no reload |
+
+The step from a worst frame's `chunk.js:offset` to a source line is `tools ts sourcemaps resolve`
+(src/ts/README.md; the full guide with every strategy, cost and measured hit rate is the plugin skill's
+`references/sourcemaps.md`). The plugin skill's `references/perf-investigation.md` is the playbook.
+`perf load` brings the tab to the front first and every summary warns when the page was hidden,
+because a background tab throttles timers and skips frames.
+
 ## Scripting
 
 - `scaffold <name> --recipe <r>` creates a CDP scratch script **in the `tools scripts`
   store** (versioned, `tools scripts run <name>`). Recipes: `redirect-chain`,
-  `cookie-diff`, `storage-snapshot`, `body-fetch`, `console-trap`, `blank`. The store's
-  tsconfig maps `@gt/chrome-devtools/*` to this tool's `lib/`.
+  `cookie-diff`, `storage-snapshot`, `body-fetch`, `console-trap`, `blank`, and the perf
+  recipes `perf-load`, `perf-ab`, `spa-steps`, `interaction`, `idb-dump`. The store's
+  tsconfig maps `@gt/chrome-devtools/*` to this tool's `lib/` and `@gt/utils/*` to `src/utils/`.
 - `cheatsheet` prints the CDP scripting cheatsheet (also in the plugin skill's references).
 - `mcp [tool] [json]` calls the real chrome-devtools-mcp tools against any port, no session
   config edit. It is an explicit pass-through: no other tool in this repo drives a browser through

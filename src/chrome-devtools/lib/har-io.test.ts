@@ -5,7 +5,14 @@ import { join } from "node:path";
 import type { RecordedEvent } from "./channels.ts";
 import { harFromMessages } from "./har/build.ts";
 import type { CdpMessage } from "./har/types.ts";
-import { buildHarFromBuffer, countDroppedFailures, parseDuration, sanitizeHar, stitchBodies } from "./har-io.ts";
+import {
+    buildHarFromBuffer,
+    countDroppedFailures,
+    countLocalNetworkBlocks,
+    parseDuration,
+    sanitizeHar,
+    stitchBodies,
+} from "./har-io.ts";
 import { segmentName } from "./segments.ts";
 
 describe("parseDuration", () => {
@@ -17,6 +24,24 @@ describe("parseDuration", () => {
         expect(parseDuration("1.5h")).toBe(5_400_000);
         expect(parseDuration("soon")).toBeNull();
         expect(parseDuration("-5m")).toBeNull();
+    });
+});
+
+describe("countLocalNetworkBlocks", () => {
+    test("counts only failures with a Local Network Access CORS error", () => {
+        expect(
+            countLocalNetworkBlocks([
+                {
+                    method: "Network.loadingFailed",
+                    params: {
+                        errorText: "net::ERR_FAILED",
+                        corsErrorStatus: { corsError: "LocalNetworkAccessPermissionDenied" },
+                    },
+                },
+                { method: "Network.loadingFailed", params: { errorText: "net::ERR_CONNECTION_REFUSED" } },
+                { method: "Network.requestWillBeSent", params: {} },
+            ])
+        ).toBe(1);
     });
 });
 

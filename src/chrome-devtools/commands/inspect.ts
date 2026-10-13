@@ -1,9 +1,41 @@
 /** cookies / rm-cookie / console / eval / nav / shot / grid / trace — page and browser inspection. */
+import { navigateSpa, type PageCondition, waitForPage } from "@genesiscz/utils/chrome-devtools/spa";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { browser, classifyEvalError, cookiesSummaryLine, newTab } from "../lib/cdp.ts";
+import {
+    browser,
+    classifyEvalError,
+    consoleLevelSummary,
+    cookiesSummaryLine,
+    newTab,
+    nextLoadEvent,
+} from "../lib/cdp.ts";
+import { cdpLikeOf } from "../lib/cdp-like-adapter.ts";
 import { artifactPath } from "../lib/platform.ts";
 import { attachTab, ignoreSigpipe, positiveNumber, resolvePort, suggest, withPage, withPort } from "./shared.ts";
+
+type NavOptions = {
+    port?: string;
+    match?: string;
+    new?: boolean;
+    spa?: boolean;
+    waitFor?: string;
+    waitText?: string;
+    timeout: string;
+};
+
+function describeCondition(condition: PageCondition): string {
+    const parts: string[] = [];
+    if (condition.selector) {
+        parts.push(`'${condition.selector}'`);
+    }
+
+    if (condition.text) {
+        parts.push(`text '${condition.text}'`);
+    }
+
+    return parts.join(" with ");
+}
 
 export function registerInspect(program: Command): void {
     withPort(program.command("cookies"))
@@ -80,26 +112,42 @@ export function registerInspect(program: Command): void {
 
     withPage(program.command("console"))
         .description(
-            "dump console messages of a tab. Attaches FIRST, so --reload replays load-time messages (the MCP list_console_messages can never see those)."
+            "dump a tab's console: what it already logged (Chrome keeps those and replays them when we attach) plus what it logs while we listen. --reload adds a fresh page load."
         )
-        .option("--reload", "reload the page once attached")
+        .option("--reload", "reload the page once attached; a '── reload ──' line separates the earlier messages")
         .option("--wait <n>", "seconds to listen (default 5, or 8 with --reload)")
+        .addHelpText(
+            "after",
+            `
+Use it when a page misbehaves and you want its own errors, without opening DevTools.
+Messages logged BEFORE you attached are included: the listener exists before Runtime.enable,
+which replays them. The last line counts them by level.
+
+Examples:
+  ${suggest(["console", "--match", "localhost:3000"])}
+  ${suggest(["console", "--match", "app.example.com", "--reload", "--wait", "12"])}
+  ${suggest(["console", "--port", "9222", "--match", "/localhost:(3000|5173)/"])}`
+        )
         .action(async (opts: { port?: string; match?: string; reload?: boolean; wait?: string }) => {
-            const page = await attachTab(opts);
             const lines: string[] = [];
-            page.onConsole((level, text) => lines.push(`[${level}] ${text}`));
+            const levels: string[] = [];
+            const page = await attachTab(opts, {
+                beforeEnable: (connected) =>
+                    connected.onConsole((level, text) => {
+                        lines.push(`[${level}] ${text}`);
+                        levels.push(level);
+                    }),
+            });
             out.log.info(`attached to: ${page.target.url}`);
 
             if (opts.reload) {
+                lines.push("── reload ──");
                 await page.reload();
             }
 
             await Bun.sleep(positiveNumber(opts.wait, opts.reload ? 8 : 5, "--wait") * 1000);
-            out.println(
-                lines.length
-                    ? lines.join("\n")
-                    : "<nothing logged in that window — use --reload to replay load-time messages>"
-            );
+            out.println(levels.length ? lines.join("\n") : "<nothing logged, before or during that window>");
+            out.log.info(consoleLevelSummary(levels));
             process.exit(0);
         });
 
@@ -167,11 +215,55 @@ export function registerInspect(program: Command): void {
         });
 
     withPage(program.command("nav"))
-        .description("navigate a tab, or open a new one with --new")
-        .argument("<url>", "destination URL")
+        .description("navigate a tab, open a new one with --new, or move a single-page app in place with --spa")
+        .argument(
+            "<url>",
+            "destination URL; with --spa the full path as the address bar shows it (include the app's base, e.g. /app/billing) or a same-origin URL"
+        )
         .option("--new", "open a NEW tab instead of reusing one (cannot be combined with --match)")
-        .action(async (url: string, opts: { port?: string; match?: string; new?: boolean }) => {
+        .option(
+            "--spa",
+            "in-app navigation: history.pushState + popstate, no reload, so app state and caches survive (same origin only)"
+        )
+        .option("--wait-for <selector>", "then wait until this CSS selector is in the page")
+        .option("--wait-text <text>", "then wait until the page (or the --wait-for element) contains this text")
+        .option("--timeout <seconds>", "deadline for --wait-for / --wait-text", "15")
+        .addHelpText(
+            "after",
+            `
+Use --spa to reach a route the way a click would: a full load resets the app's in-memory state
+(query caches, stores), --spa keeps it. Give the full path, base included: an app served under /app/
+needs /app/billing, and /billing leaves it on a blank page (a warning says so when the first path
+segment changes). It works with routers that listen to popstate (React Router,
+TanStack Router, most others). Exit code 1 when --wait-for / --wait-text did not hold in time.
+
+Examples:
+  ${suggest(["nav", "https://app.example.com/login", "--match", "app.example.com"])}
+  ${suggest(["nav", "/billing", "--spa", "--match", "localhost:3000", "--wait-text", "Billing"])}
+  ${suggest(["nav", "/settings", "--spa", "--match", "app.example.com", "--wait-for", "h1", "--timeout", "5"])}
+  ${suggest(["nav", "https://example.com", "--new", "--port", "9222"])}`
+        )
+        .action(async (url: string, opts: NavOptions) => {
+            const timeoutMs = positiveNumber(opts.timeout, 15, "--timeout") * 1000;
+            const condition: PageCondition | undefined =
+                opts.waitFor || opts.waitText ? { selector: opts.waitFor, text: opts.waitText } : undefined;
+
             if (opts.new) {
+                if (opts.spa) {
+                    out.log.error(
+                        "--spa moves an EXISTING app in place, so it cannot open a new tab. Use one or the other."
+                    );
+                    process.exit(1);
+                }
+
+                if (condition) {
+                    out.log.error("--wait-for / --wait-text need an attached tab; --new only opens one.");
+                    out.log.info(
+                        `  then: ${suggest(["nav", url, "--match", "<new tab url>", "--wait-for", "<selector>"])}`
+                    );
+                    process.exit(1);
+                }
+
                 if (opts.match) {
                     out.log.error("--new opens a fresh tab, so --match has nothing to pick. Use one or the other.");
                     process.exit(1);
@@ -191,6 +283,75 @@ export function registerInspect(program: Command): void {
 
             if (!opts.match) {
                 out.log.info("no --match given: acting on the most recently active tab");
+            }
+
+            if (opts.spa) {
+                try {
+                    const moved = await navigateSpa(cdpLikeOf(page), { path: url, waitFor: condition, timeoutMs });
+                    out.log.info(`tab ${page.target.id}: ${moved.from}\n         -> ${moved.to} (in-app, no reload)`);
+                    const firstSegment = (path: string) => path.split(/[?#]/)[0]?.split("/")[1] ?? "";
+                    // A changed first segment is also every normal top-level move (/dashboard -> /billing), so it
+                    // is only a likely cause when the wait condition failed; with no condition it is a note.
+                    const conditionFailed = Boolean(condition && moved.settled && !moved.settled.ok);
+                    if (firstSegment(moved.from) !== firstSegment(moved.to) && (!condition || conditionFailed)) {
+                        const hint = `the first path segment changed (/${firstSegment(moved.from)}/ -> /${firstSegment(moved.to)}/). If the app lives under /${firstSegment(moved.from)}/, include it: /${firstSegment(moved.from)}${moved.to}`;
+                        if (conditionFailed) {
+                            out.log.warn(hint);
+                        } else {
+                            out.log.info(hint);
+                        }
+                    }
+
+                    if (condition && moved.settled) {
+                        if (!moved.settled.ok) {
+                            out.log.error(`${describeCondition(condition)} did not show within ${timeoutMs / 1000}s.`);
+                            process.exit(1);
+                        }
+
+                        out.log.info(`${describeCondition(condition)} showed after ${Math.round(moved.settled.ms)} ms`);
+                    }
+                } catch (err) {
+                    // The in-page throw carries its page-side stack; the first line is the reason.
+                    const reason = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+                    out.log.error(reason);
+
+                    if (reason.includes("needs a real navigation")) {
+                        out.log.info(
+                            `  another origin needs a real load: ${suggest(["nav", url, "--match", opts.match ?? "<substr>"])}`
+                        );
+                    }
+
+                    process.exit(1);
+                }
+
+                process.exit(0);
+            }
+
+            if (condition) {
+                const loaded = nextLoadEvent(page, timeoutMs);
+                await page.navigate(url);
+
+                if (!(await loaded)) {
+                    out.log.error(`the page did not finish loading within ${timeoutMs / 1000}s.`);
+                    process.exit(1);
+                }
+
+                const settled = await waitForPage(cdpLikeOf(page), condition, timeoutMs).catch((err: unknown) => {
+                    out.log.error(
+                        `waiting for ${describeCondition(condition)} failed: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`
+                    );
+                    process.exit(1);
+                });
+                const after = await page.evaluate("location.href").catch(() => url);
+                out.log.info(`tab ${page.target.id}: ${before}\n         -> ${String(after)}`);
+
+                if (!settled.ok) {
+                    out.log.error(`${describeCondition(condition)} did not show within ${timeoutMs / 1000}s.`);
+                    process.exit(1);
+                }
+
+                out.log.info(`${describeCondition(condition)} showed after ${Math.round(settled.ms)} ms`);
+                process.exit(0);
             }
 
             await page.navigate(url);

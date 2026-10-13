@@ -27,10 +27,14 @@ import { registerFollow } from "./commands/follow.ts";
 import { registerHar } from "./commands/har.ts";
 import { registerInspect } from "./commands/inspect.ts";
 import { registerNetPanel } from "./commands/net-panel.ts";
+import { registerOverrides } from "./commands/override.ts";
 import { registerPage } from "./commands/page.ts";
+import { registerPerf } from "./commands/perf.ts";
+import { registerReact } from "./commands/react.ts";
 import { registerRecord, registerWatchTombstone } from "./commands/record.ts";
 import { registerScripting } from "./commands/scripting.ts";
 import { registerStatus } from "./commands/status.ts";
+import { registerStorage } from "./commands/storage.ts";
 
 const program = new Command();
 program
@@ -67,5 +71,9 @@ registerBrowse(program);
 registerInspect(program);
 registerPage(program);
 registerScripting(program);
+registerPerf(program);
+registerOverrides(program);
+registerStorage(program);
+registerReact(program);
 
 await runTool(program, { tool: "chrome-devtools" });
