@@ -12,6 +12,7 @@ import { dirname } from "node:path";
 import { catalogPath } from "@app/spotify/lib/paths";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
@@ -82,6 +83,25 @@ export function loadCatalog(path = catalogPath()): ArtistCatalog {
     return emptyCatalog();
 }
 
+/**
+ * The catalogue a save merges into. Only a missing file starts empty. A file that does not parse or has the
+ * wrong shape is copied to `artist-catalog.json.corrupt-<time>` first, so the save keeps the new harvest
+ * without destroying every earlier one. A read error such as EACCES throws: nothing is written.
+ */
+function loadCatalogForUpdate(path: string): ArtistCatalog {
+    const read = readJsonFileForUpdateSync(path, { accepts: isCatalog });
+
+    if (read.state === "corrupt") {
+        log.warn(
+            { path, error: read.error, preservedAt: read.preservedAt },
+            "artist catalogue is unreadable; kept a copy, saving this harvest into a new one"
+        );
+        return emptyCatalog();
+    }
+
+    return read.state === "ok" ? read.value : emptyCatalog();
+}
+
 function isCatalog(value: unknown): value is ArtistCatalog {
     return (
         typeof value === "object" &&
@@ -149,7 +169,7 @@ export async function saveHarvestedArtists({
 
     return withFileLock(
         `${path}.lock`,
-        async () => saveCatalog(mergeCatalog(loadCatalog(path), harvested, fetchedAt), path),
+        async () => saveCatalog(mergeCatalog(loadCatalogForUpdate(path), harvested, fetchedAt), path),
         CATALOG_LOCK_TIMEOUT_MS
     );
 }

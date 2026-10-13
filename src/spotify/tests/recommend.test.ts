@@ -3,7 +3,7 @@
  * that keeps it honest (an old artist is not a burst, a well-explored artist is not unfinished).
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -334,6 +334,20 @@ describe("saving the catalogue", () => {
         expect(after.artists["spotify:artist:C"]?.fetchedAt).toBe(new Date(T0 + 2 * DAY).toISOString());
         // The atomic write renamed its temp file and the lock was released.
         expect(readdirSync(dir).sort()).toEqual(["artist-catalog.json"]);
+    });
+
+    test("an unreadable catalogue is copied aside before the harvest is saved over it", async () => {
+        const tornDir = join(dir, "torn");
+        mkdirSync(tornDir);
+        const path = join(tornDir, "artist-catalog.json");
+        const torn = '{"version": 1, "artists": {"spotify:artist:A": {"uri": "spotify:artist:A", "name": "A", "fetc';
+        writeFileSync(path, torn);
+
+        await saveHarvestedArtists({ path, fetchedAt: new Date(T0), harvested: [artist("spotify:artist:C", "embed")] });
+
+        const copies = readdirSync(tornDir).filter((name) => name.startsWith("artist-catalog.json.corrupt-"));
+        expect(copies.map((name) => readFileSync(join(tornDir, name), "utf8"))).toEqual([torn]);
+        expect(Object.keys(loadCatalog(path).artists)).toEqual(["spotify:artist:C"]);
     });
 });
 

@@ -11,6 +11,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const log = logger.child({ component: "spotify:profiles" });
@@ -33,15 +34,45 @@ export interface Registry {
 
 const EMPTY: Registry = { defaultProfile: "me", profiles: [] };
 
+function isRegistry(value: unknown): value is Registry {
+    return isJsonObject(value) && Array.isArray(value.profiles);
+}
+
+/**
+ * The registry at `path`, or null when there is no file. A file that exists but cannot be read, does not parse
+ * or has no profiles array throws: bootstrapping over it would make the next save replace the user's profiles.
+ */
 function readRegistryFile(path: string): Registry | null {
     if (!existsSync(path)) {
         return null;
     }
 
+    let parsed: unknown;
+
     try {
-        return SafeJSON.parse(readFileSync(path, "utf8")) as Registry;
+        parsed = SafeJSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+        throw new Error(
+            `profile registry at ${path} cannot be read or does not parse; left untouched, fix or move it`,
+            {
+                cause: error,
+            }
+        );
+    }
+
+    if (!isRegistry(parsed)) {
+        throw new Error(`profile registry at ${path} has no profiles array; left untouched, fix or move it`);
+    }
+
+    return parsed;
+}
+
+/** The standalone skill's registry is only a first-run import, so an unreadable one is skipped, not fatal. */
+function readLegacyRegistry(): Registry | null {
+    try {
+        return readRegistryFile(legacyRegistryPath());
     } catch (err) {
-        log.warn({ path, err }, "profile registry is unreadable, ignoring it");
+        log.warn({ path: legacyRegistryPath(), err }, "legacy me:spotify registry is unreadable, not importing it");
 
         return null;
     }
@@ -52,7 +83,7 @@ function readRegistryFile(path: string): Registry | null {
  * export in the two places it is normally unzipped to.
  */
 function bootstrap(): Registry {
-    const legacy = readRegistryFile(legacyRegistryPath());
+    const legacy = readLegacyRegistry();
     if (legacy?.profiles?.length) {
         log.info(
             { path: legacyRegistryPath(), profiles: legacy.profiles.length },
@@ -99,7 +130,8 @@ function bootstrap(): Registry {
  * existing caller unsafe" — so the read path simply cannot write.
  *
  * The bootstrap is cheap to redo (two `existsSync` calls) and is persisted the moment the user
- * does something that writes: `profile add`, `profile rm`, `profile use`.
+ * does something that writes: `profile add`, `profile rm`, `profile use`. It runs only when the
+ * file is missing; an existing file that does not parse throws, so no save can replace it.
  */
 export function loadRegistry(): Registry {
     return readRegistryFile(registryPath()) ?? bootstrap();

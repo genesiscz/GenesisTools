@@ -7,14 +7,18 @@
  * system error.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveHistoryDir } from "@app/spotify/lib/profiles";
+import { DEFAULT_TIMEZONE, type Profile, resolveHistoryDir, upsertProfile } from "@app/spotify/lib/profiles";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const root = mkdtempSync(join(tmpdir(), "spotify-resolve-test-"));
+const snapshot = env.testing.snapshot();
 
 afterAll(() => {
+    env.testing.restore(snapshot);
     rmSync(root, { recursive: true, force: true });
 });
 
@@ -55,5 +59,36 @@ describe("resolveHistoryDir", () => {
 
     test("a missing directory names itself", () => {
         expect(() => resolveHistoryDir(join(root, "nope"))).toThrow("no such directory");
+    });
+});
+describe("saving a profile", () => {
+    test("an unparseable registry is never replaced by a bootstrap plus the new profile", () => {
+        const path = join(root, "torn-profiles.json");
+        const torn = '{"defaultProfile": "me", "profiles": [{"name": "me", "label": "me", "histo';
+        writeFileSync(path, torn);
+        env.testing.set("SPOTIFY_CONFIG_PATH", path);
+
+        expect(() => upsertProfile({ name: "partner", label: "partner", timezone: DEFAULT_TIMEZONE })).toThrow(
+            /left untouched/
+        );
+        expect(readFileSync(path, "utf8")).toBe(torn);
+    });
+
+    test("a valid registry takes the new profile and keeps the old one", () => {
+        const path = join(root, "valid-profiles.json");
+        const me: Profile = {
+            name: "me",
+            label: "me",
+            timezone: DEFAULT_TIMEZONE,
+            addedAt: "2026-01-01T00:00:00.000Z",
+        };
+        writeFileSync(path, SafeJSON.stringify({ defaultProfile: "me", profiles: [me] }));
+        env.testing.set("SPOTIFY_CONFIG_PATH", path);
+
+        upsertProfile({ name: "partner", label: "partner", timezone: DEFAULT_TIMEZONE });
+        const saved = SafeJSON.parse(readFileSync(path, "utf8"));
+
+        expect(saved.defaultProfile).toBe("me");
+        expect(saved.profiles.map((p: Profile) => p.name)).toEqual(["me", "partner"]);
     });
 });
