@@ -419,25 +419,46 @@ function floorToUnit(ms: number, unit: TimelineUnit): Date {
     return date;
 }
 
-/** Local hour or day starts from the window start (or the first run) to the window end, at most 400 of them. */
-function timelineStarts(window: StatsWindow, firstRunMs: number | null): { unit: TimelineUnit; starts: number[] } {
+/**
+ * Local hour or day starts from the window start (or the first run) to the window end, the last 400 of them. The walk
+ * begins at most 400 buckets before the end, so an open window over years of runs costs 400 steps, not one per day.
+ */
+export function timelineStarts(
+    window: StatsWindow,
+    firstRunMs: number | null
+): { unit: TimelineUnit; starts: number[] } {
     const startMs = window.since?.getTime() ?? firstRunMs ?? window.until.getTime();
-    const unit: TimelineUnit = window.until.getTime() - startMs <= HOUR_BUCKET_MAX_SPAN_MS ? "hour" : "day";
-    const starts: number[] = [];
+    const untilMs = window.until.getTime();
+    const unit: TimelineUnit = untilMs - startMs <= HOUR_BUCKET_MAX_SPAN_MS ? "hour" : "day";
     const cursor = floorToUnit(startMs, unit);
 
-    while (cursor.getTime() <= window.until.getTime()) {
+    if (unit === "hour") {
+        // Elapsed hours from the floored start, so the hour that repeats when daylight saving time ends stays its own
+        // bucket; skip the ones before the last 400.
+        const steps = Math.floor((untilMs - cursor.getTime()) / 3_600_000);
+        cursor.setTime(cursor.getTime() + Math.max(0, steps - (MAX_TIMELINE_BUCKETS - 1)) * 3_600_000);
+    } else {
+        const earliest = floorToUnit(untilMs, "day");
+        earliest.setDate(earliest.getDate() - (MAX_TIMELINE_BUCKETS - 1));
+
+        if (earliest.getTime() > cursor.getTime()) {
+            cursor.setTime(earliest.getTime());
+        }
+    }
+
+    const starts: number[] = [];
+
+    while (cursor.getTime() <= untilMs) {
         starts.push(cursor.getTime());
 
         if (unit === "hour") {
-            // Elapsed time, not the local clock: the hour that repeats when daylight saving time ends is its own bucket.
             cursor.setTime(cursor.getTime() + 3_600_000);
         } else {
             cursor.setDate(cursor.getDate() + 1);
         }
     }
 
-    return { unit, starts: starts.slice(-MAX_TIMELINE_BUCKETS) };
+    return { unit, starts };
 }
 
 function buildTimeline(runs: StatsRun[], starts: number[]): TimelineBucket[] {

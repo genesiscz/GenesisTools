@@ -5,7 +5,16 @@ import { join } from "node:path";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
-import { collectDaemonStats, readRunOutput, readStderrTail, resolveWindow, summarizeHealthLines } from "./stats";
+import {
+    collectDaemonStats,
+    readRunOutput,
+    readStderrTail,
+    resolveWindow,
+    type StatsWindow,
+    summarizeHealthLines,
+    type TimelineUnit,
+    timelineStarts,
+} from "./stats";
 import type { DaemonTask } from "./types";
 
 const NOW = new Date("2026-10-12T00:00:00.000Z");
@@ -337,5 +346,57 @@ describe("summarizeHealthLines", () => {
         expect(health.taskTimedOut).toBe(60);
         expect(health.events.filter((e) => e.kind === "taskTimedOut")).toHaveLength(50);
         expect(health.events.at(-1)?.kind).toBe("wedged");
+    });
+});
+
+describe("timelineStarts", () => {
+    /** The walk timelineStarts did before it was bounded: every bucket of the window, then the last 400. */
+    function everyBucketThenLast400(window: StatsWindow, firstRunMs: number | null) {
+        const startMs = window.since?.getTime() ?? firstRunMs ?? window.until.getTime();
+        const unit: TimelineUnit = window.until.getTime() - startMs <= 48 * 3_600_000 ? "hour" : "day";
+        const cursor = new Date(startMs);
+        cursor.setMinutes(0, 0, 0);
+
+        if (unit === "day") {
+            cursor.setHours(0);
+        }
+
+        const starts: number[] = [];
+
+        while (cursor.getTime() <= window.until.getTime()) {
+            starts.push(cursor.getTime());
+
+            if (unit === "hour") {
+                cursor.setTime(cursor.getTime() + 3_600_000);
+            } else {
+                cursor.setDate(cursor.getDate() + 1);
+            }
+        }
+
+        return { unit, starts: starts.slice(-400) };
+    }
+
+    test("gives the same buckets as walking the whole window, for long, short and DST-crossing windows", () => {
+        const until = new Date("2026-10-26T12:34:56.000Z");
+        const daysBefore = (days: number) => new Date(until.getTime() - days * 86_400_000);
+        const cases: Array<{ window: StatsWindow; firstRunMs: number | null }> = [
+            { window: { since: daysBefore(3 * 365), until }, firstRunMs: null },
+            { window: { since: daysBefore(400), until }, firstRunMs: null },
+            { window: { since: daysBefore(30), until }, firstRunMs: null },
+            { window: { since: null, until }, firstRunMs: daysBefore(5 * 365).getTime() },
+            { window: { since: null, until }, firstRunMs: null },
+            { window: { since: new Date(until.getTime() - 47 * 3_600_000), until }, firstRunMs: null },
+        ];
+
+        for (const zone of ["Europe/Prague", "America/New_York", "Asia/Kolkata"]) {
+            withTimeZone(zone, () => {
+                for (const { window, firstRunMs } of cases) {
+                    expect({ zone, ...timelineStarts(window, firstRunMs) }).toEqual({
+                        zone,
+                        ...everyBucketThenLast400(window, firstRunMs),
+                    });
+                }
+            });
+        }
     });
 });
