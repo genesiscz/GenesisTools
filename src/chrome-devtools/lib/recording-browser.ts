@@ -7,7 +7,9 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { redactBrowserText } from "./action-recording";
 import { targets } from "./cdp";
 import {
+    type BackgroundLaunch,
     CdpLaunchError,
+    defaultBackgroundLaunch,
     defaultSpawnLogged,
     type LaunchCdpOpts,
     launchCdpBrowser,
@@ -49,6 +51,8 @@ interface RecordingBrowserDependencies {
     probe?: LaunchCdpOpts["probe"];
     quit?: QuitDeps;
     timeoutMs?: number;
+    /** `false` launches with a startup window, as before the background launch existed. */
+    background?: BackgroundLaunch | false;
 }
 export function recordingBrowsers(): RecordingBrowser[] {
     const installed = new Set(installedBrowsers());
@@ -139,6 +143,8 @@ export async function openRecordingBrowser(options: {
             probe: dependencies.probe,
             quit: dependencies.quit,
             timeoutMs: dependencies.timeoutMs,
+            background:
+                dependencies.background === false ? undefined : (dependencies.background ?? defaultBackgroundLaunch),
             spawnLogged: (command, output) => {
                 options.signal?.throwIfAborted();
                 owned = (dependencies.spawnLogged ?? defaultSpawnLogged)(command, output);

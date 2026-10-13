@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
+    type BackgroundLaunch,
     CdpLaunchError,
     COLD_PROFILE_TIMEOUT_MS,
     closeBrowserOnPort,
@@ -16,6 +17,7 @@ import {
     launchCdpBrowser,
     type QuitDeps,
     quitOwnedBrowser,
+    withDisabledFeatures,
 } from "./launch.ts";
 import type { ExecFn } from "./platform.ts";
 import { openRecordingBrowser } from "./recording-browser";
@@ -60,8 +62,10 @@ describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", (
         expect(args.some((a) => a.startsWith("--load-extension"))).toBe(false);
     });
 
-    test("the real profile NEVER gets the private-network downgrade flag", () => {
-        expect(launchArgs(9222, {}).some((a) => a.startsWith("--disable-features"))).toBe(false);
+    test("the real profile NEVER gets the private-network downgrade flag, only the code-sign-clone switch", () => {
+        expect(launchArgs(9222, {}).filter((a) => a.startsWith("--disable-features"))).toEqual([
+            "--disable-features=MacAppCodeSignClone",
+        ]);
     });
 
     test("--fresh isolates into a unique /tmp profile so the user's own profile stays untouched", () => {
@@ -69,7 +73,9 @@ describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", (
         // never really throwaway: see freshProfileDir's own uniqueness test in resolve-attach.test.ts.
         const args = launchArgs(9223, { fresh: true });
         expect(args.find((a) => a.startsWith("--user-data-dir="))).toMatch(/^--user-data-dir=\/tmp\/cdp-profile-9223-/);
-        expect(args).toContain("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
+        expect(args).toContain(
+            "--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks,MacAppCodeSignClone"
+        );
     });
 
     test("--extension implies its own profile and restricts loaded extensions to the one given", () => {
@@ -107,13 +113,17 @@ describe("launchArgs — an explicit profile dir", () => {
             extension: "/dist/ext",
             disposableProfile: true,
         });
-        expect(args).toContain("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
+        expect(args).toContain(
+            "--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks,MacAppCodeSignClone"
+        );
     });
 
     test("a persistent --user-data-dir alone keeps the network protections: it holds logins like the real profile", () => {
         const args = launchArgs(9444, { userDataDir: "/Users/x/.genesis-tools/chrome-devtools/chrome/profile" });
         expect(args).toContain("--user-data-dir=/Users/x/.genesis-tools/chrome-devtools/chrome/profile");
-        expect(args.some((a) => a.startsWith("--disable-features"))).toBe(false);
+        expect(args.filter((a) => a.startsWith("--disable-features"))).toEqual([
+            "--disable-features=MacAppCodeSignClone",
+        ]);
     });
 
     // PR #374 review: --extension and --fresh both used to force the downgrade, and
@@ -124,7 +134,9 @@ describe("launchArgs — an explicit profile dir", () => {
         for (const opts of [{ extension: "/dist/ext" }, { fresh: true }, { fresh: true, extension: "/dist/ext" }]) {
             const args = launchArgs(9445, { ...opts, userDataDir: profile });
             expect(args).toContain(`--user-data-dir=${profile}`);
-            expect(args.some((a) => a.startsWith("--disable-features"))).toBe(false);
+            expect(args.filter((a) => a.startsWith("--disable-features"))).toEqual([
+                "--disable-features=MacAppCodeSignClone",
+            ]);
         }
     });
 });
@@ -142,7 +154,7 @@ describe("launchCdpBrowser", () => {
             port: 9222,
             url: "https://example.com",
             launch: (o) => {
-                seen.push([...o.args, o.url]);
+                seen.push([...o.args, ...(o.url === undefined ? [] : [o.url])]);
 
                 return okLaunch();
             },
@@ -154,6 +166,7 @@ describe("launchCdpBrowser", () => {
             "--remote-debugging-port=9222",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-features=MacAppCodeSignClone",
             "https://example.com",
         ]);
     });
@@ -289,6 +302,131 @@ describe("launchCdpBrowser", () => {
     });
 });
 
+describe("one --disable-features flag (Chrome reads only the last one)", () => {
+    test("every list merges into one flag at the first one's place, without duplicates", () => {
+        expect(
+            withDisabledFeatures(
+                ["--a", "--disable-features=One,Two", "--b", "--disable-features=Two,Three"],
+                ["MacAppCodeSignClone"]
+            )
+        ).toEqual(["--a", "--disable-features=One,Two,Three,MacAppCodeSignClone", "--b"]);
+        expect(withDisabledFeatures(["--a"], ["MacAppCodeSignClone"])).toEqual([
+            "--a",
+            "--disable-features=MacAppCodeSignClone",
+        ]);
+    });
+
+    test("launchArgs emits exactly one flag for every profile kind", () => {
+        for (const opts of [
+            {},
+            { fresh: true },
+            { extension: "/dist/ext" },
+            { userDataDir: "/x", disposableProfile: true },
+        ]) {
+            expect(launchArgs(9222, opts).filter((a) => a.startsWith("--disable-features"))).toHaveLength(1);
+        }
+    });
+});
+
+describe("background launch (the user keeps focus, macOS)", () => {
+    const windowArgs = ["--window-position=-1280,0", "--window-size=1280,775"];
+    const fakeBackground = () => {
+        const opened: Array<{ port: number; url: string }> = [];
+        const background: BackgroundLaunch = {
+            windowArgs: async () => windowArgs,
+            openWindow: async (port, url) => {
+                opened.push({ port, url });
+            },
+        };
+
+        return { background, opened };
+    };
+    const spawnInto = (spawned: string[][]) => (cmd: string[]) => {
+        spawned.push(cmd);
+
+        return { pid: 4242, kill: () => {} };
+    };
+
+    test("an isolated profile starts without a window and opens the url inactive once CDP answers", async () => {
+        const { background, opened } = fakeBackground();
+        const spawned: string[][] = [];
+        await launchCdpBrowser({
+            port: 9555,
+            fresh: true,
+            url: "https://example.com/app",
+            logPath: "/tmp/profile.log",
+            platform: "darwin",
+            background,
+            spawnLogged: spawnInto(spawned),
+            probe: liveProbe,
+            waitFor: cameUp,
+        });
+        expect(spawned[0]).toContain("--no-startup-window");
+        expect(spawned[0]).toEqual(expect.arrayContaining(windowArgs));
+        expect(spawned[0]).not.toContain("https://example.com/app");
+        expect(opened).toEqual([{ port: 9555, url: "https://example.com/app" }]);
+    });
+
+    test("through `open` it asks Launch Services not to bring the app forward, and passes no url", async () => {
+        const { background } = fakeBackground();
+        const launches: Array<{ url?: string; background?: boolean }> = [];
+        await launchCdpBrowser({
+            port: 9556,
+            fresh: true,
+            platform: "darwin",
+            background,
+            launch: (o) => {
+                launches.push({ url: o.url, background: o.background });
+
+                return okLaunch();
+            },
+            probe: liveProbe,
+            waitFor: cameUp,
+        });
+        expect(launches).toEqual([{ url: undefined, background: true }]);
+    });
+
+    test("the real profile and other platforms launch exactly as before", async () => {
+        for (const run of [
+            { platform: "darwin" as const, fresh: false },
+            { platform: "linux" as const, fresh: true },
+        ]) {
+            const { background, opened } = fakeBackground();
+            const spawned: string[][] = [];
+            await launchCdpBrowser({
+                port: 9557,
+                fresh: run.fresh,
+                url: "https://example.com/app",
+                logPath: "/tmp/profile.log",
+                platform: run.platform,
+                background,
+                spawnLogged: spawnInto(spawned),
+                probe: liveProbe,
+                waitFor: cameUp,
+            });
+            expect(spawned[0]).not.toContain("--no-startup-window");
+            expect(spawned[0].at(-1)).toBe("https://example.com/app");
+            expect(opened).toEqual([]);
+        }
+    });
+
+    test("a browser whose port never answers gets no window request", async () => {
+        const { background, opened } = fakeBackground();
+        await launchCdpBrowser({
+            port: 9558,
+            fresh: true,
+            logPath: "/tmp/profile.log",
+            platform: "darwin",
+            background,
+            spawnLogged: () => ({ pid: 7, kill: () => {} }),
+            probe: deadProbe,
+            waitFor: neverUp,
+            readLog: async () => "",
+        }).catch(() => undefined);
+        expect(opened).toEqual([]);
+    });
+});
+
 describe("separate recording browser onboarding", () => {
     const installed = () => [{ id: "chrome", name: "Google Chrome" }];
     let snapshot: ReturnType<typeof env.testing.snapshot>;
@@ -309,6 +447,7 @@ describe("separate recording browser onboarding", () => {
                 installed,
                 freePort: async () => 45678,
                 probe: liveProbe,
+                background: false,
                 spawnLogged: (command) => {
                     commands.push(command);
                     return {
@@ -383,6 +522,7 @@ describe("separate recording browser onboarding", () => {
             dependencies: {
                 installed,
                 freePort: async () => 45678,
+                background: false,
                 spawnLogged: () => ({
                     pid: 4242,
                     kill: () => {
@@ -430,6 +570,7 @@ describe("separate recording browser onboarding", () => {
                     installed,
                     freePort: async () => 45678,
                     probe: liveProbe,
+                    background: false,
                     spawnLogged: () => {
                         attempted++;
                         throw new Error("fixture spawn refused");

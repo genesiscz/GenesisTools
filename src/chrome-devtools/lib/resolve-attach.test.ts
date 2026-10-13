@@ -671,6 +671,30 @@ describe("launchBrowser", () => {
         ]);
     });
 
+    test("darwin background: `open -g` keeps the app behind, and no url means no page argument", () => {
+        const argvLog: string[][] = [];
+        const r = launchBrowser({
+            browser: chrome,
+            args: ["--remote-debugging-port=9222", "--no-startup-window"],
+            background: true,
+            exec: (argv: string[]) => {
+                argvLog.push(argv);
+
+                return okExec();
+            },
+            platform: "darwin",
+        });
+        expect(r.ok).toBe(true);
+        expect(argvLog[0]).toEqual([
+            "open",
+            "-gna",
+            "Google Chrome",
+            "--args",
+            "--remote-debugging-port=9222",
+            "--no-startup-window",
+        ]);
+    });
+
     test("linux: picks the first bin that `which` finds and spawns it detached", () => {
         const spawned: string[][] = [];
         const exec = (argv: string[]) =>

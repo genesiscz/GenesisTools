@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { abSchedule, runAb } from "./ab.ts";
 import type { CdpLike } from "./cdp-like.ts";
 import { callInPage, InPageError, inPageExpression } from "./evaluate.ts";
@@ -32,6 +33,16 @@ import {
     invokerKind,
     topFrames,
 } from "./summaries.ts";
+import {
+    activeDisplayIndex,
+    chooseIdleDisplay,
+    type DisplayLayout,
+    flipToTopLeft,
+    parseDisplayLayout,
+    planWindowPlacement,
+    type Rect,
+    windowPlacementArgs,
+} from "./window-placement.ts";
 
 const IN_PAGE = {
     reactFind,
@@ -668,5 +679,97 @@ describe("permissions", () => {
             "net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS"
         );
         expect(localNetworkBlockOf({ errorText: "net::ERR_BLOCKED_BY_CLIENT" })).toBeNull();
+    });
+});
+
+describe("window placement on an idle display", () => {
+    // Invented desks, AppKit coordinates: a 1440x900 laptop as the primary display (menu bar 25 pt), a 1920x1080
+    // monitor above it and a 1280x800 monitor to its left with the Dock at its bottom.
+    const laptop = {
+        frame: { x: 0, y: 0, width: 1440, height: 900 },
+        visible: { x: 0, y: 0, width: 1440, height: 875 },
+    };
+    const above = {
+        frame: { x: 0, y: 900, width: 1920, height: 1080 },
+        visible: { x: 0, y: 900, width: 1920, height: 1080 },
+    };
+    const left = {
+        frame: { x: -1280, y: 100, width: 1280, height: 800 },
+        visible: { x: -1280, y: 125, width: 1280, height: 775 },
+    };
+    // CoreGraphics coordinates (top-left of the laptop, y down).
+    const onLaptop: Rect = { x: 100, y: 100, width: 800, height: 600 };
+    const onAbove: Rect = { x: 200, y: -1000, width: 1200, height: 800 };
+    const desk = (over: Partial<DisplayLayout>): DisplayLayout => ({
+        screens: [laptop, above, left],
+        focusedWindow: onLaptop,
+        mouse: null,
+        frontApp: "com.example.editor",
+        ...over,
+    });
+
+    test("an AppKit rect flips into top-left coordinates against the primary display's height", () => {
+        expect(flipToTopLeft(above.frame, 900)).toEqual({ x: 0, y: -1080, width: 1920, height: 1080 });
+        expect(flipToTopLeft(left.visible, 900)).toEqual({ x: -1280, y: 0, width: 1280, height: 775 });
+        expect(flipToTopLeft(laptop.frame, 900)).toEqual({ x: 0, y: 0, width: 1440, height: 900 });
+    });
+
+    test("the active display is the one holding most of the frontmost window", () => {
+        expect(activeDisplayIndex(desk({}))).toBe(0);
+        expect(activeDisplayIndex(desk({ focusedWindow: onAbove }))).toBe(1);
+        // Straddles the laptop's top edge, mostly on the monitor above.
+        expect(activeDisplayIndex(desk({ focusedWindow: { x: 0, y: -700, width: 800, height: 800 } }))).toBe(1);
+    });
+
+    test("without a frontmost window the display under the mouse counts as active", () => {
+        expect(activeDisplayIndex(desk({ focusedWindow: null, mouse: { x: -600, y: 400 } }))).toBe(2);
+        expect(chooseIdleDisplay(desk({ focusedWindow: null, mouse: null }))).toBeNull();
+    });
+
+    test("never picks the display holding the focused window, and prefers one without the mouse, then the largest", () => {
+        expect(chooseIdleDisplay(desk({}))).toBe(1);
+        expect(chooseIdleDisplay(desk({ focusedWindow: onAbove }))).toBe(0);
+        expect(chooseIdleDisplay(desk({ mouse: { x: 500, y: 1500 } }))).toBe(2);
+    });
+
+    test("one display keeps the caller's default placement", () => {
+        const single = desk({ screens: [laptop] });
+        expect(chooseIdleDisplay(single)).toBeNull();
+        expect(planWindowPlacement(single, { width: 1440, height: 1000 })).toBeNull();
+    });
+
+    test("the window goes to the top-left of the idle display's usable area, shrunk to fit it", () => {
+        expect(planWindowPlacement(desk({}), { width: 1440, height: 1000 })).toEqual({
+            left: 0,
+            top: -1080,
+            width: 1440,
+            height: 1000,
+            display: 1,
+            activeDisplay: 0,
+        });
+        const placement = planWindowPlacement(desk({ screens: [laptop, left] }), { width: 1440, height: 1000 });
+        expect(placement).toEqual({ left: -1280, top: 0, width: 1280, height: 775, display: 1, activeDisplay: 0 });
+        expect(placement && windowPlacementArgs(placement)).toEqual([
+            "--window-position=-1280,0",
+            "--window-size=1280,775",
+        ]);
+    });
+
+    test("the probe's JSON line is checked field by field", () => {
+        const line = SafeJSON.stringify({
+            screens: [laptop, above],
+            focusedWindow: null,
+            mouse: { x: 1, y: 2 },
+            frontApp: "a.b",
+        });
+        expect(parseDisplayLayout(line)).toEqual({
+            screens: [laptop, above],
+            focusedWindow: null,
+            mouse: { x: 1, y: 2 },
+            frontApp: "a.b",
+        });
+        expect(parseDisplayLayout(SafeJSON.stringify({ screens: [{ frame: laptop.frame }] }))).toBeNull();
+        expect(parseDisplayLayout(SafeJSON.stringify({ screens: [] }))).toBeNull();
+        expect(parseDisplayLayout("execution error: -1743")).toBeNull();
     });
 });

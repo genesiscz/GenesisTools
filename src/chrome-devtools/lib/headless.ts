@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
-import { quitOwnedBrowser } from "./launch";
+import { CODE_SIGN_CLONE_FEATURE, quitOwnedBrowser, withDisabledFeatures } from "./launch";
 
 const { log } = logger.scoped("chrome-devtools-headless");
 
@@ -28,19 +28,18 @@ export async function launchHeadlessChrome(
     const binary = options.binary ?? DEFAULT_CHROME;
     const ownsProfile = options.userDataDir === undefined;
     const profile = options.userDataDir ?? mkdtempSync(join(tmpdir(), "gt-headless-chrome-"));
-    const chrome = Bun.spawn(
+    const args = withDisabledFeatures(
         [
-            binary,
             "--headless=new",
             "--remote-debugging-port=0",
             `--user-data-dir=${profile}`,
             "--no-first-run",
             "--no-default-browser-check",
             ...(options.extraArgs ?? []),
-            "about:blank",
         ],
-        { stdout: "ignore", stderr: "ignore" }
+        [CODE_SIGN_CLONE_FEATURE]
     );
+    const chrome = Bun.spawn([binary, ...args, "about:blank"], { stdout: "ignore", stderr: "ignore" });
     let port: number | undefined;
     const close = async () => {
         await quitChrome(chrome, port);

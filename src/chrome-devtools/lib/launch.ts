@@ -5,10 +5,15 @@
  * The way back is here too: `quitOwnedBrowser` and `closeBrowserOnPort` quit
  * through CDP, because a kill signal leaks a 1.4 GB app copy on macOS.
  */
+import {
+    BACKGROUND_WINDOW_TARGET,
+    backgroundLaunchSupported,
+    idleDisplayWindowArgs,
+} from "@genesiscz/utils/chrome-devtools/window-placement";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
-import { type Browser, browser, type CdpProbe, probe } from "./cdp.ts";
+import { type Browser, browser, type CdpProbe, newTab, probe } from "./cdp.ts";
 import {
     currentPlatform,
     defaultExec,
@@ -40,6 +45,43 @@ export const DEFAULT_LAUNCH_TIMEOUT_MS = 20_000;
  */
 export const COLD_PROFILE_TIMEOUT_MS = 30_000;
 
+/**
+ * Branded Chrome on macOS copies its whole app (about 1.4 GB) into `com.google.Chrome.code_sign_clone/` under the temp
+ * folder at every launch, and leaves the copy behind when the browser does not exit cleanly (Chromium issue 379125944).
+ * Every launch turns it off. Other platforms ignore the unknown feature name.
+ */
+export const CODE_SIGN_CLONE_FEATURE = "MacAppCodeSignClone";
+
+const LOCAL_NETWORK_FEATURES = ["LocalNetworkAccessChecks", "PrivateNetworkAccessChecks"];
+
+/** The first window of a background launch: the desktop layout size, shrunk to fit the idle display. */
+const BACKGROUND_WINDOW_SIZE = { width: 1440, height: 1000 };
+
+/**
+ * Chrome reads only the LAST `--disable-features` flag, so every feature a launch turns off must be in one flag.
+ * Merges the lists of all `--disable-features` entries in `args` with `features` into one flag, kept where the first
+ * one was (or appended).
+ */
+export function withDisabledFeatures(args: string[], features: string[]): string[] {
+    const prefix = "--disable-features=";
+    const merged: string[] = [];
+    for (const arg of args) {
+        if (arg.startsWith(prefix)) {
+            merged.push(...arg.slice(prefix.length).split(","));
+        }
+    }
+
+    merged.push(...features);
+    const flag = `${prefix}${[...new Set(merged.filter(Boolean))].join(",")}`;
+    const first = args.findIndex((arg) => arg.startsWith(prefix));
+    const rest = args.filter((arg) => !arg.startsWith(prefix));
+    if (first < 0) {
+        return [...rest, flag];
+    }
+
+    return [...rest.slice(0, first), flag, ...rest.slice(first)];
+}
+
 /** Chromium launch flags. Exported for tests: the --user-data-dir rule is what keeps `open` off the real profile. */
 export function launchArgs(
     port: number,
@@ -49,6 +91,10 @@ export function launchArgs(
         userDataDir?: string;
         disposableProfile?: boolean;
         profileDirectory?: string;
+        /** No startup window: the caller opens the first one over CDP, inactive (see `BackgroundLaunch`). */
+        background?: boolean;
+        /** `--window-position` / `--window-size` for that window. */
+        windowArgs?: string[];
     }
 ): string[] {
     const args = [`--remote-debugging-port=${port}`, "--no-first-run", "--no-default-browser-check"];
@@ -65,6 +111,8 @@ export function launchArgs(
         args.push(`--user-data-dir=${opts.userDataDir ?? freshProfileDir(port)}`);
     }
 
+    const disabledFeatures: string[] = [];
+
     if ((!explicitDir && (opts.fresh || opts.extension)) || opts.disposableProfile) {
         // Local/private-network access checks block CDP-driven fetches to dev
         // servers, so THROWAWAY profiles disable them: the /tmp dir this launcher
@@ -73,7 +121,14 @@ export function launchArgs(
         // too, exactly like the user's real profile (plain open / restart) —
         // including when --extension or --fresh is passed alongside it. A session
         // that holds credentials must never run security-downgraded.
-        args.push("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
+        disabledFeatures.push(...LOCAL_NETWORK_FEATURES);
+    }
+
+    disabledFeatures.push(CODE_SIGN_CLONE_FEATURE);
+    args.push(`--disable-features=${disabledFeatures.join(",")}`);
+
+    if (opts.background) {
+        args.push("--no-startup-window", ...(opts.windowArgs ?? []));
     }
 
     if (opts.extension) {
@@ -99,6 +154,48 @@ export const defaultSpawnLogged: SpawnLoggedFn = (cmd, logPath) => {
 };
 
 export type LaunchStage = "spawn" | "timeout";
+
+/**
+ * How an isolated launch on macOS leaves the user's focus alone. A startup window is shown active and Chrome activates
+ * itself, so the launch passes `--no-startup-window`, places the first window on a display the user is not working on,
+ * and opens the url over CDP in a window Chrome shows inactive. Injectable for tests.
+ */
+export interface BackgroundLaunch {
+    /** Placement flags for the first window; empty keeps Chrome's default placement. */
+    windowArgs: () => Promise<string[]>;
+    /** Opens the url in an inactive window once the CDP port answers. */
+    openWindow: (port: number, url: string) => Promise<void>;
+}
+
+/**
+ * Opens the url in a window Chrome shows inactive. If that fails, `PUT /json/new` opens it in a normal (active) window,
+ * as before; a failure there is logged and left to the caller's probe, which then reports no pages.
+ */
+export async function openBackgroundWindow(port: number, url: string): Promise<void> {
+    try {
+        const conn = await browser(port);
+        try {
+            await conn.send("Target.createTarget", { url, ...BACKGROUND_WINDOW_TARGET });
+        } finally {
+            conn.close();
+        }
+
+        return;
+    } catch (err) {
+        log.debug({ err, port }, "inactive first window failed; opening the url in a normal window");
+    }
+
+    try {
+        await newTab(port, url);
+    } catch (err) {
+        log.debug({ err, port, url }, "could not open the first window");
+    }
+}
+
+export const defaultBackgroundLaunch: BackgroundLaunch = {
+    windowArgs: () => idleDisplayWindowArgs(BACKGROUND_WINDOW_SIZE),
+    openWindow: openBackgroundWindow,
+};
 
 export class CdpLaunchError extends Error {
     readonly stage: LaunchStage;
@@ -134,6 +231,13 @@ export interface LaunchCdpOpts {
     disposableProfile?: boolean;
     /** Profile dir inside the user-data-dir, e.g. "Default" / "Profile 1". Keeps the profile picker shut. */
     profileDirectory?: string;
+    /**
+     * Set by the doors that open a browser for the user (`open`, the recording browser), normally to
+     * `defaultBackgroundLaunch`. Applies to an isolated profile on macOS only. The user's real profile always launches
+     * with its startup window, because `--no-startup-window` would skip its session restore.
+     */
+    background?: BackgroundLaunch;
+    platform?: Platform;
     timeoutMs?: number;
     /** Own the browser's stdio and write it here. Required to get a pid back, and to see WHY a launch failed. */
     logPath?: string;
@@ -196,6 +300,11 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
     // one dir while this function told the caller it was using another.
     const generatedUserDataDir = isolated && opts.userDataDir === undefined ? freshProfileDir(opts.port) : undefined;
     const userDataDir = isolated ? (opts.userDataDir ?? generatedUserDataDir ?? null) : null;
+    const background =
+        isolated && opts.background && backgroundLaunchSupported(opts.platform ?? currentPlatform())
+            ? opts.background
+            : null;
+    const windowArgs = background ? await background.windowArgs() : [];
     const args = launchArgs(opts.port, {
         fresh: opts.fresh,
         extension: opts.extension,
@@ -204,8 +313,12 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
         // --fresh/--extension default launchArgs would otherwise have generated itself.
         disposableProfile: opts.disposableProfile || generatedUserDataDir !== undefined,
         profileDirectory: opts.profileDirectory,
+        background: background !== null,
+        windowArgs,
     });
     const url = opts.url ?? "about:blank";
+    // A url on argv would open the startup window, which is shown active.
+    const argvUrl = background ? [] : [url];
     let pid: number | null = null;
     let kill = () => {};
 
@@ -216,11 +329,16 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
             throw new CdpLaunchError(`no ${def.app} executable found on this machine`, { stage: "spawn" });
         }
 
-        const child = (opts.spawnLogged ?? defaultSpawnLogged)([bin, ...args, url], opts.logPath);
+        const child = (opts.spawnLogged ?? defaultSpawnLogged)([bin, ...args, ...argvUrl], opts.logPath);
         pid = child.pid;
         kill = child.kill;
     } else {
-        const launch = (opts.launch ?? launchBrowser)({ browser: def, args, url });
+        const launch = (opts.launch ?? launchBrowser)({
+            browser: def,
+            args,
+            url: argvUrl[0],
+            background: background !== null,
+        });
 
         if (!launch.ok) {
             throw new CdpLaunchError(launch.message, { stage: "spawn" });
@@ -232,6 +350,11 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
     const up = await prof.measureAsync(`launch.wait-cdp.${isolated ? "isolated" : "profile"}`, () =>
         (opts.waitFor ?? waitForCdp)({ port: opts.port, probe: probeFn, timeoutMs })
     );
+
+    if (up && background) {
+        await background.openWindow(opts.port, url);
+    }
+
     const result = up ? await prof.measureAsync("launch.probe", () => probeFn(opts.port)) : null;
 
     if (!result) {

@@ -7,6 +7,7 @@ import {
     CLOSE_TIMEOUT_MS,
     type CloseOnPortResult,
     closeBrowserOnPort,
+    defaultBackgroundLaunch,
     launchCdpBrowser,
 } from "../lib/launch.ts";
 import {
@@ -175,6 +176,8 @@ export function registerBrowse(program: Command): void {
                     fresh: opts.fresh === true,
                     extension: opts.extension,
                     userDataDir: opts.userDataDir,
+                    // A separate profile opens on a display you are not working on and does not take the keyboard (macOS).
+                    background: defaultBackgroundLaunch,
                 });
                 up = true;
                 out.log.info(`up: ${describeEndpointBrowser(result.browser, id)} on ${port} (${result.pages} pages)`);

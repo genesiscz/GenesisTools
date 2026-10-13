@@ -657,11 +657,15 @@ export function browserNotInstalledMessage(id: BrowserId, query: InstalledBrowse
  * Launch a browser with the given args, per platform. darwin: `open -na` (the
  * only way that respects app bundles); linux: first bin on PATH, detached;
  * win32: known install path or the exe name.
+ *
+ * `background` (darwin): `open -g`, so Launch Services does not bring the app to
+ * the front. Without a `url` the browser gets no page argument.
  */
 export function launchBrowser(opts: {
     browser: BrowserKind;
     args: string[];
-    url: string;
+    url?: string;
+    background?: boolean;
     exec?: ExecFn;
     platform?: Platform;
     spawnDetached?: SpawnDetachedFn;
@@ -670,9 +674,10 @@ export function launchBrowser(opts: {
     const exec = opts.exec ?? defaultExec;
     const platform = opts.platform ?? currentPlatform();
     const spawnDetached = opts.spawnDetached ?? defaultSpawnDetached;
+    const url = opts.url === undefined ? [] : [opts.url];
 
     if (platform === "darwin") {
-        const r = exec(["open", "-na", opts.browser.app, "--args", ...opts.args, opts.url]);
+        const r = exec(["open", opts.background ? "-gna" : "-na", opts.browser.app, "--args", ...opts.args, ...url]);
 
         return { ok: r.exitCode === 0, message: r.exitCode === 0 ? `launched ${opts.browser.app}` : r.stderr.trim() };
     }
@@ -687,7 +692,7 @@ export function launchBrowser(opts: {
             };
         }
 
-        spawnDetached([bin, ...opts.args, opts.url]);
+        spawnDetached([bin, ...opts.args, ...url]);
 
         return { ok: true, message: `launched ${bin}` };
     }
@@ -702,7 +707,7 @@ export function launchBrowser(opts: {
         };
     }
 
-    spawnDetached([bin, ...opts.args, opts.url]);
+    spawnDetached([bin, ...opts.args, ...url]);
 
     return { ok: true, message: `launched ${bin}` };
 }
