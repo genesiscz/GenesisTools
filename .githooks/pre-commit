@@ -44,6 +44,13 @@ biome_staged() {
         # aborts the commit through set -e.
         case "$(git diff --cached --numstat -- "$f")" in -*) continue ;; esac
         git show ":./$f" | bunx biome check --write --stdin-file-path="$f" > "$fixed"
+        # biome prints NOTHING (exit 0, a files/missingHandler note on stderr) for a path it has no handler for that
+        # is not on disk: a Swift or Markdown file staged and then moved or deleted. Writing that back committed the
+        # file empty (2026-10-13). Empty output for a non-empty staged blob is never a format result, so the staged
+        # blob stays.
+        if [ ! -s "$fixed" ] && [ "$(git cat-file -s ":./$f")" -gt 0 ]; then
+            continue
+        fi
         blob=$(git hash-object -w -- "$fixed")
         case "$entry" in *" $blob "*) continue ;; esac
         git update-index --cacheinfo "$mode,$blob,$full"
