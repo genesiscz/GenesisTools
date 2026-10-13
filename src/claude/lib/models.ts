@@ -58,7 +58,12 @@ export function listLaunchableModels(): LaunchableModel[] {
 export type ModelResolution =
     | { kind: "exact"; model: LaunchableModel }
     | { kind: "ambiguous"; candidates: LaunchableModel[] }
+    /** A full `claude-*` id the catalog does not know yet, passed to `claude --model` as written. */
+    | { kind: "passthrough"; id: string }
     | { kind: "none" };
+
+/** A full Claude model id, optionally with the `[1m]` suffix: what a session transcript records. */
+const FULL_CLAUDE_ID = /^claude-[a-z]+(?:-[a-z0-9]+)+(?:\[1m\])?$/;
 
 /** Lowercase, dots → dashes, brackets stripped, so "4.8 1m" matches "claude-opus-4-8[1m]". */
 function normalize(text: string): string {
@@ -103,11 +108,26 @@ export function resolveModelSpec(spec: string): ModelResolution {
         return { kind: "ambiguous", candidates };
     }
 
+    // A resume names the model its session ran on, and a model released after the catalog's last
+    // update must not make that resume fail; claude itself reports an id it does not serve.
+    if (FULL_CLAUDE_ID.test(trimmed)) {
+        return { kind: "passthrough", id: trimmed };
+    }
+
     return { kind: "none" };
 }
+
+const FAMILY_IN_ID = /^claude-(fable|opus|sonnet|haiku)-/;
 
 /** Family of a resolved model id (used to pick the binding weekly bucket). */
 export function modelFamilyOf(modelId: string): ClaudeModelFamily | undefined {
     const base = modelId.replace(/\[1m\]$/, "");
-    return CLAUDE_MODELS.find((m) => m.id === base)?.family;
+    const known = CLAUDE_MODELS.find((m) => m.id === base)?.family;
+
+    if (known) {
+        return known;
+    }
+
+    const family = FAMILY_IN_ID.exec(base)?.[1];
+    return FAMILY_ORDER.find((candidate) => candidate === family);
 }

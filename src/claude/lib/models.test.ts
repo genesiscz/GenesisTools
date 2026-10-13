@@ -60,6 +60,14 @@ describe("resolveModelSpec", () => {
 
     test("nonsense spec -> none", () => {
         expect(resolveModelSpec("gpt-5").kind).toBe("none");
+        expect(resolveModelSpec("sonet").kind).toBe("none");
+    });
+
+    test("a full claude id the catalog does not know yet passes through, so a resume keeps its model", () => {
+        expect(resolveModelSpec("claude-haiku-6-0")).toEqual({ kind: "passthrough", id: "claude-haiku-6-0" });
+        expect(resolveModelSpec("claude-opus-6-0[1m]")).toEqual({ kind: "passthrough", id: "claude-opus-6-0[1m]" });
+        expect(modelFamilyOf("claude-opus-6-0[1m]")).toBe("opus");
+        expect(modelFamilyOf("claude-nova-1-0")).toBeUndefined();
     });
 });
 

@@ -221,13 +221,23 @@ async function resolveModel(spec: string): Promise<string> {
 
     if (resolution.kind === "none") {
         out.error(pc.red(`No Claude model matches "${spec}".`));
-        out.printlnErr(pc.dim("Try: fable, opus, sonnet, haiku, 4.8, opus 1m, claude-opus-4-8[1m], ..."));
+        out.printlnErr(
+            pc.dim("Try: fable, opus, sonnet, haiku, haiku 4.5, claude-sonnet-5-5, claude-opus-4-8[1m], ...")
+        );
+        out.printlnErr(pc.dim("A full claude-* id the catalog does not know yet is passed to claude as written."));
         await out.flush();
         process.exit(1);
     }
 
     if (resolution.kind === "exact") {
         return resolution.model.id;
+    }
+
+    if (resolution.kind === "passthrough") {
+        out.printlnErr(
+            pc.yellow(`"${resolution.id}" is not in the model catalog yet; passing it to claude as written.`)
+        );
+        return resolution.id;
     }
 
     if (!isInteractive()) {
