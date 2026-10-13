@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type AgentNames, agentNamesFrom, formatEventMonitor, type MonitorEvent } from "../lib/format-monitor";
+import {
+    type AgentNames,
+    agentNamesFrom,
+    eventJsonLine,
+    formatEventMonitor,
+    type MonitorEvent,
+} from "../lib/format-monitor";
 import { formatReadyEvent, resolveFeedFormat } from "../lib/login-io";
 import type { AgentRecord, FeedEvent, MessageEvent } from "../lib/types";
 
@@ -139,8 +145,32 @@ describe("formatEventMonitor", () => {
     test.each(cases)("%# headline, then the exact --format json line", (event, headline) => {
         const lines = formatEventMonitor(event, names).split("\n");
 
-        expect(lines).toEqual([headline, SafeJSON.stringify(event, { strict: true })]);
+        expect(lines).toEqual([headline, eventJsonLine(event)]);
+        expect(SafeJSON.parse(lines[1] ?? "", { strict: true })).toEqual(event);
         expect(lines[0]?.startsWith("{")).toBe(false);
+    });
+
+    test("a message's JSON line leads with body, then from_agent_name, then the other keys in their usual order", () => {
+        const reply: MessageEvent = { ...message, in_reply_to: "0001" };
+        const keys = Object.keys(SafeJSON.parse(eventJsonLine(reply), { strict: true }) as Record<string, unknown>);
+        const [, json] = formatEventMonitor(reply, names).split("\n");
+
+        expect(keys.slice(0, 2)).toEqual(["body", "from_agent_name"]);
+        expect(keys.slice(2)).toEqual(Object.keys(reply).filter((key) => key !== "body" && key !== "from_agent_name"));
+        expect(json).toStartWith(`{"body":${SafeJSON.stringify(reply.body)},"from_agent_name":"beta",`);
+    });
+
+    test("every other event keeps its key order", () => {
+        const joined: FeedEvent = {
+            seq: 9,
+            ts,
+            type: "agent_joined",
+            agent_id: "agt_0002",
+            agent_name: "beta",
+            present: [],
+        };
+
+        expect(eventJsonLine(joined)).toBe(SafeJSON.stringify(joined, { strict: true }));
     });
 
     test("a long multi-line body stays on one headline line, and the JSON line keeps every byte", () => {

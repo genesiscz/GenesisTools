@@ -17,6 +17,7 @@ import {
     type AgentNames,
     agentNamesFrom,
     type BatchPosition,
+    eventJsonLine,
     formatEventMonitor,
     learnAgentNames,
 } from "../lib/format-monitor";
@@ -336,7 +337,7 @@ async function writeFeedEvent(active: ActiveLogin, event: FeedEvent, position: B
         return;
     }
 
-    await writeLoginJsonLine(event);
+    await writeLoginJsonLine(eventJsonLine(event));
 }
 
 /** The ready and timeout lines are JSON in every format; `monitor` puts its headline first. */

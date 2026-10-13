@@ -25,7 +25,22 @@ export function formatEventMonitor(event: MonitorEvent, names: AgentNames, posit
     // Lines written together arrive as one Monitor event whose row shows only the first headline, so a batch says
     // how many events it carries.
     const prefix = position && position.total > 1 ? `[${position.index}/${position.total}] ` : "";
-    return `${prefix}${oneLine(monitorHeadline(event, names))}\n${SafeJSON.stringify(event, { strict: true })}`;
+    return `${prefix}${oneLine(monitorHeadline(event, names))}\n${eventJsonLine(event)}`;
+}
+
+/**
+ * The JSON line for one event. A message leads with `body`, then `from_agent_name`, then every other key in its
+ * usual order: a Monitor notification shows only the first keys of a long line, and `type` and the sender id used to
+ * fill that space and hide the message (2026-10-13).
+ */
+export function eventJsonLine(event: MonitorEvent): string {
+    if (event.type !== "message") {
+        return SafeJSON.stringify(event, { strict: true });
+    }
+
+    const { body, from_agent_name, ...rest } = event;
+    return SafeJSON.stringify({ body, from_agent_name, ...rest }, { strict: true });
+
 }
 
 export function learnAgentNames(names: AgentNames, event: FeedEvent): void {

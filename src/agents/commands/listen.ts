@@ -3,13 +3,12 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { runWithFriendlyErrors } from "../lib/errors";
 import { FeedLogCursor, readFeed } from "../lib/feed";
-import { type AgentNames, type BatchPosition, formatEventMonitor, learnAgentNames } from "../lib/format-monitor";
+import { type AgentNames, type BatchPosition, eventJsonLine, formatEventMonitor, learnAgentNames } from "../lib/format-monitor";
 import { formatEventPretty } from "../lib/format-pretty";
 import { onShutdown } from "../lib/lifecycle";
 import { type FeedFormat, resolveFeedFormat } from "../lib/login-io";
@@ -162,7 +161,7 @@ function emitEvent({
     learnAgentNames(names, event);
 
     if (format === "json") {
-        out.println(SafeJSON.stringify(event, { strict: true }));
+        out.println(eventJsonLine(event));
         return;
     }
 
