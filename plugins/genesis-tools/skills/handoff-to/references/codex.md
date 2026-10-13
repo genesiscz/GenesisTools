@@ -127,7 +127,7 @@ tools codex tail    --name <task> --follow      # follow the event stream; backg
 tools codex read    --name <task>               # thread snapshot
 tools codex steer   --name <task> --prompt 'Focus on the auth path; do NOT refactor the router'
 tools codex interrupt --name <task>             # kill the current turn
-tools codex rollback  --name <task> --turns 1   # drop turns from the end
+tools codex rollback  --name <task> --turns 1   # revert persisted history via thread/revert; file changes stay
 tools codex stop      --name <task>             # tear down
 tools codex sessions [--json]                   # every session, with its derived status
 ```

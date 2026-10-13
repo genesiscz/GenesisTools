@@ -4,7 +4,28 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { sessionPaths } from "@app/agents/lib/paths";
 import { env } from "@genesiscz/utils/env";
-import { parseWritePolicy, resolveWritableRoots, resolveWritePolicy } from "./spawn";
+import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
+import { parseWritePolicy, resolveWritableRoots, resolveWritePolicy, schemaDriftWarning } from "./spawn";
+
+describe("schemaDriftWarning", () => {
+    const [major, minor, patch] = CODEX_SCHEMA_VERSION.split(".").map(Number);
+
+    test("stays quiet for the snapshot's own version and for any patch release of it", () => {
+        expect(schemaDriftWarning(CODEX_SCHEMA_VERSION)).toBeNull();
+        expect(schemaDriftWarning(`${major}.${minor}.${(patch ?? 0) + 7}`)).toBeNull();
+        expect(schemaDriftWarning(`${major}.${minor}.0`)).toBeNull();
+    });
+
+    test("warns when MAJOR.MINOR moves, either way, or the version does not parse", () => {
+        expect(schemaDriftWarning(`${major}.${(minor ?? 0) + 1}.0`)).toBe(
+            `Installed codex ${major}.${(minor ?? 0) + 1}.0 differs from generated app-server schema ${CODEX_SCHEMA_VERSION}`
+        );
+        expect(schemaDriftWarning(`${major}.${(minor ?? 0) - 1}.${patch}`)).not.toBeNull();
+        expect(schemaDriftWarning(`${(major ?? 0) + 1}.${minor}.${patch}`)).not.toBeNull();
+        expect(schemaDriftWarning(`${major}.${minor}1.0`)).not.toBeNull();
+        expect(schemaDriftWarning("unknown")).not.toBeNull();
+    });
+});
 
 describe("resolveWritePolicy", () => {
     test("defaults to a read-only reviewer", () => {

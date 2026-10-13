@@ -247,6 +247,7 @@ tools codex tail --name reviewer --follow
 tools codex logs --name reviewer --format compact   # the transcript door every backend shares (json|jsonl|events|raw)
 tools codex steer --name reviewer --prompt "Focus on the auth path"
 tools codex interrupt --name reviewer
+tools codex rollback --name reviewer --turns 1  # revert the persisted history through thread/revert; file changes stay
 tools codex read --name reviewer
 tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
@@ -272,7 +273,7 @@ Sessions are read-only by default. For implementation work, use `--write ask` fo
 
 With `--write ask`, Codex uses its `untrusted` approval policy: commands outside Codex's built-in trusted read-only
 set, sandbox escalations, and file-change approval requests pause and are forwarded to `lead` as `approval_request`
-messages. Resolve one with `tools codex approve --name <n> --request <id>` or `deny`. Codex 0.144.5 has no protocol
+messages. Resolve one with `tools codex approve --name <n> --request <id>` or `deny`. Codex 0.162.1 has no protocol
 mode that pauses its built-in trusted read-only commands; `untrusted` is its strictest supported command policy.
 The one exception the daemon accepts itself is the worker's own seeded bus command (`tools agents message`, `login`,
 `request` or `leave` as `codex_<name>` with its own `--session`, from its own thread, holding no shell operator,

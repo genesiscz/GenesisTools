@@ -334,8 +334,20 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     throw new Error(`Timed out starting Codex session. See ${sessionDaemonLogPath(options.name)}`);
 }
 
+/**
+ * Warns when the installed codex is on another MAJOR.MINOR than the generated app-server snapshot. A patch release
+ * counts as the same protocol: warning on every patch was noise. A version that does not parse always warns.
+ */
 export function schemaDriftWarning(version: string): string | null {
-    return version === CODEX_SCHEMA_VERSION
-        ? null
-        : `Installed codex ${version} differs from generated app-server schema ${CODEX_SCHEMA_VERSION}`;
+    const installed = majorMinor(version);
+    if (installed !== null && installed === majorMinor(CODEX_SCHEMA_VERSION)) {
+        return null;
+    }
+
+    return `Installed codex ${version} differs from generated app-server schema ${CODEX_SCHEMA_VERSION}`;
+}
+
+function majorMinor(version: string): string | null {
+    const match = version.match(/^(\d+)\.(\d+)(?:\.|$)/);
+    return match ? `${match[1]}.${match[2]}` : null;
 }

@@ -3,12 +3,16 @@ import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type {
+    InitializeParams,
     ReviewStartParams,
     ReviewTarget,
     ThreadReadParams,
-    ThreadRollbackParams,
+    ThreadRevertParams,
     ThreadStartParams,
+    ThreadTurnsListParams,
+    ThreadTurnsListResponse,
     ThreadUnsubscribeParams,
+    Turn,
     TurnInterruptParams,
     TurnStartParams,
 } from "./_generated/protocol";
@@ -119,7 +123,7 @@ export class CodexSessionRuntime {
     async start(options: { prompt?: string }): Promise<void> {
         this.store.appendEvent(this.meta.name, { source: "daemon", method: "daemon/started" });
 
-        const initialize = {
+        const initialize: InitializeParams = {
             clientInfo: {
                 name: "genesis-tools-codex",
                 title: "GenesisTools Codex",
@@ -176,7 +180,7 @@ export class CodexSessionRuntime {
             threadId: this.meta.threadId,
             input: [{ type: "text", text: body, text_elements: [] }],
             ...(this.meta.model ? { model: this.meta.model } : {}),
-            ...(this.meta.effort ? { effort: this.meta.effort as TurnStartParams["effort"] } : {}),
+            ...(this.meta.effort ? { effort: this.meta.effort } : {}),
         };
         const result = await this.client.request<TurnStartResult>("turn/start", params);
         await this.updateMeta({ activeTurnId: result.turn.id, status: "running" });
@@ -416,11 +420,10 @@ export class CodexSessionRuntime {
     }
 
     private async steer(body: string, force: boolean): Promise<{ turnId?: string; queued: boolean; merged?: boolean }> {
-        // codex 0.144.5 accepts turn/start during an active turn and MERGES the
-        // input into it (verified live): the returned turn id never runs as a
-        // separate turn, so keep the original active id in meta instead of the
-        // phantom one. The error path below is kept for servers that reject
-        // same-turn input.
+        // codex 0.162.1 answers turn/start during an active turn by steering: the
+        // input MERGES into that turn (verified live on 2026-10-13), so keep the
+        // original active id in meta. A turn that takes no steering (a review or
+        // compact turn) refuses instead; that input waits for the turn boundary.
         const activeBefore = this.meta.activeTurnId;
 
         try {
@@ -433,8 +436,7 @@ export class CodexSessionRuntime {
 
             return { turnId, queued: false };
         } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            if (!/same-turn steer|same-turn steering|cannot accept/i.test(message)) {
+            if (!isNotSteerableRejection(err)) {
                 throw err;
             }
 
@@ -463,10 +465,43 @@ export class CodexSessionRuntime {
         return { interrupted: true };
     }
 
+    /**
+     * codex 0.162.1 has no `thread/rollback`; `thread/revert` drops one turn and every later turn from the persisted
+     * history. It does not undo file changes. The server's own refusals (an ephemeral or non-paginated thread, a
+     * thread with no user message yet) reach the caller unchanged.
+     */
     private async rollback(turns: number): Promise<{ rolledBack: number }> {
-        const params: ThreadRollbackParams = { threadId: this.threadId(), numTurns: turns };
-        await this.client.request("thread/rollback", params);
+        const threadId = this.threadId();
+        const newest = await this.newestTurns(threadId, turns);
+        const oldestDropped = newest[turns - 1];
+        if (!oldestDropped) {
+            throw new Error(`Cannot roll back ${turns} turn(s): the thread has only ${newest.length}.`);
+        }
+
+        const params: ThreadRevertParams = { threadId, beforeTurnId: oldestDropped.id };
+        await this.client.request("thread/revert", params);
         return { rolledBack: turns };
+    }
+
+    /** Up to `count` turns of the thread, the newest first. */
+    private async newestTurns(threadId: string, count: number): Promise<Turn[]> {
+        const turns: Turn[] = [];
+        let cursor: string | null = null;
+
+        do {
+            const params: ThreadTurnsListParams = {
+                threadId,
+                ...(cursor ? { cursor } : {}),
+                limit: count - turns.length,
+                sortDirection: "desc",
+                itemsView: "notLoaded",
+            };
+            const page = await this.client.request<ThreadTurnsListResponse>("thread/turns/list", params);
+            turns.push(...page.data);
+            cursor = page.data.length > 0 ? page.nextCursor : null;
+        } while (cursor && turns.length < count);
+
+        return turns.slice(0, count);
     }
 
     private async read(): Promise<unknown> {
@@ -512,6 +547,23 @@ export class CodexSessionRuntime {
         pending.resolve(approvalResponse(pending.method, approved));
         return { resolved: true };
     }
+}
+
+/**
+ * The app-server refused input because the active turn takes no steering (a review or compact turn). codex-cli
+ * 0.162.1 says so two ways: `turn/start` fails with `failed to submit turn input: ActiveTurnNotSteerable { turn_kind:
+ * Review }` and no error data, and `turn/steer` fails with `cannot steer a review turn` plus
+ * `codexErrorInfo.activeTurnNotSteerable` in the error data. "no active turn to steer" is not matched on purpose:
+ * no turn is running then, so a queued steer would wait for a boundary that never comes.
+ */
+function isNotSteerableRejection(err: unknown): boolean {
+    const info = nestedRecord(nestedRecord(err, "data"), "codexErrorInfo");
+    if (info && "activeTurnNotSteerable" in info) {
+        return true;
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    return /ActiveTurnNotSteerable|cannot steer a (review|compact) turn/.test(message);
 }
 
 function isApprovalMethod(method: string): boolean {

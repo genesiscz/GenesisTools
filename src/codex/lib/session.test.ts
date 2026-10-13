@@ -6,6 +6,7 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { ThreadTurnsListParams, Turn } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { isOwnBusCommand } from "./bus-approval";
 import type { RpcClient } from "./session";
@@ -19,6 +20,11 @@ class FakeRpcClient implements RpcClient {
     rejectNextTurn: Error | null = null;
     /** What `thread/list` returns; empty means the thread is not listable yet. */
     threads: Array<{ id: string; projectId?: string | null }> = [];
+    /** The thread's turns, oldest first; `thread/turns/list` pages them newest first. */
+    turns: Turn[] = [];
+    /** The most turns one `thread/turns/list` page holds, whatever limit was asked for. */
+    turnPageCap = Number.POSITIVE_INFINITY;
+    rejectRevert: Error | null = null;
 
     async request<T>(method: string, params?: unknown): Promise<T> {
         this.requests.push({ method, params });
@@ -46,8 +52,32 @@ class FakeRpcClient implements RpcClient {
             return { turn: { id: `turn-${this.turn}` } } as T;
         }
 
-        if (method === "turn/interrupt" || method === "thread/rollback" || method === "thread/unsubscribe") {
+        if (method === "turn/interrupt" || method === "thread/unsubscribe") {
             return {} as T;
+        }
+
+        if (method === "thread/turns/list") {
+            const { cursor, limit } = params as ThreadTurnsListParams;
+            const newestFirst = [...this.turns].reverse();
+            const start = cursor ? Number(cursor) : 0;
+            const end = start + Math.min(limit ?? newestFirst.length, this.turnPageCap);
+            return {
+                data: newestFirst.slice(start, end),
+                nextCursor: end < newestFirst.length ? String(end) : null,
+                backwardsCursor: null,
+            } as T;
+        }
+
+        if (method === "thread/revert") {
+            if (this.rejectRevert) {
+                throw this.rejectRevert;
+            }
+
+            return {
+                thread: { id: "thread-1", turns: [] },
+                turnsBackwardsCursor: null,
+                itemsBackwardsCursor: null,
+            } as T;
         }
 
         if (method === "thread/read") {
@@ -102,7 +132,7 @@ function makeMeta(home: string): CodexSessionMeta {
 }
 
 describe("CodexSessionRuntime", () => {
-    test("handshakes, starts a thread, and fires the first turn with exact v0.144 input", async () => {
+    test("handshakes, starts a thread, and fires the first turn with exact v0.162 input", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-"));
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
@@ -181,8 +211,8 @@ describe("CodexSessionRuntime", () => {
 
             const result = await runtime.execute({ op: "steer", body: "Focus on auth", force: false });
 
-            // codex 0.144.5 merges mid-turn input into the ACTIVE turn (verified
-            // live): the phantom new turn id is reported, but meta keeps the
+            // codex 0.162.1 merges mid-turn input into the ACTIVE turn (verified
+            // live): the returned turn id is reported, but meta keeps the
             // original active turn.
             expect(result).toEqual({ turnId: "turn-2", queued: false, merged: true });
             expect((await store.readMeta("reviewer"))?.activeTurnId).toBe("turn-1");
@@ -196,7 +226,7 @@ describe("CodexSessionRuntime", () => {
         });
     });
 
-    test("queues a rejected same-turn steer and delivers it at the boundary", async () => {
+    test("queues a steer turn/start refuses for a non-steerable turn and delivers it at the boundary", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-queue-"));
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
@@ -206,7 +236,10 @@ describe("CodexSessionRuntime", () => {
             const client = new FakeRpcClient();
             const runtime = new CodexSessionRuntime({ client, store, meta });
             await runtime.start({ prompt: "Begin" });
-            client.rejectNextTurn = new Error("active turn cannot accept same-turn steering");
+            // codex-cli 0.162.1 `turn/start` while a review turn runs (turn_processor.rs, NotSubmitted).
+            client.rejectNextTurn = new Error(
+                "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Review }"
+            );
 
             await expect(runtime.execute({ op: "steer", body: "Queued correction", force: false })).resolves.toEqual({
                 queued: true,
@@ -231,9 +264,20 @@ describe("CodexSessionRuntime", () => {
             const client = new FakeRpcClient();
             const runtime = new CodexSessionRuntime({ client, store, meta });
             await runtime.start({ prompt: "Begin" });
-            client.rejectNextTurn = new Error("active turn cannot accept same-turn steering");
+            // The `turn/steer` form: the structured error data decides, whatever the message says.
+            client.rejectNextTurn = Object.assign(new Error("rejected"), {
+                data: {
+                    message: "cannot steer a compact turn",
+                    codexErrorInfo: { activeTurnNotSteerable: { turnKind: "compact" } },
+                    additionalDetails: null,
+                },
+            });
 
-            await runtime.execute({ op: "steer", body: "Recover after failure", force: false });
+            await expect(
+                runtime.execute({ op: "steer", body: "Recover after failure", force: false })
+            ).resolves.toEqual({
+                queued: true,
+            });
             await runtime.handleNotification({ method: "turn/failed", params: { turn: { id: "turn-1" } } });
 
             expect(client.requests.at(-1)?.params).toMatchObject({
@@ -243,8 +287,8 @@ describe("CodexSessionRuntime", () => {
         });
     });
 
-    test("interrupts, rolls back, and reads the thread", async () => {
-        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-controls-"));
+    test("does not queue a steer the server refuses for another reason", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-steer-refused-"));
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             const store = new CodexSessionStore();
@@ -254,16 +298,119 @@ describe("CodexSessionRuntime", () => {
             const runtime = new CodexSessionRuntime({ client, store, meta });
             await runtime.start({ prompt: "Begin" });
 
+            for (const message of ["no active turn to steer", "active turn cannot accept same-turn steering"]) {
+                client.rejectNextTurn = new Error(message);
+                await expect(runtime.execute({ op: "steer", body: "Lost", force: false })).rejects.toThrow(message);
+            }
+
+            expect((await store.readMeta("reviewer"))?.queuedSteers).toBeUndefined();
+        });
+    });
+
+    test("interrupts, rolls back through thread/revert, and reads the thread", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-controls-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = makeMeta(home);
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            client.turns = [
+                { id: "turn-a", status: "completed" },
+                { id: "turn-b", status: "completed" },
+                { id: "turn-c", status: "completed" },
+            ];
+            const runtime = new CodexSessionRuntime({ client, store, meta });
+            await runtime.start({ prompt: "Begin" });
+
             await runtime.execute({ op: "interrupt" });
-            await runtime.execute({ op: "rollback", turns: 2 });
+            const rolledBack = await runtime.execute({ op: "rollback", turns: 2 });
             const snapshot = await runtime.execute({ op: "read" });
 
-            expect(client.requests.slice(-3)).toEqual([
+            expect(rolledBack).toEqual({ rolledBack: 2 });
+            expect(client.requests.slice(-4)).toEqual([
                 { method: "turn/interrupt", params: { threadId: "thread-1", turnId: "turn-1" } },
-                { method: "thread/rollback", params: { threadId: "thread-1", numTurns: 2 } },
+                {
+                    method: "thread/turns/list",
+                    params: { threadId: "thread-1", limit: 2, sortDirection: "desc", itemsView: "notLoaded" },
+                },
+                { method: "thread/revert", params: { threadId: "thread-1", beforeTurnId: "turn-b" } },
                 { method: "thread/read", params: { threadId: "thread-1", includeTurns: true } },
             ]);
             expect(snapshot).toEqual({ thread: { id: "thread-1", turns: [] } });
+        });
+    });
+
+    test("rollback follows the turn cursor when a page holds fewer turns than asked", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-rollback-pages-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = makeMeta(home);
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            client.turns = [
+                { id: "turn-a", status: "completed" },
+                { id: "turn-b", status: "completed" },
+                { id: "turn-c", status: "completed" },
+            ];
+            client.turnPageCap = 2;
+            const runtime = new CodexSessionRuntime({ client, store, meta });
+            await runtime.start({});
+
+            await expect(runtime.execute({ op: "rollback", turns: 3 })).resolves.toEqual({ rolledBack: 3 });
+
+            const listed = client.requests.filter((request) => request.method === "thread/turns/list");
+            expect(listed.map((request) => request.params)).toEqual([
+                { threadId: "thread-1", limit: 3, sortDirection: "desc", itemsView: "notLoaded" },
+                { threadId: "thread-1", cursor: "2", limit: 1, sortDirection: "desc", itemsView: "notLoaded" },
+            ]);
+            expect(client.requests.at(-1)).toEqual({
+                method: "thread/revert",
+                params: { threadId: "thread-1", beforeTurnId: "turn-a" },
+            });
+        });
+    });
+
+    test("refuses to roll back more turns than the thread has, and never reverts", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-rollback-short-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = makeMeta(home);
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            client.turns = [{ id: "turn-a", status: "completed" }];
+            client.rejectRevert = new Error("thread/revert must not be reached");
+            const runtime = new CodexSessionRuntime({ client, store, meta });
+            await runtime.start({});
+
+            await expect(runtime.execute({ op: "rollback", turns: 2 })).rejects.toThrow(
+                "Cannot roll back 2 turn(s): the thread has only 1."
+            );
+            expect(client.requests.some((request) => request.method === "thread/revert")).toBe(false);
+        });
+    });
+
+    test("passes the server's revert refusals through unchanged", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-rollback-refused-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = makeMeta(home);
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            client.turns = [{ id: "turn-a", status: "completed" }];
+            const runtime = new CodexSessionRuntime({ client, store, meta });
+            await runtime.start({});
+
+            for (const refusal of [
+                "thread/revert only supports paginated threads",
+                "ephemeral threads do not support thread/revert",
+            ]) {
+                client.rejectRevert = new Error(refusal);
+                await expect(runtime.execute({ op: "rollback", turns: 1 })).rejects.toThrow(refusal);
+            }
         });
     });
 
