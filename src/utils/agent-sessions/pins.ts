@@ -1,10 +1,10 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage/storage";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 /**
  * Append-only journal of `session id → account`. Append-only because the writer is a
@@ -66,6 +66,8 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
 
     const pins = new Map<string, SessionPin>();
     let lines = 0;
+    // Lines the map cannot hold. `compact` rewrites the journal as the map, so it would delete them.
+    let unusable = 0;
 
     for (const line of text.split("\n")) {
         if (!line.trim()) {
@@ -78,6 +80,7 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
             const pin = SafeJSON.parse(line, { strict: true }) as SessionPin;
 
             if (typeof pin.sessionId !== "string") {
+                unusable += 1;
                 continue;
             }
 
@@ -91,6 +94,7 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
                 pins.set(pin.sessionId, pin);
             }
         } catch (err) {
+            unusable += 1;
             logger.debug({ err }, "[cmux-pins] skipping an unparseable journal line");
         }
     }
@@ -99,9 +103,16 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
     // handed, so compacting after a `provider: "codex"` load would delete every Claude and Grok
     // record in the file.
     if (!opts.readOnly && !opts.provider && lines > COMPACT_THRESHOLD) {
-        await compact(path, pins).catch((err) => {
-            logger.warn({ err, path }, "[cmux-pins] compaction failed; the journal keeps growing");
-        });
+        if (unusable > 0) {
+            logger.warn(
+                { path, unusable },
+                "[cmux-pins] the pin journal has lines that do not parse; not compacting it, so they are kept"
+            );
+        } else {
+            await compact(path, pins).catch((err) => {
+                logger.warn({ err, path }, "[cmux-pins] compaction failed; the journal keeps growing");
+            });
+        }
     }
 
     return pins;
@@ -117,7 +128,7 @@ async function compact(path: string, pins: Map<string, SessionPin>): Promise<voi
         .sort((a, b) => a.at - b.at)
         .map((pin) => SafeJSON.stringify(pin))
         .join("\n");
-    await writeFile(path, `${body}\n`, "utf8");
+    atomicWriteFileSync(path, `${body}\n`);
     logger.debug({ path, records: pins.size }, "[cmux-pins] compacted the pin journal");
 }
 

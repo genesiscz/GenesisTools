@@ -107,6 +107,16 @@ describe("pins", () => {
             expect(await journalLines()).toBe(SESSIONS);
         });
 
+        test("a journal with a line that does not parse is not compacted, so that line is not deleted", async () => {
+            const planted = `{"sessionId":"torn","acc\n${await writeOversizedJournal()}`;
+            await writeFile(pinsPath(), planted, "utf8");
+
+            const pins = await loadPins();
+
+            expect(pins.size).toBe(SESSIONS);
+            expect(await readFile(pinsPath(), "utf8")).toBe(planted);
+        });
+
         test("readOnly leaves the journal byte-identical", async () => {
             // `--dry-run` reaches loadPins through listCandidates. Compaction there
             // would make an inspection mutate durable state.
