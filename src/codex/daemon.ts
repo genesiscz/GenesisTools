@@ -124,6 +124,7 @@ async function run(): Promise<void> {
         client,
         store,
         meta: (await store.readMeta(name)) ?? meta,
+        ...(launch.project ? { project: launch.project } : {}),
         onApprovalRequest: async (notice) => {
             store.appendEvent(name, { source: "daemon", method: "approval_request", params: notice });
             if (!meta.agentsEnabled) {

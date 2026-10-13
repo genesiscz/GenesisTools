@@ -72,6 +72,48 @@ export function projectForCwd(
 }
 
 /**
+ * The project a `--project` value names: its id, its name (case-insensitive), or a directory that one of
+ * its roots holds. Throws with the choices when nothing matches, and when a name is shared by several
+ * projects (Desktop allows duplicates), because a guess would file the thread somewhere the user does not
+ * look.
+ */
+export function resolveProjectSelector(
+    projects: readonly CodexProject[],
+    selector: string,
+    home: string = homedir()
+): CodexProject {
+    const byId = projects.find((project) => project.id === selector);
+
+    if (byId) {
+        return byId;
+    }
+
+    const named = projects.filter((project) => project.name.toLowerCase() === selector.toLowerCase());
+
+    if (named.length === 1) {
+        return named[0];
+    }
+
+    if (named.length > 1) {
+        throw new Error(
+            `Codex Desktop has ${named.length} projects named "${selector}"; pass the id instead: ${named.map((project) => project.id).join(", ")}`
+        );
+    }
+
+    if (/^[~./]/.test(selector)) {
+        const path = resolve(selector.startsWith("~") ? `${home}${selector.slice(1)}` : selector);
+        const owner = projectForCwd(projects, path, home);
+
+        if (owner) {
+            return owner;
+        }
+    }
+
+    const names = [...new Set(projects.map((project) => project.name))].sort().join(", ");
+    throw new Error(`No Codex Desktop project matches "${selector}" (by id, name or root). Projects: ${names}`);
+}
+
+/**
  * Assign the thread, unless it already belongs somewhere.
  *
  * A thread the user has filed by hand in Desktop is never moved: `thread/list` is read first
@@ -88,6 +130,8 @@ export async function assignThreadToProject(
         home?: string;
         /** Injected by tests: the real resolver shells out to git, and a fixture path is no repo. */
         mainCheckout?: string;
+        /** The project the caller chose (`tools codex spawn --project`); skips the lookup by directory. */
+        project?: CodexProject;
     }
 ): Promise<CodexProject | undefined> {
     const { threadId, cwd } = options;
@@ -103,6 +147,15 @@ export async function assignThreadToProject(
 
     if (current.projectId) {
         return undefined;
+    }
+
+    if (options.project) {
+        await client.request("thread/metadata/update", { threadId, projectId: options.project.id });
+        logger.info(
+            { threadId, project: options.project.name, projectId: options.project.id },
+            "[codex] thread filed under the chosen project"
+        );
+        return options.project;
     }
 
     const projects = await client.request<{ data?: CodexProject[] }>("project/list", {});

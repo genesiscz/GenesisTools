@@ -57,7 +57,11 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             .option("--mode <mode>", "review | task", "task")
             .option("--no-agents", `Disable ${toolCommand("agents")} integration`)
             .option("--session <id>", `Parent ${toolCommand("agents")} session id`)
-            .option("--writable-root <path...>", "Additional writable roots");
+            .option("--writable-root <path...>", "Additional writable roots")
+            .option(
+                "--project <project>",
+                "Codex Desktop project (id, name or root) to show the thread under; default: the project owning the cwd"
+            );
     },
 
     extendSteer(command) {
@@ -87,6 +91,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             agents?: boolean;
             session?: string;
             writableRoot?: string[];
+            project?: string;
         };
 
         if (extras.mode !== "review" && extras.mode !== "task") {
@@ -122,6 +127,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             agents: extras.agents,
             ...(extras.session === undefined ? {} : { rendezvousSession: extras.session }),
             ...(extras.writableRoot === undefined ? {} : { writableRoots: extras.writableRoot }),
+            ...(extras.project === undefined ? {} : { project: extras.project }),
         });
         const warning = schemaDriftWarning(meta.codexVersion);
 

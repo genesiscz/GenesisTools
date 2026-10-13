@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { assignThreadToProject, type CodexProject, projectForCwd } from "./desktop-project";
+import { assignThreadToProject, type CodexProject, projectForCwd, resolveProjectSelector } from "./desktop-project";
 
 const PROJECTS: CodexProject[] = [
     { id: "p-home", name: "Martin", roots: [{ path: "/Users/fixture" }] },
@@ -27,6 +27,49 @@ test("a sibling whose name merely starts the same is not a match", () => {
     expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind-old", HOME)).toBeUndefined();
     expect(projectForCwd([PROJECTS[2]], "/Users/fixture/Projects/Rewind-old", HOME)).toBeUndefined();
     expect(projectForCwd([], "/Users/fixture", HOME)).toBeUndefined();
+});
+
+test("--project names a project by id, by name in any case, or by a directory inside one of its roots", () => {
+    expect(resolveProjectSelector(PROJECTS, "p-rewind", HOME).id).toBe("p-rewind");
+    expect(resolveProjectSelector(PROJECTS, "tools", HOME).id).toBe("p-tools");
+    expect(resolveProjectSelector(PROJECTS, "/Users/fixture/Projects/Rewind/packages", HOME).id).toBe("p-rewind");
+    expect(resolveProjectSelector(PROJECTS, "~/Projects/Tools", HOME).id).toBe("p-tools");
+});
+
+test("--project refuses a name two projects share, and an unknown one, with the choices", () => {
+    // Desktop allows duplicate names; picking one would file the thread where the user does not look.
+    const twins = [...PROJECTS, { id: "p-tools-2", name: "Tools", roots: [{ path: "/Users/fixture/Other" }] }];
+
+    expect(() => resolveProjectSelector(twins, "Tools", HOME)).toThrow("p-tools, p-tools-2");
+    expect(() => resolveProjectSelector(PROJECTS, "Nope", HOME)).toThrow("Projects: Martin, Rewind, Rootless, Tools");
+    expect(() => resolveProjectSelector(PROJECTS, "/elsewhere", HOME)).toThrow(
+        'No Codex Desktop project matches "/elsewhere"'
+    );
+});
+
+test("a chosen project wins over the one that owns the directory, and needs no project lookup", async () => {
+    // Two projects can hold the same worktree; the caller's choice is the only way to say which one.
+    const api = client([{ id: "t1", projectId: null }]);
+    const chosen = PROJECTS[1];
+    const project = await assignThreadToProject(api, {
+        threadId: "t1",
+        cwd: "/Users/fixture/Projects/Rewind",
+        home: HOME,
+        project: chosen,
+    });
+
+    expect(project?.id).toBe("p-tools");
+    expect(api.calls.map((call) => call.method)).toEqual(["thread/list", "thread/metadata/update"]);
+    expect(updates(api.calls)[0]?.params).toEqual({ threadId: "t1", projectId: "p-tools" });
+});
+
+test("a chosen project still never moves a thread the user filed", async () => {
+    const api = client([{ id: "t1", projectId: "p-rewind" }]);
+
+    expect(await assignThreadToProject(api, { threadId: "t1", cwd: "/x", home: HOME, project: PROJECTS[1] })).toBe(
+        undefined
+    );
+    expect(updates(api.calls)).toEqual([]);
 });
 
 function client(threads: Array<{ id: string; projectId?: string | null }>) {

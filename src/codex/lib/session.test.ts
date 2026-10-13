@@ -16,6 +16,8 @@ class FakeRpcClient implements RpcClient {
     readonly notifications: Array<{ method: string; params: unknown }> = [];
     private turn = 0;
     rejectNextTurn: Error | null = null;
+    /** What `thread/list` returns; empty means the thread is not listable yet. */
+    threads: Array<{ id: string; projectId?: string | null }> = [];
 
     async request<T>(method: string, params?: unknown): Promise<T> {
         this.requests.push({ method, params });
@@ -53,6 +55,18 @@ class FakeRpcClient implements RpcClient {
 
         if (method === "review/start") {
             return { turn: { id: "review-turn-1" }, reviewThreadId: "thread-1" } as T;
+        }
+
+        if (method === "thread/list") {
+            return { data: this.threads } as T;
+        }
+
+        if (method === "project/list") {
+            return { data: [{ id: "p-tools", name: "Tools", roots: [{ path: "/elsewhere" }] }] } as T;
+        }
+
+        if (method === "thread/metadata/update") {
+            return {} as T;
         }
 
         throw new Error(`Unexpected request: ${method}`);
@@ -498,5 +512,53 @@ test("the daemon refuses stale thread/home guards before RPC even when the worke
             })
         ).toMatchObject({ turnId: "turn-1", queued: false });
         expect(client.requests.map((request) => request.method)).toEqual(["turn/start"]);
+    });
+});
+
+test("--project is resolved before the thread starts, and the thread is filed once its first message is recorded", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-project-"));
+
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const store = new CodexSessionStore();
+        const meta = makeMeta(home);
+        store.writeMeta(meta);
+        const client = new FakeRpcClient();
+        client.threads = [{ id: "thread-1", projectId: null }];
+        const runtime = new CodexSessionRuntime({ client, store, meta, project: "tools" });
+        const methods = () => client.requests.map((request) => request.method);
+
+        await runtime.start({ prompt: "Begin" });
+        expect(methods()).toEqual(["initialize", "project/list", "thread/start", "turn/start"]);
+        expect(client.requests[0]?.params).toMatchObject({ capabilities: { experimentalApi: true } });
+
+        // A thread is not in thread/list before its first user message is recorded.
+        await runtime.handleNotification({ method: "turn/started", params: { turn: { id: "turn-1" } } });
+        expect(methods()).not.toContain("thread/list");
+
+        await runtime.handleNotification({
+            method: "item/completed",
+            params: { item: { type: "userMessage", id: "u1" } },
+        });
+        await runtime.handleNotification({ method: "turn/completed", params: { turn: { id: "turn-1" } } });
+
+        expect(client.requests.filter((request) => request.method === "thread/metadata/update")).toEqual([
+            { method: "thread/metadata/update", params: { threadId: "thread-1", projectId: "p-tools" } },
+        ]);
+        expect((await store.readMeta("reviewer"))?.desktopProject).toEqual({ id: "p-tools", name: "Tools" });
+    });
+});
+
+test("an unknown --project fails the start before any thread exists", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-project-miss-"));
+
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const store = new CodexSessionStore();
+        const meta = makeMeta(home);
+        store.writeMeta(meta);
+        const client = new FakeRpcClient();
+        const runtime = new CodexSessionRuntime({ client, store, meta, project: "nope" });
+
+        await expect(runtime.start({ prompt: "Begin" })).rejects.toThrow('No Codex Desktop project matches "nope"');
+        expect(client.requests.map((request) => request.method)).toEqual(["initialize", "project/list"]);
     });
 });

@@ -277,3 +277,9 @@ mode that pauses its built-in trusted read-only commands; `untrusted` is its str
 
 The driver joins the parent Claude Code swarm through `tools agents`. Use `--no-agents` to disable that integration,
 or `--session <id>` when the parent session cannot be discovered from `CLAUDE_CODE_SESSION_ID`.
+
+Codex Desktop shows a thread only under the project its stored `projectId` names; it never places one by cwd. A spawned
+worker's thread is filed once its first message is recorded: under `--project <id|name|root>` when given, otherwise
+under the project whose root holds the cwd (a linked worktree falls back to its main checkout). Pass `--project` when
+two projects share a root. An unknown or ambiguous `--project` fails the spawn; `tools codex status` shows the result
+as `desktopProject`.

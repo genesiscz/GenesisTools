@@ -32,6 +32,8 @@ export interface SpawnOptions {
     agents?: boolean;
     rendezvousSession?: string;
     writableRoots?: string[];
+    /** A Codex Desktop project id, name or root to show the thread under; the cwd decides without it. */
+    project?: string;
 }
 
 export interface LaunchConfig {
@@ -41,6 +43,7 @@ export interface LaunchConfig {
     prompt?: string;
     mode: "review" | "task";
     writableRoots: string[];
+    project?: string;
 }
 
 export function parseWritePolicy(value: string | undefined): CodexWritePolicy | undefined {
@@ -255,6 +258,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         mode: options.mode ?? "task",
         writableRoots,
         ...(options.prompt ? { prompt: options.prompt } : {}),
+        ...(options.project ? { project: options.project } : {}),
     };
     if (options.computerUse) {
         // Validate here, in the process the user is watching. The daemon is already detached by

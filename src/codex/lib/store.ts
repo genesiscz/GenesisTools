@@ -72,6 +72,8 @@ export interface CodexSessionMeta {
     pendingApprovals: Record<string, PendingApproval>;
     queuedSteers?: Array<{ body: string; force: boolean }>;
     lastAgentSeq?: number;
+    /** The Codex Desktop project the thread was filed under, once it was. */
+    desktopProject?: { id: string; name: string };
 }
 
 export interface CodexEventRecord {

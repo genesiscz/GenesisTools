@@ -15,6 +15,7 @@ import type {
 import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
 import type { CodexControl } from "./control";
+import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import { buildAgentInstructions } from "./seed-instructions";
 import type { CodexSessionMeta, CodexSessionStore } from "./store";
 import { codexTurnOutcome } from "./terminal-outcome";
@@ -34,6 +35,8 @@ interface RuntimeOptions {
     meta: CodexSessionMeta;
     onApprovalRequest?: (notice: Record<string, unknown>) => void | Promise<void>;
     unsubscribeTimeoutMs?: number;
+    /** `tools codex spawn --project`: a Desktop project id, name or root. Without it the cwd decides. */
+    project?: string;
 }
 
 interface ThreadStartResult {
@@ -97,6 +100,9 @@ export class CodexSessionRuntime {
     private readonly onApprovalRequest: RuntimeOptions["onApprovalRequest"];
     private readonly unsubscribeTimeoutMs: number;
     private readonly pendingApprovalDecisions = new Map<string, PendingApprovalDecision>();
+    private readonly projectSelector?: string;
+    private chosenProject?: CodexProject;
+    private filingAttempts = 0;
 
     constructor(options: RuntimeOptions) {
         this.account = options.account;
@@ -105,6 +111,7 @@ export class CodexSessionRuntime {
         this.meta = options.meta;
         this.onApprovalRequest = options.onApprovalRequest;
         this.unsubscribeTimeoutMs = options.unsubscribeTimeoutMs ?? 1000;
+        this.projectSelector = options.project;
     }
 
     async start(options: { prompt?: string }): Promise<void> {
@@ -116,11 +123,20 @@ export class CodexSessionRuntime {
                 title: "GenesisTools Codex",
                 version: "0.1.0",
             },
-            capabilities: this.account ? { experimentalApi: true } : null,
+            // `project/list` and `thread/metadata/update` (filing the thread in Codex Desktop) are
+            // experimental methods; without the capability they fail and the thread stays projectless.
+            capabilities: { experimentalApi: true },
         };
         await this.client.request("initialize", initialize);
         await this.client.notify("initialized");
         await this.account?.authenticate(this.client);
+
+        // Resolved before the thread starts, so a wrong --project fails the spawn the user is watching
+        // instead of a filing attempt that only the daemon log would mention.
+        if (this.projectSelector) {
+            const projects = await this.client.request<{ data?: CodexProject[] }>("project/list", {});
+            this.chosenProject = resolveProjectSelector(projects.data ?? [], this.projectSelector);
+        }
 
         const threadParams: ThreadStartParams = {
             cwd: this.meta.cwd,
@@ -173,6 +189,7 @@ export class CodexSessionRuntime {
         });
 
         const lastEventAt = new Date().toISOString();
+        await this.fileUnderProject(notification);
 
         if (notification.method === "turn/started") {
             await this.updateMeta({
@@ -302,6 +319,44 @@ export class CodexSessionRuntime {
             lastEventAt: new Date().toISOString(),
             pendingApprovals: {},
         });
+    }
+
+    /**
+     * Put the thread under its Codex Desktop project, where Desktop's sidebar shows it. A thread is not in
+     * `thread/list` until its first user message is recorded, so the first try waits for that item, and the
+     * end of the first turn gets one more. Never fatal: a failed filing leaves a working thread unlisted.
+     */
+    private async fileUnderProject(notification: RpcNotification): Promise<void> {
+        if (this.meta.desktopProject || this.filingAttempts >= 2 || !this.meta.threadId) {
+            return;
+        }
+
+        const item = nestedRecord(notification.params, "item");
+        const userMessageRecorded = notification.method === "item/completed" && item?.type === "userMessage";
+
+        if (!userMessageRecorded && !codexTurnOutcome(notification)) {
+            return;
+        }
+
+        this.filingAttempts += 1;
+
+        try {
+            const project = await withTimeout(
+                assignThreadToProject(this.client, {
+                    threadId: this.meta.threadId,
+                    cwd: this.meta.cwd,
+                    ...(this.chosenProject ? { project: this.chosenProject } : {}),
+                }),
+                5000,
+                new Error("Codex Desktop project filing")
+            );
+
+            if (project) {
+                await this.updateMeta({ desktopProject: { id: project.id, name: project.name } });
+            }
+        } catch (err) {
+            log.warn({ err, threadId: this.meta.threadId }, "could not file the thread under a Codex Desktop project");
+        }
     }
 
     private async updateMeta(update: Partial<CodexSessionMeta>): Promise<void> {
