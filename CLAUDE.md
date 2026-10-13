@@ -17,6 +17,7 @@ The detailed rules live in area files. Claude Code loads an area file by itself 
 - macOS app, notifications, privacy grants (`src/macos/`, `src/utils/macos/`, `src/notify/`): `.claude/rules/macos.md`. Window rules for the Swift app (`src/macos/GenesisTools/`): `.claude/rules/macos-app.md`.
 - The personal-data probe and the git hooks: `.claude/rules/placeholder-check.md`.
 - Browser automation (`src/chrome-devtools/`, `src/utils/chrome-devtools/`, which another repo vendors): `.claude/rules/chrome-devtools.md`. The plugin (`plugins/`, `.claude-plugin/`): `plugins.md`. CI, guards and git hooks (`.github/`, `scripts/ci/`, `.githooks/`): `ci.md`. Dependencies (`package.json`, `bun.lock`): `dependencies.md`.
+- Compression (`src/utils/compress/`, `src/compress/`, `scripts/benchmarks/compress/`): `.claude/rules/compress.md` (Bun 1.3.13 reads only the first zstd frame through `node:zlib`, verify before removing, the 30% read budget, readers that open either form).
 - One folder each: `.claude/rules/du.md` (`src/du/`, benchmarks before any change), `say.md` (`src/say/`, per-app profiles), `database.md` (`src/utils/database/`, `src/utils/storage/`, any `*migration*.ts`), `claude-sdk.md` (`src/utils/claude/`, Agent SDK types), `audio.md` (`src/utils/audio/`, `src/transcribe/`), `azure-devops.md` (`src/azure-devops/`, ADO API).
 
 A new rule goes into the area file it belongs to, or into a new `.claude/rules/<topic>.md` with a `paths:` list of globs. Do not add a CLAUDE.md to a subfolder: one rule file can cover several folders, and one folder can have several rule files. Only the sub-apps with a root of their own keep one (`apps/eve/`, `DevDashboard/mobile/`, `src/dashboard/apps/web/.claude/`). Only a rule that every session needs, whatever it touches, goes into this file.
@@ -58,7 +59,7 @@ Skipping any of these has cost real sessions hours; there are no exceptions.
 - `~/.genesis-tools/claude-history/index.db` holds Claude, Codex and Grok history, plus historical `usage_snapshots` and `spend_snapshots`. Never remove it as a disposable cache, never clear observation tables during a history rebuild, and never run unscoped history SQL across providers.
 - A diagnostic (`doctor`, `test`, `probe`, `health`, `check`, `status`, `list`, `show`, `--dry-run`) never mutates durable state and never spends a single-use credential such as an OAuth refresh token. Details: `.claude/rules/code.md`.
 - An empty result from a permission-gated tool (Calendar, Reminders, Contacts, Full Disk Access) is never proof of empty data. Run `tools macos permissions` first: it exits 1 while a grant is missing.
-- When a tool misbehaves, read `~/.genesis-tools/logs/<today>.log` (day-stamped pino JSON) and `rg` it for the tool name or the error before you form a hypothesis.
+- When a tool misbehaves, read `~/.genesis-tools/logs/<today>.log` (day-stamped pino JSON) and `rg` it for the tool name or the error before you form a hypothesis. A day older than a week is `<date>.log.zst` (seekable zstd, written by the daily pass): search it with `rg -z <pattern> <file>` (needs the `zstd` CLI) or `tools compress cat <file> | rg <pattern>`.
 
 ## Git branch mechanics
 

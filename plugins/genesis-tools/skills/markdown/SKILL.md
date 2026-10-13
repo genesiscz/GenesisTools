@@ -83,7 +83,7 @@ Every file a run changes is copied first. One folder per run:
 
 The command prints the restore line (`cp '<backup>' '<file>'`). The day log
 (`~/.genesis-tools/logs/<date>.log`, `rg "markdown: file rewritten"`) has the same record, so the log
-alone proves what changed an hour later. `/tmp` clears on a reboot: copy the patch somewhere durable
+alone proves what changed an hour later (a day older than a week is `<date>.log.zst`: `rg -z`). `/tmp` clears on a reboot: copy the patch somewhere durable
 when a change must outlive it.
 
 Before it writes, a run checks one invariant: collapsing every block back to its token must give the
