@@ -4,7 +4,7 @@ Two recipes. Both are deliberately one-folder / one-entry changes: after the
 2026-07 rearchitecture, nothing about a new provider should require editing call
 sites scattered across tools.
 
-Read the layer summary in the root `CLAUDE.md` ("AI subsystem") first. The rule
+Read the layer summary in `.claude/rules/ai.md` ("AI subsystem") first. The rule
 that makes these recipes work is that layers import only DOWNWARD: security,
 then config, then providers, then catalog, then core, then tasks.
 

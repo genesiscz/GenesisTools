@@ -7,7 +7,7 @@ with an absolute `floor` per metric). Baselines are git-tracked JSON under
 `scripts/benchmarks/baselines/<name>.json`; every script takes `--baseline` to record and
 `--compare` to gate. CPU time and counts are the metrics; wall time on this machine swings with
 the load average and is reported, never gated. The rule that came out of this work is the
-"Never spin" section of `CLAUDE.md`; the detection side is `bun scripts/ci/lint-rules.ts`
+"Never spin" section of `.claude/rules/code.md`; the detection side is `bun scripts/ci/lint-rules.ts`
 (timers under 100 ms including identifier-bound constants, `sleepSync` in a loop, a Swift `.wait()`
 without a timeout) and `tools doctor cpu` (two `ps -o cputime` samples, what burned a core in
 between; opt-in, not in the default doctor suite).

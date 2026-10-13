@@ -40,6 +40,6 @@ thing for real, frame by frame, and comparing it with the checklist**, then fixi
 
 - Generic pieces live in GenesisKit (one disclosure row, one permission dialog, one thumbnail view); never an
   app-local copy. Hover effect on every button, tooltip on every icon-only button, `.titlebarZone()` on every
-  window root (src/macos/GenesisTools/CLAUDE.md has the table).
+  window root (.claude/rules/macos-app.md has the table).
 - Data and caching belong on the TypeScript side; a view body only reads cached state.
 - Staging surfaces (widget, Clicky) stay gated for other users: Preview bundle or `scripts/native/staging.ts on`.

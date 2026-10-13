@@ -15,8 +15,8 @@ on-demand workers took the same idle state to 0 claims, one statement a second a
 core, while making a burst *faster*: first start 18 ms to 0.3 ms, drain 24.7 ms to 6.2 ms
 (`scripts/benchmarks/youtube/pipeline-idle.ts`, numbers in `docs/benchmarks-cpu.md`).
 
-The rule it enforces is the one in `CLAUDE.md`: wake on the event, never on a timer under
-100 ms. See [Never spin](../../../CLAUDE.md).
+The rule it enforces is the one in `.claude/rules/code.md`: wake on the event, never on a timer under
+100 ms. See [Never spin](../../../.claude/rules/code.md).
 
 ## `WorkerPool`
 

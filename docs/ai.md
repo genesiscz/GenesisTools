@@ -9,7 +9,7 @@
 > `src/utils/ai/catalog/`.
 >
 > - To ADD a provider or a local model: `docs/ai-adding-providers.md`.
-> - For the layer map and the guards: the "AI subsystem" section of the root `CLAUDE.md`.
+> - For the layer map and the guards: the "AI subsystem" section of `.claude/rules/ai.md`.
 >
 > The DarwinKit / CoreML / embedding notes further down are still accurate and
 > are why this document is kept rather than deleted.
