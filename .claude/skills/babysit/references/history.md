@@ -7,7 +7,7 @@ skill is built on:
 |---|---|---|
 | Findings | 2 (a regex, a Swift scroll chase) | 4 (a window failure, an empty-placement fallback x2, a README) |
 | Time | 10 min 37 s, 82 tool calls | 9 min 13 s, 3.01 M tokens (2.86 M cached), 12 k output |
-| Cost | $2.44 API-equivalent, billed to SuperGrok (weekly 3% to 4%; API credits unchanged at $8.55) | ChatGPT subscription |
+| Cost (`tools ai-spend workers`) | $2.44 API-equivalent (grok's recorded cost), billed $0 to SuperGrok (weekly 3% to 4%; API credits unchanged at $8.55); as Claude ≈ Opus $3.40 / Sonnet $1.70 | $0.69 API-equivalent (catalog), billed $0 to the ChatGPT subscription; as Claude ≈ Opus $1.38 / Sonnet $0.69 |
 | Verdict | VERIFIED WITH CAVEATS: both fixes right, both new tests fail on the old code; tests in the wrong file (brief's fault) | VERIFIED WITH CAVEATS: three fixes right; one broke the module's error contract, so the CLI would have printed a stack trace |
 | Bus round trip | 59 s (Grok's `monitor` tool) | 20 s (daemon delivers mail as turn input) |
 | Cherry-pick onto the PR branch | clean (files identical on unified and the PR) | one import-line conflict (unified held a later PR's imports) |

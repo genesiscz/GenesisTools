@@ -84,8 +84,10 @@ the stop point. After the confirmation period, state the plan in one line and pr
    and whether unified differs from the PR branch per file. That list is the outer bound. The brief allows the files
    the findings cite plus their tests, and any other PR file a fix provably needs. Missing a test file in the scope
    put Grok's tests in the wrong file on 2026-10-14.
-7. Baseline the cost: `tools grok usage --json --fresh` for Grok workers, and the session's `usage` for Codex. Each
-   worker turn report now ends with a cost line (API-equivalent, billed, and a Claude estimate). The API-credit
+7. Baseline the cost: `tools grok usage --json --fresh` (the SuperGrok weekly percentage) for Grok workers. Every
+   worker turn is booked in the cost ledger with its ai-spend price, login and label, and its report (Codex: the
+   `turn_completed` bus event and `status --json` `cost`) ends with one line: API-equivalent, billed, and a Claude
+   Opus/Sonnet estimate for the same tokens. The API-credit
    proof (the xAI console) is needed only for a `--auth api-key` worker or when the user asks for it. It lives in
    the user's own browser, so ask before you touch it, read an already-open console tab with a read-only CDP
    `Runtime.evaluate` of the page text, and never reload, navigate or restart the browser for it.
@@ -100,10 +102,12 @@ run, explicit negative constraints, a named checkpoint, a deliverable the sandbo
 Worker cwd: its worktree (worktree mode) or the main checkout (unified mode). The reply JSON and the rendered
 summary go to `.claude/work/babysit/` inside that cwd (ignored by git; Grok's jail blocks writes outside cwd).
 
-- Grok: `tools grok spawn --name bs-<N>-grok --cwd <cwd> -m grok-4.7-build-fast --auth subscription --prompt-file
-  <brief>` with Bash `run_in_background` (it blocks for the whole turn).
+- Grok: `tools grok spawn --name bs-<N>-grok --cwd <cwd> -m grok-4.7-build-fast --auth subscription
+  --label "babysit pr<N>" --prompt-file <brief>` with Bash `run_in_background` (it blocks for the whole turn).
 - Codex: `tools codex spawn --name bs-<N>-sol --model gpt-6.1-sol --effort medium --write ask --cwd <cwd> --session
-  <bus session> --prompt-file <brief>`.
+  <bus session> --label "babysit pr<N>" --prompt-file <brief>`.
+
+The `--label` tags every cost-ledger row of the session, so a run's spend is one query later (step 9).
 
 No subagents inside a worker: the brief says so, and the master treats a spawned subagent as a scope breach.
 
@@ -186,9 +190,11 @@ A vault note per run (`GenesisBrain/<project>/<date>-Babysit-<topic>/`, the run'
 the run card names a recipient, a bus message to it (register with `tools agents login --agent-name <me> --once
 --timeout 1 --session <s>`, then `tools agents message --body-file`). Contents, in this order: PRs and commits per PR
 (worker and correction, unified and PR-branch SHAs, pushed ranges), fable-judge verdicts with the evidence, harness
-bugs fixed (SHA and where cherry-picked), cost (each worker's API-equivalent and billed cost, credits before and
-after, and the Claude-equivalent estimate), monitoring facts (turns, tool calls, stalls, questions, approvals), and
-what to change before the next run.
+bugs fixed (SHA and where cherry-picked), cost (`tools ai-spend workers --label babysit --by label,backend,name`:
+each worker's API-equivalent and billed cost and the Claude estimate; plus the SuperGrok percentage before and
+after, and the API credits when step 3.7 read them), monitoring facts (turns, tool calls, stalls, questions,
+approvals), and what to change before the next run. Label the Claude figure an estimate: the same tokens on another
+tokenizer, without the cache writes Claude would also bill.
 
 ## 10. Bugs in the harness: fix them, after the user confirms
 
