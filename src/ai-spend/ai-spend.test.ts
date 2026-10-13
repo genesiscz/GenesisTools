@@ -864,6 +864,9 @@ describe("worker cost card", () => {
         expect(card.apiEquivalentUsd).toBeNull();
         expect(card.billedUsd).toBeNull();
         expect(card.unpriced).toBe("no list price for grok-0-unpriced");
+        expect(formatCostLine(card, "grok")).toMatch(
+            /^cost: API-equivalent unknown \(no list price for grok-0-unpriced; api-key, billed \?\) · as Claude/
+        );
         expect(card.claudeEquivalent.opusUsd).toBeCloseTo(24.2, 10);
     });
 
@@ -906,6 +909,9 @@ describe("worker cost card", () => {
         });
 
         expect(card).toMatchObject({ apiEquivalentUsd: 2.44, basis: "recorded", billedUsd: 0, reportedUsd: 2.44 });
+        expect(formatCostLine(card, "grok")).toBe(
+            "cost: $2.44 API-equivalent (grok's recorded cost; subscription, billed $0) · as Claude ≈ Opus $24.20 / Sonnet $12.10 (estimate)"
+        );
     });
 });
 

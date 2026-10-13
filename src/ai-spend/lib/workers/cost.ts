@@ -303,22 +303,25 @@ function usdOrUnknown(value: number | null): string {
 }
 
 /**
- * `cost: $0.69 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $3.10 / Sonnet $1.55 (estimate)`
+ * `cost: $0.69 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $1.38 / Sonnet $0.69 (estimate)`
+ * `cost: $2.44 API-equivalent (grok's recorded cost; subscription, billed $0) · as Claude ≈ Opus $3.40 / Sonnet $1.70 (estimate)`
  */
 export function formatCostLine(card: WorkerCostCard, backend: WorkerBackend): string {
     const api =
         card.apiEquivalentUsd === null
-            ? `API-equivalent unknown (${card.unpriced ?? "no usage reported"})`
-            : `${formatUsd(card.apiEquivalentUsd)} API-equivalent${card.basis === "recorded" ? ` (as ${backend} recorded it)` : ""}`;
-    const billed =
+            ? "API-equivalent unknown"
+            : `${formatUsd(card.apiEquivalentUsd)} API-equivalent`;
+    const notes = [
+        card.apiEquivalentUsd === null ? (card.unpriced ?? "no usage reported") : "",
+        card.basis === "recorded" ? `${backend}'s recorded cost` : "",
         card.auth === "unknown"
             ? "login unknown"
-            : `${card.auth}, billed ${card.billedUsd === null ? "?" : formatUsd(card.billedUsd)}`;
-    const reported =
+            : `${card.auth}, billed ${card.billedUsd === null ? "?" : formatUsd(card.billedUsd)}`,
         card.reportedUsd === undefined || card.basis === "recorded"
             ? ""
-            : `; ${backend} reported ${formatUsd(card.reportedUsd)}`;
+            : `${backend} reported ${formatUsd(card.reportedUsd)}`,
+    ].filter(Boolean);
     const claude = card.claudeEquivalent;
 
-    return `cost: ${api} (${billed}${reported}) · as Claude ≈ Opus ${usdOrUnknown(claude.opusUsd)} / Sonnet ${usdOrUnknown(claude.sonnetUsd)} (estimate)`;
+    return `cost: ${api} (${notes.join("; ")}) · as Claude ≈ Opus ${usdOrUnknown(claude.opusUsd)} / Sonnet ${usdOrUnknown(claude.sonnetUsd)} (estimate)`;
 }
