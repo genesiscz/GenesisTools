@@ -1,4 +1,4 @@
-import { unlinkSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
@@ -7,6 +7,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { grokRoot } from "@genesiscz/utils/grok/worker-paths";
 import { logger } from "@genesiscz/utils/logger";
 import { masterKey, resolveSecret, type SecureRef, secrets } from "@genesiscz/utils/security";
+import { preserveUnreadableFile } from "@genesiscz/utils/storage/atomic-file";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
 import { decodeJwtClaims, getActiveAuthEntry, readAuthFile, readAuthFileAsync } from "./auth";
 import { writeGrokAuthEntry } from "./auth-write";
@@ -309,6 +310,12 @@ export async function materialiseGrokGrant(
 
             finished = true;
             const active = getActiveAuthEntry(await readAuthFileAsync(authPath));
+
+            // A file the CLI left torn reads as no entry, yet it may hold the only copy of a rotated
+            // token: it is copied aside before the delete below. A failed copy throws, keeping the file.
+            if (!active && existsSync(authPath)) {
+                preserveUnreadableFile(authPath, new Error("no active auth entry at release"));
+            }
 
             // Delete before syncing, not after: the token is already in memory, so every
             // extra millisecond the plaintext file exists buys nothing.

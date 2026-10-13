@@ -24,10 +24,10 @@
  * `grok` CLI does not take this lock, which is what the mid-grant re-read below
  * still exists for.
  */
-import { chmod, rename, unlink, writeFile } from "node:fs/promises";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt } from "@genesiscz/utils/jwt";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isJsonObject, preserveUnreadableFile } from "@genesiscz/utils/storage/atomic-file";
 import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { decodeJwtClaims, isAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
@@ -93,48 +93,48 @@ export async function readAuthDocument(
     authPath: string,
     knownEntries: Map<string, GrokAuthEntry>
 ): Promise<Record<string, unknown>> {
+    let text: string;
+
+    try {
+        text = await Bun.file(authPath).text();
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return Object.fromEntries(knownEntries);
+        }
+
+        // EACCES or EIO: the file is there and may be intact, so nothing may replace it.
+        throw new Error(`grok auth file ${authPath} could not be read; left untouched`, { cause: err });
+    }
+
+    let parsed: unknown;
+    let failure: unknown;
+
     try {
         // Lenient, matching `readAuthFileAsync`. A stricter parse here would
         // reject files the reader accepted (a trailing comma is enough), fall
         // through to the fallback, and drop everything this function exists to
         // keep — the exact data loss it was written to prevent.
-        const parsed = SafeJSON.parse(await Bun.file(authPath).text());
-
-        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
-        }
-
-        logger.warn({ authPath }, "grok refresh: auth file is not a JSON object, rewriting it from known entries");
+        parsed = SafeJSON.parse(text);
     } catch (err) {
-        logger.warn({ err, authPath }, "grok refresh: auth file unreadable before rewrite, keeping known entries");
+        failure = err;
     }
 
-    // Still every entry the initial read saw, rather than an empty document:
-    // losing the non-entry fields is bad, losing the other accounts is worse.
+    if (failure === undefined && isJsonObject(parsed)) {
+        return parsed;
+    }
+
+    // The rewrite keeps only the entries the first read saw, so the file as it stands (other accounts,
+    // `settings`, logged-out slots) is copied aside first. A copy that fails throws and refuses the write.
+    preserveUnreadableFile(authPath, failure ?? new Error("not a JSON object"));
+    logger.warn({ authPath }, "grok refresh: auth file did not parse before rewrite, keeping known entries");
+
     return Object.fromEntries(knownEntries);
 }
 
 export async function writeAuthFileAtomically(authPath: string, document: Record<string, unknown>): Promise<void> {
-    const temp = `${authPath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = `${SafeJSON.stringify(document, { strict: true }, 2)}\n`;
-
-    // The temp file holds the access AND refresh tokens, so a failure after it
-    // exists must not leave it lying around at whatever mode it got. `writeFile`
-    // mode is masked by umask (umask 0600 yields a 000 file), which is why the
-    // chmod follows rather than being redundant with it.
-    try {
-        await writeFile(temp, payload, { mode: AUTH_FILE_MODE });
-        await chmod(temp, AUTH_FILE_MODE);
-        await rename(temp, authPath);
-    } catch (err) {
-        try {
-            await unlink(temp);
-        } catch (cleanupErr) {
-            logger.warn({ err: cleanupErr, temp }, "grok refresh: could not remove the temp auth file after a failure");
-        }
-
-        throw err;
-    }
+    // The shared writer applies the mode from the temp file's birth and removes the temp file on any
+    // failure, so the access and refresh tokens are never left behind at the umask default.
+    atomicWriteFileSync(authPath, `${SafeJSON.stringify(document, { strict: true }, 2)}\n`, { mode: AUTH_FILE_MODE });
 }
 
 /** Token-shaped runs, which some issuers echo back inside their error payloads. */

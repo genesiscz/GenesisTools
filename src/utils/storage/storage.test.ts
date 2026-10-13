@@ -16,7 +16,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { atomicWriteIo, readJsonFileForUpdateSync } from "./atomic-file";
+import { atomicWriteIo, readFileIfExistsSync, readJsonFileForUpdateSync } from "./atomic-file";
 import { genesisToolsDir, toolDataDir } from "./root";
 import { atomicWriteFileSync, Storage } from "./storage";
 
@@ -443,6 +443,25 @@ describe("a failed write never costs the user the stored file", () => {
             value: { accounts: { work: { token: "keep-me" } }, theme: "dark" },
         });
         expect(readdirSync(dir)).toEqual(["state.json"]);
+    });
+
+    it("a snapshot taken before a replace reads an unreadable file as an error, never as absent", () => {
+        // A login snapshots auth.json to roll back a refused identity; "absent" makes that rollback delete it.
+        const target = join(dir, "auth.json");
+
+        expect(readFileIfExistsSync(target)).toBeUndefined();
+
+        writeFileSync(target, USER_CONFIG);
+
+        expect(Buffer.from(readFileIfExistsSync(target) ?? []).toString("utf8")).toBe(USER_CONFIG);
+
+        chmodSync(target, 0o000);
+
+        try {
+            expect(() => readFileIfExistsSync(target)).toThrow(/EACCES/);
+        } finally {
+            chmodSync(target, 0o600);
+        }
     });
 
     it("atomicConfigUpdate refuses a config that does not parse and leaves it byte-identical", async () => {

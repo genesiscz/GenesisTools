@@ -2,6 +2,7 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { logger, out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { callbackStateError, readCallbackCode } from "../../../oauth/callback-code";
 import { type StartCallbackListener, startCallbackListener } from "../../../oauth/callback-server";
 import { presentAuthorizationUrl } from "../../../oauth/login-ui";
@@ -94,10 +95,9 @@ export async function codexLogin(
 
     // Read the file BEFORE replacing it. The identity guard runs in the CLI layer,
     // after this function has returned, so a refused re-login has to be able to put
-    // the previous credential back (PR #360 review t17).
-    const previous = await Bun.file(authFile)
-        .arrayBuffer()
-        .catch(() => undefined);
+    // the previous credential back (PR #360 review t17). An unreadable file throws here, before anything
+    // is written: reading it as "absent" would make the rollback delete it.
+    const previous = readFileIfExistsSync(authFile);
 
     await writeCodexAuthJson(authFile, tokens);
     out.println(`  Wrote ${authFile}`);
@@ -115,14 +115,19 @@ export async function codexLogin(
  * but leaving a REPLACED one is the bug: `OpenAISubResolver` reads the path the
  * old account still stores, so the refused identity would keep serving requests.
  */
-export async function restoreCodexAuthFile(authFile: string, previous: ArrayBuffer | undefined): Promise<void> {
+export async function restoreCodexAuthFile(
+    authFile: string,
+    previous: ArrayBuffer | Uint8Array | undefined
+): Promise<void> {
     if (previous === undefined) {
         await unlink(authFile);
         logger.info({ authFile }, "codex login refused: removed the auth file this login created");
         return;
     }
 
-    await Bun.write(authFile, previous);
+    atomicWriteFileSync(authFile, previous instanceof Uint8Array ? previous : new Uint8Array(previous), {
+        mode: 0o600,
+    });
     logger.info({ authFile }, "codex login refused: restored the previous auth file");
 }
 

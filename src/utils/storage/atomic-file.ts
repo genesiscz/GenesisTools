@@ -197,7 +197,7 @@ export function readJsonFileForUpdateSync<T>(
     try {
         text = readFileSync(filePath, "utf8");
     } catch (err) {
-        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+        if (isMissingFileError(err)) {
             return { state: "missing" };
         }
 
@@ -218,6 +218,31 @@ export function readJsonFileForUpdateSync<T>(
     }
 
     return { state: "ok", value: value as T };
+}
+
+/**
+ * The bytes of a file, or `undefined` when it does not exist. Any other read error (EACCES, EIO) throws: a
+ * caller that snapshots a file before replacing it must never mistake "unreadable" for "absent", or its
+ * rollback deletes the user's file instead of restoring it.
+ */
+export function readFileIfExistsSync(filePath: string): Uint8Array | undefined {
+    try {
+        return readFileSync(filePath);
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return undefined;
+        }
+
+        throw err;
+    }
+}
+
+/**
+ * True only for ENOENT, the one read error that means "there is no file yet". EACCES, EIO or EISDIR mean
+ * the file's content is unknown, so a caller must not treat the file as empty and write over it.
+ */
+export function isMissingFileError(err: unknown): boolean {
+    return err instanceof Error && "code" in err && err.code === "ENOENT";
 }
 
 /** True for a plain JSON object (`{...}`), the shape every config file here has at its root. */

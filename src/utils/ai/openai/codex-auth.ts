@@ -1,8 +1,8 @@
-import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { generatePkcePair } from "../oauth/pkce";
 
 // OpenAI Codex OAuth constants (reverse-engineered from Codex CLI)
@@ -132,8 +132,9 @@ export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise
  * ChatGPT app and GenesisTools share ONE token per profile (decision D3).
  *
  * Mode 0600: this file is the whole subscription grant, and the CLI writes it
- * the same way. `mkdir` is recursive because `--home <dir>` may name a profile
- * directory that does not exist yet.
+ * the same way. The parent is created because `--home <dir>` may name a profile
+ * directory that does not exist yet. The write is atomic: a full disk or a crash
+ * leaves the previous grant in place instead of a truncated file.
  */
 export async function writeCodexAuthJson(path: string, tokens: CodexTokens): Promise<void> {
     const payload: CodexAuthJsonOfficial = {
@@ -147,9 +148,7 @@ export async function writeCodexAuthJson(path: string, tokens: CodexTokens): Pro
         last_refresh: new Date().toISOString(),
     };
 
-    mkdirSync(dirname(path), { recursive: true });
-    await Bun.write(path, SafeJSON.stringify(payload, null, 2));
-    chmodSync(path, 0o600);
+    atomicWriteFileSync(path, SafeJSON.stringify(payload, null, 2), { mode: 0o600 });
     logger.info({ path }, "codex: wrote auth.json in the official CLI shape");
 }
 

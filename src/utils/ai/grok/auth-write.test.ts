@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -82,6 +82,27 @@ describe("writeGrokAuthEntry", () => {
             first_name: "Alice",
             create_time: "2026-01-01T00:00:00Z",
         });
+    });
+
+    test("a truncated auth file is copied aside before the login writes over it", async () => {
+        // A disk-full write by the CLI leaves the other accounts and settings in a torn file; the rewrite
+        // can keep only what it can parse, so the bytes as they stand must survive next to it.
+        const dir = mkdtempSync(join(tmpdir(), "grok-auth-write-"));
+        const authFile = join(dir, "auth.json");
+        const torn = `{\n  "settings": { "theme": "dark" },\n  "https://other.example::client-other": { "key": "oth`;
+        writeFileSync(authFile, torn);
+
+        await writeGrokAuthEntry(authFile, {
+            accessToken: ACCESS,
+            refreshToken: "refresh-new",
+            expiresAt: 4_102_444_800_000,
+        });
+
+        const aside = readdirSync(dir).filter((name) => name.startsWith("auth.json.corrupt-"));
+
+        expect(aside).toHaveLength(1);
+        expect(readFileSync(join(dir, aside[0]), "utf-8")).toBe(torn);
+        expect(getActiveAuthEntry(await readAuthFileAsync(authFile))?.key).toBe(ACCESS);
     });
 
     /**

@@ -1,6 +1,7 @@
 import { unlink } from "node:fs/promises";
 import * as p from "@clack/prompts";
 import { logger, out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { writeGrokAuthEntry } from "../../../grok/auth-write";
 import { GROK_REDIRECT_URI, type GrokTokens, grokOAuth, identityFromGrokTokens } from "../../../grok/oauth";
 import { grokAuthPath } from "../../../grok/paths";
@@ -95,10 +96,9 @@ export async function grokLogin(
     const authFile = resolveGrokAuthDestination(ctx);
 
     // Read the file BEFORE replacing it: the identity guard runs in the CLI layer, after
-    // this function has returned, so a refused re-login must be able to put it back.
-    const previous = await Bun.file(authFile)
-        .arrayBuffer()
-        .catch(() => undefined);
+    // this function has returned, so a refused re-login must be able to put it back. An unreadable file
+    // throws here, before anything is written: reading it as "absent" would make the rollback delete it.
+    const previous = readFileIfExistsSync(authFile);
 
     await writeGrokAuthEntry(authFile, tokens);
     out.println(`  Wrote ${authFile}`);
@@ -110,14 +110,19 @@ export async function grokLogin(
 }
 
 /** Put the auth file back the way it was, or remove the one this login created. */
-export async function restoreGrokAuthFile(authFile: string, previous: ArrayBuffer | undefined): Promise<void> {
+export async function restoreGrokAuthFile(
+    authFile: string,
+    previous: ArrayBuffer | Uint8Array | undefined
+): Promise<void> {
     if (previous === undefined) {
         await unlink(authFile);
         logger.info({ authFile }, "grok login refused: removed the auth file this login created");
         return;
     }
 
-    await Bun.write(authFile, previous);
+    atomicWriteFileSync(authFile, previous instanceof Uint8Array ? previous : new Uint8Array(previous), {
+        mode: 0o600,
+    });
     logger.info({ authFile }, "grok login refused: restored the previous auth file");
 }
 

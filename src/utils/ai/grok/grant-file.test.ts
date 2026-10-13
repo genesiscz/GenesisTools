@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -157,6 +157,28 @@ async function deliverSignal(signal: NodeJS.Signals): Promise<number> {
 
     return delivered;
 }
+
+test("a file the CLI left torn is copied aside before release deletes it, since it may hold the only rotated token", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "grok-grant-torn-"));
+    const writes: string[] = [];
+    const grant = await materialiseGrokGrant(
+        ACCOUNT,
+        deps(dir, (field) => writes.push(field))
+    );
+    const torn = `{"https://auth.example::client": {"key": "access-rotated", "refresh_token": "refresh-rot`;
+
+    await Bun.write(grant.authPath, torn);
+
+    expect(await grant.release()).toBe("missing");
+    expect(writes).toEqual([]);
+    expect(existsSync(grant.authPath)).toBe(false);
+
+    const aside = readdirSync(dir).filter((name) => name.startsWith(`${basename(grant.authPath)}.corrupt-`));
+
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dir, aside[0]), "utf8")).toBe(torn);
+    expect(statSync(join(dir, aside[0])).mode & 0o777).toBe(0o600);
+});
 
 test("the materialised path is scoped to this process, so two sessions of one account cannot collide", async () => {
     const dir = mkdtempSync(join(tmpdir(), "grok-grant-pid-"));
