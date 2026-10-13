@@ -30,13 +30,17 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 | gpt-6.1-sol | 9 | 8 | 7 |
 | sonnet-5-5 | 7 | 8 | 8 |
 | gpt-6-luna | 10 | 7 | 5 |
+| haiku-5-5 | 10 | 7 | 6 |
 | grok-4.7 | 7 | 7 | 5 |
 
 <!-- updated 2026-09-23: GPT-6 Sol/Luna, Opus 5.5 and grok-4.7 scored from launch benchmarks; opus-5, fable-5, gpt-5.6-* and grok-4.6 rows retired -->
 <!-- updated 2026-09-30: gpt-6.1-sol replaces gpt-6-sol and sonnet-5-5 replaces sonnet-5, both from launch data -->
+<!-- updated 2026-10-13 17:32: haiku-5-5 added from launch data; sonnet-5-5 cache reads halved -->
 
-List prices per MTok (input/output), from the vendor pages on 2026-09-30: fable-5-1 and gpt-6-astra
-$10/$50, opus-5-5 $4/$20, gpt-6.1-sol $2/$10, sonnet-5-5 $2/$10, gpt-6-luna $0.10/$0.50, grok-4.7 $2/$6.
+List prices per MTok (input/output), from the vendor pages on 2026-10-13: fable-5-1 and gpt-6-astra
+$10/$50, opus-5-5 $4/$20, gpt-6.1-sol $2/$10, sonnet-5-5 $2/$10, gpt-6-luna $0.10/$0.50,
+haiku-5-5 $0.10/$0.50 (5x for a prompt over 100K tokens), grok-4.7 $2/$6. Sonnet 5.5 cache reads cost
+$0.10 since 2026-10-07, half the earlier $0.20.
 gpt-6.1-sol has GPT-6 Sol's list price but cached input at $0.10 (5% of input, half of 6 Sol's), so
 cache-heavy agent loops cost less than on 6 Sol; Artificial Analysis measured $0.72 per Intelligence
 Index task against $1.05 for gpt-6-sol and $3.26 for gpt-6-astra.
@@ -63,7 +67,7 @@ How to apply:
 - Codex mechanical work and bounded exploration use Luna, and implementation requiring judgment uses GPT-6.1 Sol (`gpt-6.1-sol`, the `sol` alias). Do not pick `gpt-6-sol`: 6.1 Sol is stronger at the same list price and cheaper on cached input. Use Astra for the difficult cases described below.
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
 - Claude plan/implementation reviews: opus-5-5 by default, fable-5-1 when the problem needs the deepest reasoning. Codex code-review workers use gpt-6.1-sol unless the user requests another model. For a cheaper Claude worker, use sonnet-5-5.
-- Never Haiku for work that ships (thin wrapper/relay agents are fine).
+- Never Haiku 4.5 for work that ships (thin wrapper/relay agents are fine). Haiku 5.5 beats gpt-6-luna on Anthropic's launch benchmarks (Terminal-Bench 4.0 39.2% against 16.4%, OSWorld 2.1 72.4% against 48.9%), so it fits the same mechanical and exploration work Luna does; not design or user-facing work.
 - GPT-6 Astra, Sol and Luna use native Codex collaboration when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol and Luna (Terra still maps to `gpt-5.6-terra`); see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use Claude Code's `Agent`/`Workflow`, or the separate process in `references/claude.md`. A native Codex GPT subagent can drive that process, but remains the driver rather than the Claude execution model.
 - **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.
 - Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals, so route work needing supervised writes in a live checkout to Codex instead.
