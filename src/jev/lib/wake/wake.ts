@@ -1,8 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const { log } = logger.scoped("jev-wake");
 
@@ -36,25 +38,45 @@ export function wakeConfigPath(): string {
     return join(env.tools.getHome(), ".genesis-tools", "jev", "wake.json");
 }
 
+function isWakeGatePatch(value: unknown): value is Partial<WakeGate> {
+    return isJsonObject(value);
+}
+
+/** For display and `listen`: a gate file that cannot be read counts as the disabled default. */
 export function readWakeGate(): WakeGate {
     const path = wakeConfigPath();
     try {
         const parsed = SafeJSON.parse(readFileSync(path, "utf8"));
         return { ...DEFAULT_WAKE_GATE, ...(typeof parsed === "object" && parsed ? parsed : {}) };
-    } catch {
+    } catch (err) {
+        if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
+            log.warn({ err, path }, "Wake gate unreadable, treating it as disabled");
+        }
+
         return { ...DEFAULT_WAKE_GATE };
     }
+}
+
+/**
+ * The gate a write starts from. A file that exists but does not parse is copied aside first
+ * (`wake.json.corrupt-<time>`), so enabling or disabling never destroys the only copy of the saved
+ * phrases, account and languages. Disabling still works on such a file: it is the kill switch.
+ */
+export function readWakeGateForUpdate(): WakeGate {
+    const existing = readJsonFileForUpdateSync(wakeConfigPath(), { accepts: isWakeGatePatch });
+
+    return existing.state === "ok" ? { ...DEFAULT_WAKE_GATE, ...existing.value } : { ...DEFAULT_WAKE_GATE };
 }
 
 export function writeWakeGate(gate: WakeGate): void {
     const path = wakeConfigPath();
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    writeFileSync(path, `${SafeJSON.stringify(gate, undefined, 2)}\n`, { mode: 0o600 });
+    atomicWriteFileSync(path, `${SafeJSON.stringify(gate, undefined, 2)}\n`, { mode: 0o600 });
     log.debug({ enabled: gate.enabled, word: gate.word }, "Wake gate written");
 }
 
 export function disableWakeGate(): void {
-    const current = readWakeGate();
+    const current = readWakeGateForUpdate();
     writeWakeGate({ ...current, enabled: false });
 }
 

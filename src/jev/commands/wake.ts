@@ -16,6 +16,7 @@ import {
     disableWakeGate,
     fixtureWakeEvents,
     readWakeGate,
+    readWakeGateForUpdate,
     type WakeGate,
     wakeBlockedByEnv,
     writeWakeGate,
@@ -127,7 +128,7 @@ function enable(options: {
 
     const stt = parseSttProvider(typeof options.stt === "string" ? options.stt : "fixture");
     const phrases = parseWakePhrases(options.word);
-    const existing = readWakeGate();
+    const existing = readWakeGateForUpdate();
     if (!isInteractive() && !existing.enabled && !options.yes) {
         ui.err("Wake enable needs a TTY the first time.");
         ui.info(suggestCommand("tools jev wake enable", { add: ["--yes"] }));
