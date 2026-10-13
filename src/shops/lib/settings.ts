@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type {
     DefaultLandingView,
@@ -10,6 +10,7 @@ import type {
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 
 const log = logger.child({ component: "SettingsRepository" });
 
@@ -95,18 +96,34 @@ export class SettingsRepository {
             await this.migrateLegacyForUser1();
         }
 
+        // Only a missing file means defaults. Any other failure throws, so a patch is never written over
+        // a file this process could not read: that would replace the user's settings with defaults.
+        const filePath = this.path(userId);
+        let raw: string;
+
         try {
-            const raw = await readFile(this.path(userId), "utf8");
-            const parsed = SafeJSON.parse(raw) as Partial<SettingsPayload>;
-            return mergeWithDefaults(parsed);
+            raw = await readFile(filePath, "utf8");
         } catch (err) {
             if (isFileNotFound(err)) {
                 return cloneDefaults();
             }
 
-            log.warn({ err, path: this.path(userId) }, "settings: failed to read; falling back to defaults");
-            return cloneDefaults();
+            throw new Error(`settings: cannot read ${filePath}; left untouched`, { cause: err });
         }
+
+        let parsed: unknown;
+
+        try {
+            parsed = SafeJSON.parse(raw);
+        } catch (err) {
+            throw new Error(`settings: ${filePath} does not parse; left untouched, fix or move it`, { cause: err });
+        }
+
+        if (!isJsonObject(parsed)) {
+            throw new Error(`settings: ${filePath} is not a JSON object; left untouched, fix or move it`);
+        }
+
+        return mergeWithDefaults(parsed as Partial<SettingsPayload>);
     }
 
     async patch(userId: number, patch: SettingsPatch): Promise<SettingsPayload> {
@@ -134,10 +151,7 @@ export class SettingsRepository {
             shops: patch.shops ? { ...current.shops, ...patch.shops } : current.shops,
         };
         const filePath = this.path(userId);
-        await ensureDir(filePath);
-        const tmp = `${filePath}.tmp`;
-        await writeFile(tmp, SafeJSON.stringify(next, null, 2), "utf8");
-        await rename(tmp, filePath);
+        atomicWriteFileSync(filePath, SafeJSON.stringify(next, null, 2));
         log.info(
             {
                 userId,
@@ -219,10 +233,6 @@ function validatePatch(patch: SettingsPatch): void {
             }
         }
     }
-}
-
-async function ensureDir(filePath: string): Promise<void> {
-    await mkdir(dirname(filePath), { recursive: true });
 }
 
 function isFileNotFound(err: unknown): boolean {

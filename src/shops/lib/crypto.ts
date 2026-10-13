@@ -1,7 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, linkSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;
@@ -14,27 +16,58 @@ function defaultKeyPath(): string {
     return env.shops.getSecretKeyPath() ?? join(env.tools.getHome(), ".genesis-tools", "shops", ".secret-key");
 }
 
+function readKey(path: string): Buffer {
+    const raw = readFileSync(path);
+    if (raw.length !== KEY_BYTES) {
+        throw new Error(`Secret key at ${path} has wrong length (${raw.length}); expected ${KEY_BYTES}`);
+    }
+
+    return raw;
+}
+
+function isEexist(err: unknown): boolean {
+    return err instanceof Error && "code" in err && err.code === "EEXIST";
+}
+
+/**
+ * Create the key so that no process ever sees a short key or a second key. The full key is written and
+ * fsync'd under a temp name first, then hard-linked to the real name: `link` never replaces an existing
+ * file, so when a concurrent first run got there first it fails with EEXIST and that run's key is kept.
+ */
+function createKeyFile(path: string): void {
+    const tmp = `${path}.${process.pid}.${Date.now()}.new`;
+    atomicWriteFileSync(tmp, randomBytes(KEY_BYTES), { mode: 0o600 });
+
+    try {
+        linkSync(tmp, path);
+        logger.info({ path }, "shops: created the credentials key");
+    } catch (err) {
+        if (!isEexist(err)) {
+            throw err;
+        }
+
+        logger.debug({ path }, "shops: another run created the credentials key first; using that one");
+    } finally {
+        try {
+            unlinkSync(tmp);
+        } catch (cleanupErr) {
+            logger.debug({ err: cleanupErr, tmp }, "shops: could not remove the temp key name");
+        }
+    }
+}
+
 function loadOrCreateKey(): Buffer {
     if (cachedKey) {
         return cachedKey;
     }
 
     const path = defaultKeyPath();
-    if (existsSync(path)) {
-        const raw = readFileSync(path);
-        if (raw.length !== KEY_BYTES) {
-            throw new Error(`Secret key at ${path} has wrong length (${raw.length}); expected ${KEY_BYTES}`);
-        }
 
-        cachedKey = raw;
-        return cachedKey;
+    if (!existsSync(path)) {
+        createKeyFile(path);
     }
 
-    mkdirSync(dirname(path), { recursive: true });
-    const fresh = randomBytes(KEY_BYTES);
-    writeFileSync(path, fresh, { mode: 0o600 });
-    chmodSync(path, 0o600);
-    cachedKey = fresh;
+    cachedKey = readKey(path);
     return cachedKey;
 }
 

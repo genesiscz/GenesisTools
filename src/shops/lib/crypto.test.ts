@@ -1,5 +1,7 @@
-import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { describe, expect, it, spyOn } from "bun:test";
+import { randomBytes } from "node:crypto";
+import * as fs from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptCredentials, encryptCredentials, resetCryptoForTest } from "@app/shops/lib/crypto";
@@ -30,6 +32,32 @@ describe("shops/crypto", () => {
         expect(decryptCredentials(a)).toBe("hello");
         expect(decryptCredentials(b)).toBe("hello");
         expect(existsSync(join(dir, ".secret-key"))).toBe(true);
+        expect(readdirSync(dir)).toEqual([".secret-key"]);
+        expect(readFileSync(join(dir, ".secret-key")).length).toBe(32);
+        expect(statSync(join(dir, ".secret-key")).mode & 0o777).toBe(0o600);
+    });
+
+    it("keeps the key a concurrent first run created after this run saw no key", () => {
+        const dir = freshKeyDir();
+        const keyPath = join(dir, ".secret-key");
+        const winner = randomBytes(32);
+        writeFileSync(keyPath, winner, { mode: 0o600 });
+        const realExists = fs.existsSync;
+        // This run checked before the other run's key landed, so it believes there is no key yet.
+        const spy = spyOn(fs, "existsSync").mockImplementation((path) => path !== keyPath && realExists(path));
+
+        let blob: string;
+
+        try {
+            blob = encryptCredentials("hello");
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(readFileSync(keyPath).equals(winner)).toBe(true);
+        expect(readdirSync(dir)).toEqual([".secret-key"]);
+        resetCryptoForTest();
+        expect(decryptCredentials(blob)).toBe("hello");
     });
 
     it("rejects a tampered ciphertext (auth tag check)", () => {

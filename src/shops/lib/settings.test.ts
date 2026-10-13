@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SettingsRepository } from "@app/shops/lib/settings";
@@ -120,5 +120,36 @@ describe("SettingsRepository (per-user)", () => {
         const settings = await repo.read(1);
         expect(settings.default_cooldown_hours).toBe(42);
         expect(settings.theme).toBe("wow");
+    });
+
+    it("never replaces a settings file that does not parse with defaults plus the patch", async () => {
+        const baseDir = join(dir, "settings");
+        mkdirSync(baseDir, { recursive: true });
+        const torn = '{"theme": "wow", "default_cooldown_hours": 6, "shops": {"https://shop.example": {"rate_li';
+        writeFileSync(join(baseDir, "2.json"), torn);
+        const repo = new SettingsRepository(baseDir);
+
+        await expect(repo.patch(2, { default_cooldown_hours: 12 })).rejects.toThrow(/left untouched/);
+        await expect(repo.read(2)).rejects.toThrow(/does not parse/);
+        expect(readFileSync(join(baseDir, "2.json"), "utf8")).toBe(torn);
+    });
+
+    it("treats a read error other than a missing file as an error, not as defaults", async () => {
+        const baseDir = join(dir, "settings");
+        mkdirSync(join(baseDir, "2.json"), { recursive: true });
+        const repo = new SettingsRepository(baseDir);
+
+        await expect(repo.read(2)).rejects.toThrow(/cannot read/);
+        await expect(repo.patch(2, { theme: "wow" })).rejects.toThrow(/cannot read/);
+    });
+
+    it("writes a patch through a unique temp file and leaves no temp file behind", async () => {
+        const baseDir = join(dir, "settings");
+        const repo = new SettingsRepository(baseDir);
+        await repo.patch(2, { theme: "wow" });
+        await repo.patch(2, { default_cooldown_hours: 5 });
+
+        expect(readdirSync(baseDir)).toEqual(["2.json"]);
+        expect(await repo.read(2)).toMatchObject({ theme: "wow", default_cooldown_hours: 5 });
     });
 });
