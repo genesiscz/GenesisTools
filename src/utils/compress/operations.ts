@@ -3,7 +3,14 @@ import { basename, dirname, join } from "node:path";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { compressFile, decompressFile, digestZstdContent, sourceUnchanged, verifyCompressedFile } from "./file";
 import { type LedgerRecord, recordCompression } from "./ledger";
-import { type CompressPreset, MIN_USEFUL_SAVING, resolvePreset, sampleFile, trialSaving } from "./presets";
+import {
+    type CompressPreset,
+    DEFAULT_MIN_SAVING,
+    MEASURED_MEDIA_NOTE,
+    MIN_USEFUL_SAVING,
+    resolvePreset,
+    trialSaving,
+} from "./presets";
 import { removePath } from "./retention";
 import {
     archiveBaseName,
@@ -78,9 +85,11 @@ export interface CompressPathOptions {
     preset?: CompressPreset;
     /** Overrides the preset's level. */
     level?: number;
+    /** Refuse when a trial saves less than this share (default {@link DEFAULT_MIN_SAVING}, 0.30). */
+    minSaving?: number;
     /** Remove the original after the output is verified. Off by default: the original is kept. */
     removeOriginal?: boolean;
-    /** Compress even when the preset says the data is already compressed. */
+    /** Compress even when the trial saves too little or the preset stores. */
     force?: boolean;
     caller: string;
 }
@@ -88,6 +97,92 @@ export interface CompressPathOptions {
 export interface CompressPathResult {
     record: LedgerRecord;
     warning?: string;
+}
+
+export interface CompressPathPlan {
+    source: string;
+    target: string;
+    isFolder: boolean;
+    preset: CompressPreset;
+    level: number;
+    inputBytes: number;
+    /** Share a level-3 trial on a sample saved; NaN when there was nothing to sample. */
+    trialSaving: number;
+    /** Expected output size from the trial. */
+    estimatedBytes: number;
+    /** Why the run would not compress (too little saving, an existing output); undefined when it would. */
+    refusal?: string;
+    reason: string;
+}
+
+/** The first `bytes` of a folder's tar stream: the sample a folder's trial compresses. */
+export async function sampleFolder(path: string, bytes = 32 * 1024 * 1024): Promise<Uint8Array> {
+    const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(path), basename(path)], {
+        stdout: "pipe",
+        stderr: "ignore",
+        env: { ...process.env, COPYFILE_DISABLE: "1" },
+    });
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+
+    for await (const chunk of proc.stdout) {
+        chunks.push(chunk);
+        total += chunk.length;
+
+        if (total >= bytes) {
+            proc.kill();
+            break;
+        }
+    }
+
+    await proc.exited;
+    return Buffer.concat(chunks).subarray(0, bytes);
+}
+
+/**
+ * What {@link compressPath} would do, from a trial on a sample (1 MiB of a file, the first 32 MiB of a folder's tar
+ * stream). Writes nothing: this is the dry run, and the numbers `tools compress pack --dry-run` prints.
+ */
+export async function planCompressPath(
+    options: Omit<CompressPathOptions, "caller" | "removeOriginal">
+): Promise<CompressPathPlan> {
+    const { source } = options;
+
+    if (!existsSync(source)) {
+        throw new CompressRefusal(`${source} does not exist`);
+    }
+
+    const isFolder = statSync(source).isDirectory();
+    const choice = resolvePreset(source);
+    const preset = options.preset ?? choice.preset;
+    const level = options.level ?? preset.level;
+    const target = options.target ?? `${source}${isFolder ? FOLDER_ARCHIVE_SUFFIX : ZSTD_SUFFIX}`;
+    const inputBytes = isFolder ? folderBytes(source) : statSync(source).size;
+    const saving = isFolder ? trialSaving(await sampleFolder(source), { level: 3 }) : choice.trialSaving;
+    const minSaving = options.minSaving ?? DEFAULT_MIN_SAVING;
+    const plan: CompressPathPlan = {
+        source,
+        target,
+        isFolder,
+        preset,
+        level,
+        inputBytes,
+        trialSaving: saving,
+        estimatedBytes: Math.round(inputBytes * (Number.isFinite(saving) ? 1 - saving : 1)),
+        reason: isFolder
+            ? choice.sniffed.reason
+            : `${choice.sniffed.reason}, ${choice.sniffed.entropy.toFixed(2)} bits/byte`,
+    };
+
+    if (existsSync(target)) {
+        plan.refusal = `${target} already exists; move it away or pass another --output`;
+    } else if (!options.force && Number.isFinite(saving) && saving < minSaving) {
+        plan.refusal = `a level-3 trial saved ${(saving * 100).toFixed(1)}%, under the ${(minSaving * 100).toFixed(0)}% minimum (${choice.sniffed.reason}); ${MEASURED_MEDIA_NOTE}. Pass --force or a lower --min-saving to compress anyway`;
+    } else if (!options.force && preset.store) {
+        plan.refusal = `the ${preset.name} preset stores data as it is (${MEASURED_MEDIA_NOTE}); pass --force to compress anyway`;
+    }
+
+    return plan;
 }
 
 /**
@@ -103,24 +198,13 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
         throw new CompressRefusal(`${source} does not exist`);
     }
 
-    const isFolder = statSync(source).isDirectory();
-    const choice = options.preset ? undefined : resolvePreset(source);
-    const preset = options.preset ?? choice!.preset;
-    const level = options.level ?? preset.level;
-    const target = options.target ?? `${source}${isFolder ? FOLDER_ARCHIVE_SUFFIX : ZSTD_SUFFIX}`;
+    const plan = await planCompressPath(options);
 
-    if (preset.store && !options.force) {
-        throw new CompressRefusal(
-            `${source}: ${choice?.warning ?? "the media preset stores data as it is"}; pass --force to compress anyway`
-        );
+    if (plan.refusal) {
+        throw new CompressRefusal(`${source}: ${plan.refusal}`);
     }
 
-    if (existsSync(target)) {
-        throw new CompressRefusal(`${target} already exists; move it away or pass another --output`);
-    }
-
-    const inputBytes = isFolder ? folderBytes(source) : statSync(source).size;
-    const saving = choice?.trialSaving ?? (isFolder ? Number.NaN : trialSaving(sampleFile(source), { level: 3 }));
+    const { isFolder, preset, level, target, inputBytes, trialSaving: saving } = plan;
     assertRoomFor({ outputDir: dirname(target), inputBytes, keptShare: Number.isFinite(saving) ? 1 - saving : 1 });
     const startedAt = new Date().toISOString();
     const params = { level, long: preset.long, frameBytes: preset.frameBytes, threads: preset.threads };
@@ -195,7 +279,7 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
     const warning =
         Number.isFinite(saving) && saving < MIN_USEFUL_SAVING
             ? `saved only ${(saving * 100).toFixed(2)}% in the trial`
-            : choice?.warning;
+            : undefined;
     return { record, warning };
 }
 

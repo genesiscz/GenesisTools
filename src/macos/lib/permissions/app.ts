@@ -890,7 +890,7 @@ export function pinnedRetiredBundles({
  * restore with `tools compress unpack`), and removes packed copies past the count or age cap. Runs after
  * the install window, so native commands are refused only for the swap. A failure is logged, never fatal.
  */
-async function packRetiredBundles(retiredRoot: string): Promise<void> {
+export async function packRetiredBundles(retiredRoot: string): Promise<void> {
     if (!existsSync(retiredRoot)) {
         return;
     }

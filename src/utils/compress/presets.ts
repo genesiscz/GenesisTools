@@ -103,6 +103,14 @@ export function isPresetName(value: string): value is PresetName {
 
 /** Saving below this share means the data is already compressed (MEASURED on photos and video: 0.2% to 1.8%). */
 export const MIN_USEFUL_SAVING = 0.03;
+/**
+ * `tools compress pack` refuses below this saving unless forced: a second copy that is barely smaller is not worth
+ * the risk and the time (Martin's rule, 2026-10-13: compress only when it saves at least 30%).
+ */
+export const DEFAULT_MIN_SAVING = 0.3;
+/** The measured savings behind the media default, quoted in every refusal so the reader sees why. */
+export const MEASURED_MEDIA_NOTE =
+    "measured 2026-10-13 with zstd -19 --long=27: .mov 1.1%, .mp4 0.2-0.9% (screen recordings 14-36%), .heic 0.2-1.9%, .jpg 0.2-4.4%, .png 0-5.4%, .wav 7.2%, .m4a 4.9%, .mp3 1.0%, .pdf 19-29%, .docx 4-8%, .xlsx 13.8%; text 43-94%";
 
 const SAMPLE_BYTES = 1024 * 1024;
 

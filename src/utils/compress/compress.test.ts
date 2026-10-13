@@ -24,7 +24,7 @@ import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { planDailyCompression } from "./daily";
 import { compressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
-import { compressPath, expandPath, verifyPath } from "./operations";
+import { compressPath, expandPath, planCompressPath, verifyPath } from "./operations";
 import { PRESETS, resolvePreset, sniffSample } from "./presets";
 import {
     applyFolderRetention,
@@ -215,7 +215,7 @@ describe("folder archives", () => {
 });
 
 describe("presets", () => {
-    it("sniffs signatures, text and random bytes, and refuses already-compressed data", () => {
+    it("sniffs signatures, text and random bytes, and refuses already-compressed data", async () => {
         const dir = scratch("presets");
         const random = join(dir, "random.bin");
         writeFileSync(random, crypto.getRandomValues(new Uint8Array(256 * 1024)));
@@ -229,7 +229,38 @@ describe("presets", () => {
         const choice = resolvePreset(random);
         expect(choice.preset.name).toBe("media");
         expect(choice.warning).toContain("already compressed");
-        expect(compressPath({ source: random, caller: "test" })).rejects.toThrow("--force");
+        await expect(compressPath({ source: random, caller: "test" })).rejects.toThrow("--force");
+    });
+
+    it("plans without writing: skips under the 30% minimum with the measured numbers, and --force or a lower minimum lifts it", async () => {
+        const dir = scratch("plan");
+        const half = join(dir, "half.bin");
+        // Half random bytes, half zeros: a trial saves about 50%.
+        writeFileSync(
+            half,
+            Buffer.concat([crypto.getRandomValues(new Uint8Array(128 * 1024)), Buffer.alloc(128 * 1024)])
+        );
+        const noisy = join(dir, "noisy.bin");
+        // Mostly random: saves about 10%, under the default minimum.
+        writeFileSync(
+            noisy,
+            Buffer.concat([crypto.getRandomValues(new Uint8Array(230 * 1024)), Buffer.alloc(26 * 1024)])
+        );
+
+        const plain = await planCompressPath({ source: half, preset: PRESETS.binary });
+        const skipped = await planCompressPath({ source: noisy, preset: PRESETS.binary });
+
+        expect(plain.refusal).toBeUndefined();
+        expect(plain.trialSaving).toBeGreaterThan(0.4);
+        expect(skipped.refusal).toContain("under the 30% minimum");
+        expect(skipped.refusal).toContain(".mov 1.1%");
+        expect(
+            (await planCompressPath({ source: noisy, preset: PRESETS.binary, minSaving: 0.05 })).refusal
+        ).toBeUndefined();
+        expect(
+            (await planCompressPath({ source: noisy, preset: PRESETS.binary, force: true })).refusal
+        ).toBeUndefined();
+        expect(readdirSync(dir).sort()).toEqual(["half.bin", "noisy.bin"]);
     });
 });
 
