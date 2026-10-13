@@ -10,7 +10,7 @@ export function registerConfigCommand(program: Command): void {
         .description("Read/update task retention and GC settings")
         .option("--session-retention-days <n>", "Delete sessions older than N days on GC")
         .option("--gc-on-run-start <onoff>", `Run GC at the start of each ${toolCommand("task run")} (on|off)`)
-        .action((opts: { sessionRetentionDays?: string; gcOnRunStart?: string }) => {
+        .action(async (opts: { sessionRetentionDays?: string; gcOnRunStart?: string }) => {
             let next = loadTaskToolConfig();
 
             if (opts.sessionRetentionDays !== undefined) {
@@ -20,7 +20,7 @@ export function registerConfigCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                next = saveTaskToolConfig({ sessionRetentionDays: days });
+                next = await saveTaskToolConfig({ sessionRetentionDays: days });
             }
 
             if (opts.gcOnRunStart !== undefined) {
@@ -29,7 +29,7 @@ export function registerConfigCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                next = saveTaskToolConfig({ gcOnRunStart: opts.gcOnRunStart === "on" });
+                next = await saveTaskToolConfig({ gcOnRunStart: opts.gcOnRunStart === "on" });
             }
 
             out.result(SafeJSON.stringify(next, null, 2));

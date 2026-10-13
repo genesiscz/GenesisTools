@@ -4,10 +4,13 @@ setupStorageSandbox();
 
 import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadTaskToolConfig, saveTaskToolConfig } from "@app/task/lib/config";
 import { jsonlPath, sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 describe("TaskSessionStore.resolveRunSessionName", () => {
     it("uses requested name when no session files exist", async () => {
@@ -354,5 +357,28 @@ describe("TaskSessionStore.deleteSession", () => {
         }
 
         expect([paths.jsonl, paths.uiJsonl, paths.stdout, paths.stderr, paths.meta].filter(existsSync)).toEqual([]);
+    });
+});
+
+describe("saveTaskToolConfig", () => {
+    it("keeps the recentSession key the session store wrote into the same config file", async () => {
+        const path = new Storage("task").getConfigPath();
+        await new TaskSessionStore().setRecentSession("keep-me");
+
+        const next = await saveTaskToolConfig({ sessionRetentionDays: 90 }, path);
+        const saved = SafeJSON.parse(readFileSync(path, "utf8"));
+
+        expect(next).toEqual({ sessionRetentionDays: 90, gcOnRunStart: true });
+        expect(saved).toEqual({ recentSession: "keep-me", sessionRetentionDays: 90 });
+    });
+
+    it("refuses to replace a config that does not parse, and turns the run-start GC off", async () => {
+        const path = new Storage("task").getConfigPath();
+        const torn = '{"recentSession": "keep-me", "sessionRetentionDays": 365, "gcOn';
+        writeFileSync(path, torn);
+
+        await expect(saveTaskToolConfig({ gcOnRunStart: false }, path)).rejects.toThrow(/left untouched/);
+        expect(readFileSync(path, "utf8")).toBe(torn);
+        expect(loadTaskToolConfig(path)).toEqual({ sessionRetentionDays: 30, gcOnRunStart: false });
     });
 });

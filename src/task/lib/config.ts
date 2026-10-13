@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { taskConfigPath } from "@app/task/lib/paths";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 export interface TaskToolConfig {
     sessionRetentionDays: number;
@@ -41,24 +42,55 @@ function normalizeTaskToolConfig(input: unknown): Partial<TaskToolConfig> {
     return out;
 }
 
-export function loadTaskToolConfig(path = configPath()): TaskToolConfig {
+/**
+ * The whole config object on disk, every key kept: `Storage("task")` keeps `recentSession` in the same file.
+ * Only a missing file is empty. A file that exists but cannot be read or does not parse throws.
+ */
+function readRawTaskConfig(path: string): Record<string, unknown> {
     if (!existsSync(path)) {
-        return DEFAULT;
+        return {};
     }
 
-    try {
-        return { ...DEFAULT, ...normalizeTaskToolConfig(SafeJSON.parse(readFileSync(path, "utf8"))) };
-    } catch (err) {
-        logger.warn({ err, path }, "task config: failed to load; falling back to defaults");
+    let parsed: unknown;
 
-        return DEFAULT;
+    try {
+        parsed = SafeJSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+        throw new Error(`Invalid task config at ${path}: it cannot be read or does not parse, left untouched`, {
+            cause: error,
+        });
+    }
+
+    if (!isJsonObject(parsed)) {
+        throw new Error(`Invalid task config at ${path}: expected a JSON object, left untouched`);
+    }
+
+    return parsed;
+}
+
+export function loadTaskToolConfig(path = configPath()): TaskToolConfig {
+    try {
+        return { ...DEFAULT, ...normalizeTaskToolConfig(readRawTaskConfig(path)) };
+    } catch (err) {
+        // The retention the user set is unknown, so the run-start GC must not delete sessions by the default.
+        logger.warn({ err, path }, "task config: failed to load; using defaults with run-start GC off");
+
+        return { ...DEFAULT, gcOnRunStart: false };
     }
 }
 
-export function saveTaskToolConfig(patch: Partial<TaskToolConfig>, path = configPath()): TaskToolConfig {
-    const next = { ...loadTaskToolConfig(path), ...patch };
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, SafeJSON.stringify(next, null, 2));
+/**
+ * Merge a patch into the config file under the lock `Storage("task").atomicConfigUpdate` takes, so a
+ * concurrent `recentSession` write is not lost. Refuses an existing file that does not parse.
+ */
+export async function saveTaskToolConfig(patch: Partial<TaskToolConfig>, path = configPath()): Promise<TaskToolConfig> {
+    return new Storage("task").withFileLock({
+        file: path,
+        fn: async () => {
+            const next = { ...readRawTaskConfig(path), ...patch };
+            atomicWriteFileSync(path, SafeJSON.stringify(next, null, 2));
 
-    return next;
+            return { ...DEFAULT, ...normalizeTaskToolConfig(next) };
+        },
+    });
 }
