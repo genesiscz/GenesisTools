@@ -4,6 +4,7 @@ import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 /**
  * The env a token-pinned Claude Code process needs. Shared by `start`, `exec`
@@ -62,7 +63,8 @@ export async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
             updated = SafeJSON.stringify(config, null, 2);
         }
 
-        await Bun.write(claudeJson, updated);
+        // Claude Code owns this file: keep the replaced copy as .bak, and never publish a half-written one.
+        atomicWriteFileSync(claudeJson, updated, { backup: true });
         logger.debug({ path: claudeJson }, "Set hasCompletedOnboarding for CLAUDE_CODE_OAUTH_TOKEN launch");
     } catch (error) {
         logger.warn({ error, path: claudeJson }, "Could not patch hasCompletedOnboarding");

@@ -1,10 +1,10 @@
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RestoreCandidate, SessionSnapshot, SnapshotEntry } from "@app/claude/lib/cmux/types";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage/storage";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 export function snapshotDir(): string {
     return join(new Storage("claude-code").getBaseDir(), "cmux-snapshots");
@@ -37,8 +37,7 @@ export function toSnapshotEntries(candidates: RestoreCandidate[], workspaceIdByS
 
 export async function saveSnapshot(snapshot: SessionSnapshot): Promise<string> {
     const path = snapshotPath(snapshot.name);
-    await mkdir(snapshotDir(), { recursive: true });
-    await writeFile(path, `${SafeJSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    atomicWriteFileSync(path, `${SafeJSON.stringify(snapshot, null, 2)}\n`);
     logger.debug({ path, entries: snapshot.entries.length }, "[claude-cmux] snapshot saved");
 
     return path;

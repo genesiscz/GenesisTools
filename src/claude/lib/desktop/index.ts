@@ -1,8 +1,9 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export const CLAUDE_CODE_SKILLS = join(homedir(), ".claude", "skills");
 export const CLAUDE_DESKTOP_BASE = join(
@@ -143,7 +144,7 @@ export function installSkill(skill: LocalSkill, manifest: Manifest, manifestPath
 
 export function writeManifest(manifest: Manifest, manifestPath: string): void {
     manifest.lastUpdated = Date.now();
-    writeFileSync(manifestPath, SafeJSON.stringify(manifest, null, 2));
+    atomicWriteFileSync(manifestPath, SafeJSON.stringify(manifest, null, 2));
 }
 
 export function readManifest(manifestPath: string): Manifest {

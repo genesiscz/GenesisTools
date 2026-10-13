@@ -6,6 +6,8 @@ import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 import { CLAUDE_CODE_CLIENT_ID, fetchOAuthProfile } from "./auth";
 
 /**
@@ -16,6 +18,8 @@ import { CLAUDE_CODE_CLIENT_ID, fetchOAuthProfile } from "./auth";
  */
 const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const VALID_KEYCHAIN_USER = /^[a-zA-Z0-9._-]+$/;
+/** `security` exits with the low byte of the OSStatus: 44 is errSecItemNotFound, the one exit that means "absent". */
+const SECURITY_ITEM_NOT_FOUND = 44;
 
 export interface ClaudeAiOauthCredentials {
     accessToken: string;
@@ -32,6 +36,59 @@ interface KeychainPayload {
     claudeAiOauth?: ClaudeAiOauthCredentials;
     [key: string]: unknown;
 }
+
+/** What the keychain holds: nothing, a payload, or an entry that exists but could not be read. */
+export type KeychainEntryRead =
+    | { state: "absent" }
+    | { state: "ok"; payload: KeychainPayload }
+    | { state: "unreadable"; reason: string };
+
+export interface SecurityCliResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+}
+
+/** A write refused because the entry it would replace exists but could not be read. */
+export class KeychainUnreadableError extends Error {
+    constructor(reason: string) {
+        super(
+            `Claude Code's keychain login exists but cannot be read (${reason}). It was left untouched. ` +
+                "Unlock the login keychain, or allow access when macOS asks, then run the command again."
+        );
+        this.name = "KeychainUnreadableError";
+    }
+}
+
+/**
+ * The one door to the `security` CLI. Claude Code's login item is machine-global: a test that reached it
+ * would read, or overwrite, the user's real login. So the real door refuses under `bun test` (RUN_KEYCHAIN=1
+ * opts in), and tests replace `run` with a fake that records every call.
+ */
+export const claudeKeychainCli = {
+    async run(args: string[], stdin?: string): Promise<SecurityCliResult> {
+        if (isTestProcess() && !env.isFlag("RUN_KEYCHAIN")) {
+            throw new Error(
+                "The security CLI is blocked under bun test: Claude Code's keychain login is machine-global. " +
+                    "Fake claudeKeychainCli.run instead."
+            );
+        }
+
+        const proc = Bun.spawn({
+            cmd: ["security", ...args],
+            stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+
+        return { exitCode, stdout, stderr };
+    },
+};
 
 function keychainUser(): string {
     let user: string;
@@ -76,62 +133,105 @@ export async function keychainOwnerUuidOffline(): Promise<string | undefined> {
     }
 }
 
-/** Read the raw keychain payload Claude Code stores. Returns null when absent. */
-export async function readKeychainPayload(): Promise<KeychainPayload | null> {
+/**
+ * Read Claude Code's keychain entry, keeping "there is none" apart from "there is one we cannot read". Only
+ * errSecItemNotFound (or an empty password, which holds nothing) is absent. Any other exit (a locked
+ * keychain, a denied access prompt) or a payload that is not a JSON object is unreadable, and a write must
+ * then refuse: it would replace a login it could neither back up nor identify.
+ */
+export async function readKeychainEntry(): Promise<KeychainEntryRead> {
     // No keychain off macOS (a Linux devbox, CI): that is "no ambient
     // identity", not an error. Status, the rotated-creds sync and the doctor
     // degrade gracefully; pinned sessions via CLAUDE_CODE_OAUTH_TOKEN are the
     // model there. The WRITE paths stay macOS-only.
     if (process.platform !== "darwin") {
         logger.debug("[keychain] no keychain on this platform — no ambient identity");
-        return null;
+        return { state: "absent" };
     }
 
-    const proc = Bun.spawn({
-        cmd: ["security", "find-generic-password", "-a", keychainUser(), "-w", "-s", KEYCHAIN_SERVICE],
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const text = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
+    const result = await claudeKeychainCli.run([
+        "find-generic-password",
+        "-a",
+        keychainUser(),
+        "-w",
+        "-s",
+        KEYCHAIN_SERVICE,
+    ]);
 
-    if (exitCode !== 0 || !text.trim()) {
-        logger.debug(`[keychain] no "${KEYCHAIN_SERVICE}" entry (exit ${exitCode})`);
-        return null;
+    if (result.exitCode === SECURITY_ITEM_NOT_FOUND) {
+        logger.debug(`[keychain] no "${KEYCHAIN_SERVICE}" entry`);
+        return { state: "absent" };
     }
+
+    if (result.exitCode !== 0) {
+        const detail = result.stderr.trim().slice(0, 300) || "no message";
+        return { state: "unreadable", reason: `security exited ${result.exitCode}: ${detail}` };
+    }
+
+    const text = result.stdout.trim();
+
+    if (!text) {
+        logger.debug(`[keychain] "${KEYCHAIN_SERVICE}" entry is empty`);
+        return { state: "absent" };
+    }
+
+    let parsed: unknown;
 
     try {
-        return SafeJSON.parse(text.trim(), { strict: true }) as KeychainPayload;
+        parsed = SafeJSON.parse(text, { strict: true });
     } catch (err) {
-        logger.warn({ err }, "[keychain] payload is not valid JSON");
+        return { state: "unreadable", reason: `the payload is not valid JSON (${String(err)})` };
+    }
+
+    if (!isJsonObject(parsed)) {
+        return { state: "unreadable", reason: "the payload is not a JSON object" };
+    }
+
+    return { state: "ok", payload: parsed as KeychainPayload };
+}
+
+/**
+ * The raw payload Claude Code stores, or null when there is none. An unreadable entry is null here too,
+ * with a warning: callers of this one only report. A path that writes the keychain decides on
+ * {@link readKeychainEntry}, and {@link writeKeychainPayload} checks it again itself.
+ */
+export async function readKeychainPayload(): Promise<KeychainPayload | null> {
+    const entry = await readKeychainEntry();
+
+    if (entry.state === "unreadable") {
+        logger.warn(`[keychain] "${KEYCHAIN_SERVICE}" entry is unreadable (${entry.reason})`);
         return null;
     }
+
+    return entry.state === "ok" ? entry.payload : null;
 }
 
 /**
  * Write the payload the way Claude Code does (`security -i` stdin with the
  * hex-encoded password, argv fallback for oversized payloads). `-U` updates
  * an existing entry in place.
+ *
+ * Refuses (KeychainUnreadableError) when the entry it would replace exists but cannot be read. The check
+ * sits here, right before the overwrite, so a caller that never thought to look is covered too.
  */
 export async function writeKeychainPayload(payload: KeychainPayload): Promise<void> {
     assertMacOS();
+
+    const current = await readKeychainEntry();
+
+    if (current.state === "unreadable") {
+        throw new KeychainUnreadableError(current.reason);
+    }
 
     const json = SafeJSON.stringify(payload);
     const hex = Buffer.from(json, "utf-8").toString("hex");
     const user = keychainUser();
     const stdinCommand = `add-generic-password -U -a "${user}" -s "${KEYCHAIN_SERVICE}" -X "${hex}"\n`;
 
-    const proc = Bun.spawn({
-        cmd: ["security", "-i"],
-        stdin: new TextEncoder().encode(stdinCommand),
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
+    const result = await claudeKeychainCli.run(["-i"], stdinCommand);
 
-    if (exitCode !== 0) {
-        const stderr = await new Response(proc.stderr).text();
-        throw new Error(`Keychain write failed (exit ${exitCode}): ${stderr.trim().slice(0, 300)}`);
+    if (result.exitCode !== 0) {
+        throw new Error(`Keychain write failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 300)}`);
     }
 
     logger.info("[keychain] wrote Claude Code credentials entry");
@@ -141,12 +241,14 @@ export async function writeKeychainPayload(payload: KeychainPayload): Promise<vo
 export async function deleteKeychainEntry(): Promise<boolean> {
     assertMacOS();
 
-    const proc = Bun.spawn({
-        cmd: ["security", "delete-generic-password", "-a", keychainUser(), "-s", KEYCHAIN_SERVICE],
-        stdout: "ignore",
-        stderr: "ignore",
-    });
-    const ok = (await proc.exited) === 0;
+    const result = await claudeKeychainCli.run([
+        "delete-generic-password",
+        "-a",
+        keychainUser(),
+        "-s",
+        KEYCHAIN_SERVICE,
+    ]);
+    const ok = result.exitCode === 0;
     logger.info(`[keychain] delete entry: ${ok ? "removed" : "not present"}`);
     return ok;
 }
@@ -195,6 +297,7 @@ export async function resolveKeychainAccountUuid(oauth: ClaudeAiOauthCredentials
 
 export type KeychainSyncResult =
     | { status: "no-entry" }
+    | { status: "unreadable"; reason: string }
     | { status: "no-identity" }
     | { status: "no-match"; uuid: string }
     | { status: "unchanged"; account: string; uuid: string }
@@ -207,8 +310,14 @@ export type KeychainSyncResult =
  * /login to a different account or /logout inside Claude Code directly).
  */
 export async function syncKeychainToConfig(aiConfig: AIConfig): Promise<KeychainSyncResult> {
-    const payload = await readKeychainPayload();
-    const oauth = payload?.claudeAiOauth;
+    const entry = await readKeychainEntry();
+
+    if (entry.state === "unreadable") {
+        logger.warn(`[keychain] entry is unreadable (${entry.reason}) — not syncing, and nothing may overwrite it`);
+        return { status: "unreadable", reason: entry.reason };
+    }
+
+    const oauth = entry.state === "ok" ? entry.payload.claudeAiOauth : undefined;
 
     if (!oauth?.accessToken || !oauth.refreshToken) {
         return { status: "no-entry" };

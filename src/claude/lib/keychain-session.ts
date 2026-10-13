@@ -5,7 +5,8 @@ import {
     backupKeychainPayload,
     deleteKeychainEntry,
     type KeychainSyncResult,
-    readKeychainPayload,
+    KeychainUnreadableError,
+    readKeychainEntry,
     secondaryToKeychainPayload,
     syncKeychainToConfig,
     writeKeychainPayload,
@@ -13,6 +14,7 @@ import {
 import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const CLAUDE_JSON = join(homedir(), ".claude.json");
 
@@ -30,7 +32,9 @@ export interface ForeignKeychainEntry {
 /**
  * Inspect the keychain BEFORE injecting. Returns the foreign entry when the
  * current credentials belong to nobody we track — the caller must get user
- * confirmation before proceeding (overwriting logs that login out).
+ * confirmation before proceeding (overwriting logs that login out). A
+ * `preSync.status` of "unreadable" means an entry exists that could not be
+ * read: the caller must stop, and `writeKeychainPayload` refuses it anyway.
  */
 export async function inspectKeychainBeforeInject(aiConfig: AIConfig): Promise<{
     preSync: KeychainSyncResult;
@@ -61,10 +65,14 @@ export async function injectSecondaryLogin(
     let backupPath: string | undefined;
 
     if (backupForeign) {
-        const existing = await readKeychainPayload();
+        const existing = await readKeychainEntry();
 
-        if (existing?.claudeAiOauth) {
-            backupPath = await backupKeychainPayload(existing);
+        if (existing.state === "unreadable") {
+            throw new KeychainUnreadableError(existing.reason);
+        }
+
+        if (existing.state === "ok" && existing.payload.claudeAiOauth) {
+            backupPath = await backupKeychainPayload(existing.payload);
         }
     }
 
@@ -90,6 +98,12 @@ export async function finishKeychainSession(
         postSync.status === "synced" || postSync.status === "unchanged" || postSync.status === "no-match"
             ? postSync.uuid
             : undefined;
+
+    if (postSync.status === "unreadable") {
+        // Whose login it is cannot be told, so neither the restore nor the delete may touch it.
+        logger.warn(`[keychain] entry is unreadable after the session (${postSync.reason}) — leaving keychain as-is`);
+        return postSync;
+    }
 
     if (postSync.status === "no-entry") {
         // User ran /logout inside Claude Code — nothing to sync. Restore the
@@ -153,7 +167,8 @@ async function seedClaudeJson(secondary: AISecondaryLogin): Promise<void> {
             };
         }
 
-        await Bun.write(CLAUDE_JSON, SafeJSON.stringify(config, null, 2));
+        // Claude Code owns this file: keep the replaced copy as .bak, and never publish a half-written one.
+        atomicWriteFileSync(CLAUDE_JSON, SafeJSON.stringify(config, null, 2), { backup: true });
         logger.debug({ path: CLAUDE_JSON }, "Seeded oauthAccount + onboarding for keychain launch");
     } catch (error) {
         logger.warn({ error, path: CLAUDE_JSON }, "Could not seed ~/.claude.json for keychain launch");

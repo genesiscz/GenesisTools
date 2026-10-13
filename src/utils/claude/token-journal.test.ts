@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { pruneJournal, readJournalRecovery } from "./subscription-auth";
 
 /**
@@ -130,13 +131,34 @@ describe("token journal pruning", () => {
         expect(readJournalRecovery("martin-max", "sk-ant-ort01-consumed")?.refreshToken).toBe("sk-ant-ort01-new-live");
     });
 
-    test("a corrupt line is dropped rather than kept as a token pair", () => {
+    /** It may be the newest pair with a torn tail; only the byte budget may drop it, never the prune itself. */
+    test("a line that does not parse is kept as it is", () => {
         writeJournal(bulk(4000, daysAgo(1)));
         writeFileSync(journalPath(), `${readFileSync(journalPath(), "utf8")}{ not json\n`, { mode: 0o600 });
 
         pruneJournal(journalPath());
 
-        expect(readFileSync(journalPath(), "utf8")).not.toContain("{ not json");
+        expect(readFileSync(journalPath(), "utf8")).toEndWith("}\n{ not json\n");
+    });
+
+    test("a rewrite that fails halfway leaves the journal byte-identical", () => {
+        writeJournal([...bulk(4000, daysAgo(90)), entry("work", "live", daysAgo(1))]);
+        const before = readFileSync(journalPath(), "utf8");
+        const failing = spyOn(atomicWriteIo, "writeSync").mockImplementation(() => {
+            throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+        });
+        let attempts = 0;
+
+        try {
+            pruneJournal(journalPath());
+            attempts = failing.mock.calls.length;
+        } finally {
+            failing.mockRestore();
+        }
+
+        expect(attempts).toBeGreaterThan(0);
+        expect(readFileSync(journalPath(), "utf8")).toBe(before);
+        expect(readJournalRecovery("work", "sk-ant-ort01-consumed")?.refreshToken).toBe("sk-ant-ort01-new-live");
     });
 
     test("the rewritten journal is still 0600", () => {

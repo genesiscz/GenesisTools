@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -241,6 +241,13 @@ function keepNewestWithinBudget(lines: string[], maxBytes: number): string[] {
  * that situation. So instead of touching entries, drop the old ones: anything
  * older than the retention window can no longer be the live pair.
  *
+ * It runs under the AI config lock: its one caller, `journalTokenRotation`, is
+ * called inside `aiConfig.withLock`, which is also where every append happens,
+ * so no append can land between this read and the rename. The rewrite is
+ * atomic, so a crash or a full disk leaves the old journal whole. A line that
+ * does not parse is kept as it is: it may be the newest pair with a torn tail,
+ * and the byte budget still bounds it.
+ *
  * Exported for its test: the byte bound has no other observable seam.
  */
 export function pruneJournal(path: string): void {
@@ -261,15 +268,14 @@ export function pruneJournal(path: string): void {
                     const entry = SafeJSON.parse(line, { strict: true }) as { ts?: string };
                     return entry.ts ? Date.parse(entry.ts) >= cutoff : true;
                 } catch {
-                    // An unparsable line is corruption, not a token pair worth keeping.
-                    return false;
+                    // Not provably old, and possibly the newest pair with a torn tail: the byte budget bounds it.
+                    return true;
                 }
             });
 
         const bounded = keepNewestWithinBudget(kept, JOURNAL_MAX_BYTES);
 
-        writeFileSync(path, bounded.length > 0 ? `${bounded.join("\n")}\n` : "", { mode: 0o600 });
-        chmodSync(path, 0o600);
+        atomicWriteFileSync(path, bounded.length > 0 ? `${bounded.join("\n")}\n` : "", { mode: 0o600 });
         logger.info(
             { path, kept: bounded.length, droppedByBudget: kept.length - bounded.length },
             "[token-refresh] pruned token journal"

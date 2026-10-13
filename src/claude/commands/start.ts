@@ -893,6 +893,17 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     if (opts.keychain) {
         const { preSync, foreign } = await inspectKeychainBeforeInject(aiConfig);
 
+        if (preSync.status === "unreadable") {
+            out.error(
+                pc.red(
+                    `The keychain holds a Claude Code login that cannot be read (${preSync.reason}). ` +
+                        "Refusing to overwrite it; the keychain is untouched. Unlock the login keychain and run again."
+                )
+            );
+            await out.flush();
+            process.exit(1);
+        }
+
         if (preSync.status === "synced") {
             out.printlnErr(pc.dim(`Keychain held a rotated login — synced back to "${preSync.account}".`));
         }
@@ -1077,6 +1088,13 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
                 if (result.status === "synced") {
                     out.printlnErr(pc.dim(`Synced rotated keychain tokens back to "${result.account}".`));
+                } else if (result.status === "unreadable") {
+                    const backup = foreignBackupPath ? ` Your earlier login is backed up at ${foreignBackupPath}.` : "";
+                    out.printlnErr(
+                        pc.yellow(
+                            `Keychain entry is unreadable after the session — left untouched, nothing synced.${backup}`
+                        )
+                    );
                 } else if (result.status === "no-match") {
                     out.printlnErr(
                         pc.yellow(
