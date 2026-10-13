@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { buildAllowedTypeConfig } from "@app/azure-devops/lib/timelog/allowed-type-config";
 import {
     normalizeTimelogEntries,
@@ -13,6 +15,7 @@ import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import type { Command } from "commander";
 import { z } from "zod";
 
@@ -35,7 +38,7 @@ const TimelogEntrySchema = z
 
 type TimelogEntryInput = z.infer<typeof TimelogEntrySchema>;
 
-interface StoredEntry {
+export interface StoredEntry {
     _id: string;
     _status: "pending";
     workItemId: number;
@@ -49,7 +52,7 @@ interface StoredEntry {
     comment: string;
 }
 
-interface PrepareImportFile {
+export interface PrepareImportFile {
     name: string;
     createdAt: string;
     entries: StoredEntry[];
@@ -94,6 +97,51 @@ function resolveFileName(options: { from?: string; to?: string; name?: string })
 
 function cacheKey(name: string): string {
     return `prepare-import/${name}.json`;
+}
+
+function isPrepareImportFile(value: unknown): value is PrepareImportFile {
+    return isJsonObject(value) && typeof value.name === "string" && Array.isArray(value.entries);
+}
+
+/**
+ * Append one staged entry to `prepare-import/<fileName>.json`. Only a missing file is created. An existing
+ * file that does not parse or has the wrong shape is refused, naming the path: `atomicUpdate` started a
+ * fresh one-entry file over it, so every staged, unsubmitted entry was gone from the tool.
+ */
+export async function appendPrepareImportEntry({
+    storage,
+    fileName,
+    entry,
+}: {
+    storage: Storage;
+    fileName: string;
+    entry: StoredEntry;
+}): Promise<PrepareImportFile> {
+    const key = cacheKey(fileName);
+    const appended = await storage.atomicUpdateExisting<PrepareImportFile>(key, {
+        accepts: isPrepareImportFile,
+        update: (current) => ({ ...current, entries: [...current.entries, entry] }),
+    });
+
+    if (appended) {
+        return appended;
+    }
+
+    const path = join(storage.getCacheDir(), key);
+
+    if (existsSync(path)) {
+        throw new Error(
+            `Prepare-import file ${path} does not parse or is not a prepare-import file, so it was left untouched. Fix or move it, then add again.`
+        );
+    }
+
+    return storage.atomicUpdate<PrepareImportFile>(key, (current) => {
+        if (current) {
+            return { ...current, entries: [...current.entries, entry] };
+        }
+
+        return { name: fileName, createdAt: new Date().toISOString(), entries: [entry] };
+    });
 }
 
 function computeTotalMinutes(entry: StoredEntry): number {
@@ -250,17 +298,7 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
         comment: validated.comment ?? "",
     };
 
-    await storage.atomicUpdate<PrepareImportFile>(cacheKey(fileName), (current) => {
-        if (current) {
-            return { ...current, entries: [...current.entries, storedEntry] };
-        }
-
-        return {
-            name: fileName,
-            createdAt: new Date().toISOString(),
-            entries: [storedEntry],
-        };
-    });
+    await appendPrepareImportEntry({ storage, fileName, entry: storedEntry });
 
     out.println("Entry added:");
     printEntry(storedEntry);

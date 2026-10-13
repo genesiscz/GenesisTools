@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Api, AZURE_DEVOPS_RESOURCE_ID } from "@app/azure-devops/api";
 import { azLoginSuggestionBlock, azNotOnPathMessage, isAzOnPath } from "@app/azure-devops/lib/az-cli.utils";
 import type { AzureConfig, AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { extractTeamFromUrl, parseAzureDevOpsUrl } from "@app/azure-devops/url-parser";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { $ } from "bun";
 
 export async function checkAzureCliLogin(): Promise<void> {
@@ -85,28 +85,48 @@ export function saveAdoConfig(config: AzureConfig, configDir: string): SavedAdoC
     const sameProject = existing.org === config.org && existing.project === config.project;
     const merged = sameProject ? { ...existing, ...config } : { ...config };
 
-    writeFileSync(configPath, SafeJSON.stringify(merged, null, 2));
+    atomicWriteFileSync(configPath, SafeJSON.stringify(merged, null, 2));
     return { path: configPath, config: merged as AzureConfigWithTimeLog };
 }
 
+/**
+ * Only a missing file starts fresh. A file that exists but does not parse is refused, never replaced:
+ * it may be the only copy of `timelog.functionsKey`, and a fresh config would drop it for good.
+ */
 function readExistingConfig(configPath: string): Partial<AzureConfigWithTimeLog> {
-    if (!existsSync(configPath)) {
-        return {};
+    let text: string;
+
+    try {
+        text = readFileSync(configPath, "utf8");
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return {};
+        }
+
+        throw err;
     }
+
+    let parsed: unknown;
 
     try {
         // Lenient on purpose. NO_TEAM_MESSAGE tells users to add "team" to this
         // file by hand, so it really does grow `//` comments and trailing commas.
-        // Under { strict: true } those threw, the catch below returned {}, and the
-        // whole config — including timelog.functionsKey — was overwritten
-        // (PR #333 review t13). SafeJSON is a comment-json wrapper; leniency here
-        // is the point of using it.
-        return SafeJSON.parse(readFileSync(configPath, "utf8")) as Partial<AzureConfigWithTimeLog>;
+        // Under { strict: true } those threw and the whole config — including
+        // timelog.functionsKey — was overwritten (PR #333 review t13). SafeJSON
+        // is a comment-json wrapper; leniency here is the point of using it.
+        parsed = SafeJSON.parse(text);
     } catch (err) {
-        // A corrupt file must not take the new configuration down with it, but
-        // it also must not be silent: whatever was in there is about to be
-        // replaced rather than merged.
-        logger.warn({ err, configPath }, "existing Azure DevOps config is unreadable; writing a fresh one");
-        return {};
+        throw new Error(
+            `Azure DevOps config ${configPath} does not parse, so it was left untouched. Fix or move it, then configure again.`,
+            { cause: err }
+        );
     }
+
+    if (!isJsonObject(parsed)) {
+        throw new Error(
+            `Azure DevOps config ${configPath} is not a JSON object, so it was left untouched. Fix or move it, then configure again.`
+        );
+    }
+
+    return parsed as Partial<AzureConfigWithTimeLog>;
 }

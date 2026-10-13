@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { Api } from "@app/azure-devops/api";
 import { extractOrgName } from "@app/azure-devops/config";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
@@ -8,6 +8,7 @@ import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -53,7 +54,7 @@ function loadExistingConfig(): { config: AzureConfigWithTimeLog; configPath: str
 }
 
 function saveConfig(configPath: string, config: AzureConfigWithTimeLog): void {
-    writeFileSync(configPath, SafeJSON.stringify(config, null, 2));
+    atomicWriteFileSync(configPath, SafeJSON.stringify(config, null, 2));
 }
 
 function extractOrgNameOrExit(config: AzureConfigWithTimeLog): string {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { azDevopsDefaults, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
@@ -201,6 +201,35 @@ describe("saveAdoConfig", () => {
         expect(saved.config.team).toBe("Payments Team");
         expect(saved.config.timelog?.functionsKey).toBe("kept-secret");
         expect(SafeJSON.parse(readFileSync(saved.path, "utf8"), { strict: true })).toEqual(saved.config);
+    });
+
+    /**
+     * A config that exists but does not parse was replaced by a fresh one built from the URL alone,
+     * which dropped timelog.functionsKey for good. The save must refuse and leave the bytes alone.
+     */
+    test.each([
+        ["does not parse", `{\n    "org": "contoso",\n    "timelog": { "functionsKey": "kept-sec`],
+        ["is not a JSON object", `["contoso", "Widgets"]\n`],
+    ])("refuses to replace a config that %s and leaves its bytes untouched", (_label, planted) => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
+        const configPath = join(dir, "config.json");
+        writeFileSync(configPath, planted);
+
+        const save = () =>
+            saveAdoConfig(
+                {
+                    org: "contoso",
+                    project: "Widgets",
+                    projectId: "00000000-0000-0000-0000-000000000001",
+                    apiResource: "499b84ac-0000-0000-0000-000000000000",
+                },
+                dir
+            );
+
+        expect(save).toThrow(configPath);
+        expect(save).toThrow(/left untouched/);
+        expect(readFileSync(configPath, "utf8")).toBe(planted);
+        expect(readdirSync(dir)).toEqual(["config.json"]);
     });
 
     test("writes a fresh config when none exists", () => {
