@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { launchdPlistNeedsGenesisApp, launchdProgramArgumentsXml } from "@genesiscz/utils/macos/genesis-app";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", "com.genesis-tools.daemon.plist");
 const LABEL = "com.genesis-tools.daemon";
@@ -56,7 +57,7 @@ export async function installLaunchd(): Promise<void> {
     }
 
     try {
-        await Bun.write(PLIST_PATH, generatePlist());
+        atomicWriteFileSync(PLIST_PATH, generatePlist());
         const proc = Bun.spawn(["launchctl", "load", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
         const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
 
@@ -80,7 +81,7 @@ async function restorePreviousPlist(previousPlist: string | undefined, cause: un
     }
 
     try {
-        await Bun.write(PLIST_PATH, previousPlist);
+        atomicWriteFileSync(PLIST_PATH, previousPlist);
         const proc = Bun.spawn(["launchctl", "load", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
         const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
 

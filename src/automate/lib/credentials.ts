@@ -1,10 +1,11 @@
 // src/automate/lib/credentials.ts
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { StoredCredential } from "./types";
 
 const CREDENTIALS_DIR = join(env.tools.getHome(), ".genesis-tools", "automate", "credentials");
@@ -31,8 +32,7 @@ function ensureDir(): void {
 export async function saveCredential(credential: StoredCredential): Promise<void> {
     ensureDir();
     const filePath = join(CREDENTIALS_DIR, `${safeName(credential.name)}.json`);
-    await Bun.write(filePath, SafeJSON.stringify(credential, null, 2));
-    chmodSync(filePath, 0o600);
+    atomicWriteFileSync(filePath, SafeJSON.stringify(credential, null, 2), { mode: 0o600 });
     logger.debug(`Credential saved: ${credential.name}`);
 }
 

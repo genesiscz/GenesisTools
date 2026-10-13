@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { attachSemanticPlan } from "../lib/decision/workflow";
@@ -405,6 +406,28 @@ function stopActivityRecorder(session: SessionState): void {
     }
 }
 
+/**
+ * Hand over the finished plan (atomically to `outPath`, or to stdout), then end the session. The session
+ * marker goes only after the plan is out: removing it first lost the whole recording when the write failed.
+ */
+export function finishRecordedPlan({
+    planJson,
+    outPath,
+    sessionPath,
+}: {
+    planJson: string;
+    outPath: string | undefined;
+    sessionPath: string;
+}): void {
+    if (outPath) {
+        atomicWriteFileSync(outPath, `${planJson}\n`);
+    } else {
+        out.println(planJson);
+    }
+
+    unlinkSync(sessionPath);
+}
+
 export function registerRecordPlanCommand(program: Command): void {
     addCaptureFlags(program.command("record-plan [action]"))
         .description(`Record a plan instead of writing one — capture what happens, emit runnable plan JSON.
@@ -541,10 +564,9 @@ export function registerRecordPlanCommand(program: Command): void {
                       })
                     : plan;
                 const planJson = SafeJSON.stringify(outputPlan, null, 2);
-                unlinkSync(RECORD_SESSION);
+                finishRecordedPlan({ planJson, outPath: opts.out, sessionPath: RECORD_SESSION });
                 const stepCount = (plan.steps as unknown[]).length;
                 if (opts.out) {
-                    writeFileSync(opts.out, `${planJson}\n`);
                     out.println(
                         `${pc.green("plan written")} ${pc.cyan(opts.out)} — ${stepCount} steps (mode=${session.mode})`
                     );
@@ -553,8 +575,6 @@ export function registerRecordPlanCommand(program: Command): void {
                             `review it, then: ${toolCommand("control")} ${opts.semantic ? "replay-plan" : "run"} ${opts.out}`
                         )
                     );
-                } else {
-                    out.println(planJson);
                 }
                 if (foreignCount > 0) {
                     logger.warn(

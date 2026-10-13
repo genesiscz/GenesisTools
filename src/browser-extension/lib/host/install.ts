@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -7,6 +7,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { browserExtensionStorage } from "../config";
 import { NATIVE_HOST_NAME } from "./messages";
 
@@ -100,15 +101,15 @@ export async function installHost(): Promise<InstallResult> {
     const extensionId = pinnedExtensionId();
     const launcher = launcherPath();
     await mkdir(dirname(launcher), { recursive: true });
-    await Bun.write(
+    atomicWriteFileSync(
         launcher,
         launcherSource({
             bunPath: Bun.which("bun") ?? process.execPath,
             pathEnv: env.getProcessEnv().PATH ?? "",
             hostEntry: HOST_ENTRY,
-        })
+        }),
+        { mode: 0o755 }
     );
-    chmodSync(launcher, 0o755);
     const manifest = SafeJSON.stringify(hostManifest({ launcher, extensionId }), null, 2);
     const result: InstallResult = { extensionId, launcher, registered: [], skipped: [] };
 
@@ -120,7 +121,7 @@ export async function installHost(): Promise<InstallResult> {
 
         await mkdir(dir.hostDir, { recursive: true });
         const path = join(dir.hostDir, `${NATIVE_HOST_NAME}.json`);
-        await Bun.write(path, `${manifest}\n`);
+        atomicWriteFileSync(path, `${manifest}\n`);
         result.registered.push({ browser: dir.browser, manifest: path });
     }
 

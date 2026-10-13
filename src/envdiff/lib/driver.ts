@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { diffEnv, isFailing } from "./diff";
 import { parseEnv } from "./parse";
 import { renderDiff, toJsonShape } from "./render";
@@ -86,7 +87,8 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
         const synced = buildSyncedContent({ actualContent, diff, now: args.now });
         if (synced !== actualContent) {
             try {
-                writeFileSync(actual, synced);
+                // A read-only .env still fails with EACCES, as the in-place write did.
+                atomicWriteFileSync(actual, synced);
             } catch (err) {
                 logger.debug({ error: err, actual }, "envdiff: failed to write synced file");
                 return { exitCode: 2, stdout: "", status: [`Failed to write ${actual}`] };

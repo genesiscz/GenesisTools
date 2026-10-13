@@ -1,9 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { suggestCommand } from "@genesiscz/utils/cli/executor";
 import { out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { glob } from "glob";
 import pc from "picocolors";
@@ -274,7 +275,7 @@ async function runBlockRemoval({ projectPath, ignore, opts }: BlockRemovalArgs):
     for (const [file, blocks] of fileBlockMap) {
         const content = readFileSync(file, "utf-8");
         const cleaned = removeBlocks(content, blocks);
-        writeFileSync(file, cleaned);
+        atomicWriteFileSync(file, cleaned);
         modifiedFiles.push(file);
     }
 
