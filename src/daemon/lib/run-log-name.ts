@@ -1,3 +1,11 @@
+/**
+ * The rule every task name follows: not empty, no path separator and no "..". It also keeps each task's log folder
+ * its own, since `taskLogDirName` maps separators to "_" and "a/b" would share a folder with "a_b".
+ */
+export function isValidTaskName(name: string): boolean {
+    return Boolean(name) && !/[/\\]|\.\./.test(name);
+}
+
 /** The folder under the logs base dir that holds a task's run logs; a name with a path separator stays inside it. */
 export function taskLogDirName(name: string): string {
     return name.replace(/[/\\]/g, "_") || "unnamed-task";

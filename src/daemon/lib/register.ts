@@ -1,5 +1,6 @@
 import { ensureStorage, getTask, removeTask, upsertTask } from "./config";
 import { parseInterval } from "./interval";
+import { isValidTaskName } from "./run-log-name";
 import type { DaemonTask, RunLogRetention, TaskPriority } from "./types";
 
 export const DEFAULT_RETENTION: RunLogRetention = { maxAgeDays: 14, minRuns: 50 };
@@ -22,7 +23,7 @@ export interface RegisterTaskOptions {
 }
 
 function validateTaskName(name: string): void {
-    if (!name || /[/\\]|\.\./.test(name)) {
+    if (!isValidTaskName(name)) {
         throw new Error(`Invalid task name "${name}". Must not contain "/", "\\", or "..".`);
     }
 }

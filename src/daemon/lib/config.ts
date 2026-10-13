@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { parseInterval } from "./interval";
 import { timeOnDay } from "./missed-run";
+import { isValidTaskName } from "./run-log-name";
 import {
     type DaemonConfig,
     type DaemonTask,
@@ -45,8 +46,14 @@ export async function ensureStorage(): Promise<void> {
     mkdirSync(getLogsBaseDir(), { recursive: true });
 }
 
-export function validateTaskIntervals(tasks: DaemonTask[]): DaemonTask[] {
+/** The tasks a hand-edited config may hold: a valid name (the rule registerTask enforces) and a parsable interval. */
+export function validateTasks(tasks: DaemonTask[]): DaemonTask[] {
     return tasks.filter((task) => {
+        if (!isValidTaskName(task.name)) {
+            logger.warn({ task: task.name }, '[daemon] invalid task name in config (empty, or with "/", "\\" or "..")');
+            return false;
+        }
+
         try {
             parseInterval(task.every);
             return true;
@@ -64,7 +71,7 @@ export async function loadConfig(): Promise<DaemonConfig> {
         return { tasks: [] };
     }
 
-    return { ...config, tasks: validateTaskIntervals(config.tasks) };
+    return { ...config, tasks: validateTasks(config.tasks) };
 }
 
 export async function getTask(name: string): Promise<DaemonTask | undefined> {
