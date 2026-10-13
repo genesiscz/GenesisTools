@@ -40,7 +40,7 @@ Everything AI lives under `src/utils/ai/` + `src/utils/security/`, in layers tha
 
 **CLI.** `tools ai config account add|list|show|edit|rm|test`, `default set`, `link ls`, `secret set|rotate|export|import`, and `tools ai config doctor` (per-account credential diagnosis). `tools ai-proxy link` registers the proxy as a real account so `@proxy/...` refs resolve.
 
-🛑 **A diagnostic must never mutate.** See "Side Effects: Diagnostics & Irreversible Operations" above. `doctor` and `account test` pass `probe: true`, and each plugin's shared auth path refuses to spend a single-use refresh token.
+🛑 **A diagnostic must never mutate.** See "Side Effects: Diagnostics & Irreversible Operations" in `.claude/rules/code.md`. `doctor` and `account test` pass `probe: true`, and each plugin's shared auth path refuses to spend a single-use refresh token.
 
 ## Provider history storage
 

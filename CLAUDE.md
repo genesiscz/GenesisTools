@@ -27,7 +27,7 @@ tools <tool-name> [args]    # run one tool
 tools <tool-name> --readme  # print its README
 ```
 
-- 🛑 `tools` on PATH runs the MAIN checkout. In a worktree, run `bun run src/<tool>/index.ts`. From code, start a tool with `execTool` / `execToolInteractive` from `@genesiscz/utils/cli`, never with `Bun.spawn(["tools", ...])`.
+- 🛑 `tools` on PATH runs the MAIN checkout. In a worktree, run `./tools <tool-name> [args]` from the worktree root: it runs the worktree's code through the app launcher, so privacy grants and preloads still apply. From code, start a tool with `execTool` / `execToolInteractive` from `@genesiscz/utils/cli`, never with `Bun.spawn(["tools", ...])`.
 - End-of-task notification: `tools say "<task> done" --app claude`. Voice and volume come from the saved `claude` profile.
 
 ## Tests
@@ -46,7 +46,7 @@ Run `bash scripts/ci/placeholder-check.sh`. The pre-push hook runs it first, and
 Every teammate/subagent given its own worktree MUST, before ANY other work:
 
 1. **Verify the base commit.** Isolated worktrees are often cut from `origin/master`, NOT the campaign/feature branch you were briefed on. Run `git log --oneline -1`; if the briefed base commit is not an ancestor, `git fetch origin <branch> && git reset --hard <base-sha>`. Building on the wrong base silently invalidates every anchor in your brief.
-2. **Run `bun install` in the worktree.** A worktree without its own `node_modules` resolves imports against the MAIN repo's dependency tree and fabricates failures that look like "the branch broke the world" (verified repeatedly; see also Running Tests below).
+2. **Run `bun install` in the worktree.** A worktree without its own `node_modules` resolves imports against the MAIN repo's dependency tree and fabricates failures that look like "the branch broke the world" (verified repeatedly; see also Tests above).
 3. **Never bare `bun test`** — always `bun run test` (the wrapper repairs the dependency tree first).
 
 Skipping any of these has cost real sessions hours; there are no exceptions.
