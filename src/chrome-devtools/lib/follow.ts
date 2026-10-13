@@ -52,6 +52,8 @@ export interface FollowOpts {
     /** Stop after N seconds; omit = until killed. */
     seconds?: number;
     onLine: (line: string) => void;
+    /** Every event, rendered or not (loop detection watches navigations whatever the channels). */
+    onEvent?: (event: RecordedEvent) => void;
     signal?: AbortSignal;
     pollMs?: number;
     /** Capture dir override (tests). Defaults to the port's real dir. */
@@ -63,6 +65,7 @@ export async function follow(opts: FollowOpts): Promise<void> {
     const on = new Set(opts.channels);
     const matches = makeMatcher(opts.match);
     const render = (ev: RecordedEvent) => {
+        opts.onEvent?.(ev);
         for (const line of renderEventLines(ev, on, matches)) {
             opts.onLine(line);
         }

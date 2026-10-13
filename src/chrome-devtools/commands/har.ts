@@ -51,7 +51,14 @@ function printHarSummary(har: HarFile): void {
 
 async function writeHarFile(
     har: HarFile,
-    opts: { sanitize?: boolean; analyze?: boolean; out: string; droppedFailed: number; note: string }
+    opts: {
+        sanitize?: boolean;
+        analyze?: boolean;
+        out: string;
+        droppedFailed: number;
+        localNetworkBlocked: number;
+        note: string;
+    }
 ): Promise<void> {
     const outHar = opts.sanitize ? sanitizeHar(har) : har;
     await Bun.write(opts.out, SafeJSON.stringify(outHar, { strict: true }, 2));
@@ -61,6 +68,12 @@ async function writeHarFile(
     if (opts.droppedFailed > 0) {
         out.log.warn(
             `${opts.droppedFailed} failed request(s) are NOT in the HAR (the format cannot represent network-level failures). See them: ${suggest(["follow", "--channels", "error"])}`
+        );
+    }
+
+    if (opts.localNetworkBlocked > 0) {
+        out.log.warn(
+            `${opts.localNetworkBlocked} request(s) were blocked by Local Network Access (a public page calling a private or loopback address). Allow it while you reproduce: ${suggest(["grant", "--match", "<tab>"])}`
         );
     }
 
@@ -150,6 +163,7 @@ a tab navigates (Chrome discards them — Chromium #141129). For bodies use
                     analyze: opts.analyze,
                     out: opts.out ?? DEFAULT_HAR_OUT,
                     droppedFailed: live.droppedFailed,
+                    localNetworkBlocked: live.localNetworkBlocked,
                     note:
                         live.har.log.entries.length === 0
                             ? "0 entries: CDP starts empty at attach. Re-run with --reload, or longer --seconds while you reproduce."
@@ -214,6 +228,7 @@ a tab navigates (Chrome discards them — Chromium #141129). For bodies use
                 analyze: opts.analyze,
                 out: opts.out ?? DEFAULT_HAR_OUT,
                 droppedFailed: built.droppedFailed,
+                localNetworkBlocked: built.localNetworkBlocked,
                 note:
                     built.har.log.entries.length === 0
                         ? "0 entries written (see the coverage warning above)."

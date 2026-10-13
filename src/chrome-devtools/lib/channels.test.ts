@@ -4,9 +4,11 @@ import {
     DEFAULT_CAPTURE_CHANNELS,
     parseChannels,
     RENDER_CHANNELS,
+    type RecordedEvent,
     type RenderChannel,
     renderEventLines,
 } from "./channels.ts";
+import { type LoopAlert, LoopDetector, loopLine, navigationKey } from "./loops.ts";
 
 const all = (channels: RenderChannel[]) => new Set(channels);
 const yes = () => true;
@@ -99,5 +101,105 @@ describe("renderEventLines", () => {
         );
         expect(lines[0]).toContain("MARKER");
         expect(lines[0]).toContain("capDropped");
+    });
+});
+
+describe("loop detection", () => {
+    const nav = (url: string, t: number): RecordedEvent => ({
+        method: "Page.frameNavigated",
+        params: { frame: { url } },
+        t,
+    });
+    const hop = (from: string, t: number): RecordedEvent => ({
+        method: "Network.requestWillBeSent",
+        params: {
+            type: "Document",
+            request: { url: "x", method: "GET" },
+            redirectResponse: { url: from, status: 302 },
+        },
+        t,
+    });
+
+    test("a page is keyed by path and query NAMES, so changing code/state values still match", () => {
+        expect(navigationKey("https://app.example.com/cb?state=a1&code=x#f")).toBe(
+            "https://app.example.com/cb?code&state"
+        );
+        expect(navigationKey("https://app.example.com/cb?code=y&state=b2")).toBe(
+            "https://app.example.com/cb?code&state"
+        );
+    });
+
+    test("an auth loop is reported at the third visit with its cycle, and again while it continues", () => {
+        const detector = new LoopDetector({ threshold: 3, windowMs: 60_000 });
+        const alerts = [];
+        for (let lap = 0; lap < 6; lap++) {
+            const t = lap * 1000;
+            alerts.push(...detector.observe(hop(`https://idp.example.com/authorize?state=${lap}`, t)));
+            alerts.push(...detector.observe(nav(`https://app.example.com/cb?code=${lap}&state=${lap}`, t + 400)));
+        }
+
+        const app = alerts.filter((alert) => alert.key === "https://app.example.com/cb?code&state");
+        expect(app.map((alert) => alert.count)).toEqual([3, 6]);
+        expect(app[0]?.cycle).toEqual([
+            "https://app.example.com/cb?code&state",
+            "https://idp.example.com/authorize?state",
+            "https://app.example.com/cb?code&state",
+        ]);
+        expect(loopLine(app[0] as LoopAlert, () => "12:00:00.000")).toContain("seen 3x in 2.0 s; cycle:");
+    });
+
+    test("visits spread wider than the window, iframes' commits and subresource redirects never count", () => {
+        const detector = new LoopDetector({ threshold: 3, windowMs: 1_000 });
+        const quiet = [
+            nav("https://app.example.com/home", 0),
+            nav("https://app.example.com/home", 5_000),
+            nav("https://app.example.com/home", 10_000),
+            {
+                method: "Page.frameNavigated",
+                params: { frame: { url: "https://app.example.com/home", parentId: "1" } },
+                t: 10_100,
+            },
+            {
+                method: "Network.requestWillBeSent",
+                params: {
+                    type: "XHR",
+                    request: { url: "x", method: "GET" },
+                    redirectResponse: { url: "https://app.example.com/home" },
+                },
+                t: 10_200,
+            },
+        ];
+        expect(quiet.flatMap((event) => detector.observe(event))).toEqual([]);
+    });
+});
+
+describe("Local Network Access hint", () => {
+    test("a FAIL line names the LNA block and the grant command; an ordinary failure gets no hint", () => {
+        const blocked = renderEventLines(
+            {
+                method: "Network.loadingFailed",
+                params: {
+                    requestId: "7.1",
+                    type: "Fetch",
+                    errorText: "net::ERR_FAILED",
+                    corsErrorStatus: { corsError: "LocalNetworkAccessPermissionDenied" },
+                },
+                t: 0,
+            },
+            all(["error"]),
+            yes
+        );
+        expect(blocked[0]).toContain("blocked by Local Network Access (LocalNetworkAccessPermissionDenied)");
+        expect(blocked[0]).toContain("tools chrome-devtools grant --match <tab>");
+        const refused = renderEventLines(
+            {
+                method: "Network.loadingFailed",
+                params: { requestId: "7.2", type: "Fetch", errorText: "net::ERR_CONNECTION_REFUSED" },
+                t: 0,
+            },
+            all(["error"]),
+            yes
+        );
+        expect(refused[0]).not.toContain("Local Network Access");
     });
 });

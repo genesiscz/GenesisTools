@@ -3,6 +3,7 @@ import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import {
     channelHelpLines,
+    fmtTime,
     monitorHints,
     parseChannels,
     RENDER_CHANNEL_HELP,
@@ -11,6 +12,7 @@ import {
 } from "../lib/channels.ts";
 import { follow, missingCaptureChannels } from "../lib/follow.ts";
 import { parseDuration } from "../lib/har-io.ts";
+import { LoopDetector, loopLine } from "../lib/loops.ts";
 import { recorderPidPath } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
 import { segmentStats } from "../lib/status.ts";
@@ -27,6 +29,8 @@ interface FollowOpts {
     last?: string;
     seconds?: string;
     out?: string;
+    loops?: string | boolean;
+    loopWindow?: string;
 }
 
 export function registerFollow(program: Command): void {
@@ -39,6 +43,11 @@ export function registerFollow(program: Command): void {
         .option("--last <duration>", "replay the last 90s / 30m / 2h of the buffer first, then go live")
         .option("--seconds <n>", "stop after N seconds (default: run until killed)")
         .option("--out <file>", "also mirror lines into this file (what the printed Monitor commands tail)")
+        .option(
+            "--loops [n]",
+            "print a LOOP line when one page (path + query names) is visited n times (default 3) within --loop-window"
+        )
+        .option("--loop-window <seconds>", "the window --loops counts in (default 60)")
         .addHelpText(
             "after",
             `
@@ -53,6 +62,12 @@ Examples:
   ${suggest(["follow", "--channels", "nav,redirect,cookie", "--match", "idp.example.com"])}
   ${suggest(["follow", "--channels", "error", "--last", "10m"])}
   ${suggest(["follow", "--channels", "xhr,error", "--out", EXAMPLE_OUT_LOG, "--seconds", "120"])}
+  ${suggest(["follow", "--channels", "nav,redirect", "--loops", "--out", EXAMPLE_OUT_LOG])}
+
+--loops watches every document navigation and redirect hop (iframes too, whatever --channels shows),
+keyed by origin + path + query parameter NAMES, since code/state/nonce values change on every lap of
+an auth loop. A LOOP line names the page, how often and how fast, and the cycle of pages between the
+last two visits. A Monitor on '^[0-9:.]+ LOOP' fires once per loop and again while it keeps going.
 
 Run long follows with run_in_background and --out, then arm a Monitor on the
 printed command. Never pipe follow to head/tail.`
@@ -122,19 +137,39 @@ printed command. Never pipe follow to head/tail.`
                 }
             }
 
+            const loopThreshold =
+                typeof opts.loops === "string" ? positiveNumber(opts.loops, 3, "--loops") : opts.loops ? 3 : 0;
+            const detector =
+                loopThreshold > 0
+                    ? new LoopDetector({
+                          threshold: loopThreshold,
+                          windowMs: opts.loopWindow
+                              ? positiveNumber(opts.loopWindow, 60, "--loop-window") * 1000
+                              : 60_000,
+                      })
+                    : null;
+            const emit = (line: string) => {
+                out.println(line);
+                if (mirror) {
+                    mirror.write(`${line}\n`);
+                    void mirror.flush();
+                }
+            };
+
             await follow({
                 port,
                 channels: parsed.channels,
                 match: opts.match,
                 sinceMs,
                 seconds: opts.seconds ? positiveNumber(opts.seconds, 0, "--seconds") : undefined,
-                onLine: (line) => {
-                    out.println(line);
-                    if (mirror) {
-                        mirror.write(`${line}\n`);
-                        void mirror.flush();
-                    }
-                },
+                onLine: emit,
+                onEvent: detector
+                    ? (event) => {
+                          for (const alert of detector.observe(event)) {
+                              emit(loopLine(alert, fmtTime));
+                          }
+                      }
+                    : undefined,
             });
             await mirror?.end();
             process.exit(0);

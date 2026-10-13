@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import {
     AmbiguousTabError,
     Conn,
+    choosePortByMatch,
     NoMatchingTabError,
     Page,
     pickPageTarget,
@@ -146,12 +147,13 @@ export async function scanInventory(): Promise<Inventory> {
  * The ONE place a verb decides which endpoint it talks to.
  *
  * Explicit --port wins. Otherwise: the port `attach` last worked on if it is
- * still live, else the single live endpoint whatever its number, else an error
- * naming the live ports. The old code defaulted to a hardcoded 9222 and then
- * refused on ambiguity, so `attach --port 9223` followed by a bare `nav` printed
- * the whole inventory and did nothing.
+ * still live, else the single live endpoint whatever its number, else (with
+ * --match) the one endpoint that has a tab matching it, else an error naming the
+ * live ports. The old code defaulted to a hardcoded 9222 and then refused on
+ * ambiguity, so `attach --port 9223` followed by a bare `nav` printed the whole
+ * inventory and did nothing.
  */
-export async function resolvePort(opts: { port?: string }): Promise<number> {
+export async function resolvePort(opts: { port?: string; match?: string }): Promise<number> {
     if (isPortSpecified()) {
         return portOf(opts);
     }
@@ -181,15 +183,46 @@ export async function resolvePort(opts: { port?: string }): Promise<number> {
         process.exit(1);
     }
 
+    if (opts.match) {
+        const choice = choosePortByMatch(inventory.endpoints, opts.match);
+
+        if (choice.kind === "one") {
+            log.out.info(
+                `port ${choice.port}: the only one of ${live.length} live endpoints (${live.join(", ")}) with a tab whose ${choice.by} matches '${opts.match}'`
+            );
+
+            return choice.port;
+        }
+
+        out.log.error(
+            choice.kind === "none"
+                ? `${live.length} live CDP endpoints (${live.join(", ")}) and no tab on any of them matches '${opts.match}'.`
+                : `'${opts.match}' matches tabs on ${choice.ports.length} endpoints (${choice.ports.join(", ")}). Pick one with --port; nothing is guessed.`
+        );
+        out.log.info(`  see every tab: ${suggest(["attach"])}`);
+        out.log.info(`  ${suggest(["targets", "--port", String(live[0]), "--match", opts.match])}`);
+        process.exit(1);
+    }
+
     out.log.error(`${live.length} live CDP endpoints (${live.join(", ")}). Pick one with --port; nothing is guessed.`);
     out.log.info(`  ${suggest(["attach", "--port", String(live[0])])}   then bare verbs use that port`);
     process.exit(1);
 }
 
-/** attach() with the no-random-tab contract; exits with guidance when the match misses. */
-export async function attachTab(opts: { port?: string; match?: string }): Promise<Page> {
+/**
+ * attach() with the no-random-tab contract; exits with guidance when the match misses.
+ *
+ * `beforeEnable` runs on the connected page BEFORE the domains are enabled. A listener that must
+ * see what enabling replays belongs there: Runtime.enable re-sends every console message the tab
+ * already logged, at once, so a listener added after attachTab returns misses all of them.
+ */
+export async function attachTab(
+    opts: { port?: string; match?: string },
+    hooks: { beforeEnable?: (page: Page) => void } = {}
+): Promise<Page> {
     const { target } = await pickTab(opts);
     const page = new Page(new Conn(target.webSocketDebuggerUrl), target);
+    hooks.beforeEnable?.(page);
     await page.enable();
     return page;
 }

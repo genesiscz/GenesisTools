@@ -6,8 +6,10 @@ import {
     type CdpCookie,
     Conn,
     cdpPortOf,
+    choosePortByMatch,
     classifyEvalError,
     closeTabCandidates,
+    consoleLevelSummary,
     cookiesSummaryLine,
     evaluationExpression,
     localDebuggerUrl,
@@ -157,6 +159,51 @@ describe("makeMatcher", () => {
     test("a bare slash-free pattern that looks regexy stays literal", () => {
         expect(makeMatcher("a|b")("x a|b y")).toBe(true);
         expect(makeMatcher("a|b")("just a")).toBe(false);
+    });
+});
+
+describe("choosePortByMatch", () => {
+    const endpoints = [
+        { port: 9223, pages: [{ title: "Mail", url: "https://mail.example.com/inbox" }] },
+        { port: 9231, pages: [{ title: "Fixture", url: "http://127.0.0.1:47361/" }] },
+        { port: 9224, pages: [{ title: "DevTools - 127.0.0.1:47361/", url: "devtools://devtools/bundled/x.html" }] },
+    ];
+
+    test("the one port whose tab url matches wins, even when another port's TITLE matches too", () => {
+        expect(choosePortByMatch(endpoints, "127.0.0.1:47361")).toEqual({
+            kind: "one",
+            port: 9231,
+            by: "url",
+            tabs: 1,
+        });
+    });
+
+    test("a title match decides only when no port has a url match", () => {
+        expect(choosePortByMatch(endpoints, "Mail")).toEqual({ kind: "one", port: 9223, by: "title", tabs: 1 });
+    });
+
+    test("url matches on two ports refuse, naming both", () => {
+        expect(choosePortByMatch(endpoints, "/^(https|http):/")).toEqual({ kind: "many", ports: [9223, 9231] });
+    });
+
+    test("no match anywhere is its own answer, never a fallback port", () => {
+        expect(choosePortByMatch(endpoints, "nowhere.example")).toEqual({ kind: "none" });
+    });
+});
+
+describe("consoleLevelSummary", () => {
+    test("counts per level in a fixed order, with warning shortened to warn", () => {
+        expect(consoleLevelSummary(["log", "error", "warning", "log", "warning", "info"])).toBe(
+            "2 log · 1 info · 2 warn · 1 error"
+        );
+    });
+
+    test("levels outside the known set follow, alphabetically", () => {
+        expect(consoleLevelSummary(["table", "log", "assert"])).toBe("1 log · 1 assert · 1 table");
+    });
+
+    test("nothing logged says so", () => {
+        expect(consoleLevelSummary([])).toBe("0 messages");
     });
 });
 

@@ -281,6 +281,7 @@ export class Page {
     send = (method: string, params?: Record<string, unknown>, options?: CdpCallOptions) =>
         this.conn.send(method, params, undefined, options);
     on = (fn: CdpEventListener) => this.conn.on(fn);
+    off = (fn: CdpEventListener) => this.conn.off(fn);
     close = () => this.conn.close();
 
     async enable(domains: string[] = ["Network", "Page", "Runtime", "Log"]): Promise<void> {
@@ -490,6 +491,44 @@ export function cookiesSummaryLine(count: number): string {
     return `${count} cookies. Duplicate name on different paths => longer path is sent FIRST (RFC 6265); servers taking the first value bind to the stale session.`;
 }
 
+/** Resolves true on the tab's next `Page.loadEventFired`, false at the deadline. Subscribe BEFORE navigating; needs Page.enable. */
+export function nextLoadEvent(page: Pick<Page, "on" | "off">, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+        const listener: CdpEventListener = (method) => {
+            if (method === "Page.loadEventFired") {
+                clearTimeout(timer);
+                page.off(listener);
+                resolve(true);
+            }
+        };
+        const timer = setTimeout(() => {
+            page.off(listener);
+            resolve(false);
+        }, timeoutMs);
+        page.on(listener);
+    });
+}
+
+const CONSOLE_LEVEL_ORDER = ["log", "info", "debug", "warn", "error"];
+
+/** The count line `console` prints last, e.g. `12 log · 3 warn · 1 error`. Chrome's `warning` is counted as `warn`. */
+export function consoleLevelSummary(levels: string[]): string {
+    if (levels.length === 0) {
+        return "0 messages";
+    }
+
+    const counts = new Map<string, number>();
+    for (const raw of levels) {
+        const level = raw === "warning" ? "warn" : raw;
+        counts.set(level, (counts.get(level) ?? 0) + 1);
+    }
+
+    const known = CONSOLE_LEVEL_ORDER.filter((level) => counts.has(level));
+    const other = [...counts.keys()].filter((level) => !CONSOLE_LEVEL_ORDER.includes(level)).sort();
+
+    return [...known, ...other].map((level) => `${counts.get(level)} ${level}`).join(" · ");
+}
+
 /** Browser-level session: cookies across ALL domains incl. httpOnly, target list. */
 export class Browser {
     constructor(
@@ -679,6 +718,42 @@ export function makeMatcher(pattern?: string): (value: string) => boolean {
     }
 
     return (value) => value.includes(pattern);
+}
+
+export type PortChoice =
+    | { kind: "one"; port: number; by: "url" | "title"; tabs: number }
+    | { kind: "none" }
+    | { kind: "many"; ports: number[] };
+
+/**
+ * Which live endpoint a `--match` points at when no --port was given. Same ranking as
+ * `pickPageTarget`: ports with a url hit first, title hits only when no port has a url hit.
+ * Exactly one port is an answer; zero or several are reported, never resolved by a guess.
+ */
+export function choosePortByMatch(
+    endpoints: { port: number; pages: { title?: string; url: string }[] }[],
+    pattern: string
+): PortChoice {
+    const matches = makeMatcher(pattern);
+
+    for (const by of ["url", "title"] as const) {
+        const hits = endpoints
+            .map((endpoint) => ({
+                port: endpoint.port,
+                tabs: endpoint.pages.filter((page) => matches(by === "url" ? page.url : (page.title ?? ""))).length,
+            }))
+            .filter((hit) => hit.tabs > 0);
+
+        if (hits.length === 1) {
+            return { kind: "one", port: hits[0].port, by, tabs: hits[0].tabs };
+        }
+
+        if (hits.length > 1) {
+            return { kind: "many", ports: hits.map((hit) => hit.port) };
+        }
+    }
+
+    return { kind: "none" };
 }
 
 /**
