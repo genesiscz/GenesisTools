@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig as loadDaemonConfig } from "@app/daemon/lib/config";
@@ -113,6 +113,29 @@ describe("notify config", () => {
         expect(readNotifyConfig(path)).toEqual(defaultNotifyConfig());
         await updateNotifyConfig({ repo: "/work/web", repoEnabled: true }, path);
         expect(readNotifyConfig(path).repos["/work/web"]).toEqual({ enabled: true });
+    });
+
+    test("an update refuses a config that does not parse and keeps its bytes; a read for display uses the defaults", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "hub-notify-")), "notify.json");
+        const truncated = '{"enabled": true, "intervalMinutes": 15, "repos": {"/work/web": {"enabled": tr';
+        writeFileSync(path, truncated);
+
+        expect(readNotifyConfig(path)).toEqual(defaultNotifyConfig());
+        await expect(updateNotifyConfig({ repo: "/work/api", repoEnabled: true }, path)).rejects.toThrow(
+            `the notify config ${path} does not parse`
+        );
+        expect(readFileSync(path, "utf8")).toBe(truncated);
+
+        writeFileSync(path, "[]");
+        await expect(updateNotifyConfig({ onlyMine: true }, path)).rejects.toThrow("is not a JSON object");
+        expect(readFileSync(path, "utf8")).toBe("[]");
+
+        // Negative control: an update of a valid file keeps what it had and adds the change.
+        writeFileSync(path, '{"intervalMinutes": 15, "repos": {"/work/web": {"enabled": true}}}');
+        await updateNotifyConfig({ repo: "/work/api", repoEnabled: true }, path);
+        const saved = readNotifyConfig(path);
+        expect(saved.intervalMinutes).toBe(15);
+        expect(saved.repos).toEqual({ "/work/web": { enabled: true }, "/work/api": { enabled: true } });
     });
 });
 

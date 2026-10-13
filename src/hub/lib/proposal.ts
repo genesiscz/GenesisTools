@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { xxhash } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -7,6 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * A review proposal: what an agent concluded about a PR/MR, pushed into the GenesisTools.app review
@@ -508,9 +509,7 @@ function mergeAndWrite({ incoming, key, path }: { incoming: ReviewProposal; key:
         drafts,
         ...(threads ? { threads } : {}),
     };
-    const temp = `${path}.${process.pid}.tmp`;
-    writeFileSync(temp, `${SafeJSON.stringify(merged, null, 2)}\n`);
-    renameSync(temp, path);
+    atomicWriteFileSync(path, `${SafeJSON.stringify(merged, null, 2)}\n`);
     logger.debug({ key, path, drafts: drafts.length, kept }, "review proposal saved");
     return { key, path, kept };
 }

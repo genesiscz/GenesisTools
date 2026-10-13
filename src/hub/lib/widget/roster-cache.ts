@@ -1,8 +1,8 @@
-import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { WidgetRoster } from "./roster-index";
 import { realWidgetSources, type WidgetSources } from "./snapshot";
 import { widgetRoot } from "./storage";
@@ -83,24 +83,13 @@ export async function writeWidgetRosterCache({
 }
 
 /**
- * Writes to one cache file run one at a time, in the order they were asked for: they share the temporary path, and
- * an older roster must never replace a newer one. Every roster run asks for a write, often before the last finished.
+ * Writes to one cache file run one at a time, in the order they were asked for: an older roster must never replace
+ * a newer one. Every roster run asks for a write, often before the last finished.
  */
 const pendingRosterWrites = new Map<string, Promise<void>>();
 
-async function replaceRosterCache(path: string, file: WidgetRosterCacheFile): Promise<void> {
-    const temporary = `${path}.${process.pid}.tmp`;
-    await Bun.write(temporary, SafeJSON.stringify(file, { strict: true }));
-
-    try {
-        await rename(temporary, path);
-    } catch (error) {
-        // A failed rename would leave the temporary file in the widget root for good.
-        await unlink(temporary).catch((cleanup) => {
-            logger.debug({ error: cleanup, temporary }, "Widget roster cache: temporary file not removed");
-        });
-        throw error;
-    }
+function replaceRosterCache(path: string, file: WidgetRosterCacheFile): void {
+    atomicWriteFileSync(path, SafeJSON.stringify(file, { strict: true }));
 }
 
 /** The watch's roster when its writer is alive and wrote it recently; undefined sends the caller to the index. */

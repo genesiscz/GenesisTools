@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
@@ -36,6 +36,7 @@ import {
     normalizeRulesConfig,
     prRefFromKey,
     RULE_LIMITS,
+    RULES_CONFIG_KEY,
     type RuleInputs,
     type RuleSession,
     readRulesConfig,
@@ -796,6 +797,63 @@ describe("rules", () => {
         expect(posted).toEqual(["d2"]);
         const none = await runRules({ ...shared, readConfig: async () => ({ rules: [] }) });
         expect(none.skipped).toContain("no rules");
+    });
+
+    test("a state file that does not parse is copied aside before a run replaces it; a dry run writes nothing", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-rules-"));
+        const statePath = join(dir, "rules-state.json");
+        const truncated = '{"seeded": {"r_decision": true}, "fired": {"r_decision": {"d1": "2026-03-02T14:00:0';
+        writeFileSync(statePath, truncated);
+        const posted: string[] = [];
+        const shared = {
+            now: NOW,
+            statePath,
+            readConfig: async () => ({ rules: [rule({ kind: "decision" })] }),
+            inputs: async () => inputs({ decisions: [decision({ id: "d1" }), decision({ id: "d2" })] }),
+            post: async (firing: { key: string }) => {
+                posted.push(firing.key);
+                return true;
+            },
+        };
+
+        await runRules({ ...shared, dryRun: true });
+        expect(readdirSync(dir)).toEqual(["rules-state.json"]);
+        expect(readFileSync(statePath, "utf8")).toBe(truncated);
+
+        const rerun = await runRules(shared);
+        const copies = readdirSync(dir).filter((name) => name.startsWith("rules-state.json.corrupt-"));
+        expect(copies).toHaveLength(1);
+        expect(readFileSync(join(dir, copies[0]), "utf8")).toBe(truncated);
+        // The rule takes a new baseline: nothing already open is posted again.
+        expect(rerun.reports[0].seeded).toBe(true);
+        expect(posted).toEqual([]);
+
+        // Negative control: the rewritten state works as before, so a new match posts once.
+        await runRules({
+            ...shared,
+            inputs: async () => inputs({ decisions: ["d1", "d2", "d3"].map((id) => decision({ id })) }),
+        });
+        expect(posted).toEqual(["d3"]);
+    });
+
+    test("an update keeps a stored rule this version cannot read, and refuses a stored value that is not a list", async () => {
+        const storage = new Storage(`hub-rules-unreadable-${process.pid}`);
+        const future = { id: "r_future", kind: "quietHours", from: "22:00", to: "07:00" };
+        await storage.setConfigValue(RULES_CONFIG_KEY, [rule({ kind: "decision" }), future]);
+
+        const added = await updateRulesConfig((config) => addRule(config, { kind: "idle", minutes: 30 }), storage);
+
+        const stored = await storage.getConfigValue<unknown[]>(RULES_CONFIG_KEY);
+        expect(stored).toContainEqual(future);
+        expect(stored).toContainEqual(added);
+        expect((await readRulesConfig(storage)).rules.map((entry) => entry.kind)).toEqual(["decision", "idle"]);
+
+        const notAList = { r_decision: { kind: "decision" } };
+        await storage.setConfigValue(RULES_CONFIG_KEY, notAList);
+        await expect(updateRulesConfig((config) => addRule(config, { kind: "decision" }), storage)).rejects.toThrow(
+            "are not a list"
+        );
+        expect(await storage.getConfigValue<unknown>(RULES_CONFIG_KEY)).toEqual(notAList);
     });
 
     test("a notification that fails to post fires again on the next run", async () => {

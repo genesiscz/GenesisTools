@@ -269,6 +269,28 @@ describe("stuck thresholds", () => {
         expect(SafeJSON.parse(readFileSync(path, "utf8"))).toMatchObject({ toolMinutes: 15 });
         expect((await updateStuckThresholds({ reset: true }, path)).toolMinutes).toBe(10);
     });
+
+    test("an update refuses thresholds that do not parse and keeps their bytes; reset and a read still work", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "hub-stuck-")), "stuck.json");
+        const truncated = '{"toolMinutes": 15, "repeats": 8, "idleMin';
+        writeFileSync(path, truncated);
+
+        expect(readStuckThresholds(path).toolMinutes).toBe(10);
+        await expect(updateStuckThresholds({ repeats: 9 }, path)).rejects.toThrow(
+            `the stuck thresholds ${path} do not parse`
+        );
+        expect(readFileSync(path, "utf8")).toBe(truncated);
+
+        writeFileSync(path, "null");
+        await expect(updateStuckThresholds({ repeats: 9 }, path)).rejects.toThrow("are not a JSON object");
+        expect(readFileSync(path, "utf8")).toBe("null");
+
+        // Negative controls: an update of a valid file keeps its other fields, and an explicit reset may replace any file.
+        writeFileSync(path, '{"toolMinutes": 15}');
+        expect(await updateStuckThresholds({ repeats: 9 }, path)).toMatchObject({ toolMinutes: 15, repeats: 9 });
+        writeFileSync(path, truncated);
+        expect((await updateStuckThresholds({ reset: true }, path)).toolMinutes).toBe(10);
+    });
 });
 
 describe("composeHandoff", () => {

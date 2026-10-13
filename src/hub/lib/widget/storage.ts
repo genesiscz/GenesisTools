@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, rename, unlink } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type WidgetState, widgetStateSchema } from "./types";
@@ -45,18 +44,7 @@ export async function mutateWidgetState<T>(root: string | undefined, update: (st
                 throw new Error("This change was not saved: widget history would exceed 32 MiB");
             }
 
-            const temporary = join(directory, `state.${randomUUID()}.tmp`);
-            try {
-                await Bun.write(temporary, serialized);
-                await rename(temporary, join(directory, "state.json"));
-            } catch (error) {
-                try {
-                    await unlink(temporary);
-                } catch (cleanupError) {
-                    logger.debug({ error: cleanupError }, "Widget temporary state already gone");
-                }
-                throw error;
-            }
+            atomicWriteFileSync(join(directory, "state.json"), serialized);
             return value;
         },
         10_000

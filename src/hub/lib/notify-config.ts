@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -255,13 +255,48 @@ export function notifyConfigPath(dir = notifyDir()): string {
     return join(dir, "notify.json");
 }
 
-export function readNotifyConfig(path = notifyConfigPath()): NotifyConfig {
-    if (!existsSync(path)) {
-        return defaultNotifyConfig();
-    }
+/**
+ * The saved config, or the defaults when there is no file. A file that exists but cannot be read, does not parse or
+ * is not a JSON object THROWS, so a caller that writes the config back never replaces the user's settings with the
+ * defaults.
+ */
+function readNotifyConfigStrict(path: string): NotifyConfig {
+    let text: string;
 
     try {
-        return normalizeNotifyConfig(SafeJSON.parse(readFileSync(path, "utf8")));
+        text = readFileSync(path, "utf8");
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return defaultNotifyConfig();
+        }
+
+        throw new Error(`hub: cannot read the notify config ${path}; it was left untouched`, { cause: err });
+    }
+
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(text);
+    } catch (err) {
+        throw new Error(
+            `hub: the notify config ${path} does not parse; it was left untouched. Fix or move it, then run again`,
+            { cause: err }
+        );
+    }
+
+    if (!isRecord(raw)) {
+        throw new Error(
+            `hub: the notify config ${path} is not a JSON object; it was left untouched. Fix or move it, then run again`
+        );
+    }
+
+    return normalizeNotifyConfig(raw);
+}
+
+/** The config to act on or show: an unreadable file warns and reads as the defaults, and is never written here. */
+export function readNotifyConfig(path = notifyConfigPath()): NotifyConfig {
+    try {
+        return readNotifyConfigStrict(path);
     } catch (err) {
         log.warn({ err, path }, "notify config unreadable; using the defaults");
         return defaultNotifyConfig();
@@ -275,7 +310,7 @@ export async function updateNotifyConfig(
 ): Promise<NotifyConfig> {
     mkdirSync(dirname(path), { recursive: true });
     return withFileLock(`${path}.lock`, async () => {
-        const next = applyNotifySettings(readNotifyConfig(path), change);
+        const next = applyNotifySettings(readNotifyConfigStrict(path), change);
         atomicWriteFileSync(path, `${SafeJSON.stringify(next, null, 2)}\n`);
         log.debug({ path, change }, "notify config updated");
         return next;

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, mkdir, rename, stat, unlink } from "node:fs/promises";
+import { copyFile, mkdir, stat, unlink } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { importWidgetAsset } from "../composer/assets";
@@ -84,14 +85,7 @@ async function mutateShelf<T>({
 
             state.revision += 1;
             shelfStateSchema.parse(state);
-            const temporary = join(directory, `state-${randomUUID()}.tmp`);
-            try {
-                await Bun.write(temporary, SafeJSON.stringify(state));
-                await rename(temporary, join(directory, "state.json"));
-            } catch (error) {
-                await cleanupOwnedFile(temporary);
-                throw error;
-            }
+            atomicWriteFileSync(join(directory, "state.json"), SafeJSON.stringify(state));
             return result;
         },
         10_000

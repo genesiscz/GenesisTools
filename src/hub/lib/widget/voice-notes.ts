@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, unlinkSync } from "node:fs";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt/types";
@@ -8,6 +8,7 @@ import { type RecordingEvent, recordPcmClip } from "@genesiscz/utils/ai/voice/re
 import { createVoiceSession, type VoiceEvent } from "@genesiscz/utils/ai/voice/session";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { widgetRoot } from "./storage";
@@ -93,18 +94,10 @@ async function mutate<T>({
                 throw new Error("Voice note metadata exceeds the supported local size");
             }
 
+            // The write and the rename run with no await between them, so a cancel seen here is the last one
+            // that can still stop the save.
             signal?.throwIfAborted();
-            const temporary = join(directory, `notes.${randomUUID()}.tmp`);
-            try {
-                await writeFile(temporary, serialized, { flag: "wx", mode: 0o600 });
-                signal?.throwIfAborted();
-                await rename(temporary, join(directory, "notes.json"));
-            } catch (error) {
-                await unlink(temporary).catch((cleanup) =>
-                    logger.debug({ error: cleanup }, "Voice note temporary cleanup")
-                );
-                throw error;
-            }
+            atomicWriteFileSync(join(directory, "notes.json"), serialized, { mode: 0o600 });
             return result;
         },
         10_000

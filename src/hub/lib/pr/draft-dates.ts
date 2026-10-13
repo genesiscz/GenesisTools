@@ -1,7 +1,8 @@
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -127,9 +128,7 @@ export async function draftDatesFor({
             const stamped = stampDraftDates({ dates: await readDates(file), mr, draftIds, now });
 
             if (stamped.changed) {
-                const temporary = `${file}.${crypto.randomUUID()}.tmp`;
-                await Bun.write(temporary, SafeJSON.stringify(stamped.dates, null, 2));
-                await rename(temporary, file);
+                atomicWriteFileSync(file, SafeJSON.stringify(stamped.dates, null, 2));
             }
 
             return stamped.byId;

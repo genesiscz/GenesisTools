@@ -15,6 +15,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { dispatchNotification, type NotificationEvent } from "@genesiscz/utils/notifications";
 import { LockTimeoutError, Storage, withFileLock } from "@genesiscz/utils/storage";
+import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import type { NotifyItem } from "./notify";
@@ -203,15 +204,13 @@ export async function readRulesConfig(storage = new Storage("hub")): Promise<Rul
     return normalizeRulesConfig({ rules: (await storage.getConfigValue<unknown[]>(RULES_CONFIG_KEY)) ?? [] });
 }
 
-/** One key of the hub config: the other settings in that file are left as they are. */
-export async function writeRulesConfig(config: RulesConfig, storage = new Storage("hub")): Promise<void> {
-    await storage.setConfigValue(RULES_CONFIG_KEY, normalizeRulesConfig(config).rules);
-}
-
 /**
  * Read, change and write the rules under one lock, so two writers (a hub toggle and a remove a moment
  * later, or the hub and a terminal) never both read the old list and drop each other's change. The
  * lock is the rules' own: `setConfigValue` takes the config file's lock by itself.
+ *
+ * A stored entry this version cannot read (a kind from a newer version, a missing id) is written back
+ * as it was, after the rules it can read; a stored value that is not a list makes the update refuse.
  */
 export async function updateRulesConfig<T>(
     change: (config: RulesConfig) => T,
@@ -220,9 +219,23 @@ export async function updateRulesConfig<T>(
     return storage.withFileLock({
         file: `${storage.getConfigPath()}.rules`,
         fn: async () => {
-            const config = await readRulesConfig(storage);
+            const stored = (await storage.getConfigValue<unknown>(RULES_CONFIG_KEY)) ?? [];
+
+            if (!Array.isArray(stored)) {
+                throw new Error(
+                    `hub: the rules in ${rulesConfigPath(storage)} are not a list; they were left untouched. Fix the file, then run again`
+                );
+            }
+
+            const unreadable = stored.filter((entry) => normalizeRule(entry) === null);
+            const config = normalizeRulesConfig({ rules: stored });
             const result = change(config);
-            await writeRulesConfig(config, storage);
+            await storage.setConfigValue(RULES_CONFIG_KEY, [...normalizeRulesConfig(config).rules, ...unreadable]);
+
+            if (unreadable.length > 0) {
+                log.warn({ count: unreadable.length }, "hub rules: kept stored rules this version cannot read");
+            }
+
             return result;
         },
     });
@@ -232,9 +245,32 @@ export function emptyRulesState(): RulesState {
     return { seeded: {}, fired: {}, lastRunAt: null };
 }
 
-export function readRulesState(path = rulesStatePath()): RulesState {
-    const raw = readJson(path);
+/**
+ * The dedupe state; a missing file is empty. `forUpdate` is for a run that writes the state back: a file that
+ * exists but does not parse is first copied aside to `<path>.corrupt-<time>`, then reads as empty, so every rule
+ * takes a new baseline (posts nothing) and the old record is not lost. Without it (a dry run) nothing is written.
+ */
+export function readRulesState(
+    path = rulesStatePath(),
+    { forUpdate = false }: { forUpdate?: boolean } = {}
+): RulesState {
+    if (!forUpdate) {
+        return rulesStateFrom(readJson(path));
+    }
 
+    const file = readJsonFileForUpdateSync(path, { accepts: isJsonObject });
+
+    if (file.state === "corrupt") {
+        log.warn(
+            { path, preservedAt: file.preservedAt },
+            "hub rules: state unreadable, copied aside; rules re-baseline"
+        );
+    }
+
+    return file.state === "ok" ? rulesStateFrom(file.value) : emptyRulesState();
+}
+
+function rulesStateFrom(raw: unknown): RulesState {
     if (!raw || typeof raw !== "object") {
         return emptyRulesState();
     }
@@ -754,7 +790,7 @@ export async function runRules({
     }
 
     const evaluate = async (): Promise<RulesRunResult> => {
-        const state = readRulesState(statePath);
+        const state = readRulesState(statePath, { forUpdate: !dryRun });
         const evaluation = evaluateRules({ config, state, inputs: await readInputs(config), now });
         let posted = 0;
 

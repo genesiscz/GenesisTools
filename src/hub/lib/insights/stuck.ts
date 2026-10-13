@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
@@ -93,13 +93,47 @@ export function stuckConfigPath(dir = new Storage("hub").getBaseDir()): string {
     return join(dir, "stuck.json");
 }
 
-export function readStuckThresholds(path = stuckConfigPath()): StuckThresholds {
-    if (!existsSync(path)) {
-        return defaultStuckThresholds();
-    }
+/**
+ * The saved thresholds, or the defaults when there is no file. A file that exists but cannot be read, does not parse
+ * or is not a JSON object THROWS, so an update never replaces the user's thresholds with the defaults.
+ */
+function readStuckThresholdsStrict(path: string): StuckThresholds {
+    let text: string;
 
     try {
-        return normalizeStuckThresholds(SafeJSON.parse(readFileSync(path, "utf8")));
+        text = readFileSync(path, "utf8");
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return defaultStuckThresholds();
+        }
+
+        throw new Error(`hub: cannot read the stuck thresholds ${path}; they were left untouched`, { cause: err });
+    }
+
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(text);
+    } catch (err) {
+        throw new Error(
+            `hub: the stuck thresholds ${path} do not parse; they were left untouched. Fix or move the file, or pass --reset`,
+            { cause: err }
+        );
+    }
+
+    if (!isRecord(raw)) {
+        throw new Error(
+            `hub: the stuck thresholds ${path} are not a JSON object; they were left untouched. Fix or move the file, or pass --reset`
+        );
+    }
+
+    return normalizeStuckThresholds(raw);
+}
+
+/** The thresholds to judge with or show: an unreadable file warns and reads as the defaults, and is never written. */
+export function readStuckThresholds(path = stuckConfigPath()): StuckThresholds {
+    try {
+        return readStuckThresholdsStrict(path);
     } catch (err) {
         log.warn({ err, path }, "stuck thresholds unreadable; using the defaults");
         return defaultStuckThresholds();
@@ -114,7 +148,7 @@ export async function updateStuckThresholds(
     mkdirSync(dirname(path), { recursive: true });
     return withFileLock(`${path}.lock`, async () => {
         const { reset, ...fields } = change;
-        const base = reset ? defaultStuckThresholds() : readStuckThresholds(path);
+        const base = reset ? defaultStuckThresholds() : readStuckThresholdsStrict(path);
         const next = normalizeStuckThresholds({ ...base, ...fields });
         atomicWriteFileSync(path, `${SafeJSON.stringify(next, null, 2)}\n`);
         log.debug({ path, change }, "stuck thresholds updated");
