@@ -5,6 +5,7 @@ import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { ClientIdentity, GateGrant, GateProvider, TokenKind } from "./types";
@@ -41,6 +42,21 @@ function readGrantsFile(path: string): GrantsFile {
     }
 
     return parsed;
+}
+
+function isGrantsFile(value: unknown): value is GrantsFile {
+    return isJsonObject(value) && Array.isArray(value.grants);
+}
+
+/**
+ * The grants a write starts from. A file that exists but does not parse is copied aside first
+ * (`grants.json.corrupt-<time>`), so remembering or revoking a grant never destroys the only copy of
+ * the user's approvals. A read error other than a missing file throws, and nothing is written.
+ */
+function readGrantsFileForUpdate(path: string): GrantsFile {
+    const existing = readJsonFileForUpdateSync(path, { accepts: isGrantsFile });
+
+    return existing.state === "ok" ? existing.value : { version: 1, grants: [] };
 }
 
 function writeGrantsFile(path: string, data: GrantsFile): void {
@@ -89,7 +105,7 @@ async function mutateGrants(fn: (grants: GateGrant[]) => GateGrant[]): Promise<v
         `${path}.lock`,
         async () => {
             const now = Date.now();
-            const current = readGrantsFile(path).grants.filter((grant) => isLive(grant, now));
+            const current = readGrantsFileForUpdate(path).grants.filter((grant) => isLive(grant, now));
             writeGrantsFile(path, { version: 1, grants: fn(current) });
         },
         10_000

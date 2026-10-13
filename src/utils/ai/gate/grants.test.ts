@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import {
     appendAudit,
@@ -113,6 +113,20 @@ describe("grants", () => {
         await rememberGrant(grant());
         expect(await revokeGrants("*")).toBe(1);
         expect(listGrants(NOW)).toEqual([]);
+    });
+
+    test("a grants file that does not parse is copied aside before a new grant replaces it", async () => {
+        const planted = '{"version":1,"grants":[{"key":"k-pi-node","clientName":"pi","accountId":"acc_a","un';
+        mkdirSync(dirname(grantsPath()), { recursive: true });
+        writeFileSync(grantsPath(), planted, { mode: 0o600 });
+
+        await rememberGrant(grant({ key: "k-other", clientName: "other", accountId: "acc_b" }));
+
+        const dir = dirname(grantsPath());
+        const copies = readdirSync(dir).filter((name) => name.startsWith("grants.json.corrupt-"));
+        expect(copies).toHaveLength(1);
+        expect(readFileSync(join(dir, copies[0]), "utf8")).toBe(planted);
+        expect(listGrants(NOW).map((g) => g.clientName)).toEqual(["other"]);
     });
 
     test("the audit tail returns the last lines in order, from a long history and from a short one", async () => {

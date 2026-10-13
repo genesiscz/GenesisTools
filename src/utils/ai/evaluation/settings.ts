@@ -141,11 +141,15 @@ function settingsStore(): Storage {
 
 let cache: JevSettings | null = null;
 
-/** Read and cache the saved settings. Safe to call repeatedly; a broken file yields defaults. */
+async function readSavedSettings(storage: Storage) {
+    const config = await storage.getConfig<{ settings?: unknown }>();
+    return jevSettingsSchema.safeParse(config?.settings ?? {});
+}
+
+/** Read and cache the saved settings. Safe to call repeatedly; settings that fail the schema yield defaults. */
 export async function loadJevSettings(): Promise<JevSettings> {
     const storage = settingsStore();
-    const config = await storage.getConfig<{ settings?: unknown }>();
-    const parsed = jevSettingsSchema.safeParse(config?.settings ?? {});
+    const parsed = await readSavedSettings(storage);
     if (!parsed.success) {
         logger.warn(
             { file: storage.getConfigPath(), issues: parsed.error.issues.map((issue) => issue.path.join(".")) },
@@ -160,6 +164,25 @@ export async function loadJevSettings(): Promise<JevSettings> {
 }
 
 /**
+ * The settings a write starts from. Settings that fail the schema throw instead of reading as `{}`:
+ * the write saves the whole `settings` object, so `{}` plus one key would erase every other saved one.
+ */
+async function loadJevSettingsForUpdate(): Promise<JevSettings> {
+    const storage = settingsStore();
+    const parsed = await readSavedSettings(storage);
+
+    if (!parsed.success) {
+        const keys = parsed.error.issues.map((issue) => issue.path.join(".")).join(", ");
+        throw new Error(
+            `The saved Jev settings in ${storage.getConfigPath()} fail the schema (${keys}), so the file was left ` +
+                "untouched. Fix or remove those keys, then retry."
+        );
+    }
+
+    return parsed.data;
+}
+
+/**
  * The settings loaded so far. Synchronous on purpose: `selectedProvider` runs inside commander's
  * option resolution, and the CLI preloads through `loadJevSettings` in its preAction hook.
  */
@@ -169,7 +192,7 @@ export function savedJevSettings(): JevSettings {
 
 export async function setJevSetting(key: JevSettingKey, raw: string): Promise<JevSettings> {
     const value = NUMERIC.has(key) ? Number(raw) : raw;
-    const next = jevSettingsSchema.parse(withSetting(await loadJevSettings(), key, value));
+    const next = jevSettingsSchema.parse(withSetting(await loadJevSettingsForUpdate(), key, value));
     await settingsStore().setConfigValue("settings", next);
     cache = next;
     logger.debug({ key }, "Saved a Jev setting");
@@ -177,7 +200,7 @@ export async function setJevSetting(key: JevSettingKey, raw: string): Promise<Je
 }
 
 export async function unsetJevSetting(key: JevSettingKey): Promise<JevSettings> {
-    const current = withoutSetting(await loadJevSettings(), key);
+    const current = withoutSetting(await loadJevSettingsForUpdate(), key);
     await settingsStore().setConfigValue("settings", current);
     cache = current;
     logger.debug({ key }, "Cleared a Jev setting");

@@ -106,14 +106,15 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): JsonFi
         return resolve(dir, `${id}.jsonl`);
     }
 
-    function readEntries(id: string): DiskEntry[] {
+    /** The entries that parse, and every line that does not, verbatim. */
+    function readLines(id: string): { entries: DiskEntry[]; unreadable: string[] } {
         const path = filePath(id);
+        const entries: DiskEntry[] = [];
+        const unreadable: string[] = [];
 
         if (!existsSync(path)) {
-            return [];
+            return { entries, unreadable };
         }
-
-        const entries: DiskEntry[] = [];
 
         for (const line of readFileSync(path, "utf8").split("\n")) {
             const trimmed = line.trim();
@@ -125,11 +126,16 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): JsonFi
             try {
                 entries.push(SafeJSON.parse(trimmed, { strict: true }) as DiskEntry);
             } catch (error) {
+                unreadable.push(line);
                 log.debug({ session: id, err: error }, "session line unreadable — skipped");
             }
         }
 
-        return entries;
+        return { entries, unreadable };
+    }
+
+    function readEntries(id: string): DiskEntry[] {
+        return readLines(id).entries;
     }
 
     function toRecord(id: string, entry: DiskEntry, index: number): MessageRecord {
@@ -239,7 +245,19 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): JsonFi
         },
 
         async writeRawEntries(id: string, entries: unknown[]): Promise<void> {
-            const content = entries.length === 0 ? "" : `${entries.map((e) => SafeJSON.stringify(e)).join("\n")}\n`;
+            // A line the reader skipped never reached `entries`. It goes back verbatim after them, so
+            // saving a session that loaded with a torn line does not delete that line.
+            const { unreadable } = readLines(id);
+
+            if (unreadable.length > 0) {
+                log.warn(
+                    { session: id, lines: unreadable.length },
+                    "session lines that do not parse were kept as they are"
+                );
+            }
+
+            const lines = [...entries.map((e) => SafeJSON.stringify(e)), ...unreadable];
+            const content = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
             // This is ask's whole-file save() path: a plain write interrupted by
             // a crash or a full disk truncates the user's chat history in place.
             atomicWriteFileSync(filePath(id), content);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatSessionManager } from "../ChatSessionManager";
@@ -103,6 +103,23 @@ describe("ChatSessionManager", () => {
     it("accepts valid session IDs with hyphens and underscores", () => {
         const session = manager.create("my-session_123");
         expect(session.id).toBe("my-session_123");
+    });
+
+    it("save keeps a line that did not parse when the session loaded", async () => {
+        const path = join(tempDir, "torn-line.jsonl");
+        const hello = '{"type":"user","content":"hello","timestamp":"2026-07-01T10:00:01.000Z"}';
+        const torn = '{"type":"assistant","content":"half an ans';
+        writeFileSync(path, `${hello}\n${torn}\n`);
+
+        const session = await manager.load("torn-line");
+        session.add({ role: "user", content: "still there?" });
+        await manager.save(session);
+
+        const lines = readFileSync(path, "utf8").trim().split("\n");
+        expect(lines).toHaveLength(3);
+        expect(lines[0]).toBe(hello);
+        expect(lines[2]).toBe(torn);
+        expect((await manager.load("torn-line")).length).toBe(2);
     });
 
     it("resumes a session file written before the store refactor", async () => {
