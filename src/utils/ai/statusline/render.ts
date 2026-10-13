@@ -6,12 +6,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import { StatuslineCache } from "./cache";
-import { buildLine, terminalWidth } from "./layout";
+import { buildLine, terminalWidth, visibleWidth } from "./layout";
 import {
     accountSegment,
     contextSegment,
     deltaSegment,
     dirtySegment,
+    fitBranch,
     gitSegment,
     modelDirSegment,
     modelLabel,
@@ -38,6 +39,13 @@ export interface GitInfo {
     branch: string | null;
     dirty: number;
 }
+
+/**
+ * Claude Code draws the statusline 2 cells in from each edge and cuts a longer line with its own
+ * `…`: a 59-column pane showed 55 cells, a 53-column pane 49. A line built to `COLUMNS - 2` lost
+ * its last two cells, so the budget is `COLUMNS - 4`.
+ */
+const HOST_PADDING_COLUMNS = 4;
 
 /** A hung `git status` must not freeze every Claude statusline on the machine. */
 const GIT_STATUS_TIMEOUT_MS = 5_000;
@@ -85,10 +93,14 @@ export async function renderStatusline(raw: Record<string, unknown>, deps: Rende
         time("extension", async () => (config.extends ? runExtension(payload, config) : [])),
     ]);
 
-    const line1Parts = [
-        modelDirSegment(modelLabel(model, payload.modelDisplayName, config.modelStyle), basename(payload.cwd)),
-        gitSegment(git?.branch ?? null),
-    ];
+    const maxWidth = (deps.columns ?? terminalWidth(config.fallbackColumns)) - HOST_PADDING_COLUMNS;
+    const modelDir = modelDirSegment(
+        modelLabel(model, payload.modelDisplayName, config.modelStyle),
+        basename(payload.cwd)
+    );
+    // The git segment is a space plus the name, so the name gets what is left after that space.
+    const branch = fitBranch(git?.branch ?? null, maxWidth - visibleWidth(modelDir) - 1);
+    const line1Parts = [modelDir, gitSegment(branch)];
     const line2Parts: string[] = [config.showDirty ? dirtySegment(git?.branch ?? null, git?.dirty ?? 0) : ""];
 
     if (payload.contextWindowSize && payload.usage) {
@@ -112,7 +124,6 @@ export async function renderStatusline(raw: Record<string, unknown>, deps: Rende
         line2Parts.push(accountSegment(account, now()));
     }
 
-    const maxWidth = (deps.columns ?? terminalWidth(config.fallbackColumns)) - 2;
     const line1 = buildLine(line1Parts, maxWidth);
     const line2 = buildLine(line2Parts, maxWidth);
     const lines = line2 ? [line1, line2] : [line1];

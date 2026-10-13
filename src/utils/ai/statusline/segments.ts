@@ -1,3 +1,4 @@
+import { truncateMiddle } from "./layout";
 import type { AccountSegmentData } from "./types";
 
 /**
@@ -101,6 +102,27 @@ export function modelDirSegment(short: string, dirName: string): string {
 
 export function gitSegment(branch: string | null): string {
     return branch ? ` ${ANSI.magenta}${branch}${ANSI.reset}` : "";
+}
+
+/** The fewest branch characters still worth printing; with less room the line goes without it. */
+export const MIN_BRANCH_WIDTH = 8;
+
+/**
+ * The branch as it fits in the `room` characters left after the model and the dir. Claude Code
+ * passes its own pane width as `COLUMNS`, so a 59-column pane leaves 55, and the raw model id
+ * plus the dir already take 28 of them. A branch that does not fit loses its middle instead of
+ * vanishing whole; below `MIN_BRANCH_WIDTH` it is still dropped.
+ */
+export function fitBranch(branch: string | null, room: number): string | null {
+    if (!branch) {
+        return null;
+    }
+
+    if (Array.from(branch).length <= room) {
+        return branch;
+    }
+
+    return room >= MIN_BRANCH_WIDTH ? truncateMiddle(branch, room) : null;
 }
 
 export function dirtySegment(branch: string | null, dirty: number): string {

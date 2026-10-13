@@ -9,8 +9,8 @@ export function visibleWidth(text: string): number {
 
 /**
  * Concatenate parts left to right, skipping any part that would push the line past
- * `maxWidth`. Later parts still get a chance, exactly like the shell `build_line`, so a long
- * branch name drops the branch and keeps the dirty count.
+ * `maxWidth`. Later parts still get a chance, exactly like the shell `build_line`. The branch
+ * is fitted to the room before it gets here (`fitBranch`), so only a too-narrow line drops it.
  */
 export function buildLine(parts: readonly string[], maxWidth: number): string {
     let result = "";
@@ -24,6 +24,28 @@ export function buildLine(parts: readonly string[], maxWidth: number): string {
     }
 
     return result;
+}
+
+/**
+ * Cut the middle of `text` so it is at most `max` characters and both ends stay readable:
+ * `feat/2026-10-13-enhancements-unified` at 20 reads `feat/2026-…s-unified`. Counts code
+ * points like `visibleWidth`, and returns the text unchanged when it already fits.
+ */
+export function truncateMiddle(text: string, max: number): string {
+    const chars = Array.from(text);
+
+    if (chars.length <= max) {
+        return text;
+    }
+
+    if (max <= 1) {
+        return max === 1 ? "…" : "";
+    }
+
+    const tail = Math.floor((max - 1) / 2);
+    const head = max - 1 - tail;
+
+    return `${chars.slice(0, head).join("")}…${tail > 0 ? chars.slice(-tail).join("") : ""}`;
 }
 
 /**

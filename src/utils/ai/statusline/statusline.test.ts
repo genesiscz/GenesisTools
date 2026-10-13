@@ -15,6 +15,7 @@ import { env } from "@genesiscz/utils/env";
 import * as gitCore from "@genesiscz/utils/git/core";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { isolatedPreviewCache, isolatedPreviewCacheDir, StatuslineCache } from "./cache";
 import {
     defaultStatuslineConfig,
@@ -27,7 +28,7 @@ import {
     rememberPreviousCommand,
     saveStatuslineConfig,
 } from "./config";
-import { buildLine, visibleWidth } from "./layout";
+import { buildLine, truncateMiddle, visibleWidth } from "./layout";
 import { gitInfo, renderStatusline } from "./render";
 import {
     ANSI,
@@ -110,6 +111,13 @@ describe("statusline segments reproduce the shell script", () => {
         expect(visibleWidth(`${ANSI.red}abc${ANSI.reset}`)).toBe(3);
         expect(buildLine(["12345", "67890", "x"], 6)).toBe("12345x");
     });
+
+    test("truncateMiddle keeps both ends, counts code points, and leaves a fitting text alone", () => {
+        expect(truncateMiddle("feat/2026-10-13-enhancements-unified", 20)).toBe("feat/2026-…s-unified");
+        expect(truncateMiddle("main", 20)).toBe("main");
+        expect(truncateMiddle("🌿abcdef", 4)).toBe("🌿a…f");
+        expect(truncateMiddle("abcdef", 1)).toBe("…");
+    });
 });
 
 describe("Claude Code payload", () => {
@@ -186,6 +194,34 @@ describe("renderStatusline", () => {
         expect(second.lines[1]).toContain(`${ANSI.green}+1.5k${ANSI.reset}`);
         expect(Object.keys(second.timings)).toContain("model");
         await second.settled;
+    });
+
+    /**
+     * Claude Code passes its pane width as `COLUMNS`. In a 59-column pane the raw model id and
+     * the dir take 28 of the 55 usable columns, and a 36-character branch used to vanish whole.
+     */
+    test("a narrow pane keeps the branch by cutting its middle, and drops it only below eight characters", async () => {
+        const root = mkdtempSync(join(tmpdir(), "statusline-narrow-"));
+        const cwd = join(root, "GenesisTools");
+        mkdirSync(join(cwd, ".git"), { recursive: true });
+        writeFileSync(join(cwd, ".git", "HEAD"), "ref: refs/heads/feat/2026-10-13-enhancements-unified\n");
+        const cache = new StatuslineCache(join(root, "cache"));
+        const config = mergeStatuslineConfig(defaultStatuslineConfig(), {
+            graft: { enabled: false, shim: "", ttlMs: 0 },
+            metricsPost: { enabled: false, url: "", timeoutMs: 0 },
+        });
+        const narrowFeature: StatuslineFeature = { ...feature, resolveModel: async () => "claude-opus-5-5" };
+        const raw = { workspace: { current_dir: cwd, project_dir: cwd }, session_id: "1b4001ba-aaaa" };
+        const line1 = async (columns: number) => {
+            const result = await renderStatusline(raw, { feature: narrowFeature, config, cache, columns });
+
+            return stripAnsi(result.lines[0] ?? "");
+        };
+
+        expect(await line1(59)).toBe("claude-opus-5-5 GenesisTools feat/2026-10-…ents-unified");
+        expect(visibleWidth(await line1(59))).toBe(55);
+        expect(await line1(120)).toBe("claude-opus-5-5 GenesisTools feat/2026-10-13-enhancements-unified");
+        expect(await line1(36)).toBe("claude-opus-5-5 GenesisTools");
     });
 
     test("a subagent frame renders nothing but the graft line", async () => {
