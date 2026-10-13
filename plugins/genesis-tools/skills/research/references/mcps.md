@@ -121,6 +121,8 @@ Hosted HTTP MCP — no local install, no API key.
 
 CLI install: `claude mcp add --transport http gh_grep https://mcp.grep.app`
 
+**When a code file will not load.** gh_grep finds code; it does not read whole files. Pin one commit SHA, then read the file from `https://raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>` or with `gh api repos/<owner>/<repo>/contents/<path>?ref=<sha> --jq .content | base64 -d`. A 404 usually means the file moved: find it with `gh search code '<symbol> repo:<owner>/<repo>'` or gh_grep before marking it unread. Measured 2026-10-12: a haiku agent left two key Chromium files unread after a 404 and a reader outage; a sonnet agent read 29 files this way at one pinned commit.
+
 ### context7-mcp (library docs)
 
 Tools used by this skill (only when a named library is being researched): `mcp__context7-mcp__resolve-library-id`, `mcp__context7-mcp__get-library-docs`.
