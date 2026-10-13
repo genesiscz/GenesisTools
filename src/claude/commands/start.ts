@@ -56,6 +56,7 @@ interface StartOptions {
     cmux?: boolean;
     tmux?: boolean;
     crossMessages?: boolean;
+    sdk?: boolean;
 }
 
 /** Same bound findClaudeCommand uses — an rc file that blocks must not hang the launch. */
@@ -209,6 +210,32 @@ async function forwardStderrDroppingZleNoise(stream: ReadableStream<Uint8Array>)
         }
     } finally {
         reader.releaseLock();
+    }
+}
+
+/**
+ * `--sdk` runs the real claude executable with no shell between: the user's `ccc`/`claude`
+ * wrappers add `--dangerously-skip-permissions`, which would override the permission mode the
+ * embedding app chose. The app stops a session by signalling the process it spawned (this one),
+ * so each signal is passed on, or claude would keep running after the app let it go.
+ */
+async function runClaudeBinaryDirect(argv: string[], launchEnv: Record<string, string | undefined>): Promise<number> {
+    const proc = Bun.spawn({ cmd: argv, stdio: ["inherit", "inherit", "inherit"], env: launchEnv });
+    const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
+    const forward = (signal: NodeJS.Signals) => {
+        proc.kill(signal);
+    };
+
+    for (const signal of signals) {
+        process.on(signal, forward);
+    }
+
+    try {
+        return await proc.exited;
+    } finally {
+        for (const signal of signals) {
+            process.off(signal, forward);
+        }
     }
 }
 
@@ -830,6 +857,12 @@ async function resolveResumeArgs(
 }
 
 async function main(nameArg: string | undefined, opts: StartOptions, passthrough: string[]): Promise<never> {
+    if (opts.sdk && (opts.tmux || opts.cmux)) {
+        out.error("--sdk cannot be combined with --tmux or --cmux: the embedding app owns claude's stdio.");
+        await out.flush();
+        process.exit(2);
+    }
+
     const aiConfig = await AIConfig.load();
     const withToken = aiConfig
         .getAccountsByProvider("anthropic-sub")
@@ -962,7 +995,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     }
 
     const shell = env.paths.getShell("/bin/sh");
-    const cmd = opts.cmux ? await findCmuxTeamsCommand(shell) : await findClaudeCommand();
+    const cmd = opts.sdk
+        ? resolveClaudeBinaryForTeammates()
+        : opts.cmux
+          ? await findCmuxTeamsCommand(shell)
+          : await findClaudeCommand();
 
     const extraArgs = buildLaunchArgs({ modelId, resumeArgs, passthrough, cmux: opts.cmux === true });
 
@@ -1018,8 +1055,10 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // Agent-team tmux teammates do NOT inherit CLAUDE_CODE_OAUTH_TOKEN (CC spawn
     // allowlist). Point CLAUDE_CODE_TEAMMATE_COMMAND at a per-PID wrapper that
     // re-exports this launch env. See Claude/Bugs/TeammateTmuxNotRespectingOauthTokens.
+    // --sdk skips it: an embedding app has no tmux teammates, and it probes often enough
+    // that a killed probe would leave the token file behind.
     let teammateWrapperPath: string | undefined;
-    if (!opts.keychain && account.tokens.longLivedToken) {
+    if (!opts.keychain && !opts.sdk && account.tokens.longLivedToken) {
         try {
             sweepStaleTeammateWrappers();
             const installed = installTeammateWrapper({
@@ -1044,7 +1083,9 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     let exitCode: number;
 
     try {
-        if (opts.tmux) {
+        if (opts.sdk) {
+            exitCode = await runClaudeBinaryDirect([cmd, ...extraArgs], launchEnv);
+        } else if (opts.tmux) {
             const {
                 currentTmuxSessionName,
                 launchCommandInTmux,
@@ -1183,6 +1224,11 @@ export function registerStartCommand(program: Command): void {
             "--tmux",
             "Create a tmux session and launch Claude inside it. Already inside tmux (ttyd): rename " +
                 "that session (and the bound ttyd tab) from the resumed session title, then launch here."
+        )
+        .option(
+            "--sdk",
+            "Act as the claude binary for an app that embeds Claude Code (T3 Code, the Agent SDK): run the " +
+                "real executable with no shell, so the app's own permission mode applies, and pass signals on"
         )
         .option(
             "--cross-messages",

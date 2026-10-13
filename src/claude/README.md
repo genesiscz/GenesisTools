@@ -44,6 +44,21 @@ tools claude start work --tmux --resume "auth callback"
 
 `--tmux` applies to `tools claude start` / `run` for Anthropic accounts. A slash target (`account/provider`) still goes to `proxy` and ignores `--tmux`. If you are already inside tmux, this renames the current session instead of nesting a new one.
 
+### Apps that embed Claude Code (T3 Code, the Agent SDK)
+
+Such an app asks for the path of a `claude` binary and spawns it with stream-json arguments. Give it
+a wrapper script that holds no token, with the absolute path of `tools` (the app's PATH may not have it):
+
+```sh
+#!/bin/zsh
+exec /path/to/GenesisTools/tools claude run --autopick --sdk -- "$@"
+```
+
+`--sdk` runs the real executable with no interactive shell between. A shell function such as `ccc`
+adds `--dangerously-skip-permissions`, which would override the permission mode the app chose. It
+also passes the app's stop signals on to claude, so a stopped session does not keep running.
+`--autopick` picks the account with the most headroom on every spawn; give an account name to pin one.
+
 ---
 
 ## Shared native history index
