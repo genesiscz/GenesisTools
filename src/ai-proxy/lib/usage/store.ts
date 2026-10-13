@@ -9,17 +9,19 @@ import type {
     GrokUsageDetails,
     UsageRequestRecord,
 } from "@app/ai-proxy/lib/usage/types";
+import { noteUnreadableUsageFile, preserveBeforeReplacing } from "@app/ai-proxy/lib/usage/unreadable-files";
 import type { GrokBillingConfig, GrokSettings } from "@genesiscz/utils/ai/grok";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 
 const BILLING_TTL_MS = 5 * 60 * 1000;
 
 let billingStoreCache: BillingUsageStore | null = null;
+let usageDirOverride: string | null = null;
 
 function usageDir(): string {
-    return join(getAiProxyStorage().getBaseDir(), "usage");
+    return usageDirOverride ?? join(getAiProxyStorage().getBaseDir(), "usage");
 }
 
 function billingPath(): string {
@@ -77,56 +79,59 @@ function migrateBillingStore(store: BillingUsageStore): BillingUsageStore {
     return { ...store, accounts };
 }
 
-function readJsonFile<T>(path: string, fallback: T): T {
+/**
+ * An existing file that does not parse, or has no `container` object, loads as `fallback` so the proxy keeps
+ * counting, and is noted so {@link writeJsonFile} copies it aside before it replaces it.
+ */
+function readJsonFile<T>(path: string, fallback: T, container: "days" | "accounts"): T {
     if (!existsSync(path)) {
         return fallback;
     }
 
     try {
-        return SafeJSON.parse(readFileSync(path, "utf-8")) as T;
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf-8"));
+
+        if (!isJsonObject(parsed) || !isJsonObject(parsed[container])) {
+            throw new Error(`store file has no ${container} object`);
+        }
+
+        return parsed as T;
     } catch (err) {
-        logger.warn({ err, path }, "ai-proxy usage: failed to read store file");
+        logger.warn({ err, path }, "ai-proxy usage: store file unreadable, counting from zero; it is kept aside first");
+        noteUnreadableUsageFile(path, err);
         return fallback;
     }
 }
 
 function writeJsonFile(path: string, value: unknown): void {
     ensureUsageDir();
+    preserveBeforeReplacing(path);
     atomicWriteFileSync(path, `${SafeJSON.stringify(value, null, 2)}\n`);
 }
 
 let dailyStoreCache: DailyUsageStore | null = null;
-let isWritingDailyStore = false;
-let dailyStorePendingWrite = false;
+
+/** Test hook: point the usage store at a temp dir and drop the in-memory stores. Pass null to restore. */
+export function setUsageStoreDirForTests(dir: string | null): void {
+    usageDirOverride = dir;
+    billingStoreCache = null;
+    dailyStoreCache = null;
+}
 
 function getDailyStore(): DailyUsageStore {
     if (!dailyStoreCache) {
-        dailyStoreCache = readJsonFile(dailyPath(), emptyDailyStore());
+        dailyStoreCache = readJsonFile(dailyPath(), emptyDailyStore(), "days");
     }
 
     return dailyStoreCache;
 }
 
-async function saveDailyStoreAsync(): Promise<void> {
-    if (isWritingDailyStore) {
-        dailyStorePendingWrite = true;
-        return;
-    }
-
-    isWritingDailyStore = true;
-
+/** Rewritten on every request, and launchd can stop the proxy at any moment: replaced whole or not at all. */
+function saveDailyStore(): void {
     try {
-        ensureUsageDir();
-        await Bun.write(dailyPath(), `${SafeJSON.stringify(dailyStoreCache, null, 2)}\n`);
+        writeJsonFile(dailyPath(), dailyStoreCache);
     } catch (err) {
         logger.warn({ err }, "ai-proxy usage: failed to write daily store");
-    } finally {
-        isWritingDailyStore = false;
-
-        if (dailyStorePendingWrite) {
-            dailyStorePendingWrite = false;
-            void saveDailyStoreAsync();
-        }
     }
 }
 
@@ -187,7 +192,7 @@ function bumpDailyAggregate(record: UsageRequestRecord): void {
     }
 
     store.days[day][key] = current;
-    void saveDailyStoreAsync();
+    saveDailyStore();
 }
 
 export function recordUsageRequest(record: UsageRequestRecord): void {
@@ -221,7 +226,7 @@ export function readBillingStore(): BillingUsageStore {
         return billingStoreCache;
     }
 
-    billingStoreCache = migrateBillingStore(readJsonFile(billingPath(), emptyBillingStore()));
+    billingStoreCache = migrateBillingStore(readJsonFile(billingPath(), emptyBillingStore(), "accounts"));
     return billingStoreCache;
 }
 

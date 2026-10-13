@@ -5,6 +5,7 @@ import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { detectCloudflared, installCloudflared } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export { detectCloudflared, installCloudflared };
 
@@ -286,7 +287,8 @@ export async function readCloudflaredConfig(config: AiProxyConfig): Promise<stri
 
 export async function writeCloudflaredConfig(config: AiProxyConfig, yaml: string): Promise<string> {
     const path = resolveCloudflaredConfigPath(config.public);
-    await Bun.write(path, yaml);
+    // The file also holds other tunnels' ingress rules: keep the replaced copy as .bak, never a torn file.
+    atomicWriteFileSync(path, yaml, { backup: true });
     return path;
 }
 

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { estimateCostUsd } from "@app/ai-proxy/lib/billing/pricing";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { noteUnreadableUsageFile, preserveBeforeReplacing } from "@app/ai-proxy/lib/usage/unreadable-files";
 import { emitProxyUsage } from "@app/ai-proxy/lib/usage/usage-events";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -83,7 +84,9 @@ export function readClientLedger(): ClientLedgerStore {
         cachedLedger = parsed;
         return cachedLedger;
     } catch (err) {
-        logger.warn({ err, path }, "ai-proxy: client ledger unreadable, starting fresh");
+        // The bookings in that file are invoices: the next booking copies it aside before it replaces it.
+        logger.warn({ err, path }, "ai-proxy: client ledger unreadable, booking from zero; it is kept aside first");
+        noteUnreadableUsageFile(path, err);
         cachedLedger = emptyLedger();
         return cachedLedger;
     }
@@ -117,6 +120,9 @@ export function recordClientUsage(input: {
     }
 
     const ledger = readClientLedger();
+    // Before anything is booked in memory: when the unreadable ledger cannot be copied aside, this booking is
+    // refused (it throws) rather than written over the only copy of the month's invoices.
+    preserveBeforeReplacing(ledgerPath());
     const month = monthKeyFromTs(input.ts);
     let byClient = ledger.months[month];
 

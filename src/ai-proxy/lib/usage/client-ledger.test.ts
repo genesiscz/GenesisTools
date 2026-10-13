@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
     recordClientUsage,
     setClientLedgerDirForTests,
 } from "@app/ai-proxy/lib/usage/client-ledger";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let dir: string;
 
@@ -181,5 +182,79 @@ describe("upstream-priced booking", () => {
         expect(entry.cost_usd).toBe(0);
         expect(entry.unpriced_requests).toBe(0);
         expect(entry.upstream_priced_requests).toBe(1);
+    });
+});
+describe("an unreadable ledger", () => {
+    /** A ledger cut off mid-write: still a month of invoices, and the only copy of them. */
+    const TORN = '{"version":1,"months":{"2026-07":{"alice":{"requests":41,"cost_usd":12.5';
+
+    function ledgerFile(): string {
+        return join(dir, "clients.json");
+    }
+
+    function corruptCopies(): string[] {
+        return readdirSync(dir).filter((name) => name.startsWith("clients.json.corrupt-"));
+    }
+
+    function book(client: string): void {
+        recordClientUsage({
+            client,
+            ts: "2026-07-20T10:00:00.000Z",
+            upstreamModel: "grok-4-fast",
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        });
+    }
+
+    it("is copied aside byte for byte before the next booking replaces it", () => {
+        writeFileSync(ledgerFile(), TORN);
+
+        // A quota check or a listing reads it and changes nothing on disk.
+        expect(readClientLedger().months).toEqual({});
+        expect(readFileSync(ledgerFile(), "utf8")).toBe(TORN);
+        expect(corruptCopies()).toEqual([]);
+
+        book("bob");
+
+        const copies = corruptCopies();
+        expect(copies).toHaveLength(1);
+        expect(readFileSync(join(dir, copies[0]), "utf8")).toBe(TORN);
+        setClientLedgerDirForTests(dir);
+        expect(readClientLedger().months["2026-07"]?.bob?.requests).toBe(1);
+
+        book("bob");
+        expect(corruptCopies()).toHaveLength(1);
+    });
+
+    it.skipIf(process.getuid?.() === 0)("refuses the booking when the copy cannot be made", () => {
+        writeFileSync(ledgerFile(), TORN);
+        readClientLedger();
+        chmodSync(dir, 0o500);
+
+        try {
+            expect(() => book("bob")).toThrow();
+        } finally {
+            chmodSync(dir, 0o700);
+        }
+
+        expect(readFileSync(ledgerFile(), "utf8")).toBe(TORN);
+        expect(corruptCopies()).toEqual([]);
+        expect(readClientLedger().months).toEqual({});
+    });
+
+    it("a readable ledger keeps accumulating and is never copied aside", () => {
+        const alice = {
+            requests: 41,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cost_usd: 12.5,
+            unpriced_requests: 0,
+        };
+        writeFileSync(ledgerFile(), SafeJSON.stringify({ version: 1, months: { "2026-07": { alice } } }) ?? "");
+
+        book("alice");
+
+        expect(readClientLedger().months["2026-07"]?.alice?.requests).toBe(42);
+        expect(corruptCopies()).toEqual([]);
     });
 });
