@@ -408,6 +408,17 @@ final class CursorFeedbackTests: XCTestCase {
         XCTAssertEqual(long?.count, CursorFeedbackText.detailLimit)
         XCTAssertTrue(long?.hasSuffix("…”") ?? false)
     }
+    func testAnActSentToTheWindowIsHiddenWhenTheFocusedFieldIsAPassword() {
+        // press_key with no element targets the window; the focused input receives the keys.
+        XCTAssertTrue(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true,
+                                                             focused: ["AXTextField", "AXSecureTextField"]))
+        XCTAssertTrue(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true, focused: nil),
+                      "an unreadable recipient counts as a password field")
+        XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true,
+                                                              focused: ["AXTextField", nil]))
+        XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: false, focused: nil))
+        XCTAssertTrue(CursorFeedbackText.writesToSecureField(targetSecure: true, sentToWindow: false, focused: nil))
+    }
     func testTheDetailLineHidesAKeyThatTypesIntoASecureField() {
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: true), "keys •")
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "shift, 7", secure: true), "keys shift+•")

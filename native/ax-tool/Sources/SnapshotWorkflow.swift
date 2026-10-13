@@ -1039,6 +1039,13 @@ func cmdAct(appName _: String) {
     }
     let element = tree.elements[elementIndex]
     ActionCursor.describe(element)
+    if ["key", "type", "paste"].contains(action) {
+        // Sent to the window, the keys or text land in the app's focused input, which may be a password
+        // field the window itself does not show as one.
+        let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement")
+            .flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        ActionCursor.describeRecipient(sentToWindow: CFEqual(element, window.ax), focused: focused)
+    }
     ActionCursor.describeInput(action: action, text: workflowArgument(
         action == "set" ? "--value" : action == "key" ? "--keys" : "--text"))
     if action != "get", !(action == "focus" && elementIndex == 0) {

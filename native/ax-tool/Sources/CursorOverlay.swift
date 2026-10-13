@@ -63,6 +63,14 @@ enum ActionCursor {
         detail = CursorFeedbackText.detail(action: action, text: text, secure: targetSecure)
     }
 
+    /// For an act sent to the window: the app's focused input receives it, so that input decides whether
+    /// the label hides the text. Call after `describe(_:)` and before `describeInput`.
+    static func describeRecipient(sentToWindow: Bool, focused: AXUIElement?) {
+        let parts = focused.map { [axStringAttribute($0, "AXRole"), axStringAttribute($0, "AXSubrole")] }
+        targetSecure = CursorFeedbackText.writesToSecureField(targetSecure: targetSecure, sentToWindow: sentToWindow,
+                                                              focused: parts)
+    }
+
     /// Names the app a pointer-only act goes to, when no element is known.
     static func describe(pid: pid_t) {
         targetApp = NSRunningApplication(processIdentifier: pid)?.localizedName

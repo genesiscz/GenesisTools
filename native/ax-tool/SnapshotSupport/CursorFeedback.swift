@@ -201,6 +201,22 @@ public enum CursorFeedbackText {
         return String(flat.prefix(max(1, limit - 1))).trimmingCharacters(in: .whitespaces) + "…"
     }
 
+    /// Whether an act writes into a password field, so the detail line must hide what it sends. A key
+    /// or text sent to the window lands in the app's focused input, so that input decides; `focused` is
+    /// its role and subrole, or nil when it cannot be read, which counts as a password field: the label
+    /// must not show a password because its recipient was unknown.
+    public static func writesToSecureField(targetSecure: Bool, sentToWindow: Bool, focused: [String?]?) -> Bool {
+        if targetSecure {
+            return true
+        }
+
+        guard sentToWindow else {
+            return false
+        }
+
+        return focused?.contains("AXSecureTextField") ?? true
+    }
+
     /// The line under the label for an act that writes text or sends keys, or nil for any other act.
     /// A secure field shows bullets and a count, never the text, and a bullet for every key that types
     /// a character: the label is on screen for anyone watching, and in every screen recording.
