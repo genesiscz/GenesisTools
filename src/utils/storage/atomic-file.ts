@@ -1,4 +1,5 @@
 import {
+    accessSync,
     chmodSync,
     closeSync,
     constants,
@@ -114,6 +115,12 @@ export function atomicWriteFileSync(path: string, data: string | Uint8Array, opt
 
     if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
+    }
+
+    // A rename needs write access to the folder only, so it would replace a file the user made read-only.
+    // The in-place writes this replaces failed with EACCES there, and so does this.
+    if (existsSync(filePath)) {
+        accessSync(filePath, constants.W_OK);
     }
 
     const mode = options?.mode ?? existingMode(filePath);

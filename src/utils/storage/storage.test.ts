@@ -398,6 +398,20 @@ describe("a failed write never costs the user the stored file", () => {
         expect(readdirSync(dir).sort()).toEqual(["other-app.json", "other-app.json.bak"]);
     });
 
+    it("refuses to replace a file the user made read-only, as an in-place write did", () => {
+        const target = join(dir, "pinned.json");
+        writeFileSync(target, USER_CONFIG);
+        chmodSync(target, 0o444);
+
+        try {
+            expect(() => atomicWriteFileSync(target, `{}`)).toThrow(/EACCES/);
+            expect(readFileSync(target, "utf8")).toBe(USER_CONFIG);
+            expect(readdirSync(dir)).toEqual(["pinned.json"]);
+        } finally {
+            chmodSync(target, 0o644);
+        }
+    });
+
     it("writes through a symlinked target and keeps the link", () => {
         // ~/.claude/settings.json is a link into a dotfiles repo: replacing the link would cut that repo off.
         const real = join(dir, "dotfiles-settings.json");
