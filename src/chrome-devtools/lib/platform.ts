@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcessPath } from "@genesiscz/utils/process/libproc-table";
 import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 
 const { log } = logger.scoped("chrome-devtools:platform");
@@ -134,6 +135,13 @@ export function processExecutable(
     exec: ExecFn = defaultExec,
     platform: Platform = currentPlatform()
 ): string | null {
+    // The kernel's own path (proc_pidpath) without a spawn; an injected exec (tests) still gets its own output.
+    const fromKernel = platform !== "win32" && exec === defaultExec ? readProcessPath(pid) : null;
+
+    if (fromKernel !== null) {
+        return fromKernel;
+    }
+
     const r =
         platform === "win32"
             ? exec([
