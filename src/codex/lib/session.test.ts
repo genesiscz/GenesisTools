@@ -854,6 +854,11 @@ describe("an ask worker's read-only commands", () => {
             zsh("git show origin/feature:src/a.ts | sed -n 315,380p"),
             zsh("cd src && ls -la && wc -l a.ts"),
             zsh("find src -name '\"'\"'*.ts'\"'\"' -newer a.ts"),
+            // Shapes a Sol worker sent on 2026-10-14: a glob, a backslash in a double-quoted wrapper, a discarded stream.
+            `/bin/zsh -lc "rg -n 'parse\\\\(' src/utils/json.ts | head -15"`,
+            `/bin/zsh -lc "rg -n 'WebSocket|Bun.serve' src/utils/chrome-devtools/*.test.ts | head -40"`,
+            zsh("ls missing 2>/dev/null\ngit log --oneline -5 2>&1 | head"),
+            zsh("cat ~/notes.md src/\\(a\\).ts"),
         ]) {
             expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: true });
         }
@@ -879,6 +884,13 @@ describe("an ask worker's read-only commands", () => {
             zsh("bun scripts/test.ts"),
             zsh("FOO=1 cat a.ts"),
             zsh("cat 'unclosed"),
+            zsh("cat a.ts 2>err.log"),
+            zsh("cat a.ts >> out.ts"),
+            zsh("cat a.ts >/dev/nullx"),
+            zsh("cat <(echo a.ts)"),
+            zsh("cat a.ts 2>/dev/null; rm b.ts"),
+            `/bin/zsh -lc "cat \\"$HOME/a.ts\\""`,
+            zsh("cat a.ts &"),
             "",
         ]) {
             expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: false });

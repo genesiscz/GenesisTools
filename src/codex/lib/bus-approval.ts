@@ -149,8 +149,8 @@ export function isOwnBusCommand(command: string, bus: { agentName: string; sessi
 }
 /**
  * The segments of a shell script, split at a newline, `;`, `|`, `||` and `&&` outside quotes, or null when it
- * runs anything in the background (`&`) or leaves a quote open. Each segment still goes through
- * {@link strictShellWords}, which refuses redirections and expansions.
+ * runs anything in the background (`&`) or leaves a quote open. The `&` of a descriptor redirect (`2>&1`, `&>`) is
+ * not a background job. Each segment still goes through {@link readOnlyWords}.
  */
 function scriptSegments(script: string): string[] | null {
     const segments: string[] = [];
@@ -163,10 +163,19 @@ function scriptSegments(script: string): string[] | null {
         if (quote) {
             current += char;
 
-            if (char === quote) {
+            if (quote === '"' && char === "\\") {
+                current += script[index + 1] ?? "";
+                index += 1;
+            } else if (char === quote) {
                 quote = null;
             }
 
+            continue;
+        }
+
+        if (char === "\\") {
+            current += script.slice(index, index + 2);
+            index += 1;
             continue;
         }
 
@@ -185,7 +194,7 @@ function scriptSegments(script: string): string[] | null {
             continue;
         }
 
-        if (char === "&") {
+        if (char === "&" && script[index - 1] !== ">" && script[index + 1] !== ">") {
             return null;
         }
 
@@ -205,6 +214,102 @@ function scriptSegments(script: string): string[] | null {
     segments.push(current);
 
     return segments.map((segment) => segment.trim()).filter(Boolean);
+}
+
+/** Unquoted characters a read-only word may hold: plain words, plus globs and `~`, which only name files. */
+const READ_BARE = /^[A-Za-z0-9_@%+=:,./~*?[\]^#!-]$/;
+/** Redirects that write nothing: an error stream or output thrown away, or one stream joined to the other. */
+const DISCARD_REDIRECT = /(^|\s)(\d?>|&>)(\/dev\/null|&[12])(?=\s|$)/g;
+
+/**
+ * The words of a read-only command, quotes removed and escapes resolved, or null when it holds anything that runs
+ * or writes: an expansion (`$`, backtick), a redirection (other than to `/dev/null`), a subshell or a brace.
+ * Unlike {@link strictShellWords}, it takes globs, `~` and backslash escapes, which only change what is read.
+ */
+function readOnlyWords(text: string): string[] | null {
+    const words: string[] = [];
+    const source = text.replace(DISCARD_REDIRECT, " ");
+    let word: string | null = null;
+    let index = 0;
+
+    while (index < source.length) {
+        const char = source[index];
+
+        if (char === " " || char === "\t" || char === "\n") {
+            if (word !== null) {
+                words.push(word);
+                word = null;
+            }
+
+            index += 1;
+            continue;
+        }
+
+        if (char === "'") {
+            const end = source.indexOf("'", index + 1);
+
+            if (end === -1) {
+                return null;
+            }
+
+            word = (word ?? "") + source.slice(index + 1, end);
+            index = end + 1;
+            continue;
+        }
+
+        if (char === '"') {
+            let value = "";
+            index += 1;
+
+            while (index < source.length && source[index] !== '"') {
+                const inner = source[index];
+
+                if (inner === "$" || inner === "`") {
+                    return null;
+                }
+
+                if (inner === "\\" && '$`"\\'.includes(source[index + 1] ?? "")) {
+                    value += source[index + 1];
+                    index += 2;
+                    continue;
+                }
+
+                value += inner;
+                index += 1;
+            }
+
+            if (index >= source.length) {
+                return null;
+            }
+
+            word = (word ?? "") + value;
+            index += 1;
+            continue;
+        }
+
+        if (char === "\\") {
+            if (index + 1 >= source.length) {
+                return null;
+            }
+
+            word = (word ?? "") + source[index + 1];
+            index += 2;
+            continue;
+        }
+
+        if (!READ_BARE.test(char)) {
+            return null;
+        }
+
+        word = (word ?? "") + char;
+        index += 1;
+    }
+
+    if (word !== null) {
+        words.push(word);
+    }
+
+    return words;
 }
 
 /** `sed -n` with one line-range print script (`sed -n '120,180p' file`): nothing else that sed can write with. */
@@ -280,7 +385,7 @@ const READ_ONLY_COMMANDS: Record<string, (args: string[]) => boolean> = {
  * one 9-minute turn on 2026-10-14).
  */
 export function isReadOnlyCommand(command: string): boolean {
-    const outer = strictShellWords(command);
+    const outer = readOnlyWords(command);
     const script =
         outer?.length === 3 && SHELL_WRAPPER.test(outer[0]) && (outer[1] === "-lc" || outer[1] === "-c")
             ? outer[2]
@@ -292,7 +397,7 @@ export function isReadOnlyCommand(command: string): boolean {
     }
 
     return segments.every((segment) => {
-        const words = strictShellWords(segment);
+        const words = readOnlyWords(segment);
         const check = words?.[0] === undefined ? undefined : READ_ONLY_COMMANDS[words[0]];
 
         return check !== undefined && words !== null && check(words.slice(1));
