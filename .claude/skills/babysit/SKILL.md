@@ -1,0 +1,199 @@
+---
+name: babysit
+description: Run a PR review loop where external worker models fix the review findings (Grok through `tools grok`, Codex Sol through `tools codex`, chosen per PR) and this Claude session is the master that briefs them, watches them live, judges every fix with fable-judge, adds one correction commit, cherry-picks onto the PR branch, pushes, and reports with costs. Use it whenever the user asks to let Grok, Codex, Sol or "other models" fix PR reviews, to babysit workers on PRs, to run the worker review loop or its next phase, to compare worker models on review fixes, or says "babysit" — even when they only name PR numbers and a model. Not for a plain review loop that Claude fixes itself (use review-loop alone), and not for a one-off handoff that is not about PR review findings (use handoff-to alone).
+---
+
+# babysit: other models fix the review findings, this session judges
+
+This session is the **master**. Workers (Grok or Codex Sol) do the fixing on their own PRs; the master briefs them,
+watches them, judges each fix as if a stranger wrote it, corrects what is wrong, integrates, pushes and reports. The
+process was proven on 2026-10-14 (Phase 1 and 2: Grok 4.7 Fast on #512, Sol 6.1 on #511); the numbers and the
+mistakes it found are in [references/history.md](references/history.md). Read that once before your first run.
+
+Why the master judges everything: both workers produced green tests and confident reports, and one of them still
+shipped a defect (a raw error that broke a module's "throws only CdpLaunchError" contract). A worker's report is a
+set of claims. The value of this loop is the judge.
+
+## 0. Load the mandatory skills first
+
+Invoke, with the Skill tool, before any other step:
+
+1. `genesis-tools:handoff-to`: worker choice, the readiness gate, and its `references/grok.md` or
+   `references/codex.md` for every spawn flag. Never hand-roll `grok -p` or `codex exec`.
+2. `genesis-tools:agents-talk`: the lead's bus listener under Monitor, the 30-minute re-arm, worker identities.
+3. `review-loop` (listed as `me:review-loop`; Martin's local skill, real files in
+   `GenesisClaude/user/skills/review-loop/`): Rule 0 thread fetching, the five hidden channels, the round policy,
+   the reply-file JSON, `round-summary.ts`, `post-replies.ts`, `new-threads.ts`, `thread-audit.ts`.
+4. `fable-judge` when you judge (step 6), inline, no delegation of the verdict itself.
+
+These skills own their mechanics; this file only says how they fit together. When they disagree with this file,
+they win for their own mechanics, and you say so in the report.
+
+## 1. The run card: what to configure
+
+Write it to `/tmp/cc/<project>/<session>/babysit/run.json` at the start; the scripts read it.
+
+| Field | Default | Notes |
+|---|---|---|
+| `prs` | asked | PR numbers. Small PRs first; never a PR another session owns (step 3.1). |
+| `worker` per PR | `grok` | `grok` (model `grok-4.7-build-fast`, `--auth subscription`) or `codex` (model `gpt-6.1-sol`, effort `medium`, `--write ask`). Mix freely; one worker per PR. |
+| `mode` | from `scripts/mode.ts` | `worktree` or `unified`, step 2. |
+| `maxParallel` | 3 | Workers at once. The master is the bottleneck, not the workers. |
+| `post` | ask | Post the round summary and replies after the push (review-loop step 4), or hold them in the vault. |
+| `report` | vault note | Optionally also a bus message: `{ "session": "grok-dev", "to": "grokbot-developer" }`. |
+| `stopAfter` | the user's words | A phase or round to stop at. Stop there even if everything is green. |
+
+## 2. Mode: a worktree per worker, or the unified branch
+
+`bun .claude/skills/babysit/scripts/mode.ts --workers <n> [--swift <n>]` prints free disk, the estimate and a
+recommendation. Measured on 2026-10-14: a worktree plus `bun install --ignore-scripts` costs about 0.12 GB (APFS
+clones), and a GenesisKit Swift test build adds about 1 GB. The script recommends `worktree` when free disk stays
+above 10 GB after all worker worktrees, else `unified`.
+
+- **worktree (preferred)**: each worker gets its own worktree of its PR branch, commits there, and the master
+  cherry-picks the pair onto unified afterwards. No index-lock races between workers, no half-written files from a
+  neighbour in a typecheck, and the commits apply to the PR branch by construction.
+- **unified**: workers share the main checkout on the unified branch (the 2026-10-14 setup). The master then
+  cherry-picks onto the PR branch in a scratch worktree, and a file that unified changed later than the PR branch
+  conflicts (#511's import list did). Use it only when disk is short.
+
+🛑 **Confirmation period (from 2026-10-14 until Martin says he no longer needs it):** before you dispatch, show the
+plan with AskUserQuestion and wait: the PRs, the worker per PR, the mode with the free-disk numbers, `post`, and
+the stop point. After the confirmation period, state the plan in one line and proceed.
+
+## 3. Prepare each PR
+
+1. **Owner.** A PR another live session works on is not yours to dispatch. Look for a lock on its worktree
+   (`git worktree list --porcelain`: the `locked` reason names the session), and for a live agent on its branch
+   (`tools hub agents`). If one exists, ask it with `tools claude message <session> "<question>" --wait
+   --wait-timeout 300` and dispatch only on an explicit "free". Silence is not consent.
+2. **Stacks.** `gh pr view <N> --json baseRefName`: when a PR's base is another open PR's branch, a push to the parent
+   moves the child's base, and GitHub then shows the parent's new commits in the child's diff until it is restacked.
+   Push the parent first. Never give two workers in one round a file that both PRs change; run them one after the
+   other instead. Do not restack the child in a round: that belongs to merge prep (review-loop landing recipe), or
+   to the user's word.
+3. Fetch the findings per review-loop Rule 0 (`tools github review <N> --llm -u`, never filtered by reviewer), sweep
+   the hidden channels, `expand` every thread (the L1 table can scramble files). Keep each thread's `threadId`.
+4. Read the source at every cited line before you brief: a stale or wrong finding is briefed as such, so the worker
+   does not "fix" it.
+5. **Round policy.** review-loop decides what gets fixed in each round (rounds 1 and 2: every valid finding; later
+   rounds: critical and high). When the user's own words ask for a fix the policy would only answer ("fix the open
+   threads"), the user's words win; say so in the plan.
+6. Scope: `git fetch origin <pr branch>`, then `bun .claude/skills/babysit/scripts/pr-scope.ts <N> --compare HEAD`.
+   It lists the PR's files, the test file of each one (a sibling `.test.ts`, or a neighbour test that imports it),
+   and whether unified differs from the PR branch per file. That list is the outer bound. The brief allows the files
+   the findings cite plus their tests, and any other PR file a fix provably needs. Missing a test file in the scope
+   put Grok's tests in the wrong file on 2026-10-14.
+7. Baseline the cost: `tools grok usage --json --fresh` for Grok workers, and the session's `usage` for Codex. Each
+   worker turn report now ends with a cost line (API-equivalent, billed, and a Claude estimate). The API-credit
+   proof (the xAI console) is needed only for a `--auth api-key` worker or when the user asks for it. It lives in
+   the user's own browser, so ask before you touch it, read an already-open console tab with a read-only CDP
+   `Runtime.evaluate` of the page text, and never reload, navigate or restart the browser for it.
+
+## 4. Brief and dispatch
+
+Fill [references/brief-template.md](references/brief-template.md) per PR (the findings pasted in full, the scope,
+the verify commands, the commit subject `fix(<scopes>): #<N> followup - <what>`, the reply-JSON shape, the bus
+lines, the stop point). The handoff-to readiness gate applies: self-contained, a verify command the sandbox can
+run, explicit negative constraints, a named checkpoint, a deliverable the sandbox can write.
+
+Worker cwd: its worktree (worktree mode) or the main checkout (unified mode). The reply JSON and the rendered
+summary go to `.claude/work/babysit/` inside that cwd (ignored by git; Grok's jail blocks writes outside cwd).
+
+- Grok: `tools grok spawn --name bs-<N>-grok --cwd <cwd> -m grok-4.7-build-fast --auth subscription --prompt-file
+  <brief>` with Bash `run_in_background` (it blocks for the whole turn).
+- Codex: `tools codex spawn --name bs-<N>-sol --model gpt-6.1-sol --effort medium --write ask --cwd <cwd> --session
+  <bus session> --prompt-file <brief>`.
+
+No subagents inside a worker: the brief says so, and the master treats a spawned subagent as a scope breach.
+
+How each backend commits (measured 2026-10-14 with probe workers in linked worktrees of this repo):
+
+- Grok's jail stops its file tools outside `--cwd`, but not git's own writes: a Grok worker commits normally in a
+  linked worktree. After a turn whose changes were all committed, its report prints "turn N changed NOTHING". That
+  line counts uncommitted files only; read `git log` instead.
+- Codex's sandbox keeps every `.git` path read-only, even one passed as `--writable-root`, so `git add` and
+  `git commit` fail with `index.lock: Operation not permitted` in every mode. Under `--write ask` each one becomes an
+  escalation that the approval driver (step 5) accepts when it matches the brief. The brief therefore tells a Codex
+  worker to run `git add -- <paths>` and `git commit` as two separate commands, never chained with `&&`.
+
+## 5. Watch while they work
+
+Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next tool call after its expiry notice
+(agents-talk):
+
+1. The lead's bus: `tools agents login --agent-main --agent-name lead --format monitor --hide-worker-steps
+   --session <s>`. Worker mail, Codex turn and approval events.
+2. The workers: `bun .claude/skills/babysit/scripts/watch-workers.ts grok:<name> codex:<name> …`. One line per turn
+   start and end, tool call, question and stall (3 minutes silent while running).
+3. Codex approvals: `bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <name>`. The daemon
+   itself accepts read-only commands (since 886b44308); this driver approves the brief's file edits, `git add` of
+   scope files, the one commit with the brief's subject, and the brief's verify commands, including their one
+   sandbox escalation for loopback tests. Everything else prints `NEEDS LEAD`; decide it yourself. Deny rituals
+   (`tools say`), pushes, and anything outside scope.
+
+Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
+reply arrive (Sol answered in 20 s, Grok in 59 s). During the confirmation period do it for every worker.
+
+## 6. Judge each worker commit (fable-judge, inline)
+
+[references/judging.md](references/judging.md) is the checklist. In short: the diff is the truth, not the report;
+rerun every claimed check yourself; plant the old code back to prove each new test fails without the fix; check the
+fix against the module's documented contracts and its callers (the #511 defect hid in a caller); check scope, one
+commit, nothing staged that is not the worker's; check the ready-to-post replies against the final code. Verdict per
+PR: VERIFIED, VERIFIED WITH CAVEATS, or REFUTED, with evidence.
+
+## 7. Correct, integrate, push
+
+At most **one correction commit** per PR per round, for what is wrong or below the bar (a defect, a test in the wrong
+place, a misleading reply). None when the judge found nothing; say so. Then
+[references/integrate.md](references/integrate.md):
+
+- worktree mode: the correction goes on the worker's worktree; verify there; push `HEAD:refs/heads/<pr-branch>`;
+  then cherry-pick both commits onto unified in the main checkout.
+- unified mode: correction on unified; cherry-pick both onto a scratch worktree of the PR branch; resolve context
+  conflicts by keeping the PR branch's side plus the worker's change; verify; push.
+
+Gates before each push: the test files of the scope (not the PR's whole suite: a test that launches a real
+browser or app, such as the chrome-devtools headless tests, makes a 1.4 GB app copy per launch, so run it only when
+the fix touches that path, and report it as NOT RUN otherwise), `bunx tsgo --noEmit`, Biome on the changed files,
+`bun scripts/ci/check-tool-commands.ts`, `bash scripts/ci/placeholder-check.sh`. Never push unified. One push per PR
+per round (review-loop round policy).
+
+Then the replies: copy the worker's reply JSON to the run's vault folder, replace its SHAs with the PR-branch SHAs,
+add the correction to the affected items and to `alsoInPush`, set every item's `"model": "Claude Opus 5.5
+(fable-judge)"`, and render `round-summary.ts --range <old head>..<new head> --cwd <pr worktree>`. Post per review-loop
+step 4 only when `post` is true.
+
+## 8. Clean up after every round, automatically
+
+Do not wait to be asked. When a round's pushes and unified picks are done:
+
+- `tools codex stop --name <name>` for each Codex worker; a Grok worker ends with its turn.
+- `tools agents leave --agent-name lead --session <s> --note "done: …"`, then stop the three Monitors.
+- Remove every worker and scratch worktree: `git -C <wt> status --short` must be empty and its commits must be on a
+  remote branch. Then `git worktree remove <wt>`. Never `git worktree unlock` and never `remove -f -f`
+  (`.claude/rules/plugins.md`). A worktree that a session names in a command gets that session's lock, and the lock
+  goes at SessionEnd. So when git refuses because of a lock, run
+  `bun plugins/genesis-tools/hooks/worktree-lock.ts stale <repo> --clear` (it unlocks only dead or reused-pid
+  locks: a finished worker's), try once more, and list any worktree still locked in the report with its lock reason.
+  A lock that names this session goes when this session ends.
+- Scratch stays in `/tmp/cc/<project>/<session>/babysit/` (briefs, logs, run card) for the report.
+
+## 9. Report
+
+A vault note per run (`GenesisBrain/<project>/<date>-Babysit-<topic>/`, the run's reply files next to it) and, when
+the run card names a recipient, a bus message to it (register with `tools agents login --agent-name <me> --once
+--timeout 1 --session <s>`, then `tools agents message --body-file`). Contents, in this order: PRs and commits per PR
+(worker and correction, unified and PR-branch SHAs, pushed ranges), fable-judge verdicts with the evidence, harness
+bugs fixed (SHA and where cherry-picked), cost (each worker's API-equivalent and billed cost, credits before and
+after, and the Claude-equivalent estimate), monitoring facts (turns, tool calls, stalls, questions, approvals), and
+what to change before the next run.
+
+## 10. Bugs in the harness: fix them, after the user confirms
+
+A defect in handoff-to, agents-talk, `tools codex`, `tools grok`, `tools claude worker` or `tools agents` that broke a
+step, cost real time, or reported something false: describe it in one line with the proposed fix and ask the user
+(AskUserQuestion) before you change anything. On yes: fix on unified with a test, then cherry-pick onto the open PR
+that owns that code (on 2026-10-14 that was #509 for Codex). Do not nitpick: wording, cosmetics and one-off quirks go
+into the report's "what to change" list, not into a fix.

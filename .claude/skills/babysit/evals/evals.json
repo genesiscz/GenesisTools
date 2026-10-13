@@ -1,0 +1,45 @@
+{
+  "skill_name": "babysit",
+  "note": "Plan-only evals: a real run dispatches paid workers and pushes PR branches. The agent reads real PR data with read-only commands and writes the exact commands, decisions and user questions it would use to outputs/plan.md.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "two-prs-grok-and-sol-worktree",
+      "prompt": "babysit #513 with grok and #504 with sol, one round each, then stop and tell me what happened",
+      "expected_output": "Loads handoff-to, agents-talk and review-loop; writes a run card; checks disk with mode.ts and asks the user to confirm the plan (confirmation period); fetches findings with tools github review and expands threads; builds scope with pr-scope.ts; fills the brief template; spawns tools grok spawn --auth subscription -m grok-4.7-build-fast and tools codex spawn --model gpt-6.1-sol --effort medium --write ask --session in per-PR worktrees; runs the three Monitors with 30-minute re-arm and the approver; proves two-way bus; judges each commit inline (rerun checks, planted regression, contracts); at most one correction commit; pushes the PR branch, never unified; cherry-picks onto unified; cleans up sessions, monitors and worktrees; writes the vault report with cost.",
+      "files": [],
+      "assertions": [
+        "loads handoff-to, agents-talk and review-loop before dispatching any worker",
+        "checks free disk (mode.ts or equivalent) and states the mode it chooses with the numbers",
+        "asks the user to confirm the plan (PRs, worker per PR, mode, post) before dispatching",
+        "spawns the Grok worker with tools grok spawn, --auth subscription and a grok-4.7 model",
+        "spawns the Sol worker with tools codex spawn, --model gpt-6.1-sol and --write ask",
+        "runs workers in their own worktree of the PR branch, not in the shared main checkout",
+        "watches with Monitor (bus listener and worker events) and says it re-arms at the 30-minute expiry",
+        "handles Codex approvals with a scoped driver or explicit rules rather than approving everything",
+        "judges each worker commit by rerunning the checks itself and planting the old code back for new tests",
+        "limits itself to at most one correction commit per PR",
+        "pushes only the PR branches and never the unified branch",
+        "removes the worker worktrees and stops the worker sessions after the round",
+        "reports cost (API-equivalent and billed) per worker"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "codex-low-disk-unified",
+      "prompt": "the disk only has about 4 GB free right now, but let codex sol fix the open review threads on #498 anyway and push when it's good",
+      "expected_output": "Chooses unified mode because the disk is short and asks the user to confirm; worker works in the main checkout on the unified branch; master cherry-picks the worker commit and the correction onto a scratch worktree of the PR branch, resolves context conflicts keeping the PR side plus the change, runs the gates, pushes, removes the scratch worktree; approver driver for Codex; one correction commit at most; replies rewritten to PR-branch SHAs; posting decided by the run card.",
+      "files": [],
+      "assertions": [
+        "chooses the unified mode because of the low disk space",
+        "asks the user to confirm before dispatching",
+        "has the worker commit on the unified branch in the main checkout with exact-path staging",
+        "cherry-picks the worker commit and the correction onto a scratch worktree of the PR branch before pushing",
+        "plans how to resolve a cherry-pick conflict caused by later unified changes",
+        "runs the repo gates (tests, tsgo, biome, placeholder probe) before the push",
+        "rewrites the reply file to the PR-branch SHAs before anything is posted",
+        "removes the scratch worktree afterwards"
+      ]
+    }
+  ]
+}
