@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -66,6 +66,16 @@ describe("Walk", () => {
         expect(loaded).not.toBeNull();
         expect(loaded?.snapshot().regions[0]?.decision).toBe("capture");
         expect(loaded?.snapshot().currentIndex).toBe(1);
+    });
+
+    test("load throws on a state file that does not parse, so a fresh walk cannot replace it", async () => {
+        const stateFile = join(stateDir, "abc--update--s9.json");
+        const torn = '{"verb": "update", "stashId": "s9", "regions": [{"id": "r1", "decision": "capt';
+        await writeFile(stateFile, torn);
+
+        await expect(Walk.load({ stashId: "s9", projectHash: "abc", stateDir })).rejects.toThrow(/left untouched/);
+        expect(await readFile(stateFile, "utf8")).toBe(torn);
+        expect(await Walk.load({ stashId: "other", projectHash: "abc", stateDir })).toBeNull();
     });
 
     test("decide advances currentIndex past already-decided regions", () => {

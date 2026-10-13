@@ -1,7 +1,8 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const { log } = logger.scoped("stash:walk");
 
@@ -105,9 +106,13 @@ export class Walk {
                 };
                 return new Walk(snap, args.stateDir);
             } catch (err) {
-                // ENOENT = no session for this verb. Other errors bubble up so corruption surfaces.
+                // ENOENT = no session for this verb. Anything else throws: answering "no session" would
+                // let the caller start a fresh walk and persist it over the decisions this file holds.
                 if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-                    log.warn({ err, file }, "walk state file unreadable");
+                    throw new Error(
+                        `walk state ${file} cannot be read or does not parse; left untouched, fix or move it aside`,
+                        { cause: err }
+                    );
                 }
             }
         }
@@ -148,7 +153,7 @@ export class Walk {
     async persist(): Promise<void> {
         this.snap.pausedAt = new Date().toISOString();
         const file = this.stateFile();
-        await writeFile(file, SafeJSON.stringify(this.snap, undefined, 2));
+        atomicWriteFileSync(file, SafeJSON.stringify(this.snap, undefined, 2));
         log.debug({ file, currentIndex: this.snap.currentIndex }, "walk persisted");
     }
 
