@@ -406,9 +406,22 @@ final class CursorFeedbackTests: XCTestCase {
     func testTheDetailLineHidesAKeyThatTypesIntoASecureField() {
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: true), "keys •")
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "shift, 7", secure: true), "keys shift+•")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "shift+7", secure: true), "keys shift+•")
         XCTAssertEqual(CursorFeedbackText.detail(action: "hotkey", text: "space", secure: true), "keys •")
-        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "tab", secure: true), "keys tab")
+        for named in ["apostrophe", "comma", "kp_1", "kp_decimal", "slash"] {
+            XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: named, secure: true), "keys •", named)
+        }
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "cmd+comma", secure: true), "keys cmd+•")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "shift+tab", secure: true), "keys shift+tab")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "f5", secure: true), "keys f5")
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: false), "keys q")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "cmd+comma", secure: false), "keys cmd+comma")
+    }
+    func testEveryKeyTheSecureLabelShowsIsARealKeyThatTypesNothing() throws {
+        // A typo in the readable list would leave a real key unmasked and match nothing; every name must parse.
+        for name in NativeKeyChord.nonPrintingKeys {
+            XCTAssertNoThrow(try NativeKeyChord(name), name)
+        }
     }
     func testAFullDetailStillFitsTheHelperDatagram() {
         var event = CursorFeedbackEvent(action: "text", point: .zero)

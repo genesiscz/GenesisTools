@@ -223,10 +223,11 @@ public enum CursorFeedbackText {
                 .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).joined(separator: " ⏎ ")
             return "“" + truncate(flat, to: detailLimit - 2) + "”"
         case "key", "hotkey":
-            // Key by key into a password field is the password, so a key that types a character is hidden;
-            // modifiers and named keys (tab, return) stay readable.
-            let keys = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-                .map { secure && ($0.count == 1 || $0.lowercased() == "space") ? "•" : $0 }
+            // Key by key into a password field is the password, so on a secure target every part that types
+            // a character is a bullet, named ones too (apostrophe, kp_1); modifiers and keys that type
+            // nothing (tab, return, an arrow) stay readable. The parts are read as NativeKeyChord reads them.
+            let keys = NativeKeyChord.parts(text).filter { !$0.isEmpty }
+                .map { secure && !NativeKeyChord.typesNoCharacter($0) ? "•" : $0 }
                 .joined(separator: "+")
             return keys.isEmpty ? nil : truncate("keys \(keys)", to: detailLimit)
         default:

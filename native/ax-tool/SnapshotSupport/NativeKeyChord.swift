@@ -8,9 +8,7 @@ public struct NativeKeyChord {
     public init(_ raw: String) throws {
         var flags: CGEventFlags = []
         var resolved: CGKeyCode?
-        let parts = raw.lowercased().components(separatedBy: CharacterSet(charactersIn: ",+"))
-        for part in parts {
-            let key = part.trimmingCharacters(in: .whitespaces)
+        for key in Self.parts(raw) {
             switch key {
             case "cmd", "command", "super", "meta": flags.insert(.maskCommand)
             case "ctrl", "control": flags.insert(.maskControl)
@@ -35,8 +33,8 @@ public struct NativeKeyChord {
     /// cannot turn a click into a keystroke.
     public static func modifiers(_ raw: String) throws -> CGEventFlags {
         var flags: CGEventFlags = []
-        for part in raw.lowercased().components(separatedBy: CharacterSet(charactersIn: ",+")) {
-            switch part.trimmingCharacters(in: .whitespaces) {
+        for part in Self.parts(raw) {
+            switch part {
             case "cmd", "command", "super", "meta": flags.insert(.maskCommand)
             case "ctrl", "control": flags.insert(.maskControl)
             case "alt", "option", "opt": flags.insert(.maskAlternate)
@@ -47,6 +45,28 @@ public struct NativeKeyChord {
         }
         return flags
     }
+
+    /// The parts of a chord as `init` reads them: split at commas and plus signs, trimmed, lowercased.
+    public static func parts(_ raw: String) -> [String] {
+        raw.lowercased().components(separatedBy: CharacterSet(charactersIn: ",+"))
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// True for a modifier or a key that types no character (tab, return, an arrow, F1). Every other
+    /// supported key types one, so the cursor label for a password field hides it.
+    public static func typesNoCharacter(_ part: String) -> Bool {
+        ["cmd", "command", "super", "meta", "ctrl", "control", "alt", "option", "opt", "shift", "fn"].contains(part)
+            || nonPrintingKeys.contains(part)
+    }
+
+    static let nonPrintingKeys: Set<String> = [
+        "return", "enter", "tab", "backspace", "delete", "escape", "esc",
+        "left", "right", "down", "up", "arrow_left", "arrow_right", "arrow_down", "arrow_up",
+        "home", "end", "pageup", "page_up", "prior", "pagedown", "page_down", "next",
+        "forwarddelete", "delete_forward", "help", "insert", "kp_enter", "kp_clear", "clear",
+        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10",
+        "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20",
+    ]
 
     private static let codes: [String: CGKeyCode] = [
         "a":0, "s":1, "d":2, "f":3, "h":4, "g":5, "z":6, "x":7, "c":8, "v":9, "b":11,
