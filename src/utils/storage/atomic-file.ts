@@ -188,6 +188,63 @@ export function atomicWriteFileSync(path: string, data: string | Uint8Array, opt
     }
 }
 
+/** What {@link atomicWriteFileStreamed} hands its producer: appends bytes to the temp file. */
+export type AtomicChunkWriter = (bytes: Uint8Array) => void;
+
+/**
+ * {@link atomicWriteFileSync} for output too large to hold in memory (the archive of a multi-GB folder): the producer
+ * appends chunks to a temp file in the target's folder, which is fsync'd and renamed over the target only after the
+ * producer resolves. A producer that throws, or a disk that fills halfway, leaves the target as it was and removes
+ * the temp file, so a full disk never publishes a truncated archive.
+ */
+export async function atomicWriteFileStreamed(
+    path: string,
+    produce: (write: AtomicChunkWriter) => Promise<void> | void,
+    options?: Pick<AtomicWriteOptions, "mode">
+): Promise<void> {
+    assertTestSafePath(path, "write");
+
+    const dir = dirname(path);
+
+    if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+    }
+
+    const tmp = `${path}.${process.pid}.${Date.now()}.${tempCounter++}.tmp`;
+
+    try {
+        const fd = openSync(tmp, "wx", options?.mode ?? 0o666);
+
+        try {
+            await produce((bytes) => {
+                let offset = 0;
+
+                while (offset < bytes.length) {
+                    offset += atomicWriteIo.writeSync(fd, bytes, offset, bytes.length - offset);
+                }
+            });
+            atomicWriteIo.fsyncSync(fd);
+        } finally {
+            closeSync(fd);
+        }
+
+        // The open's mode is masked by umask; re-applied so a 0600 source's archive is never published wider.
+        if (options?.mode !== undefined) {
+            chmodSync(tmp, options.mode);
+        }
+    } catch (err) {
+        removeTempFile(tmp);
+        throw err;
+    }
+
+    try {
+        renameSync(tmp, path);
+    } catch (err) {
+        removeTempFile(tmp);
+        throw new Error(`Atomic rename failed: ${tmp} → ${path}`, { cause: err });
+    }
+}
+
 /**
  * Keep a copy of a file that exists but cannot be used (it does not parse, or has the wrong shape) as
  * `<path>.corrupt-<local time>` next to it, BEFORE anything replaces it. A truncated config is often still

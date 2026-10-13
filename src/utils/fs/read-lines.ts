@@ -1,4 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { isZstdPath, readZstdFramesSync } from "@genesiscz/utils/compress/zstd";
 import {
     cPath,
     errnoError,
@@ -13,21 +14,10 @@ import {
 /** How much of the file is held at once. */
 const CHUNK_BYTES = 8 * 1024 * 1024;
 
-/**
- * The lines of a text file, read in chunks, so a large file is never held whole: a 218 MB transcript read
- * with `readFileSync(path, "utf8")` became a 640 MB string (UTF-16 once one character is not ASCII) before
- * a single line was looked at (2026-10-08). Lines are cut at newline bytes and decoded one by one, so a
- * multi-byte character is never split. The last line is yielded also without a trailing newline, as
- * `text.split("\n")` would give it; a file that ends with a newline yields a final empty line, the same way.
- * Throws when the file cannot be opened, like `readFileSync`.
- */
-export function* readLinesSync(
-    path: string,
-    { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}
-): Generator<string> {
+/** A plain file in chunks of `chunkBytes`; the yielded view is reused by the next read. */
+function* plainChunksSync(path: string, chunkBytes: number): Generator<Buffer> {
     const fd = openSync(path, "r");
     try {
-        let carried = Buffer.alloc(0);
         let position = 0;
         const chunk = Buffer.allocUnsafe(chunkBytes);
         for (;;) {
@@ -37,24 +27,63 @@ export function* readLinesSync(
             }
 
             position += read;
-            const bytes =
-                carried.length > 0 ? Buffer.concat([carried, chunk.subarray(0, read)]) : chunk.subarray(0, read);
-            let start = 0;
-            let newline = bytes.indexOf(10, start);
-            while (newline !== -1) {
-                yield bytes.toString("utf8", start, newline);
-                start = newline + 1;
-                newline = bytes.indexOf(10, start);
-            }
-
-            // Copied: `chunk` is reused by the next read.
-            carried = Buffer.from(bytes.subarray(start));
+            yield chunk.subarray(0, read);
         }
-
-        yield carried.toString("utf8");
     } finally {
         closeSync(fd);
     }
+}
+
+function asBuffer(bytes: Uint8Array): Buffer {
+    return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
+}
+
+/**
+ * The content of a text file in chunks: the file itself, or for a `.zst` path its decompressed frames, one at a
+ * time (`@genesiscz/utils/compress`). A yielded chunk may be reused by the next one.
+ */
+export function* readTextChunksSync(path: string, { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}) {
+    if (isZstdPath(path)) {
+        for (const frame of readZstdFramesSync(path)) {
+            yield asBuffer(frame);
+        }
+
+        return;
+    }
+
+    yield* plainChunksSync(path, chunkBytes);
+}
+
+/**
+ * The lines of a text file, read in chunks, so a large file is never held whole: a 218 MB transcript read
+ * with `readFileSync(path, "utf8")` became a 640 MB string (UTF-16 once one character is not ASCII) before
+ * a single line was looked at (2026-10-08). Lines are cut at newline bytes and decoded one by one, so a
+ * multi-byte character is never split. The last line is yielded also without a trailing newline, as
+ * `text.split("\n")` would give it; a file that ends with a newline yields a final empty line, the same way.
+ * A `.zst` path is read frame by frame, with the same lines as its plain form. Throws when the file cannot be
+ * opened, like `readFileSync`.
+ */
+export function* readLinesSync(
+    path: string,
+    { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}
+): Generator<string> {
+    let carried = Buffer.alloc(0);
+
+    for (const chunk of readTextChunksSync(path, { chunkBytes })) {
+        const bytes = carried.length > 0 ? Buffer.concat([carried, chunk]) : chunk;
+        let start = 0;
+        let newline = bytes.indexOf(10, start);
+        while (newline !== -1) {
+            yield bytes.toString("utf8", start, newline);
+            start = newline + 1;
+            newline = bytes.indexOf(10, start);
+        }
+
+        // Copied: the chunk may be reused by the next read.
+        carried = Buffer.from(bytes.subarray(start));
+    }
+
+    yield carried.toString("utf8");
 }
 
 /** How far `readFirstLines` and `readLastLines` read by default. */
@@ -165,6 +194,49 @@ export interface EdgeLines {
 }
 
 /**
+ * {@link readFirstLines} and {@link readLastLines} for a `.zst` path: frames are decompressed from the needed end
+ * until they cover the window, so a tail read of a seekable file costs about one frame (4 MiB, a few ms).
+ */
+function zstdEdgeLines(path: string, maxBytes: number, edge: "first" | "last"): EdgeLines {
+    const frames: Buffer[] = [];
+    let total = 0;
+
+    for (const frame of readZstdFramesSync(path, { fromEnd: edge === "last" })) {
+        frames.push(asBuffer(frame));
+        total += frame.length;
+
+        if (total > maxBytes) {
+            break;
+        }
+    }
+
+    const wholeFile = total <= maxBytes;
+
+    if (edge === "first") {
+        const buffer = Buffer.concat(frames);
+        const read = Math.min(total, maxBytes + 1);
+        const end = wholeFile ? read : buffer.lastIndexOf(10, maxBytes - 1) + 1;
+        return { lines: linesBetween(buffer, 0, end), wholeFile };
+    }
+
+    const buffer = Buffer.concat(frames.reverse());
+    // The byte before the window tells whether the window starts on a line, as in the plain read.
+    const window = buffer.subarray(Math.max(0, total - maxBytes - 1));
+
+    if (wholeFile) {
+        return { lines: linesBetween(window, 0, window.length), wholeFile };
+    }
+
+    const newline = window.indexOf(10);
+
+    if (newline === -1) {
+        return { lines: [], wholeFile: false };
+    }
+
+    return { lines: linesBetween(window, newline + 1, window.length), wholeFile };
+}
+
+/**
  * The first lines of a file, from one synchronous read of at most `maxBytes` (64 KB by default): for a header, a
  * title, or anything else at the top of a large file. A line longer than `maxBytes` gives no lines; read more, or
  * read the file in full. Measured on 623 Codex rollouts (`scripts/benchmarks/fs/read-primitives.ts`, 2026-10-12):
@@ -172,6 +244,10 @@ export interface EdgeLines {
  * chunk and 385 ms for whole files; pure FFI was no faster. Throws when the file cannot be opened.
  */
 export function readFirstLines(path: string, { maxBytes = END_BYTES, method }: EdgeReadOptions = {}): EdgeLines {
+    if (isZstdPath(path)) {
+        return zstdEdgeLines(path, maxBytes, "first");
+    }
+
     const reader = readerFor(method);
     const fd = reader.open(path);
 
@@ -194,6 +270,10 @@ export function readFirstLines(path: string, { maxBytes = END_BYTES, method }: E
  * `Bun.file().slice()` and 61 ms for the two slices the old `readTailBytes` made. Throws when the file cannot be opened.
  */
 export function readLastLines(path: string, { maxBytes = END_BYTES, method }: EdgeReadOptions = {}): EdgeLines {
+    if (isZstdPath(path)) {
+        return zstdEdgeLines(path, maxBytes, "last");
+    }
+
     const reader = readerFor(method);
     const fd = reader.open(path);
 

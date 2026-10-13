@@ -180,6 +180,11 @@
             "types": "./format.ts",
             "default": "./format.ts"
         },
+        "./compress": {
+            "bun": "./compress/index.ts",
+            "types": "./compress/index.ts",
+            "default": "./compress/index.ts"
+        },
         "./fs": {
             "bun": "./fs/index.ts",
             "types": "./fs/index.ts",
