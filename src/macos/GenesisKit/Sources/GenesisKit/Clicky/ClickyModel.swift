@@ -81,11 +81,20 @@ public final class ClickyModel: ObservableObject {
         self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor()
         self.appearance =
             appearance ?? NativeSettingsAppearance(defaults: defaults, observeExternalChanges: !previewOnly)
-        if let data = defaults.data(forKey: "clicky.preferences.v1"),
-            var saved = try? JSONDecoder().decode(ClickyPreferences.self, from: data)
-        {
-            saved.normalize()
-            preferences = saved
+        if let data = defaults.data(forKey: "clicky.preferences.v1") {
+            do {
+                var saved = try JSONDecoder().decode(ClickyPreferences.self, from: data)
+                saved.normalize()
+                preferences = saved
+            } catch {
+                // The next save writes defaults over this key, so the stored bytes get a key of their own first.
+                let recoveryKey = "clicky.preferences.v1.undecodable.\(Int(Date().timeIntervalSince1970))"
+                defaults.set(data, forKey: recoveryKey)
+                Logger(subsystem: "dev.genesis.tools", category: "Clicky").error(
+                    "Saved preferences could not be decoded; kept them as \(recoveryKey, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+                preferences = ClickyPreferences()
+            }
         } else {
             preferences = ClickyPreferences()
         }

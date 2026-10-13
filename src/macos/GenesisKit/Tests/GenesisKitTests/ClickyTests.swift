@@ -447,6 +447,39 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testUndecodablePreferencesAreKeptBeforeTheFirstSaveReplacesThem() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stored = Data("{\"releaseSounds\": false, \"notifications\": tru".utf8)
+        defaults.set(stored, forKey: "clicky.preferences.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+        defer { model.shutdown() }
+        model.preferences.releaseSounds.toggle()
+        let recovery = defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix("clicky.preferences.v1.undecodable.")
+        }
+        XCTAssertEqual(recovery.count, 1)
+        XCTAssertEqual(defaults.data(forKey: try XCTUnwrap(recovery.first)), stored)
+        XCTAssertNotEqual(defaults.data(forKey: "clicky.preferences.v1"), stored)
+    }
+
+    @MainActor
+    func testDecodablePreferencesLeaveNoRecoveryCopy() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var saved = ClickyPreferences()
+        saved.releaseSounds = false
+        defaults.set(try JSONEncoder().encode(saved), forKey: "clicky.preferences.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+        defer { model.shutdown() }
+        XCTAssertFalse(model.preferences.releaseSounds)
+        model.preferences.releaseSounds.toggle()
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
+    }
+
+    @MainActor
     func testUnreadableHistoryIsNeverOverwrittenByActivationOrShutdown() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
