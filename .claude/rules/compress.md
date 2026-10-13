@@ -16,6 +16,12 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   through `readZstdFramesSync` / `readZstdFrames` (frames found from the seek table or the block headers, one
   `Bun.zstdDecompress*` per frame). Compressing one frame with `node:zlib` is fine and is the only way to pass
   parameters (checksum, long mode).
+- **On Bun 1.4.2 `node:zlib`'s zstd stream decodes every frame, and the frame walker still wins**, so it is used on
+  both versions: full read 2.1 to 3.0 times faster in wall time and 2.6 times less CPU, a tail read 7 to 27 times
+  faster (it decodes only the last frame), with byte-identical output on a 165 MB day log, a 144 MB transcript and a
+  1.08 GB migrate-home archive (medians of 7, load 17 to 20). The stream needs less memory (55 to 95 MB against 87 to
+  947 MB: the walker keeps 4 frames in flight, which is 4 × 32 MiB for a tree archive). Rerun:
+  `bun scripts/benchmarks/compress/native-stream.ts`.
 - **Every file written here is seekable zstd**: independent frames plus a seek table in a skippable frame. `zstd -d`,
   `rg -z` and any decoder read it as plain zstd. A tail read costs one frame (4 MiB for `text`).
 - **Nothing is removed before it is verified.** Output goes through `atomicWriteFileStreamed` (temp file, fsync,
