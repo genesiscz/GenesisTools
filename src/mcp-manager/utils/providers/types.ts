@@ -1,6 +1,7 @@
-import { chmod, stat, writeFile } from "node:fs/promises";
+import { chmod, stat } from "node:fs/promises";
 import type { EnabledMcpServers, HarnessSyncMap, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * Result of a write operation to a provider config.
@@ -139,10 +140,10 @@ export abstract class MCPProvider {
      * Creates backup AFTER user confirms but BEFORE writing.
      */
     protected async writeFileWithBackup(content: string): Promise<void> {
-        // Create backup before writing
         await this.backupManager.createBackup(this.configPath, this.providerName);
-        // Write the file
-        await writeFile(this.configPath, content, "utf-8");
+        // Atomic: these are other apps' configs (~/.claude.json, Codex, Grok, Cursor, Gemini). A full disk or
+        // a crash mid-write must leave the user's file as it was, never truncated.
+        atomicWriteFileSync(this.configPath, content);
         await this.tightenConfigMode();
     }
 
