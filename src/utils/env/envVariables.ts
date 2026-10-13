@@ -139,6 +139,14 @@ export const env = {
         getCopilotTokenEnvKey: () => (isNonEmpty("COPILOT_GITHUB_TOKEN") ? "COPILOT_GITHUB_TOKEN" : undefined),
     },
 
+    sentry: {
+        // sentry-cli's own variables, so a token already set up for sentry-cli works here as well.
+        getAuthToken: () => getTrimmed("SENTRY_AUTH_TOKEN"),
+        getUrl: () => getTrimmed("SENTRY_URL"),
+        getOrg: () => getTrimmed("SENTRY_ORG"),
+        getProject: () => getTrimmed("SENTRY_PROJECT"),
+    },
+
     security: {
         // Base64 of the vault's 32-byte master key. The headless rung: launchd
         // daemons started before login and SSH sessions cannot reach the login

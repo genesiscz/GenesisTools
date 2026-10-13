@@ -149,6 +149,42 @@ when you need a body, a string literal, a comment, control flow or a nested clos
 
 ---
 
+## `tools ts sourcemaps`
+
+> **Which source line is `https://app.example.com/static/js/710.f9e49e56.chunk.js:95812`, when the deployment publishes no maps?**
+
+A Long Animation Frame entry (`sourceURL` + `sourceCharPosition`) or a stack frame points into a minified chunk. When the `.map` files are deployed, the answer is one lookup. Often they are not: they went to an error monitor and were deleted from the image. Then the only maps are the ones a local build produces, and a local build never matches byte for byte (a monitoring snippet injected before minification renames every identifier; build-time values are inlined).
+
+The resolvers run in order and stop at the first answer:
+
+1. **deployed-map** (exact): the file's own `sourceMappingURL`, fetched once per deployment by `fetch` (the preflight).
+2. **debug-id** (exact, optional): the file's debug id (`//# debugId=` or Sentry's `sentry-dbid-<uuid>`) looked up in maps kept from an earlier run, a `--maps-dir`, or Sentry's artifact lookup (`--sentry-mcp <server>` reads URL, token and CA from a Claude Code MCP entry; `--sentry <url>` with `--sentry-token-stdin` or `SENTRY_AUTH_TOKEN`).
+3. **local-build** (aligned / approximate): identifiers are collapsed in the deployed and the local chunk, a code window around the position must occur exactly once in the local chunk, the code before and after must agree, and the local `.map` answers. With `--deployed-commit` the line is moved through `git diff` to the deployed commit's version of the file. Measured with a second build as the deployment: 96-99.5% right line, 100% after translation on Vite.
+
+GenesisTools knows nothing about the project. The caller passes the deployed base URL (or `--deployed-dir`), and either finished build folders (`--build <dir>`) or a checkout, commit and THEIR build command (`--repo --commit --build-cmd --output`). In a terminal without either, `resolve` asks which one.
+
+| Command | What it does |
+|---------|-------------|
+| `sourcemaps resolve <url>:<offset>` (or `:<line>:<col>`) | Resolve positions through the chain; prints the source line, the evidence, warnings and a code excerpt. Exit 1 when one stays unresolved |
+| `sourcemaps fetch <base-url>` | Snapshot a deployment's JS/CSS and preflight every published `.map`. Files come from a build manifest, else from the page's scripts, the bundler runtime's chunk table and ES imports |
+| `sourcemaps env <base-url>` | The env values the deployment inlined (`process.env` / `import.meta.env` objects), as `--env` flags for a build |
+| `sourcemaps build --repo --commit --build-cmd --output` | Build a commit in a worktree with the caller's command; keep the output and maps in the cache |
+| `sourcemaps rank --deployed --build <dir>...` | How much of the deployed code each build contains, and how many chunk debug ids match |
+| `sourcemaps find-commit --deployed --repo --range A..B --build-cmd --output` | The deployed commit, from one reference build (below) |
+| `sourcemaps check --deployed --build <dir>` | How often `resolve` is right on THIS deployment, with its string literals as ground truth |
+| `sourcemaps carry --deployed --build <dir> --out <dir>` | A map for every deployed chunk, carried from the build; `tools chrome-devtools intercept --map-dir <dir>` shows them in DevTools |
+| `sourcemaps cache list\|prune --project <name>` | What the cache holds; prune by age and remove folders of failed builds |
+
+**find-commit** (`--strategy tokens`, the default) builds one reference commit and ranks every first-parent commit of the range by how closely the strings and property names it would put in the bundle match the deployed ones; no build per commit. Commits that produce the same strings tie, and the oldest of the tie introduced the deployed code; one more build confirms it (`verified`). It also reports, as evidence only: commit shas the bundle names, the newest `Last-Modified` of the deployed files (commits after it cannot be the build), and inlined env values the build did not get. `--strategy rebuild` builds the commits that touched the differing files instead.
+
+**Cache.** `~/.genesis-tools/ts/sourcemaps/<project>/<id>/` with an index in `<project>/metadata.json` (kind, origin, size, last use). A deployment snapshot is keyed by its asset list, a build by commit + command + output folder, so a second run reuses both. Maps fetched by debug id are kept in `<project>/debug-id-maps/`. `--out <dir>` exposes an entry as a symlink. Every command that writes the cache first removes entries unused for 30 days, and folders a failed build left (`cache prune --max-age-days` to do it by hand). Builds run in one managed worktree per project (`<project>/worktree`) unless `--worktree` names one; `--link .npmrc` symlinks untracked files the build needs.
+
+Profiling: `PROFILE=sourcemaps` times each phase. The full guide, with the fastest order, every strategy's cost and its measured hit rate, is `plugins/genesis-tools/skills/chrome-devtools/references/sourcemaps.md`.
+
+The library is `src/utils/ts/sourcemaps/` (`resolvers/` holds one file per resolver).
+
+---
+
 > **Where does the startup time of a TypeScript entry point go, and why?**
 
 `tools ts imports analyze <entry>` prints the import tree of a file with a measured cost per module, then explains each slow module: a native addon, a top-level await, work at module scope, a barrel that drags in more than the caller uses, or an import cycle. Three companion commands turn the same measurement into actions: which imports to make lazy, which barrels to bypass, which cycles to break.

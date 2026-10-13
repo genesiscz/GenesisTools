@@ -7,6 +7,7 @@ import { registerDuplicatesCommands } from "./commands/duplicates";
 import { registerImportsCommands } from "./commands/imports";
 import { registerRefactorsCommands } from "./commands/refactors";
 import { registerSkeletonCommands } from "./commands/skeleton";
+import { registerSourcemapsCommands } from "./commands/sourcemaps";
 
 const program = new Command();
 
@@ -20,6 +21,7 @@ registerImportsCommands(program);
 registerSkeletonCommands(program);
 registerDuplicatesCommands(program);
 registerRefactorsCommands(program);
+registerSourcemapsCommands(program);
 
 if (import.meta.main) {
     await runTool(program, { tool: "ts" });

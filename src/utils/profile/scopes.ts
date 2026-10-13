@@ -45,6 +45,8 @@ export const PROFILER_SCOPE_NAMES = [
     "ai-proxy",
     "ttyd",
     "ts",
+    // `tools ts sourcemaps`: discovery, snapshot, builds, token ranking, alignment and each resolver.
+    "sourcemaps",
     "macos-mail",
     "chrome-devtools",
     "jev-listen",
