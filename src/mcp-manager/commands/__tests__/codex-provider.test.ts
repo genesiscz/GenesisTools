@@ -44,8 +44,8 @@ describe("CodexProvider remote HTTP authentication", () => {
         const config = TOML.parse(readFileSync(join(homeDir, ".codex", "config.toml"), "utf-8")) as {
             mcp_servers?: Record<string, unknown>;
         };
+        // No `type` either: Codex has no such key and logged every one as an unrecognized setting.
         expect(config.mcp_servers?.jina).toEqual({
-            type: "http",
             url: "https://mcp.jina.ai/v1",
             http_headers: { Authorization: "Bearer test-jina-key" },
         });
@@ -181,7 +181,6 @@ command = "peekaboo"
             mcp_servers?: Record<string, unknown>;
         };
         expect(extraConfig.mcp_servers?.jina).toEqual({
-            type: "http",
             url: "https://mcp.jina.ai/v1",
             http_headers: { Authorization: "Bearer unified-key" },
         });

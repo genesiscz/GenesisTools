@@ -384,9 +384,10 @@ export class CodexProvider extends MCPProvider {
         };
     }
 
+    // No `type`: Codex has no such key (a `url` makes a server HTTP, a `command` makes it stdio) and logged
+    // "ignoring unrecognized configuration settings" as an ERROR at every app-server start (2026-10-13).
     private unifiedToCodex(unified: UnifiedMCPServerConfig): CodexMCPServerConfig {
         return {
-            type: unified.type || "stdio",
             command: unified.command,
             args: unified.args,
             env: unified.env,
