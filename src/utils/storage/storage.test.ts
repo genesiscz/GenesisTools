@@ -2,12 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
     chmodSync,
+    lstatSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
     rmSync,
     statSync,
+    symlinkSync,
     writeFileSync,
     writeSync,
 } from "node:fs";
@@ -394,6 +396,20 @@ describe("a failed write never costs the user the stored file", () => {
         expect(() => atomicWriteFileSync(target, `{ "v": 3 }`, { backup: true })).toThrow();
         expect(readFileSync(target, "utf8")).toBe(`{ "v": 2 }`);
         expect(readdirSync(dir).sort()).toEqual(["other-app.json", "other-app.json.bak"]);
+    });
+
+    it("writes through a symlinked target and keeps the link", () => {
+        // ~/.claude/settings.json is a link into a dotfiles repo: replacing the link would cut that repo off.
+        const real = join(dir, "dotfiles-settings.json");
+        const link = join(dir, "settings.json");
+        writeFileSync(real, USER_CONFIG);
+        symlinkSync(real, link);
+
+        atomicWriteFileSync(link, `{ "theme": "light" }`, { backup: true });
+
+        expect(lstatSync(link).isSymbolicLink()).toBe(true);
+        expect(readFileSync(real, "utf8")).toBe(`{ "theme": "light" }`);
+        expect(readFileSync(`${real}.bak`, "utf8")).toBe(USER_CONFIG);
     });
 
     it("copies a truncated file aside before anything can replace it", () => {

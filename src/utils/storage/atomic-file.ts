@@ -5,9 +5,11 @@ import {
     copyFileSync,
     existsSync,
     fsyncSync,
+    lstatSync,
     mkdirSync,
     openSync,
     readFileSync,
+    realpathSync,
     renameSync,
     statSync,
     unlinkSync,
@@ -63,6 +65,18 @@ function existingMode(filePath: string): number | undefined {
     }
 }
 
+/**
+ * A symlinked target (`~/.claude/settings.json` points into a dotfiles repo) is written through to the file
+ * it names: renaming over the link itself would replace it with a plain file and cut the user's repo off.
+ */
+function resolveSymlinkTarget(filePath: string): string {
+    try {
+        return lstatSync(filePath).isSymbolicLink() ? realpathSync(filePath) : filePath;
+    } catch {
+        return filePath;
+    }
+}
+
 /** Local time as `YYYYMMDD-HHMMSS-mmm`, for file names that sort by age. */
 function fileStamp(date = new Date()): string {
     const pad = (value: number, width = 2) => String(value).padStart(width, "0");
@@ -85,9 +99,16 @@ function cloneFileSync(from: string, to: string, exclusive: boolean): void {
  * `mode` applies from the temp file's birth, so a file holding secrets is never briefly published at the
  * umask default: the rename carries the restricted mode with it. The open's own mode is masked by umask
  * (umask 0600 yields a 000 file), so it is re-applied to the temp file before it gets the real name.
+ * A symlinked target is written through: the link stays, the file it names gets the new content.
  */
-export function atomicWriteFileSync(filePath: string, data: string | Uint8Array, options?: AtomicWriteOptions): void {
-    assertTestSafePath(filePath, "write");
+export function atomicWriteFileSync(path: string, data: string | Uint8Array, options?: AtomicWriteOptions): void {
+    assertTestSafePath(path, "write");
+
+    const filePath = resolveSymlinkTarget(path);
+
+    if (filePath !== path) {
+        assertTestSafePath(filePath, "write");
+    }
 
     const dir = dirname(filePath);
 
