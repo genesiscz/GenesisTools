@@ -33,6 +33,7 @@
 
 import { findInFiles, Lang, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { PROCESS_TOOL_SPAWN_BASELINE } from "./process-tool-spawn-baseline";
 
 export type Severity = "error" | "warn";
 
@@ -225,6 +226,111 @@ const SWIFT_WAIT_RULE = {
         "`// lint-rules-ignore: <why it cannot hang>`.",
 };
 const SWIFT_BARE_WAIT = /\.wait\(\s*\)/;
+
+/**
+ * Process tools (2026-10-14). The process table, command lines, executables, listening sockets and working
+ * directories come from the kernel through `@genesiscz/utils/process` (libproc on macOS), measured at 9.5 ms where
+ * `lsof` cost 282 ms of CPU and at 38 ms where `ps` cost 567 ms (fb1a5f6da, d56c55667, 01ad30303). That layer owns
+ * the `ps`/`lsof` fallbacks for Linux, Windows and a failed self-check; nothing outside it spawns them.
+ */
+const PROCESS_TOOL_SPAWN_RULE = {
+    name: "no-process-tool-spawn",
+    severity: "error" as const,
+    message:
+        "Spawning ps, lsof or pgrep costs tens to hundreds of ms of CPU per call. Read the kernel through " +
+        "`@genesiscz/utils/process` (libproc-table, socket-owner, ps.ts), which owns the fallbacks, or " +
+        "`// lint-rules-ignore: <why the kernel read does not fit>`.",
+};
+const PROCESS_TOOLS = new Set(["ps", "lsof", "pgrep"]);
+/** The process layer that owns the fallbacks, and the benchmarks that measure the spawn against the kernel read. */
+const PROCESS_TOOL_EXEMPT = /^(?:src\/utils\/process\/|scripts\/benchmarks\/)/;
+/** Callees whose FIRST argument is the program name, with the arguments in a separate array. */
+const PROGRAM_FIRST_CALLEES = new Set(["spawn", "spawnSync", "execFile", "execFileSync", "capture", "captureSync"]);
+/** Callees that take one command string, and Bun's shell tag. */
+const COMMAND_STRING_CALLEES = new Set(["exec", "execSync", "$"]);
+/** Rust-side prefilter: the arguments open with a quoted ps, lsof or pgrep, bare or as an array's first element. */
+const PROCESS_TOOL_CALL_MATCHER = {
+    rule: {
+        kind: "call_expression",
+        has: { field: "arguments", regex: "^\\(?\\s*\\[?\\s*[\"'`](?:ps|lsof|pgrep)[\"'`\\s]" },
+    },
+};
+
+function unquote(node: SgNode): string {
+    return node.text().slice(1, -1);
+}
+
+function spawnsProcessTool(node: SgNode): boolean {
+    const args = node.field("arguments");
+
+    if (!args) {
+        return false;
+    }
+
+    const calleeText = node.field("function")?.text() ?? "";
+    const callee = calleeText.split(".").pop() ?? "";
+    const first = args.kind() === "template_string" ? args : args.namedChildren()[0];
+
+    if (!first) {
+        return false;
+    }
+
+    if (first.kind() === "array") {
+        const program = first.namedChildren()[0];
+        // A method's argv is its own program's (`this.run(["ps", …])` is `docker ps`); Bun.spawn's is the process.
+        const spawnsArgv = !calleeText.includes(".") || calleeText.startsWith("Bun.");
+
+        return spawnsArgv && program?.kind() === "string" && PROCESS_TOOLS.has(unquote(program));
+    }
+
+    if (first.kind() !== "string" && first.kind() !== "template_string") {
+        return false;
+    }
+
+    const text = unquote(first);
+
+    if (PROCESS_TOOLS.has(text)) {
+        return PROGRAM_FIRST_CALLEES.has(callee);
+    }
+
+    return COMMAND_STRING_CALLEES.has(callee) && PROCESS_TOOLS.has(text.split(/\s+/)[0]);
+}
+
+/**
+ * Drops a file's process-tool findings while it holds no more than its baseline count. Over it, every one of them is
+ * reported, since a count cannot tell the new call from the old ones.
+ */
+export function applyProcessToolBaseline(
+    findings: Finding[],
+    baseline: Readonly<Record<string, number>> = PROCESS_TOOL_SPAWN_BASELINE
+): Finding[] {
+    const counts = new Map<string, number>();
+
+    for (const finding of findings) {
+        if (finding.rule === PROCESS_TOOL_SPAWN_RULE.name) {
+            counts.set(finding.file, (counts.get(finding.file) ?? 0) + 1);
+        }
+    }
+
+    return findings
+        .filter((f) => f.rule !== PROCESS_TOOL_SPAWN_RULE.name || (counts.get(f.file) ?? 0) > (baseline[f.file] ?? 0))
+        .map((f) =>
+            f.rule === PROCESS_TOOL_SPAWN_RULE.name && baseline[f.file] !== undefined
+                ? {
+                      ...f,
+                      message: `${f.message} This file is over its baseline of ${baseline[f.file]} in scripts/ci/process-tool-spawn-baseline.ts.`,
+                  }
+                : f
+        );
+}
+
+function recordProcessToolSpawns(nodes: SgNode[], fileOf: (node: SgNode) => string, record: RecordFinding): void {
+    for (const node of nodes) {
+        if (!PROCESS_TOOL_EXEMPT.test(fileOf(node).replace(/\\/g, "/")) && spawnsProcessTool(node)) {
+            record(node, PROCESS_TOOL_SPAWN_RULE);
+        }
+    }
+}
 
 function parseNumberLiteral(text: string): number | null {
     const value = Number(text.replace(/_/g, ""));
@@ -558,6 +664,7 @@ export function checkSource(file: string, source: string): Finding[] {
     }
 
     recordBusyWaitFindings(root, record);
+    recordProcessToolSpawns(root.findAll(PROCESS_TOOL_CALL_MATCHER), () => file, record);
 
     // The `.genesis-tools` rule is about REACHING that directory through
     // `homedir()`, not about the literal. `join(env.tools.getHome(),
@@ -593,7 +700,7 @@ export function checkSource(file: string, source: string): Finding[] {
         }
     }
 
-    return findings;
+    return applyProcessToolBaseline(findings);
 }
 
 /**
@@ -785,6 +892,13 @@ async function scanAll(files: string[]): Promise<Finding[]> {
             ),
             findInFiles(
                 lang,
+                { paths, matcher: PROCESS_TOOL_CALL_MATCHER },
+                guard((nodes) => {
+                    recordProcessToolSpawns(nodes, (node) => node.getRoot().filename(), push);
+                })
+            ),
+            findInFiles(
+                lang,
                 { paths, matcher: { rule: { pattern: "$FN(homedir(), $$$ARGS)" } } },
                 guard((nodes) => {
                     for (const node of nodes) {
@@ -854,15 +968,17 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         sources.set(file, (await Bun.file(file).text()).split("\n"));
     }
 
-    return unfiltered.filter((finding) => {
-        const lines = sources.get(finding.file) ?? [];
+    return applyProcessToolBaseline(
+        unfiltered.filter((finding) => {
+            const lines = sources.get(finding.file) ?? [];
 
-        if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
-            return false;
-        }
+            if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
+                return false;
+            }
 
-        return !isSuppressed(lines, finding.line);
-    });
+            return !isSuppressed(lines, finding.line);
+        })
+    );
 }
 
 if (import.meta.main) {
@@ -888,7 +1004,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 10 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 11 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }

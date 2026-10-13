@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkSource, pluginsDisabledFor } from "./lint-rules";
+import { applyProcessToolBaseline, checkSource, pluginsDisabledFor } from "./lint-rules";
 
 /**
  * These pin the behaviour of the six GritQL plugins this checker replaced.
@@ -229,6 +229,48 @@ describe("no-sync-poll-loop", () => {
         expect(rules("Bun.sleepSync(400);")).toEqual([]);
         expect(rules("async function wait() { while (!done()) { await Bun.sleep(50); } }")).toEqual([]);
         expect(rules("// lint-rules-ignore: bounded retry\nfor (;;) { Bun.sleepSync(5); }")).toEqual([]);
+    });
+});
+
+describe("no-process-tool-spawn", () => {
+    test("flags ps, lsof and pgrep in every spawn shape", () => {
+        for (const source of [
+            'exec(["ps", "-axo", "pid=,command="]);',
+            'Bun.spawnSync(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]);',
+            'runCommand(["pgrep", "-P", String(pid)]);',
+            'spawnSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" });',
+            'childProcess.execFileSync("lsof", ["-p", "1"]);',
+            'execSync("pgrep -f claude");',
+            "await $`ps -axo pid=`;",
+        ]) {
+            expect(rules(source)).toEqual(["no-process-tool-spawn"]);
+        }
+    });
+
+    test("leaves other programs, log text and a bare string alone", () => {
+        expect(rules('exec(["git", "status"]);')).toEqual([]);
+        expect(rules('log.debug("ps -axo did not exit cleanly");')).toEqual([]);
+        expect(rules('spawnSync("psql", ["-c", "select 1"]);')).toEqual([]);
+        expect(rules('const program = "ps";')).toEqual([]);
+        expect(rules('this.run(["ps", "--filter", "name=db"]);')).toEqual([]);
+    });
+
+    test("the process layer and the benchmarks may spawn them, and a suppression names the reason", () => {
+        const source = 'Bun.spawnSync(["ps", "-axo", "pid="]);';
+        expect(rules(source, "src/utils/process/ps.ts")).toEqual([]);
+        expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
+        expect(rules(`// lint-rules-ignore: Linux fallback\n${source}`)).toEqual([]);
+    });
+
+    test("the baseline keeps a file's old spawns quiet and reports every one once the file adds another", () => {
+        const two = checkSource("src/legacy.ts", 'exec(["ps", "-axo"]);\nexec(["lsof", "-nP"]);');
+        expect(two.map((f) => f.rule)).toEqual(["no-process-tool-spawn", "no-process-tool-spawn"]);
+        expect(applyProcessToolBaseline(two, { "src/legacy.ts": 2 })).toEqual([]);
+
+        const over = applyProcessToolBaseline(two, { "src/legacy.ts": 1 });
+        expect(over).toHaveLength(2);
+        expect(over[0].message).toContain("over its baseline of 1");
+        expect(applyProcessToolBaseline(two, {})).toHaveLength(2);
     });
 });
 
