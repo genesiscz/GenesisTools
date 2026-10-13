@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { Storage } from "@genesiscz/utils/storage/storage.ts";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage.ts";
 
 export type SayProvider = "macos" | "xai" | "openai" | "elevenlabs";
 
@@ -242,7 +242,7 @@ export class SayConfigManager {
             const backupPath = join(dirname(this.storage.getConfigPath()), "config.v1.bak.json");
 
             if (!existsSync(backupPath)) {
-                await Bun.write(backupPath, this.pendingV1Backup);
+                atomicWriteFileSync(backupPath, this.pendingV1Backup);
             }
 
             this.pendingV1Backup = null;

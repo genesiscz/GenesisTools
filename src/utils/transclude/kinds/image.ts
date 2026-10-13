@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { MAX_IMAGE_ATTACHMENT_BYTES } from "../../image/attachments";
 import { defineTransclusion, TransclusionError } from "../registry";
 
@@ -63,12 +64,14 @@ export const imageTransclusion = defineTransclusion({
             throw new TransclusionError("image needs an asset store, and this caller configured none");
         }
 
-        const sha256 = createHash("sha256").update(readFileSync(path)).digest("hex");
+        const content = readFileSync(path);
+        const sha256 = createHash("sha256").update(content).digest("hex");
         const stored = join(ctx.assetDir, `${sha256.slice(0, 16)}${extension}`);
-        mkdirSync(ctx.assetDir, { recursive: true });
 
+        // The name is the content's hash, and an existing name is trusted forever, so it must never be
+        // published for a half-written copy (ENOSPC, a crash): the atomic write renames only a complete file.
         if (!existsSync(stored)) {
-            copyFileSync(path, stored);
+            atomicWriteFileSync(stored, content);
         }
 
         return {

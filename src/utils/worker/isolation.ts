@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * Which of the user's personal surfaces a headless worker loads. ON by default
@@ -85,6 +86,5 @@ export function ensureGrokWorkerConfig(workerHome: string, surfaces: WorkerSurfa
         return;
     }
 
-    mkdirSync(workerHome, { recursive: true });
-    writeFileSync(path, next, "utf8");
+    atomicWriteFileSync(path, next);
 }

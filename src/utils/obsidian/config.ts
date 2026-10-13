@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, renameSync } from "node:fs";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { resolveActiveVault } from "./discovery";
 
 export interface ObsidianConfig {
@@ -124,12 +125,7 @@ function writeSection(path: string, value: ObsidianConfig): void {
     }
 
     config.obsidian = value;
-    mkdirSync(dirname(path), { recursive: true });
-
-    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-
-    writeFileSync(tmp, `${SafeJSON.stringify(config, null, 2)}\n`);
-    renameSync(tmp, path);
+    atomicWriteFileSync(path, `${SafeJSON.stringify(config, null, 2)}\n`);
 }
 
 /** Resolution order: shared plugin config → legacy file (migrated) → obsidian.json discovery → null. */

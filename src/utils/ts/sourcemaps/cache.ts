@@ -1,9 +1,10 @@
-import { lstat, mkdir, readdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, readlink, rm, stat, symlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 const { log } = logger.scoped("ts:sourcemaps:cache");
@@ -121,10 +122,7 @@ export class SourcemapCache {
     }
 
     private async write(metadata: CacheMetadata): Promise<void> {
-        await mkdir(this.dir, { recursive: true });
-        const temp = `${this.metadataPath}.${process.pid}.tmp`;
-        await writeFile(temp, SafeJSON.stringify(metadata, null, 2));
-        await rename(temp, this.metadataPath);
+        atomicWriteFileSync(this.metadataPath, SafeJSON.stringify(metadata, null, 2));
     }
 
     async get(id: string): Promise<CacheEntry | null> {

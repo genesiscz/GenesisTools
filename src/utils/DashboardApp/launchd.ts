@@ -14,11 +14,12 @@
  * At the old 2s a dashboard that died during startup respawned faster than it
  * could finish a Vite build, so the public port stayed down for the whole storm.
  */
-import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 
@@ -181,19 +182,10 @@ ${envEntries}
 </plist>
 `;
 
-    mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
-    // EnvironmentVariables can carry provider API keys, so the plist must never be
-    // group/world-readable — not even for the instant between write and chmod.
-    // Tighten an existing file BEFORE overwriting it (writeFileSync's `mode` is
-    // ignored when the file already exists), and create a new one owner-only.
-    if (existsSync(path)) {
-        chmodSync(path, 0o600);
-    }
-
-    writeFileSync(path, plist, { mode: 0o600 });
-    // The creation mode above is still masked by the process umask, which can strip
-    // owner bits too (umask 0200 would leave the file read-only). Restore 0600 exactly.
-    chmodSync(path, 0o600);
+    // EnvironmentVariables can carry provider API keys, so the plist must never be group/world-readable,
+    // not even for an instant. The temp file gets exactly 0600 (umask cannot strip it) before it is
+    // renamed over the old plist, so the live file is never truncated or half-written either.
+    atomicWriteFileSync(path, plist, { mode: 0o600 });
 }
 
 export async function refreshLaunchd(opts: LaunchdInstallOptions): Promise<void> {

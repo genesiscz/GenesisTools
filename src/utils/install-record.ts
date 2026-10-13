@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -59,10 +60,7 @@ export function refreshInstallRecord(root: string): void {
         }
 
         const record: InstallRecord = { checkout: root, version, pluginVersion, recordedAt: new Date().toISOString() };
-        mkdirSync(dirname(file), { recursive: true });
-        const temporary = `${file}.${process.pid}.tmp`;
-        writeFileSync(temporary, `${SafeJSON.stringify(record, null, 4)}\n`);
-        renameSync(temporary, file);
+        atomicWriteFileSync(file, `${SafeJSON.stringify(record, null, 4)}\n`);
         logger.debug({ file, record }, "install record written");
     } catch (err) {
         logger.debug({ err, root }, "install record: not refreshed");

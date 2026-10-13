@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "./atomic-file";
 
 export interface AuthStorageKey {
     /** Logical namespace; on macOS Keychain this becomes the entry's "service". */
@@ -111,8 +112,7 @@ export class FileBackend implements AuthStorageBackend {
     async set(key: AuthStorageKey, value: string): Promise<void> {
         const path = this.pathFor(key);
         mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-        writeFileSync(path, `${value.trim()}\n`, { encoding: "utf-8", mode: 0o600 });
-        chmodSync(path, 0o600);
+        atomicWriteFileSync(path, `${value.trim()}\n`, { mode: 0o600 });
     }
 
     async delete(key: AuthStorageKey): Promise<void> {

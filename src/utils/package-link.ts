@@ -35,21 +35,12 @@
  * exactly the target — resolve through it.
  */
 
-import {
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    readdirSync,
-    readFileSync,
-    readlinkSync,
-    rmdirSync,
-    rmSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 export const PACKAGE_NAME = "@genesiscz/utils";
 
@@ -541,8 +532,8 @@ export function linkUtilsPackage(options: LinkOptions = {}): LinkResult {
         config.include = [];
     }
 
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, `${SafeJSON.stringify(config, null, 4)}\n`);
+    // The user's own tsconfig: keep the replaced copy as `.bak`, one `mv` away from undone.
+    atomicWriteFileSync(configPath, `${SafeJSON.stringify(config, null, 4)}\n`, { backup: true });
 
     return {
         outcome,
@@ -753,7 +744,7 @@ export function unlinkUtilsPackage(options: LinkOptions = {}): UnlinkResult {
     if (configRemoved) {
         rmSync(configPath, { force: true });
     } else {
-        writeFileSync(configPath, `${SafeJSON.stringify(config, null, 4)}\n`);
+        atomicWriteFileSync(configPath, `${SafeJSON.stringify(config, null, 4)}\n`, { backup: true });
     }
 
     return { outcome: "removed", configPath, existing, legacyRemoved, configRemoved };

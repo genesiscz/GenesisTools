@@ -1,9 +1,8 @@
 import { statSync } from "node:fs";
-import { mkdir, rename } from "node:fs/promises";
-import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * What tells one version of a file from the next without reading it. Any write moves the ctime, and a file
@@ -229,18 +228,15 @@ export class FileIdentityCache<T> {
 
         this.dirty = false;
         const path = persist.path();
-        const writing = `${path}.${process.pid}.tmp`;
 
         try {
-            await mkdir(dirname(path), { recursive: true });
-            await Bun.write(
-                writing,
+            atomicWriteFileSync(
+                path,
                 SafeJSON.stringify(
                     { version: persist.version, entries: Object.fromEntries(this.entries) },
                     { strict: true }
                 )
             );
-            await rename(writing, path);
         } catch (err) {
             logger.debug({ err, path }, "[identity-cache] cache not saved");
         }

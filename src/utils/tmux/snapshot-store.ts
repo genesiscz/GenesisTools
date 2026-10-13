@@ -1,17 +1,9 @@
-import {
-    existsSync,
-    mkdirSync,
-    readdirSync,
-    readFileSync,
-    renameSync,
-    statSync,
-    unlinkSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { SNAPSHOT_VERSION, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
 
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -105,9 +97,7 @@ export class TmuxPresetStore {
 
         this.ensureDir();
         const normalized: TmuxPreset = { ...preset, name, version: SNAPSHOT_VERSION };
-        const tmpPath = `${path}.tmp.${process.pid}`;
-        writeFileSync(tmpPath, `${SafeJSON.stringify(normalized, null, 2)}\n`, "utf8");
-        renameSync(tmpPath, path);
+        atomicWriteFileSync(path, `${SafeJSON.stringify(normalized, null, 2)}\n`);
         return path;
     }
 
