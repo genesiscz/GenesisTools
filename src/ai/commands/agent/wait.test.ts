@@ -3,6 +3,8 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as delivery from "@app/ai/lib/agent-message/delivery";
+import { cmuxNamedSessionId } from "@app/ai/lib/sessions/resolve-transcript";
+import type { SessionCreatedRecord } from "@app/cmux/lib/session-store";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -14,6 +16,7 @@ import {
     type TranscriptTool,
     type TranscriptTurn,
 } from "@genesiscz/utils/ai/transcripts/types";
+import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { messageCommand } from "./message";
@@ -565,5 +568,60 @@ describe("message --wait --stream on a reply that is already being written", () 
         expect(process.exitCode).toBe(0);
         expect(printed).toContain("first part");
         expect(printed).toContain("second part");
+    });
+});
+
+describe("cmuxNamedSessionId", () => {
+    const created = (name: string, agent: SessionCreatedRecord["agent"], surfaceId: string, createdAt: string) =>
+        ({
+            type: "created",
+            name,
+            agent,
+            account: "work",
+            model: null,
+            cwd: "/repo",
+            window: "window:1",
+            workspace: "workspace:1",
+            surface: "surface:1",
+            surfaceId,
+            tmuxSession: null,
+            pidFile: "/tmp/x.pid",
+            command: "tools grok run",
+            createdAt,
+            createdBy: "agents-new",
+        }) satisfies SessionCreatedRecord;
+    const ref = (sessionId: string, surfaceId: string, at: string): SessionCmuxRefs => ({
+        sessionId,
+        provider: "grok",
+        workspaceId: null,
+        surfaceId,
+        workspaceRef: null,
+        paneRef: null,
+        surfaceRef: null,
+        windowRef: null,
+        tmuxPane: null,
+        cwd: "/repo",
+        at: Date.parse(at),
+    });
+    const refs = [
+        ref("old-session", "S1", "2026-10-13T16:00:00Z"),
+        ref("verify-session", "S2", "2026-10-13T17:14:03Z"),
+    ];
+
+    it("maps a tools cmux agents name to the session its surface recorded", () => {
+        const records = [created("verify", "grok", "S2", "2026-10-13T17:14:00Z")];
+
+        expect(cmuxNamedSessionId({ alias: "grok", query: "verify", records, refs })).toBe("verify-session");
+    });
+
+    it("takes the newest record of a reused name, and never another agent's record", () => {
+        const records = [
+            created("verify", "grok", "S1", "2026-10-13T15:59:00Z"),
+            created("verify", "grok", "S2", "2026-10-13T17:14:00Z"),
+        ];
+
+        expect(cmuxNamedSessionId({ alias: "grok", query: "verify", records, refs })).toBe("verify-session");
+        expect(cmuxNamedSessionId({ alias: "codex", query: "verify", records, refs })).toBeNull();
+        expect(cmuxNamedSessionId({ alias: "grok", query: "other", records, refs })).toBeNull();
     });
 });

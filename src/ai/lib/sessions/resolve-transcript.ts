@@ -1,3 +1,5 @@
+import { recordedSessionIdOf } from "@app/cmux/lib/session-close";
+import { fileSessionStore, type SessionCreatedRecord, type SessionRecordLine } from "@app/cmux/lib/session-store";
 import {
     type ResolvedTranscript,
     resolveCodexNative,
@@ -5,9 +7,51 @@ import {
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
+import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("agent-wait");
+
+/**
+ * The native session id of the newest session `tools cmux agents new --name <query>` started for this agent, open
+ * or closed, through the cmux-refs journal. A cmux name is not a `/rename` title, so the other lookups never find it
+ * (2026-10-13: `tools grok wait mcp-verify-grok` failed for a session `agents new` had just started).
+ */
+export function cmuxNamedSessionId(input: {
+    alias: TurnProvider;
+    query: string;
+    records: readonly SessionRecordLine[];
+    refs: Iterable<SessionCmuxRefs>;
+}): string | null {
+    const record = input.records
+        .filter(
+            (line): line is SessionCreatedRecord =>
+                line.type === "created" && line.name === input.query && line.agent === input.alias
+        )
+        .at(-1);
+
+    if (!record) {
+        return null;
+    }
+
+    return recordedSessionIdOf({ record, refs: input.refs, tmuxPanes: record.tmuxPane ? [record.tmuxPane] : [] });
+}
+
+async function resolveByCmuxName(alias: TurnProvider, query: string): Promise<ResolvedTranscript | null> {
+    const sessionId = cmuxNamedSessionId({
+        alias,
+        query,
+        records: fileSessionStore().read(),
+        refs: loadAllSessionCmuxRefs().values(),
+    });
+
+    if (!sessionId) {
+        return null;
+    }
+
+    log.debug({ alias, query, sessionId }, "matched a tools cmux agents name");
+    return resolveTranscript(sessionId, {}, alias);
+}
 
 async function resolveByTitle(alias: TurnProvider, query: string, first: boolean): Promise<ResolvedTranscript | null> {
     const hits = findSessionsByTitle(query, { provider: alias });
@@ -53,8 +97,12 @@ export async function resolveSessionTranscript(
     }
 
     if (!resolved) {
+        resolved = await resolveByCmuxName(alias, query);
+    }
+
+    if (!resolved) {
         throw new NoSessionMatchError(
-            `No ${alias} session matches "${query}" (tried session id, path and /rename title)`
+            `No ${alias} session matches "${query}" (tried session id, path, /rename title and tools cmux agents name)`
         );
     }
 
