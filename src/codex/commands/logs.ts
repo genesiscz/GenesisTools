@@ -49,7 +49,8 @@ export async function printLogs(options: LogsOptions): Promise<void> {
 
     if (options.tail) {
         const count = Number.parseInt(options.tail, 10);
-        events = events.slice(-count);
+        // `slice(-0)` is the whole array, so `--tail 0` printed every event instead of none.
+        events = events.slice(Math.max(0, events.length - count));
     }
 
     if (options.events) {
