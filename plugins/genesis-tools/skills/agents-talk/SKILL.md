@@ -29,7 +29,7 @@ Each row was proven live with a 12-step worker that got a ping mid-turn and answ
 | Claude Code plain background agent (`Agent` WITHOUT `name`) | native `SendMessage` to its agentId; no bus needed | about 9 s, between tool calls | the same `SendMessage` resumes it |
 | Grok 1.0.44, main session or `tools grok spawn` worker | the bus; the worker wraps its `tools agents login` in the `monitor` tool | about 28 s, mid-turn | not woken by mail; the parent resumes it (`tools grok steer`, or `spawn_subagent` `resume_from`) |
 | Codex `tools codex spawn` worker | `tools codex steer --name <task>`: merged into the running turn | about 26 s, mid-turn | `tools codex steer` starts a new turn |
-| Codex `tools codex spawn` worker, bus mail | the bus, read only at its seeded `login --once` checkpoints | at its next checkpoint | `tools codex steer` |
+| Codex `tools codex spawn` worker, bus mail | `tools agents message --to codex_<task>`: the worker's daemon delivers it as turn input with a `[Bus message from <sender> #<id>. Reply with: ...]` header | 11 s, merged mid-turn (2026-10-13) | the same message starts a new turn: reply in 2 s |
 
 🛑 Native Claude team mail (`SendMessage` to a teammate NAME) is NOT on this list for mid-turn use.
 In 2.1.280 the harness never injects team mail into a running teammate turn (the mid-turn
@@ -277,7 +277,9 @@ On **Grok**:
 On **Codex** (`tools codex spawn` workers; the Codex host itself never uses this skill):
 
 - The lead's mid-turn channel is `tools codex steer --name <task> --prompt '...'`. Verified 2026-10-01 00:10: the steer was merged into the running turn (`"merged": true`) and acted on about 26 s later.
-- Bus mail reaches the worker only when it runs its seeded `tools agents login --once` receive, so a brief that relies on bus mail must name the checkpoints where it checks.
+- **The worker never receives by itself; its daemon does it.** The daemon's bridge watches the bus for mail addressed to `codex_<task>` and hands each one to the model as turn input, headed `[Bus message from <sender> #<id>. Reply with: tools agents message --from codex_<task> --reply <id> ...]`. A busy worker gets it merged into the running turn; an idle worker gets a new turn. Measured 2026-10-13 with a luna worker and no model-side receive: busy, the answer reached the lead 11 s after the send; idle, 2 s, as a correct `--reply`.
+- So the injected contract no longer tells a Codex worker to run `tools agents login --once` (it blocked the turn, received the same mail twice, and one such login held the identity's slot for 3+ minutes). At a checkpoint the worker sends its message and ends its turn; the lead's reply starts the next one. A brief should say the same instead of `tools agents request ... and WAIT`.
+- Broadcasts (no `--to`) do not reach a Codex worker. Address it.
 
 In these bus workflows, send payloads through `tools agents` and use the host's native resume operation for idle recipients. Do not assume Claude Code's `SendMessage` wake behavior applies to Codex's `collaboration.send_message`; Codex requires `followup_task` in the tool set described above. Monitor delivery during an active turn still depends on the host.
 
@@ -324,8 +326,8 @@ tools agents request --from reviewer --to lead --body 'Approve the auth change?'
 ## Long-lived Codex CLI workers, separate from native subagents
 
 `tools codex spawn` creates a persistent app-server session and auto-registers `codex_<name>` on this same bus. Do
-not manually log that identity in from the orchestrator — the model receives with its seeded
-`tools agents login --agent-name codex_<name> --once --session <id>` command.
+not manually log that identity in from the orchestrator. The worker's daemon receives for it and hands each
+addressed message to the model as turn input (see "On **Codex**" above); the model runs no receive command.
 
 Write policies, steering, approvals, and the driver-subagent pattern live in **`gt:handoff-to`**, whose
 `references/codex.md` carries the Codex mechanics. Load that skill rather than hand-rolling a spawn from here.

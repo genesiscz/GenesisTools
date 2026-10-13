@@ -36,8 +36,10 @@ interface MessageFeedEvent {
     seq: number;
     type: "message";
     from_agent_id: string;
+    from_agent_name?: string;
     to_agent_ids: string[];
     body: string;
+    message_id?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -271,7 +273,25 @@ export class AgentsBridge {
             return;
         }
 
-        await this.onControl(control);
+        await this.onControl(
+            control.op === "steer" && !event.body.trim().startsWith("{") ? this.asMail(control, event) : control
+        );
+    }
+
+    /**
+     * Plain mail reaches the model as turn input (merged into a running turn, or a new turn when it is idle), so
+     * the model needs what a bus receive would have shown it: who wrote and how to answer. Without this header a
+     * lead's reply read as if the user had typed it, and the model had no message id to reply to.
+     */
+    private asMail(control: Extract<CodexControl, { op: "steer" }>, event: MessageFeedEvent): CodexControl {
+        const from = event.from_agent_name ?? event.from_agent_id;
+        const reply = event.message_id
+            ? ` Reply with: tools agents message --from ${this.agentName} --reply ${event.message_id} --body '<text>' --session ${this.session}`
+            : "";
+        return {
+            ...control,
+            body: `[Bus message from ${from}${event.message_id ? ` #${event.message_id}` : ""}.${reply}]\n\n${control.body}`,
+        };
     }
 }
 

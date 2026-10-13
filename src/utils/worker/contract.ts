@@ -28,6 +28,26 @@ const BACKEND_LABEL: Record<WorkerBackend, string> = {
     claude: "Claude Code",
 };
 
+/**
+ * How mail reaches the worker. A codex worker's daemon delivers every message addressed to it as turn input
+ * (merged into a running turn, or a new turn when idle), so a model-side `login --once` only blocked the turn and
+ * received the same mail twice; one held the identity's slot for 3+ minutes on 2026-10-13. Other backends still
+ * receive through `login --once`.
+ */
+function receiveLines(backend: WorkerBackend, bus: WorkerBus, sessionFlag: string): string[] {
+    if (backend === "codex") {
+        return [
+            `Mail addressed to you arrives by itself as input that starts with \`[Bus message from <sender> #<id>. Reply with: ...]\`: inside your running turn, or as a new turn when you are idle. Never run \`${toolCommand("agents login")}\` or \`${toolCommand("agents request")}\`: they block your turn and receive that mail a second time.`,
+            "At a checkpoint where you must wait for the lead, send your message and END your turn; the reply starts your next turn.",
+        ];
+    }
+
+    return [
+        "Check for replies or steering from the lead with:",
+        `${toolCommand("agents login")} --agent-name ${bus.agentName} --once ${sessionFlag}`,
+    ];
+}
+
 function channelLines(input: WorkerContractInput): string[] {
     const label = BACKEND_LABEL[input.backend];
     const bus = input.bus;
@@ -52,8 +72,7 @@ function channelLines(input: WorkerContractInput): string[] {
             `If you are a subagent that another agent of this worker started, these bus lines are not yours: never run \`${toolCommand("agents")}\` as \`${bus.agentName}\` (it is refused), and report to the agent that started you.`,
             "Report progress, findings, and questions with:",
             `${toolCommand("agents message")} --from ${bus.agentName} --to ${bus.leadName} --body '<text>' ${sessionFlag}`,
-            "Check for replies or steering from the lead with:",
-            `${toolCommand("agents login")} --agent-name ${bus.agentName} --once ${sessionFlag}`,
+            ...receiveLines(input.backend, bus, sessionFlag),
             "Reply to a specific message with:",
             `${toolCommand("agents message")} --from ${bus.agentName} --reply <id> --body '<text>' ${sessionFlag}`,
             "Prefer one concise message per meaningful step.",

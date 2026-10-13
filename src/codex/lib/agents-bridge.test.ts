@@ -238,3 +238,39 @@ test("the bridge publishes one event per finished step, never the prompt echo, t
         { event: "item", phase: "completed", itemId: "agentMessage-1", itemType: "agentMessage", summary: "x" },
     ]);
 });
+
+test("plain mail reaches the model with its sender and the reply command; a structured control does not", async () => {
+    const transport = new FakeAgentsTransport();
+    const controls: CodexControl[] = [];
+    const bridge = new AgentsBridge({
+        agentName: "codex_reviewer",
+        rendezvousSession: "parent-1",
+        transport,
+        onControl: async (control) => {
+            controls.push(control);
+        },
+    });
+    await bridge.start();
+
+    const line = (seq: number, body: string) =>
+        SafeJSON.stringify({
+            seq,
+            type: "message",
+            from_agent_id: "main_parent",
+            from_agent_name: "lead",
+            to_agent_ids: ["agt_0002"],
+            body,
+            message_id: "007c",
+        });
+    await transport.lineHandler?.(line(1, "Approved, go on."));
+    await transport.lineHandler?.(line(2, '{"op":"steer","body":"focus"}'));
+
+    expect(controls).toEqual([
+        {
+            op: "steer",
+            force: false,
+            body: "[Bus message from lead #007c. Reply with: tools agents message --from codex_reviewer --reply 007c --body '<text>' --session parent-1]\n\nApproved, go on.",
+        },
+        { op: "steer", body: "focus", force: false },
+    ]);
+});

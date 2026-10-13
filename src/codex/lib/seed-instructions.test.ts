@@ -10,7 +10,8 @@ describe("buildAgentInstructions", () => {
         });
 
         expect(instructions).toContain("--from codex_reviewer --to lead");
-        expect(instructions).toContain("--agent-name codex_reviewer --once --session parent-123");
+        expect(instructions).toContain("--from codex_reviewer --reply <id> --body '<text>' --session parent-123");
+        expect(instructions).not.toContain("--once");
         expect(instructions.match(/--session parent-123/g)?.length).toBeGreaterThanOrEqual(3);
     });
 

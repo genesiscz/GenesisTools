@@ -32,8 +32,18 @@ describe("buildWorkerContract", () => {
         const text = buildWorkerContract({ backend: "codex", bus, sandbox: "workspace-write" });
         expect(text).toContain("You are `codex_task`, a headless Codex worker");
         expect(text).toContain("tools agents message --from codex_task --to lead --body '<text>' --session s-1");
-        expect(text).toContain("tools agents login --agent-name codex_task --once --session s-1");
         expect(text).toContain("--body 'received; starting' --session s-1");
+    });
+
+    test("bus: a codex worker receives through its daemon, never with a blocking login --once", () => {
+        // The daemon delivers mail as turn input; a model-side --once blocked the turn and held the slot 3+ min.
+        const codex = buildWorkerContract({ backend: "codex", bus, sandbox: "workspace-write" });
+        expect(codex).toContain("Mail addressed to you arrives by itself");
+        expect(codex).toContain("END your turn");
+        expect(codex).not.toContain("--once");
+
+        const grok = buildWorkerContract({ backend: "grok", bus, sandbox: "workspace-write" });
+        expect(grok).toContain("tools agents login --agent-name codex_task --once --session s-1");
     });
 
     test("bus in a read-only sandbox: narrate, never run tools agents", () => {
