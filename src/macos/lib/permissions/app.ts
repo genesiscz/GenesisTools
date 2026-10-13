@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { PRESETS } from "@genesiscz/utils/compress/presets";
+import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
 import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -678,6 +680,9 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         }
     });
 
+    step("pack retired bundles");
+    await packRetiredBundles(retiredRootFor(appDir));
+
     step("reap stale app-face processes");
     await reapStaleAppFaces(step, relaunch);
 
@@ -736,8 +741,10 @@ function retirePreviousBundle(previous: string, appDir: string): void {
     renameSync(previous, target);
     adoptLegacyRetired(appDir, retiredRoot);
     // Launch Services must never offer a retired copy: not in the Full Disk Access picker, and not
-    // to `open -b`. Unregistered BEFORE the prune: a copy deleted while still registered left a record
-    // pointing at a missing path, which the notification center then tried to launch for every click.
+    // to `open -b`. Unregistered BEFORE the pack (`packRetiredBundles`, after the install window): a copy
+    // removed while still registered left a record pointing at a missing path, which the notification
+    // center then tried to launch for every click. A packed `<ms>.zst` is a file, never a bundle, so
+    // lsregister is never pointed at one.
     for (const entry of readdirSync(retiredRoot, { withFileTypes: true })) {
         const bundle = join(retiredRoot, entry.name, `${GENESIS_APP_NAME}.app`);
 
@@ -745,8 +752,6 @@ function retirePreviousBundle(previous: string, appDir: string): void {
             run([LSREGISTER, "-u", bundle]);
         }
     }
-
-    pruneRetiredBundles(retiredRoot);
 }
 
 /**
@@ -850,11 +855,18 @@ export function runningExecutableInodes(listing: { code: number; stdout: string 
     return inodes.size === 0 ? null : inodes;
 }
 
+/** Retired bundles kept as folders for a quick rollback; older idle ones are packed into `<ms>.zst`. */
+export const RETIRED_KEEP_FOLDERS = 2;
+/** At most this many packed bundles stay, and none older than {@link RETIRED_ARCHIVE_MAX_AGE_DAYS}. */
+export const RETIRED_MAX_ARCHIVES = 5;
+export const RETIRED_ARCHIVE_MAX_AGE_DAYS = 14;
+
 /**
- * Which retired bundles stay: the newest one (one version back), and every one whose binary a
- * running process still executes, since tccd resolves that process by the binary's path.
+ * Retired bundles that must stay folders whatever their age: every one whose binary a running process
+ * still executes, since tccd resolves that process by the binary's path, and every one whose binary
+ * cannot be stat'ed (it cannot be shown to be idle).
  */
-export function retiredBundlesToKeep({
+export function pinnedRetiredBundles({
     entries,
     inodeOf,
     running,
@@ -864,20 +876,25 @@ export function retiredBundlesToKeep({
     inodeOf: (entry: string) => number | null;
     running: Set<number>;
 }): Set<string> {
-    const newest = entries.reduce<string | null>(
-        (best, entry) => (best === null || Number(entry) > Number(best) ? entry : best),
-        null
-    );
     return new Set(
         entries.filter((entry) => {
             const inode = inodeOf(entry);
-            return entry === newest || inode === null || running.has(inode);
+            return inode === null || running.has(inode);
         })
     );
 }
 
-/** Deletes every retired bundle except the newest and the ones a running process executes. */
-function pruneRetiredBundles(retiredRoot: string): void {
+/**
+ * Keeps the newest {@link RETIRED_KEEP_FOLDERS} retired bundles and every pinned one as folders, packs the
+ * other idle ones into `<ms>.zst` (tar inside seekable zstd, checked file by file before the folder goes;
+ * restore with `tools compress unpack`), and removes packed copies past the count or age cap. Runs after
+ * the install window, so native commands are refused only for the swap. A failure is logged, never fatal.
+ */
+async function packRetiredBundles(retiredRoot: string): Promise<void> {
+    if (!existsSync(retiredRoot)) {
+        return;
+    }
+
     const listing = run(["lsof", "-d", "txt", "-Fi", "-n"]);
     const running = runningExecutableInodes(listing);
 
@@ -894,18 +911,36 @@ function pruneRetiredBundles(retiredRoot: string): void {
         .map((entry) => entry.name);
     const binary = (entry: string) =>
         join(retiredRoot, entry, `${GENESIS_APP_NAME}.app`, "Contents", "MacOS", GENESIS_APP_NAME);
-    const keep = retiredBundlesToKeep({
+    const pinned = pinnedRetiredBundles({
         entries,
         running,
         inodeOf: (entry) => (existsSync(binary(entry)) ? statSync(binary(entry)).ino : null),
     });
-    const removed = entries.filter((entry) => !keep.has(entry));
 
-    for (const entry of removed) {
-        rmSync(join(retiredRoot, entry), { recursive: true, force: true });
+    try {
+        const plan = planFolderRetention({
+            root: retiredRoot,
+            keep: RETIRED_KEEP_FOLDERS,
+            include: (name) => Number.isFinite(Number(name)),
+            pin: (name) => pinned.has(name),
+            timeOf: ({ name }) => Number(name),
+            maxArchives: RETIRED_MAX_ARCHIVES,
+            maxArchiveAgeDays: RETIRED_ARCHIVE_MAX_AGE_DAYS,
+        });
+        const report = await applyFolderRetention(plan, { caller: "app-retired", preset: PRESETS.binary });
+        logger.info(
+            {
+                kept: plan.kept.length,
+                pinned: pinned.size,
+                packed: report.packed.length,
+                removed: plan.drop.length + plan.deleteArchives.length,
+                failed: report.failed.length,
+            },
+            "packed retired app bundles"
+        );
+    } catch (error) {
+        logger.warn({ error, retiredRoot }, "packing retired app bundles failed; they stay as they are");
     }
-
-    logger.info({ kept: keep.size, removed: removed.length }, "pruned retired app bundles");
 }
 
 const STALE_FACE_TERM_GRACE_MS = 500;

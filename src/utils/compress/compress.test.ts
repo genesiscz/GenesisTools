@@ -272,6 +272,12 @@ describe("retention", () => {
         expect(report.packed.map((item) => item.archive.split("/").pop())).toEqual(["r3.zst"]);
         expect(retired).toEqual(["r3", "r4"]);
         expect(readdirSync(dir).sort()).toEqual(["r1", "r2", "r3.zst"]);
+        // A pinned folder stays whatever its rank (a running process executes a retired app bundle).
+        expect(
+            planFolderRetention({ root: dir, keep: 0, pin: (name) => name === "r2", now }).kept.map((path) =>
+                path.split("/").pop()
+            )
+        ).toEqual(["r2"]);
         // A kept folder older than keepMaxAgeDays is packed anyway (cloned backup runs free nothing one by one).
         expect(
             planFolderRetention({ root: dir, keep: 2, keepMaxAgeDays: 1.5, now }).pack.map((item) =>

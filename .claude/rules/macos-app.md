@@ -248,8 +248,11 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   A snapshot taken before a search or load finished shows its empty state: read `app-perf.log` for the span.
   One hub runs at a time: a second `GenesisTools --hub …` hands its flags to the running hub and exits
   (Hub/HubSingleInstance.swift: the hub holds a `flock` on `~/.genesis-tools/hub/hub.lock`, dropped by the kernel on exit).
-- A rebuild never deletes the replaced bundle: it moves to `~/.genesis-tools/app/retired/<ms>/` and is pruned once
-  no GenesisTools process older than it runs. Claude sessions run inside the launcher binary they started with, and
+- A rebuild never deletes the replaced bundle: it moves to `~/.genesis-tools/app/retired.noindex/<ms>/`. After the
+  install window the newest two retired bundles and every one a running process executes stay folders; other idle
+  ones are packed into `<ms>.zst` (tar inside zstd, `tools compress unpack` restores one), at most 5 packed copies
+  and none older than 14 days (`packRetiredBundles` in `src/macos/lib/permissions/app.ts`). Claude sessions run
+  inside the launcher binary they started with, and
   tccd denies every grant to a process whose binary is gone. The launcher also exports `GENESIS_TOOLS_APP_INODE`;
   `tools` re-enters the current launcher when it differs (`genesisAppLauncher()`). A build that finds no signing
   identity while the installed app is Developer ID signed refuses to install ad-hoc (a sandboxed shell cannot read

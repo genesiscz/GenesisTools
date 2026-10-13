@@ -2,7 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertFullXcodeToolchain, retiredBundlesToKeep, runningExecutableInodes, stampAppToolsPath } from "./app";
+import { assertFullXcodeToolchain, pinnedRetiredBundles, runningExecutableInodes, stampAppToolsPath } from "./app";
 import {
     type BuildOfferDeps,
     createRealBuildOfferDeps,
@@ -68,20 +68,20 @@ describe("assertFullXcodeToolchain", () => {
     });
 });
 
-describe("retiredBundlesToKeep", () => {
+describe("pinnedRetiredBundles", () => {
     const inodes: Record<string, number | null> = { "100": 1, "200": 2, "300": 3, "400": null, "500": 5 };
     const inodeOf = (entry: string) => inodes[entry] ?? null;
 
-    it("keeps the newest and every bundle a running process executes, and nothing else", () => {
-        const keep = retiredBundlesToKeep({ entries: ["100", "200", "300", "500"], inodeOf, running: new Set([2]) });
+    it("pins every bundle a running process executes, and nothing else (the newest are kept by retention)", () => {
+        const pinned = pinnedRetiredBundles({ entries: ["100", "200", "300", "500"], inodeOf, running: new Set([2]) });
 
-        expect([...keep].sort()).toEqual(["200", "500"]);
+        expect([...pinned].sort()).toEqual(["200"]);
     });
 
-    it("keeps a bundle whose binary it cannot stat", () => {
-        const keep = retiredBundlesToKeep({ entries: ["100", "400", "500"], inodeOf, running: new Set() });
+    it("pins a bundle whose binary it cannot stat", () => {
+        const pinned = pinnedRetiredBundles({ entries: ["100", "400", "500"], inodeOf, running: new Set() });
 
-        expect([...keep].sort()).toEqual(["400", "500"]);
+        expect([...pinned].sort()).toEqual(["400"]);
     });
 });
 

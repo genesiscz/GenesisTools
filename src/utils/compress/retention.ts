@@ -43,6 +43,8 @@ export interface FolderRetentionOptions {
     maxArchives?: number;
     /** Which folders take part; default: every folder whose name does not start with a dot. */
     include?: (name: string) => boolean;
+    /** Folders that stay as they are whatever their age or rank (a running process uses them). */
+    pin?: (name: string) => boolean;
     /**
      * When a folder (or the folder an archive was made from) was made, in ms. Default: the folder's mtime, which an
      * archive inherits. Pass a name parser when names carry the time (`<epoch ms>`, `<YYYYMMDD-HHMMSS>`).
@@ -109,8 +111,10 @@ export function planFolderRetention(options: FolderRetentionOptions): FolderRete
     }
 
     folders.sort((a, b) => b.timeMs - a.timeMs || b.name.localeCompare(a.name));
-    const keepable = (folder: { timeMs: number }, index: number) =>
-        index < keep && (keepMaxAgeDays === undefined || now - folder.timeMs <= keepMaxAgeDays * DAY_MS);
+    const pinned = options.pin ?? (() => false);
+    const keepable = (folder: { timeMs: number; name: string }, index: number) =>
+        pinned(folder.name) ||
+        (index < keep && (keepMaxAgeDays === undefined || now - folder.timeMs <= keepMaxAgeDays * DAY_MS));
     plan.kept = folders.filter(keepable).map((folder) => folder.path);
     const older = folders.filter((folder, index) => !keepable(folder, index));
     const repacked = new Set(older.map((folder) => `${folder.path}${FOLDER_ARCHIVE_SUFFIX}`));
