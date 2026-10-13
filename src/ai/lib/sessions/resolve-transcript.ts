@@ -7,6 +7,7 @@ import {
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -49,7 +50,7 @@ async function resolveByCmuxName(alias: TurnProvider, query: string): Promise<Re
         return null;
     }
 
-    log.debug({ alias, query, sessionId }, "matched a tools cmux agents name");
+    log.debug({ alias, query, sessionId }, `matched a ${toolCommand("cmux agents")} name`);
     return resolveTranscript(sessionId, {}, alias);
 }
 
@@ -102,7 +103,7 @@ export async function resolveSessionTranscript(
 
     if (!resolved) {
         throw new NoSessionMatchError(
-            `No ${alias} session matches "${query}" (tried session id, path, /rename title and tools cmux agents name)`
+            `No ${alias} session matches "${query}" (tried session id, path, /rename title and ${toolCommand("cmux agents")} name)`
         );
     }
 
@@ -116,7 +117,7 @@ export async function resolveSessionTranscript(
 
         const verbs =
             alias === "claude"
-                ? "tools claude worker status|tail --name <name>"
+                ? toolCommand("claude worker", "status|tail", "--name", "<name>")
                 : `tools ${alias} status|read --name <name>`;
         throw new Error(`"${query}" is a headless worker session with no native transcript yet. Use \`${verbs}\`.`);
     }

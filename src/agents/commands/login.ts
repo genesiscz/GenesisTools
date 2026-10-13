@@ -717,7 +717,7 @@ export function registerLoginCommand(program: Command): void {
         .option("--exclude-kinds <csv>", "Never emit these feed types or op/event kinds (wins over --kinds)")
         .option(
             "--hide-worker-steps",
-            `Hide a tools codex spawn worker's per-step events (kind "${WORKER_STEP_KIND}": each finished command, reply or file change); keep its mail, approvals and turn events`
+            `Hide a ${toolCommand("codex spawn")} worker's per-step events (kind "${WORKER_STEP_KIND}": each finished command, reply or file change); keep its mail, approvals and turn events`
         )
         .option("--filter <expr>", 'Filter structured bodies, e.g. .op=="approval_request"')
         .action(async (opts: LoginOpts) => {

@@ -3,6 +3,7 @@ import { withFeedLock } from "@app/agents/lib/feed";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { resolveMany, resolveOne } from "@app/agents/lib/resolve-token";
 import { OWNER_THREAD_META_KEY } from "@app/agents/lib/thread-owner";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -286,7 +287,7 @@ export class AgentsBridge {
     private asMail(control: Extract<CodexControl, { op: "steer" }>, event: MessageFeedEvent): CodexControl {
         const from = event.from_agent_name ?? event.from_agent_id;
         const reply = event.message_id
-            ? ` Reply with: tools agents message --from ${this.agentName} --reply ${event.message_id} --body '<text>' --session ${this.session}`
+            ? ` Reply with: ${toolCommand("agents message", "--from", this.agentName, "--reply", String(event.message_id), "--body", "'<text>'", "--session", this.session)}`
             : "";
         return {
             ...control,
