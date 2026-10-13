@@ -107,6 +107,7 @@ import { type AdoWorkItem, extractWorkItemIds, resolveAdo } from "@app/gitlab/li
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { type Command, Option } from "commander";
 
 interface PreflightOptions extends TargetOptions {
@@ -156,7 +157,7 @@ async function loadReport(json: string): Promise<StaleReport> {
 }
 
 function saveReport(json: string, report: StaleReport): void {
-    writeFileSync(json, `${SafeJSON.stringify(report, null, 2)}\n`);
+    atomicWriteFileSync(json, `${SafeJSON.stringify(report, null, 2)}\n`);
 }
 
 /** The host and project the sweep recorded; a JSON without them falls back to the usual resolution. */

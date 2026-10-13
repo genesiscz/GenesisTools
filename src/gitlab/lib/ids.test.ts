@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { assignIds, emptyIdMap, idMapPath, keyOfId, loadIdMap, parseId, saveIdMap } from "./ids";
 
 describe("review ids", () => {
@@ -22,6 +22,24 @@ describe("review ids", () => {
         expect(parseId("X1")).toBeNull();
         expect(keyOfId(map, "D02")).toEqual({ kind: "D", key: "901" });
         expect(keyOfId(map, "D09")).toBeNull();
+    });
+
+    test("a stored map that does not parse throws instead of starting a new one, and keeps its bytes", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-ids-"));
+        const path = idMapPath({ host: "https://gitlab.example.com", project: "group/app", iid: 9 }, dir);
+        mkdirSync(dirname(path), { recursive: true });
+        const truncated = '{"F": {"src/a.ts": 1}, "T": {"disc-1": 1, "disc-2": 2}, "D": {"90';
+        writeFileSync(path, truncated);
+
+        expect(() => loadIdMap(path)).toThrow(`the review id map ${path} cannot be read or does not parse`);
+        expect(readFileSync(path, "utf8")).toBe(truncated);
+
+        writeFileSync(path, "[1, 2]");
+        expect(() => loadIdMap(path)).toThrow("is not a JSON object");
+
+        // Negative control: a valid map loads with its numbers, and a new thread gets the next free one.
+        writeFileSync(path, '{"T": {"disc-1": 1, "disc-2": 2}}');
+        expect(assignIds(loadIdMap(path), "T", ["disc-3", "disc-1"])).toEqual(["T03", "T01"]);
     });
 
     test("a map survives a save and a load, one file per MR", () => {

@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { storage } from "@app/gitlab/lib/config";
 import type { PrReviewFacts } from "@app/gitlab/lib/pr-review";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export const ID_KINDS = ["F", "T", "D", "Y", "M"] as const;
@@ -82,20 +82,38 @@ export function idMapPath(mr: { host: string; project: string; iid: number }, di
     return join(dir, "review-ids", `${project}-${mr.iid}.json`);
 }
 
+/** A stored map is a JSON object; a kind it lacks starts empty. */
+function isStoredIdMap(value: unknown): value is Partial<IdMap> {
+    return isJsonObject(value);
+}
+
+/**
+ * The stored map, or an empty one when the MR has none yet. A map that exists but cannot be read THROWS: starting
+ * a new one would renumber every thread and draft, and the ids already handed out would name other items.
+ */
 export function loadIdMap(path: string): IdMap {
     if (!existsSync(path)) {
         return emptyIdMap();
     }
 
+    let raw: unknown;
+
     try {
-        const raw = SafeJSON.parse(readFileSync(path, "utf-8"), { strict: true }) as Partial<IdMap>;
-
-        return { ...emptyIdMap(), ...raw };
+        raw = SafeJSON.parse(readFileSync(path, "utf-8"), { strict: true });
     } catch (error) {
-        logger.warn({ error, path }, "gitlab: review id map unreadable, starting a new one");
-
-        return emptyIdMap();
+        throw new Error(
+            `gitlab: the review id map ${path} cannot be read or does not parse; it was left untouched so no id is renumbered. Fix or move it, then run again`,
+            { cause: error }
+        );
     }
+
+    if (!isStoredIdMap(raw)) {
+        throw new Error(
+            `gitlab: the review id map ${path} is not a JSON object; it was left untouched so no id is renumbered. Fix or move it, then run again`
+        );
+    }
+
+    return { ...emptyIdMap(), ...raw };
 }
 
 export function saveIdMap(path: string, map: IdMap): void {

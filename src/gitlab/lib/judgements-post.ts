@@ -24,7 +24,7 @@ import type { KnownItem } from "@app/gitlab/lib/judgements-check";
 import { postedText, signedAnswer } from "@app/gitlab/lib/judgements-render";
 import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export type PostStep =
@@ -252,18 +252,38 @@ export function ledgerPath(mr: { host: string; project: string; iid: number }, d
     return join(dir, "review-ledger", `${project}-${mr.iid}.json`);
 }
 
+/** A stored ledger is a JSON object of step id → entry. */
+function isStoredLedger(value: unknown): value is Ledger {
+    return isJsonObject(value);
+}
+
+/**
+ * The steps already posted, or none when the MR has no ledger yet. A ledger that exists but cannot be read THROWS:
+ * an empty one would make a re-run post every reply and comment to GitLab a second time.
+ */
 export function loadLedger(path: string): Ledger {
     if (!existsSync(path)) {
         return {};
     }
 
-    try {
-        return SafeJSON.parse(readFileSync(path, "utf-8"), { strict: true }) as Ledger;
-    } catch (error) {
-        logger.warn({ error, path }, "gitlab: review ledger unreadable, starting a new one");
+    let raw: unknown;
 
-        return {};
+    try {
+        raw = SafeJSON.parse(readFileSync(path, "utf-8"), { strict: true });
+    } catch (error) {
+        throw new Error(
+            `gitlab: the review ledger ${path} cannot be read or does not parse; it was left untouched and nothing was posted, so no comment goes out twice. Fix or move it, then run again`,
+            { cause: error }
+        );
     }
+
+    if (!isStoredLedger(raw)) {
+        throw new Error(
+            `gitlab: the review ledger ${path} is not a JSON object; it was left untouched and nothing was posted. Fix or move it, then run again`
+        );
+    }
+
+    return raw;
 }
 
 export function saveLedger(path: string, ledger: Ledger): void {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runStep } from "@app/gitlab/commands/review-judgements";
 import { parseJudgements } from "./judgements";
 import type { KnownItem } from "./judgements-check";
@@ -181,6 +181,27 @@ describe("comments post plan", () => {
 
         expect(alreadyPosted(ledger, reply)).not.toBeNull();
         expect(alreadyPosted(ledger, { ...reply, body: "Fixed, differently." })).toBeNull();
+    });
+
+    test("a ledger that does not parse throws instead of reading as nothing posted, and keeps its bytes", () => {
+        const path = ledgerPath(
+            { host: "https://gitlab.example.com", project: "group/app", iid: 43 },
+            mkdtempSync(join(tmpdir(), "gt-ledger-"))
+        );
+        const [reply] = plan(["T01"]).steps;
+        mkdirSync(dirname(path), { recursive: true });
+        const truncated = '{"T01": {"kind": "reply", "bodyHash": "0123456789abcdef", "at": "2026-10-07T05:0';
+        writeFileSync(path, truncated);
+
+        expect(() => loadLedger(path)).toThrow(`the review ledger ${path} cannot be read or does not parse`);
+        expect(readFileSync(path, "utf8")).toBe(truncated);
+
+        writeFileSync(path, '"T01"');
+        expect(() => loadLedger(path)).toThrow("is not a JSON object");
+
+        // Negative control: a valid ledger still loads and still skips the step it records.
+        saveLedger(path, { T01: { kind: "reply", bodyHash: stepHash(reply), at: "2026-10-07T05:00:00Z" } });
+        expect(alreadyPosted(loadLedger(path), reply)).not.toBeNull();
     });
 
     test("the ledger key is the whole effect: a reply that now resolves, or a comment on a new line, is new", () => {
