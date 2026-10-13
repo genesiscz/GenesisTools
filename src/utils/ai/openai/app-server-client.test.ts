@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { AppServerClient, type AppServerProcess, appServerCommand } from "./app-server-client";
+import { AppServerClient, type AppServerProcess, AppServerRpcError, appServerCommand } from "./app-server-client";
 
 function createProcessHarness(): {
     process: AppServerProcess;
@@ -52,6 +52,22 @@ function createProcessHarness(): {
 }
 
 describe("AppServerClient", () => {
+    test("an error response keeps the server's code and data, so a caller can read codexErrorInfo", async () => {
+        const harness = createProcessHarness();
+        const client = new AppServerClient(harness.process, {});
+        const pending = client.request("turn/steer");
+
+        await Bun.sleep(0);
+        const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as { id: number };
+        const data = { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } };
+        harness.push({ id: request.id, error: { code: -32600, message: "cannot steer a review turn", data } });
+
+        const error = await pending.catch((err: unknown) => err);
+        expect(error).toBeInstanceOf(AppServerRpcError);
+        expect(error).toMatchObject({ message: "cannot steer a review turn", code: -32600, data });
+        await client.close();
+    });
+
     // The reader used to await the handler, so a handler that never settled held every
     // later response line and a handler that threw tore the loop down.
     test("a hanging notification handler does not delay a later response", async () => {

@@ -47,9 +47,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** A JSON-RPC error response, with the `code` and `data` the server sent (`data.codexErrorInfo` names the cause). */
+export class AppServerRpcError extends Error {
+    constructor(
+        message: string,
+        readonly code?: number,
+        readonly data?: unknown
+    ) {
+        super(message);
+        this.name = "AppServerRpcError";
+    }
+}
+
 function responseError(value: unknown): Error {
     if (isRecord(value) && typeof value.message === "string") {
-        return new Error(value.message);
+        return new AppServerRpcError(
+            value.message,
+            typeof value.code === "number" ? value.code : undefined,
+            value.data
+        );
     }
 
     return new Error("Codex app-server returned an unknown RPC error");
