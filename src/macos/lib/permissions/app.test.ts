@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertFullXcodeToolchain, pinnedRetiredBundles, runningExecutableInodes, stampAppToolsPath } from "./app";
@@ -277,6 +277,16 @@ describe("readOfferStateFrom / writeOfferStateTo", () => {
 
     it("reads nothing when no state file exists yet", () => {
         expect(readOfferStateFrom(tempStatePath())).toEqual({});
+    });
+
+    it("leaves a state file that does not parse untouched instead of rewriting it", () => {
+        const path = tempStatePath();
+        const torn = '{"declinedAtMs": 1000, "xcodeNot';
+        writeFileSync(path, torn);
+        writeOfferStateTo(path, { xcodeNoticeAtMs: 2_000 });
+
+        expect(readFileSync(path, "utf8")).toBe(torn);
+        expect(readOfferStateFrom(path)).toEqual({});
     });
 });
 

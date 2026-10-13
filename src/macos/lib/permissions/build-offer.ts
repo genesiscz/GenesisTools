@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppLauncherPath } from "@genesiscz/utils/macos/genesis-app";
 import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { buildApp } from "./app";
 
@@ -170,43 +171,69 @@ function timestamp(value: unknown): number | undefined {
     return typeof value === "number" ? value : undefined;
 }
 
-/** Exported for {@link createRealBuildOfferDeps} and its tests; takes an explicit path so a test never touches the real HOME. */
-export function readOfferStateFrom(path: string): OfferState {
+type StoredOfferState =
+    | { state: "missing" }
+    | { state: "ok"; value: OfferState }
+    | { state: "unreadable"; error: unknown };
+
+function readStoredOfferState(path: string): StoredOfferState {
     if (!existsSync(path)) {
-        return {};
+        return { state: "missing" };
     }
+
+    let stored: unknown;
 
     try {
-        const state: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-
-        if (state === null || typeof state !== "object") {
-            return {};
-        }
-
-        const read: OfferState = {};
-        const declinedAtMs = "declinedAtMs" in state ? timestamp(state.declinedAtMs) : undefined;
-        const xcodeNoticeAtMs = "xcodeNoticeAtMs" in state ? timestamp(state.xcodeNoticeAtMs) : undefined;
-
-        if (declinedAtMs !== undefined) {
-            read.declinedAtMs = declinedAtMs;
-        }
-
-        if (xcodeNoticeAtMs !== undefined) {
-            read.xcodeNoticeAtMs = xcodeNoticeAtMs;
-        }
-
-        return read;
+        stored = SafeJSON.parse(readFileSync(path, "utf8"));
     } catch (error) {
-        logger.debug({ error, path }, "build-offer: offer state unreadable");
-        return {};
+        return { state: "unreadable", error };
     }
+
+    if (!isJsonObject(stored)) {
+        return { state: "unreadable", error: new Error("expected a JSON object") };
+    }
+
+    const value: OfferState = {};
+    const declinedAtMs = timestamp(stored.declinedAtMs);
+    const xcodeNoticeAtMs = timestamp(stored.xcodeNoticeAtMs);
+
+    if (declinedAtMs !== undefined) {
+        value.declinedAtMs = declinedAtMs;
+    }
+
+    if (xcodeNoticeAtMs !== undefined) {
+        value.xcodeNoticeAtMs = xcodeNoticeAtMs;
+    }
+
+    return { state: "ok", value };
 }
 
-/** Merges `patch` into the state file, so writing one key keeps the other. */
+/** Exported for {@link createRealBuildOfferDeps} and its tests; takes an explicit path so a test never touches the real HOME. */
+export function readOfferStateFrom(path: string): OfferState {
+    const stored = readStoredOfferState(path);
+
+    if (stored.state === "unreadable") {
+        logger.debug({ error: stored.error, path }, "build-offer: offer state unreadable");
+    }
+
+    return stored.state === "ok" ? stored.value : {};
+}
+
+/**
+ * Merges `patch` into the state file, so writing one key keeps the other. A state file that exists but cannot
+ * be read or does not parse is left untouched and nothing is saved: the offer only asks again.
+ */
 export function writeOfferStateTo(path: string, patch: OfferState): void {
+    const stored = readStoredOfferState(path);
+
+    if (stored.state === "unreadable") {
+        logger.warn({ error: stored.error, path }, "build-offer: offer state file is unreadable; left untouched");
+        return;
+    }
+
     try {
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, `${SafeJSON.stringify({ ...readOfferStateFrom(path), ...patch })}\n`);
+        const current = stored.state === "ok" ? stored.value : {};
+        atomicWriteFileSync(path, `${SafeJSON.stringify({ ...current, ...patch })}\n`);
     } catch (error) {
         logger.debug({ error, path }, "build-offer: could not persist offer state");
     }

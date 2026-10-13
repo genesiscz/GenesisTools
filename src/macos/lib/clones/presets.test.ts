@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
     getPreset,
     listPresets,
@@ -66,11 +67,22 @@ describe("presets", () => {
     });
 
     it("a corrupt presets.json reads as empty instead of crashing every preset verb", () => {
-        writeFileSync(presetsPath(), '{"presets": [ {"id": "half"');
+        const torn = '{"presets": [ {"id": "half"';
+        writeFileSync(presetsPath(), torn);
         expect(listPresets()).toEqual([]);
         expect(getPreset("half")).toBeNull();
         expect(removePreset("half")).toBe(false);
         savePreset(preset("fresh"));
         expect(listPresets().map((p) => p.id)).toEqual(["fresh"]);
+
+        const dir = dirname(presetsPath());
+        const copies = readdirSync(dir).filter((name) => name.startsWith("presets.json.corrupt-"));
+        const copied = copies.map((name) => readFileSync(join(dir, name), "utf8"));
+
+        for (const name of copies) {
+            rmSync(join(dir, name));
+        }
+
+        expect(copied).toEqual([torn]);
     });
 });

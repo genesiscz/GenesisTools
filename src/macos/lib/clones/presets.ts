@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 import type { KeepPartnerId } from "./keep-partners";
 import type { ReclaimSelector } from "./reclaim";
@@ -74,8 +75,8 @@ export function listPresets(): Preset[] {
     }
 
     // A truncated, empty or merge-conflicted presets.json must not crash every
-    // preset verb: savePreset and removePreset both read through here, so a
-    // throw would also make the bad file unrepairable from the CLI.
+    // preset verb, or the bad file would be unrepairable from the CLI. The
+    // save path reads through presetsForUpdate, which copies it aside first.
     let parsed: { presets?: Preset[] } | null;
     try {
         parsed = SafeJSON.parse(raw) as { presets?: Preset[] } | null;
@@ -93,6 +94,26 @@ export function listPresets(): Preset[] {
     return [...presets].sort((a, b) => a.id.localeCompare(b.id));
 }
 
+function hasPresetsArray(value: unknown): value is { presets: Preset[] } {
+    return isJsonObject(value) && Array.isArray(value.presets);
+}
+
+/**
+ * The presets a save starts from. A file that exists but does not parse, or has no presets array, is copied to
+ * `presets.json.corrupt-<time>` before the save replaces it, so the user's presets survive the rewrite.
+ */
+function presetsForUpdate(): Preset[] {
+    const path = presetsPath();
+    const read = readJsonFileForUpdateSync(path, { accepts: hasPresetsArray });
+
+    if (read.state === "corrupt") {
+        log.warn({ err: read.error, path, preservedAt: read.preservedAt }, "presets file unreadable; kept a copy");
+        return [];
+    }
+
+    return read.state === "ok" ? read.value.presets : [];
+}
+
 function writeAll(presets: Preset[]): void {
     atomicWriteFileSync(presetsPath(), `${SafeJSON.stringify({ presets }, null, 2)}\n`);
 }
@@ -102,7 +123,7 @@ export function getPreset(id: string): Preset | null {
 }
 
 export function savePreset(preset: Preset): void {
-    const rest = listPresets().filter((p) => p.id !== preset.id);
+    const rest = presetsForUpdate().filter((p) => p.id !== preset.id);
     writeAll([...rest, preset].sort((a, b) => a.id.localeCompare(b.id)));
     log.info({ id: preset.id, dirs: preset.dirs, targets: preset.targets }, "preset saved");
 }
