@@ -106,13 +106,13 @@ const TASK_KEYS = ["transcribe", "translate", "summarize", "classify", "embed", 
 
 // ── Helpers ──
 
+/**
+ * A missing old config is null. One that exists but cannot be read or parsed throws (`getConfig` does), so
+ * the migration aborts before it stamps the new config as done and before step 5 deletes the old Claude
+ * accounts: reading such a file as "absent" would drop the accounts it holds.
+ */
 async function readOldConfig<T extends object>(toolName: string): Promise<T | null> {
-    try {
-        const storage = new Storage(toolName);
-        return await storage.getConfig<T>();
-    } catch {
-        return null;
-    }
+    return new Storage(toolName).getConfig<T>();
 }
 
 // ── Migration ──

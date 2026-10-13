@@ -4,7 +4,12 @@ import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import {
+    atomicWriteFileSync,
+    isJsonObject,
+    isMissingFileError,
+    preserveUnreadableFile,
+} from "@genesiscz/utils/storage/atomic-file";
 
 export interface TokenRecord {
     /** The URL a click routes. In a bundle it is the first of `urls`, so an older reader still gets a link. */
@@ -58,7 +63,7 @@ function writeToken(id: string, record: TokenRecord): string {
 
     assertLocked("mintToken");
 
-    const all = readTokens();
+    const all = readTokens(true);
 
     if (all[id]) {
         throw new Error(`token ${id} already exists`);
@@ -100,7 +105,7 @@ function assertLocked(caller: string): void {
 
 /** Returns the record. When `consume` is set, one use is spent and a spent token is deleted. */
 export function takeToken(id: string, consume: boolean): TokenRecord | null {
-    const all = readTokens();
+    const all = readTokens(false);
     const token = all[id];
 
     if (!token || token.usesLeft < 1) {
@@ -124,31 +129,54 @@ export function takeToken(id: string, consume: boolean): TokenRecord | null {
     return token;
 }
 
-function readTokens(): Record<string, TokenRecord> {
+/**
+ * Only a missing file means "no tokens yet"; any other read error throws. A file that is not a JSON object
+ * reads as empty, and with `forUpdate` (the caller writes the file next) its bytes are copied aside first.
+ * `takeToken` reads without it: it writes only after finding its token, which an unusable file never holds.
+ */
+function readTokens(forUpdate: boolean): Record<string, TokenRecord> {
     const path = tokenFile();
     let text: string;
 
     try {
         text = readFileSync(path, "utf8");
     } catch (error) {
-        logger.debug({ error, path }, "browser-router: no token file yet");
-        return {};
-    }
-
-    restrictMode(path);
-
-    try {
-        const parsed: unknown = SafeJSON.parse(text, { strict: true });
-
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        if (isMissingFileError(error)) {
+            logger.debug({ path }, "browser-router: no token file yet");
             return {};
         }
 
-        return parsed as Record<string, TokenRecord>;
-    } catch (error) {
-        logger.warn({ error, path }, "browser-router: token file is not JSON, treating it as empty");
-        return {};
+        throw error;
     }
+
+    restrictMode(path);
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(text, { strict: true });
+    } catch (error) {
+        return unusableTokenFile({ path, error, forUpdate });
+    }
+
+    if (!isJsonObject(parsed)) {
+        return unusableTokenFile({ path, error: new Error("not a JSON object"), forUpdate });
+    }
+
+    return parsed as Record<string, TokenRecord>;
+}
+
+function unusableTokenFile(opts: { path: string; error: unknown; forUpdate: boolean }): Record<string, TokenRecord> {
+    if (opts.forUpdate) {
+        // Throws when the copy cannot be made, which refuses the write that would leave no copy at all.
+        preserveUnreadableFile(opts.path, opts.error);
+    } else {
+        logger.warn(
+            { error: opts.error, path: opts.path },
+            "browser-router: token file is not JSON, treating it as empty"
+        );
+    }
+
+    return {};
 }
 
 /** A file written before tokens were private (a 022 umask made it 0644) is tightened on the next read. */

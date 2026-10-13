@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { linkFor, mintLink, planMintedLink, presetEnabled } from "./links";
 import { presets } from "./presets";
 import { defaultRouterConfig } from "./route";
 import { type RouterStatus, routerStatus } from "./status";
-import { takeToken } from "./tokens";
+import { mintToken, takeToken, tokenFile, withTokenLock } from "./tokens";
 
 function status(overrides: Partial<RouterStatus> = {}): RouterStatus {
     return {
@@ -140,4 +140,69 @@ describe("minted links", () => {
             expect(takeToken(plannedId, false)?.url).toBe("https://links.example.test/done/2");
         });
     });
+});
+
+describe("token file", () => {
+    const corruptCopies = (path: string): string[] =>
+        readdirSync(dirname(path)).filter((name) => name.startsWith("tokens.json.corrupt-"));
+    const plant = (text: string): string => {
+        const path = tokenFile();
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, text, { mode: 0o600 });
+        return path;
+    };
+
+    test("a token file that is not JSON is copied aside before the next mint replaces it", async () => {
+        const home = mkdtempSync(join(tmpdir(), "browser-router-tokens-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const truncated = '{\n  "abcdefgh": { "url": "https://links.example.test/a", "usesLeft": 2 },\n  "ijkl';
+            const path = plant(truncated);
+
+            expect(takeToken("abcdefgh", false)).toBeNull();
+            expect(corruptCopies(path)).toEqual([]);
+
+            const id = await withTokenLock(() => mintToken("https://links.example.test/b", 1));
+
+            const copies = corruptCopies(path);
+            expect(copies.length).toBe(1);
+            expect(readFileSync(join(dirname(path), copies[0] ?? ""), "utf8")).toBe(truncated);
+            expect(takeToken(id, false)?.url).toBe("https://links.example.test/b");
+        });
+    });
+
+    test("a valid token file keeps every token when another is minted", async () => {
+        const home = mkdtempSync(join(tmpdir(), "browser-router-tokens-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const path = plant('{ "abcdefgh": { "url": "https://links.example.test/a", "usesLeft": 2 } }\n');
+
+            const id = await withTokenLock(() => mintToken("https://links.example.test/b", 1));
+
+            expect(takeToken("abcdefgh", false)).toEqual({ url: "https://links.example.test/a", usesLeft: 2 });
+            expect(takeToken(id, false)?.url).toBe("https://links.example.test/b");
+            expect(corruptCopies(path)).toEqual([]);
+        });
+    });
+
+    test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "a token file that cannot be read throws instead of reading as empty",
+        async () => {
+            const home = mkdtempSync(join(tmpdir(), "browser-router-tokens-"));
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const original = '{ "abcdefgh": { "url": "https://links.example.test/a", "usesLeft": 2 } }\n';
+                const path = plant(original);
+                chmodSync(path, 0o200);
+
+                try {
+                    expect(() => takeToken("abcdefgh", false)).toThrow(/EACCES/);
+                    await expect(withTokenLock(() => mintToken("https://links.example.test/b", 1))).rejects.toThrow(
+                        /EACCES/
+                    );
+                } finally {
+                    chmodSync(path, 0o600);
+                }
+
+                expect(readFileSync(path, "utf8")).toBe(original);
+            });
+        }
+    );
 });

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     defaultLanDashboardUrl,
     defaultLocalDashboardUrl,
@@ -6,7 +9,8 @@ import {
     resolveDashboardBindHost,
     resolveDashboardBrowserUrl,
 } from "./access";
-import { writePreferences } from "./preferences";
+import { configFilePath } from "./pidFile";
+import { readPreferences, writePreferences } from "./preferences";
 import type { DashboardAppConfig } from "./types";
 
 describe("DashboardApp access", () => {
@@ -94,5 +98,39 @@ describe("DashboardApp access", () => {
 
         writePreferences("bind-pinned", { bindHost: "127.0.0.1" });
         expect(resolveDashboardBindHost({ ...base, key: "bind-pinned", bindHost: "0.0.0.0" })).toBe("127.0.0.1");
+    });
+});
+
+describe("DashboardApp preferences file", () => {
+    const plant = (key: string, text: string): string => {
+        const file = configFilePath(key);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, text);
+        return file;
+    };
+
+    it("writePreferences refuses a hand-edited file that does not parse, and leaves its bytes alone", () => {
+        const truncated = '{\n  "bindHost": "0.0.0.0",\n  "launchdInstalled": tr';
+        const file = plant("prefs-truncated", truncated);
+
+        expect(() => writePreferences("prefs-truncated", { launchdPromptDismissed: true })).toThrow(file);
+        expect(readFileSync(file, "utf8")).toBe(truncated);
+        expect(readPreferences("prefs-truncated")).toEqual({});
+
+        const list = plant("prefs-array", '["0.0.0.0"]\n');
+        expect(() => writePreferences("prefs-array", { launchdInstalled: true })).toThrow(list);
+        expect(readFileSync(list, "utf8")).toBe('["0.0.0.0"]\n');
+    });
+
+    it("writePreferences merges into a valid file and keeps every key it did not set", () => {
+        const file = plant("prefs-valid", '{ "bindHost": "0.0.0.0", "launchdServe": "preview" }\n');
+
+        writePreferences("prefs-valid", { launchdInstalled: true });
+
+        expect(SafeJSON.parse(readFileSync(file, "utf8"))).toEqual({
+            bindHost: "0.0.0.0",
+            launchdServe: "preview",
+            launchdInstalled: true,
+        });
     });
 });
