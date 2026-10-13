@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -13,6 +13,7 @@ import {
     rotateMasterKey,
     secrets,
 } from "@genesiscz/utils/security";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { createBoxTable, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -180,8 +181,8 @@ export async function cmdSecretExport(flags: { out: string; passphraseEnv?: stri
     const blob = await exportVault(passphrase);
     const target = resolve(flags.out);
 
-    writeFileSync(target, blob, { mode: 0o600 });
-    chmodSync(target, 0o600);
+    // An export already at this path may be the only recovery copy: replace it whole or not at all.
+    atomicWriteFileSync(target, blob, { mode: 0o600 });
     await recordVaultExport();
 
     out.log.success(`Wrote the encrypted vault export to ${pc.bold(target)} (mode 0600).`);

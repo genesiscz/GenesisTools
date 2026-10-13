@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage/storage";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 import { decodeMasterKey, MASTER_KEY_BYTES, type MasterKeyProvider } from "./types";
 
 /**
@@ -148,8 +148,8 @@ class FileKeyProvider implements MasterKeyProvider {
 
         const path = masterKeyFilePath();
         mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-        writeFileSync(path, key.toString("base64"), { mode: 0o600 });
-        chmodSync(path, 0o600);
+        // A torn master.key makes every vault entry undecryptable, so the old key stays until the new one is whole.
+        atomicWriteFileSync(path, key.toString("base64"), { mode: 0o600 });
         logger.warn({ path }, "vault master key written to a plaintext key file (opt-in)");
     }
 }
