@@ -50,7 +50,16 @@ interface HookInput {
 const HOME = process.env.GENESIS_TOOLS_HOME || homedir();
 const REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs.jsonl");
 
+/**
+ * Where cmux says this process sits NOW. The UUIDs are the identity: cmux renumbers every `*_ref` at a
+ * relaunch, and `CMUX_WORKSPACE_ID` in the agent's env goes stale once the tab moves to another workspace,
+ * while identify answers with the current workspace, pane and window.
+ */
 interface IdentifyCaller {
+    surface_id?: string;
+    workspace_id?: string;
+    pane_id?: string;
+    window_id?: string;
     pane_ref?: string;
     surface_ref?: string;
     window_ref?: string;
@@ -58,7 +67,10 @@ interface IdentifyCaller {
 }
 
 function identifyRefs(): IdentifyCaller {
-    const result = spawnSync("cmux", ["--json", "identify"], { encoding: "utf8", timeout: 1500 });
+    const result = spawnSync("cmux", ["--json", "--id-format", "both", "identify"], {
+        encoding: "utf8",
+        timeout: 1500,
+    });
 
     if (result.status !== 0 || !result.stdout) {
         return {};
@@ -141,8 +153,11 @@ function main(raw: string): void {
         sessionId,
         // Absent means claude, so every record written before this field keeps its meaning.
         ...(harness === "claude" ? {} : { provider: harness }),
-        workspaceId,
-        surfaceId,
+        // identify knows the tab's CURRENT workspace; the env value is from when the agent started.
+        workspaceId: caller.workspace_id ?? workspaceId,
+        surfaceId: caller.surface_id ?? surfaceId,
+        paneId: caller.pane_id ?? null,
+        windowId: caller.window_id ?? null,
         workspaceRef: caller.workspace_ref ?? null,
         paneRef: caller.pane_ref ?? null,
         surfaceRef: caller.surface_ref ?? null,

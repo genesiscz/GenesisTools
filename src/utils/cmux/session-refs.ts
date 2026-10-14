@@ -1,9 +1,10 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "cmux:session-refs" });
 
@@ -26,8 +27,14 @@ export interface SessionCmuxRefs {
      * pin journal first and falls back to the id shape.
      */
     provider?: AccountProviderAlias;
+    /** Workspace UUID where the tab was at this record (a moved tab gets the new one at its next prompt). */
     workspaceId: string | null;
+    /** Surface UUID: the identity. It survives a cmux relaunch and a move to another workspace. */
     surfaceId: string | null;
+    /** Pane and window UUIDs at this record. Absent on records written before 2026-10-14. */
+    paneId?: string | null;
+    windowId?: string | null;
+    /** The refs below are display-only: cmux renumbers them at every relaunch. */
     workspaceRef: string | null;
     paneRef: string | null;
     surfaceRef: string | null;
@@ -37,9 +44,7 @@ export interface SessionCmuxRefs {
     at: number;
 }
 
-const HOME = env.tools.getHome();
-
-export const CMUX_REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs.jsonl");
+export const CMUX_REFS_PATH = genesisToolsDir("claude-code", "cmux-refs.jsonl");
 
 /**
  * Append one record, in the format the SessionStart / UserPromptSubmit hook writes
