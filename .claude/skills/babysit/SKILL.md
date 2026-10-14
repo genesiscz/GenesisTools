@@ -46,6 +46,15 @@ Write it to `/tmp/cc/<project>/<session>/babysit/run.json` at the start; the scr
 | `judge` | `Claude` | The name the round summary credits as judge ("… from <worker> judged by <judge>"). |
 | `worktrees` | `<run>/worktrees` | Parent of the per-PR worker worktrees `bs-<N>`. |
 
+**Codex model: Sol unless a finding needs Astra.** A large PR is not a hard PR: its findings are mostly Medium and Low
+fixes that Sol handles. Use `gpt-6-astra` only when the user names it for a PR, when a Sol worker missed the same
+finding twice after the judge's correction, or for a finding that crosses systems (process lifecycle, concurrency,
+kernel or OS APIs, a stacked chain that must stay consistent). Steering the same session keeps its model, so decide
+again at each round: an Astra session that finished its hard finding hands the next round to a Sol session. On
+2026-10-14 the overnight run gave Astra every large PR by size: 47 of the 62 worker rounds, and $903 of the $924
+API-equivalent spend of the `bs-*` workers (an Astra worker cost $201 to $217 for about 20 turns; the Sol worker $21
+for 25 turns; `tools ai-spend workers --backend codex --by model,name`).
+
 Every script below takes `--run <run dir>` (or `BABYSIT_RUN`) and reads this card through `scripts/run.ts`.
 
 ## 2. Mode: a worktree per worker, or the unified branch
@@ -249,8 +258,8 @@ step 4 only when `post` is true.
 A round counts only when it fixed or answered real findings. When the reviewer bot has nothing left on a PR that
 still needs rounds, or a PR merged with fewer than three, run an independent read-only review: `bun
 .claude/skills/babysit/scripts/review-brief.ts --run <dir> --pr <N> --wt <worktree> [--post-merge] [--swift]`, then
-`steer.ts` with the printed file to a worker that did NOT fix this PR (Astra for a large or risky PR, Sol for a small
-one). Judge its findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
+`steer.ts` with the printed file to a worker that did NOT fix this PR (Sol; Astra only for a risky cross-system PR,
+by the model rule in step 1). Judge its findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
 file>`); after a merge they go to a follow-up PR from master (2026-10-14: #518 carried #509's after-merge findings).
 Never count a reply-only round, or a label, as a fix round: on 2026-10-14 the report said "#500 merged after 3
 rounds" when GitHub showed two round summaries.
