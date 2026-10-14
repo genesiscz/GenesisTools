@@ -3,6 +3,7 @@ paths:
   - ".github/**"
   - "scripts/ci/**"
   - ".githooks/**"
+  - "scripts/git/install-hooks.ts"
 ---
 
 # CI scripts, guards and git hooks
@@ -13,4 +14,5 @@ Loaded by Claude Code when you read, write or edit a file under `.github/`, `scr
   - Exit code 0 means matched and 1 means no match. Anything else is a broken scan: abort and name the reason.
   - Use `git grep -P` in anything CI runs, never `rg`. Git is always present and searches tracked files only.
 - **Lint the diff, not the tree, and not with `biome --changed`.** Under CI's depth-1 checkout it finds zero files, and biome exits 1 on "No files were processed". `scripts/ci/lint-changed.sh` passes `git diff --name-only --diff-filter=ACMR <base> HEAD` to biome with an `[ -f ]` test per path. The base is `github.event.pull_request.base.sha`, which already is the merge base, so no history fetch is needed.
+- **Git runs the `.githooks/` scripts as config hooks** (`hook.genesis-tools-<name>`, through `/bin/sh -c`), set by `scripts/git/install-hooks.ts` from package.json `prepare`, never through `core.hooksPath`. Git executes a hook-folder file directly, macOS checks the first execution of every new file in syspolicyd, and a worktree's hooks are new files: on 2026-10-14 a stuck syspolicyd froze every such first execution at `_dyld_start`, and a rebase hung 41 minutes. A new hook needs a `#!` line (its interpreter becomes the command) and one `bun install`. Check what runs with `git hook list <event>`.
 - **`lint-rules.ts` and `placeholder-check.sh` scan tracked files only** (`git ls-files`). Run them after the last commit, or after `git add` of every new file. A run before staging proves nothing about a new file.
