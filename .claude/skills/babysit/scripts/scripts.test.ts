@@ -276,8 +276,10 @@ describe("merge-prep version conflicts", () => {
 
         // Positive control: the same commit without the switches runs the hook.
         fs.writeFileSync(join(dir, "a"), "b\n");
-        Bun.spawnSync(["git", "-C", dir, "add", "a"]);
-        Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "n"]);
+        Bun.spawnSync(["git", "-C", dir, "add", "a"], { env: process.env });
+        Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "n"], {
+            env: process.env,
+        });
         expect(fs.existsSync(marker)).toBe(true);
     });
 
