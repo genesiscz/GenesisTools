@@ -187,7 +187,7 @@ Do not wait to be asked. When a round's pushes and unified picks are done:
 
 ## 9. Report
 
-A vault note per run (`GenesisBrain/<project>/<date>-Babysit-<topic>/`, the run's reply files next to it) and, when
+A vault note per run (`<vault>/<project>/<date>-Babysit-<topic>/` in the user's notes vault, the run's reply files next to it) and, when
 the run card names a recipient, a bus message to it (register with `tools agents login --agent-name <me> --once
 --timeout 1 --session <s>`, then `tools agents message --body-file`). Contents, in this order: PRs and commits per PR
 (worker and correction, unified and PR-branch SHAs, pushed ranges), fable-judge verdicts with the evidence, harness

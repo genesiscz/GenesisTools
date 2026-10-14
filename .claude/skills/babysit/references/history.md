@@ -1,6 +1,6 @@
 # What the first run showed (2026-10-14, Phase 1 and 2)
 
-Full report: the vault note `GenesisBrain/GenesisTools/2026-10-14-ReviewLoopWorkersExperiment/`. The facts this
+Full report: the vault note `<vault>/GenesisTools/2026-10-14-ReviewLoopWorkersExperiment/`. The facts this
 skill is built on:
 
 | | Grok 4.7 Fast on #512 | Sol 6.1 on #511 |
