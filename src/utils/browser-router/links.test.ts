@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { linkGate, linkGatePath, presetUrl } from "./link-gate";
+import { type LinkGate, linkGate, linkGatePath } from "./link-gate";
 import { linkFor, mintLink, planMintedLink, presetEnabled } from "./links";
 import { presets } from "./presets";
 import { defaultRouterConfig } from "./route";
+import { routerLink, schemeLink } from "./router-link";
 import { type RouterStatus, routerStatus } from "./status";
 import { mintToken, takeToken, tokenFile, withTokenLock } from "./tokens";
 
@@ -209,18 +210,99 @@ describe("token file", () => {
     );
 });
 
-describe("presetUrl and the link gate", () => {
-    const routed = { at: 0, configMtimeMs: 0, linkHost: "genesis.tools", enabledPresets: ["genesis-md"] };
+describe("routerLink and the link gate", () => {
+    const routed: LinkGate = {
+        version: 2,
+        at: 0,
+        configMtimeMs: 0,
+        installed: true,
+        defaultHandler: true,
+        httpsHandler: "com.example.router",
+        configured: true,
+        linkHost: "genesis.tools",
+        presets: {
+            "genesis-md": { available: true, enabled: true, routed: true, missing: [] },
+            "genesis-hub": { available: true, enabled: false, routed: false, missing: [] },
+        },
+    };
+    const open = (gate: LinkGate) =>
+        routerLink({
+            preset: "genesis-md",
+            action: "open",
+            data: { path: "/a b/c&d.md", range: "3-9" },
+            gate,
+            fallback: () => "PLAIN",
+        });
 
-    test("builds the link only for a preset the router routes", () => {
-        expect(presetUrl({ preset: "genesis-md", path: "/md/open?path=/a.md", gate: routed })).toBe(
-            "https://genesis.tools/md/open?path=/a.md"
-        );
-        expect(presetUrl({ preset: "mail", path: "x", gate: routed })).toBeNull();
-        expect(presetUrl({ preset: "genesis-md", path: "x", gate: { ...routed, linkHost: null } })).toBeNull();
+    test("builds the router link from the preset, with the path readable and the rest encoded", () => {
+        expect(open(routed)).toEqual({
+            result: "https://genesis.tools/md/open?path=/a%20b/c%26d.md&range=3-9",
+            link: "https://genesis.tools/md/open?path=/a%20b/c%26d.md&range=3-9",
+            via: "router",
+        });
     });
 
-    test("answers from a fresh gate file, and recomputes a stale one", () => {
+    test.each([
+        ["router-missing", { installed: false }],
+        ["not-https-handler", { defaultHandler: false }],
+        ["no-link-host", { linkHost: null }],
+    ] as const)("falls back with %s", (code, change) => {
+        const result = open({ ...routed, ...change });
+
+        expect(result.result).toBe("PLAIN");
+        expect(result.link).toBeNull();
+        expect(result.error?.code).toBe(code);
+    });
+
+    test("falls back for a preset that is off, and names why", () => {
+        const result = routerLink({
+            preset: "genesis-hub",
+            action: "open",
+            data: { pr: "acme/app#7" },
+            gate: routed,
+            fallback: () => "none",
+        });
+
+        expect(result.result).toBe("none");
+        expect(result.error).toMatchObject({ code: "preset-off" });
+        expect(result.error?.reason).toContain("off in the config");
+    });
+
+    test("tries the app's own link next when asked, and passes the link to render", () => {
+        const result = routerLink({
+            preset: "genesis-md",
+            action: "open",
+            data: { path: "/a.md" },
+            via: ["router", "scheme"],
+            gate: { ...routed, defaultHandler: false },
+            render: ({ link, via }) => `[a.md](${link}) via ${via}`,
+            fallback: () => "a.md",
+        });
+
+        expect(result.result).toBe("[a.md](genesis-md://open?path=/a.md) via scheme");
+    });
+
+    test("when() can decline", () => {
+        expect(open({ ...routed }).error).toBeUndefined();
+        expect(
+            routerLink({
+                preset: "genesis-md",
+                action: "open",
+                data: { path: "/a.md" },
+                gate: routed,
+                when: () => false,
+                fallback: () => "no",
+            }).error?.code
+        ).toBe("declined");
+    });
+
+    test("the hub link keeps the app's strict encoding", () => {
+        expect(
+            schemeLink({ preset: "genesis-hub", action: "open", data: { pr: "acme/app#7", commit: "abc1234" } })
+        ).toBe("genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234");
+    });
+
+    test("answers from a fresh gate file, and recomputes a stale or old-format one", () => {
         const cached = { ...routed, at: Date.now(), configMtimeMs: 0, linkHost: "cached.example" };
 
         mkdirSync(dirname(linkGatePath()), { recursive: true });
@@ -229,5 +311,11 @@ describe("presetUrl and the link gate", () => {
 
         writeFileSync(linkGatePath(), SafeJSON.stringify({ ...cached, at: Date.now() - 60 * 60_000 }));
         expect(linkGate().linkHost).not.toBe("cached.example");
+
+        writeFileSync(
+            linkGatePath(),
+            SafeJSON.stringify({ at: Date.now(), configMtimeMs: 0, linkHost: "old.example", enabledPresets: [] })
+        );
+        expect(linkGate().linkHost).not.toBe("old.example");
     });
 });

@@ -57,6 +57,7 @@ import {
 } from "@app/gitlab/lib/review-drafts";
 import { judgementsPath, reviewItems } from "@app/gitlab/lib/review-items";
 import { collectThreadContext } from "@app/gitlab/lib/review-render";
+import { schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -368,7 +369,7 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     progress(`ℹ  full layout → ${reportPath}`);
 
     if (opts.open && platform === "darwin") {
-        const link = `genesis-md://open?path=${encodeURIComponent(reportPath)}`;
+        const link = schemeLink({ preset: "genesis-md", action: "open", data: { path: reportPath } });
         const opened = Bun.spawnSync(["open", link]);
 
         if (opened.exitCode !== 0) {

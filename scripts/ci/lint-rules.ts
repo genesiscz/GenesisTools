@@ -75,8 +75,8 @@ const HOMEDIR_MESSAGE =
 
 const LITERAL_KINDS = ["string", "template_string"];
 
-/** An https link on the browser router's host. */
-const GENESIS_ROUTER_LINK = /genesis\.tools\//;
+/** A link to a GenesisTools app: on the browser router's host, or an app's own scheme. */
+const GENESIS_ROUTER_LINK = /genesis\.tools\/|genesis-(?:md|tools):\/\//;
 
 const RULES: Rule[] = [
     {
@@ -103,8 +103,9 @@ const RULES: Rule[] = [
         kinds: LITERAL_KINDS,
         message:
             "A genesis.tools link opens something only when GenesisTools.app is installed, is the https handler and " +
-            "routes that preset. Build it with `presetUrl()` from @genesiscz/utils/browser-router/link-gate, which " +
-            "returns null so the caller prints its fallback instead of a dead link.",
+            "routes that preset, and a link on the genesis-md or genesis-tools scheme only when its app is installed. Build it " +
+            "with `routerLink()` (or `schemeLink()` to open it) from @genesiscz/utils/browser-router/router-link: the " +
+            "preset builds the link, and the caller gets its fallback with the reason instead of a dead link.",
         test: (text) => GENESIS_ROUTER_LINK.test(text),
         allowedIn: /(^|\/)src\/utils\/browser-router\//,
     },
