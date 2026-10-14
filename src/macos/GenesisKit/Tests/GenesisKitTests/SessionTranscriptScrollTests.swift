@@ -296,6 +296,36 @@ final class SessionTranscriptScrollTests: XCTestCase {
         XCTAssertLessThan(gap, 40, "the pill left the reader \(Int(gap)) pt above the end")
     }
 
+    func testAnEndJumpDropsTheOldAnchorInsideAStillVisibleTallRow() throws {
+        let anchor = TranscriptScrollAnchor()
+        let rig = Rig(TallAnchorTable().background(TranscriptScrollAnchorProbe(anchor: anchor)),
+                      size: NSSize(width: 500, height: 200))
+        defer { rig.close() }
+        rig.settle(0.3)
+        let list = try XCTUnwrap(rig.transcript)
+        let table = try XCTUnwrap(list.documentView as? NSTableView)
+        let tallRow = 20
+        NotificationCenter.default.post(name: TranscriptScrollAnchor.readerScrolled, object: nil)
+        rig.scrollTranscript(to: table.rect(ofRow: tallRow).minY + 10)
+        rig.settle(0.4)
+        let originalView = try XCTUnwrap(table.rowView(atRow: tallRow, makeIfNecessary: false))
+        XCTAssertEqual(table.row(at: NSPoint(x: 1, y: list.contentView.bounds.minY + 1)), tallRow)
+        XCTAssertGreaterThan(table.frame.height - list.contentView.bounds.maxY, 300)
+
+        anchor.scrollToEnd()
+        rig.settle(0.4) // Also covers Reduce Motion, where the jump is immediate.
+        let endY = list.contentView.bounds.minY
+        XCTAssertLessThan(table.frame.height - list.contentView.bounds.maxY, 2)
+        XCTAssertTrue(table.rowView(atRow: tallRow, makeIfNecessary: false) === originalView,
+                      "the old anchor must still reference the same realized row")
+
+        // Layout changes the bounds without a reader event. The pre-jump anchor must not win.
+        rig.scrollTranscript(to: endY - 1)
+        rig.settle(0.05)
+        XCTAssertEqual(list.contentView.bounds.minY, endY - 1, accuracy: 0.5,
+                       "a one-point layout adjustment restored the old position inside the tall row")
+    }
+
     func testPromptNavigationDuringTheEndChaseKeepsTheRequestedPrompt() throws {
         let session = try InventedSession.make(sections: 3)
         let rig = Rig(Streaming(session: session), size: NSSize(width: 1200, height: 700))
@@ -854,6 +884,40 @@ private struct Republisher<Content: View>: View {
                 }
             }
     }
+}
+
+// A final row taller than the viewport stays realized both before and after the end jump.
+@MainActor
+private struct TallAnchorTable: NSViewRepresentable {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        func numberOfRows(in tableView: NSTableView) -> Int { 21 }
+        func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { row == 20 ? 1600 : 20 }
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            NSTextField(labelWithString: "Fixture output")
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        let table = NSTableView()
+        table.headerView = nil
+        table.intercellSpacing = .zero
+        table.usesAutomaticRowHeights = false
+        table.dataSource = context.coordinator
+        table.delegate = context.coordinator
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fixture"))
+        column.width = 500
+        table.addTableColumn(column)
+        table.reloadData()
+        scroll.documentView = table
+        table.setFrameSize(NSSize(width: 500, height: table.rect(ofRow: 20).maxY))
+        table.autoresizingMask = [.width]
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {}
 }
 
 // MARK: - Rig

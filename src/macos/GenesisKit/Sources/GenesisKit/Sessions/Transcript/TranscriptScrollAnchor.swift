@@ -334,6 +334,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// on mouse-down; this starts a fresh one and clears the pill's own click.
     public func scrollToEnd() {
         releaseHold()
+        rowAnchor = nil
         readerClickAt = nil
         pressInList = false
         chaseEndUntil = CFAbsoluteTimeGetCurrent() + Self.chaseWindow
