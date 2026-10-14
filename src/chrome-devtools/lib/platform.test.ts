@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     artifactPath,
     listListeningTcpPorts,
@@ -9,6 +10,7 @@ import {
     parseNetstatListeners,
     parsePsProcesses,
     parsePsSample,
+    processArguments,
     terminatePid,
     tmpRoot,
 } from "./platform.ts";
@@ -47,6 +49,69 @@ describe.skipIf(process.platform !== "darwin")("listListeningTcpPorts on live li
             child.kill();
             await child.exited;
         }
+    });
+});
+
+describe("processArguments", () => {
+    test("Linux reads NUL boundaries, preserving spaces inside arguments, and refuses failed reads", () => {
+        const args = ["/usr/bin/chromium", "https://example.test/?q= --user-data-dir=/tmp/fixture"];
+        const calls: string[][] = [];
+        expect(
+            processArguments(
+                42,
+                (argv) => {
+                    calls.push(argv);
+                    return { exitCode: 0, stdout: `${args.join("\0")}\0`, stderr: "" };
+                },
+                "linux"
+            )
+        ).toEqual(args);
+        expect(calls).toEqual([["cat", "/proc/42/cmdline"]]);
+        for (const result of [
+            { exitCode: 1, stdout: "", stderr: "denied" },
+            { exitCode: 0, stdout: args.join(" "), stderr: "" },
+        ]) {
+            expect(processArguments(42, () => result, "linux")).toBeNull();
+        }
+    });
+
+    test("Windows delegates boundary decoding to CommandLineToArgvW and refuses invalid results", () => {
+        const args = ["chrome.exe", "https://example.test/?q= --user-data-dir=/tmp/fixture"];
+        expect(
+            processArguments(
+                42,
+                (argv) => {
+                    expect(argv[0]).toBe("powershell");
+                    expect(argv[3]).toContain("CommandLineToArgvW");
+                    return { exitCode: 0, stdout: SafeJSON.stringify(args), stderr: "" };
+                },
+                "win32"
+            )
+        ).toEqual(args);
+        for (const stdout of ["null", '["chrome.exe", 1]', "not json"]) {
+            expect(processArguments(42, () => ({ exitCode: 0, stdout, stderr: "" }), "win32")).toBeNull();
+        }
+        expect(processArguments(42, () => ({ exitCode: 1, stdout: "[]", stderr: "denied" }), "win32")).toBeNull();
+    });
+
+    test.skipIf(process.platform !== "darwin")("macOS reads a fixture child's actual argv boundaries", async () => {
+        const url = "https://example.test/?q= --user-data-dir=/tmp/fixture";
+        const child = Bun.spawn([process.execPath, "-e", "console.log('ready'); await Bun.stdin.text();", "--", url], {
+            env: process.env,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "ignore",
+        });
+        try {
+            await child.stdout.getReader().read();
+            const args = processArguments(child.pid);
+            expect(args).toContain(url);
+            expect(args?.some((arg) => arg.startsWith("--user-data-dir"))).toBe(false);
+        } finally {
+            child.stdin.end();
+            await child.exited;
+        }
+        expect(processArguments(child.pid)).toBeNull();
     });
 });
 

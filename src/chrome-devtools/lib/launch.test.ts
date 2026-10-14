@@ -959,6 +959,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                 port: 9333,
                 deps: {
                     exec: throwaway,
+                    args: () => [chrome, "--user-data-dir=/tmp/cdp-profile-9333-a", "about:blank"],
                     platform: "darwin",
                     connect: browser.connect,
                     alive: () => running,
@@ -967,6 +968,26 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             });
             expect(result).toEqual({ status: "closed", pid: 4242 });
             expect(browser.sent).toEqual(["Browser.close"]);
+        });
+
+        test("a space and profile flag inside one URL argument never authorizes Browser.close", async () => {
+            const url = "https://example.test/?q= --user-data-dir=/tmp/fixture";
+            let attempts = 0;
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: machine([listener(4242)], [`4242 1 ${chrome} --remote-debugging-port=9333 ${url}`]),
+                    args: () => [chrome, "--remote-debugging-port=9333", url],
+                    platform: "darwin",
+                    alive: () => false,
+                    connect: async () => {
+                        attempts++;
+                        throw new Error("main-profile browser must not be contacted");
+                    },
+                },
+            });
+            expect(result).toMatchObject({ status: "main-profile", pid: 4242 });
+            expect(attempts).toBe(0);
         });
 
         test("the profile flag counts only as an argument of its own, never as text inside a URL", async () => {
@@ -992,6 +1013,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                 port: 9333,
                 deps: {
                     exec: throwaway,
+                    args: () => [chrome, "--user-data-dir=/tmp/cdp-profile-9333-a", "about:blank"],
                     platform: "darwin",
                     connect: browser.connect,
                     alive: () => true,
@@ -999,6 +1021,50 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                 },
             });
             expect(result).toEqual({ status: "still-running", pid: 4242 });
+        });
+
+        test("unreadable, empty and positional profile switches never authorize a close", async () => {
+            for (const args of [
+                null,
+                [chrome, "--user-data-dir="],
+                [chrome, "--user-data-dir", ""],
+                [chrome, "--user-data-dir", "/tmp/fixture"],
+                [chrome, "--user-data-dir", "--remote-debugging-port=9333"],
+                [chrome, "--", "--user-data-dir=/tmp/fixture"],
+                [chrome, "--user-data-dir=/tmp/fixture", "--user-data-dir="],
+            ]) {
+                let attempts = 0;
+                const result = await closeBrowserOnPort({
+                    port: 9333,
+                    deps: {
+                        exec: throwaway,
+                        platform: "darwin",
+                        args: () => args,
+                        connect: async () => {
+                            attempts++;
+                            throw new Error("unsafe profile must not be contacted");
+                        },
+                    },
+                });
+                expect(result).toMatchObject({ status: "main-profile" });
+                expect(attempts).toBe(0);
+            }
+        });
+
+        test("a profile value preserves spaces and authorizes a close", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: throwaway,
+                    platform: "darwin",
+                    args: () => [chrome, "--user-data-dir=/tmp/fixture with spaces"],
+                    connect: browser.connect,
+                    alive: () => false,
+                },
+            });
+            expect(result).toEqual({ status: "closed", pid: 4242 });
+            expect(browser.sent).toEqual(["Browser.close"]);
         });
 
         test("the user's own profile needs allowMainProfile", async () => {

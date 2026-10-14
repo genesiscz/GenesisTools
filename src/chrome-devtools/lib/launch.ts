@@ -21,6 +21,7 @@ import {
     listListeningTcpPorts,
     listProcesses,
     type Platform,
+    processArguments,
     processExecutable,
 } from "./platform.ts";
 import {
@@ -417,6 +418,7 @@ export interface QuitDeps {
     now?: () => number;
     exec?: ExecFn;
     platform?: Platform;
+    args?: (pid: number) => string[] | null;
 }
 
 /** The pids listening on `port`. Two of them means one browser on 127.0.0.1 and another on [::1]. */
@@ -572,9 +574,17 @@ async function closeOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
         return { status: "not-a-browser", pid, command };
     }
 
-    // An argument of its own: the text inside a URL or another flag's value must not pass the guard.
-    if (!opts.allowMainProfile && !/(?:^|\s)--user-data-dir(?:=|\s|$)/.test(command)) {
-        return { status: "main-profile", pid, command };
+    if (!opts.allowMainProfile) {
+        const args = deps.args ? deps.args(pid) : processArguments(pid, exec, platform);
+        const end = args?.indexOf("--") ?? -1;
+        const switches = end < 0 ? args : args?.slice(0, end);
+        // Chromium uses the last switch value; a bare switch has no value (the next argv is positional).
+        const profile = switches
+            ?.filter((arg) => arg === "--user-data-dir" || arg.startsWith("--user-data-dir="))
+            .at(-1);
+        if (!profile?.startsWith("--user-data-dir=") || !profile.slice("--user-data-dir=".length).trim()) {
+            return { status: "main-profile", pid, command };
+        }
     }
 
     if (!(await requestBrowserClose(opts.port, deps))) {

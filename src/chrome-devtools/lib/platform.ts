@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { readProcessPath } from "@genesiscz/utils/process/libproc-table";
+import { readProcessArgs, readProcessPath } from "@genesiscz/utils/process/libproc-table";
 import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 
 const { log } = logger.scoped("chrome-devtools:platform");
@@ -154,6 +154,56 @@ export function processExecutable(
     const executable = r.stdout.trim();
 
     return r.exitCode === 0 && executable ? executable : null;
+}
+
+/** Structured argv only: never infer POSIX argument boundaries from space-joined ps output. */
+export function processArguments(
+    pid: number,
+    exec: ExecFn = defaultExec,
+    platform: Platform = currentPlatform()
+): string[] | null {
+    if (platform === "darwin") {
+        return exec === defaultExec ? (readProcessArgs(pid)?.argv ?? null) : null;
+    }
+
+    if (platform === "linux") {
+        const result = exec(["cat", `/proc/${pid}/cmdline`]);
+        if (result.exitCode !== 0 || !result.stdout.endsWith("\0")) {
+            return null;
+        }
+
+        return result.stdout.slice(0, -1).split("\0");
+    }
+
+    // Windows stores an encoded command line. Let its own argv decoder establish the boundaries.
+    const script = [
+        "$source = @'",
+        "using System; using System.Runtime.InteropServices;",
+        "public static class BrowserArgv {",
+        '[DllImport("shell32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CommandLineToArgvW(string s, out int n);',
+        '[DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);',
+        "public static string[] Parse(string s) { int n; IntPtr p = CommandLineToArgvW(s, out n);",
+        'if (p == IntPtr.Zero) throw new Exception("argv unavailable");',
+        "try { var a = new string[n]; for (int i=0; i<n; i++) a[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(p, i*IntPtr.Size)); return a; }",
+        "finally { LocalFree(p); } } }",
+        "'@",
+        "Add-Type -TypeDefinition $source -ErrorAction Stop",
+        `$line = (Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction Stop).CommandLine`,
+        "if ([string]::IsNullOrEmpty($line)) { exit 1 }",
+        "ConvertTo-Json -InputObject @([BrowserArgv]::Parse($line)) -Compress",
+    ].join("\n");
+    const result = exec(["powershell", "-NoProfile", "-Command", script]);
+    if (result.exitCode !== 0) {
+        return null;
+    }
+
+    try {
+        const args: unknown = SafeJSON.parse(result.stdout, { strict: true });
+        return Array.isArray(args) && args.every((arg) => typeof arg === "string") ? args : null;
+    } catch (err) {
+        log.debug({ err, pid }, "process argv JSON parse failed");
+        return null;
+    }
 }
 
 export interface ListeningPort {
