@@ -576,13 +576,35 @@ async function closeOnPort(opts: CloseOnPortOpts): Promise<CloseOnPortResult> {
 
     if (!opts.allowMainProfile) {
         const args = deps.args ? deps.args(pid) : processArguments(pid, exec, platform);
-        const end = args?.indexOf("--") ?? -1;
-        const switches = end < 0 ? args : args?.slice(0, end);
-        // Chromium uses the last switch value; a bare switch has no value (the next argv is positional).
-        const profile = switches
-            ?.filter((arg) => arg === "--user-data-dir" || arg.startsWith("--user-data-dir="))
-            .at(-1);
-        if (!profile?.startsWith("--user-data-dir=") || !profile.slice("--user-data-dir=".length).trim()) {
+        let profile: string | undefined;
+        // Chromium normalizes each argv after the program and replaces earlier values of the same switch.
+        for (const raw of args?.slice(1) ?? []) {
+            // POSIX Chromium trims ASCII whitespace; Windows uses Unicode whitespace.
+            const arg =
+                platform === "win32"
+                    ? raw.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "")
+                    : raw.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, "");
+            if (arg === "--") {
+                break;
+            }
+
+            const prefix = arg.startsWith("--")
+                ? 2
+                : arg.startsWith("-") || (platform === "win32" && arg.startsWith("/"))
+                  ? 1
+                  : 0;
+            if (!prefix) {
+                continue;
+            }
+
+            const equals = arg.indexOf("=", prefix);
+            const name = arg.slice(prefix, equals < 0 ? undefined : equals);
+            if ((platform === "win32" ? name.toLowerCase() : name) === "user-data-dir") {
+                profile = equals < 0 ? "" : arg.slice(equals + 1);
+            }
+        }
+
+        if (!profile?.trim()) {
             return { status: "main-profile", pid, command };
         }
     }

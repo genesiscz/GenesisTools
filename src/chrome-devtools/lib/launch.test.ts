@@ -1067,6 +1067,79 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             expect(browser.sent).toEqual(["Browser.close"]);
         });
 
+        test.each(["darwin", "linux", "win32"] as const)(
+            "%s normalizes the final profile switch before authorizing Browser.close",
+            async (platform) => {
+                const exec: ExecFn =
+                    platform === "win32"
+                        ? (argv) => ({
+                              exitCode: 0,
+                              stdout:
+                                  argv[0] === "netstat"
+                                      ? "TCP 127.0.0.1:9333 0.0.0.0:0 LISTENING 4242"
+                                      : argv[3].endsWith(".Name")
+                                        ? "chrome.exe"
+                                        : '[{"ProcessId":4242,"CommandLine":"chrome.exe"}]',
+                              stderr: "",
+                          })
+                        : throwaway;
+                const valid = "--user-data-dir=/tmp/fixture";
+                const refused = [
+                    [chrome, valid, "-user-data-dir="],
+                    [chrome, valid, " --user-data-dir= "],
+                    [chrome, " -- ", valid],
+                    [chrome, valid, " -user-data-dir "],
+                    [valid, chrome], // argv[0] is the program, never a switch.
+                ];
+                if (platform === "win32") {
+                    refused.push(
+                        [chrome, valid, "/USER-DATA-DIR="],
+                        [chrome, valid, "-USER-DATA-DIR="],
+                        [chrome, valid, "\u0085--user-data-dir=\u0085"]
+                    );
+                } else {
+                    refused.push([chrome, `\u00a0${valid}`]);
+                }
+                for (const args of refused) {
+                    let attempts = 0;
+                    const result = await closeBrowserOnPort({
+                        port: 9333,
+                        deps: {
+                            exec,
+                            platform,
+                            args: () => args,
+                            alive: () => false,
+                            connect: async () => {
+                                attempts++;
+                                throw new Error("normalized main profile must not be contacted");
+                            },
+                        },
+                    });
+                    expect(result.status, args.join(" | ")).toBe("main-profile");
+                    expect(attempts).toBe(0);
+                }
+                const accepted = [
+                    [chrome, " -user-data-dir=/tmp/fixture "],
+                    [chrome, " --user-data-dir=/tmp/fixture "],
+                ];
+                if (platform === "win32") {
+                    accepted.push([chrome, " /USER-DATA-DIR=/tmp/fixture "]);
+                } else {
+                    // POSIX switch names remain case-sensitive; an uppercase override does not replace this one.
+                    accepted.push([chrome, valid, "--USER-DATA-DIR="]);
+                }
+                for (const args of accepted) {
+                    const browser = fakeBrowser(() => {});
+                    const result = await closeBrowserOnPort({
+                        port: 9333,
+                        deps: { exec, platform, args: () => args, alive: () => false, connect: browser.connect },
+                    });
+                    expect(result.status, args.join(" | ")).toBe("closed");
+                    expect(browser.sent).toEqual(["Browser.close"]);
+                }
+            }
+        );
+
         test("the user's own profile needs allowMainProfile", async () => {
             const refused = fakeBrowser(() => {});
             expect(
