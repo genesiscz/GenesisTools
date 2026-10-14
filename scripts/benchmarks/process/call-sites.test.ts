@@ -1,4 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { scanProcessToolSpawns } from "../../ci/lint-rules";
 import { CALL_SITES, checkValue, isProcessToolSpawn, runsHere } from "./call-sites";
 
@@ -23,14 +26,24 @@ describe("the call-site registry", () => {
         }
 
         const found = new Map<string, number>();
+        // A planted spawn rides along: once every site is migrated the scan finds nothing, and an empty result only
+        // means "none" when the same scan found the plant.
+        const plantDir = mkdtempSync(join(tmpdir(), "call-sites-plant-"));
+        const plant = join(plantDir, "plant.ts");
+        writeFileSync(plant, 'export const planted = Bun.spawnSync(["ps", "-ax"]);\n');
 
-        for (const finding of await scanProcessToolSpawns(trackedSources)) {
-            found.set(finding.file, (found.get(finding.file) ?? 0) + 1);
+        try {
+            for (const finding of await scanProcessToolSpawns([...trackedSources, plant])) {
+                found.set(finding.file, (found.get(finding.file) ?? 0) + 1);
+            }
+        } finally {
+            rmSync(plantDir, { recursive: true, force: true });
         }
 
+        expect(found.get(plant)).toBe(1);
+        found.delete(plant);
         // A spawn that moved into the process layer leaves the lint findings; its entry stays as the benchmark of
         // the caller, so the registry may cover more than the rule finds, never less.
-        expect(found.size).toBeGreaterThan(0);
         const uncovered = [...found]
             .filter(([file, count]) => (registered.get(file) ?? 0) < count)
             .map(([file, count]) => `${file}: ${count} found, ${registered.get(file) ?? 0} registered`);

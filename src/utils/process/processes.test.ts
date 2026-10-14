@@ -311,7 +311,9 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         expect(me?.command).toContain(process.argv0.split("/").pop() ?? "bun");
         expect(childPids(process.ppid)).toContain(process.pid);
         expect(ancestry(process.pid, 2).map((entry) => entry.pid)).toEqual([process.pid, process.ppid]);
-        expect(realpathSync(readExecutablePath(process.pid) ?? "")).toBe(realpathSync(process.execPath));
+        // The same file, compared by inode: bun has hard links (each gt-* launcher is one), and the kernel may name
+        // the running image by any of them.
+        expect(statSync(readExecutablePath(process.pid) ?? "").ino).toBe(statSync(process.execPath).ino);
         expect(readProcessEnvironment(process.pid)?.PATH).toBeDefined();
         const usage = readProcessUsages([process.pid]).get(process.pid);
         expect(usage?.rssBytes).toBeGreaterThan(0);
