@@ -23,10 +23,13 @@ report, its reply file (every verdict and every reply text it wants posted) and 
      2026-10-14 #510's round 2 passed its Clicky and Flow filters, yet it broke the master test
      `FlowFocusRuntimeTests.testForwardedWritesFailBeforeAcknowledgementAndConfigurationRollsBack`, which the full
      module run found a round later.
-3. **Planted regression for every new or changed test.** Put the pre-fix version of the fixed source back (copy the
-   fixed file aside first, `git show <base>:<path> > <path>`, run the test, copy the fixed file back; the shell guard
-   blocks `git checkout --` for this). A test that still passes proves nothing. Do it in the PR worktree, never in the
-   shared main checkout.
+3. **Planted regression for every new or changed test.** Put the pre-fix version of the fixed source back and run the
+   test: `bun .claude/skills/babysit/scripts/plant.ts --wt <worktree> --file <path>… --test "<test paths>"` (Swift:
+   `--swift-package src/macos/GenesisKit --swift-filter <Class/test>`). It backs up first, restores in a `finally`,
+   proves the worktree unchanged, and exits 0 only when the planted run fails and the fixed run passes. A test that
+   still passes proves nothing. Do it in the PR worktree, never in the shared main checkout. Do not hand-write the
+   loop: on 2026-10-14 two shell versions failed silently (an unsplit zsh variable, a `shift` that broke the backups)
+   and one left the pre-fix code in two worktrees.
    - A plant that stops the COMPILE proves only that the test calls the new code, not that it catches the fault. Plant
      a behaviour fault instead (flip the fail-closed branch, drop the check) and see the assertion fail.
    - Run the new test by its own name (`swift test --filter <Class>/<testName>`, `bun scripts/test.ts <file> -t
