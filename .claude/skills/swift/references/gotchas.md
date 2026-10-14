@@ -104,6 +104,10 @@
   belongs to a Codex session; edit there only when Martin says so, commit only your paths.
 - **placeholder-check blocks a push** on internal repo names in fixtures; replace them in a new
   commit (no history rewrite).
+- **Wait for a free Swift slot by process name, never by command line.** `until ! pgrep -f 'swift-(build|test)|xctest'`
+  waited forever on 2026-10-15: the `zsh -c` running the loop carries that pattern in its own command line, so
+  `pgrep -f` matches the waiting shell itself. Use `pgrep -x swift-build`, `pgrep -x swift-test`, `pgrep -x xctest`
+  (process names), or a script file whose command line does not contain the pattern.
 
 ## Animated panel verification
 
