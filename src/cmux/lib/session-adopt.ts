@@ -395,7 +395,14 @@ export function liveAgentSurfaces(input: {
         const agent = input.providerOf(entry);
 
         if (agent && isSessionAgentId(agent)) {
-            found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd, tmux, lastSeenAt: entry.at });
+            found.push({
+                sessionId: entry.sessionId,
+                agent,
+                surface: live,
+                cwd: entry.cwd,
+                tmux,
+                lastSeenAt: entry.at,
+            });
         }
     }
 

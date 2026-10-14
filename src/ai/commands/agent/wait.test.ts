@@ -5,11 +5,11 @@ import { join } from "node:path";
 import * as delivery from "@app/ai/lib/agent-message/delivery";
 import { cmuxNamedSessionId, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import * as liveSessions from "@app/cmux/lib/session-close-live";
-import * as nativeTitles from "@genesiscz/utils/ai/transcripts/session-title";
 import type { SessionCreatedRecord } from "@app/cmux/lib/session-store";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
+import * as nativeTitles from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     DEFAULT_TURN_LIMIT,
@@ -167,9 +167,27 @@ describe("wait requested messages at every outcome", () => {
         const timestamp = new Date(Date.now() - 2_000).toISOString();
         const records = [
             { type: "user", timestamp, message: { role: "user", content: "first prompt" } },
-            { type: "assistant", timestamp, message: { id: "first", role: "assistant", content: [{ type: "text", text: "first answer" }], stop_reason: "end_turn" } },
+            {
+                type: "assistant",
+                timestamp,
+                message: {
+                    id: "first",
+                    role: "assistant",
+                    content: [{ type: "text", text: "first answer" }],
+                    stop_reason: "end_turn",
+                },
+            },
             { type: "user", timestamp, message: { role: "user", content: "second prompt" } },
-            { type: "assistant", timestamp, message: { id: "second", role: "assistant", content: [{ type: "text", text: "latest answer" }], stop_reason: outcome === "idle" ? "end_turn" : null } },
+            {
+                type: "assistant",
+                timestamp,
+                message: {
+                    id: "second",
+                    role: "assistant",
+                    content: [{ type: "text", text: "latest answer" }],
+                    stop_reason: outcome === "idle" ? "end_turn" : null,
+                },
+            },
         ];
         writeFileSync(file, records.map((record) => SafeJSON.stringify(record, { strict: true })).join("\n") + "\n");
         if (outcome === "stalled") {
@@ -177,9 +195,17 @@ describe("wait requested messages at every outcome", () => {
         }
 
         const printed: string[] = [];
-        spyOn(out, "println").mockImplementation((text) => { printed.push(String(text)); });
+        spyOn(out, "println").mockImplementation((text) => {
+            printed.push(String(text));
+        });
         try {
-            await waitCommand("claude", file, { last: "2", quiet, stream, timeout: "0.02", stallTimeout: outcome === "stalled" ? "0.001" : "0" });
+            await waitCommand("claude", file, {
+                last: "2",
+                quiet,
+                stream,
+                timeout: "0.02",
+                stallTimeout: outcome === "stalled" ? "0.001" : "0",
+            });
             expect(process.exitCode).toBe(code);
             expect(printed.join("\n")).toBe("first answer\n\n---\n\nlatest answer");
         } finally {
@@ -639,28 +665,52 @@ describe("message --wait --stream on a reply that is already being written", () 
 });
 
 describe("surface titles share the wait and message resolver", () => {
-    afterEach(() => { mock.restore(); process.exitCode = 0; });
-
-    it.each(["claude", "grok", "codex"] as const)("resolves an unrecorded %s surface title and refuses ambiguity", async (alias) => {
-        const sessionId = "11111111-2222-4333-8444-555555555555";
-        const entry = { sessionId, agent: alias, cwd: "/fixture", surface: {
-            ref: "surface:12", id: "surface-uuid", tty: "ttys012", workspace: "workspace:1",
-            workspaceId: "workspace-uuid", window: "window:1", title: "fixture-surface", workspaceTitle: "fixture",
-        } };
-        const sessions = spyOn(liveSessions, "liveAgentSurfacesNow").mockResolvedValue([entry]);
-        spyOn(nativeTitles, "findSessionsByTitle").mockReturnValue([]);
-        spyOn(transcriptResolver, "resolveTranscript").mockImplementation(async (query) => {
-            if (query !== sessionId) { throw new Error("no native match"); }
-            return { provider: alias, source: "native", sessionId, filePath: "/fixture/native.jsonl" };
-        });
-        expect((await resolveSessionTranscript(alias, "fixture-surface", false)).sessionId).toBe(sessionId);
-        expect(await delivery.resolveSessionId({ alias, query: "fixture-surface", first: false })).toBe(sessionId);
-        sessions.mockResolvedValue([entry, { ...entry, sessionId: "other-session", surface: { ...entry.surface, ref: "surface:13" } }]);
-        await expect(resolveSessionTranscript(alias, "fixture-surface", false)).rejects.toThrow("matches 2");
+    afterEach(() => {
+        mock.restore();
+        process.exitCode = 0;
     });
 
+    it.each(["claude", "grok", "codex"] as const)(
+        "resolves an unrecorded %s surface title and refuses ambiguity",
+        async (alias) => {
+            const sessionId = "11111111-2222-4333-8444-555555555555";
+            const entry = {
+                sessionId,
+                agent: alias,
+                cwd: "/fixture",
+                surface: {
+                    ref: "surface:12",
+                    id: "surface-uuid",
+                    tty: "ttys012",
+                    workspace: "workspace:1",
+                    workspaceId: "workspace-uuid",
+                    window: "window:1",
+                    title: "fixture-surface",
+                    workspaceTitle: "fixture",
+                },
+            };
+            const sessions = spyOn(liveSessions, "liveAgentSurfacesNow").mockResolvedValue([entry]);
+            spyOn(nativeTitles, "findSessionsByTitle").mockReturnValue([]);
+            spyOn(transcriptResolver, "resolveTranscript").mockImplementation(async (query) => {
+                if (query !== sessionId) {
+                    throw new Error("no native match");
+                }
+                return { provider: alias, source: "native", sessionId, filePath: "/fixture/native.jsonl" };
+            });
+            expect((await resolveSessionTranscript(alias, "fixture-surface", false)).sessionId).toBe(sessionId);
+            expect(await delivery.resolveSessionId({ alias, query: "fixture-surface", first: false })).toBe(sessionId);
+            sessions.mockResolvedValue([
+                entry,
+                { ...entry, sessionId: "other-session", surface: { ...entry.surface, ref: "surface:13" } },
+            ]);
+            await expect(resolveSessionTranscript(alias, "fixture-surface", false)).rejects.toThrow("matches 2");
+        }
+    );
+
     it("message --dry-run resolves its target without reaching delivery", async () => {
-        const send = spyOn(delivery, "deliverMessage").mockImplementation(async () => { throw new Error("must not send"); });
+        const send = spyOn(delivery, "deliverMessage").mockImplementation(async () => {
+            throw new Error("must not send");
+        });
         spyOn(delivery, "resolveSessionId").mockResolvedValue("fixture-session");
         const printed = spyOn(out, "println").mockImplementation(() => {});
         await messageCommand("grok", "fixture-surface", ["fixture preview"], { dryRun: true });

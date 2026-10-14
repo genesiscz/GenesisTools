@@ -652,10 +652,7 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
         .option("--first", "When a title matches several sessions, take the newest instead of failing")
         .option("--last <n>", "Print the last N assistant messages of the session, not only the final one")
         .option("--tools", "Also list the tool calls of the turn that ended (name ×count)")
-        .option(
-            "--quiet",
-            "Suppress live progress, retaining requested messages, tools and the final status"
-        )
+        .option("--quiet", "Suppress live progress, retaining requested messages, tools and the final status")
         .addHelpText(
             "after",
             `

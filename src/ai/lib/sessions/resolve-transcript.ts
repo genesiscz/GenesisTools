@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
-import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
 import { recordedSessionIdOf } from "@app/cmux/lib/session-close";
+import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
 import { fileSessionStore, type SessionCreatedRecord, type SessionRecordLine } from "@app/cmux/lib/session-store";
 import {
     type ResolvedTranscript,
@@ -102,7 +102,9 @@ export async function resolveSessionTranscript(
         });
         const hits = matchLiveAgentSurfaces(query, alias, live);
         if (hits.length > 1 && !first) {
-            throw new Error(`"${query}" matches ${hits.length} running ${alias} sessions. Pass the session id or --first:\n${hits.map((hit) => `  ${hit.sessionId}  ${hit.surface.title ?? ""}  ${hit.surface.ref}`).join("\n")}`);
+            throw new Error(
+                `"${query}" matches ${hits.length} running ${alias} sessions. Pass the session id or --first:\n${hits.map((hit) => `  ${hit.sessionId}  ${hit.surface.title ?? ""}  ${hit.surface.ref}`).join("\n")}`
+            );
         }
 
         const hit = hits.sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0))[0];

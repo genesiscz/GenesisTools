@@ -5,8 +5,10 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatDateTime } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
+
 import type { Command } from "commander";
 import { type AccountBudget, accountChoiceMessage, liveAccountBudgets } from "../lib/account-budgets";
 import {
@@ -60,6 +62,11 @@ export interface SessionNewDeps {
 async function liveAccounts(): Promise<AccountSource> {
     const config = await AiConfigStore.readOnly();
     return { accounts: config.accounts() };
+}
+
+/** Local time for people, with how long ago while it is recent; the JSON keeps the ISO instant. */
+function activityLabel(iso: string | null | undefined): string {
+    return iso ? formatDateTime(iso, { absolute: "datetime", relative: "two-days" }) : "-";
 }
 
 function blank(value: string | undefined): string | undefined {
@@ -295,17 +302,21 @@ async function runSessionStatus(options: { agent?: string; json?: boolean }): Pr
     if (options.json) {
         out.result(sessions);
     } else {
-        out.println(sessions.length === 0 ? "No agent sessions in cmux." : formatTable(
-            sessions.map((session) => [
-                session.title ?? session.name,
-                session.agent,
-                session.state,
-                session.lastActivityAt ?? "-",
-                session.lastMessage?.replace(/\s+/g, " ").trim() || "-",
-            ]),
-            ["Title", "Agent", "State", "Last activity", "Last message"],
-            { maxColWidth: LIST_COLUMN_WIDTH }
-        ));
+        out.println(
+            sessions.length === 0
+                ? "No agent sessions in cmux."
+                : formatTable(
+                      sessions.map((session) => [
+                          session.title ?? session.name,
+                          session.agent,
+                          session.state,
+                          activityLabel(session.lastActivityAt),
+                          session.lastMessage?.replace(/\s+/g, " ").trim() || "-",
+                      ]),
+                      ["Title", "Agent", "State", "Last activity", "Last message"],
+                      { maxColWidth: LIST_COLUMN_WIDTH }
+                  )
+        );
     }
     await out.flush();
 }
@@ -328,7 +339,7 @@ export function formatSessionList(input: {
                     record.title ?? "-",
                     record.agent,
                     record.state ?? "unknown",
-                    record.lastActivityAt ?? "-",
+                    activityLabel(record.lastActivityAt),
                     record.account,
                     record.workspace,
                     record.tmuxSession ?? "-",
@@ -348,7 +359,7 @@ export function formatSessionList(input: {
                     session.title ?? "-",
                     session.agent,
                     session.state ?? "unknown",
-                    session.lastActivityAt ?? "-",
+                    activityLabel(session.lastActivityAt),
                     session.workspace,
                     session.surface,
                     session.cwd,
