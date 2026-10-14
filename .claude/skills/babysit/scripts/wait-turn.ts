@@ -8,6 +8,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { flag, loadRun } from "./run";
@@ -26,12 +27,15 @@ if (fromFile) {
 } else {
     // A steer reaches the daemon a moment after its command returns; waiting at once can catch the previous turn.
     await Bun.sleep(3000);
-    const p = Bun.spawnSync(["./tools", "codex", "wait", flag("--thread") ?? "", "--stall-timeout", "1800", "--json"], {
-        cwd: run.main,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: process.env,
-    });
+    const p = Bun.spawnSync(
+        [toolsEntrypoint(), "codex", "wait", flag("--thread") ?? "", "--stall-timeout", "1800", "--json"],
+        {
+            cwd: run.main,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: process.env,
+        }
+    );
     raw = p.stdout.toString();
     exitCode = p.exitCode ?? 1;
     stderr = p.stderr.toString();
