@@ -125,16 +125,35 @@ or `· skip: <reason>`. A tab is typed into only when all of these hold:
 
 - Its surface UUID is in the live layout. cmux keeps the UUID across a relaunch, while the
   `surface:N` refs are renumbered, so the pairing never depends on a ref or a tab position.
-- Its tty runs nothing but a shell. A tab with an agent, an `ssh`, a `tail -f` or any other
-  program is busy. When a busy tab runs a different agent than the journal recorded (cmux's
-  own restore can pick a stale session), the skip line names the recorded session.
-- Its prompt is empty. Text already typed at the prompt is never overwritten.
+- cmux reports the tab's tty. A tab opened in the background and never shown has no tty in
+  `cmux tree` yet; it is skipped until you show it once.
+- Its tty runs exactly one process, a shell. A tab with an agent, an `ssh`, a `tail -f`, a
+  second shell (a script waiting for input) or any other program is busy and is skipped. When
+  it runs the session the journal names, the line says `already runs the recorded session`.
+  When it runs a different agent (cmux's own restore can pick a stale session), the skip line
+  names the recorded session.
 - It is not the tab running the restore.
 - For an agent: a concrete session id is resolved, and the evidence is the surface journal or
   the tab title (see below). A weaker match is printed with its command, never typed.
 
-After it resumes a session, the restore writes that tab's record to the surface journal, so
-the next relaunch finds it even if the agent's own hook did not run.
+Two preparations run before the command is typed. The plan prints each as `first: …`:
+
+- **Text at the prompt** (`first: clears the prompt line …`): `tools cmux` sends Ctrl-E and
+  Ctrl-U to that tab (`cmux send-key --surface <UUID>`), then waits for an empty prompt. If the
+  prompt is still not empty, nothing is typed. zsh keeps the cleared text: Ctrl-Y brings it
+  back.
+- **A stale grok at its trust prompt** (`first: quits grok …`): cmux's relaunch restore can
+  start an old grok session in the tab. While it still asks "Do you trust the contents of this
+  directory?" it has opened nothing, so the restore reads the screen again, answers `n`, waits
+  until only the shell is left, and clears the line. A grok that is past that dialog is never
+  touched.
+
+Both use the tab's UUID and run in the background: your focused workspace and tab do not
+change.
+
+After a resume runs (`--enter`), the restore writes that tab's record to the surface journal,
+so the next relaunch finds it even if the agent's own hook did not run. A command that is only
+typed is not recorded.
 
 ### How each tab's session is chosen
 
@@ -145,8 +164,10 @@ Claude through any alias, function or wrapper (`cr work`, `ffff`, a shell functi
 1. **A live process on the tab's tty** (`claude … --resume <uuid>`): it names the session it
    runs.
 2. **The surface journal** (`~/.genesis-tools/claude-code/cmux-refs.jsonl`). The
-   genesis-tools plugin hook writes the session id with the tab's `CMUX_SURFACE_ID` at
-   session start and on every prompt, for Claude, Codex and Grok. The newest record for the
+   genesis-tools plugin hook writes the session id with the tab's surface UUID at session
+   start and on every prompt, for Claude, Codex and Grok. It also writes the workspace, pane and
+   window UUIDs that `cmux identify` reports at that moment, so a tab you moved to another
+   workspace is recorded where it is now, not where the agent started. The newest record for the
    tab's UUID wins, with these rules for the tab's last shell command:
    - The journal saw the session **after** that command started: the session was the tab's
      last occupant, so it is resumed, whatever the command was. A launcher the code does not
@@ -166,7 +187,10 @@ Claude through any alias, function or wrapper (`cr work`, `ffff`, a shell functi
    shown in the drift and the plan, and `--in-place` does not type it.
 
 When the typed launcher is a known one, its flags are kept and only the session id is
-attached: `cr work -m sonnet` becomes `cr work -m sonnet -- --resume <uuid>`. Any executable
+attached: `cr work --cross-messages` becomes `cr work --cross-messages -- --resume <uuid>`.
+Model flags (`-m`, `--model`, `--model=…`) are the exception: every restore drops them and the
+drift line says so. You can switch models inside a session (`/model`), so the model a tab was
+started with is not the model the session uses now; without the flag the agent picks its own. Any executable
 under `~/.aliases/` whose body runs `exec tools cc run` or `exec tools claude run` counts as
 known, whatever its name. The id lands after `--`, where claude itself reads it; a cc run
 level `--resume <query>` is a fuzzy search, so it is replaced by the id. When two tabs resolve

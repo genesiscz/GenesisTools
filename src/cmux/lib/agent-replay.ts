@@ -7,6 +7,7 @@ import {
     isAgentLauncher,
     resumeQueryFromCommand,
     resumeTargetFromCommand,
+    stripModelFlags,
 } from "@app/cmux/lib/command-capture";
 import type { Profile, ResumeEvidence, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
@@ -718,5 +719,30 @@ export async function prepareProfileForRestore(profile: Profile, options: { cach
     const catalog = await loadReplayCatalog(profile, options);
     const corrected = correctNativeResumeBindings(profile, catalog);
 
-    return dedupeResumeTargets(withInferredReplayCommands(corrected, catalog), catalog);
+    return withoutModelPins(dedupeResumeTargets(withInferredReplayCommands(corrected, catalog), catalog));
+}
+
+/** Every agent resume without its model flags (`stripModelFlags`), with a drift line naming what was dropped. */
+export function withoutModelPins(profile: Profile): Profile {
+    return mapTerminalSurfaces(profile, (surface) => {
+        if (!surface.command || !isAgentLauncher(surface.command)) {
+            return surface;
+        }
+
+        const { command, removed } = stripModelFlags(surface.command);
+
+        if (removed.length === 0) {
+            return surface;
+        }
+
+        return {
+            ...surface,
+            command,
+            command_original: surface.command_original ?? surface.command,
+            drift: [
+                ...(surface.drift ?? []),
+                `dropped ${removed.join(", ")}: the session may have switched models since it started, so the agent picks its own`,
+            ],
+        };
+    });
 }

@@ -513,6 +513,43 @@ export function tokenizeCommand(command: string): CommandToken[] {
     return tokens;
 }
 
+const MODEL_FLAGS = new Set(["-m", "--model"]);
+
+/**
+ * The agent command without its model flags (`-m X`, `--model X`, `--model=X`), on either side of `--`.
+ *
+ * A resume must not pin the model the tab was STARTED with: the user can switch models inside the session
+ * (`/model`), so replaying `cr work -m sonnet` for ten sessions moved to opus would put all ten back on
+ * sonnet. Without the flag the agent picks its own default.
+ */
+export function stripModelFlags(command: string): { command: string; removed: string[] } {
+    const tokens = tokenizeCommand(command);
+    const cut: Array<{ start: number; end: number }> = [];
+    const removed: string[] = [];
+
+    for (let index = 0; index < tokens.length; index++) {
+        const token = tokens[index];
+
+        if (MODEL_FLAGS.has(token.value) && tokens[index + 1]) {
+            const value = tokens[index + 1];
+            cut.push({ start: token.start, end: value.end });
+            removed.push(`${token.value} ${value.value}`);
+            index++;
+        } else if (token.value.startsWith("--model=")) {
+            cut.push({ start: token.start, end: token.end });
+            removed.push(token.value);
+        }
+    }
+
+    let out = command;
+
+    for (const { start, end } of cut.reverse()) {
+        out = `${out.slice(0, start).trimEnd()} ${out.slice(end).trimStart()}`.trim();
+    }
+
+    return { command: out, removed };
+}
+
 interface ResumeFlagMatch {
     flag: string;
     /** The value exactly as written, quotes included. Undefined for a bare flag. */

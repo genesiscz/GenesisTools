@@ -15,6 +15,7 @@ import {
     resumeQueryFromCommand,
     resumeTargetFromCommand,
     setCcRunAliases,
+    stripModelFlags,
 } from "@app/cmux/lib/command-capture";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
@@ -609,5 +610,22 @@ describe("journalReplayCommand with cmux's own restore line", () => {
         expect(journalReplayCommand({ command: ` cmux restore grok ${GROK_ID}`, atMs: 2_000 }).command).toBe(
             `grok -r ${GROK_ID}`
         );
+    });
+});
+
+// The user can switch models inside a session; a resume must never pin the model the tab started with.
+describe("stripModelFlags", () => {
+    test("drops -m, --model and --model= on either side of --", () => {
+        expect(stripModelFlags("cr work -m sonnet -- --resume abc")).toEqual({
+            command: "cr work -- --resume abc",
+            removed: ["-m sonnet"],
+        });
+        expect(
+            stripModelFlags("tools claude run work --model opus --cross-messages -- --model=haiku --resume abc")
+        ).toEqual({
+            command: "tools claude run work --cross-messages -- --resume abc",
+            removed: ["--model opus", "--model=haiku"],
+        });
+        expect(stripModelFlags("grok -r abc")).toEqual({ command: "grok -r abc", removed: [] });
     });
 });
