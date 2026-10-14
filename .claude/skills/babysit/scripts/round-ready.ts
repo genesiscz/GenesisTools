@@ -24,7 +24,8 @@ const prs = process.argv.slice(2).filter((a, i, all) => /^\d+$/.test(a) && !all[
 const query = `query($n:Int!){viewer{login} repository(owner:"${owner}",name:"${name}"){pullRequest(number:$n){headRefOid
  reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}
  comments(last:100){nodes{author{login}}}
- reviews(last:40){nodes{author{login} commit{oid} submittedAt state}}}}}`;
+ reviews(last:40){nodes{author{login} commit{oid} submittedAt state}}
+ timelineItems(last:1,itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]){nodes{... on HeadRefForcePushedEvent{createdAt}}}}}}`;
 
 for (const n of prs) {
     const p = Bun.spawnSync(["gh", "api", "graphql", "-f", `query=${query}`, "-F", `n=${n}`], {
@@ -52,6 +53,7 @@ for (const n of prs) {
                         };
                         comments: { nodes: Array<{ author?: { login: string } }> };
                         reviews: { nodes: Review[] };
+                        timelineItems: { nodes: Array<{ createdAt?: string }> };
                     };
                 };
             };
@@ -85,7 +87,13 @@ for (const n of prs) {
     const atHead = reviewers.map((bot) => {
         // The LATEST review of the head: eve can approve a head and later withhold the approval on it (#503,
         // 2026-10-14: APPROVED 04:48Z, then COMMENTED "approval withheld" 04:53Z), and the first match hid that.
-        const review = pr.reviews.nodes.findLast((r) => r.author?.login === bot && r.commit?.oid === pr.headRefOid);
+        // After a force-push GitHub reports an earlier review on the NEW head commit when the patch matches, so
+        // commit equality is not proof the reviewer saw this tree (2026-10-14: #500 and #517 showed eve@head
+        // APPROVED from before their rebase). A review counts only when it is newer than the last force-push.
+        const forcedAt = pr.timelineItems.nodes.at(-1)?.createdAt ?? "";
+        const review = pr.reviews.nodes.findLast(
+            (r) => r.author?.login === bot && r.commit?.oid === pr.headRefOid && r.submittedAt > forcedAt
+        );
         return `${bot.split("-")[0]}@head ${review ? `${review.state}@${review.submittedAt.slice(11, 16)}Z` : "no"}`;
     });
     console.log(
