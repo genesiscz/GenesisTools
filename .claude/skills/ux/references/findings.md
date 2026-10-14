@@ -3,6 +3,22 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-15 00:50 — **The vault approval window (GenesisTools.app `vault.unlock`).**
+  - *"This can be probably nicer": one block of text with full paths, the raw command, two UUIDs and five buttons
+    in a row.* It was an `NSAlert`. Now a SwiftUI panel (GenesisKit Permissions/ApprovalDialog.swift): the reason
+    first, four facts (session by its name, program from its project folder, folder, secret), the rest under
+    Details, a remember choice, Deny and "Allow with Touch ID".
+  - *The same window came back every three minutes.* The modal loop held the main queue, so the deadline never fired
+    (see the swift gotchas), and a refusal was not final for the calling process. Both fixed; the account gate
+    window had the same loop and moved to the same panel.
+  - *"It wanted Touch ID and then the password two times, always."* The app read a keychain item another binary
+    (bun) created. The app now keeps its own copy, stamped with the source item's modification date.
+  - *The first SwiftUI version cut "Allow with Touch ID", wrapped the countdown, left an empty band on top and cut
+    the script path.* See the swift gotchas, "Dialogs".
+  - *A remembered approval was too broad.* `bun run <script>` was read as no script, so "always" covered every
+    `bun run`; a relative script matched from any folder. The program is now the absolute script.
+  - Unified d48b6131b, 12bf77b14, 64b3a6186. Shots: GenesisTools.native/Approvals/Screenshot/.
+
 - 2026-10-14 22:43 — **Markdown viewer dead clicks, PostureWatcher's message, and the agent's own live-test mistakes.**
   - *Holding a tab moved the window a little; from then on no click in the viewer did anything (tabs, toolbar)
     until a restart, while accessibility presses still worked.* The window had `isMovableByWindowBackground = true`.
