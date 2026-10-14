@@ -495,3 +495,38 @@ describe("conflict resolution helper", () => {
         git(["cherry-pick", "--abort"]);
     });
 });
+
+test("a status that keeps failing names the exit and the output, then hands over to the lead", async () => {
+    const messages: string[] = [];
+    const output = spyOn(console, "log").mockImplementation((value) => messages.push(String(value)));
+    const errors = spyOn(console, "error").mockImplementation((value) => messages.push(String(value)));
+    let time = 0;
+    const exec: typeof execTool = async () => ({
+        success: false,
+        exitCode: 1,
+        stderr: "",
+        stdout: "no session named fixture\n",
+    });
+
+    try {
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 1_000,
+            pollMs: 5,
+        });
+        expect(messages[0]).toBe("[approver] status failed (exit 1): no session named fixture");
+        expect(messages.filter((line) => line.startsWith("[approver] status failed"))).toHaveLength(10);
+        expect(messages.at(-1)).toBe(
+            "[approver] NEEDS LEAD: codex status failed 10 times in a row for fixture; stopped"
+        );
+        expect(time).toBe(45);
+    } finally {
+        output.mockRestore();
+        errors.mockRestore();
+    }
+});
