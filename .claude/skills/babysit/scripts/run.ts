@@ -5,9 +5,9 @@
  *   { "vault": "<notes folder of this run>", "judge": "Claude Opus 5.5", "repo": "owner/name",
  *     "worktrees": "<dir>", "reviewLoopScripts": "<dir>", "prs": [...], ... }
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface RunCard {
@@ -45,14 +45,47 @@ function capture(cmd: string[], cwd?: string): string {
     return p.exitCode === 0 ? p.stdout.toString().trim() : "";
 }
 
+/**
+ * `--run` names the run folder; the path of its run.json is accepted too. A folder that does not exist, or a path to
+ * any other file, is an error: the fallbacks in `loadRun` would quietly answer for the current checkout's repository
+ * (2026-10-14: `--run <dir>/run.json` made round-ready report GenesisTools #94, a closed PR, for GenesisPlayground #94).
+ */
+export function runPaths(given: string): { runDir: string; cardPath: string } {
+    const path = resolve(given);
+    if (basename(path) === "run.json") {
+        if (!existsSync(path)) {
+            throw new Error(`no run card at ${path}`);
+        }
+
+        return { runDir: dirname(path), cardPath: path };
+    }
+
+    if (!existsSync(path) || !statSync(path).isDirectory()) {
+        throw new Error(`run dir ${path} is not a folder: pass the folder that holds run.json`);
+    }
+
+    return { runDir: path, cardPath: join(path, "run.json") };
+}
+
 export function loadRun(dir = flag("--run") ?? process.env.BABYSIT_RUN): RunCard {
     if (!dir) {
         console.error("no run dir: pass --run <dir> or set BABYSIT_RUN");
         process.exit(2);
     }
 
-    const runDir = resolve(dir);
-    const cardPath = join(runDir, "run.json");
+    let paths: { runDir: string; cardPath: string };
+    try {
+        paths = runPaths(dir);
+    } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(2);
+    }
+
+    const { runDir, cardPath } = paths;
+    if (!existsSync(cardPath)) {
+        console.error(`no run.json in ${runDir}: the repo, checkout and vault come from the current checkout`);
+    }
+
     const card: Record<string, unknown> = existsSync(cardPath)
         ? (SafeJSON.parse(readFileSync(cardPath, "utf8")) as Record<string, unknown>)
         : {};
