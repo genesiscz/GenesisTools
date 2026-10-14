@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
+import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
 import { recordedSessionIdOf } from "@app/cmux/lib/session-close";
 import { fileSessionStore, type SessionCreatedRecord, type SessionRecordLine } from "@app/cmux/lib/session-store";
 import {
@@ -93,6 +95,22 @@ export async function resolveSessionTranscript(
         log.debug({ err, query, alias }, "no session id or path matched; trying titles");
     }
 
+    if (!resolved || resolved.source === "worker") {
+        const live = await liveAgentSurfacesNow().catch((error: unknown) => {
+            log.debug({ error }, "cmux unavailable during session resolution");
+            return [];
+        });
+        const hits = matchLiveAgentSurfaces(query, alias, live);
+        if (hits.length > 1 && !first) {
+            throw new Error(`"${query}" matches ${hits.length} running ${alias} sessions. Pass the session id or --first:\n${hits.map((hit) => `  ${hit.sessionId}  ${hit.surface.title ?? ""}  ${hit.surface.ref}`).join("\n")}`);
+        }
+
+        const hit = hits.sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0))[0];
+        if (hit) {
+            resolved = await resolveTranscript(hit.transcriptPath ?? hit.sessionId, {}, alias);
+        }
+    }
+
     // An 8+ character query also matches worker NAMES by substring, so a title can lose to a worker
     // that merely contains it. A native session with that title wins.
     if (!resolved || resolved.source === "worker") {
@@ -105,7 +123,7 @@ export async function resolveSessionTranscript(
 
     if (!resolved) {
         throw new NoSessionMatchError(
-            `No ${alias} session matches "${query}" (tried session id, path, /rename title and ${toolCommand("cmux agents")} name)`
+            `No ${alias} session matches "${query}" (tried session id, path, cmux surface title, /rename title and ${toolCommand("cmux agents")} name)`
         );
     }
 

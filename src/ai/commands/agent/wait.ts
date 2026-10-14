@@ -50,7 +50,7 @@ export interface WaitOptions {
     last?: string;
     /** Also list the tool calls of the turn that ended. */
     tools?: boolean;
-    /** Status line and exit code only; no message text. */
+    /** Suppress live progress, retaining final and explicitly requested output. */
     quiet?: boolean;
     /** Set by `message --wait`: a turn that ended after this instant (epoch ms) counts even if it ended before the wait began. */
     sentAt?: number;
@@ -659,7 +659,7 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
         .addHelpText(
             "after",
             `
-<session> is a session id (8+ characters is enough), a transcript path, or a /rename title.
+<session> is a session id (8+ characters is enough), a transcript path, a cmux surface title, or a /rename title.
 Without --json the final assistant message goes to stdout and one status line to stderr.
 An idle session returns at once. A turn that ended on a question for the user exits 0 too:
 read "asksQuestion" in --json and never answer a design question for the human.

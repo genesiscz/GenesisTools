@@ -1,4 +1,4 @@
-import { deliverMessage, deliveryLine, MessageError } from "@app/ai/lib/agent-message/delivery";
+import { deliverMessage, deliveryLine, MessageError, resolveSessionId } from "@app/ai/lib/agent-message/delivery";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { PeerPriority } from "@genesiscz/utils/claude/peer-message";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -13,6 +13,7 @@ import { baselineStartFor, parseWaitFlags, readTurnBaseline, UsageError, waitCom
  */
 
 interface MessageFlags {
+    dryRun?: boolean;
     priority?: string;
     first?: boolean;
     allowKeystrokes?: boolean;
@@ -71,6 +72,22 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
             process.exitCode = 2;
             return;
         }
+    }
+
+    if (flags.dryRun) {
+        try {
+            const sessionId = await resolveSessionId({ alias, query, first: flags.first === true });
+            if (flags.json) {
+                out.result({ agent: alias, sessionId, dryRun: true });
+            } else {
+                out.println(`Would send to ${alias} ${sessionId} (nothing sent)`);
+            }
+        } catch (error) {
+            out.error(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+        await out.flush();
+        return;
     }
 
     // Read before delivery: the turn that is current now (ended or running) must never count as the reply.
@@ -136,6 +153,7 @@ export function registerAgentMessageCommand(program: Command, alias: TurnProvide
         .description(
             `Send a message into a RUNNING ${alias} session through the agent's own channel, not by typing into its terminal`
         )
+        .option("--dry-run", "Resolve the session and show its id without sending anything")
         .option("--priority <now|next|later>", "Claude: when the session handles it (default: its own queue order)")
         .option("--first", "When a /rename title matches several sessions, take the newest instead of failing")
         .option(

@@ -337,6 +337,7 @@ export interface LiveAgentSurface {
     sessionId: string;
     /** Native transcript found without a journal record. */
     transcriptPath?: string;
+    lastSeenAt?: number;
     agent: SessionAgentId;
     surface: LiveSurface;
     cwd: string | null;
@@ -394,7 +395,7 @@ export function liveAgentSurfaces(input: {
         const agent = input.providerOf(entry);
 
         if (agent && isSessionAgentId(agent)) {
-            found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd, tmux });
+            found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd, tmux, lastSeenAt: entry.at });
         }
     }
 
@@ -426,6 +427,7 @@ export function liveAgentSurfaces(input: {
                     cwd: null,
                     tmux: joined ?? null,
                     transcriptPath: hits[0].locator,
+                    lastSeenAt: hits[0].mtime,
                 });
                 break;
             }
