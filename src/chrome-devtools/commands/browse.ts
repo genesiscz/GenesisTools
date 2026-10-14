@@ -1,8 +1,14 @@
-/** open / restart / targets — getting a CDP endpoint to exist, on any platform. */
+/** open / close / restart / targets: getting a CDP endpoint to exist, on any platform, and quitting it cleanly. */
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { browserVersion, makeMatcher, targets } from "../lib/cdp.ts";
-import { CdpLaunchError, launchCdpBrowser } from "../lib/launch.ts";
+import {
+    CdpLaunchError,
+    CLOSE_TIMEOUT_MS,
+    type CloseOnPortResult,
+    closeBrowserOnPort,
+    launchCdpBrowser,
+} from "../lib/launch.ts";
 import {
     BROWSER_APPS,
     BROWSERS,
@@ -67,6 +73,46 @@ interface OpenOpts {
  */
 export function persistentProfileHint(browser: string): string {
     return `~/.genesis-tools/chrome-devtools/${browser}/profile`;
+}
+
+/** Prints the outcome of `close` and returns its exit code. */
+function reportClose(port: number, result: CloseOnPortResult): number {
+    const noKill = "Do not kill it: a kill signal leaves its 1.4 GB app copy in /var/folders/<user>/X.";
+
+    switch (result.status) {
+        case "closed":
+            out.log.info(`closed: pid ${result.pid} on ${port} quit through Browser.close.`);
+            return 0;
+        case "nothing-listening":
+            out.log.error(`nothing listens on port ${port}.`);
+            out.log.info(`  see live ports: ${suggest(["attach"])}`);
+            return 1;
+        case "several-listeners":
+            out.log.error(
+                `${result.pids.length} processes listen on ${port} (pids ${result.pids.join(", ")}), one per address family. CDP reaches only one of them, so close refuses.`
+            );
+            out.log.info(`  see which is which: lsof -nP -iTCP:${port} -sTCP:LISTEN`);
+            return 1;
+        case "not-a-browser":
+            out.log.error(`pid ${result.pid} on ${port} is not a browser: ${truncate(result.command, 160)}`);
+            return 1;
+        case "main-profile":
+            out.log.error(
+                `pid ${result.pid} on ${port} runs on the user's own profile (no --user-data-dir). Closing it closes their windows.`
+            );
+            out.log.info(`  if the user agreed: ${suggest(["close", "--port", String(port), "--main-profile"])}`);
+            return 1;
+        case "unreachable":
+            out.log.error(`pid ${result.pid} listens on ${port} but does not answer CDP.`);
+            out.log.info(`  quit it from its own window (Cmd-Q). ${noKill}`);
+            return 1;
+        case "still-running":
+            out.log.warn(
+                `Browser.close sent, but pid ${result.pid} still runs ${Math.round(CLOSE_TIMEOUT_MS / 1000)} s later. A page may be asking to confirm leaving: answer it in the browser.`
+            );
+            out.log.info(`  ${noKill}`);
+            return 1;
+    }
 }
 
 export function registerBrowse(program: Command): void {
@@ -154,7 +200,28 @@ export function registerBrowse(program: Command): void {
             }
 
             out.log.info(`  next: ${suggest(["attach", "--port", String(port)])}`);
+
+            if (up) {
+                const isolated = opts.fresh === true || opts.extension !== undefined || opts.userDataDir !== undefined;
+                const close = ["close", "--port", String(port), ...(isolated ? [] : ["--main-profile"])];
+                out.log.info(`  done: ${suggest(close)} (never kill the pid: a kill leaves a 1.4 GB app copy behind)`);
+            }
+
             process.exit(up ? 0 : 1);
+        });
+
+    withPort(program.command("close"))
+        .description(
+            "quit the browser on this CDP port through Browser.close, so it deletes its 1.4 GB app copy on macOS (a kill signal leaves the copy in /var/folders/<user>/X). Never kills."
+        )
+        .option(
+            "--main-profile",
+            "also close a browser on the user's own profile (no --user-data-dir). Ask the user first: it closes their windows; session restore brings the tabs back"
+        )
+        .action(async (opts: { port?: string; mainProfile?: boolean }) => {
+            const port = portOf(opts);
+            const result = await closeBrowserOnPort({ port, allowMainProfile: opts.mainProfile === true });
+            process.exit(reportClose(port, result));
         });
 
     withPort(program.command("restart"))

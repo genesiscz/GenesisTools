@@ -110,6 +110,24 @@ flag. Three behaviours worth knowing:
 `--match <substr|/regex/>` to narrow it, `--all` to include workers/iframes/extension pages,
 `--json` for the raw `/json/list` entries. Useful on its own to find a tab id before `attach`.
 
+### `close`, the way back from `open`
+
+`close --port <n>` quits the browser on that port through `Browser.close` and waits up to
+10 s for its process to exit. It never kills. On macOS, Chrome and Brave copy their app bundle
+for every launch (`/var/folders/<user>/X/<bundle id>.code_sign_clone/`, about 1.4 GB) and delete
+the copy only on a clean quit, so a `kill <pid>` leaks 1.4 GB each time. It refuses:
+
+- a browser on the user's own profile (no `--user-data-dir`), unless `--main-profile`;
+- a port two processes listen on (one on 127.0.0.1, one on [::1]), since CDP reaches only one;
+- a listener that is not a browser (judged by its executable alone, not its arguments), and an
+  empty port.
+
+`open` prints the matching `close` line after it starts a browser. The library side is
+`closeBrowserOnPort` in `lib/launch.ts`; a browser this process spawned itself goes through
+`quitOwnedBrowser`, which sends `Browser.close` only when that browser is the one process
+listening on the port. It kills the browser in three cases: another process also listens on the
+port, the browser does not answer CDP, or `Browser.close` did not end it within 3 s.
+
 ### The buffer
 
 `/tmp/GenesisTools/ChromeDevtools/<port>/` — 30-minute jsonl segments, pruned past 4 h at
@@ -263,6 +281,7 @@ throwaway profile and a loopback fixture (no model, no network). Measured 2026-0
 - Do not `tail -f` segment files — use `follow`.
 - Do not `pkill -f chrome-devtools` — that can hit MCP servers and the CLI you are typing.
   `status` shows pids; `cleanup --kill` verifies before killing.
+- Do not `kill` a browser that `open` started — it leaks a 1.4 GB app copy on macOS. Use `close`.
 - Do not `cat`/`jq` a `.har` — `tools har-analyzer load` it.
 - A HAR of a login flow contains the plaintext password and live session tokens. `--sanitize`
   before it leaves the machine.

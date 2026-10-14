@@ -6,7 +6,15 @@ import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { redactBrowserText } from "./action-recording";
 import { targets } from "./cdp";
-import { defaultSpawnLogged, type LaunchCdpOpts, launchCdpBrowser, type SpawnLoggedFn } from "./launch";
+import {
+    CdpLaunchError,
+    defaultSpawnLogged,
+    type LaunchCdpOpts,
+    launchCdpBrowser,
+    type QuitDeps,
+    quitOwnedBrowser,
+    type SpawnLoggedFn,
+} from "./launch";
 import {
     BROWSERS,
     CDP_PORTS,
@@ -39,6 +47,8 @@ interface RecordingBrowserDependencies {
     freePort?: typeof findFreePort;
     spawnLogged?: SpawnLoggedFn;
     probe?: LaunchCdpOpts["probe"];
+    quit?: QuitDeps;
+    timeoutMs?: number;
 }
 export function recordingBrowsers(): RecordingBrowser[] {
     const installed = new Set(installedBrowsers());
@@ -97,18 +107,27 @@ export async function openRecordingBrowser(options: {
     await mkdir(directory, { recursive: true });
     const logPath = join(directory, "browser.log");
     let owned: ReturnType<SpawnLoggedFn> | undefined;
-    const cancelOwned = () => {
+    let quitting: Promise<unknown> = Promise.resolve();
+    const cancelOwned = (): Promise<unknown> => {
         if (owned) {
             const child = owned;
             owned = undefined;
-            try {
-                child.kill();
-            } catch (error) {
-                logger.debug({ error, pid: child.pid }, "recording browser already exited");
-            }
+            const kill = () => {
+                try {
+                    child.kill();
+                } catch (error) {
+                    logger.debug({ error, pid: child.pid }, "recording browser already exited");
+                }
+            };
+            quitting = quitOwnedBrowser({ port, pid: child.pid, kill, deps: dependencies.quit });
         }
+
+        return quitting;
     };
-    options.signal?.addEventListener("abort", cancelOwned, { once: true });
+    const onAbort = () => {
+        void cancelOwned();
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     try {
         options.signal?.throwIfAborted();
         const result = await launchCdpBrowser({
@@ -118,6 +137,8 @@ export async function openRecordingBrowser(options: {
             fresh: true,
             logPath,
             probe: dependencies.probe,
+            quit: dependencies.quit,
+            timeoutMs: dependencies.timeoutMs,
             spawnLogged: (command, output) => {
                 options.signal?.throwIfAborted();
                 owned = (dependencies.spawnLogged ?? defaultSpawnLogged)(command, output);
@@ -146,12 +167,15 @@ export async function openRecordingBrowser(options: {
         );
         return { ...result, pid: result.pid, userDataDir: result.userDataDir, browserId: options.browserId, logPath };
     } catch (error) {
-        cancelOwned();
+        if (error instanceof CdpLaunchError && error.childQuit) {
+            owned = undefined;
+        }
+        await cancelOwned();
         await rm(directory, { recursive: true, force: true }).catch((cleanupError) => {
             logger.debug({ error: cleanupError, directory }, "recording browser directory cleanup failed");
         });
         throw error;
     } finally {
-        options.signal?.removeEventListener("abort", cancelOwned);
+        options.signal?.removeEventListener("abort", onAbort);
     }
 }

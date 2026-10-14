@@ -10,11 +10,47 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
     CdpLaunchError,
     COLD_PROFILE_TIMEOUT_MS,
+    closeBrowserOnPort,
     DEFAULT_LAUNCH_TIMEOUT_MS,
     launchArgs,
     launchCdpBrowser,
+    type QuitDeps,
+    quitOwnedBrowser,
 } from "./launch.ts";
+import type { ExecFn } from "./platform.ts";
 import { openRecordingBrowser } from "./recording-browser";
+
+/** An `lsof -nP -iTCP -sTCP:LISTEN` row for `pid` on `port`. */
+const listener = (pid: number, address = "127.0.0.1", port = 9333) =>
+    `Google ${pid} work 50u IPv4 0x1 0t0 TCP ${address}:${port} (LISTEN)`;
+
+/**
+ * A fake machine: these listener rows for `lsof`, these `pid ppid command` rows for `ps`. `ps -o comm= -p <pid>`
+ * answers the row's executable, which these rows keep before their first ` --` flag.
+ */
+function machine(listeners: string[], processes: string[]): ExecFn {
+    return (argv) => {
+        const pidAt = argv.indexOf("-p");
+
+        if (argv[0] === "ps" && pidAt !== -1) {
+            const row = processes.find((r) => r.trim().split(/\s+/)[0] === argv[pidAt + 1]);
+            const executable = row?.replace(/^\s*\d+\s+\d+\s+/, "").split(" --")[0];
+
+            return { exitCode: executable ? 0 : 1, stdout: executable ?? "", stderr: "" };
+        }
+
+        return { exitCode: 0, stdout: (argv[0] === "lsof" ? listeners : processes).join("\n"), stderr: "" };
+    };
+}
+
+/** A quit path must never reach a real browser: one listens on 9222 on a developer's Mac. */
+const noBrowser: QuitDeps = {
+    connect: async () => {
+        throw new Error("no browser in tests");
+    },
+    exec: machine([], []),
+    platform: "darwin",
+};
 
 describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", () => {
     test("a plain launch carries the debug port and NO --user-data-dir (the real profile)", () => {
@@ -177,10 +213,12 @@ describe("launchCdpBrowser", () => {
             probe: deadProbe,
             waitFor: neverUp,
             readLog: async () => "[0903/101500] ERROR: could not load extension\n",
+            quit: noBrowser,
         }).catch((e: unknown) => e);
         expect(killed).toBe(true);
         expect(err).toBeInstanceOf(CdpLaunchError);
         expect((err as CdpLaunchError).stage).toBe("timeout");
+        expect((err as CdpLaunchError).childQuit).toBe(true);
         expect((err as CdpLaunchError).logTail).toContain("could not load extension");
         expect((err as CdpLaunchError).message).toContain("could not load extension");
     });
@@ -195,6 +233,7 @@ describe("launchCdpBrowser", () => {
             readLog: async () => {
                 throw new Error("ENOENT");
             },
+            quit: noBrowser,
         }).catch((e: unknown) => e);
         expect((err as CdpLaunchError).logTail).toBe("(log unreadable)");
     });
@@ -354,9 +393,32 @@ describe("separate recording browser onboarding", () => {
                     controller.abort();
                     return null;
                 },
+                quit: noBrowser,
             },
         });
         await expect(pending).rejects.toThrow();
+        expect(killed).toBe(1);
+    });
+    test("a readiness timeout quits the owned browser once: the cleanup does not quit it again", async () => {
+        let killed = 0;
+        const err = await openRecordingBrowser({
+            browserId: "chrome",
+            dependencies: {
+                installed,
+                freePort: async () => 45678,
+                timeoutMs: 0,
+                probe: async () => null,
+                spawnLogged: () => ({
+                    pid: 4242,
+                    kill: () => {
+                        killed++;
+                    },
+                }),
+                quit: noBrowser,
+            },
+        }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(CdpLaunchError);
+        expect((err as CdpLaunchError).stage).toBe("timeout");
         expect(killed).toBe(1);
     });
     test("spawn refusal reaches the caller without starting a replacement browser", async () => {
@@ -377,6 +439,289 @@ describe("separate recording browser onboarding", () => {
         ).rejects.toThrow("fixture spawn refused");
         expect(attempted).toBe(1);
         expect(await readdir(toolDataDir("chrome-devtools", "recording-browsers"))).toEqual([]);
+    });
+});
+
+describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
+    function fakeBrowser(onClose: () => void) {
+        const sent: string[] = [];
+        const connect: QuitDeps["connect"] = async () => ({
+            send: async (method: string) => {
+                sent.push(method);
+                onClose();
+                return {};
+            },
+            close: () => {},
+        });
+
+        return { sent, connect };
+    }
+
+    function fakeClock(): Pick<QuitDeps, "now" | "sleep"> {
+        let t = 0;
+
+        return {
+            now: () => t,
+            sleep: async (ms: number) => {
+                t += ms;
+            },
+        };
+    }
+
+    const killLeaks = () => {
+        throw new Error("kill reached: it leaves the app copy behind");
+    };
+
+    /** The machine where `pid` is the one process listening on 9333. */
+    const ownedBy = (pid: number): Pick<QuitDeps, "exec" | "platform"> => ({
+        exec: machine([listener(pid)], []),
+        platform: "darwin",
+    });
+
+    test("a browser that exits after Browser.close is never killed", async () => {
+        let running = true;
+        const browser = fakeBrowser(() => {
+            running = false;
+        });
+        const result = await quitOwnedBrowser({
+            port: 9333,
+            pid: 4242,
+            kill: killLeaks,
+            deps: { connect: browser.connect, alive: () => running, ...fakeClock(), ...ownedBy(4242) },
+        });
+        expect(result).toBe("closed");
+        expect(browser.sent).toEqual(["Browser.close"]);
+    });
+
+    test("a browser still running after the deadline is killed", async () => {
+        let killed = 0;
+        const browser = fakeBrowser(() => {});
+        const result = await quitOwnedBrowser({
+            port: 9333,
+            pid: 4242,
+            kill: () => {
+                killed++;
+            },
+            deps: { connect: browser.connect, alive: () => true, ...fakeClock(), ...ownedBy(4242) },
+        });
+        expect(result).toBe("killed");
+        expect(browser.sent).toEqual(["Browser.close"]);
+        expect(killed).toBe(1);
+    });
+
+    test("a port another browser also listens on never gets Browser.close; the owned child is killed", async () => {
+        for (const listeners of [[listener(5353)], [listener(4242), listener(5353, "[::1]")]]) {
+            let killed = 0;
+            const browser = fakeBrowser(() => {});
+            const result = await quitOwnedBrowser({
+                port: 9333,
+                pid: 4242,
+                kill: () => {
+                    killed++;
+                },
+                deps: { connect: browser.connect, exec: machine(listeners, []), platform: "darwin", ...fakeClock() },
+            });
+            expect(result).toBe("killed");
+            expect(browser.sent).toEqual([]);
+            expect(killed).toBe(1);
+        }
+    });
+
+    test("a browser that never answered CDP is killed without waiting", async () => {
+        let killed = 0;
+        const result = await quitOwnedBrowser({
+            port: 9333,
+            pid: 4242,
+            kill: () => {
+                killed++;
+            },
+            deps: {
+                ...noBrowser,
+                ...ownedBy(4242),
+                alive: () => {
+                    throw new Error("waited on a browser that cannot be asked to quit");
+                },
+            },
+        });
+        expect(result).toBe("killed");
+        expect(killed).toBe(1);
+    });
+
+    test("the child's own exit decides, because an unreaped child still answers a pid probe", async () => {
+        const browser = fakeBrowser(() => {});
+        const result = await quitOwnedBrowser({
+            port: 9333,
+            pid: 4242,
+            kill: killLeaks,
+            exited: Promise.resolve(0),
+            deps: {
+                connect: browser.connect,
+                alive: () => {
+                    throw new Error("probed the pid although the exit promise was given");
+                },
+                sleep: () => new Promise(() => {}),
+                ...ownedBy(4242),
+            },
+        });
+        expect(result).toBe("closed");
+    });
+
+    test("a launch that timed out but answers CDP by now quits through Browser.close", async () => {
+        let running = true;
+        const browser = fakeBrowser(() => {
+            running = false;
+        });
+        const err = await launchCdpBrowser({
+            port: 9333,
+            logPath: "/tmp/profile.log",
+            spawnLogged: () => ({ pid: 7, kill: killLeaks }),
+            probe: deadProbe,
+            waitFor: neverUp,
+            readLog: async () => "",
+            quit: { connect: browser.connect, alive: () => running, ...fakeClock(), ...ownedBy(7) },
+        }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(CdpLaunchError);
+        expect(browser.sent).toEqual(["Browser.close"]);
+    });
+
+    describe("closeBrowserOnPort", () => {
+        const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+        const throwaway = machine(
+            [listener(4242)],
+            [`4242 1 ${chrome} --remote-debugging-port=9333 --user-data-dir=/tmp/cdp-profile-9333-a about:blank`]
+        );
+        const ownProfile = machine([listener(4242)], [`4242 1 ${chrome} --remote-debugging-port=9333 about:blank`]);
+
+        test("closes a throwaway-profile browser and waits for its exit", async () => {
+            let running = true;
+            const browser = fakeBrowser(() => {
+                running = false;
+            });
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: throwaway,
+                    platform: "darwin",
+                    connect: browser.connect,
+                    alive: () => running,
+                    ...fakeClock(),
+                },
+            });
+            expect(result).toEqual({ status: "closed", pid: 4242 });
+            expect(browser.sent).toEqual(["Browser.close"]);
+        });
+
+        test("the profile flag counts only as an argument of its own, never as text inside a URL", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: machine(
+                        [listener(4242)],
+                        [`4242 1 ${chrome} --remote-debugging-port=9333 https://example.com/?--user-data-dir=x`]
+                    ),
+                    platform: "darwin",
+                    connect: browser.connect,
+                },
+            });
+            expect(result).toMatchObject({ status: "main-profile", pid: 4242 });
+            expect(browser.sent).toEqual([]);
+        });
+
+        test("reports a browser still running at the deadline and never kills it", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: throwaway,
+                    platform: "darwin",
+                    connect: browser.connect,
+                    alive: () => true,
+                    ...fakeClock(),
+                },
+            });
+            expect(result).toEqual({ status: "still-running", pid: 4242 });
+        });
+
+        test("the user's own profile needs allowMainProfile", async () => {
+            const refused = fakeBrowser(() => {});
+            expect(
+                await closeBrowserOnPort({
+                    port: 9333,
+                    deps: { exec: ownProfile, platform: "darwin", connect: refused.connect },
+                })
+            ).toMatchObject({ status: "main-profile", pid: 4242 });
+            expect(refused.sent).toEqual([]);
+
+            let running = true;
+            const allowed = fakeBrowser(() => {
+                running = false;
+            });
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                allowMainProfile: true,
+                deps: {
+                    exec: ownProfile,
+                    platform: "darwin",
+                    connect: allowed.connect,
+                    alive: () => running,
+                    ...fakeClock(),
+                },
+            });
+            expect(result).toEqual({ status: "closed", pid: 4242 });
+        });
+
+        test("refuses a port that two processes listen on, since CDP reaches only one", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: machine([listener(4242), listener(5353, "[::1]")], []),
+                    platform: "darwin",
+                    connect: browser.connect,
+                },
+            });
+            expect(result).toEqual({ status: "several-listeners", pids: [4242, 5353] });
+            expect(browser.sent).toEqual([]);
+        });
+
+        test("reports an empty port and a listener that is not a browser", async () => {
+            const browser = fakeBrowser(() => {});
+            expect(
+                await closeBrowserOnPort({
+                    port: 9333,
+                    deps: { exec: machine([], []), platform: "darwin", connect: browser.connect },
+                })
+            ).toEqual({ status: "nothing-listening" });
+            expect(
+                await closeBrowserOnPort({
+                    port: 9333,
+                    deps: {
+                        exec: machine([listener(4242)], ["4242 1 node server.js --port 9333"]),
+                        platform: "darwin",
+                        connect: browser.connect,
+                    },
+                })
+            ).toMatchObject({ status: "not-a-browser", pid: 4242 });
+            expect(browser.sent).toEqual([]);
+        });
+
+        test("only the executable counts: a process whose arguments name a browser is not one", async () => {
+            const browser = fakeBrowser(() => {});
+            const result = await closeBrowserOnPort({
+                port: 9333,
+                deps: {
+                    exec: machine(
+                        [listener(4242)],
+                        [`4242 1 /usr/local/bin/cdp-proxy --target=${chrome} --user-data-dir=/tmp/cdp-profile-9333-a`]
+                    ),
+                    platform: "darwin",
+                    connect: browser.connect,
+                },
+            });
+            expect(result).toMatchObject({ status: "not-a-browser", pid: 4242 });
+            expect(browser.sent).toEqual([]);
+        });
     });
 });
 

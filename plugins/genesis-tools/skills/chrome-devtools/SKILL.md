@@ -30,7 +30,17 @@ tools chrome-devtools restart --browser brave --port 9222
 
 # B) throwaway profile alongside their browser — nothing of theirs touched, but they must log in again
 tools chrome-devtools open --browser chrome --port 9223 --fresh <url>
+
+# when you are done with a browser that `open` started
+tools chrome-devtools close --port 9223
 ```
+
+🛑 **Never `kill <pid>` a browser you started.** macOS Chrome and Brave copy their app bundle
+for every launch (`/var/folders/<user>/X/<bundle id>.code_sign_clone/`, about 1.4 GB) and delete
+the copy only when they quit on their own. A kill signal leaves it: one session on 2026-10-09
+left three copies that way, and 102 of them filled the disk on 2026-10-08. `close` quits through
+`Browser.close`, waits for the process to exit, and never kills. It refuses a browser on the
+user's own profile unless `--main-profile` is given, so ask the user first for that one.
 
 ### 🛑 A slow quit is NOT a failed quit
 
@@ -207,6 +217,7 @@ regex picks the shorter one.
 | `record`/`follow`/`trace` piped to `head`, `tail`, or anything that closes stdout | long-running; the pid and paths print FIRST | run_in_background + `--out` + Monitor |
 | `tail -f` on `/tmp/GenesisTools/ChromeDevtools/<port>/seg-*.jsonl` | segments rotate every 30 min; your fd goes silently quiet and you conclude "no traffic" | `tools chrome-devtools follow` |
 | `pkill -f chrome-devtools` | kills MCP servers and the CLI you are typing | `status` then `cleanup --kill <pid>` |
+| `kill <pid>` of a browser that `open` started | leaves its 1.4 GB app copy in `/var/folders/<user>/X` on macOS | `tools chrome-devtools close --port <n>` |
 | `rm` capture dirs or the leftover buffer | that IS the retroactive HAR | `cleanup` (moves to trash), after dumping |
 | `cat`/`jq` a `.har` | token bonfire | `tools har-analyzer load x.har` |
 
