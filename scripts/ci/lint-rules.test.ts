@@ -301,6 +301,10 @@ describe("no-process-tool-spawn", () => {
         expect(text).toContain('    "src/a.ts": 1,\n    "src/b.ts": 2,\n};');
         expect(text).not.toContain("gone");
         expect(text).toContain("export const PROCESS_TOOL_SPAWN_BASELINE");
+        // Every spawn migrated: one line, as biome formats an empty object, so the pre-push check accepts it.
+        expect(renderProcessToolBaseline(new Map([["src/gone.ts", 0]]))).toContain(
+            "PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {};\n"
+        );
     });
 });
 

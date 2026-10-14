@@ -890,7 +890,9 @@ export function renderProcessToolBaseline(counts: ReadonlyMap<string, number>): 
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([file, count]) => `    "${file}": ${count},`);
 
-    return `${PROCESS_TOOL_BASELINE_HEADER}\nexport const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {\n${lines.join("\n")}\n};\n`;
+    // An empty object on one line, as biome formats it: the baseline is empty once every spawn is migrated.
+    const body = lines.length === 0 ? "{}" : `{\n${lines.join("\n")}\n}`;
+    return `${PROCESS_TOOL_BASELINE_HEADER}\nexport const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = ${body};\n`;
 }
 
 /** Rewrites the baseline from the live findings. Returns the exit code: 1 when a count would rise. */

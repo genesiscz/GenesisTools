@@ -5,6 +5,4 @@
  * When you move a call site to `@genesiscz/utils/process`, run `bun scripts/ci/lint-rules.ts --update-process-baseline`,
  * which lowers the counts and refuses to raise one.
  */
-export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
-
-};
+export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {};
