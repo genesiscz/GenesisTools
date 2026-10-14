@@ -42,6 +42,10 @@ describe("listAnthropicSubProxyModels", () => {
         expect(byAlias.opus).toBe(1_000_000);
         expect(byAlias.fable).toBe(1_000_000);
         expect(byAlias.haiku).toBe(1_000_000);
+        const haikuAlias = models.find((model) => model.upstreamId === "haiku");
+        const haikuTarget = byProvider("anthropic").find((model) => model.id === "claude-haiku-5-5");
+        expect(haikuAlias?.thinking).toBe("reasoning");
+        expect(haikuAlias?.thinking).toBe(haikuTarget?.thinking);
 
         for (const alias of ANTHROPIC_SUB_ALIASES) {
             expect(models.some((model) => model.upstreamId === alias)).toBe(true);

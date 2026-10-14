@@ -88,6 +88,12 @@ export function resolveModelSpec(spec: string): ModelResolution {
         return { kind: "exact", model: aliasedLaunchable };
     }
 
+    // A resume names the model its session ran on, and a model released after the catalog's last
+    // update must not make that resume fail; claude itself reports an id it does not serve.
+    if (FULL_CLAUDE_ID.test(trimmed)) {
+        return { kind: "passthrough", id: trimmed };
+    }
+
     const tokens = normalize(trimmed)
         .split(/[\s,]+/)
         .filter(Boolean);
@@ -106,12 +112,6 @@ export function resolveModelSpec(spec: string): ModelResolution {
 
     if (candidates.length > 1) {
         return { kind: "ambiguous", candidates };
-    }
-
-    // A resume names the model its session ran on, and a model released after the catalog's last
-    // update must not make that resume fail; claude itself reports an id it does not serve.
-    if (FULL_CLAUDE_ID.test(trimmed)) {
-        return { kind: "passthrough", id: trimmed };
     }
 
     return { kind: "none" };

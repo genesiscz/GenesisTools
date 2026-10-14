@@ -234,6 +234,44 @@ describe("openAiChatToAnthropicMessages", () => {
             expect(forced.tool_choice).toEqual({ type: "any" });
         });
 
+        it("keeps Haiku 5.5 required and named tools when reasoning is also requested", () => {
+            for (const tool_choice of ["required", { type: "function", function: { name: "search" } }]) {
+                const body = openAiChatToAnthropicMessages(
+                    {
+                        messages: [{ role: "user", content: "go" }],
+                        tools: searchTool,
+                        tool_choice,
+                        reasoning_effort: "xhigh",
+                    },
+                    { model: "claude-haiku-5-5" }
+                );
+
+                expect(body.tool_choice).toEqual(
+                    tool_choice === "required" ? { type: "any" } : { type: "tool", name: "search" }
+                );
+                expect(body.thinking).toBeUndefined();
+                expect(body.output_config).toBeUndefined();
+            }
+        });
+
+        it("keeps Haiku 5.5 reasoning with auto or none tool choice", () => {
+            for (const tool_choice of ["auto", "none"] as const) {
+                const body = openAiChatToAnthropicMessages(
+                    {
+                        messages: [{ role: "user", content: "go" }],
+                        tools: searchTool,
+                        tool_choice,
+                        reasoning_effort: "xhigh",
+                    },
+                    { model: "claude-haiku-5-5" }
+                );
+
+                expect(body.tool_choice).toEqual({ type: tool_choice });
+                expect(body.thinking).toEqual({ type: "adaptive" });
+                expect(body.output_config).toEqual({ effort: "xhigh" });
+            }
+        });
+
         it("keeps a forced tool choice on Opus 5, which still accepts it", () => {
             const body = openAiChatToAnthropicMessages(
                 { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice: "required" },

@@ -57,16 +57,16 @@ const SONNET_4_PRICING: ModelPricing = {
 };
 
 /**
- * Sonnet 4.5 is the one model here that surcharges long context: its 1M window
- * was a beta bolted onto a 200K model, and requests past 200K bill at double.
+ * Sonnet 4.5 surcharges long context: its 1M window was a beta bolted onto a 200K model,
+ * and requests past 200K bill at double.
  *
- * Nothing newer carries this. Anthropic's pricing page is explicit that "Claude
+ * Its tiers must not be copied onto other models. Anthropic's pricing page says "Claude
  * 4.6 and later models include the full 1M token context window at standard
  * pricing (a 900k-token request is billed at the same per-token rate as a
- * 9k-token request)", and LiteLLM prices them the same way — so copying these
- * tiers onto Sonnet 4.6 or the 5 family would invent a 2x surcharge that the
- * vendor does not charge. Verified against docs.claude.com/en/docs/about-claude/pricing
- * and the LiteLLM feed on 2026-07-29.
+ * 9k-token request)", and LiteLLM prices them the same way (verified against
+ * docs.claude.com/en/docs/about-claude/pricing and the LiteLLM feed on 2026-07-29).
+ * The one later exception is Haiku 5.5, whose own page bills every rate at 5x past
+ * 100,000 tokens; its band is declared on its entry below, from that page.
  */
 const SONNET_4_5_PRICING: ModelPricing = {
     ...SONNET_4_PRICING,

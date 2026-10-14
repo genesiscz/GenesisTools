@@ -63,6 +63,20 @@ describe("resolveModelSpec", () => {
         expect(resolveModelSpec("sonet").kind).toBe("none");
     });
 
+    test.each(["claude-haiku-5", "claude-opus-4"])(
+        "preserves the unknown full id %s even when it prefixes catalog ids",
+        (id) => {
+            expect(resolveModelSpec(id)).toEqual({ kind: "passthrough", id });
+            expect(resolveModelSpec(`  ${id}  `)).toEqual({ kind: "passthrough", id });
+        }
+    );
+
+    test("the Haiku alias and short filters still resolve to catalog entries", () => {
+        for (const spec of ["haiku", "haiku 5.5", "claude-haiku-5-5"]) {
+            expect(resolveModelSpec(spec)).toMatchObject({ kind: "exact", model: { id: "claude-haiku-5-5" } });
+        }
+    });
+
     test("a full claude id the catalog does not know yet passes through, so a resume keeps its model", () => {
         expect(resolveModelSpec("claude-haiku-6-0")).toEqual({ kind: "passthrough", id: "claude-haiku-6-0" });
         expect(resolveModelSpec("claude-opus-6-0[1m]")).toEqual({ kind: "passthrough", id: "claude-opus-6-0[1m]" });

@@ -477,8 +477,19 @@ export function openAiChatToAnthropicMessages(
     if (tools) {
         result.tools = tools;
 
-        // Thinking (adaptive or budget) accepts only `auto` / `none`, so a request this function
-        // turned thinking on for loses the forcing the same way Opus 5.5 always does.
+        // Haiku's adaptive models accept forcing by calling the tool without thinking first.
+        const requestedChoice = mapOpenAiToolChoice(body.tool_choice);
+        if (
+            options.model.startsWith("claude-haiku-") &&
+            rules.thinking === "adaptive" &&
+            rules.forcedToolChoice &&
+            (requestedChoice?.type === "any" || requestedChoice?.type === "tool")
+        ) {
+            delete result.thinking;
+            delete result.output_config;
+        }
+
+        // Other models cannot combine thinking with a forced choice.
         const toolChoice = mapToolChoice(body.tool_choice, rules.forcedToolChoice && result.thinking === undefined);
 
         if (toolChoice) {

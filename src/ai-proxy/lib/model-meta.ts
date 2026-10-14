@@ -19,6 +19,7 @@ import {
     tryFetchAnthropicSubModels,
 } from "@genesiscz/utils/ai/anthropic/models";
 import {
+    byId,
     byProvider,
     DEFAULT_OPENROUTER_EXCLUDE,
     DEFAULT_OPENROUTER_INCLUDE,
@@ -294,7 +295,7 @@ export async function listAnthropicSubProxyModels(
 
         return {
             ...shared(alias),
-            thinking: (alias === "haiku" ? "none" : "reasoning") as ProxyModelMeta["thinking"],
+            thinking: byId(concrete, "anthropic")?.thinking === "none" ? "none" : "reasoning",
             contextWindow: inferAnthropicContextWindow(concrete),
             description: `Claude ${alias} via subscription (${concrete})`,
         };
