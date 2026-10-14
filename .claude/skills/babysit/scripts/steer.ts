@@ -6,6 +6,7 @@
  *   bun steer.ts --run <dir> --worker <name> --file <prompt.md> [--model m] [--pr N] [--round N]
  */
 import { readFileSync } from "node:fs";
+import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { appendEvent } from "./ledger";
 import { flag, loadRun } from "./run";
 
@@ -30,7 +31,9 @@ appendEvent(run.dir, {
     ...round,
     text: readFileSync(file, "utf8"),
 });
-const p = Bun.spawnSync(["./tools", "codex", "steer", "--name", worker, "--prompt-file", file], {
+// This checkout's own `tools`, by absolute path: a run card for another repository (GenesisPlayground) has no `./tools`
+// in its main checkout, and the steer was logged but never delivered (2026-10-14, #94).
+const p = Bun.spawnSync([toolsEntrypoint(), "codex", "steer", "--name", worker, "--prompt-file", file], {
     cwd: run.main,
     stdout: "pipe",
     stderr: "pipe",

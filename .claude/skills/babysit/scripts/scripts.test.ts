@@ -253,6 +253,12 @@ test("babysit control scripts use checkout-local executors", () => {
     expect(approval).toContain("exec = execTool");
     expect(watch).not.toContain('["tools"');
     expect(watch).toContain("toolsEntrypoint()");
+    // A run card for another repository points run.main at a checkout with no ./tools (2026-10-14, GenesisPlayground).
+    for (const name of ["steer.ts", "wait-turn.ts"]) {
+        const source = fs.readFileSync(join(import.meta.dir, name), "utf8");
+        expect(source).not.toContain('"./tools"');
+        expect(source).toContain("toolsEntrypoint()");
+    }
     expect(toolsEntrypoint()).toBe(join(import.meta.dir, "../../../../tools"));
 });
 
