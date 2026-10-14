@@ -241,6 +241,24 @@ session's branch waits for that branch). Then the review-loop landing recipe:
    retargets dependents.
 4. Log a `note` event with the merge SHA, and list every PR that did not land with its reason in the report.
 
+## 7c. Disk: watch it, reclaim /tmp safely
+
+A night of worktrees, Swift builds and test runs fills a disk. Start `bun .claude/skills/babysit/scripts/df-watch.ts
+--below-gb 5` with Bash `run_in_background` at the start of a run: it exits (and wakes you) only when free space drops
+below the threshold. Then, and only with the user's standing permission for /tmp cleanup:
+
+1. `bun .claude/skills/babysit/scripts/tmp-reclaim.ts --run <dir>` (dry run): lists the candidates in /tmp, $TMPDIR and
+   each `/tmp/cc/<project>/<session>` folder, writes a plan file, deletes nothing. It skips live sessions (any agent
+   transcript changed in the last 12 h, the run folder, `--protect`), system and daemon entries, anything holding a
+   socket, a FIFO or a `.git`, open files (it stops if lsof gives no listing), anything changed in the last 6 h,
+   symlinks, other users' and other devices' entries.
+2. Read the list. Then `--apply --plan <file>` within 30 minutes: only the planned entries, each re-checked (same
+   inode, still old, still closed), moved into a scratch folder in the same root and deleted there. The result is a
+   `note` in the run ledger.
+
+Never delete a worktree this way (it refuses `.git` anyway): worktrees go through step 8's release. Machine caches
+outside /tmp (uv, SwiftPM, a repo's `.build`) are a separate, user-approved decision, not this script's.
+
 ## 8. Clean up after every round, automatically
 
 Do not wait to be asked. When a round's pushes and unified picks are done:
