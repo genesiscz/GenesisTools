@@ -176,12 +176,13 @@ Do not wait to be asked. When a round's pushes and unified picks are done:
 - `tools codex stop --name <name>` for each Codex worker; a Grok worker ends with its turn.
 - `tools agents leave --agent-name lead --session <s> --note "done: …"`, then stop the three Monitors.
 - Remove every worker and scratch worktree: `git -C <wt> status --short` must be empty and its commits must be on a
-  remote branch. Then `git worktree remove <wt>`. Never `git worktree unlock` and never `remove -f -f`
-  (`.claude/rules/plugins.md`). A worktree that a session names in a command gets that session's lock, and the lock
-  goes at SessionEnd. So when git refuses because of a lock, run
-  `bun plugins/genesis-tools/hooks/worktree-lock.ts stale <repo> --clear` (it unlocks only dead or reused-pid
-  locks: a finished worker's), try once more, and list any worktree still locked in the report with its lock reason.
-  A lock that names this session goes when this session ends.
+  remote branch. Never `git worktree unlock` and never `remove -f -f` (`.claude/rules/plugins.md`). First clear the
+  finished workers' locks: `bun plugins/genesis-tools/hooks/worktree-lock.ts stale <repo> --clear` (only dead or
+  reused-pid locks). Then remove each worktree with
+  `bun plugins/genesis-tools/hooks/worktree-lock.ts release <wt> --session <this session id>`: a worktree you named
+  in a command carries this session's lock, and `release` unlocks and removes it in one step (a separate unlock would
+  be re-locked by the next command that names the path), never forced, and it keeps the lock when git refuses.
+  List any worktree still present in the report with its lock reason.
 - Scratch stays in `/tmp/cc/<project>/<session>/babysit/` (briefs, logs, run card) for the report.
 
 ## 9. Report
