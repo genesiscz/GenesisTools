@@ -13,6 +13,7 @@
 // `suggestion` is the caller's command corrected, offered, never applied.
 
 import { type ShellScan, scanShell } from "../scan";
+import { biomeRules } from "./biome";
 import { destructiveRules } from "./destructive";
 import { devnullRules } from "./devnull";
 import { findRules } from "./find";
@@ -36,6 +37,7 @@ export const SHELL_RULES: readonly ShellRule[] = [
     ...zshRules,
     ...swiftpmRules,
     ...destructiveRules,
+    ...biomeRules,
 ];
 
 export function ruleById(id: string): ShellRule | undefined {
