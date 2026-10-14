@@ -422,6 +422,20 @@ function launcherRes(): Launchers {
 
 const GROK_LAUNCHER = /^grok(?![\w-])/;
 const CODEX_LAUNCHER = /^codex(?![\w-])/;
+/** `tools <agent> run|start`: the GenesisTools wrapper, which takes an account and passes native args after `--`. */
+const TOOLS_RUN_LAUNCHER = /^tools (cc|claude|codex|grok) (?:run|start)(?![\w-])/;
+
+/** The wrapper's agent and where its launcher words end; a cc-run alias (`cr`) is a Claude wrapper too. */
+function toolsRunLauncher(command: string): { kind: AccountProviderAlias; end: number } | undefined {
+    const tools = TOOLS_RUN_LAUNCHER.exec(command);
+
+    if (tools) {
+        return { kind: tools[1] === "cc" ? "claude" : (tools[1] as AccountProviderAlias), end: tools[0].length };
+    }
+
+    const alias = launcherRes().ccRun.exec(command);
+    return alias ? { kind: "claude", end: alias[0].length } : undefined;
+}
 
 function isSimpleAgentCommand(command: string): boolean {
     let quote: string | undefined;
@@ -455,7 +469,10 @@ export function isAgentLauncher(command: string): boolean {
 
     return (
         isSimpleAgentCommand(command) &&
-        (launcherRes().claude.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed))
+        (TOOLS_RUN_LAUNCHER.test(trimmed) ||
+            launcherRes().claude.test(trimmed) ||
+            GROK_LAUNCHER.test(trimmed) ||
+            CODEX_LAUNCHER.test(trimmed))
     );
 }
 
@@ -535,6 +552,10 @@ export function journalReplayCommand(
 
 export function agentKindFromLauncher(command: string): AccountProviderAlias | undefined {
     const trimmed = command.trim();
+    const wrapper = toolsRunLauncher(trimmed);
+    if (wrapper) {
+        return wrapper.kind;
+    }
     if (GROK_LAUNCHER.test(trimmed)) {
         return "grok";
     }
@@ -806,6 +827,18 @@ export function deriveReplayCommand(input: {
         return { command: input.original, drift: [] };
     }
 
+    const wrapper = toolsRunLauncher(original);
+
+    if (wrapper) {
+        return replaceToolsRunResume({
+            original,
+            kind: wrapper.kind,
+            launcherEnd: wrapper.end,
+            sessionId: input.sessionId,
+            pinnedAccount: input.account,
+        });
+    }
+
     if (GROK_LAUNCHER.test(original)) {
         return replaceGrokResume(original, input.sessionId);
     }
@@ -818,13 +851,9 @@ export function deriveReplayCommand(input: {
         return { command: original, drift: [] };
     }
 
-    if (!launcherRes().ccRun.test(original)) {
-        // Bare `claude …` launchers keep their command verbatim (rebuilding as
-        // `tools cc run` would drop options and change the launcher the user ran).
-        return replaceResumeInPlace(original, input.sessionId);
-    }
-
-    return replaceCcRunResume(original, input.sessionId, input.account);
+    // Bare `claude …` launchers keep their command verbatim (rebuilding as
+    // `tools cc run` would drop options and change the launcher the user ran).
+    return replaceResumeInPlace(original, input.sessionId);
 }
 
 /**
@@ -843,6 +872,15 @@ export function resumeTargetFromCommand(command: string): string | undefined {
         return undefined;
     }
 
+    // A wrapper's own `--resume` takes a search query that can prompt, so only the native target after `--` names
+    // a session id.
+    if (toolsRunLauncher(original)) {
+        const separator = passthroughStart(original);
+        const native = separator === undefined ? undefined : nativeResumeAfter(original, kind, separator);
+
+        return native?.value?.replace(/"/g, "");
+    }
+
     if (kind === "codex") {
         const tokens = tokenizeCommand(original);
 
@@ -857,21 +895,7 @@ export function resumeTargetFromCommand(command: string): string | undefined {
 
     const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
 
-    if (!match?.value) {
-        return undefined;
-    }
-
-    // cc run's OWN `--resume` takes a search query that can prompt, so only the
-    // pass-through flag after `--` names a session id.
-    if (launcherRes().ccRun.test(original)) {
-        const separator = passthroughStart(original);
-
-        if (separator === undefined || match.start < separator) {
-            return undefined;
-        }
-    }
-
-    return match.value.replace(/"/g, "");
+    return match?.value?.replace(/"/g, "");
 }
 
 /**
@@ -929,26 +953,72 @@ function passthroughStart(command: string): number | undefined {
     return separator?.end;
 }
 
+/** How each agent's own binary reads a resume target, after a wrapper's `--`. */
+const NATIVE_RESUME: Record<AccountProviderAlias, { flags: readonly string[]; render: (sessionId: string) => string }> =
+    {
+        claude: { flags: ["--resume"], render: (sessionId) => `--resume ${sessionId}` },
+        grok: { flags: ["-r", "--resume"], render: (sessionId) => `-r ${sessionId}` },
+        codex: { flags: [], render: (sessionId) => `resume ${sessionId}` },
+    };
+
+/** A wrapper's own resume flag, before `--`: it runs a search that can prompt, so it is never a replay target. */
+const WRAPPER_RESUME_FLAGS = ["-r", "--resume"] as const;
+
+/** The native resume target after `--`: its span and value, or the bare flag or `resume` word. */
+function nativeResumeAfter(
+    command: string,
+    kind: AccountProviderAlias,
+    separator: number
+): ResumeFlagMatch | undefined {
+    const tokens = tokenizeCommand(command).filter((token) => token.start >= separator);
+
+    if (kind === "codex") {
+        const at = tokens.findIndex((token) => token.value === "resume");
+
+        if (at < 0) {
+            return undefined;
+        }
+
+        const id = tokens[at + 1];
+        return id && !id.value.startsWith("-")
+            ? { flag: "resume", value: id.value, start: tokens[at].start, end: id.end }
+            : { flag: "resume", start: tokens[at].start, end: tokens[at].end };
+    }
+
+    const match = findResumeFlag(command.slice(separator), NATIVE_RESUME[kind].flags);
+    return match ? { ...match, start: match.start + separator, end: match.end + separator } : undefined;
+}
+
 /**
- * Pin a `tools cc run` resume target IN PLACE, keeping every other flag the
- * user typed. Rebuilding the command as `tools cc run <account> -- --resume
- * <id>` dropped `--model opus`, `--verbose` and the launcher spelling from
- * every restored pane — the same defect `replaceCodexResume` was fixed for.
+ * Pin the resume target of a `tools <agent> run|start` wrapper (or a cc-run alias such as `cr`) IN PLACE, keeping
+ * every other flag the user typed. Rebuilding the command as `tools cc run <account> -- --resume <id>` dropped
+ * `--model opus`, `--verbose` and the launcher spelling from every restored pane.
  *
- * The resume target still lands AFTER `--`, where claude itself reads it: cc
- * run's own `--resume <query>` runs a local search that can prompt, so it is
- * not a deterministic replay target. A cc-run-level `--resume` in the original
- * is therefore removed rather than spliced, and only that flag.
+ * The resume target lands AFTER `--`, where the agent itself reads it: `--resume <id>` for Claude, `-r <id>` for
+ * Grok, the `resume <id>` subcommand for Codex. The wrapper's own `--resume <query>` runs a local search that can
+ * prompt, so it is removed rather than spliced. The account is the session's pin when there is one: a session lives
+ * in its account's home (Sonnet F13).
  */
-function replaceCcRunResume(original: string, sessionId: string, pinnedAccount?: string): ReplayDerivation {
+function replaceToolsRunResume(input: {
+    original: string;
+    kind: AccountProviderAlias;
+    launcherEnd: number;
+    sessionId: string;
+    pinnedAccount?: string;
+}): ReplayDerivation {
+    const { original, kind, launcherEnd, sessionId, pinnedAccount } = input;
     const drift: string[] = [];
-    // Both launcher spellings, or `tools claude run personal` would lose the
-    // explicit account and replay under the journal's one (or none) while the
-    // drift line claimed the original had no account.
-    const launcherEnd = original.match(launcherRes().ccRun)?.[0].length ?? original.length;
     const accountMatch = original.slice(launcherEnd).match(/^\s+(?!-)(\S+)/);
-    const account = accountMatch?.[1] ?? pinnedAccount;
+    const account = pinnedAccount ?? accountMatch?.[1];
     let command = original;
+
+    if (accountMatch && pinnedAccount && accountMatch[1].replace(/^(['"])(.*)\1$/, "$2") !== pinnedAccount) {
+        const at = launcherEnd + (accountMatch.index ?? 0) + accountMatch[0].length - accountMatch[1].length;
+        drift.push(
+            `account "${accountMatch[1]}" replaced with "${pinnedAccount}", the account session ${sessionId} was started with`
+        );
+        command = `${command.slice(0, at)}${pinnedAccount}${command.slice(at + accountMatch[1].length)}`;
+    }
 
     if (!accountMatch && pinnedAccount) {
         drift.push(
@@ -958,41 +1028,49 @@ function replaceCcRunResume(original: string, sessionId: string, pinnedAccount?:
     }
 
     if (!account) {
-        drift.push("no account recorded for this session — cc run will ask for one");
+        drift.push(
+            `no account recorded for this session — ${kind === "claude" ? "cc" : `tools ${kind}`} run will ask for one`
+        );
     }
 
-    const match = findResumeFlag(command, ["--resume"]);
-    const separator = passthroughStart(command);
+    // The wrapper's own resume flag, before `--`.
+    const wrapper = findResumeFlag(command.slice(0, passthroughStart(command) ?? command.length), WRAPPER_RESUME_FLAGS);
 
-    if (match && separator !== undefined && match.start >= separator) {
-        const current = match.value?.replace(/"/g, "");
+    if (wrapper) {
+        drift.push(
+            wrapper.value === undefined
+                ? "bare --resume (interactive picker) replaced with the concrete session id"
+                : `resume target "${wrapper.value}" replaced with the session that was active here`
+        );
+        command = `${command.slice(0, wrapper.start).trimEnd()}${command.slice(wrapper.end)}`;
+    }
+
+    const separator = passthroughStart(command);
+    const native = separator === undefined ? undefined : nativeResumeAfter(command, kind, separator);
+
+    if (native) {
+        const current = native.value?.replace(/"/g, "");
 
         if (current === sessionId) {
             return { command, drift };
         }
 
-        drift.push(
-            current === undefined
-                ? "bare --resume (interactive picker) replaced with the concrete session id"
-                : `resume target "${current}" replaced with the session that was active here`
-        );
+        if (!wrapper) {
+            drift.push(
+                current === undefined
+                    ? "bare resume (interactive picker) replaced with the concrete session id"
+                    : `resume target "${current}" replaced with the session that was active here`
+            );
+        }
 
-        return { command: spliceFlag(command, match, `--resume ${sessionId}`), drift };
+        return { command: spliceFlag(command, native, NATIVE_RESUME[kind].render(sessionId)), drift };
     }
 
-    if (match) {
-        // cc run's own --resume: drop just that flag, keep everything else.
-        drift.push(
-            match.value === undefined
-                ? "bare --resume (interactive picker) replaced with the concrete session id"
-                : `resume target "${match.value}" replaced with the session that was active here`
-        );
-        command = `${command.slice(0, match.start).trimEnd()}${command.slice(match.end)}`;
-    } else {
-        drift.push(`-- --resume ${sessionId} added (session that was active in this pane)`);
+    if (!wrapper) {
+        drift.push(`-- ${NATIVE_RESUME[kind].render(sessionId)} added (session that was active in this pane)`);
     }
 
-    const tail = passthroughStart(command) === undefined ? "-- " : "";
+    const tail = separator === undefined ? "-- " : "";
 
-    return { command: `${command.trimEnd()} ${tail}--resume ${sessionId}`, drift };
+    return { command: `${command.trimEnd()} ${tail}${NATIVE_RESUME[kind].render(sessionId)}`, drift };
 }

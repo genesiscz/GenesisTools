@@ -6,8 +6,9 @@ const CLAUDE_ID = "6bdfb457-cee9-4202-8105-21be8a801757";
 const CODEX_ID = "01a067d4-d2b0-7532-8f59-9af2a29c2d0e";
 
 describe("resumeArgv", () => {
-    test("grok uses -r <id>", () => {
+    test("grok uses -r <id>, through tools grok run when the session has an account", () => {
         expect(resumeArgv("grok", GROK_ID)).toEqual(["grok", "-r", GROK_ID]);
+        expect(resumeArgv("grok", GROK_ID, "work")).toEqual(["tools", "grok", "run", "work", "--", "-r", GROK_ID]);
     });
 
     test("codex uses resume <id>", () => {

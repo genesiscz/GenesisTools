@@ -6,7 +6,7 @@ import type { Harness } from "../hooks/harness";
  */
 export function resumeArgv(harness: Harness, sessionId: string, account?: string | null): string[] {
     if (harness === "grok") {
-        return ["grok", "-r", sessionId];
+        return account ? ["tools", "grok", "run", account, "--", "-r", sessionId] : ["grok", "-r", sessionId];
     }
 
     if (harness === "codex") {

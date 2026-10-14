@@ -159,8 +159,9 @@ function bareShellWord(word: string): string {
 
 /**
  * The plain launcher inside a line `agentRunCommand` (and `withPidNote`) wrote, without the pid note and
- * without the prompt: `tools claude run work -m sonnet`, or `grok` / `codex`, whose resume recipes take no
- * account. Undefined for any other command.
+ * without the prompt: `tools claude run work -m sonnet`, `tools codex run work`, `tools grok run work`. The account
+ * stays, because a session lives in its account's home (Sonnet F13c: Codex and Grok tabs resumed under the default
+ * home). Undefined for any other command.
  *
  * Restore must resume the session such a tab ran. Replaying the recorded line itself sends the first
  * prompt again and starts a second session that repeats the whole task (2026-10-14: a production triage
@@ -177,10 +178,6 @@ export function agentRunLauncher(command: string): { agent: SessionAgentId; laun
 
     if (!isSessionAgentId(agent)) {
         return undefined;
-    }
-
-    if (agent !== "claude") {
-        return { agent, launcher: agent };
     }
 
     return { agent, launcher: ["tools", ...words.slice(1)].map(bareShellWord).join(" ") };

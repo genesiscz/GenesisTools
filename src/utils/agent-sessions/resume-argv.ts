@@ -14,7 +14,10 @@ export interface ResumeOptions {
  * instead of silently falling through to another agent's binary.
  */
 const RESUME_RECIPES: Record<AccountProviderAlias, (sessionId: string, options: ResumeOptions) => string[]> = {
-    grok: (sessionId) => ["grok", "-r", sessionId],
+    // `tools grok run <account>` sets the account's GROK_HOME; a bare `grok -r` resumes in the default home, where
+    // another account's session does not exist.
+    grok: (sessionId, options) =>
+        options.account ? ["tools", "grok", "run", options.account, "--", "-r", sessionId] : ["grok", "-r", sessionId],
     codex: (sessionId, options) => {
         if (!options.account) {
             return ["codex", "resume", sessionId];

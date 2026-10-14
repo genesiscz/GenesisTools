@@ -139,11 +139,11 @@ test("agentRunLauncher reads back the launcher of every line agentRunCommand wri
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "grok", account: "side", prompt: "go" }))).toEqual({
         agent: "grok",
-        launcher: "grok",
+        launcher: "tools grok run side",
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "codex", account: "side" }))).toEqual({
         agent: "codex",
-        launcher: "codex",
+        launcher: "tools codex run side",
     });
 });
 

@@ -134,15 +134,26 @@ describe("deriveReplayCommand", () => {
         expect(result.drift.some((d) => d.includes('account "work" added'))).toBe(true);
     });
 
-    test("keeps the original explicit account over the pinned one", () => {
+    // Sonnet F13, probe A: the typed account used to win, so a tab resumed another account's session where that
+    // account's home has no such session. The pin of the chosen session decides; the typed account stays when the
+    // pin agrees or there is none.
+    test("the session's pinned account replaces a different typed account", () => {
         const result = deriveReplayCommand({
             original: "tools cc run personal --resume burn",
             sessionId,
             account: "work",
         });
-        expect(result.command).toBe(`tools cc run personal -- --resume ${sessionId}`);
+        expect(result.command).toBe(`tools cc run work -- --resume ${sessionId}`);
         expect(result.drift.some((d) => d.includes('resume target "burn" replaced'))).toBe(true);
-        expect(result.drift.some((d) => d.includes("account"))).toBe(false);
+        expect(result.drift.some((d) => d.includes('account "personal" replaced with "work"'))).toBe(true);
+    });
+
+    test("the typed account stays when the pin agrees or there is no pin", () => {
+        const agrees = deriveReplayCommand({ original: "tools cc run personal -m x", sessionId, account: "personal" });
+        const unpinned = deriveReplayCommand({ original: "tools cc run personal -m x", sessionId });
+        expect(agrees.command).toStartWith("tools cc run personal ");
+        expect(unpinned.command).toStartWith("tools cc run personal ");
+        expect([...agrees.drift, ...unpinned.drift].some((d) => d.includes("replaced with"))).toBe(false);
     });
 
     test("`tools claude run` keeps its explicit account and its own launcher spelling", () => {
@@ -152,7 +163,7 @@ describe("deriveReplayCommand", () => {
         const result = deriveReplayCommand({
             original: "tools claude run personal --resume burn",
             sessionId,
-            account: "work",
+            account: "personal",
         });
         expect(result.command).toBe(`tools claude run personal -- --resume ${sessionId}`);
         expect(result.drift.some((d) => d.includes("account"))).toBe(false);
