@@ -33,12 +33,14 @@ import { covers, mentionsFrom, textPaths } from "./mentions";
 import {
     assembleMessage,
     type DiffBlock,
+    fitPath,
     hasContext,
     highlightRange,
     hunkRange,
     renderPatch,
     themedDress,
     wordSpans,
+    wrapVisible,
 } from "./render";
 import {
     blobBatches,
@@ -3311,7 +3313,9 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
     }
 
     it("follows Claude Code's theme setting, reads an unknown one as dark, and classic has none", () => {
-        expect(resolvePalette("claude", () => "light")?.added).toBe("\u001b[48;2;105;219;124m");
+        expect(resolvePalette("claude", () => "light")?.added).toBe("\u001b[48;2;220;255;220m");
+        // Claude Code's diff rows, not its theme's `diffAdded`: near black in dark.
+        expect(palette.added).toBe("\u001b[48;2;2;40;0m");
         expect(resolvePalette("claude", () => "a-theme-from-the-future")).toEqual(palette);
         expect(resolvePalette("claude", () => undefined)).toEqual(palette);
         expect(resolvePalette("classic")).toBeNull();
@@ -3340,10 +3344,12 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         const patch = ["@@ -1,2 +1,2 @@", "-old line", "+new line", " same"].join("\n");
         const themed = (width: number): DiffBlock => {
             const rendered = renderPatch(patch, palette);
-            const dress = themedDress(rendered.body, palette, "x.ts", quiet);
 
-            dress.width = width;
-            return { head: "head", body: rendered.body, dress };
+            return {
+                head: "head",
+                body: rendered.body,
+                dress: themedDress(rendered.body, palette, "x.ts", quiet, width),
+            };
         };
         const budget = (bytes: number) => ({ ...quiet, maxMessageBytes: bytes });
         const rows = (message: string) =>
@@ -3358,6 +3364,49 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         const tight = rows(assembleMessage([themed(60)], budget(plainBytes + 50)));
         expect(tight).toHaveLength(2);
         expect(tight.every((line) => Bun.stringWidth(stripAnsi(line)) < 60)).toBe(true);
+    });
+
+    it("wraps a long row under its own content, band and colour carried onto every part", () => {
+        const long = `const message = "${"x".repeat(50)}";`;
+        const patch = ["@@ -1,1 +1,1 @@", "-const message = 1;", `+${long}`].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress(rendered.body, palette, "x.ts", quiet, 40),
+        };
+        const rows = assembleMessage([block], { ...quiet, maxMessageBytes: 100_000 })
+            .split("\n")
+            .slice(2);
+
+        expect(rows.map((row) => Bun.stringWidth(stripAnsi(row)))).toEqual([40, 40, 40]);
+        // The parts after the first are indented under the content, not started at column 0.
+        expect(stripAnsi(rows[1] ?? "")).toBe(`${" ".repeat(8)}${"x".repeat(32)}`);
+        expect(stripAnsi(rows[2] ?? "")).toMatch(/^ {8}x+";\s*$/);
+        expect(rows.every((row) => row.startsWith(palette.added) || row.startsWith(palette.removed))).toBe(true);
+    });
+
+    it("keeps a colour that a cut splits across two rows", () => {
+        const rows = wrapVisible("\u001b[38;2;1;2;3mabcdef\u001b[39m", 4);
+
+        expect(rows.map((row) => row.width)).toEqual([4, 2]);
+        expect(rows[1]?.text.startsWith("\u001b[38;2;1;2;3m")).toBe(true);
+    });
+
+    it("fits a long path to the header by cutting folders from the left", () => {
+        expect(fitPath("/tmp/cc/project/session/worktrees/kit/src/Flow/Support/Window.swift", 30)).toBe(
+            "…/Flow/Support/Window.swift"
+        );
+        expect(fitPath("src/a.ts", 30)).toBe("src/a.ts");
+        expect(fitPath("src/a.ts", 0)).toBe("src/a.ts");
+    });
+
+    it("bands nothing in an ansi theme, the way Claude Code colours only the markers there", () => {
+        const ansi = resolvePalette("claude-dark-ansi");
+        const rendered = renderPatch(["@@ -1,1 +1,1 @@", "-old", "+new"].join("\n"), ansi);
+
+        expect(rendered.body[1]?.text).toContain("\u001b[92m+");
+        expect(rendered.body[1]?.text).not.toContain("\u001b[48;");
     });
 
     it("renders a file once when the command names it through another path to the same folder", () => {

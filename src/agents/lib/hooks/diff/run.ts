@@ -93,7 +93,10 @@ function patchFor(file: ChangedFile, before: string | null, config: DiffConfig, 
  */
 const BAND_MARGIN = 7;
 
-/** How a themed block names its file: relative inside the session folder, `~/` under home, else whole. */
+/**
+ * How a themed block names its file: relative inside the session folder, `~/` under home, else
+ * whole, with macOS's `/private` dropped from `/tmp` and `/var` because nobody types it.
+ */
 function displayPath(path: string, cwd: string): string {
     for (const base of new Set([cwd, canonical(cwd)])) {
         if (path.startsWith(`${base}/`)) {
@@ -103,13 +106,23 @@ function displayPath(path: string, cwd: string): string {
 
     const home = homedir();
 
-    return path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
+    return path.startsWith(`${home}/`)
+        ? `~/${path.slice(home.length + 1)}`
+        : path.replace(/^\/private(?=\/(?:tmp|var)\/)/, "");
 }
 
-/** A Claude theme in force for this call: its palette and the session folder labels are relative to. */
+/** A Claude theme in force for this call: its palette, the folder labels are relative to, the row width. */
 interface Look {
     palette: Palette;
     cwd: string;
+    /** Columns a row may use, or 0 when the terminal is unknown. */
+    width: number;
+}
+
+function lookWidth(diff: DiffConfig): number {
+    const columns = diff.columns === "auto" ? terminalColumns() : diff.columns;
+
+    return columns === null || columns === 0 ? 0 : Math.max(0, columns - BAND_MARGIN);
 }
 
 function blockFrom(
@@ -136,10 +149,10 @@ function blockFrom(
     }
 
     const label = look ? displayPath(file.path, look.cwd) : file.path;
-    const block = renderBlock(file, rendered, hadBefore, category, label);
+    const block = renderBlock(file, rendered, hadBefore, category, label, look?.width ?? 0);
 
     if (look) {
-        block.dress = themedDress(rendered.body, look.palette, file.path, config);
+        block.dress = themedDress(rendered.body, look.palette, file.path, config, look.width);
         return block;
     }
 
@@ -504,7 +517,7 @@ export function runDiffPost(
     const lookOf = (): Look | null => {
         if (look === undefined) {
             const palette = resolvePalette(diff.theme);
-            look = palette ? { palette, cwd: payload.cwd } : null;
+            look = palette ? { palette, cwd: payload.cwd, width: lookWidth(diff) } : null;
         }
 
         return look;
@@ -757,17 +770,6 @@ export function runDiffPost(
         }
 
         return { decision: "noted", reason, message: notes.join("\n"), files: [], others };
-    }
-
-    if (blocks.some((block) => block.dress)) {
-        const columns = diff.columns === "auto" ? terminalColumns() : diff.columns;
-        const width = columns === null || columns === 0 ? 0 : Math.max(0, columns - BAND_MARGIN);
-
-        for (const block of blocks) {
-            if (block.dress) {
-                block.dress.width = width;
-            }
-        }
     }
 
     const noteBytes = notes.reduce((total, line) => total + Buffer.byteLength(line) + 2, 0);

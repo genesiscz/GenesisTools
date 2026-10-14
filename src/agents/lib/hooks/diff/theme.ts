@@ -23,59 +23,90 @@ export const DIFF_THEMES = [
 
 export type DiffThemeName = (typeof DIFF_THEMES)[number];
 
-/** Background escape sequences: the band of a changed row and the brighter band of its changed words. */
 export interface Palette {
+    /** Background of a changed row; `""` leaves the row without a band (the ansi themes). */
     added: string;
     removed: string;
+    /** Background of the changed words inside a row. */
     addedWord: string;
     removedWord: string;
+    /** Foreground of the `+` and `-` markers. */
+    addedMark: string;
+    removedMark: string;
+    /** A light palette, so the syntax colour has to come from a light `bat` theme. */
+    light: boolean;
 }
 
 type FixedTheme = Exclude<DiffThemeName, "claude" | "classic">;
 
-function rgb(red: number, green: number, blue: number): string {
+function background(red: number, green: number, blue: number): string {
     return `\u001b[48;2;${red};${green};${blue}m`;
 }
 
-const ANSI: Palette = {
-    added: "\u001b[42m",
-    removed: "\u001b[41m",
-    addedWord: "\u001b[102m",
-    removedWord: "\u001b[101m",
-};
+function foreground(red: number, green: number, blue: number): string {
+    return `\u001b[38;2;${red};${green};${blue}m`;
+}
 
 /**
- * `diffAdded`, `diffRemoved`, `diffAddedWord` and `diffRemovedWord` of each Claude Code theme, read
- * from the 2.1.296 binary on 2026-10-14. Each set was matched to its theme by the colours beside
- * it (the orange `claude` colour marks the daltonized pair, the dark `bashBorder` the dark one).
+ * The colours of Claude Code's own structured diff, from its diff module in the 2.1.296 binary
+ * (`addLine`, `addWord`, `addDecoration` and the `delete*` three, truecolor), read on 2026-10-14.
+ *
+ * 🛑 NOT the theme's `diffAdded` / `diffRemoved` (`rgb(34,92,43)` in dark): those only override a
+ * custom theme. The first cut used them, and the bands came out bright where Claude Code's are near
+ * black: its added row measured `rgb(3,37,3)` on screen against `addLine` `rgb(2,40,0)`.
  */
+const DARK_REMOVED = {
+    removed: background(61, 1, 0),
+    removedWord: background(92, 2, 0),
+    removedMark: foreground(220, 90, 90),
+};
+const LIGHT_REMOVED = {
+    removed: background(255, 220, 220),
+    removedWord: background(255, 199, 199),
+    removedMark: foreground(207, 34, 46),
+};
+/** The ansi themes band nothing: Claude Code colours only the markers there (ANSI 10 and 9). */
+const ANSI: Palette = {
+    added: "",
+    removed: "",
+    addedWord: "",
+    removedWord: "",
+    addedMark: "\u001b[92m",
+    removedMark: "\u001b[91m",
+    light: false,
+};
+
 const PALETTES: Record<FixedTheme, Palette> = {
     "claude-dark": {
-        added: rgb(34, 92, 43),
-        removed: rgb(122, 41, 54),
-        addedWord: rgb(56, 166, 96),
-        removedWord: rgb(179, 89, 107),
-    },
-    "claude-light": {
-        added: rgb(105, 219, 124),
-        removed: rgb(255, 168, 180),
-        addedWord: rgb(47, 157, 68),
-        removedWord: rgb(209, 69, 75),
+        added: background(2, 40, 0),
+        addedWord: background(4, 71, 0),
+        addedMark: foreground(80, 200, 80),
+        ...DARK_REMOVED,
+        light: false,
     },
     "claude-dark-daltonized": {
-        added: rgb(0, 68, 102),
-        removed: rgb(102, 0, 0),
-        addedWord: rgb(0, 119, 179),
-        removedWord: rgb(179, 0, 0),
+        added: background(0, 27, 41),
+        addedWord: background(0, 48, 71),
+        addedMark: foreground(81, 160, 200),
+        ...DARK_REMOVED,
+        light: false,
+    },
+    "claude-light": {
+        added: background(220, 255, 220),
+        addedWord: background(178, 255, 178),
+        addedMark: foreground(36, 138, 61),
+        ...LIGHT_REMOVED,
+        light: true,
     },
     "claude-light-daltonized": {
-        added: rgb(153, 204, 255),
-        removed: rgb(255, 204, 204),
-        addedWord: rgb(51, 102, 204),
-        removedWord: rgb(153, 51, 51),
+        added: background(219, 237, 255),
+        addedWord: background(179, 217, 255),
+        addedMark: foreground(36, 87, 138),
+        ...LIGHT_REMOVED,
+        light: true,
     },
     "claude-dark-ansi": ANSI,
-    "claude-light-ansi": ANSI,
+    "claude-light-ansi": { ...ANSI, light: true },
 };
 
 function isFixedTheme(name: string): name is FixedTheme {

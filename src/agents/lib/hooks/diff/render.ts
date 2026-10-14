@@ -11,6 +11,7 @@ const UNDIM = "\u001b[22m";
  * every token with a full reset, which inside a band would end the band at the first token.
  */
 const KEEP_BAND = "\u001b[22;23;24;39m";
+const DEFAULT_FOREGROUND = "\u001b[39m";
 const TAB = "    ";
 const BOLD = "\u001b[1m";
 const OFF = "\u001b[0m";
@@ -227,7 +228,7 @@ export function renderPatch(patch: string, palette: Palette | null = null): Rend
 
         for (const line of body) {
             if (line.changed) {
-                line.text = bandRow(line, palette, 0);
+                line.text = themedRow(line, palette, { width: 0, fill: false });
             }
         }
     }
@@ -373,26 +374,108 @@ function keepBand(painted: string): string {
     return painted.replace(reset, KEEP_BAND).replace(background, "");
 }
 
+/** Columns before a row's content: the line number, a space, and the marker or a second space. */
+const INDENT = GUTTER + 2;
+
+/** How a themed row is drawn: wrapped at `width` columns (0 = never), and its band filled to it. */
+export interface RowShape {
+    width: number;
+    fill: boolean;
+    painted?: string;
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: classifies ANSI escape sequences
+const BACKGROUND_SEQUENCE = /^\u001b\[(?:48;[0-9;]*|4[0-9]|10[0-7])m$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: classifies ANSI escape sequences
+const FOREGROUND_SEQUENCE = /^\u001b\[(?:38;[0-9;]*|3[0-7]|9[0-7])m$/;
+
 /**
- * A changed row in a Claude theme: the band behind the whole row, the line number dim, the marker,
- * the content (syntax-coloured when `painted` is given), and spaces to `width` columns so the band
- * reaches the edge of the terminal. Claude Code's renderer drops `ESC[K`, so padding is the only fill.
+ * `text` cut into rows of at most `columns` visible columns. A later row opens with the colours
+ * that were active at the cut, so a token split across two rows keeps its colour on both.
  */
-function bandRow(line: PatchLine, palette: Palette, width: number, painted?: string): string {
+export function wrapVisible(text: string, columns: number): Array<{ text: string; width: number }> {
+    const rows: Array<{ text: string; width: number }> = [];
+    let current = "";
+    let used = 0;
+    let colour = "";
+    let shade = "";
+    let index = 0;
+
+    while (index < text.length) {
+        ESCAPE_SEQUENCE.lastIndex = index;
+        const sequence = ESCAPE_SEQUENCE.exec(text)?.[0];
+
+        if (sequence) {
+            current += sequence;
+            index += sequence.length;
+
+            if (BACKGROUND_SEQUENCE.test(sequence)) {
+                shade = sequence;
+            } else if (FOREGROUND_SEQUENCE.test(sequence)) {
+                colour = sequence;
+            } else if (sequence === KEEP_BAND || sequence === OFF || sequence === DEFAULT_FOREGROUND) {
+                colour = "";
+            }
+
+            continue;
+        }
+
+        const character = String.fromCodePoint(text.codePointAt(index) ?? 0);
+        const width = Bun.stringWidth(character);
+
+        if (columns > 0 && used > 0 && used + width > columns) {
+            rows.push({ text: current, width: used });
+            current = `${shade}${colour}`;
+            used = 0;
+        }
+
+        current += character;
+        used += width;
+        index += character.length;
+    }
+
+    rows.push({ text: current, width: used });
+    return rows;
+}
+
+/**
+ * One row in a Claude theme, the way Claude Code's own diff draws it: a changed row has its band
+ * behind the line number, the coloured marker and the content, with the changed words brighter.
+ * With a `width`, a long row wraps under its content rather than at column 0, and `fill` pads every
+ * part of a changed row so the band reaches the edge (Claude Code's renderer drops `ESC[K`, so
+ * spaces are the only fill). Context rows wrap the same way and have no band.
+ */
+function themedRow(line: PatchLine, palette: Palette, shape: RowShape): string {
+    const number = String(line.number ?? "").padStart(GUTTER);
+    const columns = shape.width > 0 ? shape.width - INDENT : 0;
+
+    if (line.kind === "context") {
+        const rows = wrapVisible(shape.painted ?? line.content ?? "", columns);
+
+        return rows
+            .map((row, at) => `${at === 0 ? `${DIM}${number}${OFF}` : " ".repeat(GUTTER)}  ${row.text}`)
+            .join(`${OFF}\n`);
+    }
+
     const added = line.kind === "added";
     const band = added ? palette.added : palette.removed;
-    const content = line.content ?? "";
-    let shown = painted === undefined ? content : keepBand(painted);
+    let shown = shape.painted === undefined ? (line.content ?? "") : keepBand(shape.painted);
 
-    if (line.word) {
+    if (line.word && band) {
         shown = paintWords(shown, line.word, added ? palette.addedWord : palette.removedWord, band);
     }
 
-    const number = String(line.number ?? "").padStart(GUTTER);
-    const used = GUTTER + 2 + Bun.stringWidth(content);
-    const fill = width > used ? " ".repeat(width - used) : "";
+    const mark = `${added ? palette.addedMark : palette.removedMark}${added ? "+" : "-"}${DEFAULT_FOREGROUND}`;
 
-    return `${band}${DIM}${number}${UNDIM} ${added ? "+" : "-"}${shown}${fill}${OFF}`;
+    return wrapVisible(shown, columns)
+        .map((row, at) => {
+            const head = at === 0 ? `${band}${DIM}${number}${UNDIM} ${mark}` : `${band}${" ".repeat(INDENT)}`;
+            const room = columns - row.width;
+            const fill = shape.fill && band && room > 0 ? `${band}${" ".repeat(room)}` : "";
+
+            return `${head}${row.text}${fill}${OFF}`;
+        })
+        .join("\n");
 }
 
 /**
@@ -400,14 +483,17 @@ function bandRow(line: PatchLine, palette: Palette, width: number, painted?: str
  * patch order. `--file-name` picks the syntax, so a removed row and a deleted file are coloured too,
  * which reading the file on disk could not do. Indexed like `body`; `[]` when `bat` is off or fails.
  */
-function paintRows(path: string, body: PatchLine[], config: DiffConfig): Array<string | undefined> {
+function paintRows(path: string, body: PatchLine[], config: DiffConfig, light: boolean): Array<string | undefined> {
     if (config.highlight !== "bat") {
         return [];
     }
 
+    // A dark palette keeps whatever theme the user gave `bat`; a light one needs a light theme,
+    // or the default Monokai foregrounds would sit on near-white bands.
+    const theme = light ? ["--theme=GitHub"] : [];
     const run = spawnSync(
         "bat",
-        ["--color=always", "--style=plain", "--paging=never", "--wrap=never", `--file-name=${path}`, "-"],
+        ["--color=always", "--style=plain", "--paging=never", "--wrap=never", ...theme, `--file-name=${path}`, "-"],
         { input: `${body.map((line) => line.content ?? "").join("\n")}\n`, encoding: "utf8", maxBuffer: 16_000_000 }
     );
 
@@ -421,22 +507,20 @@ function paintRows(path: string, body: PatchLine[], config: DiffConfig): Array<s
 }
 
 /** The upgrades a themed block offers `assembleMessage`; see `DiffBlock.dress`. */
-export function themedDress(body: PatchLine[], palette: Palette, path: string, config: DiffConfig): BlockDress {
+export function themedDress(
+    body: PatchLine[],
+    palette: Palette,
+    path: string,
+    config: DiffConfig,
+    width: number
+): BlockDress {
     return {
-        width: 0,
-        paint: () => paintRows(path, body, config),
-        row: (index, width, painted) => {
+        width,
+        paint: () => paintRows(path, body, config, palette.light),
+        row: (index, shape) => {
             const line = body[index];
 
-            if (!line?.kind) {
-                return line?.text ?? "";
-            }
-
-            if (line.kind === "context") {
-                return contextLine(line.number ?? 0, painted === undefined ? (line.content ?? "") : painted);
-            }
-
-            return bandRow(line, palette, width, painted);
+            return line?.kind ? themedRow(line, palette, shape) : (line?.text ?? "");
         },
     };
 }
@@ -462,12 +546,12 @@ export interface DiffBlock {
 }
 
 export interface BlockDress {
-    /** Columns a changed row's band fills, or 0 to end it at the text. Set once the terminal is known. */
+    /** Columns a row may use: long rows wrap there and bands fill to it. 0 when the terminal is unknown. */
     width: number;
     /** Syntax-coloured content per body row, one `bat` spawn. */
     paint: () => Array<string | undefined>;
-    /** Body row `index` as printed, filled to `width` and coloured with `painted` when given. */
-    row: (index: number, width: number, painted?: string) => string;
+    /** Body row `index` as printed in `shape`. */
+    row: (index: number, shape: RowShape) => string;
 }
 
 export function renderBlock(
@@ -475,7 +559,8 @@ export function renderBlock(
     patch: RenderedPatch,
     hadBefore: boolean,
     category: DiffCategory = "source",
-    label = file.path
+    label = file.path,
+    width = 0
 ): DiffBlock {
     // "Added" only when there was genuinely no before state, so a whole-file render
     // never reads as though one command wrote every line.
@@ -483,11 +568,35 @@ export function renderBlock(
     // The kind is named only when it is NOT plain source, so the common block is unchanged
     // and the one that is here on sufferance says why it is here.
     const kind = category === "source" ? "" : ` ${DIM}· ${category}${OFF}`;
+    const counts = `(+${patch.added} -${patch.removed})`;
+    const room = width - HOOK_PREFIX.length - verb.length - counts.length - 2 - (kind ? category.length + 3 : 0);
 
     return {
-        head: `${BOLD}${verb} ${label}${OFF} ${DIM}(+${patch.added} -${patch.removed})${OFF}${kind}`,
+        head: `${BOLD}${verb} ${fitPath(label, room)}${OFF} ${DIM}${counts}${OFF}${kind}`,
         body: patch.body,
     };
+}
+
+/** What Claude Code prints in front of the first line of a hook's message. */
+const HOOK_PREFIX = "PostToolUse:Bash says: ";
+
+/**
+ * `path` in at most `columns` columns, cut at a `/` from the left so the file name and its nearest
+ * folders stay: a header that wraps is the first thing that makes a narrow pane unreadable.
+ */
+export function fitPath(path: string, columns: number): string {
+    if (columns <= 0 || Bun.stringWidth(path) <= columns) {
+        return path;
+    }
+
+    const parts = path.split("/");
+    let tail = parts.pop() ?? path;
+
+    while (parts.length > 0 && Bun.stringWidth(`…/${parts[parts.length - 1]}/${tail}`) <= columns) {
+        tail = `${parts.pop()}/${tail}`;
+    }
+
+    return `…/${tail}`;
 }
 
 /**
@@ -529,39 +638,59 @@ function utf8Bytes(text: string): number {
  */
 function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<number, string>[], budget: number): number {
     let left = budget;
+    const shapes = blocks.map(() => new Map<number, RowShape>());
+    const upgrade = (index: number, at: number, shape: RowShape) => {
+        const dress = blocks[index]?.dress;
+        const current = tinted[index]?.get(at) ?? blocks[index]?.body[at]?.text;
 
-    blocks.forEach((block, index) => {
-        const dress = block.dress;
-        const held = kept[index];
-        const marks = tinted[index];
-
-        if (!dress || !held || !marks || dress.width <= 0) {
+        if (!dress || current === undefined) {
             return;
         }
 
-        for (const at of [...held].sort((first, second) => first - second)) {
-            const line = block.body[at];
+        const next = dress.row(at, shape);
+        const extra = utf8Bytes(next) - utf8Bytes(current);
 
-            if (!line?.changed) {
-                continue;
-            }
+        if (extra <= left) {
+            tinted[index]?.set(at, next);
+            shapes[index]?.set(at, shape);
+            left -= extra;
+        }
+    };
+    const rowsOf = (index: number, wanted: (line: PatchLine) => boolean) =>
+        [...(kept[index] ?? [])]
+            .sort((first, second) => first - second)
+            .filter((at) => {
+                const line = blocks[index]?.body[at];
+                return line?.kind !== undefined && wanted(line);
+            });
 
-            const next = dress.row(at, dress.width);
-            const extra = utf8Bytes(next) - utf8Bytes(line.text);
+    // 1. A row wider than the terminal wraps under its own content, not at column 0. Cheap: a
+    //    newline and an indent per cut.
+    blocks.forEach((block, index) => {
+        const width = block.dress?.width ?? 0;
 
-            if (extra <= left) {
-                marks.set(at, next);
-                left -= extra;
-            }
+        for (const at of width > 0
+            ? rowsOf(index, (line) => Bun.stringWidth(line.content ?? "") > width - INDENT)
+            : []) {
+            upgrade(index, at, { width, fill: false });
         }
     });
 
+    // 2. The band of every changed row to the edge.
+    blocks.forEach((block, index) => {
+        const width = block.dress?.width ?? 0;
+
+        for (const at of width > 0 ? rowsOf(index, (line) => line.changed) : []) {
+            upgrade(index, at, { width, fill: true });
+        }
+    });
+
+    // 3. Syntax colour, changed rows before context.
     blocks.forEach((block, index) => {
         const dress = block.dress;
         const held = kept[index];
-        const marks = tinted[index];
 
-        if (!dress || !held || !marks) {
+        if (!dress || !held) {
             return;
         }
 
@@ -575,18 +704,9 @@ function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<numbe
 
         for (const at of order) {
             const shade = painted[at];
-            const current = marks.get(at) ?? block.body[at]?.text;
 
-            if (shade === undefined || current === undefined) {
-                continue;
-            }
-
-            const next = dress.row(at, marks.has(at) && block.body[at]?.changed ? dress.width : 0, shade);
-            const extra = utf8Bytes(next) - utf8Bytes(current);
-
-            if (extra <= left) {
-                marks.set(at, next);
-                left -= extra;
+            if (shade !== undefined) {
+                upgrade(index, at, { ...(shapes[index]?.get(at) ?? { width: 0, fill: false }), painted: shade });
             }
         }
     });
