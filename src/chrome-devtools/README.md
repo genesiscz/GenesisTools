@@ -30,13 +30,18 @@ launch adds `MacAppCodeSignClone` to that one flag (Chrome reads only the last o
 branded Chrome on macOS copies its 1.4 GB app into the temp folder per launch and leaves the copy
 when it does not exit cleanly.
 
-On macOS, a separate profile (`open --fresh`, `--extension`, `--user-data-dir`, the recording
-browser) starts with `--no-startup-window` through `open -g`, and its first window is opened over
-CDP with `Target.createTarget({ background: true })`, which Chrome shows inactive. The app you are
-typing in keeps the keyboard. With more than one display, the window goes to a display that does
-not hold the frontmost app's window (`src/utils/chrome-devtools/window-placement.ts`). The real
-profile (plain `open`, `restart`) launches as before, because `--no-startup-window` skips its
-session restore.
+On macOS, when an idle display can be selected, a separate profile (`open --fresh`, `--extension`,
+`--user-data-dir`, the recording browser) starts with `--no-startup-window`. Its first window is
+opened over CDP with `Target.createTarget({ background: true })`, which Chrome shows inactive,
+on a display that does not hold the frontmost app's window (`src/utils/chrome-devtools/window-placement.ts`).
+The `open` command uses Launch Services with `open -g` to avoid bringing the app forward. The
+recording browser spawns the executable directly to capture its log and own its process; it
+does not use `open -g`, so its focus protection comes from suppressing the startup window and
+creating the first window inactive over CDP. If inactive creation fails, a normal window is
+tried; failure of both creation paths fails the launch. With one display, off macOS, or when
+the display probe fails, launches keep their normal startup window and URL on argv. The real
+profile (plain `open`, `restart`) also launches as before, because `--no-startup-window` skips
+its session restore.
 
 To let one public page reach a private or loopback address in a protected profile, hold a grant with
 `tools chrome-devtools grant --match <tab>` (default `local-network loopback-network`, for the tab's own

@@ -153,7 +153,8 @@ export const defaultSpawnLogged: SpawnLoggedFn = (cmd, logPath) => {
     return { pid: child.pid, kill: () => child.kill() };
 };
 
-export type LaunchStage = "spawn" | "timeout";
+/** `window`: the browser came up, but neither first-window path (inactive, then normal) opened its page. */
+export type LaunchStage = "spawn" | "timeout" | "window";
 
 /**
  * How an isolated launch on macOS leaves the user's focus alone. A startup window is shown active and Chrome activates
@@ -161,7 +162,7 @@ export type LaunchStage = "spawn" | "timeout";
  * and opens the url over CDP in a window Chrome shows inactive. Injectable for tests.
  */
 export interface BackgroundLaunch {
-    /** Placement flags for the first window; empty keeps Chrome's default placement. */
+    /** Placement flags for the first window; empty preserves the normal startup window. */
     windowArgs: () => Promise<string[]>;
     /** Opens the url in an inactive window once the CDP port answers. */
     openWindow: (port: number, url: string) => Promise<void>;
@@ -169,7 +170,7 @@ export interface BackgroundLaunch {
 
 /**
  * Opens the url in a window Chrome shows inactive. If that fails, `PUT /json/new` opens it in a normal (active) window,
- * as before; a failure there is logged and left to the caller's probe, which then reports no pages.
+ * as before; a failure there is propagated so CDP availability cannot hide a missing window.
  */
 export async function openBackgroundWindow(port: number, url: string): Promise<void> {
     try {
@@ -189,6 +190,7 @@ export async function openBackgroundWindow(port: number, url: string): Promise<v
         await newTab(port, url);
     } catch (err) {
         log.debug({ err, port, url }, "could not open the first window");
+        throw err;
     }
 }
 
@@ -300,11 +302,25 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
     // one dir while this function told the caller it was using another.
     const generatedUserDataDir = isolated && opts.userDataDir === undefined ? freshProfileDir(opts.port) : undefined;
     const userDataDir = isolated ? (opts.userDataDir ?? generatedUserDataDir ?? null) : null;
-    const background =
-        isolated && opts.background && backgroundLaunchSupported(opts.platform ?? currentPlatform())
-            ? opts.background
-            : null;
-    const windowArgs = background ? await background.windowArgs() : [];
+    const platform = opts.platform ?? currentPlatform();
+    if (isolated && opts.background && !backgroundLaunchSupported(platform)) {
+        log.debug({ platform }, "background window placement is macOS-only; the window keeps its default placement");
+    }
+
+    const requestedBackground =
+        isolated && opts.background && backgroundLaunchSupported(platform) ? opts.background : null;
+    const windowArgs = requestedBackground ? await requestedBackground.windowArgs() : [];
+    const background = windowArgs.length > 0 ? requestedBackground : null;
+    if (background) {
+        const owners = listenerPids(opts.port, opts.quit ?? {});
+        if (owners.length > 0) {
+            throw new CdpLaunchError(
+                `CDP port ${opts.port} is already occupied; refusing to open the launch URL in another browser`,
+                { stage: "spawn" }
+            );
+        }
+    }
+
     const args = launchArgs(opts.port, {
         fresh: opts.fresh,
         extension: opts.extension,
@@ -352,7 +368,18 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
     );
 
     if (up && background) {
-        await background.openWindow(opts.port, url);
+        try {
+            await background.openWindow(opts.port, url);
+        } catch (err) {
+            const logTail = opts.logPath
+                ? await readLogTail(opts.logPath, opts.readLog ?? ((p) => Bun.file(p).text()))
+                : null;
+            kill();
+            throw new CdpLaunchError(
+                `${def.app} launched on port ${opts.port}, but its first window did not open: ${err instanceof Error ? err.message : String(err)}`,
+                { stage: "window", logTail }
+            );
+        }
     }
 
     const result = up ? await prof.measureAsync("launch.probe", () => probeFn(opts.port)) : null;

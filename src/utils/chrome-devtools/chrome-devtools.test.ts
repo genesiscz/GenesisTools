@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { abSchedule, runAb } from "./ab.ts";
 import type { CdpLike } from "./cdp-like.ts";
 import { callInPage, InPageError, inPageExpression } from "./evaluate.ts";
@@ -753,6 +754,37 @@ describe("window placement on an idle display", () => {
             "--window-position=-1280,0",
             "--window-size=1280,775",
         ]);
+    });
+
+    test("each invalid probe result logs one fallback and valid results do not", async () => {
+        const oldLevel = logger.level;
+        const chunks: string[] = [];
+        const stderr = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            chunks.push(String(chunk));
+            return true;
+        });
+        logger.level = "debug";
+        try {
+            for (const input of [
+                SafeJSON.stringify({ screens: [{ frame: laptop.frame }] }),
+                SafeJSON.stringify({ screens: [] }),
+                SafeJSON.stringify({}),
+                "execution error: -1743",
+            ]) {
+                chunks.length = 0;
+                expect(parseDisplayLayout(input)).toBeNull();
+                await Bun.sleep(20);
+                expect(chunks.join("").match(/display probe/g)).toHaveLength(1);
+            }
+
+            chunks.length = 0;
+            expect(parseDisplayLayout(SafeJSON.stringify({ screens: [laptop] }))).not.toBeNull();
+            await Bun.sleep(20);
+            expect(chunks.join("")).toBe("");
+        } finally {
+            logger.level = oldLevel;
+            stderr.mockRestore();
+        }
     });
 
     test("the probe's JSON line is checked field by field", () => {

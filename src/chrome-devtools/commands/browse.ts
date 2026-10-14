@@ -192,7 +192,7 @@ export function registerBrowse(program: Command): void {
                     throw err;
                 }
 
-                if (err.stage === "spawn") {
+                if (err.stage !== "timeout") {
                     out.log.error(err.message);
                     process.exit(1);
                 }
@@ -334,9 +334,9 @@ page targets exist, and whether a picker is still open.`
                 }
 
                 out.log.error(
-                    err.stage === "spawn"
-                        ? err.message
-                        : `relaunched but no CDP on ${port}. Chrome ≥136 refuses the flag on the DEFAULT profile dir (anti-automation).`
+                    err.stage === "timeout"
+                        ? `relaunched but no CDP on ${port}. Chrome ≥136 refuses the flag on the DEFAULT profile dir (anti-automation).`
+                        : err.message
                 );
                 out.log.info(
                     `  fallback, throwaway profile (log in again each time): ${suggest(["open", "--browser", id, "--port", String(port), "--fresh", url])}`

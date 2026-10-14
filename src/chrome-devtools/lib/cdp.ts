@@ -885,5 +885,5 @@ export async function browser(port = BROWSER_DEVTOOLS_PORT): Promise<Browser> {
         webSocketDebuggerUrl: string;
     };
 
-    return new Browser(new Conn(v.webSocketDebuggerUrl), port);
+    return new Browser(new Conn(localDebuggerUrl(v, port)), port);
 }

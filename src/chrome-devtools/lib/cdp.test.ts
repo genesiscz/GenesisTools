@@ -3,6 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import {
     AmbiguousTabError,
     Browser,
+    browser,
     type CdpCookie,
     Conn,
     cdpPortOf,
@@ -97,6 +98,76 @@ test("the DOM driver accepts only a debugger socket on this machine and the requ
     );
     expect(() => localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/A" }, 9222)).toThrow();
     expect(() => localDebuggerUrl({ webSocketDebuggerUrl: "ws://evil.example:9222/devtools/page/A" }, 9222)).toThrow();
+});
+
+describe("browser debugger address validation", () => {
+    test("rejects remote, wrong-port and non-WebSocket addresses before opening a socket", async () => {
+        let sockets = 0;
+        const original = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+        Object.defineProperty(globalThis, "WebSocket", {
+            configurable: true,
+            value: class {
+                constructor() {
+                    sockets++;
+                    throw new Error("an unvalidated socket must not open");
+                }
+            },
+        });
+        const version = spyOn(globalThis, "fetch");
+        try {
+            for (const webSocketDebuggerUrl of [
+                "ws://evil.example:9222/devtools/browser/A",
+                "ws://127.0.0.1:9333/devtools/browser/A",
+                "http://127.0.0.1:9222/devtools/browser/A",
+            ]) {
+                version.mockResolvedValueOnce(Response.json({ webSocketDebuggerUrl }));
+                await expect(browser(9222)).rejects.toThrow("Refusing a debugger URL");
+            }
+
+            expect(sockets).toBe(0);
+        } finally {
+            version.mockRestore();
+            if (original) {
+                Object.defineProperty(globalThis, "WebSocket", original);
+            }
+        }
+    });
+
+    test("accepts a browser socket on the requested local port", async () => {
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: (request, server) => {
+                if (new URL(request.url).pathname === "/socket" && server.upgrade(request)) {
+                    return;
+                }
+
+                return Response.json({ webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/socket` });
+            },
+            websocket: {
+                message: (socket, message) => {
+                    const request: { id: number } = SafeJSON.parse(String(message));
+                    socket.send(SafeJSON.stringify({ id: request.id, result: {} }));
+                },
+            },
+        });
+        try {
+            const port = server.port;
+            if (port === undefined) {
+                throw new Error("fixture has no listening port");
+            }
+
+            const conn = await browser(port);
+            try {
+                expect(conn).toBeInstanceOf(Browser);
+                await conn.send("Browser.getVersion");
+            } finally {
+                conn.close();
+            }
+        } finally {
+            await server.stop(true);
+        }
+    });
 });
 
 describe("pickPageTarget", () => {

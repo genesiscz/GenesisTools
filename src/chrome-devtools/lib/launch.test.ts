@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
@@ -15,6 +16,7 @@ import {
     DEFAULT_LAUNCH_TIMEOUT_MS,
     launchArgs,
     launchCdpBrowser,
+    openBackgroundWindow,
     type QuitDeps,
     quitOwnedBrowser,
     withDisabledFeatures,
@@ -347,6 +349,41 @@ describe("background launch (the user keeps focus, macOS)", () => {
         return { pid: 4242, kill: () => {} };
     };
 
+    test.each([false, true])("an occupied port refuses background launch before spawn, owned=%s", async (logged) => {
+        for (const address of ["127.0.0.1", "[::1]"]) {
+            const { background, opened } = fakeBackground();
+            let spawned = 0;
+            let waited = 0;
+            const launching = launchCdpBrowser({
+                port: 9555,
+                fresh: true,
+                url: "https://example.com/private",
+                platform: "darwin",
+                background,
+                ...(logged ? { logPath: "/tmp/profile.log" } : {}),
+                quit: { ...noBrowser, exec: machine([listener(5353, address, 9555)], []) },
+                spawnLogged: () => {
+                    spawned++;
+                    throw new Error("occupied port reached the owned spawn");
+                },
+                launch: () => {
+                    spawned++;
+                    throw new Error("occupied port reached Launch Services");
+                },
+                waitFor: async () => {
+                    waited++;
+                    return true;
+                },
+                probe: liveProbe,
+            });
+            await expect(launching).rejects.toMatchObject({ stage: "spawn", childQuit: false });
+            await expect(launching).rejects.toThrow("already occupied");
+            expect(spawned).toBe(0);
+            expect(waited).toBe(0);
+            expect(opened).toEqual([]);
+        }
+    });
+
     test("an isolated profile starts without a window and opens the url inactive once CDP answers", async () => {
         const { background, opened } = fakeBackground();
         const spawned: string[][] = [];
@@ -357,6 +394,7 @@ describe("background launch (the user keeps focus, macOS)", () => {
             logPath: "/tmp/profile.log",
             platform: "darwin",
             background,
+            quit: noBrowser,
             spawnLogged: spawnInto(spawned),
             probe: liveProbe,
             waitFor: cameUp,
@@ -375,6 +413,7 @@ describe("background launch (the user keeps focus, macOS)", () => {
             fresh: true,
             platform: "darwin",
             background,
+            quit: noBrowser,
             launch: (o) => {
                 launches.push({ url: o.url, background: o.background });
 
@@ -410,6 +449,183 @@ describe("background launch (the user keeps focus, macOS)", () => {
         }
     });
 
+    test("off-macOS background requests log one fallback and skip the placement probe", async () => {
+        const oldLevel = logger.level;
+        const chunks: string[] = [];
+        const stderr = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            chunks.push(String(chunk));
+            return true;
+        });
+        logger.level = "debug";
+        let placements = 0;
+        try {
+            await launchCdpBrowser({
+                port: 9557,
+                fresh: true,
+                platform: "linux",
+                background: {
+                    windowArgs: async () => {
+                        placements++;
+                        return windowArgs;
+                    },
+                    openWindow: async () => {
+                        throw new Error("background window must not open");
+                    },
+                },
+                launch: okLaunch,
+                probe: liveProbe,
+                waitFor: cameUp,
+            });
+            await Bun.sleep(20);
+            expect(placements).toBe(0);
+            expect(chunks.join("").match(/background window placement is macOS-only/g)).toHaveLength(1);
+        } finally {
+            logger.level = oldLevel;
+            stderr.mockRestore();
+        }
+    });
+
+    test("empty placement preserves the startup window for both launch paths and separate profile kinds", async () => {
+        for (const profile of [{ fresh: true }, { extension: "/dist/ext" }, { userDataDir: "/tmp/persistent" }]) {
+            for (const logged of [false, true]) {
+                const commands: string[][] = [];
+                const { background, opened } = fakeBackground();
+                background.windowArgs = async () => [];
+                let launchBackground: boolean | undefined;
+                await launchCdpBrowser({
+                    port: 9557,
+                    ...profile,
+                    url: "https://example.com/app",
+                    platform: "darwin",
+                    background,
+                    ...(logged ? { logPath: "/tmp/profile.log" } : {}),
+                    spawnLogged: spawnInto(commands),
+                    launch: (o) => {
+                        commands.push([...o.args, ...(o.url ? [o.url] : [])]);
+                        launchBackground = o.background;
+                        return okLaunch();
+                    },
+                    probe: liveProbe,
+                    waitFor: cameUp,
+                });
+                expect(commands[0]).not.toContain("--no-startup-window");
+                expect(commands[0].some((arg) => arg.startsWith("--window-"))).toBe(false);
+                expect(commands[0].at(-1)).toBe("https://example.com/app");
+                expect(opened).toEqual([]);
+
+                if (!logged) {
+                    expect(launchBackground).toBe(false);
+                }
+            }
+        }
+    });
+
+    test.each([false, true])("both first-window creation paths failing reject the launch, owned=%s", async (logged) => {
+        const requests: string[] = [];
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: (request, server) => {
+                const pathname = new URL(request.url).pathname;
+                requests.push(`${request.method} ${pathname}`);
+
+                if (pathname === "/browser" && server.upgrade(request)) {
+                    return;
+                }
+
+                if (pathname === "/json/version") {
+                    return Response.json({ webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/browser` });
+                }
+
+                return new Response("fixture window refused", { status: 500 });
+            },
+            websocket: {
+                message: (socket, message) => {
+                    const request: { id: number; method: string } = SafeJSON.parse(String(message));
+                    requests.push(request.method);
+                    socket.send(SafeJSON.stringify({ id: request.id, error: { message: "inactive window refused" } }));
+                },
+            },
+        });
+        let killed = 0;
+        let probed = 0;
+        let logsRead = 0;
+        try {
+            const port = server.port;
+            if (port === undefined) {
+                throw new Error("fixture server has no listening port");
+            }
+
+            const launching = launchCdpBrowser({
+                port,
+                fresh: true,
+                platform: "darwin",
+                background: { windowArgs: async () => windowArgs, openWindow: openBackgroundWindow },
+                quit: noBrowser,
+                ...(logged ? { logPath: "/tmp/profile.log" } : {}),
+                readLog: async () => {
+                    logsRead++;
+                    return "fixture browser diagnostic\n";
+                },
+                launch: okLaunch,
+                spawnLogged: () => ({
+                    pid: 4242,
+                    kill: () => {
+                        killed++;
+                    },
+                }),
+                probe: async (port) => {
+                    probed++;
+                    return { port, browser: "Chrome/151", pages: [] };
+                },
+                waitFor: cameUp,
+            });
+            await expect(launching).rejects.toThrow("fixture window refused");
+            await expect(launching).rejects.toMatchObject({
+                name: "CdpLaunchError",
+                stage: "window",
+                logTail: logged ? "fixture browser diagnostic\n" : null,
+            });
+            expect(logsRead).toBe(logged ? 1 : 0);
+            expect(requests).toContain("Target.createTarget");
+            expect(requests).toContain("PUT /json/new");
+            expect(killed).toBe(logged ? 1 : 0);
+            expect(probed).toBe(0);
+        } finally {
+            await server.stop(true);
+        }
+    });
+
+    test("the normal-window fallback still succeeds when inactive creation fails", async () => {
+        const requests: string[] = [];
+        const url = "https://example.com/app?a=1&b=2";
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: (request) => {
+                requests.push(`${request.method} ${new URL(request.url).pathname}`);
+
+                if (new URL(request.url).pathname === "/json/version") {
+                    return Response.json({});
+                }
+
+                expect(decodeURIComponent(new URL(request.url).search.slice(1))).toBe(url);
+                return Response.json({ id: "fixture-page", type: "page", url });
+            },
+        });
+        try {
+            const port = server.port;
+            if (port === undefined) {
+                throw new Error("fixture server has no listening port");
+            }
+
+            await openBackgroundWindow(port, url);
+            expect(requests).toEqual(["GET /json/version", "PUT /json/new"]);
+        } finally {
+            await server.stop(true);
+        }
+    });
+
     test("a browser whose port never answers gets no window request", async () => {
         const { background, opened } = fakeBackground();
         await launchCdpBrowser({
@@ -418,6 +634,7 @@ describe("background launch (the user keeps focus, macOS)", () => {
             logPath: "/tmp/profile.log",
             platform: "darwin",
             background,
+            quit: noBrowser,
             spawnLogged: () => ({ pid: 7, kill: () => {} }),
             probe: deadProbe,
             waitFor: neverUp,

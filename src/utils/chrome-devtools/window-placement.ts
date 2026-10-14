@@ -231,6 +231,7 @@ export function parseDisplayLayout(text: string): DisplayLayout | null {
     }
 
     if (!isRecord(raw) || !Array.isArray(raw.screens)) {
+        log.debug("display probe has no screens array; the window keeps its default placement");
         return null;
     }
 
@@ -239,6 +240,7 @@ export function parseDisplayLayout(text: string): DisplayLayout | null {
         const frame = isRecord(screen) ? toRect(screen.frame) : null;
         const visible = isRecord(screen) ? toRect(screen.visible) : null;
         if (!frame || !visible) {
+            log.debug("display probe has a malformed screen; the window keeps its default placement");
             return null;
         }
 
@@ -246,6 +248,7 @@ export function parseDisplayLayout(text: string): DisplayLayout | null {
     }
 
     if (screens.length === 0) {
+        log.debug("display probe has no screens; the window keeps its default placement");
         return null;
     }
 
