@@ -16,7 +16,7 @@ function episode(id: string, scores?: { referenceScore: number; naiveScore: numb
         referenceAction: "action",
         referenceOutcome: "outcome",
         specAxes: [],
-        minedBy: "ai-proxy:martin/grok/grok-4.5",
+        minedBy: "ai-proxy:work/grok/grok-4.5",
         runId: "run-1",
         ...scores,
     };
@@ -85,20 +85,26 @@ describe("persistScores", () => {
 });
 
 describe("persistFiltered", () => {
-    test("a filtered line that does not parse survives the rebuild, and the kept episodes merge", () => {
+    test("unparseable and wrong-shape filtered lines survive the rebuild while kept episodes merge", () => {
         const pack = mkdtempSync(join(tmpdir(), "lff-filter-"));
         const dir = join(pack, "meta", "episodes");
         mkdirSync(dir, { recursive: true });
         const path = join(dir, "episodes.slug.filtered.jsonl");
-        const torn = '{"id":"old","taskTy';
-        writeFileSync(path, `${SafeJSON.stringify(episode("a"), { strict: true })}\n${torn}\n`);
+        const unreadable = [
+            '{"id":"old","taskTy',
+            '{"contextPrefix":"first"}',
+            '{"contextPrefix":"second"}',
+            "3",
+            "false",
+        ];
+        writeFileSync(path, `${[SafeJSON.stringify(episode("a"), { strict: true }), ...unreadable].join("\n")}\n`);
 
         persistFiltered({ packPath: pack, sessionsMirrorPath: pack, sessionSources: [] }, "slug", [episode("b")]);
 
         expect(readFileSync(path, "utf-8").trim().split("\n")).toEqual([
             SafeJSON.stringify(episode("a"), { strict: true }),
             SafeJSON.stringify(episode("b"), { strict: true }),
-            torn,
+            ...unreadable,
         ]);
     });
 });

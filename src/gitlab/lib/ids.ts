@@ -82,9 +82,43 @@ export function idMapPath(mr: { host: string; project: string; iid: number }, di
     return join(dir, "review-ids", `${project}-${mr.iid}.json`);
 }
 
-/** A stored map is a JSON object; a kind it lacks starts empty. */
+/** Missing kinds start empty; present tables must preserve usable, positive integer ids. */
 function isStoredIdMap(value: unknown): value is Partial<IdMap> {
-    return isJsonObject(value);
+    if (!isJsonObject(value)) {
+        return false;
+    }
+
+    for (const kind of ID_KINDS) {
+        if (!Object.hasOwn(value, kind)) {
+            continue;
+        }
+
+        const table = value[kind];
+
+        if (!isJsonObject(table) || !Object.values(table).every((n) => Number.isSafeInteger(n) && Number(n) > 0)) {
+            return false;
+        }
+    }
+
+    if (Object.hasOwn(value, "published")) {
+        const published = value.published;
+
+        if (
+            !isJsonObject(published) ||
+            !Object.values(published).every(
+                (entry) =>
+                    isJsonObject(entry) &&
+                    typeof entry.discussionId === "string" &&
+                    entry.discussionId.length > 0 &&
+                    Number.isSafeInteger(entry.draftId) &&
+                    Number(entry.draftId) > 0
+            )
+        ) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -109,7 +143,7 @@ export function loadIdMap(path: string): IdMap {
 
     if (!isStoredIdMap(raw)) {
         throw new Error(
-            `gitlab: the review id map ${path} is not a JSON object; it was left untouched so no id is renumbered. Fix or move it, then run again`
+            `gitlab: the review id map ${path} is not a JSON object with valid id tables; it was left untouched so no id is renumbered. Fix or move it, then run again`
         );
     }
 

@@ -65,7 +65,7 @@ describe("isExtractionOutage", () => {
 });
 
 describe("persistSessionResult", () => {
-    test("a raw episode line that does not parse survives a re-mine, and the new episode is merged", () => {
+    test("unparseable and wrong-shape raw lines survive a re-mine while valid episodes merge", () => {
         const pack = mkdtempSync(join(tmpdir(), "lff-mine-"));
         const runner: Runner = {
             id: "ai-proxy:work/grok/grok-4.5",
@@ -76,8 +76,21 @@ describe("persistSessionResult", () => {
         const dir = join(pack, "meta", "episodes");
         mkdirSync(dir, { recursive: true });
         const rawPath = join(dir, `episodes.${modelSlug(runner.id)}.raw.jsonl`);
-        const torn = '{"id":"old","contextPre';
-        writeFileSync(rawPath, `${torn}\n`);
+        const unreadable = [
+            '{"id":"old","contextPre',
+            '{ "contextPrefix": "first" }',
+            '{"contextPrefix":"second"}',
+            "null",
+            "true",
+            "17",
+            '"text"',
+            "[]",
+            '{"id":11}',
+            '{"id":""}',
+            '{"id":"  "}',
+        ];
+        const existing = '{"id":"existing","contextPrefix":"saved"}';
+        writeFileSync(rawPath, `${[existing, ...unreadable].join("\n")}\n`);
 
         persistSessionResult(
             { packPath: pack, sessionsMirrorPath: pack, sessionSources: [] },
@@ -86,8 +99,9 @@ describe("persistSessionResult", () => {
         );
 
         expect(readFileSync(rawPath, "utf-8").trim().split("\n")).toEqual([
+            existing,
             SafeJSON.stringify(episodes(1)[0], { strict: true }),
-            torn,
+            ...unreadable,
         ]);
     });
 });

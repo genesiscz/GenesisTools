@@ -363,10 +363,22 @@ export function isExtractionOutage(result: MineSessionResult): boolean {
     return result.extractorFailures * 2 >= result.windowsSampled;
 }
 
-/** An episodes JSONL file: the episodes by id, and every line that did not parse, verbatim. */
+/** An episodes JSONL file: the episodes by id, and every unparseable or invalid-id line, verbatim. */
 export interface EpisodeFile {
     byId: Map<string, Episode>;
     unreadable: string[];
+}
+
+/** Keep the reader's identity-only check: older episode payloads must still round-trip. */
+function hasEpisodeId(value: unknown): value is Episode {
+    return (
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        "id" in value &&
+        typeof value.id === "string" &&
+        value.id.trim().length > 0
+    );
 }
 
 export function readEpisodeFile(path: string): EpisodeFile {
@@ -383,7 +395,12 @@ export function readEpisodeFile(path: string): EpisodeFile {
         }
 
         try {
-            const ep: Episode = SafeJSON.parse(line, { strict: true });
+            const ep: unknown = SafeJSON.parse(line, { strict: true });
+
+            if (!hasEpisodeId(ep)) {
+                throw new Error("episode must be an object with a nonempty string id");
+            }
+
             byId.set(ep.id, ep);
         } catch (err) {
             unreadable.push(line);
@@ -395,12 +412,12 @@ export function readEpisodeFile(path: string): EpisodeFile {
 }
 
 /**
- * Rewrite an episodes file in one atomic rename. A line that did not parse is still paid LLM output,
+ * Rewrite an episodes file in one atomic rename. An unreadable line is still paid LLM output,
  * so it goes back in verbatim after the episodes: a rewrite never deletes it.
  */
 export function writeEpisodeFile(path: string, file: EpisodeFile): void {
     if (file.unreadable.length > 0) {
-        logger.warn({ path, lines: file.unreadable.length }, "episode lines that do not parse were kept as they are");
+        logger.warn({ path, lines: file.unreadable.length }, "unreadable episode lines were kept as they are");
     }
 
     const lines = [...file.byId.values()].map((ep) => SafeJSON.stringify(ep, { strict: true }));

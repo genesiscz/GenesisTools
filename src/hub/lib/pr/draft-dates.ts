@@ -1,8 +1,8 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -95,6 +95,32 @@ function asDraftDates(value: unknown): DraftDates {
     return dates;
 }
 
+/** The locked writer must not save the display reader's fallback over bytes it could not use. */
+async function readDatesForUpdate(file: string): Promise<DraftDates> {
+    let text: string;
+
+    try {
+        text = await readFile(file, "utf8");
+    } catch (error) {
+        if (isMissingFileError(error)) {
+            return {};
+        }
+
+        throw error;
+    }
+
+    const parsed: unknown = SafeJSON.parse(text);
+
+    if (
+        !isRecord(parsed) ||
+        !Object.values(parsed).every((ids) => isRecord(ids) && Object.values(ids).every((at) => typeof at === "string"))
+    ) {
+        throw new Error(`draft dates in ${file} have an invalid shape; refusing to replace them`);
+    }
+
+    return asDraftDates(parsed);
+}
+
 async function readDates(file: string): Promise<DraftDates> {
     const handle = Bun.file(file);
 
@@ -125,7 +151,7 @@ export async function draftDatesFor({
     try {
         await mkdir(dirname(file), { recursive: true });
         return await withFileLock(`${file}.lock`, async () => {
-            const stamped = stampDraftDates({ dates: await readDates(file), mr, draftIds, now });
+            const stamped = stampDraftDates({ dates: await readDatesForUpdate(file), mr, draftIds, now });
 
             if (stamped.changed) {
                 atomicWriteFileSync(file, SafeJSON.stringify(stamped.dates, null, 2));

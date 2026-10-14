@@ -117,6 +117,22 @@ describe("pins", () => {
             expect(await readFile(pinsPath(), "utf8")).toBe(planted);
         });
 
+        test.each([undefined, null, "damaged"])(
+            "an invalid timestamp %s cannot hide a valid pin or permit compaction",
+            async (at) => {
+                const before = await writeOversizedJournal();
+                const damaged = SafeJSON.stringify({ ...pin({ sessionId: "s0", account: "damaged" }), at });
+                const valid = SafeJSON.stringify(pin({ sessionId: "s0", account: "personal", at: 5000 }));
+                const planted = `${damaged}\n${before}${valid}\n`;
+                await writeFile(pinsPath(), planted, "utf8");
+
+                const pins = await loadPins();
+
+                expect(pins.get("s0")?.account).toBe("personal");
+                expect(await readFile(pinsPath(), "utf8")).toBe(planted);
+            }
+        );
+
         test("readOnly leaves the journal byte-identical", async () => {
             // `--dry-run` reaches loadPins through listCandidates. Compaction there
             // would make an inspection mutate durable state.

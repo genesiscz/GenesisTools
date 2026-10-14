@@ -252,9 +252,24 @@ export function ledgerPath(mr: { host: string; project: string; iid: number }, d
     return join(dir, "review-ledger", `${project}-${mr.iid}.json`);
 }
 
-/** A stored ledger is a JSON object of step id → entry. */
+/** Refuse incomplete effects instead of treating them as steps that have not landed. */
 function isStoredLedger(value: unknown): value is Ledger {
-    return isJsonObject(value);
+    return (
+        isJsonObject(value) &&
+        Object.values(value).every(
+            (entry) =>
+                isJsonObject(entry) &&
+                typeof entry.kind === "string" &&
+                ["reply", "delete", "reword", "move", "comment"].includes(entry.kind) &&
+                typeof entry.bodyHash === "string" &&
+                /^[0-9a-f]{16}$/.test(entry.bodyHash) &&
+                typeof entry.at === "string" &&
+                Number.isFinite(Date.parse(entry.at)) &&
+                (!Object.hasOwn(entry, "draftId") ||
+                    (Number.isSafeInteger(entry.draftId) && Number(entry.draftId) > 0)) &&
+                (!Object.hasOwn(entry, "verified") || typeof entry.verified === "boolean")
+        )
+    );
 }
 
 /**
@@ -279,7 +294,7 @@ export function loadLedger(path: string): Ledger {
 
     if (!isStoredLedger(raw)) {
         throw new Error(
-            `gitlab: the review ledger ${path} is not a JSON object; it was left untouched and nothing was posted. Fix or move it, then run again`
+            `gitlab: the review ledger ${path} is not a JSON object with valid ledger entries; it was left untouched and nothing was posted. Fix or move it, then run again`
         );
     }
 

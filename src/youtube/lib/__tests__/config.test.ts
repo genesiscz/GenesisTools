@@ -94,6 +94,58 @@ describe("YoutubeConfig", () => {
         expect(await fresh.get("workers")).toEqual(DEFAULT_YOUTUBE_CONFIG.workers);
     });
 
+    it.each([
+        { ai: { saved: "first" } },
+        { provider: ["saved"] },
+        { workers: "saved" },
+        { workers: { max: -1 } },
+        { workers: { max: 1.5 } },
+        { workers: { pollMs: "fast" } },
+        { workers: { idleTeardownMs: 0 } },
+        { workers: { spawnPolicy: "turbo" } },
+        { workers: { custom: "keep me" } },
+        { referrals: { offers: null } },
+    ])("refuses an update that would normalize away stored values", async (malformed) => {
+        const cfg = new YoutubeConfig({ baseDir });
+        const before = `${SafeJSON.stringify(malformed, { strict: true }, 2)}\n`;
+        await Bun.write(cfg.where(), before);
+        // Tolerant request-time reads remain available, and a cached read cannot bypass the disk guard.
+        const displayed = await cfg.getAll();
+
+        await expect(cfg.update({ firstRunComplete: true })).rejects.toThrow("refusing to replace");
+
+        expect(await readFile(cfg.where(), "utf8")).toBe(before);
+        expect(await cfg.getAll()).toEqual(displayed);
+    });
+
+    it.each(["null", "[]", '"saved"', "3", '{"ai":'])(
+        "refuses invalid top-level data or a parse failure",
+        async (before) => {
+            const cfg = new YoutubeConfig({ baseDir });
+            await Bun.write(cfg.where(), before);
+
+            await expect(cfg.update({ keepVideo: true })).rejects.toThrow();
+
+            expect(await readFile(cfg.where(), "utf8")).toBe(before);
+        }
+    );
+
+    it("updates valid partial config and still migrates the retired default port", async () => {
+        const cfg = new YoutubeConfig({ baseDir });
+        await Bun.write(
+            cfg.where(),
+            SafeJSON.stringify({ apiPort: 9876, workers: { pollMs: 0 }, provider: { qa: "local" } })
+        );
+
+        await cfg.update({ firstRunComplete: true });
+
+        const persisted = await new YoutubeConfig({ baseDir }).getAll();
+        expect(persisted.apiPort).toBe(DEFAULT_YOUTUBE_CONFIG.apiPort);
+        expect(persisted.workers.pollMs).toBe(0);
+        expect(persisted.provider.qa).toBe("local");
+        expect(persisted.firstRunComplete).toBe(true);
+    });
+
     it("reset() persists defaults", async () => {
         const cfg = new YoutubeConfig({ baseDir });
         await cfg.set("apiPort", 12345);

@@ -219,7 +219,8 @@ export async function updateRulesConfig<T>(
     return storage.withFileLock({
         file: `${storage.getConfigPath()}.rules`,
         fn: async () => {
-            const stored = (await storage.getConfigValue<unknown>(RULES_CONFIG_KEY)) ?? [];
+            const value = await storage.getConfigValue<unknown>(RULES_CONFIG_KEY);
+            const stored = value === undefined ? [] : value;
 
             if (!Array.isArray(stored)) {
                 throw new Error(

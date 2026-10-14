@@ -1177,6 +1177,31 @@ describe("GitLab draft dates", () => {
         expect(dates.get("50")).toBe(first.toISOString());
     });
 
+    test.each(["null", "[]", '{"other":"unreadable"}', '{"other":{"9":123}}'])(
+        "a malformed saved shape is left byte-identical while drafts still display",
+        async (before) => {
+            const file = join(mkdtempSync(join(tmpdir(), "draft-dates-shape-")), "dates.json");
+            writeFileSync(file, before);
+
+            const dates = await draftDatesFor({ mr, draftIds: ["50"], now: later, file });
+
+            expect(dates.get("50")).toBe(later.toISOString());
+            expect(readFileSync(file, "utf8")).toBe(before);
+        }
+    );
+
+    test("a bad date in another MR refuses a rewrite but keeps known dates in the display fallback", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "draft-dates-partial-")), "dates.json");
+        const before = SafeJSON.stringify({ [mr]: { "50": first.toISOString() }, other: { "9": 123 } });
+        writeFileSync(file, before);
+
+        const dates = await draftDatesFor({ mr, draftIds: ["50", "51"], now: later, file });
+
+        expect(dates.get("50")).toBe(first.toISOString());
+        expect(dates.get("51")).toBe(later.toISOString());
+        expect(readFileSync(file, "utf8")).toBe(before);
+    });
+
     test("the dates survive between reads through the file, and a broken file dates drafts now", async () => {
         const file = join(mkdtempSync(join(tmpdir(), "draft-dates-")), "dates.json");
         await draftDatesFor({ mr, draftIds: ["50"], now: first, file });
@@ -1186,6 +1211,7 @@ describe("GitLab draft dates", () => {
         writeFileSync(file, "{ not json");
         const broken = await draftDatesFor({ mr, draftIds: ["50"], now: later, file });
         expect(broken.get("50")).toBe(later.toISOString());
+        expect(readFileSync(file, "utf8")).toBe("{ not json");
     });
 });
 

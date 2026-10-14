@@ -317,6 +317,46 @@ describe("git fsmonitor", () => {
         expect(readFsmonitorState(deps.statePath).previous).toEqual(saved);
     });
 
+    test.each([
+        ["missing previous", { version: 1, enabledAt: null, worktrees: {} }],
+        ["partial previous", { version: 1, enabledAt: null, previous: { "core.fsmonitor": null }, worktrees: {} }],
+        ["array previous", { version: 1, enabledAt: null, previous: [], worktrees: {} }],
+        [
+            "invalid previous value",
+            {
+                version: 1,
+                enabledAt: null,
+                previous: { "core.fsmonitor": false, "core.untrackedCache": null },
+                worktrees: {},
+            },
+        ],
+        ["missing enabledAt", { version: 1, previous: null, worktrees: {} }],
+        ["array worktrees", { version: 1, enabledAt: null, previous: null, worktrees: [] }],
+        ["null worktree", { version: 1, enabledAt: null, previous: null, worktrees: { repo: null } }],
+        [
+            "partial worktree",
+            { version: 1, enabledAt: null, previous: null, worktrees: { repo: { firstSeen: "saved" } } },
+        ],
+        [
+            "invalid worktree timestamp",
+            { version: 1, enabledAt: null, previous: null, worktrees: { repo: { firstSeen: "saved", lastSeen: 1 } } },
+        ],
+    ])("refuses %s before changing config or saved state", async (_name, malformed) => {
+        const { deps, calls } = fixture({ running: ["repo"] });
+        const globalBefore = "[core]\n\tfsmonitor = true\n\tuntrackedCache = true\n";
+        writeFileSync(deps.globalConfigPath ?? "", globalBefore);
+        mkdirSync(dirname(deps.statePath), { recursive: true });
+        const stateBefore = SafeJSON.stringify(malformed);
+        writeFileSync(deps.statePath, stateBefore);
+
+        await expect(enableFsmonitor(deps)).rejects.toThrow("has an unknown shape");
+        await expect(disableFsmonitor(deps)).rejects.toThrow("has an unknown shape");
+        await expect(recordMonitorDaemons(deps)).rejects.toThrow("has an unknown shape");
+        expect(readFileSync(deps.statePath, "utf8")).toBe(stateBefore);
+        expect(readFileSync(deps.globalConfigPath ?? "", "utf8")).toBe(globalBefore);
+        expect(calls.some(([command]) => command === "git")).toBe(false);
+    });
+
     test("a recorder started while disable runs waits for it, so it cannot write back what disable cleared", async () => {
         const { deps, calls } = fixture({ running: ["repo"] });
         await enableFsmonitor(deps);

@@ -848,12 +848,20 @@ describe("rules", () => {
         expect(stored).toContainEqual(added);
         expect((await readRulesConfig(storage)).rules.map((entry) => entry.kind)).toEqual(["decision", "idle"]);
 
-        const notAList = { r_decision: { kind: "decision" } };
-        await storage.setConfigValue(RULES_CONFIG_KEY, notAList);
-        await expect(updateRulesConfig((config) => addRule(config, { kind: "decision" }), storage)).rejects.toThrow(
-            "are not a list"
-        );
-        expect(await storage.getConfigValue<unknown>(RULES_CONFIG_KEY)).toEqual(notAList);
+        for (const notAList of [{ r_decision: { kind: "decision" } }, null]) {
+            await storage.setConfigValue(RULES_CONFIG_KEY, notAList);
+            const before = readFileSync(storage.getConfigPath(), "utf8");
+            let changed = false;
+
+            await expect(
+                updateRulesConfig((config) => {
+                    changed = true;
+                    return addRule(config, { kind: "decision" });
+                }, storage)
+            ).rejects.toThrow("are not a list");
+            expect(changed).toBe(false);
+            expect(readFileSync(storage.getConfigPath(), "utf8")).toBe(before);
+        }
     });
 
     test("a notification that fails to post fires again on the next run", async () => {

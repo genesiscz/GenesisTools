@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { YoutubeConfigInit, YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 const API_PORT = WEB_SERVICES["youtube-server"].port;
@@ -148,9 +149,20 @@ export class YoutubeConfig {
         }
 
         const raw = await Bun.file(this.path).text();
-        const parsed = SafeJSON.parse(raw, { unbox: true }) as YoutubeConfigPatch | undefined;
+        const parsed: unknown = SafeJSON.parse(raw, { unbox: true });
 
-        return mergeConfig(DEFAULT_YOUTUBE_CONFIG, withoutLegacyPort(parsed ?? {}));
+        if (!isJsonObject(parsed)) {
+            throw new Error(`youtube config ${this.path} must be an object; refusing to replace it`);
+        }
+
+        const patch = withoutLegacyPort(parsed as YoutubeConfigPatch);
+        const normalized = mergeConfig(DEFAULT_YOUTUBE_CONFIG, patch);
+
+        if (!keepsStoredConfig(patch, normalized)) {
+            throw new Error(`youtube config ${this.path} contains malformed values; refusing to replace them`);
+        }
+
+        return normalized;
     }
 
     private async ensureDir(): Promise<void> {
@@ -164,6 +176,18 @@ export class YoutubeConfig {
             mkdirSync(configDir, { recursive: true });
         }
     }
+}
+
+/** Defaults may fill missing keys, but normalization must not discard or change saved values during an update. */
+function keepsStoredConfig(stored: unknown, normalized: unknown): boolean {
+    if (isJsonObject(stored)) {
+        return (
+            isJsonObject(normalized) &&
+            Object.entries(stored).every(([key, value]) => keepsStoredConfig(value, normalized[key]))
+        );
+    }
+
+    return isDeepStrictEqual(stored, normalized);
 }
 
 function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): YoutubeConfigShape {

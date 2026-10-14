@@ -143,7 +143,7 @@ let cache: JevSettings | null = null;
 
 async function readSavedSettings(storage: Storage) {
     const config = await storage.getConfig<{ settings?: unknown }>();
-    return jevSettingsSchema.safeParse(config?.settings ?? {});
+    return jevSettingsSchema.safeParse(config?.settings === undefined ? {} : config.settings);
 }
 
 /** Read and cache the saved settings. Safe to call repeatedly; settings that fail the schema yield defaults. */

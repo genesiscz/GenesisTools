@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { assignIds, emptyIdMap, idMapPath, keyOfId, loadIdMap, parseId, saveIdMap } from "./ids";
 
 describe("review ids", () => {
@@ -40,6 +41,34 @@ describe("review ids", () => {
         // Negative control: a valid map loads with its numbers, and a new thread gets the next free one.
         writeFileSync(path, '{"T": {"disc-1": 1, "disc-2": 2}}');
         expect(assignIds(loadIdMap(path), "T", ["disc-3", "disc-1"])).toEqual(["T03", "T01"]);
+    });
+
+    test("invalid saved tables refuse allocation and saving without changing the file", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-ids-")), "ids.json");
+
+        for (const invalid of [
+            { T: { "disc-1": "broken" } },
+            { T: null },
+            { F: [] },
+            { D: "broken" },
+            ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map((n) => ({ Y: { existing: n } })),
+            { published: { D01: { draftId: 1 } } },
+        ]) {
+            const bytes = SafeJSON.stringify(invalid);
+            writeFileSync(path, bytes);
+            expect(() => {
+                const map = loadIdMap(path);
+                assignIds(map, "T", ["disc-2"]);
+                saveIdMap(path, map);
+            }).toThrow("valid id tables");
+            expect(readFileSync(path, "utf8")).toBe(bytes);
+        }
+
+        writeFileSync(path, '{"T":{"disc-1":7},"published":{"D01":{"draftId":12,"discussionId":"disc-1"}}}');
+        const map = loadIdMap(path);
+        expect(assignIds(map, "T", ["disc-1", "disc-2"])).toEqual(["T07", "T08"]);
+        expect(assignIds(map, "F", ["src/new.ts"])).toEqual(["F01"]);
+        expect(map.published?.D01).toEqual({ draftId: 12, discussionId: "disc-1" });
     });
 
     test("a map survives a save and a load, one file per MR", () => {

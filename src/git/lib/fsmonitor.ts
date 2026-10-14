@@ -5,7 +5,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type CaptureResult, capture, parseCpuTime } from "@genesiscz/utils/process/ps";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -71,14 +71,26 @@ function emptyState(): FsmonitorState {
 }
 
 function isState(value: unknown): value is FsmonitorState {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        "version" in value &&
-        value.version === 1 &&
-        "worktrees" in value &&
-        typeof value.worktrees === "object" &&
-        value.worktrees !== null
+    if (
+        !isJsonObject(value) ||
+        value.version !== 1 ||
+        (value.enabledAt !== null && typeof value.enabledAt !== "string") ||
+        !isJsonObject(value.worktrees)
+    ) {
+        return false;
+    }
+
+    const previous = value.previous;
+    if (
+        previous !== null &&
+        (!isJsonObject(previous) ||
+            !FSMONITOR_KEYS.every((key) => previous[key] === null || typeof previous[key] === "string"))
+    ) {
+        return false;
+    }
+
+    return Object.values(value.worktrees).every(
+        (entry) => isJsonObject(entry) && typeof entry.firstSeen === "string" && typeof entry.lastSeen === "string"
     );
 }
 

@@ -372,6 +372,32 @@ describe("saveTaskToolConfig", () => {
         expect(saved).toEqual({ recentSession: "keep-me", sessionRetentionDays: 90 });
     });
 
+    it("disables startup GC for invalid present settings without changing the saved bytes", () => {
+        const path = new Storage("task").getConfigPath();
+
+        for (const settings of [
+            { sessionRetentionDays: "365", gcOnRunStart: true },
+            { sessionRetentionDays: null },
+            { sessionRetentionDays: -1 },
+            { sessionRetentionDays: 365, gcOnRunStart: "false" },
+            { gcOnRunStart: null },
+        ]) {
+            const saved = SafeJSON.stringify(settings);
+            writeFileSync(path, saved);
+
+            expect(loadTaskToolConfig(path).gcOnRunStart).toBe(false);
+            expect(readFileSync(path, "utf8")).toBe(saved);
+        }
+
+        for (const settings of [{}, { recentSession: "keep-me" }, { sessionRetentionDays: 0.5 }]) {
+            writeFileSync(path, SafeJSON.stringify(settings));
+            expect(loadTaskToolConfig(path).gcOnRunStart).toBe(true);
+        }
+
+        writeFileSync(path, '{"sessionRetentionDays":365,"gcOnRunStart":true}');
+        expect(loadTaskToolConfig(path)).toEqual({ sessionRetentionDays: 365, gcOnRunStart: true });
+    });
+
     it("refuses to replace a config that does not parse, and turns the run-start GC off", async () => {
         const path = new Storage("task").getConfigPath();
         const torn = '{"recentSession": "keep-me", "sessionRetentionDays": 365, "gcOn';

@@ -79,7 +79,7 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
         try {
             const pin = SafeJSON.parse(line, { strict: true }) as SessionPin;
 
-            if (typeof pin.sessionId !== "string") {
+            if (typeof pin.sessionId !== "string" || !Number.isFinite(pin.at)) {
                 unusable += 1;
                 continue;
             }

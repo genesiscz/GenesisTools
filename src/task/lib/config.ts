@@ -70,7 +70,16 @@ function readRawTaskConfig(path: string): Record<string, unknown> {
 
 export function loadTaskToolConfig(path = configPath()): TaskToolConfig {
     try {
-        return { ...DEFAULT, ...normalizeTaskToolConfig(readRawTaskConfig(path)) };
+        const raw = readRawTaskConfig(path);
+        const normalized = normalizeTaskToolConfig(raw);
+
+        for (const key of ["sessionRetentionDays", "gcOnRunStart"] as const) {
+            if (Object.hasOwn(raw, key) && normalized[key] === undefined) {
+                throw new Error(`Invalid task config at ${path}: invalid ${key}, left untouched`);
+            }
+        }
+
+        return { ...DEFAULT, ...normalized };
     } catch (err) {
         // The retention the user set is unknown, so the run-start GC must not delete sessions by the default.
         logger.warn({ err, path }, "task config: failed to load; using defaults with run-start GC off");

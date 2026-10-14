@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runStep } from "@app/gitlab/commands/review-judgements";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJudgements } from "./judgements";
 import type { KnownItem } from "./judgements-check";
 import {
@@ -202,6 +203,58 @@ describe("comments post plan", () => {
         // Negative control: a valid ledger still loads and still skips the step it records.
         saveLedger(path, { T01: { kind: "reply", bodyHash: stepHash(reply), at: "2026-10-07T05:00:00Z" } });
         expect(alreadyPosted(loadLedger(path), reply)).not.toBeNull();
+    });
+
+    test("malformed ledger entries stop the load-to-post flow before any request", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-ledger-")), "ledger.json");
+        const [reply] = plan(["T01"]).steps;
+        const good = { kind: "reply", bodyHash: stepHash(reply), at: "2026-10-07T05:00:00Z" };
+        const requests: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                requests.push(request.method);
+                return Response.json({ id: 77, note: "Fixed." });
+            },
+        });
+
+        try {
+            for (const entry of [
+                { kind: "reply", at: good.at },
+                null,
+                [],
+                { ...good, kind: "unknown" },
+                { ...good, bodyHash: "" },
+                { ...good, at: 1 },
+                { ...good, at: "invalid" },
+                { ...good, draftId: "77" },
+                { ...good, verified: "false" },
+            ]) {
+                const bytes = SafeJSON.stringify({ T01: entry });
+                writeFileSync(path, bytes);
+                const post = async () => {
+                    const ledger = loadLedger(path);
+
+                    if (!alreadyPosted(ledger, reply)) {
+                        await runStep(
+                            { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                            "42",
+                            reply,
+                            { drafts: [], files: [] }
+                        );
+                    }
+                };
+
+                await expect(post()).rejects.toThrow("valid ledger entries");
+                expect(requests).toEqual([]);
+                expect(readFileSync(path, "utf8")).toBe(bytes);
+            }
+
+            writeFileSync(path, SafeJSON.stringify({ T01: { ...good, draftId: 77, verified: false } }));
+            expect(unverifiedSteps(loadLedger(path), [reply])).toEqual([reply]);
+        } finally {
+            server.stop(true);
+        }
     });
 
     test("the ledger key is the whole effect: a reply that now resolves, or a comment on a new line, is new", () => {
