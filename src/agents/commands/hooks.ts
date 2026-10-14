@@ -40,7 +40,7 @@ import {
     uninstallHooks,
     wiringStatus,
 } from "../lib/hooks/install";
-import { nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
+import { nativeDiffForced, nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
@@ -123,6 +123,12 @@ function ruleOverrides(config: HooksConfig, rules: readonly ShellRule[]): { off:
 /** Claude Code's own Bash diff, as `doctor` reports it; loud while it duplicates and misattributes. */
 function nativeDiffLabel(config: HooksConfig): string {
     const state = nativeDiffState();
+
+    if (state === "off" && nativeDiffForced() === "1") {
+        return pc.red(
+            "🛑 off in settings, but CLAUDE_CODE_BASH_EDIT_DIFF=1 in this environment turns it on for sessions started here"
+        );
+    }
 
     if (state === "off") {
         return "off: the hook draws every Bash diff";
@@ -467,6 +473,14 @@ export function registerHooksCommands(program: Command): void {
             if (wanted === "status") {
                 const now = nativeDiffState();
                 ui.raw(`Claude Code's own Bash diff: ${now === "off" ? pc.green("off") : pc.red(now)}`);
+
+                if (nativeDiffForced() === "1") {
+                    ui.raw(
+                        pc.yellow(
+                            "🛑 CLAUDE_CODE_BASH_EDIT_DIFF=1 is set here, and it wins over the setting: a session started from this environment shows it anyway. Unset it, or start sessions with tools claude start."
+                        )
+                    );
+                }
 
                 if (now !== "off") {
                     ui.raw(

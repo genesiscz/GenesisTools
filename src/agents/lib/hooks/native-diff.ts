@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync } from "node:fs";
+import { env } from "@genesiscz/utils/env";
 import { claudeSettingsPath, readSettings } from "./install";
 import { writeJsonFile } from "./write-json";
 
@@ -18,6 +19,17 @@ export function nativeDiffState(settingsPath = claudeSettingsPath()): NativeDiff
     const value = (readSettings(settingsPath) as { bashEditDiffEnabled?: unknown }).bashEditDiffEnabled;
 
     return value === false ? "off" : value === true ? "on" : "default";
+}
+
+/**
+ * `"1"` or `"0"` when `CLAUDE_CODE_BASH_EDIT_DIFF` decides for a session started from this
+ * environment, whatever the setting says; `null` when the setting decides. `tools claude start` set
+ * it to `1` for every launch until 2026-10-15, so a session from before that shows the native diff.
+ */
+export function nativeDiffForced(): "1" | "0" | null {
+    const value = env.getProcessEnv().CLAUDE_CODE_BASH_EDIT_DIFF;
+
+    return value === "1" || value === "0" ? value : null;
 }
 
 export interface NativeDiffChange {
