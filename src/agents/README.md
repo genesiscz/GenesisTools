@@ -179,12 +179,50 @@ tools agents hooks config set diff.columns auto --write
 
 The message has a budget of 9,900 characters (`diff.maxMessageChars`). Claude Code replaces a hook
 message longer than 10,000 characters (`.length`, escape codes included) with "Output too large".
-Changed lines are bought first, then wrapping, then the full-width fill, then syntax colour, so a
-large diff keeps its content and loses the polish.
+Every row carries its syntax colour and is wrapped at the terminal width before fitting. Changed
+rows are bought first, together with the context row right above and below each change, then the
+other context, nearest first. The full-width fill is bought last, from what is left.
 
-With the hook drawing every Bash diff, Claude Code's own one can be switched off with
-`"bashEditDiffEnabled": false` in `~/.claude/settings.json`. That one has no attribution: it shows
-whatever changed in the cwd repository during the call, another session's edit included.
+`diff.highlight` sets the syntax colour, through `bat` (one run per syntax in a message):
+
+| Mode | Characters | Risk |
+|---|---|---|
+| `256` (default) | about half of `truecolor` after compaction | colours are the nearest of the 256-colour palette; a terminal theme that remaps that palette can shift them |
+| `truecolor` | the most; fewer lines fit the message | none on screen; a large diff shows fewer lines |
+| `none` | the least | no syntax colour; bands and markers stay |
+
+Every mode drops escape codes that change nothing (a reset before a new colour, a repeated colour,
+colour on blanks); that loses no colour, so there is no raw mode. A message that cuts lines links
+the call's full diff (`diff.fullDiff`: `genesis`, `path` or `off`). The `genesis` link is printed
+only while the browser router routes Markdown on this Mac; otherwise the message names the path.
+`tools agents hooks diff show <call>` prints it too.
+
+A file with more than `diff.maxBlockLines` (400) changed lines prints its header and a count only,
+and the message links its full diff. A named file in a temp folder outside every git work tree (a
+PR body, a repro script) is not printed unless `diff.showTempScratch` is on.
+
+### What the hook leaves out
+
+- A rebase that stopped, a cherry-pick, a merge or a `stash pop` brought content the command did
+  not write: one line names how many files git changed. A commit made after it still renders.
+- A file moved without a change (`git mv`) is one "moved unchanged" line, not a Deleted and an
+  Added block.
+- A file another agent's call is still working on, or a background call names, is that call's.
+- A command that only reads gets no line about other writers.
+- A background call is diffed when its task ends, and the next call of the session prints it under
+  "background task <id> ended".
+- A failed command's edits are diffed too (PostToolUseFailure), with a note that it failed.
+
+### Claude Code's own Bash diff
+
+With the hook drawing every Bash diff, `install --write` switches Claude Code's own one off
+(`"bashEditDiffEnabled": false` in `~/.claude/settings.json`, while `diff.replaceNative` is on).
+That one has no attribution: it shows whatever changed in the cwd repository during the call,
+another session's edit included. `tools agents hooks native-diff [status|off|on] --write` sets it.
+
+🛑 `CLAUDE_CODE_BASH_EDIT_DIFF=1` in a session's environment wins over the setting. `tools claude
+start` set it on every launch until 2026-10-15; it now leaves it unset while the setting is off.
+`doctor` and `native-diff` warn when the variable is set.
 
 ## Harnesses
 
