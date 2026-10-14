@@ -1073,7 +1073,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             async (platform) => {
                 const exec: ExecFn =
                     platform === "win32"
-                        ? (argv) => ({
+                        ? processFixture((argv) => ({
                               exitCode: 0,
                               stdout:
                                   argv[0] === "netstat"
@@ -1082,7 +1082,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                                         ? "chrome.exe"
                                         : '[{"ProcessId":4242,"CommandLine":"chrome.exe"}]',
                               stderr: "",
-                          })
+                          }))
                         : throwaway;
                 const valid = "--user-data-dir=/tmp/fixture";
                 const refused = [
