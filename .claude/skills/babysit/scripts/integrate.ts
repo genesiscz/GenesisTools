@@ -5,7 +5,7 @@
  * → thread replies + resolve. Logs `push` and `post` to the run ledger.
  *
  *   bun integrate.ts --run <dir> --pr 508 --round 1 [--wt <dir>] [--replies <json>] [--session bs-508-r1]
- *                    [--sha-map old=new,…] [--range a..b] [--skip-gates] [--no-post] [--dry]
+ *                    [--sha-map old=new,…] [--range a..b] [--skip-gates] [--no-post] [--dry] [--no-push-hooks]
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -86,7 +86,10 @@ if (!has("--skip-gates") && oldHead !== newHead) {
 if (oldHead !== newHead && !dry) {
     // Push the SHA that was judged and gated, never HEAD at push time: a worker steered into its next round in the
     // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
-    must(["git", "push", "origin", `${newHead}:refs/heads/${branch}`], "push");
+    // --no-push-hooks: for a machine whose pre-push hook hangs at a binary launch (a stuck syspolicyd). The gates above
+    // already ran the hook's probe, typecheck and repo rules; run Biome on the changed files yourself first.
+    const hooks = has("--no-push-hooks") && !has("--skip-gates") ? ["-c", "core.hooksPath=/dev/null"] : [];
+    must(["git", ...hooks, "push", "origin", `${newHead}:refs/heads/${branch}`], "push");
     console.log(`✔ pushed ${branch} ${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}`);
     appendEvent(run.dir, {
         kind: "push",
