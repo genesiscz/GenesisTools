@@ -1,4 +1,5 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -34,22 +35,51 @@ async function readStdinToken(): Promise<string | null> {
     return token.length > 0 ? token : null;
 }
 
-async function resolveAccount(name: string | undefined, aiConfig: AIConfig): Promise<AIAccountEntry | null> {
-    const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
+/** What the payload needs of an account: its name and label, no secret. */
+export interface InfoAccount {
+    name: string;
+    label?: string;
+}
 
+interface SecretAccounts {
+    getAccountsByProvider(provider: "anthropic-sub"): AIAccountEntry[];
+}
+
+/**
+ * The statusline runs this in every Claude session. With a name it reads the config's account list only:
+ * `AIConfig.load()` decrypts every account's secrets, which reads the vault's master key from the keychain, and
+ * macOS then asks the user whether `gt-claude` may use it. Only a token on stdin needs the stored tokens to compare.
+ */
+export async function resolveInfoAccount({
+    name,
+    readAccounts = readAnthropicAccounts,
+    loadSecrets = () => AIConfig.load(),
+    readToken = readStdinToken,
+}: {
+    name: string | undefined;
+    readAccounts?: () => Promise<InfoAccount[]>;
+    loadSecrets?: () => Promise<SecretAccounts>;
+    readToken?: () => Promise<string | null>;
+}): Promise<InfoAccount | null> {
     if (name) {
-        return accounts.find((a) => a.name === name) ?? null;
+        return (await readAccounts()).find((a) => a.name === name) ?? null;
     }
 
-    const token = await readStdinToken();
+    const token = await readToken();
     if (!token) {
         return null;
     }
 
-    return accounts.find((a) => a.tokens.longLivedToken === token) ?? null;
+    const config = await loadSecrets();
+    return config.getAccountsByProvider("anthropic-sub").find((a) => a.tokens.longLivedToken === token) ?? null;
 }
 
-async function buildPayload(account: AIAccountEntry): Promise<AccountInfoPayload> {
+async function readAnthropicAccounts(): Promise<InfoAccount[]> {
+    const store = await AiConfigStore.readOnly();
+    return store.data().accounts.filter((a) => a.provider === "anthropic-sub");
+}
+
+async function buildPayload(account: InfoAccount): Promise<AccountInfoPayload> {
     // Passive cache read only — `tools claude info` must never hit the network
     // (it is called from the statusline on every cache-miss refresh).
     const cached = await peekSharedUsage();
@@ -105,8 +135,7 @@ export function registerInfoCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const aiConfig = await AIConfig.load();
-            const account = await resolveAccount(name, aiConfig);
+            const account = await resolveInfoAccount({ name });
 
             if (!account) {
                 if (name) {
