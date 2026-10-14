@@ -97,6 +97,9 @@ describe("counterfactualSavings", () => {
         const { db, userId } = fixture();
         // For master 10 (Cola), seed price observations: best price 20 (paid 25/30)
         const r = db.raw();
+        // The fixture's orders carry fixed 2026 dates for the monthly tests; this window is the last 90 days from now,
+        // so the orders move inside it (the test failed from 2026-08-06, when the last fixed date aged out).
+        r.exec(`UPDATE user_orders SET ordered_at = datetime('now', '-20 days')`);
         r.exec(`INSERT INTO products (id, shop_origin, slug, url, name, name_normalized, master_product_id, match_method, first_seen_at, last_updated_at)
                 VALUES (1000, 'rohlik.cz', 'cola', 'https://r/cola', 'Cola 0.5l', 'cola 0 5l', 10, 'auto-seed', datetime('now'), datetime('now'))`);
         r.exec(`INSERT INTO prices (product_id, observed_at, current_price, source)
