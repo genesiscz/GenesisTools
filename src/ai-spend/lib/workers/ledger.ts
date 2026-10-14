@@ -237,12 +237,23 @@ export async function rewriteWorkerCostRows(
 export async function recordWorkerTurnCost(input: WorkerTurnCostInput): Promise<WorkerCostRow | null> {
     try {
         const row = buildWorkerCostRow(input);
-        await appendWorkerCostRows([row]);
+        const appended = await appendWorkerCostRows([row]);
+        const booked =
+            appended[0] ?? readWorkerCostRows().findLast((saved) => workerCostRowKey(saved) === workerCostRowKey(row));
+        if (!booked) {
+            throw new Error("Deduplicated worker turn cost is missing from the ledger");
+        }
+
         log.debug(
-            { backend: row.backend, name: row.name, turn: row.turn, line: formatCostLine(row.cost, row.backend) },
-            "worker turn cost booked"
+            {
+                backend: booked.backend,
+                name: booked.name,
+                turn: booked.turn,
+                line: formatCostLine(booked.cost, booked.backend),
+            },
+            appended.length > 0 ? "worker turn cost booked" : "worker turn cost already booked"
         );
-        return row;
+        return booked;
     } catch (err) {
         log.warn({ err, backend: input.backend, name: input.name, turn: input.turn }, "worker cost: booking failed");
         return null;

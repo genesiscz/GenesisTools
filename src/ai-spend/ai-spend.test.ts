@@ -1139,6 +1139,35 @@ describe("worker cost ledger", () => {
         }
     );
 
+    it("returns the persisted cost when backfill owns a turn before live booking", async () => {
+        const home = mkdtempSync(join(tmpdir(), "ledger-booking-duplicate-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const backfilled: WorkerCostRow = {
+                ...grokTurn({ name: "backfill-before-live", model: "grok-4.7" }),
+                backfilled: true,
+            };
+            expect(await appendWorkerCostRows([backfilled])).toEqual([backfilled]);
+            const live = await recordWorkerTurnCost({
+                backend: backfilled.backend,
+                name: backfilled.name,
+                sessionId: backfilled.sessionId,
+                turn: backfilled.turn,
+                auth: "api-key",
+                startedAt: new Date("2026-10-13T10:00:00Z"),
+                endedAt: new Date("2026-10-13T10:03:00Z"),
+                toolCalls: 1,
+                parts: [
+                    { model: "grok-4.7", tokens: { input: 1, cacheRead: 0, cacheWrite: 0, output: 1, reasoning: 0 } },
+                ],
+                cwd: home,
+            });
+
+            expect(live?.cost).toEqual(backfilled.cost);
+            expect(live).toEqual(backfilled);
+            expect(readWorkerCostRows()).toEqual([backfilled]);
+        });
+    });
+
     it("deduplicates concurrent backfills and a live booking inside the append lock", async () => {
         const row = grokTurn({ name: "dedup-turn", model: "grok-4.7" });
         const backfilled: WorkerCostRow = { ...row, backfilled: true };

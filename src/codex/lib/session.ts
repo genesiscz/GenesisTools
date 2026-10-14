@@ -454,7 +454,11 @@ export class CodexSessionRuntime {
 
     /** False for a notification from another thread in this app-server: a native subagent's. */
     isOwnThreadEvent(notification: RpcNotification): boolean {
-        const threadId = isRecord(notification.params) ? notification.params.threadId : undefined;
+        const params = isRecord(notification.params) ? notification.params : {};
+        const threadId =
+            notification.method === "thread/started"
+                ? (nestedRecord(params, "thread")?.id ?? params.threadId)
+                : params.threadId;
 
         if (typeof threadId !== "string" || !this.meta.threadId) {
             return true;

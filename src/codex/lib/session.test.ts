@@ -202,6 +202,10 @@ describe("CodexSessionRuntime", () => {
                 method: "turn/started",
                 params: { threadId: "thread-1", turn: { id: "turn-1" } },
             });
+            await runtime.handleNotification({
+                method: "thread/started",
+                params: { thread: { id: "sub-1", model: "gpt-6-astra" } },
+            });
             await runtime.handleNotification(call(100_000, 60_000, 2_000));
             await runtime.handleNotification(call(150_000, 140_000, 3_000));
             await runtime.handleNotification({
