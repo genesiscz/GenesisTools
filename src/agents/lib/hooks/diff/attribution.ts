@@ -315,7 +315,15 @@ export function recordTouches(rows: Touch[], path = touchesPath()): void {
 }
 
 /** Rows from sessions other than `session` whose command ended at or after `since`. */
-export function othersTouches(session: string, since: number, path = touchesPath()): Map<string, Touch[]> {
+export function othersTouches({
+    session,
+    since,
+    path = touchesPath(),
+}: {
+    session: string;
+    since: number;
+    path?: string;
+}): Map<string, Touch[]> {
     const found = new Map<string, Touch[]>();
     let fd: number;
 
@@ -377,7 +385,15 @@ const SAME_BATCH_MS = 2_000;
  * every pre phase writes (`<harness>/<session>/diff/<call>/roots.txt`). Only read when a
  * change is otherwise unattributed, so the ordinary call never lists it.
  */
-export function inFlightRoots(session: string, now: number, root = hookDataRoot()): Set<string> {
+export function inFlightRoots({
+    session,
+    now,
+    root = hookDataRoot(),
+}: {
+    session: string;
+    now: number;
+    root?: string;
+}): Set<string> {
     const roots = new Set<string>();
     const list = (dir: string): string[] => {
         try {
@@ -448,13 +464,21 @@ export interface AttributionContext {
     siblings: () => Set<string>;
 }
 
-export function attribute(file: string, root: string, context: AttributionContext): Attribution {
+export function attribute({
+    file,
+    root,
+    context,
+}: {
+    file: string;
+    root: string;
+    context: AttributionContext;
+}): Attribution {
     // A command that only reads changed nothing, even a file it names (`cat src/a.ts`): the change is another writer's.
     if (context.readOnly()) {
         return "others";
     }
 
-    if (covers(context.named, file, root, "deep")) {
+    if (covers({ mentions: context.named, file, root, reach: "deep" })) {
         return "named";
     }
 
@@ -466,7 +490,7 @@ export function attribute(file: string, root: string, context: AttributionContex
         return "others";
     }
 
-    if (covers(context.mentions(), file, root, "file")) {
+    if (covers({ mentions: context.mentions(), file, root, reach: "file" })) {
         return "mentioned";
     }
 
@@ -478,7 +502,15 @@ export function attribute(file: string, root: string, context: AttributionContex
 }
 
 /** `N file(s) changed by others in this root: a.ts, b.ts and 3 more`, relative to their roots. */
-export function summaryLine(label: string, files: Array<{ path: string; root: string }>, shown = 4): string {
+export function summaryLine({
+    label,
+    files,
+    shown = 4,
+}: {
+    label: string;
+    files: Array<{ path: string; root: string }>;
+    shown?: number;
+}): string {
     const names = files.slice(0, shown).map((file) => relative(file.root, file.path) || file.path);
     const more = files.length > shown ? ` and ${files.length - shown} more` : "";
 

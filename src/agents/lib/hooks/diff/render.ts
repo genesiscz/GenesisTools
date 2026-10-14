@@ -96,12 +96,17 @@ export function hasContext(patch: string): boolean {
     return patch.split("\n").some((line) => line.startsWith(" "));
 }
 
-export function highlightRange(
-    path: string,
-    range: { from: number; to: number } | null,
-    config: DiffConfig,
-    patch = " "
-): string[] {
+export function highlightRange({
+    path,
+    range,
+    config,
+    patch = " ",
+}: {
+    path: string;
+    range: { from: number; to: number } | null;
+    config: DiffConfig;
+    patch?: string;
+}): string[] {
     // 🛑 One `bat` spawn per changed file sits on the PostToolUse hot path. Measured
     // 2026-09-22 on a 15-file change that rewrote every line: 597 ms with highlighting
     // against 159 ms without, for BYTE-IDENTICAL output, because a full rewrite leaves no
@@ -226,7 +231,7 @@ export function renderPatch(patch: string, palette: Palette | null = null): Rend
 
         for (const line of body) {
             if (line.changed) {
-                line.text = themedRow(line, palette, { width: 0, fill: false });
+                line.text = themedRow({ line, palette, shape: { width: 0, fill: false } });
             }
         }
     }
@@ -330,7 +335,17 @@ function pairWords(body: PatchLine[]): void {
 const ESCAPE_SEQUENCE = /\u001b\[[0-9;]*[A-Za-z]/y;
 
 /** `text` with the brighter word band over the code-point span `[start, end)`, escape codes skipped. */
-function paintWords(text: string, [start, end]: [number, number], word: string, band: string): string {
+function paintWords({
+    text,
+    span: [start, end],
+    word,
+    band,
+}: {
+    text: string;
+    span: [number, number];
+    word: string;
+    band: string;
+}): string {
     let out = "";
     let visible = 0;
     let index = 0;
@@ -493,7 +508,7 @@ export function wrapVisible(text: string, columns: number): Array<{ text: string
  * part of a changed row so the band reaches the edge (Claude Code's renderer drops `ESC[K`, so
  * spaces are the only fill). Context rows wrap the same way and have no band.
  */
-function themedRow(line: PatchLine, palette: Palette, shape: RowShape): string {
+function themedRow({ line, palette, shape }: { line: PatchLine; palette: Palette; shape: RowShape }): string {
     const number = String(line.number ?? "").padStart(GUTTER);
     const columns = shape.width > 0 ? shape.width - INDENT : 0;
 
@@ -510,7 +525,12 @@ function themedRow(line: PatchLine, palette: Palette, shape: RowShape): string {
     let shown = shape.painted ?? line.content ?? "";
 
     if (line.word && band) {
-        shown = paintWords(shown, line.word, added ? palette.addedWord : palette.removedWord, band);
+        shown = paintWords({
+            text: shown,
+            span: line.word,
+            word: added ? palette.addedWord : palette.removedWord,
+            band,
+        });
     }
 
     const mark = `${added ? palette.addedMark : palette.removedMark}${added ? "+" : "-"}${DEFAULT_FOREGROUND}`;
@@ -632,10 +652,14 @@ function prepareThemed(blocks: DiffBlock[], config: DiffConfig): void {
 
         block.body.forEach((line, index) => {
             if (line.kind) {
-                line.text = themedRow(line, dress.palette, {
-                    width: dress.width,
-                    fill: false,
-                    painted: dress.painted?.[index],
+                line.text = themedRow({
+                    line,
+                    palette: dress.palette,
+                    shape: {
+                        width: dress.width,
+                        fill: false,
+                        painted: dress.painted?.[index],
+                    },
                 });
             }
         });
@@ -643,7 +667,7 @@ function prepareThemed(blocks: DiffBlock[], config: DiffConfig): void {
 }
 
 /** What a themed block needs for its rows; see `DiffBlock.dress`. */
-export function themedDress(palette: Palette, path: string, width: number): BlockDress {
+export function themedDress({ palette, path, width }: { palette: Palette; path: string; width: number }): BlockDress {
     return { width, palette, path };
 }
 
@@ -681,14 +705,21 @@ export interface BlockDress {
     painted?: Array<string | undefined>;
 }
 
-export function renderBlock(
-    file: ChangedFile,
-    patch: RenderedPatch,
-    hadBefore: boolean,
-    category: DiffCategory = "source",
+export function renderBlock({
+    file,
+    patch,
+    hadBefore,
+    category = "source",
     label = file.path,
-    width = 0
-): DiffBlock {
+    width = 0,
+}: {
+    file: ChangedFile;
+    patch: RenderedPatch;
+    hadBefore: boolean;
+    category?: DiffCategory;
+    label?: string;
+    width?: number;
+}): DiffBlock {
     // "Added" only when there was genuinely no before state, so a whole-file render
     // never reads as though one command wrote every line.
     const verb = file.deleted ? "Deleted" : !hadBefore && file.untracked ? "Added" : "Updated";
@@ -802,7 +833,17 @@ function textLength(text: string): number {
  * Colour and wrapping are already in the rows (`prepareThemed`); the fill is the one luxury left.
  * Returns the budget left.
  */
-function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<number, string>[], budget: number): number {
+function dressBlocks({
+    blocks,
+    kept,
+    tinted,
+    budget,
+}: {
+    blocks: DiffBlock[];
+    kept: Set<number>[];
+    tinted: Map<number, string>[];
+    budget: number;
+}): number {
     let left = budget;
 
     blocks.forEach((block, index) => {
@@ -819,10 +860,14 @@ function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<numbe
                 continue;
             }
 
-            const next = themedRow(line, dress.palette, {
-                width: dress.width,
-                fill: true,
-                painted: dress.painted?.[at],
+            const next = themedRow({
+                line,
+                palette: dress.palette,
+                shape: {
+                    width: dress.width,
+                    fill: true,
+                    painted: dress.painted?.[at],
+                },
             });
             const extra = textLength(next) - textLength(line.text);
 
@@ -907,7 +952,7 @@ export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: 
         }
     }
 
-    left = dressBlocks(blocks, kept, tinted, left);
+    left = dressBlocks({ blocks, kept, tinted, budget: left });
 
     blocks.forEach((block, index) => {
         const held = kept[index];

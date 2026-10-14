@@ -79,7 +79,17 @@ export interface DiffDecision {
  * that was clean when the command began. Passing a path that does not exist to
  * `--no-index` yields exit 128 and an empty patch, which reads exactly like "no change".
  */
-function patchFor(file: ChangedFile, before: string | null, config: DiffConfig, base: string): string {
+function patchFor({
+    file,
+    before,
+    config,
+    base,
+}: {
+    file: ChangedFile;
+    before: string | null;
+    config: DiffConfig;
+    base: string;
+}): string {
     const context = `-U${config.contextLines}`;
 
     if (before) {
@@ -417,14 +427,21 @@ function lookWidth(diff: DiffConfig): number {
     return columns === null || columns === 0 ? 0 : Math.max(0, columns - BAND_MARGIN);
 }
 
-function blockFrom(
-    file: ChangedFile,
-    patch: string,
-    hadBefore: boolean,
-    config: DiffConfig,
-    suppressed: Map<DiffCategory, number>,
-    look: Look | null
-): DiffBlock | null {
+function blockFrom({
+    file,
+    patch,
+    hadBefore,
+    config,
+    suppressed,
+    look,
+}: {
+    file: ChangedFile;
+    patch: string;
+    hadBefore: boolean;
+    config: DiffConfig;
+    suppressed: Map<DiffCategory, number>;
+    look: Look | null;
+}): DiffBlock | null {
     // The KIND is decided before any rendering work, so a category that is switched off
     // costs one classification rather than a `bat` spawn and a full render.
     const category = classifyChange(file.path, patch, file.root);
@@ -450,7 +467,7 @@ function blockFrom(
     }
 
     const label = look ? displayPath(file.path, look.cwd) : file.path;
-    const block = renderBlock(file, rendered, hadBefore, category, label, look?.width ?? 0);
+    const block = renderBlock({ file, patch: rendered, hadBefore, category, label, width: look?.width ?? 0 });
 
     block.source = { label: `${label} (+${rendered.added} -${rendered.removed})`, patch };
 
@@ -459,7 +476,7 @@ function blockFrom(
     }
 
     if (look) {
-        block.dress = themedDress(look.palette, file.path, look.width);
+        block.dress = themedDress({ palette: look.palette, path: file.path, width: look.width });
         return block;
     }
 
@@ -467,7 +484,7 @@ function blockFrom(
     // budget has decided a context line will really be printed. A deleted file has nothing
     // left on disk to highlight.
     if (!file.deleted) {
-        block.colour = () => highlightRange(file.path, hunkRange(patch), config, patch);
+        block.colour = () => highlightRange({ path: file.path, range: hunkRange(patch), config, patch });
     }
 
     return block;
@@ -478,7 +495,17 @@ function blockFrom(
  * print the same change. A deleted file has no stat of its own, so it keys on its parent
  * directory's mtime with `size: -1`.
  */
-function claim(path: string, deleted: boolean, config: DiffConfig, session: string | undefined): boolean {
+function claim({
+    path,
+    deleted,
+    config,
+    session,
+}: {
+    path: string;
+    deleted: boolean;
+    config: DiffConfig;
+    session: string | undefined;
+}): boolean {
     if (!config.dedupeAcrossSessions) {
         return true;
     }
@@ -521,14 +548,21 @@ function claim(path: string, deleted: boolean, config: DiffConfig, session: stri
  * Exported for its tests: the multi-cause string is the whole point of this function and
  * building every combination end to end costs a temp repo per case.
  */
-export function silentReason(
-    covered: number,
-    uncaptured: number,
-    claimed: number,
-    stale: number,
-    suppressed: Map<DiffCategory, number>,
-    unattributed = 0
-): string {
+export function silentReason({
+    covered,
+    uncaptured,
+    claimed,
+    stale,
+    suppressed,
+    unattributed = 0,
+}: {
+    covered: number;
+    uncaptured: number;
+    claimed: number;
+    stale: number;
+    suppressed: Map<DiffCategory, number>;
+    unattributed?: number;
+}): string {
     const kinds = [...suppressed].map(([kind, count]) => `${count} ${kind}`).join(", ");
 
     // Several causes can hold at once, and each single-cause message below says "every" or
@@ -932,7 +966,7 @@ export function runDiffPost({
 
             // Before any copy is read: a change another session made is neither rendered, nor
             // claimed (which would steal that session's render), nor logged as this session's.
-            const kind = attribute(file.path, root, attribution);
+            const kind = attribute({ file: file.path, root, context: attribution });
 
             // A rebase that stopped, a cherry-pick, a stash pop: what git wrote is not the command's
             // edit. Only a file the command names itself still renders (`git checkout -- a.ts`).
@@ -989,20 +1023,20 @@ export function runDiffPost({
                 continue;
             }
 
-            const block = blockFrom(
+            const block = blockFrom({
                 file,
-                patchFor(file, before, diff, base),
-                before !== null,
-                diff,
+                patch: patchFor({ file, before, config: diff, base }),
+                hadBefore: before !== null,
+                config: diff,
                 suppressed,
-                lookOf()
-            );
+                look: lookOf(),
+            });
 
             if (block === null) {
                 continue;
             }
 
-            if (!claim(file.path, file.deleted, diff, payload.sessionId)) {
+            if (!claim({ path: file.path, deleted: file.deleted, config: diff, session: payload.sessionId })) {
                 claimed += 1;
                 continue;
             }
@@ -1108,13 +1142,20 @@ export function runDiffPost({
             change.before ?? "/dev/null",
             change.deleted ? "/dev/null" : change.path,
         ]);
-        const block = blockFrom(file, patch, change.before !== null, diff, suppressed, lookOf());
+        const block = blockFrom({
+            file,
+            patch,
+            hadBefore: change.before !== null,
+            config: diff,
+            suppressed,
+            look: lookOf(),
+        });
 
         if (block === null) {
             continue;
         }
 
-        if (!claim(change.path, change.deleted, diff, payload.sessionId)) {
+        if (!claim({ path: change.path, deleted: change.deleted, config: diff, session: payload.sessionId })) {
             claimed += 1;
             continue;
         }
@@ -1144,10 +1185,10 @@ export function runDiffPost({
         ...historyNotes,
         ...renameNotes,
         ...(uncapturedFiles.length > 0
-            ? [summaryLine("dirty file(s) changed with no captured before-state", uncapturedFiles)]
+            ? [summaryLine({ label: "dirty file(s) changed with no captured before-state", files: uncapturedFiles })]
             : []),
         ...(othersWorthALine.length > 0 && diff.othersSummary === "line"
-            ? [summaryLine("file(s) changed by others in this root", othersWorthALine)]
+            ? [summaryLine({ label: "file(s) changed by others in this root", files: othersWorthALine })]
             : []),
         ...(notShown.length > 0 ? [`${notShown.length} more changed file(s) past diff.maxFiles ${diff.maxFiles}`] : []),
         ...(blocks.length > 0 && normalizeEvent(payload.event) === "posttoolusefailure"
@@ -1157,7 +1198,14 @@ export function runDiffPost({
     const others = unattributed.map((item) => item.path);
 
     if (blocks.length === 0) {
-        const reason = silentReason(covered, uncaptured, claimed, stale, suppressed, unattributed.length);
+        const reason = silentReason({
+            covered,
+            uncaptured,
+            claimed,
+            stale,
+            suppressed,
+            unattributed: unattributed.length,
+        });
 
         if (notes.length === 0) {
             return { decision: "silent", reason, files: [], others };
@@ -1248,7 +1296,7 @@ function attributionContext({
             return readOnly;
         },
         others: () => {
-            others ??= othersTouches(actor, since);
+            others ??= othersTouches({ session: actor, since });
             return others;
         },
         siblings: () => {
@@ -1256,7 +1304,7 @@ function attributionContext({
             return siblings;
         },
         busyRoots: () => {
-            busy ??= inFlightRoots(session, now);
+            busy ??= inFlightRoots({ session, now });
             return busy;
         },
     };

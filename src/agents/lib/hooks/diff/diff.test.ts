@@ -1524,30 +1524,38 @@ describe("silentReason", () => {
     const hidden = new Map([["log", 2] as const]);
 
     it("names one cause on its own terms when only one holds", () => {
-        expect(silentReason(0, 0, 0, 0, hidden)).toBe("every changed file was a kind this config hides: 2 log");
-        expect(silentReason(3, 0, 0, 0, new Map())).toBe("every changed file was already rendered natively");
-        expect(silentReason(0, 0, 2, 0, new Map())).toBe("2 changed file(s) had already been rendered");
-        expect(silentReason(0, 1, 0, 0, new Map())).toBe(
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: hidden })).toBe(
+            "every changed file was a kind this config hides: 2 log"
+        );
+        expect(silentReason({ covered: 3, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
+            "every changed file was already rendered natively"
+        );
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 2, stale: 0, suppressed: new Map() })).toBe(
+            "2 changed file(s) had already been rendered"
+        );
+        expect(silentReason({ covered: 0, uncaptured: 1, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
             "1 changed file(s) had no captured before-state, over the capture cap"
         );
-        expect(silentReason(0, 0, 0, 4, new Map())).toBe(
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 4, suppressed: new Map() })).toBe(
             "4 deletion(s) had already happened before this command began"
         );
-        expect(silentReason(0, 0, 0, 0, new Map())).toBe("no change since this command began");
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
+            "no change since this command began"
+        );
     });
 
     it("reports a mix as a mix, instead of claiming the first cause was everything", () => {
         // The suppressed branch used to come first and say "every changed file was a kind
         // this config hides" while files had also been rendered natively — so the reader
         // went and changed the wrong setting.
-        const reason = silentReason(1, 0, 0, 0, hidden);
+        const reason = silentReason({ covered: 1, uncaptured: 0, claimed: 0, stale: 0, suppressed: hidden });
 
         expect(reason).toBe("nothing left to print: a kind this config hides (2 log); 1 already rendered natively");
         expect(reason).not.toContain("every changed file");
     });
 
     it("lists every cause that holds, in a fixed order", () => {
-        expect(silentReason(1, 2, 3, 4, hidden)).toBe(
+        expect(silentReason({ covered: 1, uncaptured: 2, claimed: 3, stale: 4, suppressed: hidden })).toBe(
             "nothing left to print: a kind this config hides (2 log); 1 already rendered natively; 3 already rendered; 2 with no captured before-state, over the capture cap; 4 deletion(s) already gone before this command began"
         );
     });
@@ -2212,12 +2220,12 @@ describe("highlighting is skipped when nothing would use it", () => {
 
         writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
 
-        expect(highlightRange(file, range, batty, rewrite)).toEqual([]);
+        expect(highlightRange({ path: file, range, config: batty, patch: rewrite })).toEqual([]);
 
         if (batPresent) {
             // The positive control for this very assertion: same file, same range, same
             // config, and the ONLY difference is a patch that has context.
-            expect(highlightRange(file, range, batty, edited).length).toBeGreaterThan(0);
+            expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
         }
     });
 
@@ -2233,13 +2241,13 @@ describe("highlighting is skipped when nothing would use it", () => {
 
         writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
 
-        expect(highlightRange(file, range, batty, edited).length).toBeGreaterThan(0);
+        expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
     });
 
     it("still returns nothing when highlighting is off entirely", () => {
         const off = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const };
 
-        expect(highlightRange(join(repo, "anything.ts"), range, off, edited)).toEqual([]);
+        expect(highlightRange({ path: join(repo, "anything.ts"), range, config: off, patch: edited })).toEqual([]);
     });
 });
 
@@ -2532,9 +2540,9 @@ describe("mention extraction", () => {
         const root = "/work/app";
         const mentions = mentionsFrom([root, `${root}/src/feature`, `glob:${root}/**/*.ts`, `glob:${root}/docs/*.md`]);
 
-        expect(covers(mentions, `${root}/src/feature/x.ts`, root)).toBe(true);
-        expect(covers(mentions, `${root}/docs/y.md`, root)).toBe(true);
-        expect(covers(mentions, `${root}/src/other/z.ts`, root)).toBe(false);
+        expect(covers({ mentions, file: `${root}/src/feature/x.ts`, root })).toBe(true);
+        expect(covers({ mentions, file: `${root}/docs/y.md`, root })).toBe(true);
+        expect(covers({ mentions, file: `${root}/src/other/z.ts`, root })).toBe(false);
     });
 
     it("an EARLIER mention reaches only a directory's direct children and a glob without **", () => {
@@ -2543,11 +2551,13 @@ describe("mention extraction", () => {
         // file under `src` for it, another session's new file included.
         const mentions = mentionsFrom([`${root}/src`, `glob:${root}/lib/**/*.ts`, `glob:${root}/docs/*.md`]);
 
-        expect(covers(mentions, `${root}/src/index.ts`, root, "shallow")).toBe(true);
-        expect(covers(mentions, `${root}/src/utils/services/lifecycle.ts`, root, "shallow")).toBe(false);
-        expect(covers(mentions, `${root}/src/utils/services/lifecycle.ts`, root, "deep")).toBe(true);
-        expect(covers(mentions, `${root}/lib/deep/a.ts`, root, "shallow")).toBe(false);
-        expect(covers(mentions, `${root}/docs/y.md`, root, "shallow")).toBe(true);
+        expect(covers({ mentions, file: `${root}/src/index.ts`, root, reach: "shallow" })).toBe(true);
+        expect(covers({ mentions, file: `${root}/src/utils/services/lifecycle.ts`, root, reach: "shallow" })).toBe(
+            false
+        );
+        expect(covers({ mentions, file: `${root}/src/utils/services/lifecycle.ts`, root, reach: "deep" })).toBe(true);
+        expect(covers({ mentions, file: `${root}/lib/deep/a.ts`, root, reach: "shallow" })).toBe(false);
+        expect(covers({ mentions, file: `${root}/docs/y.md`, root, reach: "shallow" })).toBe(true);
     });
 
     it("attribution from an EARLIER mention needs the file itself, not its directory", () => {
@@ -2560,9 +2570,9 @@ describe("mention extraction", () => {
             `glob:${root}/docs/*.md`,
         ]);
 
-        expect(covers(mentions, `${root}/Sources/Hub/HubWindow.swift`, root, "file")).toBe(true);
-        expect(covers(mentions, `${root}/Sources/Hub/HubMainMenu.swift`, root, "file")).toBe(false);
-        expect(covers(mentions, `${root}/docs/y.md`, root, "file")).toBe(false);
+        expect(covers({ mentions, file: `${root}/Sources/Hub/HubWindow.swift`, root, reach: "file" })).toBe(true);
+        expect(covers({ mentions, file: `${root}/Sources/Hub/HubMainMenu.swift`, root, reach: "file" })).toBe(false);
+        expect(covers({ mentions, file: `${root}/docs/y.md`, root, reach: "file" })).toBe(false);
     });
 
     it("classifies read-only commands, and anything that writes or runs a program as a runner", () => {
@@ -3392,7 +3402,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             return {
                 head: "head",
                 body: rendered.body,
-                dress: themedDress(palette, "x.ts", width),
+                dress: themedDress({ palette, path: "x.ts", width }),
             };
         };
         const budget = (bytes: number) => ({ ...quiet, maxMessageChars: bytes });
@@ -3417,7 +3427,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         const block: DiffBlock = {
             head: "head",
             body: rendered.body,
-            dress: themedDress(palette, "x.ts", 40),
+            dress: themedDress({ palette, path: "x.ts", width: 40 }),
         };
         const rows = assembleMessage([block], { ...quiet, maxMessageChars: 100_000 })
             .split("\n")
@@ -3444,7 +3454,11 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
     it("keeps the context rows right around a change before any other context", () => {
         const patch = ["@@ -1,7 +1,7 @@", " alpha", " bravo", " charlie", "-old", "+new", " delta", " echo"].join("\n");
         const rendered = renderPatch(patch, palette);
-        const block: DiffBlock = { head: "head", body: rendered.body, dress: themedDress(palette, "x.txt", 0) };
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.txt", width: 0 }),
+        };
         // The two changed rows and their two neighbours fit; the outer context does not.
         const budget = 4 + 60 + 4 * 40;
         const shown = stripAnsi(assembleMessage([block], { ...quiet, maxMessageChars: budget }));
@@ -3456,7 +3470,11 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
 
     it("colours every themed row from the start, in 256 colours by default", () => {
         const rendered = renderPatch(["@@ -1,1 +1,1 @@", "-const a = 1;", "+const a = 2;"].join("\n"), palette);
-        const block: DiffBlock = { head: "head", body: rendered.body, dress: themedDress(palette, "x.ts", 0) };
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.ts", width: 0 }),
+        };
         const message = assembleMessage([block], { ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: 100_000 });
 
         expect(DEFAULT_HOOKS_CONFIG.diff.highlight).toBe("256");
@@ -3575,7 +3593,7 @@ describe("tools agents hooks diff log", () => {
             "git status",
         ].join("\n");
 
-        expect(commandSlices(command, ["/repo/src/a.ts"])).toEqual([
+        expect(commandSlices({ command, files: ["/repo/src/a.ts"] })).toEqual([
             "cd /repo && python3 - <<'PY'",
             "…",
             "p = 'src/a.ts'",

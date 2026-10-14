@@ -310,13 +310,21 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): void {
                     continue;
                 }
 
-                readRow(row, calls, agent);
+                readRow({ row, calls, agent });
             }
         });
     }
 }
 
-function readRow(row: unknown, calls: Map<string, DiffLogEntry>, agent: string | undefined): void {
+function readRow({
+    row,
+    calls,
+    agent,
+}: {
+    row: unknown;
+    calls: Map<string, DiffLogEntry>;
+    agent: string | undefined;
+}): void {
     const content = field(field(row, "message"), "content");
 
     for (const item of Array.isArray(content) ? content : []) {
@@ -432,7 +440,15 @@ function around(line: string, needle: string | undefined): string {
  * files (by file name), in command order, with the names highlighted. That is the part that
  * decided whether a file counted as named by the command.
  */
-export function commandSlices(command: string, files: string[], colours: LogColours = PLAIN): string[] {
+export function commandSlices({
+    command,
+    files,
+    colours = PLAIN,
+}: {
+    command: string;
+    files: string[];
+    colours?: LogColours;
+}): string[] {
     const lines = command.trim().split("\n");
     const names = [...new Set(files.map((path) => basename(path)).filter((name) => name.length > 0))];
     const mark = (text: string) =>
@@ -507,7 +523,9 @@ export function formatEntry(entry: DiffLogEntry, options: FormatOptions): string
                 "    ```"
             );
         } else {
-            lines.push(...commandSlices(entry.command, files, colours).map((line) => `    ${colours.cyan(line)}`));
+            lines.push(
+                ...commandSlices({ command: entry.command, files, colours }).map((line) => `    ${colours.cyan(line)}`)
+            );
         }
     }
 

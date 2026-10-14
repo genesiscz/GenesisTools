@@ -148,12 +148,17 @@ interface CapturePlan {
  * holds more files than the whole capture may take is left out as a unit rather than expanded
  * without bound, and deletions are skipped because `tar` cannot stat them.
  */
-function captureList(
-    root: string,
-    entries: StatusEntry[],
-    config: DiffConfig,
-    mentioned: (relativePath: string) => boolean
-): { files: string[]; namesOnly: string[]; tooWide: string[] } {
+function captureList({
+    root,
+    entries,
+    config,
+    mentioned,
+}: {
+    root: string;
+    entries: StatusEntry[];
+    config: DiffConfig;
+    mentioned: (relativePath: string) => boolean;
+}): { files: string[]; namesOnly: string[]; tooWide: string[] } {
     const files: string[] = [];
     const namesOnly: string[] = [];
     const tooWide: string[] = [];
@@ -227,12 +232,17 @@ const MAX_RECORDED_NAMES = 5_000;
  * not fit are written out, because a file that EXISTED but has no copy must never be reported
  * as one the command created.
  */
-function planCapture(
-    root: string,
-    files: string[],
-    config: DiffConfig,
-    mentioned: (relativePath: string) => boolean
-): CapturePlan {
+function planCapture({
+    root,
+    files,
+    config,
+    mentioned,
+}: {
+    root: string;
+    files: string[];
+    config: DiffConfig;
+    mentioned: (relativePath: string) => boolean;
+}): CapturePlan {
     const fileCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
     const sized = files.map((file) => ({
@@ -445,7 +455,7 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         const named = coverage(mentions.current, root, "deep");
         const earlier = coverage(mentions.index, root, "shallow");
         const mentioned = (name: string) => named(join(root, name)) || earlier(join(root, name));
-        const { files, namesOnly, tooWide } = captureList(root, entries, config, mentioned);
+        const { files, namesOnly, tooWide } = captureList({ root, entries, config, mentioned });
         // Excluding them from the archive also leaves the post phase unable to tell a
         // deletion this command MADE from one that was already sitting in `git status`.
         // Writing the names down is what closes that. See `alreadyGone` for the measurement.
@@ -459,7 +469,7 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
             return;
         }
 
-        const plan = planCapture(root, files, config, mentioned);
+        const plan = planCapture({ root, files, config, mentioned });
         const left = [...plan.left, ...namesOnly, ...tooWide];
 
         // The refusal is RECORDED rather than silent, so the post phase can tell a file it

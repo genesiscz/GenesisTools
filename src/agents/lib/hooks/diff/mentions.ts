@@ -602,7 +602,17 @@ export type Reach = "deep" | "shallow" | "file";
  * `cd <repo>` are mentions of the whole repository, and counting them would cover every file a
  * second session writes there, which is the exact case this index exists to separate.
  */
-export function covers(mentions: Mentions, file: string, root: string, reach: Reach = "deep"): boolean {
+export function covers({
+    mentions,
+    file,
+    root,
+    reach = "deep",
+}: {
+    mentions: Mentions;
+    file: string;
+    root: string;
+    reach?: Reach;
+}): boolean {
     if (mentions.paths.has(file)) {
         return true;
     }
@@ -685,5 +695,5 @@ export function coverage(mentions: Mentions, root: string, reach: Reach): (file:
         return () => false;
     }
 
-    return (file) => covers(inside, file, root, reach);
+    return (file) => covers({ mentions: inside, file, root, reach });
 }
