@@ -18,7 +18,6 @@ import { CString, type Pointer, read } from "bun:ffi";
 import { readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename } from "node:path";
-import { chunk } from "@genesiscz/utils/array";
 import { libSystem } from "@genesiscz/utils/fs/native/libsystem";
 import { ownLineage } from "./cwd";
 import {
@@ -146,23 +145,47 @@ function fromCim(process: CimProcess, commands: boolean): ProcessEntry {
     };
 }
 
-/** The command lines of `pids` from `ps`, batched: what macOS withholds from libproc for other users. */
-function psCommands(pids: number[]): Map<number, string> {
-    const commands = new Map<number, string>();
+/**
+ * ONE `ps` for the rows of `pids`, however many: `-p` for up to {@link PS_BATCH_SIZE} pids, the whole table filtered
+ * for more (macOS has about 400 other-user processes, and one `ps -A` costs about what one `ps -p` does). `columns`
+ * starts with `pid=`; each kept line is the text after the pid.
+ */
+function psLinesFor(pids: number[], columns: string): Map<number, string> {
+    const lines = new Map<number, string>();
 
-    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
-        const result = captureSync("ps", ["-o", "pid=,command=", "-p", batch.join(",")]);
+    if (pids.length === 0) {
+        return lines;
+    }
 
-        for (const line of result.stdout.split("\n")) {
-            const match = line.match(/^\s*(\d+)\s(.*)$/);
+    const wanted = new Set(pids);
+    const args = pids.length <= PS_BATCH_SIZE ? ["-o", columns, "-p", pids.join(",")] : ["-A", "-o", columns];
 
-            if (match) {
-                commands.set(Number(match[1]), match[2].trimEnd());
-            }
+    for (const line of captureSync("ps", args).stdout.split("\n")) {
+        const match = line.match(/^\s*(\d+)\s+(.*)$/);
+
+        if (match && wanted.has(Number(match[1]))) {
+            lines.set(Number(match[1]), match[2]);
         }
     }
 
-    return commands;
+    return lines;
+}
+
+/** The command lines of `pids` from one `ps`: what macOS withholds from libproc for other users. */
+function psCommands(pids: number[]): Map<number, string> {
+    return new Map([...psLinesFor(pids, "pid=,command=")].map(([pid, rest]) => [pid, rest.trimEnd()]));
+}
+
+/** `rss= time=` (KB and `ps` CPU time) as a usage entry; null when the line does not parse. */
+function psUsage(pid: number, rssKb: string, time: string): ProcessUsageEntry | null {
+    const cpuTimeMs = parseCpuTime(time);
+    const rss = Number(rssKb);
+
+    if (cpuTimeMs === null || !Number.isFinite(rss)) {
+        return null;
+    }
+
+    return { pid, rssBytes: rss * 1024, cpuTimeMs, threads: null, running: null };
 }
 
 /** `lstart` as `ps` prints it: `Tue Oct 13 15:32:57 2026`, local time. */
@@ -548,23 +571,13 @@ export function readProcessUsages(
         }
     }
 
-    if (missing.length > 0 && (options.otherUsers || !darwinKernel())) {
-        for (const batch of chunk(missing, PS_BATCH_SIZE)) {
-            const result = captureSync("ps", ["-o", "pid=,rss=,time=", "-p", batch.join(",")]);
+    if (options.otherUsers || !darwinKernel()) {
+        for (const [pid, rest] of psLinesFor(missing, "pid=,rss=,time=")) {
+            const [rssKb = "", time = ""] = rest.trim().split(/\s+/);
+            const usage = psUsage(pid, rssKb, time);
 
-            for (const line of result.stdout.split("\n")) {
-                const [pid, rssKb, time] = line.trim().split(/\s+/);
-                const cpuTimeMs = time === undefined ? null : parseCpuTime(time);
-
-                if (pid && rssKb && cpuTimeMs !== null) {
-                    usages.set(Number(pid), {
-                        pid: Number(pid),
-                        rssBytes: Number(rssKb) * 1024,
-                        cpuTimeMs,
-                        threads: null,
-                        running: null,
-                    });
-                }
+            if (usage) {
+                usages.set(pid, usage);
             }
         }
     }
@@ -587,38 +600,29 @@ export function listProcessesWithUsage(options: Pick<ListProcessesOptions, "othe
     const usages = readProcessUsages(entries.map((entry) => entry.pid));
 
     if (options.otherUsers && processPlatform() !== "linux" && processPlatform() !== "win32") {
+        const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
         const missing = entries.filter((entry) => !entry.zombie && (entry.command === null || !usages.has(entry.pid)));
 
-        for (const batch of chunk(
+        for (const [pid, rest] of psLinesFor(
             missing.map((entry) => entry.pid),
-            PS_BATCH_SIZE
+            "pid=,rss=,time=,command="
         )) {
-            const result = captureSync("ps", ["-o", "pid=,rss=,time=,command=", "-p", batch.join(",")]);
+            const match = rest.match(/^(\d+)\s+(\S+)\s(.*)$/);
 
-            for (const line of result.stdout.split("\n")) {
-                const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s(.*)$/);
-                const cpuTimeMs = match ? parseCpuTime(match[3]) : null;
+            if (!match) {
+                continue;
+            }
 
-                if (!match || cpuTimeMs === null) {
-                    continue;
-                }
+            const entry = byPid.get(pid);
 
-                const pid = Number(match[1]);
-                const entry = entries.find((candidate) => candidate.pid === pid);
+            if (entry) {
+                entry.command ??= match[3].trimEnd();
+            }
 
-                if (entry) {
-                    entry.command ??= match[4].trimEnd();
-                }
+            const usage = usages.has(pid) ? null : psUsage(pid, match[1], match[2]);
 
-                if (!usages.has(pid)) {
-                    usages.set(pid, {
-                        pid,
-                        rssBytes: Number(match[2]) * 1024,
-                        cpuTimeMs,
-                        threads: null,
-                        running: null,
-                    });
-                }
+            if (usage) {
+                usages.set(pid, usage);
             }
         }
     }

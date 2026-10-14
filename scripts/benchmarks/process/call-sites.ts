@@ -363,6 +363,10 @@ export const CALL_SITES: CallSite[] = [
     },
     {
         id: "swap-ps-rows",
+        budget: {
+            spawns: 1,
+            reason: "the scan ranks every process by memory, and another user's memory only the setuid ps reads on macOS",
+        },
         file: "src/macos/lib/swap/scanner.ts",
         spawn: "ps -A -o pid=,rss=,etime=,comm=",
         frequency: "per-command",

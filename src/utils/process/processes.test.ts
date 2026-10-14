@@ -52,6 +52,29 @@ import { parseCimDate, parseCimProcessJson, parseNetstatTcp } from "./windows-ci
 
 const PROCESS_TOOLS = /(^|\/)(ps|lsof|pgrep)$/;
 
+/**
+ * The programs `run` starts. Every `node:child_process` entry point funnels into `Bun.spawn` or `Bun.spawnSync` on
+ * Bun, so the two spies see every spawn but `Bun.$`. The calls are copied BEFORE the restore: `mockRestore()` clears
+ * `mock.calls`, so reading them afterwards always finds none.
+ */
+function spawnedPrograms(run: () => void): string[] {
+    const spawn = spyOn(Bun, "spawn");
+    const spawnSync = spyOn(Bun, "spawnSync");
+    let calls: unknown[][] = [];
+
+    try {
+        run();
+    } finally {
+        calls = [...spawn.mock.calls, ...spawnSync.mock.calls];
+        spawn.mockRestore();
+        spawnSync.mockRestore();
+    }
+
+    return calls.map(([first]) =>
+        Array.isArray(first) ? String(first[0]) : String((first as { cmd?: string[] }).cmd?.[0])
+    );
+}
+
 describe("linux /proc parsers", () => {
     test("stat keeps a comm with spaces and parentheses, and reads fields after the last parenthesis", () => {
         const stat = parseProcStat(
@@ -262,11 +285,7 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
     });
 
     test("never start ps, lsof or pgrep", () => {
-        // Every node:child_process entry point funnels into these two on Bun, so they see every spawn.
-        const spawn = spyOn(Bun, "spawn");
-        const spawnSync = spyOn(Bun, "spawnSync");
-
-        try {
+        const programs = spawnedPrograms(() => {
             listProcesses();
             readProcess(process.pid);
             childPids(process.ppid);
@@ -278,15 +297,9 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             listListeningTcp();
             listEstablishedTcp();
             ancestry(process.pid, 3);
-        } finally {
-            spawn.mockRestore();
-            spawnSync.mockRestore();
-        }
+        });
 
-        const commands = [...spawn.mock.calls, ...spawnSync.mock.calls].map(([first]) =>
-            Array.isArray(first) ? String(first[0]) : String((first as { cmd?: string[] }).cmd?.[0])
-        );
-        expect(commands.filter((command) => PROCESS_TOOLS.test(command))).toEqual([]);
+        expect(programs.filter((program) => PROCESS_TOOLS.test(program))).toEqual([]);
     });
 
     test("this process: its parent, command line, executable, environment, usage and descriptors", () => {
@@ -370,6 +383,17 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             Bun.spawnSync(["ps", "-o", "pgid=", "-p", String(process.pid)], { env: process.env }).stdout.toString()
         );
         expect(me?.pgid).toBe(fromPs);
+    });
+
+    test.skipIf(process.platform !== "darwin")("other users' rows cost exactly one ps, however many there are", () => {
+        let rows: ReturnType<typeof listProcessesWithUsage> = [];
+        const programs = spawnedPrograms(() => {
+            rows = listProcessesWithUsage({ otherUsers: true });
+        });
+
+        expect(programs.filter((program) => PROCESS_TOOLS.test(program))).toEqual(["ps"]);
+        // launchd is root's: its usage comes from that one ps.
+        expect(rows.find((row) => row.pid === 1)?.usage?.rssBytes).toBeGreaterThan(0);
     });
 
     test("sockets are readable here, so an empty list means none", () => {

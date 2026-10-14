@@ -37,16 +37,19 @@ describe.skipIf(process.platform === "win32")("readProcessBasics", () => {
 
     test("reads this user's processes without starting ps", () => {
         const spawnSync = spyOn(Bun, "spawnSync");
+        let calls: unknown[][] = [];
 
         try {
             readProcessBasics(process.pid);
             readProcessBasics(process.ppid);
             listProcessBasics();
         } finally {
+            // Copied before the restore: `mockRestore()` clears `mock.calls`.
+            calls = [...spawnSync.mock.calls];
             spawnSync.mockRestore();
         }
 
-        expect(spawnSync.mock.calls).toEqual([]);
+        expect(calls).toEqual([]);
     });
 
     test("the table agrees with the utils layer on parents and start times", () => {
