@@ -1,6 +1,6 @@
 import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { logger } from "@genesiscz/utils/logger";
-import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { listedExecutablePath, listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 
 // macOS `ps comm=` yields the full executable path. Surface a readable name:
@@ -35,7 +35,7 @@ export function sortProcesses(list: ProcessInfo[], sort: ProcessSort): ProcessIn
 
 export async function collectProcesses(): Promise<ProcessInfo[]> {
     const now = Date.now();
-    // Use the snapshot's image names; resolving each executable would spawn once per row on Windows/fallbacks.
+    // Named by the executable, read without a process per row (a cut name on macOS would merge different apps).
     return listProcessesWithUsage({ otherUsers: true, commands: false }).map((entry) => {
         const uptimeMs = entry.startMs === null ? 0 : Math.max(0, now - entry.startMs);
         return {
@@ -44,7 +44,7 @@ export async function collectProcesses(): Promise<ProcessInfo[]> {
             uptimeMs,
             // Lifetime average: the kernel has no ps-style decayed CPU percentage.
             cpuPct: uptimeMs > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / uptimeMs : 0,
-            name: friendlyProcessName(entry.name),
+            name: friendlyProcessName(listedExecutablePath(entry)),
         };
     });
 }

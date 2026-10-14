@@ -36,6 +36,7 @@ import {
     descendantPids,
     findProcesses,
     formatLstart,
+    listedExecutablePath,
     listProcesses,
     listProcessesWithUsage,
     parseFallbackPsTable,
@@ -728,6 +729,23 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         expect(findProcesses({ name, command: "no such command line anywhere", includeAncestors: true })).toEqual([]);
     });
 
+    test("a listed executable is the listed name where a per-row read would spawn a process", () => {
+        const capture = spyOn(ps, "captureSync");
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const kernelOn = spyOn(os, "darwinKernel").mockReturnValue(false);
+
+        try {
+            expect(listedExecutablePath({ pid: process.pid, name: "worker.exe" })).toBe("worker.exe");
+            platform.mockReturnValue("darwin");
+            expect(listedExecutablePath({ pid: process.pid, name: "genesis-long-pro" })).toBe("genesis-long-pro");
+            expect(capture).not.toHaveBeenCalled();
+        } finally {
+            kernelOn.mockRestore();
+            platform.mockRestore();
+            capture.mockRestore();
+        }
+    });
+
     test("a name the kernel cut matches only in full", async () => {
         // A real executable with a 25-byte name: the kernel name comes from the file, not from a symlink or a script.
         // macOS runs a copy of bun (an APFS clone, instant); a copied system binary is refused there. The copy is a
@@ -749,6 +767,10 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             expect(findProcesses({ name: "genesis-long-pro" }).map((entry) => entry.pid)).not.toContain(child.pid);
             expect(findProcesses({ name: "genesis-long-pr" }).map((entry) => entry.pid)).not.toContain(child.pid);
             expect(findProcesses({ name: "genesis-long-process-name" }).map((entry) => entry.pid)).toEqual([child.pid]);
+            // A caller that names rows by their executable gets the full path, not the listing's cut name.
+            const listed = listProcesses().find((entry) => entry.pid === child.pid);
+            expect(listed?.name).not.toBe("genesis-long-process-name");
+            expect(listed && listedExecutablePath(listed)).toBe(realpathSync(exe));
         } finally {
             child.kill();
             await child.exited;

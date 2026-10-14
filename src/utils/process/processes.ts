@@ -546,6 +546,22 @@ export function readExecutablePath(pid: number): string | null {
 }
 
 /**
+ * The executable of a listed process without a process per row: the full path where the kernel gives it for free (macOS
+ * and Linux, whose listed name is cut at 16 or 15 bytes), else the listed name (Windows, and the macOS `ps` fallback,
+ * where {@link readExecutablePath} would spawn once per row).
+ */
+export function listedExecutablePath(entry: Pick<ProcessEntry, "pid" | "name">): string {
+    switch (processPlatform()) {
+        case "linux":
+            return readProcExe(entry.pid) ?? entry.name;
+        case "win32":
+            return entry.name;
+        default:
+            return darwinKernel() ? (readProcessPath(entry.pid) ?? entry.name) : entry.name;
+    }
+}
+
+/**
  * CPU, memory and thread count of each pid. On macOS the kernel answers for this user's processes; with
  * `otherUsers` the rest come from ONE batched `ps` (without a thread count). A pid that is gone is absent.
  */
