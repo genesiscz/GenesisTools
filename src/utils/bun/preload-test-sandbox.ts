@@ -107,11 +107,11 @@ function guardSandbox(sandboxRoot: string): void {
  * passes its own `OBSIDIAN_CONFIG_DIR` or a vault override.
  */
 function isolateObsidian(): void {
-    if (env.test.allowsRealHome() || env.getTrimmed("OBSIDIAN_CONFIG_DIR")) {
+    if (env.test.allowsRealHome()) {
         return;
     }
 
-    const sandboxRoot = mkdtempSync(join(tmpdir(), "gt-test-obsidian-"));
+    const sandboxRoot = env.getTrimmed("OBSIDIAN_CONFIG_DIR") ?? mkdtempSync(join(tmpdir(), "gt-test-obsidian-"));
     env.testing.set("OBSIDIAN_CONFIG_DIR", sandboxRoot);
     afterEach(() => {
         if (env.test.allowsRealHome() || env.getTrimmed("OBSIDIAN_CONFIG_DIR")) {

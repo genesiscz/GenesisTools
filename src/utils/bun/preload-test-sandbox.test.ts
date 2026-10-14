@@ -7,6 +7,37 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { configCandidates, resolveActiveVault } from "@genesiscz/utils/obsidian/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
+test("a startup Obsidian override survives fixture cleanup between tests", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "obsidian-startup-config-"));
+    // Run the paired assertions below in a fresh process so the override precedes the preload.
+    // The name filter excludes this launcher to avoid recursively spawning the suite.
+    const result = Bun.spawnSync(
+        [
+            process.execPath,
+            "scripts/test.ts",
+            import.meta.path,
+            "--test-name-pattern",
+            "^Obsidian sandbox between tests",
+        ],
+        {
+            cwd: join(import.meta.dir, "../../.."),
+            env: {
+                ...env.getProcessEnv(),
+                OBSIDIAN_CONFIG_DIR: fixture,
+                GENESIS_TOOLS_TEST_ALLOW_REAL_HOME: "0",
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 30_000,
+        }
+    );
+    const output = result.stdout.toString() + result.stderr.toString();
+
+    expect(result.exitCode, output).toBe(0);
+    expect(output).toContain("12 pass");
+    expect(output).toContain("[test] suite complete (exit 0)");
+}, 40_000);
+
 /**
  * Guards the sandbox itself. If this fails, tests are writing to the user's real
  * ~/.genesis-tools and the preload is either missing from bunfig.toml or loading
