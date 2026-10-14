@@ -182,7 +182,16 @@ final message lands in the ledger. Never poll. Steer with `scripts/steer.ts` (sa
 prompt. `bun .claude/skills/babysit/scripts/round-ready.ts --run <dir> <N>…` says which PRs the reviewer bot has
 re-reviewed at their current head, so their next round can start. To be woken instead of checking, run
 `bun .claude/skills/babysit/scripts/watch-reviews.ts --run <dir> <N>…` as a Monitor (`timeout_ms: 1800000`, re-arm
-on expiry): it prints a PR's line only when its head, eve's review of that head or its open threads change.
+on expiry): it prints a PR's line only when its head, any reviewer's latest review of that head, its open threads or
+the PR comments by others change. Watch every reviewer, never eve alone, and keep the PRs merged in the last 24 hours
+on the list: a review can arrive after the merge (2026-10-14: #502, #503 and #505 each got findings after theirs).
+🛑 An event with new open threads is work, also on a merged PR and also when it says APPROVED: read the threads
+(`audit-reviews.ts <N> --bodies`) the same turn. On 2026-10-14 an event showed three new threads on merged #502 and
+sat unread for 70 minutes.
+
+🛑 Kill a process only after its working folder is proven to be one of the run's own worktrees
+(`lsof -a -d cwd -p <pid>`). A name match is not proof: on 2026-10-14 the lead killed another session's pre-commit
+hook, believing it was a worker's.
 
 ## 6. Judge each worker commit (fable-judge, inline)
 
@@ -311,6 +320,13 @@ each worker's API-equivalent and billed cost and the Claude estimate; plus the S
 after, and the API credits when step 3.7 read them), monitoring facts (turns, tool calls, stalls, questions,
 approvals), and what to change before the next run. Label the Claude figure an estimate: the same tokens on another
 tokenizer, without the cache writes Claude would also bill.
+
+Before every round report and before the final one, run `bun .claude/skills/babysit/scripts/audit-reviews.ts --run
+<dir> <every open PR and every PR merged in the last 24 hours>`. It lists every reviewer (bots and people), every
+open, unanswered or silently resolved thread, PR comments, findings kept in a review body ("outside diff range"), and
+everything that arrived after a merge; it exits 1 while any of those needs work. A merged PR's late finding becomes a
+follow-up commit on a branch from master, with a reply on the thread naming it. Never write "every thread answered" or
+"clean at merge" without a fresh exit 0, or a list of what is still open.
 
 ## 10. Bugs in the harness: fix them, after the user confirms
 
