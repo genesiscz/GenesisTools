@@ -1,9 +1,28 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "@genesiscz/utils/paths";
-import { inspectNativeCache, retireNativeCache } from "./retire-native-cache";
+import * as openFilesModule from "@genesiscz/utils/process/open-files";
+import { inspectNativeCache, openProcesses, retireNativeCache } from "./retire-native-cache";
+
+test("a process holding three cache files open counts once", () => {
+    const open = spyOn(openFilesModule, "openFiles").mockReturnValue([
+        { pid: 98671, command: "gt-hub", path: "/cache/index.db" },
+        { pid: 98671, command: "gt-hub", path: "/cache/index.db-wal" },
+        { pid: 98671, command: "gt-hub", path: "/cache/index.db-shm" },
+        { pid: 4242, command: "bun", path: "/cache/index.db" },
+    ]);
+
+    try {
+        expect(openProcesses(["/cache/index.db"])).toEqual([
+            { pid: 98671, command: "gt-hub" },
+            { pid: 4242, command: "bun" },
+        ]);
+    } finally {
+        open.mockRestore();
+    }
+});
 
 function fixture(): { toolsHome: string; target: string; manifestDirectory: string } {
     const toolsHome = join(tmpdir(), `retire-native-${crypto.randomUUID()}`);

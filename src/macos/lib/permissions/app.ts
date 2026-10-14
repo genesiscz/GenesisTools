@@ -946,9 +946,14 @@ export async function packRetiredBundles(retiredRoot: string): Promise<void> {
 
 const STALE_FACE_TERM_GRACE_MS = 500;
 
-/** Read-only process snapshot shared by the reap and its pre-kill recheck. */
+/**
+ * Read-only process snapshot shared by the reap and its pre-kill recheck, oldest first: the faces start again in this
+ * order, and the kernel table lists the newest first.
+ */
 export function readAppFaceProcesses(): ProcessEntry[] {
-    return listProcesses();
+    return listProcesses().sort(
+        (a, b) => (a.startMs ?? Number.POSITIVE_INFINITY) - (b.startMs ?? Number.POSITIVE_INFINITY) || a.pid - b.pid
+    );
 }
 
 export function staleAppFacePids(processes: Pick<ProcessEntry, "pid" | "command">[], launcherPath: string): string[] {

@@ -2,9 +2,11 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as processes from "@genesiscz/utils/process/processes";
 import {
     assertFullXcodeToolchain,
     pinnedRetiredBundles,
+    readAppFaceProcesses,
     readRunningExecutableInodes,
     runningExecutableInodes,
     stampAppToolsPath,
@@ -19,6 +21,36 @@ import {
     shouldAsk,
     writeOfferStateTo,
 } from "./build-offer";
+
+describe("readAppFaceProcesses", () => {
+    it("lists the faces oldest first, so they start again in the order they first started", () => {
+        const entry = (pid: number, startMs: number | null) => ({
+            pid,
+            ppid: 1,
+            pgid: null,
+            uid: null,
+            name: "GenesisTools",
+            command: `/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --face ${pid}`,
+            tty: null,
+            startMs,
+            zombie: false,
+            state: "S",
+        });
+        // The kernel table lists the newest pid first.
+        const list = spyOn(processes, "listProcesses").mockReturnValue([
+            entry(33602, 2_000),
+            entry(33573, 1_000),
+            entry(40000, null),
+            entry(33590, 1_000),
+        ]);
+
+        try {
+            expect(readAppFaceProcesses().map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
+        } finally {
+            list.mockRestore();
+        }
+    });
+});
 
 describe("stampAppToolsPath", () => {
     it("records the actual build checkout as XML text without changing template values", () => {

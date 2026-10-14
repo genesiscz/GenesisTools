@@ -49,27 +49,26 @@ export function cleanLaunchCommand(command: string): string {
 
 interface TtyProcess {
     tty: string;
-    ageSeconds: number;
+    /** Kernel start time in ms; an unknown one counts as now, the youngest. */
+    startMs: number;
     command: string;
 }
 
+/**
+ * Lowest pid first, as `ps` listed them, with the start time to the millisecond: a launcher and the agent it starts
+ * begin in the same second, so whole seconds tied them and the kernel table's newest-first order picked the agent.
+ */
 async function readTtyProcessTable(): Promise<TtyProcess[]> {
     const now = Date.now();
-    return listProcesses({ commands: false }).flatMap((entry) => {
-        if (!entry.tty || !/^ttys\d+$/.test(entry.tty)) {
-            return [];
-        }
-        const command = readProcess(entry.pid)?.command;
-        return command
-            ? [
-                  {
-                      tty: entry.tty,
-                      ageSeconds: entry.startMs === null ? 0 : Math.max(0, Math.floor((now - entry.startMs) / 1000)),
-                      command,
-                  },
-              ]
-            : [];
-    });
+    return listProcesses({ commands: false })
+        .sort((a, b) => a.pid - b.pid)
+        .flatMap((entry) => {
+            if (!entry.tty || !/^ttys\d+$/.test(entry.tty)) {
+                return [];
+            }
+            const command = readProcess(entry.pid)?.command;
+            return command ? [{ tty: entry.tty, startMs: entry.startMs ?? now, command }] : [];
+        });
 }
 
 export interface TtyCapture {
@@ -120,7 +119,7 @@ export async function collectTtyCapture(): Promise<TtyCapture> {
         }
 
         const existing = oldest.get(entry.tty);
-        if (!existing || entry.ageSeconds > existing.ageSeconds) {
+        if (!existing || entry.startMs < existing.startMs) {
             oldest.set(entry.tty, entry);
         }
     }

@@ -71,9 +71,23 @@ function databaseSchema(path: string): { tables: string[]; migrationIds: string[
     }
 }
 
+/** One entry per process: `openFiles` answers one row per open file, and the cache has several. */
 export function openProcesses(paths: string[]): NativeCacheRetirementReport["openProcesses"] {
     const result = openFiles({ files: paths });
-    return result === "unknown" ? result : result.map(({ pid, command }) => ({ pid, command }));
+
+    if (result === "unknown") {
+        return result;
+    }
+
+    const byPid = new Map<number, { pid: number; command: string }>();
+
+    for (const { pid, command } of result) {
+        if (!byPid.has(pid)) {
+            byPid.set(pid, { pid, command });
+        }
+    }
+
+    return [...byPid.values()];
 }
 
 export function inspectNativeCache(
