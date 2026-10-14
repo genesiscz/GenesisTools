@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -139,7 +140,7 @@ function nativeDiffLabel(config: HooksConfig): string {
     }
 
     return pc.red(
-        `🛑 ${state === "on" ? "ON" : "ON (default)"}: it shows other sessions' edits. Fix: tools agents hooks native-diff off --write`
+        `🛑 ${state === "on" ? "ON" : "ON (default)"}: it shows other sessions' edits. Fix: ${toolCommand("agents hooks native-diff off", "--write")}`
     );
 }
 
@@ -477,14 +478,16 @@ export function registerHooksCommands(program: Command): void {
                 if (nativeDiffForced() === "1") {
                     ui.raw(
                         pc.yellow(
-                            "🛑 CLAUDE_CODE_BASH_EDIT_DIFF=1 is set here, and it wins over the setting: a session started from this environment shows it anyway. Unset it, or start sessions with tools claude start."
+                            `🛑 CLAUDE_CODE_BASH_EDIT_DIFF=1 is set here, and it wins over the setting: a session started from this environment shows it anyway. Unset it, or start sessions with ${toolCommand("claude start")}.`
                         )
                     );
                 }
 
                 if (now !== "off") {
                     ui.raw(
-                        pc.yellow("🛑 It shows other sessions' edits. Run: tools agents hooks native-diff off --write")
+                        pc.yellow(
+                            `🛑 It shows other sessions' edits. Run: ${toolCommand("agents hooks native-diff off", "--write")}`
+                        )
                     );
                 }
 

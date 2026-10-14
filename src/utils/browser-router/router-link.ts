@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type LinkGate, linkGate } from "./link-gate";
 
 /**
@@ -214,7 +215,7 @@ export function routerError(gate: LinkGate, preset: string): LinkError | null {
         return {
             code: "preset-off",
             message: `the router does not route ${preset} on this Mac`,
-            reason: `${why} (tools browser-router presets)`,
+            reason: `${why} (${toolCommand("browser-router presets")})`,
         };
     }
 
