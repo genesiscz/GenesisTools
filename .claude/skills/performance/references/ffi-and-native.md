@@ -125,6 +125,32 @@ cold CPU 3,446 → 1,467 ms, 8 sites still spawn once each (other users' data, o
   read failed a comparison once in a full-suite run (18,719 tests), then passed 5 of 5 alone. Compare up to three
   fresh pairs; a real disagreement repeats in all three (9d0d0f824).
 
+## 3d. Proving a moved call site works as before (2026-10-15 00:53)
+
+The #516 verification compared every site's CALLER decision, old tree against new, on real processes, on macOS and
+in the Linux CI image. Raw output equality hid real regressions and showed false ones, so judge the decision (the name
+shown, the pids acted on, the kill check, the label, the CPU). It found 13 regressions after the tests passed. The
+facts it measured:
+
+- **`ps -o comm=` on macOS is argv[0]**, not the executable path: 934 of 934 of this user's processes. The resolved path
+  (`proc_pidpath`) names a hard-linked launcher (`gt-hub`) `bun`, which broke the dev dashboard's kill check (the
+  listed name must be in the command line) and every label rule written against bare names.
+- **`ps -o %cpu=` on macOS is recent usage**: the sum of each non-idle thread's `pth_cpu_usage`
+  (`PROC_PIDLISTTHREADS` then `PROC_PIDTHREADINFO`), 931 of 931 equal, about 6 ms of CPU for all of this user's
+  processes. CPU time over the process's life is a different number (a cmux at 1.8% read 6.2%); Linux `ps` does print
+  the lifetime figure.
+- **Other users on macOS:** `comm=` makes `ps -A` read every process's arguments (57 ms against 27). `ps -p` with 321
+  pids costs about 90 ms, more than `-A`. The layer names another user's process by its path instead (294 of 320 equal).
+- **Linux:** `ps -o comm=` is the 15-byte kernel name. Use the executable's file name only when the name is at that
+  limit: `python3` started through a `python3.13` symlink is `python3` to `ps`. `/proc/<pid>/exe` appends
+  ` (deleted)` after an upgrade; `ps` never shows it. `os.userInfo().username` is `$USER` in Bun (`unknown` without it).
+- **Open files on Linux** come from `/proc/<pid>/{fd,cwd,root,exe,maps}`, matched by device and inode as `lsof` does;
+  by path, a hard link to the file is missed (the unsafe direction for a delete).
+- **A `ps lstart` string read in a shell** follows the locale and `TZ`; pin that shell to `LC_ALL=C TZ=UTC` and format
+  in UTC. `Intl` throws on a POSIX `TZ`.
+- **Measure old against new in the same minute, alternating,** with the logger built first: `tools` builds it in
+  `setBaseBinding` (14.6 ms) before any action, so a bare benchmark child charges it to the first module that logs.
+
 ## 4. `defineNativeLibrary`: our own C, compiled once
 
 ```ts
