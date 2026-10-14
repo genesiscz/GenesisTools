@@ -180,7 +180,9 @@ Waiting on a Codex turn: `bun .claude/skills/babysit/scripts/wait-turn.ts --run 
 --pr <N> --round <R>` with Bash `run_in_background`; the harness wakes the lead when the turn ends, and the worker's
 final message lands in the ledger. Never poll. Steer with `scripts/steer.ts` (same flags plus `--file`), which logs the
 prompt. `bun .claude/skills/babysit/scripts/round-ready.ts --run <dir> <N>…` says which PRs the reviewer bot has
-re-reviewed at their current head, so their next round can start.
+re-reviewed at their current head, so their next round can start. To be woken instead of checking, run
+`bun .claude/skills/babysit/scripts/watch-reviews.ts --run <dir> <N>…` as a Monitor (`timeout_ms: 1800000`, re-arm
+on expiry): it prints a PR's line only when its head, eve's review of that head or its open threads change.
 
 ## 6. Judge each worker commit (fable-judge, inline)
 
