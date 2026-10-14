@@ -2,8 +2,88 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as processes from "@genesiscz/utils/process/processes";
 import * as sockets from "@genesiscz/utils/process/sockets";
+import * as resolver from "./resolve";
 import { listListeningPorts } from "./scanner";
+
+test("one process snapshot supplies display names and enrichment for every listener in a scan", async () => {
+    const owner: processes.ProcessWithUsage = {
+        pid: 42420,
+        ppid: 1,
+        pgid: null,
+        uid: null,
+        name: "node.exe",
+        command: "node.exe server.js",
+        tty: null,
+        startMs: 1700000000000,
+        zombie: false,
+        state: "S",
+        usage: null,
+    };
+    const opaque = { ...owner, pid: 42421, name: "opaque-worker", command: null };
+    const socket: sockets.SocketEntry = {
+        pid: owner.pid,
+        protocol: "TCP",
+        family: "IPv4",
+        address: "127.0.0.1",
+        port: 43120,
+        remoteAddress: "",
+        remotePort: 0,
+        state: "LISTEN",
+    };
+    const scan = spyOn(sockets, "scanSockets").mockReturnValue([
+        socket,
+        socket,
+        { ...socket, family: "IPv6", address: "[::1]" },
+        { ...socket, port: 43121 },
+        { ...socket, pid: opaque.pid, port: 43122 },
+        { ...socket, pid: 42422, port: 43123 },
+    ]);
+    const snapshot = spyOn(processes, "readProcessesWithUsage").mockReturnValue([owner, opaque]);
+    const single = spyOn(processes, "readProcess").mockImplementation((pid) =>
+        pid === owner.pid ? owner : pid === opaque.pid ? opaque : null
+    );
+    const cwd = spyOn(resolver, "batchCwds").mockResolvedValue(new Map());
+
+    try {
+        const result = await listListeningPorts();
+        expect(snapshot).toHaveBeenCalledTimes(1);
+        expect(snapshot).toHaveBeenLastCalledWith([42420, 42421, 42422]);
+        expect(single).not.toHaveBeenCalled();
+        expect(result.lsofAvailable).toBe(true);
+        expect(result.ports).toHaveLength(5);
+        for (const port of result.ports.filter((port) => port.pid === owner.pid)) {
+            expect(port).toMatchObject({
+                command: "node.exe",
+                fullCommand: "node.exe server.js",
+                startedAt: "2023-11-14T22:13:20.000Z",
+            });
+        }
+        expect(result.ports.find((port) => port.pid === opaque.pid)?.command).toBe("opaque-worker");
+        expect(result.ports.find((port) => port.pid === 42422)?.command).toBe("unknown");
+
+        // A supplied empty snapshot is authoritative: enrichment must not retry each missing PID.
+        snapshot.mockReturnValue([]);
+        const unavailableMeta = await listListeningPorts();
+        expect(snapshot).toHaveBeenCalledTimes(2);
+        expect(single).not.toHaveBeenCalled();
+        expect(unavailableMeta.lsofAvailable).toBe(true);
+        expect(unavailableMeta.ports).toHaveLength(5);
+        expect(unavailableMeta.ports.every((port) => port.command === "unknown")).toBe(true);
+
+        scan.mockReturnValue(null);
+        expect(await listListeningPorts()).toMatchObject({ lsofAvailable: false, ports: [] });
+        scan.mockReturnValue([]);
+        expect(await listListeningPorts()).toMatchObject({ lsofAvailable: true, ports: [] });
+        expect(snapshot).toHaveBeenCalledTimes(2);
+    } finally {
+        scan.mockRestore();
+        snapshot.mockRestore();
+        single.mockRestore();
+        cwd.mockRestore();
+    }
+});
 
 test("a failed socket scan is unavailable, not an empty successful listing", async () => {
     const scan = spyOn(sockets, "scanSockets").mockReturnValue(null);

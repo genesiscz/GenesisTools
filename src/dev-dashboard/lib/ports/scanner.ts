@@ -1,7 +1,7 @@
 import { classifyPortBatch, enrichPortsMeta } from "@app/dev-dashboard/lib/ports/enrich";
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@genesiscz/utils/logger";
-import { readProcess } from "@genesiscz/utils/process/processes";
+import { readProcess, readProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { scanSockets } from "@genesiscz/utils/process/sockets";
 
 /**
@@ -14,6 +14,12 @@ export async function listListeningPorts(): Promise<PortsResult> {
         if (sockets === null) {
             return { lsofAvailable: false, ports: [], scannedAt: Date.now() };
         }
+        if (sockets.length === 0) {
+            return { lsofAvailable: true, ports: [], scannedAt: Date.now() };
+        }
+
+        const pids = [...new Set(sockets.map((socket) => socket.pid))];
+        const snapshot = new Map(readProcessesWithUsage(pids).map((entry) => [entry.pid, entry]));
         const seen = new Set<string>();
         const ports: PortInfo[] = [];
         for (const socket of sockets) {
@@ -26,13 +32,13 @@ export async function listListeningPorts(): Promise<PortsResult> {
             ports.push({
                 port: socket.port,
                 pid: socket.pid,
-                command: readProcess(socket.pid)?.name ?? "unknown",
+                command: snapshot.get(socket.pid)?.name ?? "unknown",
                 address: socket.address,
                 proto,
             });
         }
         ports.sort((a, b) => a.port - b.port || a.proto.localeCompare(b.proto));
-        return { lsofAvailable: true, ports: await enrichPortsMeta(ports), scannedAt: Date.now() };
+        return { lsofAvailable: true, ports: await enrichPortsMeta(ports, { snapshot }), scannedAt: Date.now() };
     } catch (err) {
         logger.debug({ err }, "socket lookup failed; treating as unavailable");
         return { lsofAvailable: false, ports: [], scannedAt: Date.now() };

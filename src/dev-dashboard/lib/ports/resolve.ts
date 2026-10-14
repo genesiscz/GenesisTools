@@ -1,7 +1,9 @@
 import { basename } from "node:path";
 import { canReadProcessCwd } from "@genesiscz/utils/process/cwd";
-import { readProcess } from "@genesiscz/utils/process/processes";
+import { type ProcessEntry, readProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { batchCwd } from "@genesiscz/utils/process/ps";
+
+export type ProcessSnapshot = ReadonlyMap<number, ProcessEntry>;
 
 export interface ProcessMeta {
     fullCommand: string;
@@ -16,10 +18,15 @@ export interface ProcessMeta {
  * Shared by the fast port list (main dashboard + port-killer) so path/command never depend
  * on which UI called in.
  */
-export async function batchProcessMeta(pids: number[]): Promise<Map<number, ProcessMeta>> {
+export async function batchProcessMeta(
+    pids: number[],
+    options: { snapshot?: ProcessSnapshot } = {}
+): Promise<Map<number, ProcessMeta>> {
+    const unique = [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))];
+    const snapshot = options.snapshot ?? new Map(readProcessesWithUsage(unique).map((entry) => [entry.pid, entry]));
     const out = new Map<number, ProcessMeta>();
-    for (const pid of new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))) {
-        const entry = readProcess(pid);
+    for (const pid of unique) {
+        const entry = snapshot.get(pid);
         if (entry?.command) {
             out.set(pid, {
                 fullCommand: entry.command,
