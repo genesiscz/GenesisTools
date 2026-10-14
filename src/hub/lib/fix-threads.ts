@@ -338,7 +338,7 @@ export async function sendPrTask(input: PrTaskInput, deps: PrTaskDeps): Promise<
 async function liveSessions(sessionIds: string[]): Promise<Set<string>> {
     const recorded = sessionIds
         .map((id) => ({ id, refs: lookupSessionCmuxRefs(id) }))
-        .filter((entry) => entry.refs?.surfaceId || entry.refs?.surfaceRef);
+        .filter((entry) => entry.refs?.surfaceId);
 
     if (recorded.length === 0) {
         return new Set();
@@ -351,13 +351,12 @@ async function liveSessions(sessionIds: string[]): Promise<Set<string>> {
         return new Set();
     }
 
-    const surfaces = new Set(snapshot.panes.flatMap((pane) => pane.surfaces.map((surface) => surface.id)));
+    // By UUID only: a record's `surface:N` is from the cmux run that wrote it and names another tab after a relaunch.
+    const surfaces = new Set(
+        snapshot.panes.flatMap((pane) => pane.surfaces.map((surface) => surface.id.toLowerCase()))
+    );
     return new Set(
-        recorded
-            .filter(({ refs }) =>
-                [refs?.surfaceId, refs?.surfaceRef].some((surface) => surface && surfaces.has(surface))
-            )
-            .map(({ id }) => id)
+        recorded.filter(({ refs }) => refs?.surfaceId && surfaces.has(refs.surfaceId.toLowerCase())).map(({ id }) => id)
     );
 }
 

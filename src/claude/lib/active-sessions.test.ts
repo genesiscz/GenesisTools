@@ -14,7 +14,7 @@ import {
     isHelperChild,
     latestRefsBySession,
     parseAccountEnv,
-    parseCmuxSurfaceTtys,
+    parseCmuxTreeTtys,
     parseLsofCwd,
     parsePsLine,
     parseSessionTail,
@@ -299,23 +299,26 @@ describe("parseSessionTail with tool results", () => {
     });
 });
 
-describe("parseCmuxSurfaceTtys", () => {
-    test("reads surface refs and ttys from `cmux top --all`", () => {
-        const out = [
-            '   2.9%  3.4 GB  31  surface surface:3 [terminal] "abc-burn-auth" [selected] tty=ttys000',
-            '   1.5%  1.6 GB  20  surface surface:193 [terminal] "claude-bad-session" tty=ttys020',
-            "   0.0%  4.8 MB   1  process 21277 zsh",
-        ].join("\n");
+describe("parseCmuxTreeTtys", () => {
+    const tree = (surfaces: unknown[]) =>
+        SafeJSON.stringify({ windows: [{ workspaces: [{ panes: [{ surfaces }] }] }] });
 
-        const map = parseCmuxSurfaceTtys(out);
+    test("reads each terminal's tty by surface UUID, with its ref for display", () => {
+        const { ttyBySurfaceId, refBySurfaceId } = parseCmuxTreeTtys(
+            tree([
+                { id: "AAAA-0003", ref: "surface:3", type: "terminal", tty: "ttys000" },
+                { id: "AAAA-0193", ref: "surface:193", type: "terminal", tty: "ttys020" },
+            ])
+        );
 
-        expect(map.get("surface:3")).toBe("ttys000");
-        expect(map.get("surface:193")).toBe("ttys020");
-        expect(map.size).toBe(2);
+        expect(ttyBySurfaceId.get("aaaa-0003")).toBe("ttys000");
+        expect(ttyBySurfaceId.get("aaaa-0193")).toBe("ttys020");
+        expect(refBySurfaceId.get("aaaa-0193")).toBe("surface:193");
+        expect(ttyBySurfaceId.size).toBe(2);
     });
 
     test("a browser surface with no tty is skipped", () => {
-        expect(parseCmuxSurfaceTtys('surface surface:9 [browser] "docs"').size).toBe(0);
+        expect(parseCmuxTreeTtys(tree([{ id: "B-9", ref: "surface:9", type: "browser" }])).ttyBySurfaceId.size).toBe(0);
     });
 });
 
@@ -356,14 +359,15 @@ describe("buildSessionHints", () => {
         ],
     ]);
 
-    test("prefers the stable surface UUID over the renumberable ref", () => {
-        const hints = buildSessionHints(refs, new Map([["surface:1", "ttys999"]]), new Map([["UUID-1", "ttys001"]]));
+    test("joins by the stable surface UUID, whatever case it is printed in", () => {
+        const hints = buildSessionHints(refs, new Map([["uuid-1", "ttys001"]]));
 
         expect(hints).toEqual([{ sessionId: "s1", tty: "ttys001", cwd: "/a" }]);
     });
 
-    test("falls back to the ref when the UUID is unknown to cmux", () => {
-        expect(buildSessionHints(refs, new Map([["surface:1", "ttys002"]]))[0].tty).toBe("ttys002");
+    // After a relaunch the record's "surface:1" can be another session's tab.
+    test("never joins by the renumberable ref", () => {
+        expect(buildSessionHints(refs, new Map([["surface:1", "ttys002"]]))).toEqual([]);
     });
 
     test("a session whose surface is gone produces no hint", () => {
@@ -470,16 +474,22 @@ describe("countSessionInstances", () => {
 
 describe("invertSurfaceTtys", () => {
     test("maps tty back to its surface", () => {
-        expect(invertSurfaceTtys(new Map([["surface:3", "ttys000"]])).get("ttys000")).toBe("surface:3");
+        expect(
+            invertSurfaceTtys({
+                ttyBySurfaceId: new Map([["u-3", "ttys000"]]),
+                refBySurfaceId: new Map([["u-3", "surface:3"]]),
+            }).get("ttys000")
+        ).toBe("surface:3");
     });
 
     test("a tty claimed by two surfaces resolves to neither", () => {
-        const map = invertSurfaceTtys(
-            new Map([
-                ["surface:3", "ttys000"],
-                ["surface:9", "ttys000"],
-            ])
-        );
+        const map = invertSurfaceTtys({
+            ttyBySurfaceId: new Map([
+                ["u-3", "ttys000"],
+                ["u-9", "ttys000"],
+            ]),
+            refBySurfaceId: new Map(),
+        });
 
         expect(map.get("ttys000")).toBe("");
     });

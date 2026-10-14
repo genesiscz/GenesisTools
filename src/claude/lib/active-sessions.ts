@@ -250,20 +250,48 @@ export interface SessionIdAssignment {
     source: SessionIdSource;
 }
 
-/**
- * `surface surface:193 [terminal] "title" tty=ttys020` lines from `cmux top --all`.
- *
- * This is the link the hook journal is missing: it records which cmux SURFACE a session
- * runs on, but a surface ref means nothing to `ps`. The tty is the shared key.
- */
-export function parseCmuxSurfaceTtys(output: string): Map<string, string> {
-    const result = new Map<string, string>();
+/** The live terminal surfaces, from `cmux --json --id-format both tree --all`: tty by surface UUID, and each one's ref. */
+export interface CmuxSurfaceTtys {
+    /** Surface UUID (lower case) → tty. The journal records the UUID; a ref is renumbered at each relaunch. */
+    ttyBySurfaceId: Map<string, string>;
+    /** Surface UUID (lower case) → `surface:N`, for display. */
+    refBySurfaceId: Map<string, string>;
+}
 
-    for (const match of output.matchAll(/surface\s+(surface:\d+)\b[^\n]*?\btty=(\S+)/g)) {
-        result.set(match[1], match[2]);
+/**
+ * The link the hook journal is missing: it records which cmux SURFACE a session runs on, but a
+ * surface means nothing to `ps`. The tty is the shared key.
+ */
+export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
+    const ttyBySurfaceId = new Map<string, string>();
+    const refBySurfaceId = new Map<string, string>();
+    const parsed: unknown = SafeJSON.parse(json, { strict: true });
+    const list = (value: unknown, key: string): unknown[] => {
+        const field = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : null;
+        return Array.isArray(field) ? field : [];
+    };
+
+    for (const window of list(parsed, "windows")) {
+        for (const workspace of list(window, "workspaces")) {
+            for (const pane of list(workspace, "panes")) {
+                for (const surface of list(pane, "surfaces")) {
+                    const { id, ref, tty } = surface as { id?: unknown; ref?: unknown; tty?: unknown };
+
+                    if (typeof id !== "string" || typeof tty !== "string" || !tty) {
+                        continue;
+                    }
+
+                    ttyBySurfaceId.set(id.toLowerCase(), tty);
+
+                    if (typeof ref === "string") {
+                        refBySurfaceId.set(id.toLowerCase(), ref);
+                    }
+                }
+            }
+        }
     }
 
-    return result;
+    return { ttyBySurfaceId, refBySurfaceId };
 }
 
 /**
@@ -312,24 +340,19 @@ export interface SessionHint {
 }
 
 /**
- * Session → tty, by joining the hook journal to the live cmux surface list.
+ * Session → tty, by joining the hook journal to the live cmux surfaces by surface UUID.
  *
- * A surface REF is renumbered when cmux restarts, so a stale journal line can name a ref
- * another session now owns. The surface UUID is stable, so it is preferred; the ref is a
- * fallback, and `assignSessionIds` additionally requires the cwd to agree before trusting
- * either — a renumbered ref pointing at an unrelated pane will not match a cwd.
+ * Only the UUID: a surface REF is renumbered when cmux restarts, so a journal line's ref can
+ * name a tab another session owns now. `assignSessionIds` additionally requires the cwd to agree.
  */
 export function buildSessionHints(
     refs: Map<string, SessionCmuxRefs>,
-    ttyBySurfaceRef: Map<string, string>,
-    ttyBySurfaceId: Map<string, string> = new Map()
+    ttyBySurfaceId: Map<string, string>
 ): SessionHint[] {
     const hints: SessionHint[] = [];
 
     for (const [sessionId, entry] of refs) {
-        const tty =
-            (entry.surfaceId ? ttyBySurfaceId.get(entry.surfaceId) : undefined) ??
-            (entry.surfaceRef ? ttyBySurfaceRef.get(entry.surfaceRef) : undefined);
+        const tty = entry.surfaceId ? ttyBySurfaceId.get(entry.surfaceId.toLowerCase()) : undefined;
 
         if (tty) {
             hints.push({ sessionId, tty, cwd: entry.cwd });
@@ -432,10 +455,12 @@ export function assignSessionIds(
     return result;
 }
 
-export function invertSurfaceTtys(ttyBySurfaceRef: Map<string, string>): Map<string, string> {
+/** tty → the surface's display ref (`surface:N`), from the UUID-keyed maps. */
+export function invertSurfaceTtys(surfaces: CmuxSurfaceTtys): Map<string, string> {
     const surfaceByTty = new Map<string, string>();
 
-    for (const [surfaceRef, tty] of ttyBySurfaceRef) {
+    for (const [surfaceId, tty] of surfaces.ttyBySurfaceId) {
+        const surfaceRef = surfaces.refBySurfaceId.get(surfaceId) ?? surfaceId;
         // A tty belongs to exactly one surface; a duplicate means the listing is mid-change,
         // and naming either one would be a guess.
         if (surfaceByTty.has(tty)) {
@@ -472,9 +497,8 @@ async function readCmuxContext(runner: (cmd: string[]) => Promise<string>): Prom
     const empty: CmuxContext = { hints: [], surfaceByTty: new Map() };
 
     try {
-        const top = await runner(["cmux", "top", "--all"]);
-        const ttyBySurfaceRef = parseCmuxSurfaceTtys(top);
-        const surfaceByTty = invertSurfaceTtys(ttyBySurfaceRef);
+        const surfaces = parseCmuxTreeTtys(await runner(["cmux", "--json", "--id-format", "both", "tree", "--all"]));
+        const surfaceByTty = invertSurfaceTtys(surfaces);
 
         if (!existsSync(CMUX_REFS_PATH)) {
             return { hints: [], surfaceByTty };
@@ -482,7 +506,7 @@ async function readCmuxContext(runner: (cmd: string[]) => Promise<string>): Prom
 
         const refs = latestRefsBySession(readFileSync(CMUX_REFS_PATH, "utf8"));
 
-        return { hints: buildSessionHints(refs, ttyBySurfaceRef), surfaceByTty };
+        return { hints: buildSessionHints(refs, surfaces.ttyBySurfaceId), surfaceByTty };
     } catch (error) {
         logger.debug({ error }, "[who] cmux session hints unavailable");
         return empty;
