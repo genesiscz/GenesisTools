@@ -872,11 +872,17 @@ function render(finding: Finding): string {
  * comment.
  */
 /** Every `no-process-tool-spawn` finding in `files`: the live list of call sites. */
+/**
+ * The process-tool rule alone. Only its pass runs: every pass parses each file again, and all of them took 13.5 s of
+ * a 20 s test timeout on the CI runner (2026-10-15), where this one pass is a sixth of the work.
+ */
 export async function scanProcessToolSpawns(files: string[]): Promise<Finding[]> {
-    return (await scanAll(files)).filter((finding) => finding.rule === PROCESS_TOOL_SPAWN_RULE.name);
+    return (await scanAll(files, { processToolOnly: true })).filter(
+        (finding) => finding.rule === PROCESS_TOOL_SPAWN_RULE.name
+    );
 }
 
-async function scanAll(files: string[]): Promise<Finding[]> {
+async function scanAll(files: string[], options: { processToolOnly?: boolean } = {}): Promise<Finding[]> {
     const byLang = new Map<Lang, string[]>();
     const testsByLang = new Map<Lang, string[]>();
 
@@ -930,6 +936,19 @@ async function scanAll(files: string[]): Promise<Finding[]> {
     };
 
     for (const [lang, paths] of byLang) {
+        const processToolPass = findInFiles(
+            lang,
+            { paths, matcher: PROCESS_TOOL_CALL_MATCHER },
+            guard((nodes) => {
+                recordProcessToolSpawns(nodes, (node) => node.getRoot().filename(), push);
+            })
+        );
+
+        if (options.processToolOnly) {
+            await processToolPass;
+            continue;
+        }
+
         await Promise.all([
             findInFiles(
                 lang,
@@ -964,13 +983,7 @@ async function scanAll(files: string[]): Promise<Finding[]> {
                     recordSleepSyncFindings(nodes, push);
                 })
             ),
-            findInFiles(
-                lang,
-                { paths, matcher: PROCESS_TOOL_CALL_MATCHER },
-                guard((nodes) => {
-                    recordProcessToolSpawns(nodes, (node) => node.getRoot().filename(), push);
-                })
-            ),
+            processToolPass,
             findInFiles(
                 lang,
                 { paths, matcher: { rule: { pattern: "$FN(homedir(), $$$ARGS)" } } },
@@ -1008,7 +1021,8 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         ]);
     }
 
-    for (const [lang, paths] of testsByLang) {
+    // Test files and Swift sources carry other rules only.
+    for (const [lang, paths] of options.processToolOnly ? [] : testsByLang) {
         await findInFiles(
             lang,
             { paths, matcher: SPAWN_CALL_MATCHER },
@@ -1030,7 +1044,7 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         );
     }
 
-    for (const file of files) {
+    for (const file of options.processToolOnly ? [] : files) {
         if (file.endsWith(".swift")) {
             unfiltered.push(...checkSwiftSource(file, await Bun.file(file).text()));
         }
