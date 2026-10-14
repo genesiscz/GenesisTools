@@ -99,11 +99,16 @@ describe("runTask", () => {
 
 describe("taskArgv", () => {
     it("runs low under background QoS, normal as the daemon runs, and high out of background", () => {
-        expect(taskArgv("echo hi", "low", true)).toEqual(["/usr/sbin/taskpolicy", "-b", "sh", "-c", "echo hi"]);
-        expect(taskArgv("echo hi", "normal", true)).toEqual(["sh", "-c", "echo hi"]);
-        expect(taskArgv("echo hi", "high", true).slice(0, 2)).toEqual(["/usr/bin/perl", "-e"]);
-        expect(taskArgv("echo hi", "high", true).slice(3)).toEqual(["sh", "-c", "echo hi"]);
-        expect(taskArgv("echo hi", "high", false)).toEqual(["sh", "-c", "echo hi"]);
+        const macos = { perl: true, taskpolicy: true };
+        expect(taskArgv("echo hi", "low", macos)).toEqual(["/usr/sbin/taskpolicy", "-b", "sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "normal", macos)).toEqual(["sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "high", macos).slice(0, 2)).toEqual(["/usr/bin/perl", "-e"]);
+        expect(taskArgv("echo hi", "high", macos).slice(3)).toEqual(["sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "high", { perl: false, taskpolicy: true })).toEqual(["sh", "-c", "echo hi"]);
+    });
+
+    it("runs low as normal where taskpolicy does not exist, so a Linux task does not fail with ENOENT", () => {
+        expect(taskArgv("echo hi", "low", { perl: true, taskpolicy: false })).toEqual(["sh", "-c", "echo hi"]);
     });
 
     it.skipIf(process.platform !== "darwin")(

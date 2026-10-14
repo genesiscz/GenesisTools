@@ -86,6 +86,7 @@ async function streamLines(
 }
 
 const PERL = "/usr/bin/perl";
+const TASKPOLICY = "/usr/sbin/taskpolicy";
 
 /**
  * Lifts the process out of darwin background (`setpriority(PRIO_DARWIN_PROCESS, 0, 0)`, PRIO_DARWIN_PROCESS = 4),
@@ -99,19 +100,24 @@ const RAISE_FROM_BACKGROUND =
 /**
  * The argv a task runs with, by priority. The launchd job is `ProcessType=Standard` (launchd.ts); a plist installed
  * before that is `Background`, and then every child inherits background QoS (throttled CPU and disk):
- * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS is.
+ * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS is. Without /usr/sbin/taskpolicy (any
+ *   system but macOS) it runs as `normal`.
  * - `normal`: the daemon's QoS.
  * - `high`: the child clears any inherited background state before the command starts, so it is never throttled.
  *   Without /usr/bin/perl it runs as `normal`.
  */
-export function taskArgv(command: string, priority: TaskPriority, perlAvailable = existsSync(PERL)): string[] {
+export function taskArgv(
+    command: string,
+    priority: TaskPriority,
+    onDisk = { perl: existsSync(PERL), taskpolicy: existsSync(TASKPOLICY) }
+): string[] {
     const shell = ["sh", "-c", command];
 
-    if (priority === "low") {
-        return ["/usr/sbin/taskpolicy", "-b", ...shell];
+    if (priority === "low" && onDisk.taskpolicy) {
+        return [TASKPOLICY, "-b", ...shell];
     }
 
-    if (priority === "high" && perlAvailable) {
+    if (priority === "high" && onDisk.perl) {
         return [PERL, "-e", RAISE_FROM_BACKGROUND, ...shell];
     }
 
