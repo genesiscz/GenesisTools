@@ -259,6 +259,28 @@ test("babysit control scripts use checkout-local executors", () => {
 describe("merge-prep version conflicts", () => {
     const manifest = (version: string) => `{\n    "name": "genesis-tools",\n    "version": "${version}"\n}\n`;
 
+    test("prepGit turns off hooks set in config, which ignore core.hooksPath", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-hooks-"));
+        const git = prepGit(dir);
+        const marker = join(dir, "hook-ran");
+
+        git(["init", "-q"]);
+        fs.appendFileSync(
+            join(dir, ".git", "config"),
+            `[hook "genesis-tools-pre-commit"]\n\tcommand = touch ${marker}\n\tevent = pre-commit\n`
+        );
+        fs.writeFileSync(join(dir, "a"), "a\n");
+        git(["add", "a"]);
+        expect(git(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "m"]).code).toBe(0);
+        expect(fs.existsSync(marker)).toBe(false);
+
+        // Positive control: the same commit without the switches runs the hook.
+        fs.writeFileSync(join(dir, "a"), "b\n");
+        Bun.spawnSync(["git", "-C", dir, "add", "a"]);
+        Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "n"]);
+        expect(fs.existsSync(marker)).toBe(true);
+    });
+
     test("the higher version wins on either side, numerically", () => {
         expect(higherVersionSide(manifest("1.0.96"), manifest("1.0.82"))).toBe("--ours");
         expect(higherVersionSide(manifest("1.0.82"), manifest("1.0.96"))).toBe("--theirs");

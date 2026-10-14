@@ -12,6 +12,7 @@ import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { flag, has, loadRun, worktreeFor } from "./run";
+import { HOOKS_OFF } from "./versions";
 
 const run = loadRun();
 const pr = flag("--pr") ?? "";
@@ -88,7 +89,7 @@ if (oldHead !== newHead && !dry) {
     // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
     // --no-push-hooks: for a machine whose pre-push hook hangs at a binary launch (a stuck syspolicyd). The gates above
     // already ran the hook's probe, typecheck and repo rules; run Biome on the changed files yourself first.
-    const hooks = has("--no-push-hooks") && !has("--skip-gates") ? ["-c", "core.hooksPath=/dev/null"] : [];
+    const hooks = has("--no-push-hooks") && !has("--skip-gates") ? HOOKS_OFF : [];
     must(["git", ...hooks, "push", "origin", `${newHead}:refs/heads/${branch}`], "push");
     console.log(`✔ pushed ${branch} ${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}`);
     appendEvent(run.dir, {
