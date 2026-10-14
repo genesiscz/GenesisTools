@@ -121,6 +121,28 @@ How each backend commits (measured 2026-10-14 with probe workers in linked workt
   escalation that the approval driver (step 5) accepts when it matches the brief. The brief therefore tells a Codex
   worker to run `git add -- <paths>` and `git commit` as two separate commands, never chained with `&&`.
 
+### The run ledger: log every prompt, turn, verdict and push
+
+Every run keeps `<run dir>/ledger.jsonl` ([scripts/ledger.ts](scripts/ledger.ts)), one event per line, so the user can
+audit afterwards what each worker was told and what it answered, not only the outcome. Append as you go, never
+reconstruct at the end:
+
+- `spawn` and `steer`: the full prompt text (`--file <brief>`), with `--worker`, `--model`, `--pr`, `--round`.
+- `turn`: the worker's final message when a turn ends (`lastText` of `tools codex wait --json`, Grok's report).
+- `judge`: `--meta '{"verdict":"…","evidence":"…"}'`, plus refusals you overruled and the findings you fed back.
+- `correction`, `push` (`range`), `post`, `decision`, `incident`, `note`.
+
+`bun .claude/skills/babysit/scripts/ledger.ts append --run <dir> --kind steer --pr 501 --round 2 --worker bs-gk
+--model gpt-6-astra --file steer.md`; import `appendEvent` when a script of the run already does the step (the
+integrate script logs `push` and `post` itself). The Markdown is built on demand, never kept by hand:
+`ledger.ts render --run <dir> --out <vault run folder>/<date>-<topic>-Ledger.md` (an overview table per PR, then each
+PR's events in time order, prompts and final messages folded into `<details>`). Render it into the vault with every
+report.
+
+A later round is a `steer` into the SAME worker thread: the worker keeps its context and its prompt cache. The same
+PR's next round gets a delta (what the judge decided, what to fix); a new PR for an idle worker gets only the new
+PR's facts (worktree, branch, round policy, thread command) plus "same rules as your first brief".
+
 ## 5. Watch while they work
 
 Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next tool call after its expiry notice
