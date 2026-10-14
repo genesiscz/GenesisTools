@@ -237,6 +237,17 @@ add the correction to the affected items and to `alsoInPush`, set every item's `
 (fable-judge)"`, and render `round-summary.ts --range <old head>..<new head> --cwd <pr worktree>`. Post per review-loop
 step 4 only when `post` is true.
 
+## 7a. A PR short of three rounds: an independent review round
+
+A round counts only when it fixed or answered real findings. When the reviewer bot has nothing left on a PR that
+still needs rounds, or a PR merged with fewer than three, run an independent read-only review: `bun
+.claude/skills/babysit/scripts/review-brief.ts --run <dir> --pr <N> --wt <worktree> [--post-merge] [--swift]`, then
+`steer.ts` with the printed file to a worker that did NOT fix this PR (Astra for a large or risky PR, Sol for a small
+one). Judge its findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
+file>`); after a merge they go to a follow-up PR from master (2026-10-14: #518 carried #509's after-merge findings).
+Never count a reply-only round, or a label, as a fix round: on 2026-10-14 the report said "#500 merged after 3
+rounds" when GitHub showed two round summaries.
+
 ## 7b. Optional: land a PR in master (only with the user's explicit approval)
 
 Off unless the user approves it in their own words for this run ("drive the PRs into master after 3 rounds"), and

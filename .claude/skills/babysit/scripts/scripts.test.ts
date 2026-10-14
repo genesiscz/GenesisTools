@@ -7,6 +7,7 @@ import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
 import { hitsInAddedLines } from "./probe";
+import { reviewBrief } from "./review-brief";
 import { loadRun } from "./run";
 import { conflictedFiles, higherVersionSide, prepGit, resolveVersionConflicts } from "./versions";
 import { pump } from "./watch-workers";
@@ -372,4 +373,25 @@ test("a run card for another repository supplies its own verify bullets", () => 
     // No list (or a list that is not all strings): fill-brief falls back to this repository's commands.
     fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "owner/other", verify: [1] }));
     expect(loadRun(dir).verify).toBeUndefined();
+});
+describe("independent review brief", () => {
+    test("every PR reference in the brief is the one PR", () => {
+        for (const postMerge of [false, true]) {
+            const text = reviewBrief({
+                pr: 498,
+                title: "fixture title",
+                wt: "/fixture/wt",
+                base: "master",
+                scratch: "/fixture/scratch",
+                postMerge,
+                swift: true,
+            });
+            const numbers = [...text.matchAll(/(?:#|gh pr (?:view|diff) |review )(\d+)|\/(\d+)-review\.md/g)].map(
+                (m) => m[1] ?? m[2]
+            );
+            expect(numbers.length).toBeGreaterThanOrEqual(postMerge ? 5 : 4);
+            expect(new Set(numbers)).toEqual(new Set(["498"]));
+            expect(text).toContain(postMerge ? "gh pr diff 498" : "git diff origin/master...HEAD");
+        }
+    });
 });
