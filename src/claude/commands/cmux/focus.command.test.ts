@@ -19,6 +19,7 @@ let snapshot: CmuxLiveSnapshot;
  * the window has to be raised before the pane is focused, and the pane before its tab.
  */
 let events: string[] = [];
+const WINDOW_1 = "0B49D0CA-0000-4000-8000-000000000001";
 
 let stdout: string[] = [];
 let originalWrite: typeof process.stdout.write;
@@ -27,10 +28,10 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxJSON: async (args: string[]) => {
         events.push(args.join(" "));
 
-        // `identify --workspace <ref>` answers for the workspace you name; bare `identify`
+        // `identify --workspace <id>` answers for the workspace you name; bare `identify`
         // answers for the pane you are calling from.
         if (args.includes("--workspace")) {
-            return { caller: { window_ref: "window:1" } };
+            return { caller: { window_id: WINDOW_1, window_ref: "window:1" } };
         }
 
         return { bundle_identifier: "com.cmuxterm.app", caller: { pane_ref: CALLER_PANE } };
@@ -94,6 +95,7 @@ function setSnapshot(panes: CmuxLivePane[]): void {
 }
 
 const RECORDED_PANE = "pane:7";
+const RECORDED_PANE_ID = "7A7A7A7A-0000-4000-8000-000000000007";
 
 /** Refs the session hook journaled, pointing at a surface cmux has since forgotten. */
 function staleRefs(): SessionCmuxRefs {
@@ -102,8 +104,10 @@ function staleRefs(): SessionCmuxRefs {
         workspaceId: "ws-uuid",
         surfaceId: DEAD_SURFACE,
         workspaceRef: "workspace:11",
+        paneId: RECORDED_PANE_ID,
         paneRef: RECORDED_PANE,
         surfaceRef: "surface:41",
+        windowId: WINDOW_1,
         windowRef: "window:1",
         tmuxPane: null,
         cwd: "/repo",
@@ -224,17 +228,18 @@ describe("focusCommand", () => {
 
         expect(events).toEqual([
             "identify",
-            "identify --workspace workspace:11",
-            "focus-window --window window:1",
+            "--id-format both identify --workspace workspace:11",
+            `focus-window --window ${WINDOW_1}`,
             "focus-pane workspace:11 pane:33",
             "focus-surface surface:46",
         ]);
     });
 
-    test("uses the snapshot windowRef and skips identify --workspace", async () => {
+    test("uses the snapshot's window UUID and skips identify --workspace", async () => {
         setSnapshot([
             pane({
                 id: "pane:33",
+                windowId: "0B49D0CA-0000-4000-8000-000000000007",
                 windowRef: "window:7",
                 preview: resumeScreen(SESSION_A),
             }),
@@ -242,7 +247,11 @@ describe("focusCommand", () => {
 
         await runFocus(SESSION_A);
 
-        expect(events).toEqual(["identify", "focus-window --window window:7", "focus-pane workspace:11 pane:33"]);
+        expect(events).toEqual([
+            "identify",
+            "focus-window --window 0B49D0CA-0000-4000-8000-000000000007",
+            "focus-pane workspace:11 pane:33",
+        ]);
     });
 
     test("a match on the pane's own screen switches no tab", async () => {
@@ -403,8 +412,8 @@ describe("focusCommand", () => {
         expect(process.exitCode ?? 0).toBe(0);
         expect(events.filter((event) => !event.startsWith("identify"))).toEqual([
             "focus-surface live-surf",
-            "focus-window --window window:1",
-            `focus-pane ws-uuid ${RECORDED_PANE}`,
+            `focus-window --window ${WINDOW_1}`,
+            `focus-pane ws-uuid ${RECORDED_PANE_ID}`,
         ]);
     });
 });

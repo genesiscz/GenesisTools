@@ -24,22 +24,28 @@ export type FocusCommandDeps = ResolveDeps;
 
 interface IdentifyResponse {
     bundle_identifier?: string;
-    caller?: { window_ref?: string; pane_ref?: string };
+    caller?: { window_id?: string; window_ref?: string; pane_ref?: string };
 }
 
 /**
- * The cmux window that owns `workspaceRef`.
+ * The UUID of the cmux window that owns `workspaceId`.
  *
- * `identify --workspace <ref>` answers for the workspace you name rather than the one you
+ * `identify --workspace <id>` answers for the workspace you name rather than the one you
  * are calling from, so this works when the pane lives in a window you are not in — which
  * is the whole point of a focus command.
  */
-async function windowRefFor(workspaceRef: string): Promise<string | undefined> {
+async function windowIdFor(workspaceId: string): Promise<string | undefined> {
     try {
-        const identify = await runCmuxJSON<IdentifyResponse>(["identify", "--workspace", workspaceRef]);
-        return identify.caller?.window_ref;
+        const identify = await runCmuxJSON<IdentifyResponse>([
+            "--id-format",
+            "both",
+            "identify",
+            "--workspace",
+            workspaceId,
+        ]);
+        return identify.caller?.window_id;
     } catch (err) {
-        log.debug({ err, workspaceRef }, "could not resolve the owning window; focusing without it");
+        log.debug({ err, workspaceId }, "could not resolve the owning window; focusing without it");
         return undefined;
     }
 }
@@ -77,7 +83,7 @@ async function activateApp(identity?: IdentifyResponse): Promise<boolean> {
 }
 
 /**
- * Raise window, pane, and tab for one target. Returns the window ref used.
+ * Raise window, pane, and tab for one target. Returns the window UUID used.
  *
  * A recorded target's surface IS the match, and the journal can outlive it (the tab was
  * closed, cmux restarted). So its tab is raised FIRST: a gone surface throws before any
@@ -92,10 +98,10 @@ async function focusTarget(target: FocusTarget): Promise<string | undefined> {
         await focusCmuxSurface({ surfaceId: target.surfaceId });
     }
 
-    const windowRef = target.windowRef ?? (await windowRefFor(target.workspaceId));
+    const windowId = target.windowId ?? (await windowIdFor(target.workspaceId));
 
-    if (windowRef) {
-        await runCmuxOk(["focus-window", "--window", windowRef]);
+    if (windowId) {
+        await runCmuxOk(["focus-window", "--window", windowId]);
     }
 
     if (target.paneId) {
@@ -116,7 +122,7 @@ async function focusTarget(target: FocusTarget): Promise<string | undefined> {
         }
     }
 
-    return windowRef;
+    return windowId;
 }
 
 function renderTargets(targets: FocusTarget[]): void {
@@ -272,10 +278,10 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         return;
     }
 
-    let windowRef: string | undefined;
+    let windowId: string | undefined;
 
     try {
-        windowRef = await focusTarget(target);
+        windowId = await focusTarget(target);
     } catch (err) {
         // Only cmux saying not_found proves the recorded pane closed. A timeout, a broken socket, another
         // refusal or a malformed reply says nothing about the pane, so it is reported as the error it is.
@@ -314,13 +320,13 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         }
 
         target = retry.target;
-        windowRef = await focusTarget(target);
+        windowId = await focusTarget(target);
     }
 
     const activated = opts.activate === false ? false : await activateApp(identity);
 
     if (opts.json) {
-        out.result(SafeJSON.stringify({ query, focused: target, windowRef, activated }, null, 2));
+        out.result(SafeJSON.stringify({ query, focused: target, windowId, activated }, null, 2));
         return;
     }
 

@@ -112,10 +112,10 @@ export function identifiesExactSession(result: SessionTargetsResult): boolean {
 }
 
 function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
-    // UUIDs from the launch env survive cmux ref renumbering, so prefer them;
-    // a dead UUID makes the action fail fast and the caller retries the matcher.
-    const workspaceId = refs.workspaceId ?? refs.workspaceRef;
-    const surfaceId = refs.surfaceId ?? refs.surfaceRef;
+    // Only the UUIDs: a record's refs are from the cmux run that wrote it, and after a relaunch the same
+    // `surface:N` names another tab. A dead UUID makes the action fail fast and the caller retries the matcher.
+    const workspaceId = refs.workspaceId;
+    const surfaceId = refs.surfaceId;
 
     if (!workspaceId || !surfaceId) {
         return null;
@@ -124,10 +124,10 @@ function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
     return {
         workspaceId,
         workspaceName: refs.workspaceRef ?? workspaceId,
-        paneId: refs.paneRef ?? "",
+        paneId: refs.paneId ?? "",
         paneTitle: refs.paneRef ?? "",
         cwd: refs.cwd ?? undefined,
-        windowRef: refs.windowRef ?? undefined,
+        windowId: refs.windowId ?? undefined,
         surfaceId,
         sessionIds: [refs.sessionId.toLowerCase()],
         matchedOn: "recorded",
@@ -159,7 +159,7 @@ export function tmuxHostTargets(snapshot: CmuxLiveSnapshot, hosts: TmuxHost[], s
                     paneId: pane.id,
                     paneTitle: pane.title,
                     cwd: pane.cwd,
-                    windowRef: pane.windowRef,
+                    windowId: pane.windowId,
                     surfaceId: surface.id,
                     sessionIds: [sessionId.toLowerCase()],
                     matchedOn: host.visible ? "tmux" : "tmux-hidden",
