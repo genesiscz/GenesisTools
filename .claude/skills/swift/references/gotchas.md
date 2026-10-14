@@ -263,3 +263,19 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   offset one run-loop turn later and check it again a moment after (`MarkdownFileTreeView.applyPendingPlaceScroll`).
 - **A context menu opened by automation closes within seconds if nothing picks an item.** Run the right-click,
   `see --scope menu` and the press back-to-back (tools control #530, 2026-10-15).
+## ScreenCaptureKit recording — 2026-10-14 03:33
+
+- **replayd (ScreenCaptureKit's daemon) groups its clients by executable PATH.** When any process started from a path
+  exits, every live stream of every other process from that same path stops with -3805 (connection interrupted). It
+  fires at the second process's exit, not at its `stopCapture`, and also when that process only listed windows. Two
+  `tools control capture record` runs therefore cut each other short until each recorder re-ran from its own disk
+  clone (8648526b3 on #502, `native/ax-tool/SnapshotSupport/RecorderExecutable.swift`). A hard link to the same file
+  is not a fix: it made `stopCapture` hang. A 40-line probe without ax-tool reproduced it 7 of 7 from one path and
+  0 of 6 from a copy.
+- **`SCStreamFrameInfo.contentRect` is in points, the frame's pixel buffer is in pixels.** Using the rect as pixels
+  crops a Retina frame to its top-left quarter and scales that up 2x. Multiply by `scaleFactor` (from the same info
+  dictionary) before cropping.
+- **A sheet's window stream holds its whole parent window, shrunk to the sheet's size** (a 400x560 sheet arrived as
+  the 440x760 parent at 0.737). Painting it into the sheet's frame draws a second, smaller parent. When the parent is
+  also recorded, its own stream already shows the sheet; when the sheet is recorded alone, cut it out of the parent at
+  the sheet's frame (dd532721a).
