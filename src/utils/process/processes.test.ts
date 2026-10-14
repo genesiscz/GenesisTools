@@ -202,6 +202,86 @@ describe("bounded process hydration", () => {
     });
 });
 
+describe("review round 5", () => {
+    const linuxProcess = (pid: number) => ({
+        pid,
+        ppid: 1,
+        pgid: pid,
+        uid: 1000,
+        comm: "node",
+        argv: ["node", "server.js"],
+        state: "R",
+        tty: null,
+        startMs: 1000,
+        cpuTimeMs: 50,
+        rssBytes: 4096,
+        threads: 2,
+    });
+
+    test("Linux lists every process with its usage from one /proc read per process", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+        const table = spyOn(linux, "listProcProcesses").mockReturnValue([linuxProcess(42), linuxProcess(43)]);
+        const again = spyOn(linux, "readProcProcess").mockImplementation(() => {
+            throw new Error("the table already read this process");
+        });
+
+        try {
+            const rows = listProcessesWithUsage({ otherUsers: true });
+            expect(rows.map((row) => row.usage)).toEqual([
+                { pid: 42, rssBytes: 4096, cpuTimeMs: 50, threads: 2, running: true },
+                { pid: 43, rssBytes: 4096, cpuTimeMs: 50, threads: 2, running: true },
+            ]);
+            expect(rows[0]?.command).toBe("node server.js");
+            expect(table).toHaveBeenCalledTimes(1);
+            expect(again).not.toHaveBeenCalled();
+        } finally {
+            platform.mockRestore();
+            table.mockRestore();
+            again.mockRestore();
+        }
+    });
+
+    test("Windows matches an image name without regard to case, as tasklist's lowercased answers did", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const capture = spyOn(ps, "captureSync").mockReturnValue({
+            stdout: '[{"ProcessId":42,"ParentProcessId":4,"Name":"Opera.exe"},{"ProcessId":43,"ParentProcessId":4,"Name":"notepad.exe"}]',
+            stderr: "",
+            status: 0,
+        });
+
+        try {
+            const matched = (name: string) => findProcesses({ name, includeAncestors: true }).map((entry) => entry.pid);
+            expect(matched("opera.exe")).toEqual([42]);
+            expect(matched("OPERA.EXE")).toEqual([42]);
+            expect(matched("opera")).toEqual([]);
+        } finally {
+            platform.mockRestore();
+            capture.mockRestore();
+        }
+    });
+
+    test("every ps fallback carries a deadline, so a blocked ps cannot stall its caller for good", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("darwin");
+        const kernelOff = spyOn(os, "darwinKernel").mockReturnValue(false);
+        const capture = spyOn(ps, "captureSync").mockReturnValue({ stdout: "", stderr: "", status: 0 });
+
+        try {
+            listProcesses();
+            readExecutablePath(42);
+            listProcessesWithUsage({ otherUsers: true });
+            readProcessesWithUsage([42]);
+
+            const psCalls = capture.mock.calls.filter(([command]) => command === "ps");
+            expect(psCalls.length).toBeGreaterThan(1);
+            expect(psCalls.filter(([, , options]) => options?.timeoutMs === undefined)).toEqual([]);
+        } finally {
+            platform.mockRestore();
+            kernelOff.mockRestore();
+            capture.mockRestore();
+        }
+    });
+});
+
 describe("linux /proc parsers", () => {
     test("stat keeps a comm with spaces and parentheses, and reads fields after the last parenthesis", () => {
         const stat = parseProcStat(

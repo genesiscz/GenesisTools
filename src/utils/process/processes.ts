@@ -36,6 +36,9 @@ import { darwinKernel, processPlatform } from "./os";
 import { captureSync, PS_BATCH_SIZE, parseCpuTime } from "./ps";
 import { type CimProcess, listCimProcesses } from "./windows-cim";
 
+/** Every `ps` fallback gets a deadline: a blocked `ps` would otherwise stall the caller's thread for good. */
+const PS_DEADLINE_MS = 5_000;
+
 export interface ProcessEntry {
     pid: number;
     ppid: number;
@@ -162,7 +165,7 @@ function psLinesFor(pids: number[], columns: string): Map<number, string> {
     const wanted = new Set(pids);
     const args = pids.length <= PS_BATCH_SIZE ? ["-o", columns, "-p", pids.join(",")] : ["-A", "-o", columns];
 
-    for (const line of captureSync("ps", args).stdout.split("\n")) {
+    for (const line of captureSync("ps", args, { timeoutMs: PS_DEADLINE_MS }).stdout.split("\n")) {
         const match = line.match(/^\s*(\d+)\s+(.*)$/);
 
         if (match && wanted.has(Number(match[1]))) {
@@ -200,7 +203,9 @@ const PS_FALLBACK_COLUMNS = "pid=,ppid=,pgid=,uid=,tty=,state=,lstart=,comm=";
 
 /** The whole table from one `ps`, where no kernel reader works. */
 function psTable(commands: boolean): ProcessEntry[] {
-    const entries = parseFallbackPsTable(captureSync("ps", ["-axo", PS_FALLBACK_COLUMNS]).stdout);
+    const entries = parseFallbackPsTable(
+        captureSync("ps", ["-axo", PS_FALLBACK_COLUMNS], { timeoutMs: PS_DEADLINE_MS }).stdout
+    );
 
     if (commands) {
         const lines = psCommands(entries.map((entry) => entry.pid));
@@ -300,7 +305,9 @@ export function readProcess(pid: number, options: Pick<ListProcessesOptions, "ot
     }
 
     if (!darwinKernel()) {
-        const [entry] = parseFallbackPsTable(captureSync("ps", ["-o", PS_FALLBACK_COLUMNS, "-p", String(pid)]).stdout);
+        const [entry] = parseFallbackPsTable(
+            captureSync("ps", ["-o", PS_FALLBACK_COLUMNS, "-p", String(pid)], { timeoutMs: PS_DEADLINE_MS }).stdout
+        );
         return entry ? { ...entry, command: psCommands([pid]).get(pid) ?? null } : null;
     }
 
@@ -387,7 +394,7 @@ export function ancestry(pid: number, maxDepth = 64): ProcessEntry[] {
 
 /** The longest name the kernel keeps: 16 bytes on macOS (`p_comm`), 15 on Linux (`comm`). Windows keeps the whole. */
 function kernelNameLength(): number {
-    return processPlatform() === "linux" ? 15 : processPlatform() === "win32" ? Number.POSITIVE_INFINITY : 16;
+    return processPlatform() === "linux" ? 15 : 16;
 }
 
 /**
@@ -407,6 +414,12 @@ function fullName(entry: ProcessEntry): string {
 }
 
 function nameMatches(entry: ProcessEntry, name: string): boolean {
+    if (processPlatform() === "win32") {
+        // Windows image names ignore case, and CIM can report "Opera.exe" for a registry's "opera.exe" (tasklist's
+        // answers were lowercased before the comparison for the same reason).
+        return entry.name.toLowerCase() === name.toLowerCase();
+    }
+
     if (entry.name.length < kernelNameLength()) {
         return entry.name === name;
     }
@@ -541,7 +554,7 @@ export function readExecutablePath(pid: number): string | null {
         return readProcessPath(pid);
     }
 
-    const result = captureSync("ps", ["-o", "comm=", "-p", String(pid)]);
+    const result = captureSync("ps", ["-o", "comm=", "-p", String(pid)], { timeoutMs: PS_DEADLINE_MS });
     return result.status === 0 ? result.stdout.trim() || null : null;
 }
 
@@ -565,6 +578,16 @@ export function listedExecutablePath(entry: Pick<ProcessEntry, "pid" | "name">):
  * CPU, memory and thread count of each pid. On macOS the kernel answers for this user's processes; with
  * `otherUsers` the rest come from ONE batched `ps` (without a thread count). A pid that is gone is absent.
  */
+function linuxUsage(process: LinuxProcess): ProcessUsageEntry {
+    return {
+        pid: process.pid,
+        rssBytes: process.rssBytes,
+        cpuTimeMs: process.cpuTimeMs,
+        threads: process.threads,
+        running: process.state === "R",
+    };
+}
+
 export function readProcessUsages(
     pids: number[],
     options: Pick<ListProcessesOptions, "otherUsers"> = {}
@@ -577,13 +600,7 @@ export function readProcessUsages(
                 const process = readProcProcess(pid);
 
                 if (process) {
-                    usages.set(pid, {
-                        pid,
-                        rssBytes: process.rssBytes,
-                        cpuTimeMs: process.cpuTimeMs,
-                        threads: process.threads,
-                        running: process.state === "R",
-                    });
+                    usages.set(pid, linuxUsage(process));
                 }
             }
 
@@ -711,7 +728,12 @@ export function listProcessesWithUsage(
         }));
     }
 
-    const fillFromPs = options.otherUsers === true && processPlatform() !== "linux";
+    if (processPlatform() === "linux") {
+        // One /proc read per process already holds the usage; readProcessUsages would read every process again.
+        return listProcProcesses().map((process) => ({ ...fromLinux(process, commands), usage: linuxUsage(process) }));
+    }
+
+    const fillFromPs = options.otherUsers === true;
     // The `ps` that fills other users' rows prints every command line anyway, so reading them from the kernel first
     // would read each one twice (about 10 ms of sysctls on 1,300 processes).
     const entries = listProcesses({ commands: commands && !fillFromPs });

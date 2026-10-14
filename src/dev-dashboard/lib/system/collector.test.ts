@@ -1,6 +1,8 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { logger } from "@genesiscz/utils/logger";
+import * as os from "@genesiscz/utils/process/os";
+import * as ps from "@genesiscz/utils/process/ps";
 import {
     collectHostMetrics,
     type HostSources,
@@ -125,6 +127,36 @@ describe("collectTopProcesses", () => {
         ]);
         expect(read).toHaveBeenCalledTimes(1);
         expect(read).toHaveBeenCalledWith({ otherUsers: true, commands: false });
+    });
+
+    test("on Windows the names come from the snapshot, with no CIM query per row", async () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const capture = spyOn(ps, "captureSync");
+        const entry = (pid: number, name: string, rssBytes: number) => ({
+            pid,
+            ppid: 4,
+            pgid: null,
+            uid: null,
+            name,
+            command: null,
+            tty: null,
+            startMs: null,
+            zombie: false,
+            state: "?",
+            usage: { pid, rssBytes, cpuTimeMs: 0, threads: 1, running: null },
+        });
+
+        try {
+            const { collectTopProcesses } = await import("./collector");
+            const result = await collectTopProcesses(2, () => [entry(10, "chrome.exe", 90), entry(11, "Code.exe", 50)]);
+
+            expect(result.map((row) => row.pid)).toEqual([10, 11]);
+            expect(result.every((row) => row.name.length > 0)).toBe(true);
+            expect(capture).not.toHaveBeenCalled();
+        } finally {
+            platform.mockRestore();
+            capture.mockRestore();
+        }
     });
 });
 
