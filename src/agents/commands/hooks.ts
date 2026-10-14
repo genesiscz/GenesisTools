@@ -26,6 +26,7 @@ import {
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { type CustomRules, loadRuleSet } from "../lib/hooks/custom-rules";
+import { decisionCounts, extendFromTranscripts, formatEntry, readDiffLog } from "../lib/hooks/diff-log";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
 import { lastSeenPerHarness } from "../lib/hooks/harnesses";
 import { hooksFileListsOldDefaults, recordInstallState } from "../lib/hooks/hooks-file";
@@ -427,6 +428,81 @@ export function registerHooksCommands(program: Command): void {
 
             out.result(filtered);
         });
+
+    hooks
+        .command("diff")
+        .description("The Bash diff hook")
+        .command("log")
+        .description(
+            "What the diff hook decided per Bash call, told against the call: --extended reads the transcript for the command, what the message showed, and Claude Code's own diff"
+        )
+        .option("--session <id>", "Only this session (a prefix is enough)")
+        .option("--since <duration>", "How far back, e.g. 30m, 6h, 2d", "24h")
+        .option(
+            "--decision <list>",
+            "Comma list of emitted, noted, failed, silent, skip; `all` for every one",
+            "emitted,noted,failed"
+        )
+        .option("-n, --lines <count>", "At most this many calls, the newest", "50")
+        .option("--extended", "Join each call with its Claude transcript")
+        .option("--json", "The entries as JSON")
+        .action(
+            (options: {
+                session?: string;
+                since?: string;
+                decision?: string;
+                lines?: string;
+                extended?: boolean;
+                json?: boolean;
+            }) => {
+                const count = Number(options.lines ?? "50");
+                let horizonMs: number;
+
+                try {
+                    horizonMs = parseHorizon(options.since ?? "24h");
+                } catch (err) {
+                    logger.debug({ err, since: options.since }, "Rejected a diff log horizon");
+                    ui.err(`--since takes a duration like 30m, 6h or 2d, not ${options.since}`);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (!Number.isInteger(count) || count < 1) {
+                    ui.err(`--lines must be a positive integer, got ${options.lines}`);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const wanted = new Set((options.decision ?? "").split(",").map((name) => name.trim()));
+                const all = readDiffLog({
+                    logPath: loadHooksConfig().logPath,
+                    since: Date.now() - horizonMs,
+                    session: options.session,
+                });
+                const entries = all.filter((entry) => wanted.has("all") || wanted.has(entry.decision)).slice(-count);
+
+                if (options.extended) {
+                    extendFromTranscripts(entries);
+                }
+
+                if (options.json) {
+                    out.result(entries);
+                    return;
+                }
+
+                for (const entry of entries) {
+                    out.println(formatEntry(entry, options.extended === true).join("\n"));
+                    out.println("");
+                }
+
+                const totals = [...decisionCounts(all)].map(([decision, total]) => `${decision} ${total}`).join(", ");
+                out.println(
+                    pc.dim(
+                        `${entries.length} shown of ${all.length} calls in the last ${options.since ?? "24h"}: ${totals}`
+                    )
+                );
+            }
+        );
 
     hooks
         .command("gc")

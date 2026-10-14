@@ -151,6 +151,7 @@ tools agents hooks rules explain <id>           # why the rule exists, wrong and
 tools agents hooks rules test '<command>'       # what would fire, and the resolved outcome, layer by layer
 tools agents hooks rules check [--corpus 2000]  # every enabled rule against its own examples; replay recent commands
 tools agents hooks log --decision block -n 50   # the decision log
+tools agents hooks diff log --extended --since 6h   # each diff decision told against its call: command, files, what showed, why
 tools agents hooks install --write              # wire the hooks into ~/.claude/settings.json, additively
 tools agents hooks install --harness codex --write   # the same for Codex (<CODEX_HOME>/hooks.json)
 tools agents hooks uninstall [--harness codex] --write   # remove exactly what install added
@@ -161,6 +162,28 @@ tools agents hooks config set shadow false --write
 
 Every writing command is a **dry run by default**; `--write` applies it. The one exception is the
 `config rules` picker in a terminal: saving the selection is the write.
+
+## How a diff looks
+
+`diff.theme` picks the look. `claude` (the default) copies Claude Code's own Bash diff in the theme
+Claude Code is set to: a full-width band per changed row, syntax colour, old line numbers on removed
+rows, brighter bands on the changed words, paths relative to the session folder. `claude-dark`,
+`claude-light`, `claude-dark-daltonized`, `claude-light-daltonized`, `claude-dark-ansi` and
+`claude-light-ansi` pin one palette; `classic` is the original look. `diff.columns` is `auto` (the
+width of the terminal the harness draws in) or a number; `0` ends a band at its text.
+
+```bash
+tools agents hooks config set diff.theme claude --write
+tools agents hooks config set diff.columns auto --write
+```
+
+The message has a 9,000-byte budget (`diff.maxMessageBytes`; Claude Code cuts a hook message near
+10 KB). Changed lines are bought first, then the full-width fill, then syntax colour, so a large
+diff keeps its content and loses the polish.
+
+With the hook drawing every Bash diff, Claude Code's own one can be switched off with
+`"bashEditDiffEnabled": false` in `~/.claude/settings.json`. That one has no attribution: it shows
+whatever changed in the cwd repository during the call, another session's edit included.
 
 ## Harnesses
 

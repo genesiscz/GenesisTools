@@ -18,6 +18,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
+import { formatEntry, readDiffLog, readMessage } from "../diff-log";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
@@ -3393,5 +3394,60 @@ describe("files the harness writes during every call", () => {
         expect(harnessOwnFile(join(claude, "projects", "-repo", "session.jsonl"))).toBe(true);
         expect(harnessOwnFile(join(claude, "projects", "-repo", "memory", "note.md"))).toBe(false);
         expect(harnessOwnFile(join(repo, "kept.ts"))).toBe(false);
+    });
+});
+
+describe("tools agents hooks diff log", () => {
+    it("reads back what a message showed: each file, its changed lines shown, and the notes", () => {
+        const message = [
+            "\u001b[1mUpdated src/a.ts\u001b[0m \u001b[2m(+2 -1)\u001b[0m",
+            "     4  keep",
+            "     5 -old",
+            "     5 +new",
+            "        … 1 more lines",
+            "",
+            "1 file(s) changed by others in this root: b.ts",
+        ].join("\n");
+        const read = readMessage(message);
+
+        expect(read.blocks).toEqual([{ verb: "Updated", path: "src/a.ts", added: 2, removed: 1, changedShown: 2 }]);
+        expect(read.notes).toEqual(["1 file(s) changed by others in this root: b.ts"]);
+    });
+
+    it("joins the pre and post record of a call, and a pre record alone is a failed or running call", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-difflog-"));
+        const log = join(dir, "hooks.jsonl");
+        const now = Date.now();
+        const at = (ago: number) => new Date(now - ago).toISOString();
+        const rows = [
+            { at: at(5000), phase: "pre", harness: "claude", session: "s1", toolUseId: "t1", captured: 3, named: 1 },
+            {
+                at: at(4000),
+                phase: "post",
+                harness: "claude",
+                session: "s1",
+                toolUseId: "t1",
+                decision: "emitted",
+                reason: "rendered",
+                files: ["/r/a.ts"],
+            },
+            { at: at(3000), phase: "pre", harness: "claude", session: "s1", toolUseId: "t2", captured: 0, named: 0 },
+            { at: at(2000), phase: "guard", harness: "claude", session: "s1", toolUseId: "t2", decision: "allow" },
+        ];
+
+        writeFileSync(log, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n{"torn`);
+
+        try {
+            const entries = readDiffLog({ logPath: log, since: now - 60_000 });
+
+            expect(entries.map((entry) => [entry.toolUseId, entry.decision, entry.captured])).toEqual([
+                ["t1", "emitted", 3],
+                ["t2", "failed", 0],
+            ]);
+            expect(entries[0] ? formatEntry(entries[0], false) : []).toContain("     -> /r/a.ts");
+            expect(readDiffLog({ logPath: log, since: now - 60_000, session: "other" })).toEqual([]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
