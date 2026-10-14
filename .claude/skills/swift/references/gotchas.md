@@ -320,3 +320,22 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **`UserDefaults(suiteName:)` in a test writes a real plist** in `~/Library/Preferences`. `removePersistentDomain`
   empties it but leaves a 42-byte file. Give test suites one prefix (`genesiskit-tests-…`) and remove them in a
   teardown block (9a11d77bd).
+
+## Dialogs: modal loops, title bar insets, cut text — 2026-10-15 00:50
+
+- **`NSAlert.runModal()` inside a `DispatchQueue.main` block stops every timer queued on the main queue.** The
+  queue is serial and busy with the block that runs the modal loop, so `DispatchQueue.main.asyncAfter` never
+  fires until the alert closes. The vault and account approval windows had a 170 s "deny by itself" deadline that
+  never ran; the caller's own 180 s timeout killed the window with no audit line, and the caller asked again. Fix:
+  a non-modal panel (GenesisKit `ApprovalPanelPresenter`) and the deadline as a cancellable `DispatchWorkItem`.
+- **`NSHostingController` in a `.fullSizeContentView` window insets its content by the hidden title bar.** The
+  first approval panel had an empty 28 pt band on top. `.ignoresSafeArea()` on the root view; the strip still
+  drags through `.titlebarZone()`. `controller.sizingOptions = [.preferredContentSize]` makes the panel follow the
+  view, so a disclosure grows and shrinks it.
+- **A `Text` in a `Grid` cut a path in the middle at one line while the window had room for two.** The grid measured
+  the row once at one line. `.fixedSize(horizontal: false, vertical: true)` with the `lineLimit` you want.
+- **Five controls in one row of a 480 pt dialog cut the default button's title** ("Allow with…") and wrapped a
+  countdown. Give a choice (a remember picker) its own row; `.fixedSize()` on the default button and the countdown.
+- **Render a dialog for review without showing it:** `NSHostingView` in a borderless `NSWindow` that is never ordered
+  front, then `cacheDisplay(in:to:)`. Unlike `ImageRenderer`, it draws AppKit-backed controls (buttons, pop-up
+  menus). `VaultUnlockTests.testRenderTheVaultWindowWhenAsked` does it behind `APPROVAL_SNAPSHOT_DIR`.
