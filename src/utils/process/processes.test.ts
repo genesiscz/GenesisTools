@@ -808,6 +808,13 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             expect(ps.length).toBe(1);
             expect(ps[0]).toContain("-u");
             expect(ps[0]?.join(" ")).toContain("comm=");
+
+            // With command lines this user's processes are asked too, and `-u` over every user cost 65.5 ms where
+            // `-A` cost 58.0 (medians of 9, alternating), so the whole table stays `-A`.
+            calls = spawnedCommands(() => listProcessesWithUsage({ otherUsers: true }));
+            const withCommands = calls.filter((argv) => argv[0] === "ps");
+            expect(withCommands.length).toBe(1);
+            expect(withCommands[0]).toContain("-A");
         }
     );
 

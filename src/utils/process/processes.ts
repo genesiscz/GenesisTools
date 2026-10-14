@@ -161,8 +161,9 @@ function fromCim(process: CimProcess, commands: boolean): ProcessEntry {
  * ONE `ps` for the rows of `pids`, however many. One pid is `-p` (about 1 ms of CPU); a list never is, because
  * `ps -p a,b` costs about 75 ms for 2 to 60 pids on macOS 26, three times the whole table (`-A`, about 24 ms for
  * 1,250 processes). With `owners`, the effective uids of `pids`, `-u` lists only their processes: about 11 ms for the
- * 323 processes of 41 other users, measured 2026-10-15. `columns` starts with `pid=`; each kept line is the text after
- * the pid.
+ * 323 processes of 41 other users, measured 2026-10-15. Owners that include this user cover most of the table, where
+ * `-u` cost more than `-A` (65.5 ms against 58.0 with command lines), so those stay `-A`. `columns` starts with `pid=`;
+ * each kept line is the text after the pid.
  */
 function psLinesFor(pids: number[], columns: string, owners: number[] = []): Map<number, string> {
     const lines = new Map<number, string>();
@@ -177,7 +178,7 @@ function psLinesFor(pids: number[], columns: string, owners: number[] = []): Map
     const select =
         pids.length === 1
             ? ["-p", String(pids[0])]
-            : owners.length > 0 && users.every((name) => name !== null)
+            : owners.length > 0 && !owners.includes(ownUid()) && users.every((name) => name !== null)
               ? ["-u", users.join(",")]
               : ["-A"];
     let result = captureSync("ps", ["-o", columns, ...select], { timeoutMs: PS_DEADLINE_MS });
