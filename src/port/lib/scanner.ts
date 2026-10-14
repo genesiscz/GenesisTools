@@ -398,8 +398,8 @@ function processRow(entry: ProcessWithUsage): PsRow {
         ppid: entry.ppid,
         user: entry.uid === null ? "" : (userName(entry.uid) ?? String(entry.uid)),
         stat: entry.usage?.running ? "R" : entry.state,
-        // Lifetime average: the kernel does not expose ps's decayed display percentage.
-        cpu: elapsedMs > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / elapsedMs : 0,
+        // `ps`'s %cpu (recent usage on macOS); the average since the start only where nothing measured it.
+        cpu: entry.cpuPercent ?? (elapsedMs > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / elapsedMs : 0),
         rss: (entry.usage?.rssBytes ?? 0) / 1024,
         startTime: entry.startMs === null ? null : new Date(entry.startMs),
         command: entry.command ?? entry.name,
@@ -447,19 +447,20 @@ function socketProcesses(
     return [...byPid.values()];
 }
 
+/** The socket owners with `ps`'s %cpu where the kernel gives it (this user's processes), with no `ps` spawned. */
+function ownerTable(pids: number[]): Map<number, ProcessWithUsage> {
+    return new Map(readProcessesWithUsage(pids, { cpuPercent: true }).map((entry) => [entry.pid, entry]));
+}
+
 export function getPortDetails(port: number): PortSnapshot[] {
     const sockets = listSockets({ port }).filter((socket) => socket.pid !== process.pid);
-    const table = new Map(
-        readProcessesWithUsage(sockets.map((socket) => socket.pid)).map((entry) => [entry.pid, entry])
-    );
+    const table = ownerTable(sockets.map((socket) => socket.pid));
     return enrichPortProcesses(socketProcesses(sockets, { ownPid: process.pid, table }), table);
 }
 
 export function getListeningPorts(): PortSnapshot[] {
     const sockets = listSockets({ protocol: "TCP", state: "LISTEN" });
-    const table = new Map(
-        readProcessesWithUsage(sockets.map((socket) => socket.pid)).map((entry) => [entry.pid, entry])
-    );
+    const table = ownerTable(sockets.map((socket) => socket.pid));
     const seen = new Set<number>();
     const unique = socketProcesses(sockets, { ownPid: -1, table }).filter((entry) => {
         const port = extractPort(entry.name);
@@ -550,7 +551,7 @@ export function isLikelyDevProcess(processName: string, command: string): boolea
 }
 
 export function getAllProcesses(): ProcessSnapshot[] {
-    const parsedRows = listProcessesWithUsage({ otherUsers: true })
+    const parsedRows = listProcessesWithUsage({ otherUsers: true, cpuPercent: true })
         .map(processRow)
         .filter((entry) => entry.pid > 1 && entry.pid !== process.pid);
     const cwdCandidates = parsedRows

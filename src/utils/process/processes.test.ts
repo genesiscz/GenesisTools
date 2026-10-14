@@ -36,13 +36,14 @@ import {
     descendantPids,
     findProcesses,
     formatLstart,
-    listedExecutablePath,
     listProcesses,
     listProcessesWithUsage,
     parseFallbackPsTable,
     parsePasswd,
     processesOnTty,
+    readCpuPercents,
     readExecutablePath,
+    readListedName,
     readProcess,
     readProcessEnvironment,
     readProcessesWithUsage,
@@ -693,6 +694,81 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         }
     );
 
+    test("names: each of this user's processes is named as ps -o comm= named it, without the kernel's cut", () => {
+        const fromPs = new Map<number, string>();
+
+        for (const line of Bun.spawnSync(["ps", "-axo", "pid=,comm="], { env: process.env })
+            .stdout.toString()
+            .split("\n")) {
+            const match = line.match(/^\s*(\d+)\s(.*)$/);
+
+            if (match) {
+                fromPs.set(Number(match[1]), match[2].trim());
+            }
+        }
+
+        const own = process.geteuid?.() ?? -1;
+        const rows = listProcessesWithUsage({ commands: false, names: true }).filter(
+            (row) => row.uid === own && !row.zombie && fromPs.has(row.pid)
+        );
+        // macOS prints argv[0]; Linux prints the kernel name cut at 15 bytes, which the whole name starts with.
+        const differ = rows.filter((row) =>
+            process.platform === "darwin"
+                ? row.listedName !== fromPs.get(row.pid)
+                : !row.listedName?.startsWith(fromPs.get(row.pid) ?? "\0")
+        );
+
+        expect(rows.length).toBeGreaterThan(0);
+        // A process may exec or end between the two reads; past that allowance, the failure names every row.
+        const allowed = Math.max(2, Math.floor(rows.length * 0.02));
+        expect(
+            differ.length > allowed
+                ? differ.map((row) => `${row.pid}: ${row.listedName} / ps ${fromPs.get(row.pid)}`)
+                : []
+        ).toEqual([]);
+    });
+
+    test("cpu: %cpu is what ps prints, recent usage on macOS and CPU time over the life on Linux", () => {
+        const fromPs = new Map<number, number>();
+
+        for (const line of Bun.spawnSync(["ps", "-axo", "pid=,pcpu="], { env: process.env })
+            .stdout.toString()
+            .split("\n")) {
+            const [pid, pcpu] = line.trim().split(/\s+/);
+
+            if (pid && pcpu) {
+                fromPs.set(Number(pid), Number(pcpu));
+            }
+        }
+
+        const own = process.geteuid?.() ?? -1;
+        const now = Date.now();
+        const rows = listProcessesWithUsage({ commands: false, cpuPercent: true }).filter(
+            (row) =>
+                row.uid === own &&
+                !row.zombie &&
+                fromPs.has(row.pid) &&
+                // Linux `ps` divides by whole seconds of life, so a young process differs by design.
+                row.startMs !== null &&
+                now - row.startMs > 10_000
+        );
+        const percents = readCpuPercents(rows.map((row) => row.pid));
+        // A busy process moves between the two reads; the rest must agree to ps's own rounding.
+        const differ = rows.filter((row) => {
+            const expected = fromPs.get(row.pid) ?? 0;
+            return Math.abs((row.cpuPercent ?? -100) - expected) > Math.max(2, expected * 0.1);
+        });
+
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.filter((row) => percents.get(row.pid) === undefined)).toEqual([]);
+        const allowed = Math.max(2, Math.floor(rows.length * 0.02));
+        expect(
+            differ.length > allowed
+                ? differ.map((row) => `${row.pid}: ${row.cpuPercent} / ps ${fromPs.get(row.pid)}`)
+                : []
+        ).toEqual([]);
+    });
+
     test("the whole table agrees with ps on who is whose parent", () => {
         const fromPs = new Map(
             Bun.spawnSync(["ps", "-axo", "pid=,ppid="], { env: process.env })
@@ -809,15 +885,15 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         expect(findProcesses({ name, command: "no such command line anywhere", includeAncestors: true })).toEqual([]);
     });
 
-    test("a listed executable is the listed name where a per-row read would spawn a process", () => {
+    test("a listed name is the listing's own name where a per-row read would spawn a process", () => {
         const capture = spyOn(ps, "captureSync");
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
         const kernelOn = spyOn(os, "darwinKernel").mockReturnValue(false);
 
         try {
-            expect(listedExecutablePath({ pid: process.pid, name: "worker.exe" })).toBe("worker.exe");
+            expect(readListedName({ pid: process.pid, name: "worker.exe" })).toBe("worker.exe");
             platform.mockReturnValue("darwin");
-            expect(listedExecutablePath({ pid: process.pid, name: "genesis-long-pro" })).toBe("genesis-long-pro");
+            expect(readListedName({ pid: process.pid, name: "genesis-long-pro" })).toBe("genesis-long-pro");
             expect(capture).not.toHaveBeenCalled();
         } finally {
             kernelOn.mockRestore();
@@ -847,10 +923,13 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             expect(findProcesses({ name: "genesis-long-pro" }).map((entry) => entry.pid)).not.toContain(child.pid);
             expect(findProcesses({ name: "genesis-long-pr" }).map((entry) => entry.pid)).not.toContain(child.pid);
             expect(findProcesses({ name: "genesis-long-process-name" }).map((entry) => entry.pid)).toEqual([child.pid]);
-            // A caller that names rows by their executable gets the full path, not the listing's cut name.
+            // A caller that names rows as `ps -o comm=` did gets the whole name, not the listing's cut one: argv[0] on
+            // macOS, the executable's file name on Linux.
             const listed = listProcesses().find((entry) => entry.pid === child.pid);
             expect(listed?.name).not.toBe("genesis-long-process-name");
-            expect(listed && listedExecutablePath(listed)).toBe(realpathSync(exe));
+            expect(listed && readListedName(listed)).toBe(darwin ? exe : "genesis-long-process-name");
+            const named = listProcessesWithUsage({ commands: false, names: true }).find((row) => row.pid === child.pid);
+            expect(named?.listedName).toBe(darwin ? exe : "genesis-long-process-name");
         } finally {
             child.kill();
             await child.exited;

@@ -11,7 +11,7 @@ import {
     sampleCpuBusyPercent,
     type VmPageCounts,
 } from "@genesiscz/utils/macos/host-stats";
-import { listedExecutablePath, listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { friendlyProcessName } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
@@ -319,14 +319,14 @@ async function collectWifi(): Promise<string | null> {
 }
 
 export async function collectTopProcesses(limit = 5, read = listProcessesWithUsage): Promise<TopProcess[]> {
-    // Named by the executable, so the one ps skips the command lines. listedExecutablePath reads the path from the
-    // kernel where that is free and uses the snapshot's name on Windows, where a path per row is one CIM query each.
-    return read({ otherUsers: true, commands: false })
+    // Named as `ps -o comm=` printed them, so the one ps skips the command lines; a hard-linked launcher such as
+    // `gt-hub` keeps its own name instead of its executable's `bun`.
+    return read({ otherUsers: true, commands: false, names: true })
         .sort((a, b) => (b.usage?.rssBytes ?? 0) - (a.usage?.rssBytes ?? 0))
         .slice(0, limit)
         .map((entry) => ({
             pid: entry.pid,
-            name: friendlyProcessName(listedExecutablePath(entry)),
+            name: friendlyProcessName(entry.listedName ?? entry.name),
             rssBytes: entry.usage?.rssBytes ?? 0,
         }));
 }

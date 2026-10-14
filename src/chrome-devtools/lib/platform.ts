@@ -10,6 +10,7 @@ import { formatPsCpuTime, readProcessArgs } from "@genesiscz/utils/process/libpr
 import {
     findProcesses,
     listProcesses as processList,
+    readCpuPercents,
     readExecutablePath,
     readProcess,
     readProcessUsages,
@@ -66,8 +67,8 @@ const defaultProcessReader: ProcessReader = {
                   : tail;
         return {
             pid,
-            // Lifetime average: the kernel exposes cumulative time, not ps's decayed %cpu.
-            cpuPercent: elapsedMs > 0 ? (100 * usage.cpuTimeMs) / elapsedMs : 0,
+            // `ps`'s %cpu: recent usage, so the doctor's "recorder is hot" check sees a recorder that is busy now.
+            cpuPercent: readCpuPercents([pid]).get(pid) ?? 0,
             rssKb: usage.rssBytes / 1024,
             cpuTime: formatPsCpuTime(usage.cpuTimeMs),
             elapsed,

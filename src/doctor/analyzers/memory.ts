@@ -12,7 +12,7 @@ import type {
     Finding,
 } from "@app/doctor/lib/types";
 import { readSwapUsage, readVmPageCounts } from "@genesiscz/utils/macos/host-stats";
-import { listedExecutablePath, listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import clipboardy from "clipboardy";
 
 export interface VmStatParsed {
@@ -131,9 +131,10 @@ interface TopProcess {
 }
 
 export async function getTopProcessesByRss(limit: number): Promise<TopProcess[]> {
-    return listProcessesWithUsage({ otherUsers: true })
+    return listProcessesWithUsage({ otherUsers: true, names: true })
         .map((entry) => {
-            const comm = listedExecutablePath(entry);
+            // `ps -o comm=`'s name, which the label rules (`/^node$/`) were written against.
+            const comm = entry.listedName ?? entry.name;
             const command = entry.command ?? comm;
             return {
                 pid: entry.pid,

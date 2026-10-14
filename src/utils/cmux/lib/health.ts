@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
-import { listProcesses, readExecutablePath, readProcessUsages } from "@genesiscz/utils/process/processes";
+import { listProcesses, readCpuPercents, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 /**
  * cmux health triage. The socket layer answers `ping`/`capabilities` off the app's
@@ -75,10 +75,8 @@ async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> 
     if (!entry) {
         return undefined;
     }
-    const elapsed = entry.startMs === null ? 0 : Date.now() - entry.startMs;
-    const cpuTimeMs = readProcessUsages([entry.pid]).get(entry.pid)?.cpuTimeMs ?? 0;
-    // CPU is diagnostic display only; use the lifetime average instead of ps's decayed percentage.
-    return { pid: entry.pid, cpu: elapsed > 0 ? (100 * cpuTimeMs) / elapsed : 0 };
+    // `ps`'s %cpu: a cmux that spins now shows it, where the average since it started would hide it.
+    return { pid: entry.pid, cpu: readCpuPercents([entry.pid]).get(entry.pid) ?? 0 };
 }
 
 async function timedProbe(args: string[], timeoutMs: number, expect?: string): Promise<CmuxProbeResult> {

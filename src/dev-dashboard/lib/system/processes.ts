@@ -1,6 +1,6 @@
 import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { logger } from "@genesiscz/utils/logger";
-import { listedExecutablePath, listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 
 // macOS `ps comm=` yields the full executable path. Surface a readable name:
@@ -35,16 +35,16 @@ export function sortProcesses(list: ProcessInfo[], sort: ProcessSort): ProcessIn
 
 export async function collectProcesses(): Promise<ProcessInfo[]> {
     const now = Date.now();
-    // Named by the executable, read without a process per row (a cut name on macOS would merge different apps).
-    return listProcessesWithUsage({ otherUsers: true, commands: false }).map((entry) => {
+    // Named and measured as `ps -o comm=,%cpu=` printed them: the kill check below needs a name the command line
+    // holds, and a CPU column that shows a process busy NOW, not its average since it started.
+    return listProcessesWithUsage({ otherUsers: true, commands: false, names: true, cpuPercent: true }).map((entry) => {
         const uptimeMs = entry.startMs === null ? 0 : Math.max(0, now - entry.startMs);
         return {
             pid: entry.pid,
             rssBytes: entry.usage?.rssBytes ?? 0,
             uptimeMs,
-            // Lifetime average: the kernel has no ps-style decayed CPU percentage.
-            cpuPct: uptimeMs > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / uptimeMs : 0,
-            name: friendlyProcessName(listedExecutablePath(entry)),
+            cpuPct: entry.cpuPercent ?? 0,
+            name: friendlyProcessName(entry.listedName ?? entry.name),
         };
     });
 }

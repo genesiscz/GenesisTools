@@ -145,8 +145,8 @@ export function readSwapProcessRows(
         now?: () => number;
     } = {}
 ): PsRow[] {
-    // Named by the executable, so the one ps skips the command lines.
-    const entries = (readers.processes ?? listProcessesWithUsage)({ otherUsers: true, commands: false });
+    // Named as `ps -o comm=` printed them, so the one ps skips the command lines.
+    const entries = (readers.processes ?? listProcessesWithUsage)({ otherUsers: true, commands: false, names: true });
 
     if (entries.length === 0) {
         throw new Error("swap process table unavailable");
@@ -161,8 +161,9 @@ export function readSwapProcessRows(
             return [];
         }
 
-        // The executable path preserves spaces in app names and excludes command arguments.
-        const name = executablePath(entry.pid) ?? (entry.command?.split(/\s+/)[0] || entry.name);
+        // `ps -o comm=`'s name keeps spaces in app names and leaves out command arguments; a hard-linked launcher
+        // such as `gt-hub` keeps its own name instead of its executable's `bun`.
+        const name = entry.listedName ?? executablePath(entry.pid) ?? (entry.command?.split(/\s+/)[0] || entry.name);
         return [
             {
                 pid: entry.pid,

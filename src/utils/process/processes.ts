@@ -25,6 +25,7 @@ import {
     listProcessTable,
     listTtyTable,
     type ProcessTableRow,
+    readCpuPercent,
     readProcessUsage as readLibprocUsage,
     readProcessArgs,
     readProcessPath,
@@ -559,19 +560,104 @@ export function readExecutablePath(pid: number): string | null {
 }
 
 /**
- * The executable of a listed process without a process per row: the full path where the kernel gives it for free (macOS
- * and Linux, whose listed name is cut at 16 or 15 bytes), else the listed name (Windows, and the macOS `ps` fallback,
- * where {@link readExecutablePath} would spawn once per row).
+ * The name `ps -o comm=` prints for a listed process, without its cut. macOS prints argv[0]: the kernel gives it for this
+ * user's processes (measured 2026-10-15: 934 of 934 equal to `ps`), and another user's falls back to the executable's
+ * path (294 of 320 equal; only the setuid `ps` reads their argv). Linux prints the kernel name cut at 15 bytes, so this
+ * is the executable's file name when that name starts with it (else the name the process gave itself). Windows: the
+ * image name. Not the resolved executable path: a hard-linked launcher such as `gt-hub` resolves to `bun`, and a
+ * listed name the command line does not contain fails the dev dashboard's kill check.
  */
-export function listedExecutablePath(entry: Pick<ProcessEntry, "pid" | "name">): string {
+export function readListedName(entry: Pick<ProcessEntry, "pid" | "name">): string {
     switch (processPlatform()) {
-        case "linux":
-            return readProcExe(entry.pid) ?? entry.name;
+        case "linux": {
+            const file = basename(readProcExe(entry.pid)?.replace(/ \(deleted\)$/, "") ?? "");
+            return file.length > 0 && file.startsWith(entry.name) ? file : entry.name;
+        }
         case "win32":
             return entry.name;
         default:
-            return darwinKernel() ? (readProcessPath(entry.pid) ?? entry.name) : entry.name;
+            break;
     }
+
+    if (!darwinKernel()) {
+        // The `ps` table's name is `comm` already.
+        return entry.name;
+    }
+
+    return readProcessArgs(entry.pid)?.argv[0] || readProcessPath(entry.pid) || entry.name;
+}
+
+/** CPU time over the process's life in percent, as Linux and Windows `ps` print `%cpu`; null when unknown. */
+function lifetimePercent(cpuTimeMs: number | null, startMs: number | null, now: number): number | null {
+    return cpuTimeMs === null || startMs === null || now <= startMs ? null : (100 * cpuTimeMs) / (now - startMs);
+}
+
+/**
+ * `ps -o %cpu=` of each pid. On macOS that is recent usage, not CPU time over the process's life: the kernel answers
+ * for this user's processes, and with `otherUsers` the rest come from ONE batched `ps`. Linux and Windows `ps` print
+ * CPU time over the process's life, and so does this. A pid with no answer is absent.
+ */
+export function readCpuPercents(
+    pids: number[],
+    options: Pick<ListProcessesOptions, "otherUsers"> = {}
+): Map<number, number> {
+    const percents = new Map<number, number>();
+    const now = Date.now();
+
+    switch (processPlatform()) {
+        case "linux":
+            for (const pid of pids) {
+                const process = readProcProcess(pid);
+                const percent = process ? lifetimePercent(process.cpuTimeMs, process.startMs, now) : null;
+
+                if (percent !== null) {
+                    percents.set(pid, percent);
+                }
+            }
+
+            return percents;
+        case "win32": {
+            const wanted = new Set(pids);
+
+            for (const process of listCimProcesses()) {
+                const percent = wanted.has(process.pid)
+                    ? lifetimePercent(process.cpuTimeMs, process.startMs, now)
+                    : null;
+
+                if (percent !== null) {
+                    percents.set(process.pid, percent);
+                }
+            }
+
+            return percents;
+        }
+        default:
+            break;
+    }
+
+    const missing: number[] = [];
+
+    for (const pid of pids) {
+        const percent = darwinKernel() ? readCpuPercent(pid) : null;
+
+        if (percent === null) {
+            missing.push(pid);
+        } else {
+            percents.set(pid, percent);
+        }
+    }
+
+    if (options.otherUsers || !darwinKernel()) {
+        for (const [pid, rest] of psLinesFor(missing, "pid=,pcpu=")) {
+            const percent = Number.parseFloat(rest);
+
+            if (Number.isFinite(percent)) {
+                percents.set(pid, percent);
+            }
+        }
+    }
+
+    return percents;
 }
 
 /**
@@ -655,14 +741,29 @@ export function readProcessUsages(
 export interface ProcessWithUsage extends ProcessEntry {
     /** Null for another user's process on macOS without `otherUsers`. */
     usage: ProcessUsageEntry | null;
+    /** With `names`: what `ps -o comm=` prints, without its cut ({@link readListedName}). */
+    listedName?: string;
+    /** With `cpuPercent`: what `ps -o %cpu=` prints ({@link readCpuPercents}); absent when unknown. */
+    cpuPercent?: number;
+}
+
+export interface ProcessesWithUsageOptions extends Pick<ListProcessesOptions, "otherUsers" | "commands"> {
+    /** Fill `listedName`, the name `ps -o comm=` printed. */
+    names?: boolean;
+    /** Fill `cpuPercent`, the `%cpu` `ps` printed (on macOS recent usage, not CPU time over the process's life). */
+    cpuPercent?: boolean;
 }
 
 /**
  * Metadata and usage for distinct requested pids only. Linux reads each proc entry once; macOS reads only those
  * kernel rows and their usage. Windows and the non-kernel fallback share one table read, never one per pid.
- * An empty request does no process reads; gone or unreadable processes are omitted.
+ * An empty request does no process reads; gone or unreadable processes are omitted. `cpuPercent` fills `ps`'s %cpu in
+ * the same pass (on macOS for this user's processes only: no `ps` is spawned here).
  */
-export function readProcessesWithUsage(pids: number[]): ProcessWithUsage[] {
+export function readProcessesWithUsage(
+    pids: number[],
+    options: Pick<ProcessesWithUsageOptions, "cpuPercent"> = {}
+): ProcessWithUsage[] {
     const wanted = new Set(pids.filter((pid) => Number.isInteger(pid) && pid >= 0));
 
     if (wanted.size === 0) {
@@ -670,29 +771,26 @@ export function readProcessesWithUsage(pids: number[]): ProcessWithUsage[] {
     }
 
     if (processPlatform() === "linux") {
+        const now = Date.now();
         return [...wanted].flatMap((pid) => {
             const entry = readProcProcess(pid);
             if (!entry) {
                 return [];
             }
 
+            const percent = options.cpuPercent ? lifetimePercent(entry.cpuTimeMs, entry.startMs, now) : null;
             return [
                 {
                     ...fromLinux(entry, true),
-                    usage: {
-                        pid,
-                        rssBytes: entry.rssBytes,
-                        cpuTimeMs: entry.cpuTimeMs,
-                        threads: entry.threads,
-                        running: entry.state === "R",
-                    },
+                    usage: linuxUsage(entry),
+                    ...(percent !== null ? { cpuPercent: percent } : {}),
                 },
             ];
         });
     }
 
     if (!darwinKernel()) {
-        return listProcessesWithUsage().filter((entry) => wanted.has(entry.pid));
+        return listProcessesWithUsage({ cpuPercent: options.cpuPercent }).filter((entry) => wanted.has(entry.pid));
     }
 
     const entries = [...wanted].flatMap((pid) => {
@@ -700,7 +798,10 @@ export function readProcessesWithUsage(pids: number[]): ProcessWithUsage[] {
         return entry ? [entry] : [];
     });
     const usages = readProcessUsages(entries.map((entry) => entry.pid));
-    return entries.map((entry) => ({ ...entry, usage: usages.get(entry.pid) ?? null }));
+    return entries.map((entry) => {
+        const percent = options.cpuPercent ? readCpuPercent(entry.pid) : null;
+        return { ...entry, usage: usages.get(entry.pid) ?? null, ...(percent !== null ? { cpuPercent: percent } : {}) };
+    });
 }
 
 /**
@@ -708,29 +809,44 @@ export function readProcessesWithUsage(pids: number[]): ProcessWithUsage[] {
  * spawn. On macOS, `otherUsers` fills in what the kernel withholds from this user (another user's command line,
  * memory and CPU time) with ONE batched `ps`, never one per question. `commands: false` leaves every command line
  * null, for a caller that names a process by its executable: the `ps` then skips its most expensive column (about
- * 25 ms instead of 55 on 1,300 processes).
+ * 25 ms instead of 55 on 1,300 processes). `names` and `cpuPercent` add what `ps -o comm=,%cpu=` printed; other users'
+ * rows take both from the same batched `ps`.
  */
-export function listProcessesWithUsage(
-    options: Pick<ListProcessesOptions, "otherUsers" | "commands"> = {}
-): ProcessWithUsage[] {
+export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}): ProcessWithUsage[] {
     const commands = options.commands !== false;
+    const now = Date.now();
 
     if (processPlatform() === "win32") {
-        return listCimProcesses().map((process) => ({
-            ...fromCim(process, commands),
-            usage: {
-                pid: process.pid,
-                rssBytes: process.rssBytes ?? 0,
-                cpuTimeMs: process.cpuTimeMs ?? 0,
-                threads: process.threads,
-                running: null,
-            },
-        }));
+        return listCimProcesses().map((process) => {
+            const entry = fromCim(process, commands);
+            const percent = options.cpuPercent ? lifetimePercent(process.cpuTimeMs, process.startMs, now) : null;
+            return {
+                ...entry,
+                usage: {
+                    pid: process.pid,
+                    rssBytes: process.rssBytes ?? 0,
+                    cpuTimeMs: process.cpuTimeMs ?? 0,
+                    threads: process.threads,
+                    running: null,
+                },
+                ...(options.names ? { listedName: entry.name } : {}),
+                ...(percent !== null ? { cpuPercent: percent } : {}),
+            };
+        });
     }
 
     if (processPlatform() === "linux") {
         // One /proc read per process already holds the usage; readProcessUsages would read every process again.
-        return listProcProcesses().map((process) => ({ ...fromLinux(process, commands), usage: linuxUsage(process) }));
+        return listProcProcesses().map((process) => {
+            const entry = fromLinux(process, commands);
+            const percent = options.cpuPercent ? lifetimePercent(process.cpuTimeMs, process.startMs, now) : null;
+            return {
+                ...entry,
+                usage: linuxUsage(process),
+                ...(options.names ? { listedName: readListedName(entry) } : {}),
+                ...(percent !== null ? { cpuPercent: percent } : {}),
+            };
+        });
     }
 
     const fillFromPs = options.otherUsers === true;
@@ -738,28 +854,49 @@ export function listProcessesWithUsage(
     // would read each one twice (about 10 ms of sysctls on 1,300 processes).
     const entries = listProcesses({ commands: commands && !fillFromPs });
     const usages = readProcessUsages(entries.map((entry) => entry.pid));
+    const percents = options.cpuPercent
+        ? readCpuPercents(entries.map((entry) => entry.pid))
+        : new Map<number, number>();
+    const psNames = new Map<number, string>();
 
     if (fillFromPs) {
         const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
         const missing = entries.filter((entry) => !entry.zombie && (commands || !usages.has(entry.pid)));
+        // `comm` and `command` may both hold spaces, so only one of them can be the last column.
+        const tail = commands ? ",command=" : options.names ? ",comm=" : "";
+        const columns = `pid=,rss=,time=${options.cpuPercent ? ",pcpu=" : ""}${tail}`;
 
         for (const [pid, rest] of psLinesFor(
             missing.map((entry) => entry.pid),
-            commands ? "pid=,rss=,time=,command=" : "pid=,rss=,time="
+            columns
         )) {
-            const match = rest.match(commands ? /^(\d+)\s+(\S+)\s(.*)$/ : /^(\d+)\s+(\S+)\s*$/);
+            const words = rest.trimStart().split(/\s+/);
+            const fixed = options.cpuPercent ? 3 : 2;
 
-            if (!match) {
+            if (words.length < fixed) {
                 continue;
             }
 
+            const [rssKb = "", time = "", pcpu = ""] = words;
+            const last = tail
+                ? rest
+                      .trimStart()
+                      .replace(new RegExp(`^(\\S+\\s+){${fixed}}`), "")
+                      .trimEnd()
+                : "";
             const entry = byPid.get(pid);
 
             if (entry && commands) {
-                entry.command ??= match[3].trimEnd();
+                entry.command ??= last;
+            } else if (options.names && last) {
+                psNames.set(pid, last);
             }
 
-            const usage = usages.has(pid) ? null : psUsage(pid, match[1], match[2]);
+            if (options.cpuPercent && !percents.has(pid) && Number.isFinite(Number.parseFloat(pcpu))) {
+                percents.set(pid, Number.parseFloat(pcpu));
+            }
+
+            const usage = usages.has(pid) ? null : psUsage(pid, rssKb, time);
 
             if (usage) {
                 usages.set(pid, usage);
@@ -767,7 +904,15 @@ export function listProcessesWithUsage(
         }
     }
 
-    return entries.map((entry) => ({ ...entry, usage: usages.get(entry.pid) ?? null }));
+    return entries.map((entry) => {
+        const percent = percents.get(entry.pid);
+        return {
+            ...entry,
+            usage: usages.get(entry.pid) ?? null,
+            ...(options.names ? { listedName: psNames.get(entry.pid) ?? readListedName(entry) } : {}),
+            ...(percent !== undefined ? { cpuPercent: percent } : {}),
+        };
+    });
 }
 
 const userNames = new Map<number, string | null>();
