@@ -10,7 +10,7 @@ import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { formatSessionList, registerAgentsCommand, runSessionNew } from "../commands/agents";
 import { accountChoiceMessage, budgetsFromCache, budgetsFromSnapshots } from "./account-budgets";
-import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
+import { agentRunCommand, agentRunLauncher, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import * as inventory from "./session-inventory";
 import {
     assertShellExecutable,
@@ -116,6 +116,42 @@ test("the run line quotes the account and the prompt, and omits -- when there is
     expect(withPidNote(`${TOOLS} 'grok' 'run' 'side'`, "/tmp/s.pid")).toBe(
         `printf '%s' $$ > '/tmp/s.pid'; ${TOOLS} 'grok' 'run' 'side'`
     );
+});
+
+// Restore reads these lines back from the shell journal. Replaying one verbatim sends the first prompt
+// again, so restore needs the plain launcher to resume the session instead.
+test("agentRunLauncher reads back the launcher of every line agentRunCommand writes", () => {
+    const claude = agentRunCommand({
+        agent: "claude",
+        account: "work",
+        model: "sonnet",
+        crossMessages: true,
+        prompt: 'Triage the issue; there\'s a problem with "shop" $(not run)',
+    });
+
+    expect(agentRunLauncher(withPidNote(claude, "/state/sessions/triage.pid"))).toEqual({
+        agent: "claude",
+        launcher: "tools claude run work -m sonnet --cross-messages",
+    });
+    expect(agentRunLauncher(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/p.md" }))).toEqual({
+        agent: "claude",
+        launcher: "tools claude run work",
+    });
+    expect(agentRunLauncher(agentRunCommand({ agent: "grok", account: "side", prompt: "go" }))).toEqual({
+        agent: "grok",
+        launcher: "grok",
+    });
+    expect(agentRunLauncher(agentRunCommand({ agent: "codex", account: "side" }))).toEqual({
+        agent: "codex",
+        launcher: "codex",
+    });
+});
+
+test("agentRunLauncher leaves every other command alone", () => {
+    expect(agentRunLauncher("tail -f /tmp/service.log")).toBeUndefined();
+    expect(agentRunLauncher("tools cmux tree")).toBeUndefined();
+    expect(agentRunLauncher(`${TOOLS} 'claude' 'run' 'work' | tee /tmp/x`)).toBeUndefined();
+    expect(agentRunLauncher(`rm -rf /tmp/x; ${TOOLS} 'claude' 'run' 'work'`)).toBeUndefined();
 });
 
 test("the session account is exactly the one asked for; there is no default", () => {

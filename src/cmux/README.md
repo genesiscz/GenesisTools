@@ -75,60 +75,117 @@ Pre-typing rather than auto-running is deliberate. Restoring a layout should not
 
 ## `restore-after-restart`
 
-After a cmux app restart, rebuild the previous panes as new workspaces and pre-type Claude, Grok, and Codex resume commands. Always non-destructive. Default workspace prefix is `restart-`.
+After cmux crashes or restarts, put every tab back the way it was: each agent tab gets its
+Claude, Grok or Codex session again, and each shell tab gets its last command.
+
+There are two modes:
+
+- **`--in-place`** (the usual case): cmux already reopened your tabs as empty shells, with
+  their titles and directories. The restore types into those same tabs. Nothing new is
+  created.
+- **Default**: rebuild the layout as new workspaces (prefix `restart-`). Use it when cmux did
+  not reopen the tabs, or to restore from the pre-restart autosave or a saved profile.
+
+### Quick start
 
 ```bash
+# 1. See what would happen. Reads in the background; it never switches your workspace.
+tools cmux restore-after-restart --in-place --dry-run
+
+# 2. Resume every agent tab and run the resumes. Shell commands are typed, not run.
+tools cmux restore-after-restart --in-place --enter -y
+
+# Also run the restored shell commands (an `ssh host` tab logs in again):
+tools cmux restore-after-restart --in-place --enter --run-commands -y
+
+# cmux did not reopen the tabs: rebuild them from the pre-restart autosave.
 tools cmux restore-after-restart --source previous --dry-run
 tools cmux restore-after-restart --source previous --agents grok,claude --enter -y
-tools cmux restore-after-restart --list --source previous
 ```
 
 | Flag | Description |
 |------|-------------|
+| `--in-place` | Restore into the tabs cmux reopened, matched by surface UUID. Implies `--source live` |
+| `--run-commands` | With `--in-place`: also press Enter on restored shell commands |
 | `--source [source]` | `previous` (autosave `*-previous.json`), `live` (socket, then current autosave), or `profile` |
 | `--profile <name>` | Named profile. Required with `--source profile` off TTY |
 | `--agents [list]` | `claude`, `grok`, `codex`. Default is all three |
-| `--enter` | Press Enter after typing each resume command |
-| `--no-replay` | Only `cd` into cwd |
-| `--prefix <str>` | Workspace name prefix (default `restart-`) |
-| `--list` | Print the layout and inferred commands, then exit |
-| `--dry-run` | Print the restore plan without modifying cmux |
+| `--enter` | Press Enter after typing each agent resume command |
+| `--no-replay` | Only `cd` into the directory |
+| `--prefix <str>` | Workspace name prefix for new workspaces (default `restart-`) |
+| `--window <ref>` | Restore new workspaces into this window (`window:N`, index or uuid) |
+| `--list` | Print the layout and the inferred commands, then exit |
+| `--dry-run` | Print the plan without changing anything |
 | `-y, --yes` | Skip confirmation. Required off TTY |
 
-`previous` is the file cmux renamed aside on last launch, not the live layout.
+### What `--in-place` types, tab by tab
 
-`restore --enter` opts into **executing** each captured command instead of pre-typing it.
-That reverses the safe default above, so it is opt-in and never implied.
+The plan prints one line per tab: `▶ resume: <command>`, `▶ type (shell command): <command>`,
+or `· skip: <reason>`. A tab is typed into only when all of these hold:
 
-Captured commands are reported with their **drift**: every difference between what the
-process table showed and what will actually be replayed (an account added, a
-`-- --resume <id>` appended). Restore prints the diff rather than hiding the rewrite.
+- Its surface UUID is in the live layout. cmux keeps the UUID across a relaunch, while the
+  `surface:N` refs are renumbered, so the pairing never depends on a ref or a tab position.
+- Its tty runs nothing but a shell. A tab with an agent, an `ssh`, a `tail -f` or any other
+  program is busy. When a busy tab runs a different agent than the journal recorded (cmux's
+  own restore can pick a stale session), the skip line names the recorded session.
+- Its prompt is empty. Text already typed at the prompt is never overwritten.
+- It is not the tab running the restore.
+- For an agent: a concrete session id is resolved, and the evidence is the surface journal or
+  the tab title (see below). A weaker match is printed with its command, never typed.
 
-### How a Claude pane is pinned to its session
+After it resumes a session, the restore writes that tab's record to the surface journal, so
+the next relaunch finds it even if the agent's own hook did not run.
 
-The shell journal records the command as typed, so a pane started through a wrapper
-script is saved as that wrapper (`cr work`). Any executable under `~/.aliases/` whose body
-runs `exec tools cc run` or `exec tools claude run` counts as a cc run launcher, so it gets
-the same treatment as the spelled-out form. The session id comes from two places, in this
-order:
+### How each tab's session is chosen
 
-1. The pane's tty in the process table: a live `claude … --resume <uuid>` names the session
-   it runs, whatever the journal remembers from an earlier occupant of that pane.
-2. The Claude cmux journal (`~/.genesis-tools/claude-code/cmux-refs.jsonl`), written by the
-   Claude hooks with the pane's `CMUX_SURFACE_ID`, which also covers a session started fresh
-   in that pane.
+The session is identified by **where it ran**, not by the command you typed. You may start
+Claude through any alias, function or wrapper (`cr work`, `ffff`, a shell function), then
+`/rename` the session: the restore still resumes the right one. In order:
 
-The id lands after `--` (`cr work -- --resume <uuid>`), where claude itself reads it. A
-cc run level `--resume <query>` is a fuzzy search that can prompt or pick a renamed session,
-so it is removed and never replayed. A Claude pane whose id cannot be resolved keeps its
-command and gets the drift line `no claude session id resolved for this pane; restore starts
-a NEW claude session`. When two panes resolve to one session id, the pane whose tab title
-names the session keeps the resume and the other gets no command, because a second
-`--resume` of a running session forks it.
+1. **A live process on the tab's tty** (`claude … --resume <uuid>`): it names the session it
+   runs.
+2. **The surface journal** (`~/.genesis-tools/claude-code/cmux-refs.jsonl`). The
+   genesis-tools plugin hook writes the session id with the tab's `CMUX_SURFACE_ID` at
+   session start and on every prompt, for Claude, Codex and Grok. The newest record for the
+   tab's UUID wins, with these rules for the tab's last shell command:
+   - The journal saw the session **after** that command started: the session was the tab's
+     last occupant, so it is resumed, whatever the command was. A launcher the code does not
+     know becomes `tools claude start <account> -- --resume <id>` (account from the pin
+     journal).
+   - The command started **after** the session's last record (you quit Claude and ran
+     `ssh host`): the command was the last thing the tab did, so it is restored instead.
+   - `cmux restore <agent> <id>`, which cmux types itself at a relaunch, does not count as
+     your activity. When the journal names a different session for the tab, the journal wins.
+   - A `tools cmux agents new` line resumes its session. It never sends the first prompt
+     again, which would start the whole task a second time.
+3. **The tab title**, only when the journal has no record for the tab. An exact title match
+   in the tab's own directory wins over sessions whose names extend it
+   (`pr-7210-logs` beats `pr-7210-logs-scripts`). The drift line says
+   `session picked by tab title "…"`.
+4. **Weak evidence**: words of the first prompt, or a title match in another directory. It is
+   shown in the drift and the plan, and `--in-place` does not type it.
 
-`--window` on `profiles save --scope window` and on `restore-after-restart` accepts the
-`window:N` ref, the index or the uuid that `cmux list-windows` prints; an unknown value
-lists the open windows.
+When the typed launcher is a known one, its flags are kept and only the session id is
+attached: `cr work -m sonnet` becomes `cr work -m sonnet -- --resume <uuid>`. Any executable
+under `~/.aliases/` whose body runs `exec tools cc run` or `exec tools claude run` counts as
+known, whatever its name. The id lands after `--`, where claude itself reads it; a cc run
+level `--resume <query>` is a fuzzy search, so it is replaced by the id. When two tabs resolve
+to one session id, the tab whose title names the session keeps the resume and the other gets
+no command, because a second `--resume` of a running session forks it.
+
+Shell commands come from the local shell journal, so a command you typed inside an `ssh`
+session is not recorded; the tab gets the `ssh host` line that started it.
+
+### When a tab says "no session id resolved"
+
+- `tools claude cmux tree` shows the journal's session for each live tab. A tab without one
+  has no journal record.
+- `claude plugin list` must show `genesis-tools@genesis-tools` as `✔ enabled`. The journal
+  hook runs only where that plugin loaded. On 2026-10-14 a broken marketplace manifest kept
+  it off for twelve hours, and every session started in that time had no journal record.
+- `previous` is the file cmux renamed aside on its last launch, not the live layout.
+- `--dry-run` and `--list` read the cached session catalog; the real run refreshes it first,
+  so it can resolve a session the preview could not.
 
 ## Recovery: `doctor` and `rescue`
 

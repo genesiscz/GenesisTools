@@ -19,6 +19,12 @@ import {
     parseRestoreSource,
     type RestoreRestartSource,
 } from "@app/cmux/lib/restore-after-restart";
+import {
+    type InPlaceStep,
+    planInPlaceRestore,
+    readInPlaceLiveState,
+    runInPlaceRestore,
+} from "@app/cmux/lib/restore-in-place";
 import { loadSavedScreens } from "@app/cmux/lib/screen-cache";
 import { captureProfile, getCmuxVersion } from "@app/cmux/lib/snapshot";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
@@ -42,9 +48,23 @@ interface RestartFlags {
     dryRun?: boolean;
     yes?: boolean;
     window?: string;
+    inPlace?: boolean;
+    runCommands?: boolean;
 }
 
 const SOURCES: RestoreRestartSource[] = ["previous", "live", "profile"];
+
+function renderInPlaceStep(step: InPlaceStep): string {
+    const where = `${pc.cyan(step.workspaceTitle)} › ${step.title || pc.dim("(untitled)")} ${pc.dim(step.surfaceRef ?? "(gone)")}`;
+
+    if (step.skip) {
+        return `  ${pc.dim("·")} ${where}\n      ${pc.dim(`skip: ${step.skip}`)}`;
+    }
+
+    const label = step.kind === "agent" ? "resume" : "type (shell command)";
+
+    return `  ${pc.green("▶")} ${where}\n      ${pc.dim(`${label}:`)} ${step.surface.command}`;
+}
 
 async function captureLiveProfile(): Promise<Profile> {
     try {
@@ -95,6 +115,18 @@ async function resolveSource(
 ): Promise<{ source: RestoreRestartSource; profileName?: string } | undefined> {
     const sourceRaw = typeof flags.source === "string" ? flags.source : undefined;
     let source = parseRestoreSource(sourceRaw);
+    if (flags.inPlace) {
+        if (source && source !== "live") {
+            out.error(
+                `--in-place types into the tabs cmux shows now, so it reads --source live only. ${suggestCommand("tools cmux restore-after-restart --in-place --dry-run")}`
+            );
+            process.exitCode = 1;
+            return undefined;
+        }
+
+        return { source: "live" };
+    }
+
     if (!source) {
         if (!isInteractive()) {
             out.error(
@@ -174,7 +206,7 @@ export function registerRestoreAfterRestartCommand(program: Command): void {
     program
         .command("restore-after-restart")
         .description(
-            "Restore cmux panes after a restart: previous autosave, live capture, or a named profile, with Claude/Grok/Codex resume inference"
+            "Restore cmux tabs after a crash or restart: resume each tab's Claude/Grok/Codex session (found by the tab's surface UUID) and its last shell command. --in-place types into the tabs cmux reopened; the default rebuilds them as new workspaces. Examples: tools cmux --readme"
         )
         .option("--source [source]", "previous | live | profile")
         .option("--profile <name>", "Named profile (with --source profile)")
@@ -183,6 +215,14 @@ export function registerRestoreAfterRestartCommand(program: Command): void {
         .option("--no-replay", "Only cd into cwd, do not type resume commands")
         .option("--prefix <str>", "Workspace name prefix (default restart-)")
         .option("--window <ref>", "Restore into this cmux window")
+        .option(
+            "--in-place",
+            "Restore into the tabs cmux already reopened, matched by surface UUID, instead of new workspaces: each idle tab gets its agent session back, or its last shell command typed for review. Implies --source live"
+        )
+        .option(
+            "--run-commands",
+            "With --in-place: also press Enter on restored shell commands (default: typed, not run)"
+        )
         .option("--list", "Print the layout and inferred commands, then exit")
         .option("--dry-run", "Print the restore plan without modifying cmux")
         .option("-y, --yes", "Do not ask for confirmation")
@@ -248,6 +288,11 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
     // refreshing it, which would write to the shared history databases.
     const preview = Boolean(flags.list) || Boolean(flags.dryRun);
     const inferred = filterReplayByAgents(await prepareProfileForRestore(raw, { cached: preview }), agents);
+
+    if (flags.inPlace) {
+        await runInPlace(inferred, { ...flags, enter });
+        return;
+    }
 
     if (flags.list) {
         out.println(renderProfileTree(inferred));
@@ -337,4 +382,73 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         logger.error({ error }, "[restore-after-restart] failed");
         throw error;
     }
+}
+
+async function runInPlace(inferred: Profile, flags: RestartFlags & { enter: boolean }): Promise<void> {
+    const state = await readInPlaceLiveState();
+    const steps = planInPlaceRestore(inferred, state);
+    const planned = steps.filter((step) => !step.skip);
+
+    const detail = renderProfileCommandDetail(inferred);
+    if (detail.length > 0) {
+        p.note(detail.join("\n"), "Panes · commands · drift");
+    }
+
+    p.note(steps.map(renderInPlaceStep).join("\n") || "(no terminal tabs)", "In-place plan (live tabs)");
+
+    if (flags.list || flags.dryRun) {
+        p.outro(pc.dim(`${flags.list ? "List" : "Dry run"} only — nothing changed.`));
+        return;
+    }
+
+    if (planned.length === 0) {
+        p.outro(pc.dim("No idle tab has anything to restore."));
+        return;
+    }
+
+    if (!flags.yes) {
+        if (!isInteractive()) {
+            out.error(
+                `Pass --yes to skip confirmation. ${suggestCommand("tools cmux restore-after-restart --in-place --enter --yes")}`
+            );
+            process.exitCode = 1;
+            return;
+        }
+
+        const proceed = await withCancel(
+            p.confirm({
+                message: `Restore ${planned.length} tab(s) in place${flags.enter ? " and run the agent resumes" : ""}?`,
+                initialValue: true,
+            })
+        );
+        if (!proceed) {
+            p.cancel("Aborted.");
+            return;
+        }
+    }
+
+    await ensureCmuxResponsive("restore-after-restart --in-place");
+    const spinner = p.spinner();
+    spinner.start("Resuming sessions in place…");
+    const failures = await runInPlaceRestore(
+        steps,
+        { enter: flags.enter, replay: flags.replay !== false, runCommands: Boolean(flags.runCommands) },
+        {
+            onStep: (step, index, total) => {
+                spinner.message(`Resuming ${index}/${total}: ${step.title}`);
+            },
+        }
+    );
+    spinner.stop(`Processed ${planned.length} tab(s)`);
+
+    if (failures.length > 0) {
+        process.exitCode = 1;
+        p.note(failures.join("\n"), "Tabs not resumed");
+    }
+
+    if (flags.enter) {
+        await reportWaitingPrompts([...new Set(planned.map((step) => step.workspaceRef))], "Restore");
+    }
+
+    p.outro(failures.length > 0 ? pc.yellow("Partial restore — see the tabs above.") : pc.green("Done."));
 }

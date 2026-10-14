@@ -8,7 +8,7 @@ import {
     resumeQueryFromCommand,
     resumeTargetFromCommand,
 } from "@app/cmux/lib/command-capture";
-import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
+import type { Profile, ResumeEvidence, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
@@ -88,15 +88,19 @@ export function titleMatchKeys(title: string, kind: AgentKind): string[] {
     return [...new Set(keys)];
 }
 
-/** Strong evidence: the tab title IS the session's generated title, whole or truncated. */
-function titleMatchesKey(session: ReplayCatalogSession, key: string): boolean {
-    const title = session.title.trim().toLowerCase();
+/** Strongest evidence: the tab title IS the session's title. */
+function titleEqualsKey(session: ReplayCatalogSession, key: string): boolean {
+    return Boolean(key) && session.title.trim().toLowerCase() === key;
+}
 
-    if (!key) {
-        return false;
-    }
-
-    return title === key || (key.length >= 12 && title.startsWith(key));
+/**
+ * Strong evidence: the tab shows the session's title truncated. It is its own tier below the exact
+ * title, because sibling sessions are often named by extending one name (`pr-7210-logs`,
+ * `pr-7210-logs-scripts`), and counting those prefix hits beside the exact one made the match
+ * ambiguous and resolved nothing.
+ */
+function titleStartsWithKey(session: ReplayCatalogSession, key: string): boolean {
+    return key.length >= 12 && session.title.trim().toLowerCase().startsWith(key);
 }
 
 /** Weak evidence: the tab title reads like the opening words of the first prompt. */
@@ -137,7 +141,7 @@ export function matchGrokSession(
     cwd: string | undefined,
     sessions: ReplayCatalogSession[]
 ): ReplayCatalogSession | undefined {
-    return matchAgentSession("grok", title, cwd, sessions);
+    return matchAgentSession("grok", title, cwd, sessions)?.session;
 }
 
 export function matchClaudeSession(
@@ -145,7 +149,7 @@ export function matchClaudeSession(
     cwd: string | undefined,
     sessions: ReplayCatalogSession[]
 ): ReplayCatalogSession | undefined {
-    return matchAgentSession("claude", title, cwd, sessions);
+    return matchAgentSession("claude", title, cwd, sessions)?.session;
 }
 
 export function matchCodexSession(
@@ -153,7 +157,7 @@ export function matchCodexSession(
     cwd: string | undefined,
     sessions: ReplayCatalogSession[]
 ): ReplayCatalogSession | undefined {
-    return matchAgentSession("codex", title, cwd, sessions);
+    return matchAgentSession("codex", title, cwd, sessions)?.session;
 }
 
 /**
@@ -170,14 +174,23 @@ export function matchCodexSession(
  * put "a title match in any directory" above "a prompt match in this pane's own
  * directory", and the restored pane then resumed a conversation from another
  * project.
+ *
+ * `launcherKnown` says the pane's own launch command already names this agent. A
+ * tab cmux restored after a restart shows its saved title without the agent's
+ * glyph (`nabidky-2.0`, not `✳ nabidky-2.0`), so demanding the glyph refused the
+ * exact-title session for every idle tab. Then only a title that names ANOTHER
+ * agent disqualifies the match.
  */
 function matchAgentSession(
     kind: AgentKind,
     title: string,
     cwd: string | undefined,
-    sessions: ReplayCatalogSession[]
-): ReplayCatalogSession | undefined {
-    if (inferLauncherFromTitle(title) !== kind) {
+    sessions: ReplayCatalogSession[],
+    options: { launcherKnown?: boolean } = {}
+): { session: ReplayCatalogSession; evidence: Exclude<ResumeEvidence, "journal">; why: string } | undefined {
+    const titleKind = inferLauncherFromTitle(title);
+
+    if (options.launcherKnown ? titleKind !== undefined && titleKind !== kind : titleKind !== kind) {
         return undefined;
     }
 
@@ -185,13 +198,19 @@ function matchAgentSession(
     const pool = sessions.filter((session) => session.kind === kind);
     const inCwd = cwd ? pool.filter((session) => session.cwd === cwd) : pool;
 
-    const tiers = [titleMatchesKey, promptMatchesKey];
+    // `why` names the evidence for the drift line. Only a title match in the tab's own directory counts
+    // as "title"; first-prompt words, or any match in another directory, are "weak".
+    const tiers = [
+        { matches: titleEqualsKey, why: "tab title" },
+        { matches: titleStartsWithKey, why: "tab title" },
+        { matches: promptMatchesKey, why: "first-prompt words of session" },
+    ];
 
-    for (const matches of tiers) {
+    for (const { matches, why } of tiers) {
         for (const key of keys) {
             const local = pickUnique(inCwd.filter((session) => matches(session, key)));
             if (local) {
-                return local;
+                return { session: local, evidence: why === "tab title" ? "title" : "weak", why };
             }
         }
     }
@@ -200,11 +219,11 @@ function matchAgentSession(
         return undefined;
     }
 
-    for (const matches of tiers) {
+    for (const { matches, why } of tiers) {
         for (const key of keys) {
             const global = pickUnique(pool.filter((session) => matches(session, key)));
             if (global) {
-                return global;
+                return { session: global, evidence: "weak", why: `${why} in another directory (${global.cwd})` };
             }
         }
     }
@@ -248,7 +267,7 @@ export function replayCommandForSurface(
     surface: Pick<TerminalSurface, "title" | "cwd" | "command" | "command_source">,
     catalog: ReplayCatalog,
     preferred?: ReplayCatalogSession
-): { command?: string; drift: string[] } {
+): { command?: string; drift: string[]; evidence?: ResumeEvidence } {
     const captured = surface.command?.trim();
     const titleLauncher = inferLauncherFromTitle(surface.title);
     const capturedKind = captured ? agentKindFromLauncher(captured) : undefined;
@@ -276,11 +295,13 @@ export function replayCommandForSurface(
     // only for the kind of agent the pane shows: a claude journal id typed into
     // `grok -r` names a session grok has never seen.
     const journal = kind && preferred?.kind === kind ? preferred : undefined;
-    const hit =
-        journal ??
-        (kind === "grok" ? matchGrokSession(surface.title, surface.cwd, catalog.sessions) : undefined) ??
-        (kind === "claude" ? matchClaudeSession(surface.title, surface.cwd, catalog.sessions) : undefined) ??
-        (kind === "codex" ? matchCodexSession(surface.title, surface.cwd, catalog.sessions) : undefined);
+    const matched =
+        journal || !kind
+            ? undefined
+            : matchAgentSession(kind, surface.title, surface.cwd, catalog.sessions, {
+                  launcherKnown: capturedKind === kind,
+              });
+    const hit = journal ?? matched?.session;
 
     if (!hit) {
         if (original && kind) {
@@ -311,19 +332,28 @@ export function replayCommandForSurface(
         return { command: undefined, drift: [] };
     }
 
+    // Say which evidence picked the session. A title match is a guess the surface journal could not
+    // confirm, and first-prompt words are weaker still; the reader must be able to tell them apart.
+    const evidence: ResumeEvidence = matched?.evidence ?? "journal";
+    const source = matched ? `${matched.why} "${hit.title.slice(0, 60)}"` : "the session journal for this pane";
+    const note = evidence === "journal" ? [] : [`session picked by ${source}; the surface journal has no record here`];
+
     if (original && isAgentLauncher(original)) {
-        return deriveReplayCommand({ original, sessionId: hit.sessionId, account: hit.account ?? undefined });
+        const derived = deriveReplayCommand({ original, sessionId: hit.sessionId, account: hit.account ?? undefined });
+
+        return { command: derived.command, drift: [...derived.drift, ...note], evidence };
     }
 
     if (hit.kind === "grok" || hit.kind === "codex") {
-        return deriveReplayCommand({ original: hit.kind, sessionId: hit.sessionId });
-    }
+        const derived = deriveReplayCommand({ original: hit.kind, sessionId: hit.sessionId });
 
-    const source = hit === journal ? "the session journal for this pane" : `tab title "${hit.title}"`;
+        return { command: derived.command, drift: [...derived.drift, ...note], evidence };
+    }
 
     return {
         command: inferredResumeCommand(hit),
         drift: [`inferred ${hit.kind} resume ${hit.sessionId} from ${source}`],
+        evidence,
     };
 }
 
@@ -372,7 +402,9 @@ export function withInferredReplayCommands(profile: Profile, catalog: ReplayCata
                         }
 
                         if (resolved.command === surface.command) {
-                            return resolved.drift.length > 0 ? { ...surface, drift: resolved.drift } : surface;
+                            return resolved.drift.length > 0
+                                ? { ...surface, drift: resolved.drift, resume_evidence: resolved.evidence }
+                                : surface;
                         }
 
                         return {
@@ -381,6 +413,7 @@ export function withInferredReplayCommands(profile: Profile, catalog: ReplayCata
                             command_source: surface.command ? surface.command_source : "inferred",
                             command_original: surface.command,
                             drift: resolved.drift.length > 0 ? resolved.drift : surface.drift,
+                            resume_evidence: resolved.evidence,
                         };
                     }),
                 })),
@@ -417,7 +450,9 @@ interface ResumeClaim {
  * binding the app wrote down itself.
  */
 function titleNamesSession(surface: TerminalSurface, session: ReplayCatalogSession): boolean {
-    return titleMatchKeys(surface.title, session.kind).some((key) => titleMatchesKey(session, key));
+    return titleMatchKeys(surface.title, session.kind).some(
+        (key) => titleEqualsKey(session, key) || titleStartsWithKey(session, key)
+    );
 }
 
 /**
@@ -453,7 +488,7 @@ export function correctNativeResumeBindings(profile: Profile, catalog: ReplayCat
             return surface;
         }
 
-        const hit = matchAgentSession(binding.kind, surface.title, surface.cwd, catalog.sessions);
+        const hit = matchAgentSession(binding.kind, surface.title, surface.cwd, catalog.sessions)?.session;
 
         if (!hit || hit.sessionId === binding.sessionId || !titleNamesSession(surface, hit)) {
             return surface;
@@ -618,7 +653,10 @@ export async function loadClaudeCatalog(options: { cached?: boolean } = {}): Pro
         : (await getSessionListing({ excludeSubagents: true })).sessions;
 
     for (const record of records) {
-        if (!record.sessionId || !record.cwd) {
+        // The cached index also lists subagent transcripts, whose id is a path
+        // (`<project>/<parent>/subagents/agent-…`). `claude --resume` cannot open
+        // one, and `--list` printed it as a pane's resume target.
+        if (!record.sessionId || !record.cwd || record.sessionId.includes("/")) {
             continue;
         }
 

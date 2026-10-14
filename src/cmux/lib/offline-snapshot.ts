@@ -19,6 +19,7 @@ import {
     collectTtyLaunchCommands,
     deriveReplayCommand,
     isAgentLauncher,
+    journalReplayCommand,
     loadSurfaceSessions,
     type SurfaceSessionInfo,
 } from "@app/cmux/lib/command-capture";
@@ -218,17 +219,20 @@ export function buildOfflinePanes(
             const text = preferredScreenText(panel.terminal?.scrollback, cachedScreen?.text);
             const screen =
                 deps.captureScreen !== false && !isCaller && text ? { text, rows: text.split("\n").length } : undefined;
-            const original =
+            const session =
+                deps.surfaceSessions.get(panel.id) ??
+                (panel.stableSurfaceId ? deps.surfaceSessions.get(panel.stableSurfaceId) : undefined);
+            const capturedReplay = captured ? journalReplayCommand(captured, session) : undefined;
+            const capturedCommand = capturedReplay?.command;
+            const recorded =
                 captured?.command ??
                 (panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined) ??
                 panel.terminal?.tmuxStartCommand ??
                 lastCommandFromCapture(text).value;
-            const session =
-                deps.surfaceSessions.get(panel.id) ??
-                (panel.stableSurfaceId ? deps.surfaceSessions.get(panel.stableSurfaceId) : undefined);
+            const original = capturedCommand ?? recorded;
             const cwd = captured?.cwd ?? panelWorkingDirectory(panel) ?? workspace.currentDirectory;
 
-            if (captured && !isAgentLauncher(captured.command)) {
+            if (captured && capturedCommand !== undefined && !isAgentLauncher(capturedCommand)) {
                 // A pane that ran an agent and then went back to a shell still
                 // carries its resume binding. The captured command wins, because it
                 // is what the pane last did, but the binding is named so a thread is
@@ -268,11 +272,11 @@ export function buildOfflinePanes(
                 nativeKind &&
                 nativeSessionId &&
                 !headless &&
-                (!captured || agentKindFromLauncher(captured.command) === nativeKind)
+                (!capturedCommand || agentKindFromLauncher(capturedCommand) === nativeKind)
             ) {
                 const quote = (arg: string) =>
                     /^[a-zA-Z0-9_./:=@+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
-                const original = captured?.command ?? [nativeKind, ...launchArgs.slice(1)].map(quote).join(" ");
+                const original = capturedCommand ?? [nativeKind, ...launchArgs.slice(1)].map(quote).join(" ");
                 const derived = deriveReplayCommand({
                     original,
                     sessionId: nativeSessionId,
@@ -287,7 +291,11 @@ export function buildOfflinePanes(
                     command_source: captured ? "shell-journal" : "offline",
                     command_original: captured && derived.command !== captured.command ? captured.command : undefined,
                     resume: { kind: nativeKind, sessionId: nativeSessionId },
-                    drift: [`resume target recovered from cmux autosave (${nativeKind})`, ...derived.drift],
+                    drift: [
+                        `resume target recovered from cmux autosave (${nativeKind})`,
+                        ...(capturedReplay?.drift ?? []),
+                        ...derived.drift,
+                    ],
                 });
                 continue;
             }
@@ -316,6 +324,8 @@ export function buildOfflinePanes(
                 preferred
             );
 
+            const drift = derived.command ? [...(capturedReplay?.drift ?? []), ...derived.drift] : derived.drift;
+
             surfaces.push({
                 type: "terminal",
                 title: panel.title ?? "",
@@ -323,8 +333,9 @@ export function buildOfflinePanes(
                 cwd,
                 command: derived.command,
                 command_source: derived.command ? (captured ? "shell-journal" : "offline") : undefined,
-                command_original: derived.command && derived.command !== original ? original : undefined,
-                drift: derived.drift.length > 0 ? derived.drift : undefined,
+                command_original: derived.command && derived.command !== recorded ? recorded : undefined,
+                drift: drift.length > 0 ? drift : undefined,
+                resume_evidence: derived.command ? derived.evidence : undefined,
             });
         }
 

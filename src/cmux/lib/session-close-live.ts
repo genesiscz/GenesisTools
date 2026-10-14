@@ -142,7 +142,8 @@ async function liveTmuxJoin(tree: CmuxTreeView): Promise<Map<string, TmuxPaneSur
     return joinTmuxPanes({ panes: panes.items, clients: clients.items, tree });
 }
 
-async function liveTree() {
+/** Every terminal surface of every cmux window, with its UUID and tty. Reads in the background; it never changes focus. */
+export async function liveTree(): Promise<CmuxTreeView> {
     // The surface UUIDs let adoption tell a session's own surface from a renumbered ref.
     const result = await runCmux(["--id-format", "both", "tree", "--all"], { json: true });
 

@@ -532,6 +532,70 @@ describe("an agent launcher with no resolvable session says so", () => {
         ]);
     });
 });
+
+// 2026-10-14: after a cmux restart every idle tab shows its saved title without the Claude glyph
+// ("nabidky-2.0", not "✳ nabidky-2.0"). The journal said the tab ran `claude`, the catalog held a
+// session with exactly that title, and the match was refused because the title had no glyph.
+describe("a restarted tab without the agent glyph", () => {
+    test("matches the exact-title session when the journal launcher names the agent", () => {
+        const surface = terminal("nabidky-2.0", {
+            cwd: "/Users/me/Projects/App",
+            command: "claude",
+            command_source: "shell-journal",
+        });
+
+        const resolved = replayCommandForSurface(surface, catalog([claudeSession({ title: "nabidky-2.0" })]));
+
+        expect(resolved.command).toBe(`claude --resume ${CLAUDE_ID}`);
+    });
+
+    test("the exact title wins over sibling sessions whose names extend it", () => {
+        const surface = terminal("pr-7210-logouts-newest", {
+            cwd: "/Users/me/Projects/App",
+            command: "claude",
+            command_source: "shell-journal",
+        });
+        const resolved = replayCommandForSurface(
+            surface,
+            catalog([
+                claudeSession({
+                    sessionId: "11111111-1111-4111-8111-111111111111",
+                    title: "pr-7210-logouts-newest-scripts",
+                }),
+                claudeSession({ title: "pr-7210-logouts-newest" }),
+                claudeSession({
+                    sessionId: "22222222-2222-4222-8222-222222222222",
+                    title: "pr-7210-logouts-newest-loop",
+                }),
+            ])
+        );
+
+        expect(resolved.command).toBe(`claude --resume ${CLAUDE_ID}`);
+        expect(resolved.drift).toContain(
+            'session picked by tab title "pr-7210-logouts-newest"; the surface journal has no record here'
+        );
+    });
+
+    test("never matches when the title names another agent", () => {
+        const surface = terminal("nabidky-2.0 - grok", {
+            cwd: "/Users/me/Projects/App",
+            command: "claude",
+            command_source: "shell-journal",
+        });
+
+        const resolved = replayCommandForSurface(surface, catalog([claudeSession({ title: "nabidky-2.0" })]));
+
+        expect(resolved.command).toBe("claude");
+    });
+
+    test("a plain shell title with no agent launcher still resolves nothing", () => {
+        const surface = terminal("nabidky-2.0", { cwd: "/Users/me/Projects/App" });
+
+        expect(
+            replayCommandForSurface(surface, catalog([claudeSession({ title: "nabidky-2.0" })])).command
+        ).toBeUndefined();
+    });
+});
 describe("title evidence outranks prompt evidence", () => {
     // 2026-09-12: the tab "Native MCP OAuth gateway, Rohlik login p… - grok"
     // matched its own session by title AND three spec sessions whose first

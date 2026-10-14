@@ -9,6 +9,7 @@ import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/captur
 import {
     collectTtyCapture,
     isAgentLauncher,
+    journalReplayCommand,
     loadPinnedAccounts,
     loadSurfaceSessions,
     type SurfaceSessionInfo,
@@ -24,7 +25,6 @@ import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Work
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { resolveWindowRef } from "@app/cmux/lib/window-ref";
 import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
-import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
     browserUrl,
     type PaneListPane,
@@ -260,11 +260,13 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
                 total: targetWorkspaces.length,
             });
 
-            const captured = await withFocusedWorkspace(ws.ref, async () => {
-                const panes = await capturePanes(ws.ref, options, ctx.callerSurfaceRef, capture);
-                const fresh = await paneList(ws.ref);
-                return { panes, container: fresh.container_frame };
-            });
+            // Read in the background. This used to select each workspace first, so every capture
+            // (a `--list`, a `--dry-run`) visibly swapped the user's active workspace about 5 s per
+            // workspace. cmux 0.65 answers `list-pane-surfaces` and `capture-pane` for a background
+            // workspace (2026-10-14: 11 tabs in 4 background workspaces all read, focus untouched).
+            const panes = await capturePanes(ws.ref, options, ctx.callerSurfaceRef, capture);
+            const fresh = await paneList(ws.ref);
+            const captured = { panes, container: fresh.container_frame };
 
             if (captured.container.width > 0 && captured.container.height > 0) {
                 containerFrame = captured.container;
@@ -322,7 +324,7 @@ interface IdentifyContext {
     callerSurfaceRef?: string;
 }
 
-async function getIdentifyContext(): Promise<IdentifyContext> {
+export async function getIdentifyContext(): Promise<IdentifyContext> {
     try {
         const identify = await runCmuxJSON<{
             focused?: { workspace_ref?: string };
@@ -470,7 +472,7 @@ async function captureSurface(
         history: options.captureHistory,
     });
 
-    return buildTerminalSurfaceSnapshot({
+    const surface = buildTerminalSurfaceSnapshot({
         entry,
         captureCwd: options.captureCwd,
         captureScreen: options.captureScreen && !isCaller,
@@ -478,6 +480,8 @@ async function captureSurface(
         captured,
         capture,
     });
+
+    return surface.type === "terminal" && entry.id ? { ...surface, surface_id: entry.id } : surface;
 }
 
 export function buildTerminalSurfaceSnapshot(input: {
@@ -502,7 +506,13 @@ export function buildTerminalSurfaceSnapshot(input: {
         return { type: "terminal", title, cwd, screen };
     }
 
-    if (journal && !isAgentLauncher(journal.command)) {
+    const session =
+        capture && entry.id
+            ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
+            : undefined;
+    const journalReplay = journal ? journalReplayCommand(journal, session) : undefined;
+
+    if (journal && journalReplay && !isAgentLauncher(journalReplay.command)) {
         return {
             type: "terminal",
             title,
@@ -522,11 +532,8 @@ export function buildTerminalSurfaceSnapshot(input: {
     const tty = id ? capture?.panelTty.get(id) : undefined;
     const foreground = tty ? capture?.ttyCommands.get(tty) : undefined;
     const textCommand = captured.command.value ? captured.command : lastCommandFromCapture(fallbackScreen?.text);
-    const original = journal?.command ?? foreground ?? textCommand.value;
-    const session =
-        capture && entry.id
-            ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
-            : undefined;
+    const recorded = journal?.command ?? foreground ?? textCommand.value;
+    const original = journalReplay?.command ?? recorded;
     // The kind comes from the journal RECORD, never from the tab title: typing it from the
     // title made any pane whose title ends in the word "grok" (including a shell in a
     // directory named grok) replay `grok -r <claude uuid>`, a session grok has never seen.
@@ -552,6 +559,8 @@ export function buildTerminalSurfaceSnapshot(input: {
         return { type: "terminal", title, cwd, screen };
     }
 
+    const drift = [...(journalReplay?.drift ?? []), ...derived.drift];
+
     return {
         type: "terminal",
         title,
@@ -565,8 +574,9 @@ export function buildTerminalSurfaceSnapshot(input: {
               : derived.command !== original
                 ? "inferred"
                 : textCommand.source,
-        command_original: derived.command !== original ? original : undefined,
-        drift: derived.drift.length > 0 ? derived.drift : undefined,
+        command_original: derived.command !== recorded ? recorded : undefined,
+        drift: drift.length > 0 ? drift : undefined,
+        resume_evidence: derived.evidence,
     };
 }
 

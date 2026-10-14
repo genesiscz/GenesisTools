@@ -10,6 +10,7 @@ import {
     deriveReplayCommand,
     discoverCcRunAliases,
     isAgentLauncher,
+    journalReplayCommand,
     loadSurfaceSessions,
     resumeQueryFromCommand,
     resumeTargetFromCommand,
@@ -556,5 +557,57 @@ describe("loadSurfaceSessions", () => {
 
         expect(sessions.get("surface-grok-v4")).toMatchObject({ provider: "grok" });
         expect(sessions.get("surface-claude-v4")).toMatchObject({ provider: "claude" });
+    });
+});
+
+// The user starts agents through aliases, functions and wrappers this code has never seen. The tab's
+// surface journal is the evidence of which session ran there, not the words typed.
+describe("journalReplayCommand", () => {
+    const CLAUDE_ID = "6bdfb457-cee9-4202-8105-21be8a801757";
+    const session = { sessionId: CLAUDE_ID, provider: "claude" as const, account: "work", at: 2_000 };
+
+    test("an unknown launcher resumes the session the surface journal saw after it started", () => {
+        const resolved = journalReplayCommand({ command: "myclaude --fast", atMs: 1_000 }, session);
+
+        expect(resolved.command).toBe(`tools claude start work -- --resume ${CLAUDE_ID}`);
+        expect(resolved.drift[0]).toContain(`claude session ${CLAUDE_ID}`);
+    });
+
+    test("a command typed after the session's last record replays verbatim", () => {
+        expect(journalReplayCommand({ command: "tail -f app.log", atMs: 3_000 }, session)).toEqual({
+            command: "tail -f app.log",
+            drift: [],
+        });
+    });
+
+    test("a known launcher is left for the replay path to pin", () => {
+        expect(journalReplayCommand({ command: "cr work", atMs: 1_000 }, session).command).toBe("cr work");
+    });
+
+    test("a session read off a live process carries no record time and never rewrites the line", () => {
+        const live = { sessionId: CLAUDE_ID, provider: "claude" as const };
+
+        expect(journalReplayCommand({ command: "myclaude", atMs: 1_000 }, live).command).toBe("myclaude");
+    });
+});
+
+// cmux types `cmux restore <kind> <id>` itself at relaunch, from its own record, which can be stale.
+describe("journalReplayCommand with cmux's own restore line", () => {
+    const CLAUDE_ID = "6bdfb457-cee9-4202-8105-21be8a801757";
+    const GROK_ID = "b4d9d27d-1597-48fd-b6a6-f5ed76feb360";
+    // The journal record is OLDER than the line: cmux typed it after the crash, so time does not count.
+    const claude = { sessionId: CLAUDE_ID, provider: "claude" as const, account: "work", at: 1_000 };
+
+    test("the surface journal's session wins over a stale cmux restore line", () => {
+        const resolved = journalReplayCommand({ command: ` cmux restore grok ${GROK_ID}`, atMs: 2_000 }, claude);
+
+        expect(resolved.command).toBe(`tools claude start work -- --resume ${CLAUDE_ID}`);
+        expect(resolved.drift[0]).toContain(`cmux's own restore typed \`cmux restore grok ${GROK_ID}\``);
+    });
+
+    test("with no other journal session the line becomes the agent's own resume", () => {
+        expect(journalReplayCommand({ command: ` cmux restore grok ${GROK_ID}`, atMs: 2_000 }).command).toBe(
+            `grok -r ${GROK_ID}`
+        );
     });
 });

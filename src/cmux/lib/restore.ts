@@ -573,7 +573,7 @@ export function internalRestoreCommand(parts: string[], always: string[] = []): 
 }
 
 /** Resolves to a reason string when the surface was restored but its saved command was NOT replayed. */
-async function replayTerminal(
+export async function replayTerminal(
     surface: Surface & { type: "terminal" },
     workspaceRef: string,
     surfaceRef: string,

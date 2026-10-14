@@ -1,7 +1,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { CapturedCommand } from "@app/cmux/lib/capture-journal";
+import { agentRunLauncher } from "@app/cmux/lib/session-agents";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
+import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
@@ -158,6 +161,11 @@ export interface SurfaceSessionInfo {
      * described for Grok, arriving through the journal instead of a tab title.
      */
     provider: AccountProviderAlias;
+    /**
+     * When the surface journal last saw this session in the tab (epoch ms). Absent for a session read off
+     * a live process, which is running now.
+     */
+    at?: number;
 }
 
 /** surface uuid (CMUX_SURFACE_ID) → newest known agent session + account. */
@@ -205,7 +213,9 @@ export async function loadSurfaceSessions(
         logger.warn({ error }, "[command-capture] session refs/pins unavailable");
     }
 
-    return new Map([...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider }]));
+    return new Map(
+        [...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider, at: v.at }])
+    );
 }
 
 /** session id → pinned account, for ids the process table (not the journal) supplied. */
@@ -354,6 +364,80 @@ export function isAgentLauncher(command: string): boolean {
         isSimpleAgentCommand(command) &&
         (launcherRes().claude.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed))
     );
+}
+
+/** The line cmux types into a tab when it relaunches and resumes an agent from its own record. */
+const CMUX_RESTORE_RE = /^\s*cmux\s+restore\s+(\S+)\s+(\S+)\s*$/;
+const CMUX_RESTORE_KINDS: readonly AccountProviderAlias[] = ["claude", "grok", "codex"];
+
+/**
+ * The command a shell-journal line restores as.
+ *
+ * - A known agent launcher is returned as it was; the replay path pins the session onto it.
+ * - `cmux restore <kind> <id>`, which cmux types itself at relaunch, yields to the surface journal when the
+ *   journal names another session for the tab.
+ * - A line `tools cmux agents new` typed (pid note, absolute `tools` path, first prompt) becomes its plain
+ *   launcher, so restore resumes the session instead of sending the first prompt again.
+ * - Any other line is judged by the tab's surface journal, not by its words. The user can start an agent
+ *   through any alias, function or wrapper this code has never seen. When the journal saw an agent session
+ *   in this tab AFTER the line started, that session was the tab's last occupant and the tab resumes it.
+ *   Otherwise the line itself was the last thing the tab did and it replays verbatim.
+ */
+export function journalReplayCommand(
+    journal: Pick<CapturedCommand, "command" | "atMs">,
+    session?: SurfaceSessionInfo
+): { command: string; drift: string[] } {
+    if (isAgentLauncher(journal.command)) {
+        return { command: journal.command, drift: [] };
+    }
+
+    const cmuxRestore = journal.command.match(CMUX_RESTORE_RE);
+    const kind = CMUX_RESTORE_KINDS.find((candidate) => candidate === cmuxRestore?.[1]);
+
+    if (cmuxRestore && kind) {
+        const sessionId = cmuxRestore[2];
+
+        // cmux types this line itself when it relaunches, from its own agent record, which can be stale
+        // (2026-10-14: it put a day-old grok session into the tab where claude 1b4001ba ran until the crash).
+        // It is not the user's activity, so the record time does not count against the surface journal.
+        if (session && session.sessionId !== sessionId) {
+            return {
+                command: resumeCommandLine(session.provider, session.sessionId, session.account),
+                drift: [
+                    `cmux's own restore typed \`cmux restore ${kind} ${sessionId}\` here, but the surface journal saw ${session.provider} session ${session.sessionId} in this tab last; the tab resumes that session`,
+                ],
+            };
+        }
+
+        return {
+            command: resumeCommandLine(kind, sessionId),
+            drift: [`cmux's own restore named ${kind} session ${sessionId} for this tab`],
+        };
+    }
+
+    const run = agentRunLauncher(journal.command);
+
+    if (run) {
+        return {
+            command: run.launcher,
+            drift: [
+                `\`tools cmux agents new\` ${run.agent} tab: resumes its session, the first prompt is not sent again`,
+            ],
+        };
+    }
+
+    if (session?.at !== undefined && session.at >= journal.atMs) {
+        const typed = journal.command.split("\n")[0].slice(0, 60);
+
+        return {
+            command: resumeCommandLine(session.provider, session.sessionId, session.account),
+            drift: [
+                `the surface journal saw ${session.provider} session ${session.sessionId} in this tab after \`${typed}\` started, so the tab resumes that session`,
+            ],
+        };
+    }
+
+    return { command: journal.command, drift: [] };
 }
 
 export function agentKindFromLauncher(command: string): AccountProviderAlias | undefined {

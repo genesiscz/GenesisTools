@@ -28,6 +28,11 @@ export interface ContainerFrame {
 export interface TerminalSurface {
     type: "terminal";
     title: string;
+    /**
+     * The cmux surface UUID at capture time. cmux keeps it across a relaunch while the `surface:N` refs
+     * renumber, so `--in-place` pairs a captured tab with the live one by this id.
+     */
+    surface_id?: string;
     cwd?: string;
     /**
      * Visible terminal content captured at save time. On restore the new pane is
@@ -55,7 +60,15 @@ export interface TerminalSurface {
      * Restore prints these as a per-pane drift diff and never hides them.
      */
     drift?: string[];
+    /**
+     * What picked the session the command resumes: the tab's own surface journal, the tab title in the tab's
+     * directory, or weaker evidence (first-prompt words, a title in another directory). `--in-place` does
+     * not type a `weak` pick by itself.
+     */
+    resume_evidence?: ResumeEvidence;
 }
+
+export type ResumeEvidence = "journal" | "title" | "weak";
 
 export interface BrowserSurface {
     type: "browser";

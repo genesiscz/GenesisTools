@@ -89,6 +89,103 @@ export function withPidNote(command: string, pidFile: string): string {
     return `printf '%s' $$ > ${shellQuote(pidFile)}; ${command}`;
 }
 
+const PID_NOTE_RE = /^printf '%s' \$\$ > (?:'(?:[^']|'\\'')*'|\S+); /;
+
+/**
+ * Shell words up to a bare `--`, or undefined when the line holds anything but plain words
+ * (an expansion, a pipe, a second command). Enough to read back what `shellCommandLine` wrote.
+ */
+function leadingShellWords(line: string): string[] | undefined {
+    const words: string[] = [];
+    let word = "";
+    let inWord = false;
+
+    for (let index = 0; index < line.length; index++) {
+        const char = line[index];
+
+        if (char === "'" || char === '"') {
+            const end = line.indexOf(char, index + 1);
+            const quoted = end < 0 ? undefined : line.slice(index + 1, end);
+
+            if (quoted === undefined || (char === '"' && /[$`\\]/.test(quoted))) {
+                return undefined;
+            }
+
+            word += quoted;
+            inWord = true;
+            index = end;
+            continue;
+        }
+
+        if (char === "\\") {
+            word += line[index + 1] ?? "";
+            inWord = true;
+            index++;
+            continue;
+        }
+
+        if (/\s/.test(char)) {
+            if (inWord && word === "--") {
+                return words;
+            }
+
+            if (inWord) {
+                words.push(word);
+            }
+
+            word = "";
+            inWord = false;
+            continue;
+        }
+
+        if (/[;&|<>()`$]/.test(char)) {
+            return undefined;
+        }
+
+        word += char;
+        inWord = true;
+    }
+
+    if (inWord && word !== "--") {
+        words.push(word);
+    }
+
+    return words;
+}
+
+function bareShellWord(word: string): string {
+    return /^[A-Za-z0-9_./:@=-]+$/.test(word) ? word : shellQuote(word);
+}
+
+/**
+ * The plain launcher inside a line `agentRunCommand` (and `withPidNote`) wrote, without the pid note and
+ * without the prompt: `tools claude run work -m sonnet`, or `grok` / `codex`, whose resume recipes take no
+ * account. Undefined for any other command.
+ *
+ * Restore must resume the session such a tab ran. Replaying the recorded line itself sends the first
+ * prompt again and starts a second session that repeats the whole task (2026-10-14: a production triage
+ * tab would have started the triage over).
+ */
+export function agentRunLauncher(command: string): { agent: SessionAgentId; launcher: string } | undefined {
+    const words = leadingShellWords(command.trim().replace(PID_NOTE_RE, ""));
+
+    if (!words || words.length < 4 || words[0].split("/").at(-1) !== "tools" || words[2] !== "run") {
+        return undefined;
+    }
+
+    const agent = words[1];
+
+    if (!isSessionAgentId(agent)) {
+        return undefined;
+    }
+
+    if (agent !== "claude") {
+        return { agent, launcher: agent };
+    }
+
+    return { agent, launcher: ["tools", ...words.slice(1)].map(bareShellWord).join(" ") };
+}
+
 export type AccountChoice = Pick<AccountEntry, "id" | "name" | "provider" | "enabled">;
 
 /**
