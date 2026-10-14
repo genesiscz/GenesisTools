@@ -565,7 +565,8 @@ export function readExecutablePath(pid: number): string | null {
 /**
  * The name `ps -o comm=` prints for a listed process, without its cut. macOS prints argv[0]: the kernel gives it for this
  * user's processes (measured 2026-10-15: 934 of 934 equal to `ps`), and another user's falls back to the executable's
- * path (294 of 320 equal; only the setuid `ps` reads their argv). Linux prints the kernel name cut at 15 bytes, so this
+ * path (294 of 320 equal; only the setuid `ps` reads their argv, and its `comm=` column cost 30 ms more per call on
+ * 1,250 processes, measured 2026-10-15, for those 26 rows). Linux prints the kernel name cut at 15 bytes, so this
  * is the executable's file name when that name starts with it (else the name the process gave itself). Windows: the
  * image name. Not the resolved executable path: a hard-linked launcher such as `gt-hub` resolves to `bun`, and a
  * listed name the command line does not contain fails the dev dashboard's kill check.
@@ -812,8 +813,8 @@ export function readProcessesWithUsage(
  * spawn. On macOS, `otherUsers` fills in what the kernel withholds from this user (another user's command line,
  * memory and CPU time) with ONE batched `ps`, never one per question. `commands: false` leaves every command line
  * null, for a caller that names a process by its executable: the `ps` then skips its most expensive column (about
- * 25 ms instead of 55 on 1,300 processes). `names` and `cpuPercent` add what `ps -o comm=,%cpu=` printed; other users'
- * rows take both from the same batched `ps`.
+ * 25 ms instead of 55 on 1,300 processes). `names` and `cpuPercent` add what `ps -o comm=,%cpu=` printed (see
+ * {@link readListedName} for other users' names); other users' %cpu comes from the same batched `ps`.
  */
 export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}): ProcessWithUsage[] {
     const commands = options.commands !== false;
@@ -860,13 +861,11 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
     const percents = options.cpuPercent
         ? readCpuPercents(entries.map((entry) => entry.pid))
         : new Map<number, number>();
-    const psNames = new Map<number, string>();
 
     if (fillFromPs) {
         const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
         const missing = entries.filter((entry) => !entry.zombie && (commands || !usages.has(entry.pid)));
-        // `comm` and `command` may both hold spaces, so only one of them can be the last column.
-        const tail = commands ? ",command=" : options.names ? ",comm=" : "";
+        const tail = commands ? ",command=" : "";
         const columns = `pid=,rss=,time=${options.cpuPercent ? ",pcpu=" : ""}${tail}`;
 
         for (const [pid, rest] of psLinesFor(
@@ -891,8 +890,6 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
 
             if (entry && commands) {
                 entry.command ??= last;
-            } else if (options.names && last) {
-                psNames.set(pid, last);
             }
 
             if (options.cpuPercent && !percents.has(pid) && Number.isFinite(Number.parseFloat(pcpu))) {
@@ -912,7 +909,7 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
         return {
             ...entry,
             usage: usages.get(entry.pid) ?? null,
-            ...(options.names ? { listedName: psNames.get(entry.pid) ?? readListedName(entry) } : {}),
+            ...(options.names ? { listedName: readListedName(entry) } : {}),
             ...(percent !== undefined ? { cpuPercent: percent } : {}),
         };
     });

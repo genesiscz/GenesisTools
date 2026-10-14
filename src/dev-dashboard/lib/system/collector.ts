@@ -11,7 +11,7 @@ import {
     sampleCpuBusyPercent,
     type VmPageCounts,
 } from "@genesiscz/utils/macos/host-stats";
-import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage, readListedName } from "@genesiscz/utils/process/processes";
 import { friendlyProcessName } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
@@ -319,14 +319,14 @@ async function collectWifi(): Promise<string | null> {
 }
 
 export async function collectTopProcesses(limit = 5, read = listProcessesWithUsage): Promise<TopProcess[]> {
-    // Named as `ps -o comm=` printed them, so the one ps skips the command lines; a hard-linked launcher such as
-    // `gt-hub` keeps its own name instead of its executable's `bun`.
-    return read({ otherUsers: true, commands: false, names: true })
+    // Named as `ps -o comm=` printed them, after the cut to `limit` rows: a name costs a kernel read per row, and a
+    // hard-linked launcher such as `gt-hub` keeps its own name instead of its executable's `bun`.
+    return read({ otherUsers: true, commands: false })
         .sort((a, b) => (b.usage?.rssBytes ?? 0) - (a.usage?.rssBytes ?? 0))
         .slice(0, limit)
         .map((entry) => ({
             pid: entry.pid,
-            name: friendlyProcessName(entry.listedName ?? entry.name),
+            name: friendlyProcessName(readListedName(entry)),
             rssBytes: entry.usage?.rssBytes ?? 0,
         }));
 }

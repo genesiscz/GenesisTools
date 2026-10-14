@@ -126,7 +126,7 @@ describe("collectTopProcesses", () => {
             { pid: 4000003, rssBytes: 50 },
         ]);
         expect(read).toHaveBeenCalledTimes(1);
-        expect(read).toHaveBeenCalledWith({ otherUsers: true, commands: false, names: true });
+        expect(read).toHaveBeenCalledWith({ otherUsers: true, commands: false });
     });
 
     test("on Windows the names come from the snapshot, with no CIM query per row", async () => {
