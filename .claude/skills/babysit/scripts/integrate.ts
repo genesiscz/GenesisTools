@@ -7,7 +7,7 @@
  *   bun integrate.ts --run <dir> --pr 508 --round 1 [--wt <dir>] [--replies <json>] [--session bs-508-r1]
  *                    [--sha-map old=new,…] [--range a..b] [--skip-gates] [--no-post] [--dry]
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
@@ -171,6 +171,59 @@ const posted = exec(
     { cwd: run.vault }
 );
 console.log(posted.out.split("\n").slice(-12).join("\n"));
+
+// post-replies counts a thread this run already answered as done, so a later round that FIXES a thread an earlier
+// round deferred or refused never reaches the thread (2026-10-14, #502 t4-t7). Reply to those threads directly.
+interface ReplyItem {
+    ref?: string;
+    threadId?: string;
+    verdict?: string;
+    reply?: string;
+}
+const earlier = new Map<string, string>();
+
+for (const name of readdirSync(run.vault)) {
+    const match = new RegExp(`^${pr}-r(\\d+)[a-z]?-replies\\.json$`).exec(name);
+
+    if (!match || Number(match[1]) >= Number(round)) {
+        continue;
+    }
+
+    const previous = SafeJSON.parse(readFileSync(join(run.vault, name), "utf8"), { strict: true }) as {
+        items?: ReplyItem[];
+    };
+
+    for (const item of previous.items ?? []) {
+        if (item.threadId && item.verdict) {
+            earlier.set(item.threadId, item.verdict);
+        }
+    }
+}
+
+for (const item of (data.items ?? []) as ReplyItem[]) {
+    const before = item.threadId ? earlier.get(item.threadId) : undefined;
+
+    if (!item.threadId || item.verdict !== "fixed" || !before || before === "fixed" || !item.reply) {
+        continue;
+    }
+
+    const mutation = `mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}`;
+    const reply = exec(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            `query=${mutation}`,
+            "-F",
+            `id=${item.threadId}`,
+            "-F",
+            `body=Round ${round} update: ${item.reply}`,
+        ],
+        { quiet: true }
+    );
+    console.log(`${reply.code === 0 ? "✔" : "⚠"} follow-up on ${item.ref ?? item.threadId} (was ${before}, now fixed)`);
+}
 console.log(posted.code === 0 ? `✔ #${pr} round ${round} posted` : `⚠ #${pr} post-replies exit ${posted.code}`);
 appendEvent(run.dir, {
     kind: "post",
