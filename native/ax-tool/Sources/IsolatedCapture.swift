@@ -512,7 +512,9 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         compositor.updateSizes()
     }
     let indicator = RecordingIndicator(enabled: options.selection.indicator)
-    indicator.update(displayCanvas.map { [$0] } ?? selected.map(\.bounds))
+    // The border marks what the movie holds: the selected windows, also on a display canvas, where framing the whole
+    // display read as "the whole screen is recorded" (Martin, 2026-10-14).
+    indicator.update(selected.map(\.bounds))
     defer { indicator.close() }
     var startedStreams: [SCStream] = []
     do {
@@ -541,7 +543,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                 ($0[kCGWindowOwnerPID] as? pid_t) == target.pid }) else { return nil }
             return captureWindowBounds(row)
         }
-        indicator.update(displayCanvas.map { [$0] } ?? bounds)
+        indicator.update(bounds)
         compositor.refresh(rows)
         return compositor.queue.sync { compositor.error == nil }
     }
