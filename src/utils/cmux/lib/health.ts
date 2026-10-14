@@ -1,7 +1,8 @@
+import { basename } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
-import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { listProcesses, readExecutablePath, readProcessUsages } from "@genesiscz/utils/process/processes";
 
 /**
  * cmux health triage. The socket layer answers `ping`/`capabilities` off the app's
@@ -66,13 +67,18 @@ export function classifyCmuxHealth(input: {
 export const APP_BINARY_SUFFIX = "cmux.app/Contents/MacOS/cmux";
 
 async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> {
-    const entry = listProcessesWithUsage().find((entry) => readExecutablePath(entry.pid)?.endsWith(APP_BINARY_SUFFIX));
+    // The kernel's short name first: an executable path per process, or usage of every process, costs far more.
+    const entry = listProcesses({ commands: false }).find(
+        (entry) =>
+            entry.name === basename(APP_BINARY_SUFFIX) && readExecutablePath(entry.pid)?.endsWith(APP_BINARY_SUFFIX)
+    );
     if (!entry) {
         return undefined;
     }
     const elapsed = entry.startMs === null ? 0 : Date.now() - entry.startMs;
+    const cpuTimeMs = readProcessUsages([entry.pid]).get(entry.pid)?.cpuTimeMs ?? 0;
     // CPU is diagnostic display only; use the lifetime average instead of ps's decayed percentage.
-    return { pid: entry.pid, cpu: elapsed > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / elapsed : 0 };
+    return { pid: entry.pid, cpu: elapsed > 0 ? (100 * cpuTimeMs) / elapsed : 0 };
 }
 
 async function timedProbe(args: string[], timeoutMs: number, expect?: string): Promise<CmuxProbeResult> {
