@@ -651,6 +651,17 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         expect(userName(0)).toBe("root");
     });
 
+    test.skipIf(process.platform === "win32")("this user's name comes from the system, not from $USER", () => {
+        const fromSystem = Bun.spawnSync(["id", "-un"], { env: process.env }).stdout.toString().trim();
+        const script = `import { userName } from "${join(import.meta.dir, "processes.ts")}"; process.stdout.write(String(userName(process.getuid())));`;
+        const child = Bun.spawnSync([process.execPath, "-e", script], {
+            env: { ...process.env, USER: "fixture-not-me", LOGNAME: "fixture-not-me" },
+        });
+
+        expect(fromSystem.length).toBeGreaterThan(0);
+        expect(child.stdout.toString()).toBe(fromSystem);
+    });
+
     test("the start time prints exactly as ps -o lstart= prints it", () => {
         const fromPs = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(process.ppid)], { env: process.env })
             .stdout.toString()
@@ -768,6 +779,64 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
                 : []
         ).toEqual([]);
     });
+
+    test.skipIf(process.platform !== "darwin")(
+        "cpu: a process idle at first and busy now shows busy, as ps -o %cpu= shows it",
+        async () => {
+            // The running bun, not a new executable: a fresh file per run is what crashed syspolicyd on 2026-10-14.
+            const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => { for (;;) {} }, 1500)"], {
+                stdout: "ignore",
+                stderr: "ignore",
+                env: process.env,
+            });
+
+            try {
+                await Bun.sleep(4_000);
+                const ours = readCpuPercents([child.pid]).get(child.pid) ?? 0;
+                const fromPs = Number(
+                    Bun.spawnSync(["ps", "-o", "pcpu=", "-p", String(child.pid)], { env: process.env })
+                        .stdout.toString()
+                        .trim()
+                );
+                const startMs = readProcess(child.pid)?.startMs ?? Date.now();
+                const usage = readProcessUsages([child.pid]).get(child.pid);
+                const lifetime = (100 * (usage?.cpuTimeMs ?? 0)) / (Date.now() - startMs);
+
+                // About 2.5 s of 4 busy: the lifetime average is near 60%, recent usage near 100%.
+                expect(Math.abs(ours - fromPs)).toBeLessThan(15);
+                expect(ours).toBeGreaterThan(lifetime + 15);
+            } finally {
+                child.kill();
+                await child.exited;
+            }
+        },
+        15_000
+    );
+
+    // Linux only: on macOS a running executable whose file is replaced is what crashed syspolicyd on 2026-10-14.
+    test.skipIf(process.platform !== "linux")(
+        "an executable replaced while it runs is named without the (deleted) that /proc adds",
+        async () => {
+            const dir = mkdtempSync(join(tmpdir(), "gt-replaced-exe-"));
+            const exe = join(dir, "runs-then-replaced");
+            copyFileSync("/bin/sleep", exe);
+            const child = Bun.spawn([exe, "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
+
+            try {
+                // An upgrade renames the new file over the old one.
+                writeFileSync(join(dir, "replacement"), "");
+                renameSync(join(dir, "replacement"), exe);
+
+                expect(readProcExe(child.pid)).toBe(`${exe} (deleted)`);
+                expect(readExecutablePath(child.pid)).toBe(exe);
+                const listed = listProcesses({ commands: false }).find((entry) => entry.pid === child.pid);
+                expect(listed && readListedName(listed)).toBe("runs-then-replaced");
+            } finally {
+                child.kill();
+                await child.exited;
+            }
+        }
+    );
 
     test("the whole table agrees with ps on who is whose parent", () => {
         const fromPs = new Map(

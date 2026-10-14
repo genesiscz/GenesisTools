@@ -40,6 +40,9 @@ import { type CimProcess, listCimProcesses } from "./windows-cim";
 /** Every `ps` fallback gets a deadline: a blocked `ps` would otherwise stall the caller's thread for good. */
 const PS_DEADLINE_MS = 5_000;
 
+/** What `/proc/<pid>/exe` appends once the file was replaced (an upgrade) or removed; `ps` never shows it. */
+const DELETED_EXE = / \(deleted\)$/;
+
 export interface ProcessEntry {
     pid: number;
     ppid: number;
@@ -544,7 +547,7 @@ export function readProcessEnvironment(pid: number): Record<string, string> | nu
 export function readExecutablePath(pid: number): string | null {
     switch (processPlatform()) {
         case "linux":
-            return readProcExe(pid) ?? readProcProcess(pid)?.comm ?? null;
+            return readProcExe(pid)?.replace(DELETED_EXE, "") ?? readProcProcess(pid)?.comm ?? null;
         case "win32":
             return listCimProcesses(pid)[0]?.executable ?? null;
         default:
@@ -570,7 +573,7 @@ export function readExecutablePath(pid: number): string | null {
 export function readListedName(entry: Pick<ProcessEntry, "pid" | "name">): string {
     switch (processPlatform()) {
         case "linux": {
-            const file = basename(readProcExe(entry.pid)?.replace(/ \(deleted\)$/, "") ?? "");
+            const file = basename(readProcExe(entry.pid)?.replace(DELETED_EXE, "") ?? "");
             return file.length > 0 && file.startsWith(entry.name) ? file : entry.name;
         }
         case "win32":
@@ -926,17 +929,22 @@ export function userName(uid: number): string | null {
     }
 
     let name: string | null = null;
-    const own = userInfo();
 
-    if (uid === own.uid) {
-        name = own.username;
-    } else if (processPlatform() === "darwin") {
+    if (processPlatform() === "darwin") {
         const entry = libSystem()?.getpwuid(uid);
         // `pw_name` is the first field of `struct passwd`: the pointer stored there, then the string it points to.
         const field = entry ? read.ptr(entry, 0) : 0;
         name = field ? new CString(field as Pointer).toString() : null;
     } else if (processPlatform() === "linux") {
         name = parsePasswd(readPasswd()).get(uid) ?? null;
+    }
+
+    // Bun builds userInfo().username from $USER or $LOGNAME ("unknown" without them), so it fills in only this user's
+    // name, and only where the system database has none (Windows, a directory-service account).
+    const own = userInfo();
+
+    if (name === null && uid === own.uid && own.username !== "unknown") {
+        name = own.username;
     }
 
     userNames.set(uid, name);
