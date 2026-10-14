@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
@@ -580,6 +581,30 @@ describe("claude provider TRUE global disable", () => {
                 "expo@other:expo:true",
             ]);
             expect(servers[0]?.config).toEqual({ type: "http", url: PLUGIN_URL });
+        });
+
+        it("a full disk during a plugin toggle preserves all settings and cleans up the temp file", async () => {
+            const original = seedClaudePlugins();
+            const provider = new ClaudeProvider();
+            const path = settingsPath();
+            const before = readdirSync(join(homeDir, ".claude")).sort();
+            const write = spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+                writeSync(fd, bytes, offset, Math.floor(length / 2));
+                throw Object.assign(new Error("fixture disk full"), { code: "ENOSPC" });
+            });
+            try {
+                await expect(provider.setPluginServersEnabled(["expo"], false)).rejects.toThrow("fixture disk full");
+                expect(write).toHaveBeenCalledTimes(1);
+                expect(readFileSync(path, "utf8")).toBe(original);
+                expect(readdirSync(join(homeDir, ".claude")).sort()).toEqual(before);
+            } finally {
+                write.mockRestore();
+            }
+
+            expect(await provider.setPluginServersEnabled(["expo"], false)).toBe(WriteResult.Applied);
+            expect(readSettings().deniedMcpServers).toEqual([{ serverName: "plugin:expo:expo" }]);
+            expect(readSettings().theme).toBe("dark");
+            expect(statSync(path).mode & 0o777).toBe(0o600);
         });
 
         it("disable adds one deniedMcpServers entry and keeps the rest; enable restores the file", async () => {

@@ -26,8 +26,13 @@ const value = (flag: string, fallback: number) => {
 const workers = value("--workers", 1);
 const swift = value("--swift", 0);
 const reserveGb = value("--reserve-gb", 10);
-const stats = statfsSync("/System/Volumes/Data");
-const freeGb = value("--free-gb", (stats.bavail * stats.bsize) / 1024 ** 3);
+const overrideGb = value("--free-gb", Number.NaN);
+const freeGb = Number.isFinite(overrideGb)
+    ? overrideGb
+    : (() => {
+          const stats = statfsSync(process.cwd());
+          return (stats.bavail * stats.bsize) / 1024 ** 3;
+      })();
 const neededGb = workers * PER_WORKTREE_GB + swift * SWIFT_BUILD_GB;
 const leftGb = freeGb - neededGb;
 const mode = leftGb >= reserveGb ? "worktree" : "unified";

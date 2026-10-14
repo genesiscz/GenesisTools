@@ -145,6 +145,43 @@ describe("AppServerClient", () => {
         }
     });
 
+    test("approval waits for preceding file changes while a filing RPC response bypasses the queue", async () => {
+        const harness = createProcessHarness();
+        const seen: string[] = [];
+        const approval = Promise.withResolvers<void>();
+        const filing = Promise.withResolvers<void>();
+        let client: AppServerClient;
+        client = new AppServerClient(harness.process, {
+            onNotification: async (notification) => {
+                if (notification.method === "item/userMessage") {
+                    const pending = client.request("thread/read");
+                    filing.resolve();
+                    await pending;
+                }
+                seen.push(notification.method);
+            },
+            onServerRequest: () => {
+                expect(seen).toEqual(["item/userMessage", "item/started"]);
+                approval.resolve();
+                return { decision: "accept" };
+            },
+        });
+        try {
+            harness.push({ method: "item/userMessage" });
+            await filing.promise;
+            harness.push({
+                method: "item/started",
+                params: { item: { type: "fileChange", id: "edit-1", changes: [{ path: "/w/a.ts" }] } },
+            });
+            harness.push({ id: "approval-1", method: "item/fileChange/requestApproval", params: { itemId: "edit-1" } });
+            const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as { id: number };
+            harness.push({ id: request.id, result: {} });
+            await approval.promise;
+        } finally {
+            await client.close();
+        }
+    });
+
     test("correlates request responses by id", async () => {
         const harness = createProcessHarness();
         const client = new AppServerClient(harness.process);

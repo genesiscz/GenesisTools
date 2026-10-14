@@ -3,6 +3,7 @@ import { toggleServer } from "@app/mcp-manager/commands/toggle-server.js";
 import * as commandUtils from "@app/mcp-manager/utils/command.utils.js";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { logger } from "@genesiscz/utils/logger";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
@@ -17,6 +18,59 @@ describe("toggleServer", () => {
         mockProvider = new MockMCPProvider("claude", "/mock/claude.json");
         mockProviders = [mockProvider];
     });
+
+    it.each([false, true])(
+        "toggles plugin instances per provider when the name is also unified (%s)",
+        async (enabled) => {
+            const config = createMockUnifiedConfig();
+            const codex = new MockMCPProvider("codex", "/mock/codex.toml");
+            codex.listPluginServersResult = [
+                {
+                    name: "test-server",
+                    config: { command: "plugin-server" },
+                    enabled: !enabled,
+                    provider: "codex",
+                    plugin: "fixture@market",
+                },
+            ];
+            const pluginToggle = spyOn(codex, "setPluginServersEnabled").mockResolvedValue(WriteResult.Applied);
+            spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(config);
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
+            spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
+            await toggleServer(enabled, "test-server", [mockProvider, codex], { provider: "all" });
+            expect(pluginToggle).toHaveBeenCalledWith(["test-server"], enabled);
+            expect(codex.installServerCalls).toEqual([]);
+            expect(codex.enableServersCalls).toEqual([]);
+            expect(codex.disableServersCalls).toEqual([]);
+            expect(enabled ? mockProvider.enableServersCalls : mockProvider.disableServersCalls).toHaveLength(1);
+            expect(config.mcpServers["test-server"]._meta?.enabled?.codex).toBeUndefined();
+        }
+    );
+
+    it.each([false, true])(
+        "switches both existing native and plugin instances in one provider (%s)",
+        async (enabled) => {
+            const codex = new MockMCPProvider("codex", "/mock/codex.toml");
+            codex.getServerConfigResult = { command: "native-server" };
+            codex.listPluginServersResult = [
+                {
+                    name: "test-server",
+                    config: { command: "plugin-server" },
+                    enabled: !enabled,
+                    provider: "codex",
+                    plugin: "fixture@market",
+                },
+            ];
+            const pluginToggle = spyOn(codex, "setPluginServersEnabled").mockResolvedValue(WriteResult.Applied);
+            spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(createMockUnifiedConfig());
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
+            spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
+            await toggleServer(enabled, "test-server", [codex], { provider: "codex" });
+            expect(pluginToggle).toHaveBeenCalledWith(["test-server"], enabled);
+            expect(enabled ? codex.enableServersCalls : codex.disableServersCalls).toHaveLength(1);
+            expect(codex.installServerCalls).toEqual([]);
+        }
+    );
 
     describe("enable (enabled = true)", () => {
         it("--clear-project-overrides reaches the global enable and is reported as not applying without project lists", async () => {

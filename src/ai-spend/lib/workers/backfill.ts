@@ -168,7 +168,12 @@ function grokRows(): WorkerCostRow[] {
             continue;
         }
 
-        for (let turn = 1; turn <= meta.turns; turn++) {
+        // Completion metadata is published after the child exits and its log descriptors close.
+        for (let turn = 1; turn <= Math.min(meta.turns, meta.lastTurn?.turn ?? 0); turn++) {
+            if (turn === meta.activeTurn?.turn) {
+                continue;
+            }
+
             const path = turnLogPath(name, turn);
 
             if (!existsSync(path)) {
@@ -217,7 +222,12 @@ function claudeRows(): WorkerCostRow[] {
             continue;
         }
 
-        for (let turn = 1; turn <= meta.turns; turn++) {
+        // Completion metadata is published after the child exits and its log descriptors close.
+        for (let turn = 1; turn <= Math.min(meta.turns, meta.lastTurn?.turn ?? 0); turn++) {
+            if (turn === meta.activeTurn?.turn) {
+                continue;
+            }
+
             const path = workerTurnLogPath(name, turn);
 
             if (!existsSync(path)) {

@@ -15,8 +15,12 @@ const SECRET_KEY = `(?:${[...HEADER_KEYS].map((key) => key.replace(/[-]/g, "\\-"
  */
 const TOKEN_PREFIX =
     "(?:sbp_|sntryu_|sntrys_|ghp_|gho_|ghu_|ghs_|github_pat_|glpat-|xai-|sk-ant-|sk-proj-|sk-|xox[abpr]-|AIza)";
-const SECRET_FLAG_WITH_VALUE = new RegExp(`(--?${SECRET_NAME}=)[^"'\\s,\\]]+`, "gi");
-const SECRET_FLAG_THEN_VALUE = new RegExp(`(["']--?${SECRET_NAME}["']\\s*,\\s*)(["'])[^"'\\n]*\\2`, "gi");
+const SERIALIZED_STRING = `(?:"(?:[^"\\\\\\n]|\\\\.)*"|'[^'\\n]*')`;
+const SECRET_FLAG_WITH_VALUE = new RegExp(
+    `("--?${SECRET_NAME}=)(?:[^"\\\\\\n]|\\\\.)*"|('--?${SECRET_NAME}=)[^'\\n]*'`,
+    "gi"
+);
+const SECRET_FLAG_THEN_VALUE = new RegExp(`(["']--?${SECRET_NAME}["']\\s*,\\s*)(${SERIALIZED_STRING})`, "gi");
 const PREFIXED_TOKEN = new RegExp(`(["'])${TOKEN_PREFIX}[A-Za-z0-9_-]{8,}\\1`, "g");
 const SECRET_FLAG = new RegExp(`^--?${SECRET_NAME}$`, "i");
 const SECRET_FLAG_ASSIGNMENT = new RegExp(`^(--?${SECRET_NAME}=).+$`, "i");
@@ -47,8 +51,14 @@ export function redactConfigText(text: string): string {
             const quote = value.startsWith('"""') || value.startsWith("'''") ? value.slice(0, 3) : value.slice(0, 1);
             return `${prefix}${quote}${REDACTED}${quote}`;
         })
-        .replace(SECRET_FLAG_WITH_VALUE, `$1${REDACTED}`)
-        .replace(SECRET_FLAG_THEN_VALUE, `$1$2${REDACTED}$2`)
+        .replace(SECRET_FLAG_WITH_VALUE, (_match, doublePrefix: string, singlePrefix: string) => {
+            const prefix = doublePrefix ?? singlePrefix;
+            return `${prefix}${REDACTED}${prefix[0]}`;
+        })
+        .replace(
+            SECRET_FLAG_THEN_VALUE,
+            (_match, prefix: string, value: string) => `${prefix}${value[0]}${REDACTED}${value[0]}`
+        )
         .replace(PREFIXED_TOKEN, `$1${REDACTED}$1`);
 }
 

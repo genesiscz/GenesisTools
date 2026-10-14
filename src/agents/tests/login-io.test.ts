@@ -227,10 +227,7 @@ describe("formatEventMonitor", () => {
         for (const position of [undefined, { index: 2, total: 3 }]) {
             const lines = formatEventMonitor(event, unsafeNames, position).split("\n");
 
-            expect(lines).toEqual([
-                `${position ? "[2/3] " : ""}${headline}`,
-                SafeJSON.stringify(event, { strict: true }),
-            ]);
+            expect(lines).toEqual([`${position ? "[2/3] " : ""}${headline}`, eventJsonLine(event)]);
             expect(lines[0]).not.toMatch(/[\p{Cc}\p{Zl}\p{Zp}]/u);
             expect(SafeJSON.parse(lines[1] ?? "", { strict: true })).toEqual(event);
         }

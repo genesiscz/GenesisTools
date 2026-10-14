@@ -56,6 +56,17 @@ describe("redactConfigText and redactMcpValue: secrets inside args", () => {
         expect(redactedToml).toContain('"--verbose"');
     });
 
+    test("quoted argument secrets are redacted through commas, spaces and escaped quotes", () => {
+        for (const value of ["alpha,beta", "alpha beta", 'alpha\\"beta', "alpha]beta"]) {
+            const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            const text = '{"args":["--password=' + escaped + '","--password","' + escaped + '","keep"]}';
+            expect(redactConfigText(text)).toBe('{"args":["--password=•••","--password","•••","keep"]}');
+        }
+        expect(redactConfigText("args = ['--password=alpha beta,beta', '--password', 'alpha,beta', 'keep']")).toBe(
+            "args = ['--password=•••', '--password', '•••', 'keep']"
+        );
+    });
+
     test("the object form does the same for an args array", () => {
         const args = [
             "-y",

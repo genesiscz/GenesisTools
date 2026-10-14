@@ -224,7 +224,7 @@ export class CodexSessionRuntime {
 
         const finished = this.costTracker.observe(notification, new Date());
         if (finished) {
-            this.bookTurnCost(finished);
+            await this.bookTurnCost(finished);
         }
 
         if (notification.method === "turn/started") {
@@ -325,12 +325,18 @@ export class CodexSessionRuntime {
 
         const requestId = String(request.id);
         const detail = this.describeApproval(request);
+        const params = isRecord(request.params) ? request.params : {};
+        const commandRequest =
+            request.method === "item/commandExecution/requestApproval" || request.method === "execCommandApproval";
         const pendingApprovals = {
             ...this.meta.pendingApprovals,
             [requestId]: {
                 rpcId: request.id,
                 method: request.method,
                 detail,
+                paths: this.approvalPaths(request),
+                command: commandRequest && typeof params.command === "string" ? params.command : undefined,
+                cwd: commandRequest && typeof params.cwd === "string" ? params.cwd : undefined,
                 requestedAt: new Date().toISOString(),
             },
         };
@@ -425,10 +431,17 @@ export class CodexSessionRuntime {
         }
     }
 
+    private approvalPaths(request: RpcServerRequest): string[] | undefined {
+        const params = isRecord(request.params) ? request.params : {};
+        return request.method === "item/fileChange/requestApproval" && typeof params.itemId === "string"
+            ? this.fileChangePaths.get(params.itemId)
+            : undefined;
+    }
+
     /** What the lead reads for an approval: a file change names the files it writes, not its item id. */
     private describeApproval(request: RpcServerRequest): string {
         const params = isRecord(request.params) ? request.params : {};
-        const paths = typeof params.itemId === "string" ? this.fileChangePaths.get(params.itemId) : undefined;
+        const paths = this.approvalPaths(request);
 
         if (request.method === "item/fileChange/requestApproval" && paths && paths.length > 0) {
             const reason = typeof params.reason === "string" && params.reason ? ` (${params.reason})` : "";
@@ -489,8 +502,8 @@ export class CodexSessionRuntime {
     }
 
     /** Never throws: `recordWorkerTurnCost` logs its own failure and the turn goes on without a cost line. */
-    private bookTurnCost(finished: CodexFinishedTurn): void {
-        const row = recordWorkerTurnCost({
+    private async bookTurnCost(finished: CodexFinishedTurn): Promise<void> {
+        const row = await recordWorkerTurnCost({
             backend: "codex",
             name: this.meta.name,
             sessionId: this.meta.threadId ?? null,

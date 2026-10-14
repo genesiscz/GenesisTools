@@ -256,9 +256,12 @@ export class AppServerClient {
         const method = message.method;
 
         if ((typeof id === "number" || typeof id === "string") && typeof method === "string") {
-            void this.handleServerRequest({ id, method, params: message.params }).catch((err) => {
-                log.error({ err, id, method }, "answering app-server request failed");
-            });
+            // Wait for preceding notifications, while the reader continues handling RPC responses.
+            void this.notificationQueue
+                .then(() => this.handleServerRequest({ id, method, params: message.params }))
+                .catch((err) => {
+                    log.error({ err, id, method }, "answering app-server request failed");
+                });
             return;
         }
 

@@ -120,8 +120,14 @@ function renderStats(report: WorkerStatsReport): void {
     }
 }
 
-function runBackfill(flags: WorkersFlags): void {
+async function runBackfill(flags: WorkersFlags): Promise<void> {
     const plan = planWorkerBackfill(readWorkerCostRows());
+    if (!flags.dryRun) {
+        const appended = await appendWorkerCostRows(plan.rows);
+        plan.skipped += plan.rows.length - appended.length;
+        plan.rows = appended;
+    }
+
     const summary = {
         ledger: workerCostLedgerPath(),
         dryRun: flags.dryRun === true,
@@ -132,10 +138,6 @@ function runBackfill(flags: WorkersFlags): void {
         ),
         notes: plan.notes,
     };
-
-    if (!flags.dryRun) {
-        appendWorkerCostRows(plan.rows);
-    }
 
     if (flags.json) {
         out.result(flags.dryRun ? { ...summary, preview: plan.rows } : summary);
@@ -177,7 +179,7 @@ function usdCell(value: number | null): string {
     return value === null ? "?" : formatUsd(value);
 }
 
-function runReprice(flags: WorkersFlags): void {
+async function runReprice(flags: WorkersFlags): Promise<void> {
     const ledger = readWorkerCostLedger();
     const plan = planWorkerReprice(ledger.rows);
     // A price that moved by less than a hundredth of a cent is float noise, not a change.
@@ -188,7 +190,7 @@ function runReprice(flags: WorkersFlags): void {
     );
 
     if (!flags.dryRun && plan.repriced.length > 0) {
-        rewriteWorkerCostRows(plan.rows, ledger.bytes);
+        await rewriteWorkerCostRows(plan.rows, ledger);
     }
 
     const summary = {
@@ -255,17 +257,17 @@ export function registerWorkersCommand(program: Command): Command {
         .option("--backfill", "Book ledger rows for worker turns that ran before the ledger (read-only on their files)")
         .option("--reprice", "Price every ledger row again from its turn files under today's rules (keeps a .bak)")
         .option("--dry-run", "With --backfill or --reprice: show what would change, write nothing")
-        .action((_opts: WorkersFlags, cmd: Command) => {
+        .action(async (_opts: WorkersFlags, cmd: Command) => {
             // `--since` and `--json` are the tool's own options, which commander resolves on the parent.
             const flags = cmd.optsWithGlobals() as WorkersFlags;
 
             if (flags.reprice) {
-                runReprice(flags);
+                await runReprice(flags);
                 return;
             }
 
             if (flags.backfill) {
-                runBackfill(flags);
+                await runBackfill(flags);
                 return;
             }
 

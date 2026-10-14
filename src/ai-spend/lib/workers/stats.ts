@@ -38,7 +38,7 @@ export interface WorkerStatsTotals {
     /** Requests with no list price and no recorded cost: not in the sum. */
     unpricedRequests: number;
     billedUsd: number;
-    /** Requests of a session whose login is unknown, so what it billed is too. */
+    /** Requests whose login or API-key price is unknown, so what they billed is too. */
     unbilledRequests: number;
     claudeOpusUsd: number;
     claudeSonnetUsd: number;
@@ -184,7 +184,7 @@ function addEvent(group: WorkerStatsTotals, event: SpendEvent, auth: WorkerAuthM
         group.apiEquivalentUsd += own.usd;
     }
 
-    if (auth === "unknown") {
+    if (auth === "unknown" || (auth === "api-key" && own.usd === null)) {
         group.unbilledRequests += 1;
     } else if (auth === "api-key") {
         group.billedUsd += own.usd ?? 0;
@@ -261,7 +261,31 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
         ((session: WorkerSessionInfo, mtime: number) =>
             loadWorkerSessionEvents(session, { home: options.home, minMtimeMs: mtime }));
     const groups = new Map<string, WorkerStatsGroup>();
-    const sessions = options.sessions ?? listWorkerSessions(options.backends);
+    const sessions = [...(options.sessions ?? listWorkerSessions(options.backends))];
+    const known = new Set(sessions.map((session) => sessionKey(session.backend, session.sessionId, session.name)));
+    const ledgerOnly = new Set<string>();
+
+    for (const [key, booked] of rowsBySession) {
+        if (known.has(key)) {
+            continue;
+        }
+
+        const last = booked.at(-1)!;
+        ledgerOnly.add(key);
+        sessions.push({
+            backend: last.backend,
+            name: last.name,
+            sessionId: last.sessionId,
+            home: null,
+            cwd: last.cwd,
+            model: last.model,
+            effort: last.effort,
+            label: null,
+            auth: "unknown",
+            account: last.account,
+            lastActiveAt: null,
+        });
+    }
     const notes: string[] = [];
     const contributing = new Set<string>();
 
@@ -278,7 +302,15 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
             continue;
         }
 
-        const auth = sessionRows.findLast((row) => row.auth !== "unknown")?.auth ?? session.auth;
+        const authAt = (timestamp: string): WorkerAuthMode => {
+            const time = Date.parse(timestamp);
+            const matches = sessionRows.filter((row) => {
+                const end = Date.parse(row.ts);
+                return time <= end && time >= end - (row.durationMs ?? 0);
+            });
+            // Missing or overlapping turn evidence cannot establish a historical login.
+            return matches.length === 1 ? matches[0].auth : "unknown";
+        };
         const values = (model: string | null, ts: string): Record<WorkerStatsDimension, string> => ({
             backend: session.backend,
             model: model || session.model || "?",
@@ -287,7 +319,9 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
             name: session.name,
         });
         const touched = new Set<WorkerStatsGroup>();
-        const events = load(session, minMtimeMs);
+        const events = ledgerOnly.has(sessionKey(session.backend, session.sessionId, session.name))
+            ? null
+            : load(session, minMtimeMs);
         const windowRows = sessionRows.filter((row) => inWindow(row.ts));
 
         if (events === null) {
@@ -310,7 +344,7 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
                 }
 
                 const group = bucket(groups, keyOf(dimensions, values(event.model, event.timestamp)), dimensions);
-                addEvent(group, event, auth, pricing);
+                addEvent(group, event, authAt(event.timestamp), pricing);
                 touched.add(group);
             }
         }

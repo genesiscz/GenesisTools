@@ -1,13 +1,18 @@
+import { dirname, join } from "node:path";
 import { deriveRegistry, findByName, nextSubagentId } from "@app/agents/lib/derived-registry";
 import { withFeedLock } from "@app/agents/lib/feed";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { resolveMany, resolveOne } from "@app/agents/lib/resolve-token";
 import { OWNER_THREAD_META_KEY } from "@app/agents/lib/thread-owner";
+import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { planToolExec } from "@genesiscz/utils/cli/tool-exec";
+import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 import type { RpcNotification } from "./app-server-client";
 import { type CodexControl, parseControlBody } from "./control";
 
@@ -353,8 +358,20 @@ export class CliAgentsTransport implements AgentsTransport {
         session: string,
         onLine: (line: string) => void | Promise<void>
     ): Promise<AgentsTransportSubscription> {
+        const entrypoint = toolsEntrypoint();
+        const plan = planToolExec({
+            launcher: genesisAppLauncher(),
+            execPath: namedBunExecPath("agents"),
+            bunArgs: ["run", entrypoint, "agents", "listen", "--session", session, "--format", "json"],
+            orphanWatchdogPreload: join(dirname(entrypoint), "src/utils/bun/preload-orphan-watchdog.ts"),
+            detached: false,
+            orphaned: process.ppid === 1,
+            platform: process.platform,
+            execDisabled: true,
+            dependencyProblem: null,
+        });
         const proc = Bun.spawn({
-            cmd: ["tools", "agents", "listen", "--session", session, "--format", "json"],
+            cmd: plan.mode === "spawn" ? [plan.command, ...plan.args] : plan.argv,
             env: env.getProcessEnv(),
             stdin: "ignore",
             stdout: "pipe",

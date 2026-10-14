@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as delivery from "@app/ai/lib/agent-message/delivery";
-import { cmuxNamedSessionId } from "@app/ai/lib/sessions/resolve-transcript";
+import { cmuxNamedSessionId, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import type { SessionCreatedRecord } from "@app/cmux/lib/session-store";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     DEFAULT_TURN_LIMIT,
@@ -40,6 +41,30 @@ import {
     WAIT_EXIT_TIMEOUT,
     waitCommand,
 } from "./wait";
+
+it("a Codex worker wait finds its rollout in the recorded isolated home", async () => {
+    const root = mkdtempSync(join(tmpdir(), "wait-isolated-home-"));
+    const home = join(root, "isolated");
+    const id = "aaaaaaaa-bbbb-cccc-dddd-123456789abc";
+    const dir = join(home, "sessions", "2026", "10", "13");
+    mkdirSync(dir, { recursive: true });
+    const rollout = join(dir, "rollout-2026-10-13T10-00-00-" + id + ".jsonl");
+    writeFileSync(rollout, "{}\n");
+    writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ home, threadId: id }));
+    const resolver = spyOn(transcriptResolver, "resolveTranscript").mockResolvedValue({
+        provider: "codex",
+        source: "worker",
+        sessionId: id,
+        filePath: join(root, "worker.jsonl"),
+    });
+    try {
+        const hit = await resolveSessionTranscript("codex", "fixture-isolated-worker", false);
+        expect(hit.filePath).toBe(rollout);
+        expect(hit.source).toBe("native");
+    } finally {
+        resolver.mockRestore();
+    }
+});
 
 describe("wait exit codes", () => {
     it("gives each outcome its own status, with timeout matching coreutils", () => {

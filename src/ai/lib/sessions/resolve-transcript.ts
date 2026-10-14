@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { recordedSessionIdOf } from "@app/cmux/lib/session-close";
 import { fileSessionStore, type SessionCreatedRecord, type SessionRecordLine } from "@app/cmux/lib/session-store";
 import {
@@ -9,6 +10,7 @@ import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-tit
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("agent-wait");
@@ -109,7 +111,22 @@ export async function resolveSessionTranscript(
 
     if (resolved.source === "worker") {
         // A `tools codex spawn` worker runs a real native thread: its rollout is the transcript to wait on.
-        const rollout = resolved.provider === "codex" ? resolveCodexNative(resolved.sessionId) : null;
+        let codexHome: string | undefined;
+
+        if (resolved.provider === "codex") {
+            try {
+                const meta: unknown = SafeJSON.parse(
+                    readFileSync(resolved.filePath.replace(/\.jsonl$/, ".meta.json"), "utf8")
+                );
+                if (meta && typeof meta === "object" && "home" in meta && typeof meta.home === "string") {
+                    codexHome = meta.home;
+                }
+            } catch (err) {
+                log.debug({ err, query }, "worker metadata unavailable while resolving its Codex home");
+            }
+        }
+
+        const rollout = resolved.provider === "codex" ? resolveCodexNative(resolved.sessionId, { codexHome }) : null;
 
         if (rollout) {
             return rollout;

@@ -5,15 +5,17 @@
  * feed). It reads the worker's entry in the run card:
  *   { "prs": [{ "name": "bs-511-sol", "cwd": "<abs>", "scope": ["src/a.ts", …], "subject": "fix(x): #511 followup - …",
  *               "verify": ["bun scripts/test.ts src/a.test.ts", "bunx tsgo --noEmit", "bunx biome check"] }] }
- * Approved: a file change whose every path is in scope or under .claude/work/babysit/; `git add` of scope paths; one
- * `git commit -m` whose subject starts with the brief's subject up to " - "; a command that starts with a verify
- * entry; `mkdir -p .claude/work/babysit`; the review-loop round-summary renderer. Everything else waits for the lead:
+ * Approved: normalized in-scope file changes, path-limited git add and commit commands matching the brief's
+ * subject, exact configured verification commands, and creation of the babysit scratch folder.
+ * Configure the full round-summary command as a verify entry when it should be approved. Everything else waits:
  * chaining, redirection, expansion, sandbox escalations (their request shows the reason, not the command), rituals.
  *
  * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session>
  */
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { strictShellWords } from "@app/codex/lib/bus-approval";
+import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface RunEntry {
@@ -24,95 +26,167 @@ export interface RunEntry {
     verify: string[];
 }
 
-const inScope = (entry: RunEntry, path: string) =>
-    entry.scope.includes(path) || path.startsWith(".claude/work/babysit/");
+const inScope = (entry: RunEntry, path: string) => {
+    const root = resolve(entry.cwd);
+    const target = resolve(root, path);
+    const local = relative(root, target);
 
-/** The script inside `/bin/zsh -lc '…'`, or the command itself. */
-export function innerCommand(detail: string): string {
-    const match =
-        detail.match(/^\S*(zsh|bash|sh) -l?c '([\s\S]*)'$/) ?? detail.match(/^\S*(zsh|bash|sh) -l?c "([\s\S]*)"$/);
-    return (match ? match[2] : detail).trim();
+    if (!local || isAbsolute(local) || local === ".." || local.startsWith(".." + sep) || /[:*?[\]]/.test(path)) {
+        return false;
+    }
+
+    const scratch = resolve(root, ".claude/work/babysit");
+    return entry.scope.some((allowed) => target === resolve(root, allowed)) || target.startsWith(scratch + sep);
+};
+
+/** Unwrap only an exactly parsed invocation of a known system shell. */
+export function innerCommand(command: string): string {
+    const words = strictShellWords(command);
+    const shells = ["/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"];
+    return words?.length === 3 && shells.includes(words[0]) && ["-c", "-lc"].includes(words[1]) ? words[2] : command;
 }
 
 /** Whether a command approval is one the brief allows. Pure, so it can be replayed on a past session's requests. */
 export function allowedCommand(entry: RunEntry, command: string): boolean {
-    // One command only: chaining, redirection and expansion always go to the lead.
-    if (/[;&|<>`$\n]/.test(command.replace(/'[^']*'|"[^"$`]*"/g, "''"))) {
+    const words = strictShellWords(command);
+
+    if (!words || words.length === 0) {
         return false;
     }
 
-    const add = command.match(/^git add (?:-- )?(.+)$/);
-
-    if (add) {
-        return add[1].split(/\s+/).every((path) => inScope(entry, path.replace(/^['"]|['"]$/g, "")));
+    if (words[0] === "git" && words[1] === "add" && words[2] === "--") {
+        return words.length > 3 && words.slice(3).every((path) => inScope(entry, path));
     }
 
-    if (/^git commit -m /.test(command)) {
-        const paths = command.includes(" -- ") ? command.slice(command.lastIndexOf(" -- ") + 4).split(/\s+/) : [];
-        const pathsOk = paths.every((path) => inScope(entry, path.replace(/^['"]|['"]$/g, "")));
-
+    if (words[0] === "git" && words[1] === "commit" && words[2] === "-m") {
         return (
-            pathsOk && command.includes(entry.subject.split(" - ")[0]) && !/--amend|--no-verify|\s-a\b/.test(command)
+            words[4] === "--" &&
+            words.length > 5 &&
+            words[3].startsWith(entry.subject.split(" - ")[0] + " - ") &&
+            words.slice(5).every((path) => inScope(entry, path))
         );
     }
 
-    if (/^mkdir -p \.claude\/work\/babysit\/?$/.test(command)) {
+    if (words.length === 3 && words[0] === "mkdir" && words[1] === "-p" && words[2] === ".claude/work/babysit") {
         return true;
     }
 
-    if (/^bun \S*review-loop\/scripts\/round-summary\.ts /.test(command)) {
-        return true;
-    }
-
-    return entry.verify.some((verify) => command.startsWith(verify));
+    return entry.verify.some((verify) => {
+        const allowed = strictShellWords(verify);
+        return allowed?.length === words.length && allowed.every((word, index) => word === words[index]);
+    });
 }
 
-/** The paths a file-change approval names: `edit a, b (reason)` since 886b44308, else none known. */
-export function fileChangeDetailPaths(detail: string): string[] {
-    return detail.startsWith("edit ")
-        ? detail
-              .slice(5)
-              .replace(/\s+\(.*$/, "")
-              .split(/,\s*/)
-        : [];
-}
-
-/** Paths of the newest file change in the raw event log, for a daemon older than 886b44308. */
-function fileChangePathsFromLog(entry: RunEntry): string[] {
-    const tail = Bun.spawnSync(["tools", "codex", "tail", "--name", entry.name, "--tail", "10"], { stdout: "pipe" });
-    const raw = tail.stdout.toString();
-    const last = raw.lastIndexOf('"type":"fileChange"');
-    const slice = last >= 0 ? raw.slice(last, last + 20_000) : "";
-    const end = slice.indexOf('"method"', 1);
-
-    return [...(end > 0 ? slice.slice(0, end) : slice).matchAll(/"path":"([^"]+)"/g)].map((match) =>
-        relative(entry.cwd, match[1])
-    );
+interface ApprovalRequest {
+    method?: string;
+    detail?: string;
+    /** Exact paths from the daemon's file-change item. Missing on older daemons: ask the lead. */
+    paths?: unknown;
+    command?: unknown;
+    cwd?: unknown;
 }
 
 /** The decision for one pending request: approve, and the label to print. */
-export function decide(
-    entry: RunEntry,
-    request: { method?: string; detail?: string },
-    readLog: () => string[] = () => fileChangePathsFromLog(entry)
-): { ok: boolean; label: string } {
+export function decide(entry: RunEntry, request: ApprovalRequest): { ok: boolean; label: string } {
     const method = request.method ?? "";
     const detail = String(request.detail ?? "");
 
     if (method.includes("fileChange")) {
-        const named = fileChangeDetailPaths(detail);
-        const paths = named.length > 0 ? named : readLog();
+        const paths = request.paths;
 
         return {
-            ok: paths.length > 0 && paths.every((path) => inScope(entry, path)),
-            label: `edit ${paths.join(", ")}`,
+            ok:
+                Array.isArray(paths) &&
+                paths.length > 0 &&
+                paths.every((path) => typeof path === "string" && path.length > 0 && inScope(entry, path)),
+            label: detail,
         };
     }
 
-    const command = innerCommand(detail);
-    const isCommand = method.includes("commandExecution") || method === "execCommandApproval";
+    const isCommand = method === "item/commandExecution/requestApproval" || method === "execCommandApproval";
+    const command = typeof request.command === "string" ? innerCommand(request.command) : null;
+    const sameCwd =
+        typeof request.cwd === "string" && isAbsolute(request.cwd) && resolve(request.cwd) === resolve(entry.cwd);
 
-    return { ok: isCommand && allowedCommand(entry, command), label: command };
+    return { ok: isCommand && sameCwd && command !== null && allowedCommand(entry, command), label: detail };
+}
+
+export async function watchApprovals({
+    entry,
+    exec = execTool,
+    now = Date.now,
+    sleep = Bun.sleep,
+    timeoutMs = 1_800_000,
+    pollMs = 1500,
+}: {
+    entry: RunEntry;
+    exec?: typeof execTool;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<unknown>;
+    timeoutMs?: number;
+    pollMs?: number;
+}): Promise<void> {
+    const seen = new Set<string>();
+    const failures = new Map<string, number>();
+    const deadline = now() + timeoutMs;
+    const options = () => ({ cwd: entry.cwd, timeout: Math.max(1, Math.min(30_000, deadline - now())) });
+    while (now() < deadline) {
+        const status = await exec(["codex", "status", "--name", entry.name, "--json"], options());
+        let meta: { status?: string; pendingApprovals?: Record<string, ApprovalRequest> } | null = null;
+        try {
+            if (status.success && !status.timedOut) {
+                meta = SafeJSON.parse(status.stdout, { strict: true });
+            } else {
+                console.error("[approver] status failed: " + status.stderr);
+            }
+        } catch (error) {
+            console.error("[approver] invalid status: " + String(error));
+        }
+
+        if (meta?.status === "closed") {
+            console.log("[approver] session " + entry.name + " closed");
+            return;
+        }
+
+        for (const [id, request] of Object.entries(meta?.pendingApprovals ?? {})) {
+            if (seen.has(id) || (failures.get(id) ?? 0) >= 3 || now() >= deadline) {
+                continue;
+            }
+            const { ok, label } = decide(entry, request);
+            const shown = label.replace(/\s+/g, " ").slice(0, 200);
+            if (!ok) {
+                seen.add(id);
+                console.log("[approver] NEEDS LEAD #" + id + " " + shown);
+                continue;
+            }
+
+            let acknowledged = false;
+            try {
+                const result = await exec(["codex", "approve", "--name", entry.name, "--request", id], options());
+                acknowledged = result.success && !result.timedOut;
+                if (!acknowledged) {
+                    console.error(
+                        "[approver] approval failed #" + id + " (exit " + result.exitCode + "): " + result.stderr
+                    );
+                }
+            } catch (error) {
+                console.error("[approver] approval failed #" + id + ": " + String(error));
+            }
+
+            if (acknowledged) {
+                seen.add(id);
+                console.log("[approver] approved #" + id + ": " + shown);
+            } else {
+                const count = (failures.get(id) ?? 0) + 1;
+                failures.set(id, count);
+                if (count >= 3) {
+                    console.error("[approver] NEEDS LEAD #" + id + ": approval failed 3 times");
+                }
+            }
+        }
+        await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+    }
+    console.error("[approver] watch deadline reached for " + entry.name);
 }
 
 async function main(): Promise<void> {
@@ -137,50 +211,7 @@ async function main(): Promise<void> {
         process.exit(2);
     }
 
-    const seen = new Set<string>();
-    console.log(`approver for ${name}: ${entry.scope.length} scope file(s), ${entry.verify.length} verify command(s)`);
-
-    for (;;) {
-        const status = Bun.spawnSync(["tools", "codex", "status", "--name", name, "--json"], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-        let meta: { status?: string; pendingApprovals?: Record<string, { method?: string; detail?: string }> } | null =
-            null;
-
-        try {
-            meta = SafeJSON.parse(status.stdout.toString(), { strict: true });
-        } catch {
-            // a transient read; try again
-        }
-
-        if (meta?.status === "closed") {
-            console.log(`[approver] session ${name} closed`);
-            return;
-        }
-
-        for (const [id, request] of Object.entries(meta?.pendingApprovals ?? {})) {
-            if (seen.has(id)) {
-                continue;
-            }
-
-            seen.add(id);
-            const { ok, label } = decide(entry, request);
-            const shown = label.replace(/\s+/g, " ").slice(0, 200);
-
-            if (ok) {
-                const result = Bun.spawnSync(["tools", "codex", "approve", "--name", name, "--request", id], {
-                    stdout: "pipe",
-                    stderr: "pipe",
-                });
-                console.log(`[approver] approved #${id} (exit ${result.exitCode}): ${shown}`);
-            } else {
-                console.log(`[approver] NEEDS LEAD #${id} ${request.method ?? ""}: ${shown}`);
-            }
-        }
-
-        await Bun.sleep(1500);
-    }
+    await watchApprovals({ entry });
 }
 
 if (import.meta.main) {

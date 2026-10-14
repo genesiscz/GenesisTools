@@ -127,6 +127,22 @@ describe("GrokProvider.syncServers", () => {
         expect(tables.keep).toEqual({ command: "keep" });
     });
 
+    test("sync enabling an inherited or replaced server removes its disabled-list override", async () => {
+        seedClaudeJson({ same: { command: "same" }, changed: { command: "old" } });
+        const configPath = seedGrok({});
+        const provider = providerWritingTo(configPath);
+        await provider.disableServers(["same", "changed"]);
+        await provider.syncServers({
+            same: { command: "same", _meta: { enabled: { grok: true } } },
+            changed: { command: "new", _meta: { enabled: { grok: true } } },
+        });
+        expect((await provider.listCompatServers()).find((row) => row.name === "same")?.enabled).toBe(true);
+        expect(tomlAt(configPath).mcp_servers?.same).toBeUndefined();
+        expect(tomlAt(configPath).mcp_servers?.changed).toEqual({ command: "new", enabled: true });
+        const config = TOML.parse(readFileSync(configPath, "utf8"));
+        expect(config.disabled_mcp_servers ?? []).toEqual([]);
+    });
+
     test("disable and enable reach a server Grok takes from ~/.claude.json through the list, never a copy", async () => {
         seedClaudeJson({ brave: { type: "stdio", command: "brave" } });
         const configPath = join(home, ".grok", "config.toml");

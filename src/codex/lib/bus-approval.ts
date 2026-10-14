@@ -67,7 +67,7 @@ export function strictShellWords(command: string): string[] | null {
     return words;
 }
 
-const SHELL_WRAPPER = /(^|\/)(zsh|bash|sh)$/;
+const TRUSTED_SHELLS = new Set(["/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"]);
 
 /** Flags each verb may carry; `true` = takes a value. The identity flag is checked separately. */
 const VERB_FLAGS: Record<string, Record<string, boolean>> = {
@@ -100,7 +100,7 @@ export function isOwnBusCommand(command: string, bus: { agentName: string; sessi
     }
 
     const words =
-        outer.length === 3 && SHELL_WRAPPER.test(outer[0]) && (outer[1] === "-lc" || outer[1] === "-c")
+        outer.length === 3 && TRUSTED_SHELLS.has(outer[0]) && (outer[1] === "-lc" || outer[1] === "-c")
             ? strictShellWords(outer[2])
             : outer;
 
@@ -185,6 +185,11 @@ function scriptSegments(script: string): string[] | null {
             continue;
         }
 
+        // A quote in a shell comment is not a quote delimiter. Leave commented scripts to the lead.
+        if (char === "#") {
+            return null;
+        }
+
         const pair = script.slice(index, index + 2);
 
         if (pair === "&&" || pair === "||") {
@@ -216,15 +221,15 @@ function scriptSegments(script: string): string[] | null {
     return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
-/** Unquoted characters a read-only word may hold: plain words, plus globs and `~`, which only name files. */
-const READ_BARE = /^[A-Za-z0-9_@%+=:,./~*?[\]^#!-]$/;
+/** Globs can expand into executable options (e.g. rg --pre), so only literal words and tilde paths qualify. */
+const READ_BARE = /^[A-Za-z0-9_@%+=:,./~#!-]$/;
 /** Redirects that write nothing: an error stream or output thrown away, or one stream joined to the other. */
 const DISCARD_REDIRECT = /(^|\s)(\d?>|&>)(\/dev\/null|&[12])(?=\s|$)/g;
 
 /**
  * The words of a read-only command, quotes removed and escapes resolved, or null when it holds anything that runs
  * or writes: an expansion (`$`, backtick), a redirection (other than to `/dev/null`), a subshell or a brace.
- * Unlike {@link strictShellWords}, it takes globs, `~` and backslash escapes, which only change what is read.
+ * Unlike {@link strictShellWords}, it takes `~` and backslash escapes. Unquoted globs require lead approval.
  */
 function readOnlyWords(text: string): string[] | null {
     const words: string[] = [];
@@ -356,7 +361,50 @@ function readOnlyGit(args: string[]): boolean {
         return rest.every((arg) => READ_ONLY_GIT_BRANCH_FLAGS.has(arg));
     }
 
-    return READ_ONLY_GIT.has(subcommand);
+    if (!READ_ONLY_GIT.has(subcommand)) {
+        return false;
+    }
+
+    // These commands enable configured text converters by default.
+    if (["diff", "show", "log", "blame", "grep"].includes(subcommand) && !rest.includes("--no-textconv")) {
+        return false;
+    }
+
+    if (["diff", "show", "log"].includes(subcommand) && !rest.includes("--no-ext-diff")) {
+        return false;
+    }
+
+    const flags: Record<string, readonly string[]> = {
+        status: ["--short", "--porcelain", "--porcelain=v1", "--porcelain=v2", "-s", "-b", "--branch"],
+        diff: [
+            "--stat",
+            "--name-only",
+            "--name-status",
+            "--cached",
+            "--staged",
+            "--check",
+            "--no-ext-diff",
+            "--no-textconv",
+        ],
+        log: ["--oneline", "--all", "--decorate", "--graph", "--no-ext-diff", "--no-textconv"],
+        show: ["--stat", "--name-only", "--no-ext-diff", "--no-textconv"],
+        blame: ["--no-textconv", "-p", "--line-porcelain"],
+        grep: ["--no-textconv", "-n", "-l", "-i", "-F", "-E", "-w"],
+        "rev-parse": ["--show-toplevel", "--git-common-dir", "--show-prefix", "--verify", "--short"],
+        "ls-files": ["--others", "--exclude-standard", "--stage", "--cached", "-z"],
+        describe: ["--always", "--tags", "--dirty"],
+        "merge-base": ["--is-ancestor", "--all"],
+        "rev-list": ["--count", "--all"],
+        "cat-file": ["-p", "-t", "-s", "-e"],
+        shortlog: ["-s", "-n", "-sn", "--all"],
+    };
+    return rest.every(
+        (arg) =>
+            !arg.startsWith("-") ||
+            arg === "--" ||
+            flags[subcommand]?.includes(arg) ||
+            (["log", "rev-list"].includes(subcommand) && /^-\d+$/.test(arg))
+    );
 }
 
 /** Commands that only read, each with the arguments that would make it write or run another program. */
@@ -385,9 +433,15 @@ const READ_ONLY_COMMANDS: Record<string, (args: string[]) => boolean> = {
  * one 9-minute turn on 2026-10-14).
  */
 export function isReadOnlyCommand(command: string): boolean {
+    // Shells remove line continuations before recognizing options. Refuse them, including inside wrappers or
+    // quotes, so an escaped newline cannot conceal --pre or -exec from the argument checks below.
+    if (/\\\r?\n/.test(command)) {
+        return false;
+    }
+
     const outer = readOnlyWords(command);
     const script =
-        outer?.length === 3 && SHELL_WRAPPER.test(outer[0]) && (outer[1] === "-lc" || outer[1] === "-c")
+        outer?.length === 3 && TRUSTED_SHELLS.has(outer[0]) && (outer[1] === "-lc" || outer[1] === "-c")
             ? outer[2]
             : command;
     const segments = scriptSegments(script);
@@ -398,7 +452,10 @@ export function isReadOnlyCommand(command: string): boolean {
 
     return segments.every((segment) => {
         const words = readOnlyWords(segment);
-        const check = words?.[0] === undefined ? undefined : READ_ONLY_COMMANDS[words[0]];
+        const check =
+            words?.[0] !== undefined && Object.hasOwn(READ_ONLY_COMMANDS, words[0])
+                ? READ_ONLY_COMMANDS[words[0]]
+                : undefined;
 
         return check !== undefined && words !== null && check(words.slice(1));
     });

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { deriveRegistry } from "@app/agents/lib/derived-registry";
 import { appendFeed, readFeed } from "@app/agents/lib/feed";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { assertOwnerThread } from "@app/agents/lib/thread-owner";
+import * as toolExec from "@genesiscz/utils/cli/tool-exec";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -38,6 +39,47 @@ class FakeAgentsTransport implements AgentsTransport {
 }
 
 describe("AgentsBridge", () => {
+    test("the observer starts this checkout's wrapper and owns its shutdown", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-observer-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const spawn = spyOn(Bun, "spawn");
+            const planner = spyOn(toolExec, "planToolExec");
+            try {
+                const subscription = await new CliAgentsTransport().observe("fixture-session", () => {});
+                const call = spawn.mock.calls.at(-1)?.[0];
+                expect(planner).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        bunArgs: [
+                            "run",
+                            join(import.meta.dir, "../../../tools"),
+                            "agents",
+                            "listen",
+                            "--session",
+                            "fixture-session",
+                            "--format",
+                            "json",
+                        ],
+                        execDisabled: true,
+                    })
+                );
+                const input = planner.mock.calls[0]?.[0];
+                expect(input).toBeDefined();
+                if (!input) {
+                    throw new Error("Observer did not use the tool execution planner");
+                }
+                const plan = toolExec.planToolExec(input);
+                expect(plan.mode).toBe("spawn");
+                if (plan.mode === "spawn") {
+                    expect(call).toMatchObject({ cmd: [plan.command, ...plan.args] });
+                }
+                await subscription.close();
+            } finally {
+                spawn.mockRestore();
+                planner.mockRestore();
+            }
+        });
+    });
+
     test("the default transport appends messages in-process", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-agents-transport-"));
 

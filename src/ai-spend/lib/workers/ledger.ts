@@ -1,8 +1,20 @@
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+    appendFileSync,
+    closeSync,
+    copyFileSync,
+    existsSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readFileSync,
+    readSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -15,6 +27,7 @@ import {
     type WorkerTokens,
     type WorkerUsagePart,
 } from "@genesiscz/utils/worker/cost";
+import { z } from "zod";
 import { DEFAULT_PRICING } from "../pricing";
 import type { PricingTable } from "../types";
 import { formatCostLine, type WorkerCostCard, workerCostCard } from "./cost";
@@ -29,8 +42,8 @@ const log = logger.child({ component: "ai-spend:worker-ledger" });
  * usage at the moment it ended, booked once (a later price edit never rewrites it). The stats
  * read token and cost numbers from ai-spend's transcripts and use these rows for the rest.
  *
- * Append-only through O_APPEND, one write per row, so concurrent workers cannot truncate or
- * interleave each other.
+ * Appends and rewrites share a cross-process lock. Rewrites also validate the original
+ * snapshot before replacing it, so a concurrent repricer cannot silently overwrite new prices.
  */
 
 /**
@@ -146,16 +159,30 @@ export function buildWorkerCostRow(input: WorkerTurnCostInput, pricing: PricingT
 }
 
 /** Append one row. Throws on failure; the turn path goes through `recordWorkerTurnCost`, which never does. */
-export function appendWorkerCostRows(rows: readonly WorkerCostRow[]): void {
+export async function appendWorkerCostRows(rows: readonly WorkerCostRow[]): Promise<WorkerCostRow[]> {
     if (rows.length === 0) {
-        return;
+        return [];
     }
 
     const path = workerCostLedgerPath();
     assertTestSafePath(path, "append a worker cost row");
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const text = rows.map((row) => `${SafeJSON.stringify(row, { strict: true })}\n`).join("");
-    appendFileSync(path, text, { mode: 0o600, flag: "a" });
+    return withFileLock(path + ".lock", async () => {
+        const keys = new Set(readWorkerCostRows().map(workerCostRowKey));
+        const fresh = rows.filter((row) => {
+            const key = workerCostRowKey(row);
+            if (keys.has(key)) {
+                return false;
+            }
+            keys.add(key);
+            return true;
+        });
+        const text = fresh.map((row) => SafeJSON.stringify(row, { strict: true }) + "\n").join("");
+        if (text) {
+            appendFileSync(path, text, { mode: 0o600, flag: "a" });
+        }
+        return fresh;
+    });
 }
 
 export function isStalePrice(row: WorkerCostRow): boolean {
@@ -177,27 +204,40 @@ export function bookedCostLine(row: WorkerCostRow): string {
  * The copy is made here rather than through the atomic writer's own backup option, so this file
  * works on every branch the writer is on.
  */
-export function rewriteWorkerCostRows(rows: readonly WorkerCostRow[], startedFromBytes: number): void {
+export async function rewriteWorkerCostRows(
+    rows: readonly WorkerCostRow[],
+    snapshot: { bytes: number; hash: string }
+): Promise<void> {
     const path = workerCostLedgerPath();
     const text = rows.map((row) => `${SafeJSON.stringify(row, { strict: true })}\n`).join("");
-    const current = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
-    const lateAppends = current.subarray(startedFromBytes).toString("utf8");
+    assertTestSafePath(path, "rewrite the worker cost ledger");
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    await withFileLock(path + ".lock", async () => {
+        const current = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
+        if (
+            current.length < snapshot.bytes ||
+            createHash("sha256").update(current.subarray(0, snapshot.bytes)).digest("hex") !== snapshot.hash
+        ) {
+            throw new Error("Worker cost ledger changed since the reprice began; read it again and retry");
+        }
+        const lateAppends = current.subarray(snapshot.bytes).toString("utf8");
 
-    if (existsSync(path)) {
-        copyFileSync(path, `${path}.bak`);
-    }
+        if (existsSync(path)) {
+            copyFileSync(path, `${path}.bak`);
+        }
 
-    atomicWriteFileSync(path, text + lateAppends, { mode: 0o600 });
+        atomicWriteFileSync(path, text + lateAppends, { mode: 0o600 });
+    });
 }
 
 /**
  * Price a finished turn and book it. NEVER throws: the price is an in-process catalog read,
  * and a failure is logged while the turn report simply goes without its cost line.
  */
-export function recordWorkerTurnCost(input: WorkerTurnCostInput): WorkerCostRow | null {
+export async function recordWorkerTurnCost(input: WorkerTurnCostInput): Promise<WorkerCostRow | null> {
     try {
         const row = buildWorkerCostRow(input);
-        appendWorkerCostRows([row]);
+        await appendWorkerCostRows([row]);
         log.debug(
             { backend: row.backend, name: row.name, turn: row.turn, line: formatCostLine(row.cost, row.backend) },
             "worker turn cost booked"
@@ -209,56 +249,159 @@ export function recordWorkerTurnCost(input: WorkerTurnCostInput): WorkerCostRow 
     }
 }
 
-function isRow(value: unknown): value is WorkerCostRow {
-    if (typeof value !== "object" || value === null) {
-        return false;
-    }
+const amount = z.number().finite().nonnegative();
+const authMode = z.enum(["subscription", "api-key", "unknown"]);
+const tokensSchema = z.object({
+    input: amount,
+    cacheRead: amount,
+    cacheWrite: amount,
+    cacheWrite1h: amount.optional(),
+    output: amount,
+    reasoning: amount,
+});
+const rowSchema = z.object({
+    v: z.literal(1),
+    priced: amount.optional(),
+    ts: z.string().refine((value) => Number.isFinite(Date.parse(value))),
+    backend: z.enum(["codex", "grok", "claude"]),
+    name: z.string().min(1),
+    sessionId: z.string().nullable(),
+    turn: amount.int().nullable(),
+    model: z.string().nullable(),
+    effort: z.string().nullable(),
+    auth: authMode,
+    account: z.string().nullable(),
+    durationMs: amount.nullable(),
+    toolCalls: amount.int().nullable(),
+    tokens: tokensSchema.nullable(),
+    cwd: z.string(),
+    label: z.string().optional(),
+    outcome: z.enum(["completed", "failed", "interrupted"]).optional(),
+    backfilled: z.literal(true).optional(),
+    cost: z.object({
+        apiEquivalentUsd: amount.nullable(),
+        billedUsd: amount.nullable(),
+        auth: authMode,
+        basis: z.enum(["recorded", "catalog", "reported", "unpriced"]),
+        pricedAs: z.array(z.string()),
+        unpriced: z.string().optional(),
+        longContextRequests: amount.int(),
+        reportedUsd: amount.optional(),
+        claudeEquivalent: z.object({
+            estimate: z.literal(true),
+            opusModel: z.string(),
+            sonnetModel: z.string(),
+            opusUsd: amount.nullable(),
+            sonnetUsd: amount.nullable(),
+        }),
+    }),
+});
 
-    const row = value as Partial<WorkerCostRow>;
-    return row.v === 1 && typeof row.ts === "string" && typeof row.backend === "string" && typeof row.name === "string";
+function isRow(value: unknown): value is WorkerCostRow {
+    return rowSchema.safeParse(value).success;
 }
 
 /** Every row, in the order written. Malformed lines are skipped and counted in the log. */
 export function readWorkerCostRows(): WorkerCostRow[] {
-    return readWorkerCostLedger().rows;
+    return scanWorkerCostLedger().rows;
 }
 
 /** The rows and the byte length they were read at, for a rewrite that must not lose a late append. */
-export function readWorkerCostLedger(): { rows: WorkerCostRow[]; bytes: number } {
+export function readWorkerCostLedger(): { rows: WorkerCostRow[]; bytes: number; hash: string } {
+    return scanWorkerCostLedger({ snapshot: true });
+}
+
+const LEDGER_CHUNK_BYTES = 64 * 1024;
+const STATUS_LEDGER_BYTES = 1024 * 1024;
+const MAX_LEDGER_LINE_BYTES = 1024 * 1024;
+
+/** Read a stable file size in fixed-size chunks; status uses a bounded tail and never computes a lifetime hash. */
+function scanWorkerCostLedger({ maxBytes, snapshot = false }: { maxBytes?: number; snapshot?: boolean } = {}): {
+    rows: WorkerCostRow[];
+    bytes: number;
+    hash: string;
+    partial: boolean;
+} {
     const path = workerCostLedgerPath();
-
+    const hash = createHash("sha256");
     if (!existsSync(path)) {
-        return { rows: [], bytes: 0 };
+        return { rows: [], bytes: 0, hash: hash.digest("hex"), partial: false };
     }
 
-    const rows: WorkerCostRow[] = [];
-    let malformed = 0;
-    const buffer = readFileSync(path);
-
-    for (const line of buffer.toString("utf8").split("\n")) {
-        if (!line.trim()) {
-            continue;
-        }
-
-        try {
-            const parsed: unknown = SafeJSON.parse(line, { strict: true });
-
-            if (isRow(parsed)) {
-                rows.push(parsed);
-            } else {
-                malformed += 1;
+    const fd = openSync(path, "r");
+    try {
+        const size = fstatSync(fd).size;
+        const start = maxBytes === undefined ? 0 : Math.max(0, size - maxBytes);
+        let offset = start;
+        let pending = Buffer.alloc(0);
+        let dropping = start > 0;
+        let malformed = 0;
+        const rows: WorkerCostRow[] = [];
+        const chunk = Buffer.alloc(LEDGER_CHUNK_BYTES);
+        const accept = (line: Buffer) => {
+            if (!line.toString("utf8").trim()) {
+                return;
             }
-        } catch (err) {
-            malformed += 1;
-            log.debug({ err, line: line.slice(0, 200) }, "worker cost ledger: unreadable line");
+            try {
+                const parsed: unknown = SafeJSON.parse(line.toString("utf8"), { strict: true });
+                if (isRow(parsed)) {
+                    rows.push(parsed);
+                } else {
+                    malformed += 1;
+                }
+            } catch (error) {
+                malformed += 1;
+                log.debug({ error }, "worker cost ledger: unreadable line");
+            }
+        };
+
+        while (offset < size) {
+            const count = readSync(fd, chunk, {
+                offset: 0,
+                length: Math.min(chunk.length, size - offset),
+                position: offset,
+            });
+            if (count === 0) {
+                break;
+            }
+            offset += count;
+            const bytes = chunk.subarray(0, count);
+            if (snapshot) {
+                hash.update(bytes);
+            }
+            let from = 0;
+            for (let newline = bytes.indexOf(10); newline >= 0; newline = bytes.indexOf(10, from)) {
+                const segment = bytes.subarray(from, newline);
+                if (!dropping && pending.length + segment.length <= MAX_LEDGER_LINE_BYTES) {
+                    accept(Buffer.concat([pending, segment]));
+                } else if (!dropping) {
+                    malformed += 1;
+                }
+                pending = Buffer.alloc(0);
+                dropping = false;
+                from = newline + 1;
+            }
+            if (!dropping) {
+                const tail = bytes.subarray(from);
+                if (pending.length + tail.length > MAX_LEDGER_LINE_BYTES) {
+                    malformed += 1;
+                    pending = Buffer.alloc(0);
+                    dropping = true;
+                } else {
+                    pending = Buffer.concat([pending, tail]);
+                }
+            }
         }
+        if (!dropping && pending.length > 0) {
+            accept(pending);
+        }
+        if (malformed > 0) {
+            log.warn({ path, malformed }, "worker cost ledger: skipped malformed lines");
+        }
+        return { rows, bytes: offset, hash: hash.digest("hex"), partial: start > 0 };
+    } finally {
+        closeSync(fd);
     }
-
-    if (malformed > 0) {
-        log.warn({ path, malformed }, "worker cost ledger: skipped malformed lines");
-    }
-
-    return { rows, bytes: buffer.length };
 }
 
 /** The identity a row books under; backfill skips a key the ledger already holds. */
@@ -318,7 +461,8 @@ export function sessionCostSummary(options: {
     name: string;
     sessionId?: string | null;
 }): { lastTurn: WorkerCostRow & { line: string }; session: WorkerLedgerTotals; note: string } | null {
-    const rows = readWorkerCostRows().filter(
+    const scanned = scanWorkerCostLedger({ maxBytes: STATUS_LEDGER_BYTES });
+    const rows = scanned.rows.filter(
         (row) =>
             row.backend === options.backend &&
             row.name === options.name &&
@@ -333,7 +477,11 @@ export function sessionCostSummary(options: {
     return {
         lastTurn: { ...last, line: bookedCostLine(last) },
         session: ledgerTotals(rows),
-        note: "Priced by ai-spend: API-equivalent is the worker model's list price per request; a figure the worker reported itself stands in only for a model without a list price. The Claude figures are estimates, since tokenizers and agent behaviour differ.",
+        note:
+            (scanned.partial
+                ? "Partial session totals: only the most recent 1 MiB of the ledger was scanned. Use ai-spend workers for complete history. "
+                : "") +
+            "Priced by ai-spend: API-equivalent is the worker model's list price per request; a figure the worker reported itself stands in only for a model without a list price. The Claude figures are estimates, since tokenizers and agent behaviour differ.",
     };
 }
 

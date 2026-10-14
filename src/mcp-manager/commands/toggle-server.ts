@@ -203,6 +203,29 @@ export async function toggleServer(
             continue;
         }
 
+        const pluginNames = await togglePluginServers({
+            enabled,
+            names: finalServerNames,
+            providers: [provider],
+            options: { ...options, provider: providerName },
+            config,
+        });
+        const providerServerNames: string[] = [];
+        const compat = pluginNames.length > 0 ? await provider.listCompatServers() : [];
+        for (const name of finalServerNames) {
+            if (
+                !pluginNames.includes(name) ||
+                (await provider.getServerConfig(name)) ||
+                compat.some((server) => server.name === name)
+            ) {
+                providerServerNames.push(name);
+            }
+        }
+
+        if (providerServerNames.length === 0) {
+            continue;
+        }
+
         // Check if provider supports projects
         const projects = await provider.getProjects();
         let projectChoices: Array<{ projectPath: string | null; displayName: string }> | null = null;
@@ -247,7 +270,7 @@ export async function toggleServer(
 
         // Collect servers to toggle
         const serversToToggle: string[] = [];
-        for (const serverName of finalServerNames) {
+        for (const serverName of providerServerNames) {
             let serverConfig = config.mcpServers[serverName];
 
             // If enabling and server not in unified config, try to import it from provider first

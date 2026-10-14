@@ -533,6 +533,9 @@ export class GrokProvider extends MCPProvider {
             const enabled = this.isServerEnabledInMeta(unified);
             const converted = this.unifiedToGrok(stripMeta(unified));
             const elsewhere = inherited.get(name);
+            if (enabled && config.disabled_mcp_servers) {
+                config.disabled_mcp_servers = config.disabled_mcp_servers.filter((disabled) => disabled !== name);
+            }
 
             if (
                 enabled &&

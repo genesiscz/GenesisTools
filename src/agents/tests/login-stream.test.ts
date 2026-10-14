@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { eventJsonLine } from "../lib/format-monitor";
 import type { MessageEvent } from "../lib/types";
 
 // The agents entry itself, not the `tools` wrapper: a SIGTERM to the wrapper never reached the `agents login`
@@ -318,7 +319,7 @@ describe("agents listen batch framing", () => {
                     expect(tap.output).toEqual(
                         events.flatMap((event, index) => [
                             `${index < 4 ? `[${(index % 2) + 1}/2] ` : ""}message: sender → (broadcast): ${event.body}`,
-                            SafeJSON.stringify(event, { strict: true }),
+                            eventJsonLine(event),
                         ])
                     );
                 } else {

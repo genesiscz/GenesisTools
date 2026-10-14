@@ -8,7 +8,13 @@ import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { runWithFriendlyErrors } from "../lib/errors";
 import { FeedLogCursor, readFeed } from "../lib/feed";
-import { type AgentNames, type BatchPosition, eventJsonLine, formatEventMonitor, learnAgentNames } from "../lib/format-monitor";
+import {
+    type AgentNames,
+    type BatchPosition,
+    eventJsonLine,
+    formatEventMonitor,
+    learnAgentNames,
+} from "../lib/format-monitor";
 import { formatEventPretty } from "../lib/format-pretty";
 import { onShutdown } from "../lib/lifecycle";
 import { type FeedFormat, resolveFeedFormat } from "../lib/login-io";

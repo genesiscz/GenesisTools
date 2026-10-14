@@ -4,9 +4,15 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { workerTurnLogPath } from "@app/claude/lib/worker/paths";
+import { ClaudeWorkerStore } from "@app/claude/lib/worker/store";
+import { turnLogPath } from "@app/grok/lib/paths";
+import { GrokSessionStore } from "@app/grok/lib/store";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { aggregate } from "./lib/aggregate";
@@ -23,7 +29,7 @@ import type { SpendEvent } from "./lib/reports/types";
 import { walkFiles } from "./lib/reports/walk";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
-import { planWorkerReprice } from "./lib/workers/backfill";
+import { planWorkerBackfill, planWorkerReprice } from "./lib/workers/backfill";
 import { formatCostLine, formatUsd, workerCostCard } from "./lib/workers/cost";
 import {
     appendWorkerCostRows,
@@ -32,7 +38,9 @@ import {
     isStalePrice,
     readWorkerCostLedger,
     readWorkerCostRows,
+    recordWorkerTurnCost,
     rewriteWorkerCostRows,
+    sessionCostSummary,
     WORKER_PRICING_VERSION,
     type WorkerCostRow,
     workerCostLedgerPath,
@@ -1011,7 +1019,7 @@ describe("worker cost card", () => {
 });
 
 describe("worker cost ledger", () => {
-    it("appends rows without touching the ones already there", () => {
+    it("appends rows without touching the ones already there", async () => {
         const row = (turn: number) =>
             buildWorkerCostRow({
                 backend: "claude",
@@ -1034,8 +1042,8 @@ describe("worker cost ledger", () => {
             });
         const before = readWorkerCostRows().length;
 
-        appendWorkerCostRows([row(1)]);
-        appendWorkerCostRows([row(2)]);
+        await appendWorkerCostRows([row(1)]);
+        await appendWorkerCostRows([row(2)]);
         const rows = readWorkerCostRows().filter((entry) => entry.name === "ledger-fixture");
 
         expect(readWorkerCostRows().length).toBe(before + 2);
@@ -1066,6 +1074,171 @@ describe("worker cost ledger", () => {
             cwd: "/w",
             label: "babysit pr512",
         });
+
+    it.each(["claude", "grok"] as const)(
+        "%s backfill waits for published completion before reserving a booking key",
+        async (backend) => {
+            const home = mkdtempSync(join(tmpdir(), "backfill-active-"));
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const name = "active-backfill";
+                const sessionId = "00000000-0000-4000-8000-0000000000ac";
+                const startedAt = new Date("2026-10-13T10:00:00Z");
+                const common = { name, sessionId, cwd: home, turns: 1, createdAt: startedAt.toISOString() };
+                const activeTurn = { turn: 1, ownerPid: process.pid, startedAt: startedAt.toISOString() };
+                const claude = new ClaudeWorkerStore();
+                const grok = new GrokSessionStore();
+                const publish = (finished: boolean) => {
+                    const state = finished
+                        ? { lastTurn: { turn: 1, exitCode: 0, ended: true, at: "2026-10-13T10:01:00Z" } }
+                        : { activeTurn };
+                    if (backend === "claude") {
+                        claude.writeMeta({ ...common, ...state, account: "work" });
+                    } else {
+                        grok.writeMeta({ ...common, ...state, workerHome: home, readOnly: true });
+                    }
+                };
+                publish(false);
+                const path = backend === "claude" ? workerTurnLogPath(name, 1) : turnLogPath(name, 1);
+                writeFileSync(path, "");
+                expect(planWorkerBackfill([]).rows).toEqual([]);
+                expect(await appendWorkerCostRows(planWorkerBackfill([]).rows)).toEqual([]);
+                // Even a terminal record is not enough until the child has exited and closed its log.
+                writeFileSync(
+                    path,
+                    SafeJSON.stringify({
+                        type: backend === "claude" ? "result" : "end",
+                        subtype: "success",
+                        is_error: false,
+                        session_id: sessionId,
+                        usage: { input_tokens: 100, output_tokens: 20 },
+                    }) + "\n"
+                );
+                expect(planWorkerBackfill([]).rows).toEqual([]);
+                publish(true);
+                expect(planWorkerBackfill([]).rows).toHaveLength(1);
+                const live = await recordWorkerTurnCost({
+                    backend,
+                    name,
+                    sessionId,
+                    turn: 1,
+                    cwd: home,
+                    auth: "subscription",
+                    startedAt,
+                    endedAt: new Date("2026-10-13T10:01:00Z"),
+                    toolCalls: 0,
+                    outcome: "completed",
+                    parts: [
+                        { model: null, tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0 } },
+                    ],
+                });
+                expect(live?.outcome).toBe("completed");
+                expect(readWorkerCostRows()).toHaveLength(1);
+                expect(readWorkerCostRows()[0].tokens?.input).toBe(100);
+                expect(planWorkerBackfill(readWorkerCostRows()).rows).toEqual([]);
+            });
+        }
+    );
+
+    it("deduplicates concurrent backfills and a live booking inside the append lock", async () => {
+        const row = grokTurn({ name: "dedup-turn", model: "grok-4.7" });
+        const backfilled: WorkerCostRow = { ...row, backfilled: true };
+        const results = await Promise.all([
+            appendWorkerCostRows([row]),
+            appendWorkerCostRows([backfilled, backfilled]),
+        ]);
+        expect(results.flat()).toHaveLength(1);
+        expect(readWorkerCostRows().filter((entry) => entry.name === row.name)).toHaveLength(1);
+        expect(await appendWorkerCostRows([backfilled])).toEqual([]);
+    });
+
+    it("bounds status bytes and parsing while streaming complete report snapshots", async () => {
+        const home = mkdtempSync(join(tmpdir(), "ledger-status-bound-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const row = grokTurn({ name: "recent-status", model: "grok-4.7" });
+            const older = { ...row, name: "older-worker", label: "x".repeat(512) };
+            const text = (SafeJSON.stringify(older) + "\n").repeat(2000) + SafeJSON.stringify(row) + "\n";
+            expect(Buffer.byteLength(text)).toBeGreaterThan(1024 * 1024);
+            mkdirSync(join(workerCostLedgerPath(), ".."), { recursive: true });
+            writeFileSync(workerCostLedgerPath(), text);
+            const read = spyOn(fs, "readSync");
+            const parse = spyOn(SafeJSON, "parse");
+            try {
+                const summary = sessionCostSummary({ backend: "grok", name: row.name, sessionId: row.sessionId });
+                expect(summary?.lastTurn.name).toBe(row.name);
+                expect(summary?.note).toContain("Partial session totals");
+                const statusReads = read.mock.calls.map((call) => Number(call[2]?.length));
+                expect(statusReads.length).toBeGreaterThan(0);
+                expect(statusReads.reduce((sum, count) => sum + count, 0)).toBeLessThanOrEqual(1024 * 1024);
+                expect(parse.mock.calls.length).toBeLessThan(2000);
+                read.mockClear();
+                const complete = readWorkerCostLedger();
+                expect(complete.rows).toHaveLength(2001);
+                expect(complete.bytes).toBe(Buffer.byteLength(text));
+                expect(read.mock.calls.every((call) => Number(call[2]?.length) <= 64 * 1024)).toBe(true);
+            } finally {
+                read.mockRestore();
+                parse.mockRestore();
+            }
+        });
+    });
+
+    it("skips malformed ledger structures while keeping valid rows usable", async () => {
+        const valid = grokTurn({ name: "validated", model: "grok-4.7" });
+        await appendWorkerCostRows([valid]);
+        const before = readWorkerCostRows();
+        const invalid = [
+            { v: 1, ts: valid.ts, backend: "codex", name: "incomplete" },
+            { ...valid, cost: null },
+            { ...valid, backend: "unsupported" },
+            { ...valid, tokens: { input: -1 } },
+            { ...valid, ts: "not-a-date" },
+            { ...valid, cost: { ...valid.cost, billedUsd: "bad" } },
+            { ...valid, durationMs: -1 },
+        ];
+        fs.appendFileSync(workerCostLedgerPath(), invalid.map((row) => SafeJSON.stringify(row)).join("\n") + "\n");
+        expect(readWorkerCostRows()).toEqual(before);
+    });
+
+    it("locks appends from another process against a rewrite and rejects a stale repricer snapshot", async () => {
+        await appendWorkerCostRows([grokTurn({ name: "locked-original", model: "grok-4.7" })]);
+        const ledger = readWorkerCostLedger();
+        const row = grokTurn({ name: "locked-child", model: "grok-4.7" });
+        let rewrite: Promise<void> | undefined;
+        let child: ReturnType<typeof Bun.spawn> | undefined;
+        await withFileLock(workerCostLedgerPath() + ".lock", async () => {
+            const source =
+                "import { appendWorkerCostRows } from " +
+                SafeJSON.stringify(join(import.meta.dir, "lib/workers/ledger.ts")) +
+                "; const pending = appendWorkerCostRows([" +
+                SafeJSON.stringify(row) +
+                "]); console.log('started'); await pending;";
+            const proc = Bun.spawn([process.execPath, "-e", source], {
+                env: env.getProcessEnv(),
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            child = proc;
+            const reader = proc.stdout.getReader();
+            try {
+                expect(new TextDecoder().decode((await reader.read()).value)).toContain("started");
+            } finally {
+                reader.releaseLock();
+            }
+            rewrite = rewriteWorkerCostRows(
+                ledger.rows.map((item) =>
+                    item.name === "locked-original" ? { ...item, label: "locked rewrite" } : item
+                ),
+                ledger
+            );
+            expect(readWorkerCostRows().some((item) => item.name === "locked-child")).toBe(false);
+        });
+        await rewrite;
+        expect(await child?.exited).toBe(0);
+        const after = readWorkerCostRows();
+        expect(after.find((item) => item.name === "locked-original")?.label).toBe("locked rewrite");
+        expect(after.filter((item) => item.name === "locked-child")).toHaveLength(1);
+        await expect(rewriteWorkerCostRows(ledger.rows, ledger)).rejects.toThrow("changed since");
+    });
 
     it("a re-price moves only the price, and keeps a row whose turn files are gone", () => {
         // A row booked under the old rules: grok's own metering stood in as the list price.
@@ -1104,14 +1277,14 @@ describe("worker cost ledger", () => {
         expect(after.cost).toMatchObject({ auth: "api-key", apiEquivalentUsd: 8.5, billedUsd: 8.5 });
     });
 
-    it("a rewrite keeps the old ledger as .bak and carries a row appended while it ran", () => {
-        appendWorkerCostRows([grokTurn({ name: "rewrite-a", model: "grok-4.7" })]);
+    it("a rewrite keeps the old ledger as .bak and carries a row appended while it ran", async () => {
+        await appendWorkerCostRows([grokTurn({ name: "rewrite-a", model: "grok-4.7" })]);
         const ledger = readWorkerCostLedger();
-        appendWorkerCostRows([grokTurn({ name: "rewrite-late", model: "grok-4.7" })]);
+        await appendWorkerCostRows([grokTurn({ name: "rewrite-late", model: "grok-4.7" })]);
 
-        rewriteWorkerCostRows(
+        await rewriteWorkerCostRows(
             ledger.rows.map((row) => (row.name === "rewrite-a" ? { ...row, label: "rewritten" } : row)),
-            ledger.bytes
+            ledger
         );
         const after = readWorkerCostRows();
 
@@ -1147,6 +1320,98 @@ describe("worker stats", () => {
         outputTokens: 0,
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
+    });
+
+    const booked = (options: { name: string; day: string; auth: "api-key" | "subscription"; model?: string }) =>
+        buildWorkerCostRow({
+            backend: "codex",
+            name: options.name,
+            sessionId: "thread-" + options.name,
+            turn: Number(options.day.slice(-2)),
+            model: options.model ?? "gpt-6.1-sol",
+            auth: options.auth,
+            endedAt: new Date(options.day + "T11:00:00.000Z"),
+            durationMs: 3_600_000,
+            toolCalls: 1,
+            parts: [
+                {
+                    model: options.model ?? "gpt-6.1-sol",
+                    tokens: { input: 100_000, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+                },
+            ],
+            cwd: "/w",
+            label: "historic",
+        });
+
+    it("keeps an unpriced API-key request's billed amount unknown", () => {
+        const report = buildWorkerStats({
+            home: "/nonexistent",
+            timezone: "UTC",
+            dimensions: ["day"],
+            sessions: [session("unpriced", null)],
+            rows: [booked({ name: "unpriced", day: "2026-10-13", auth: "api-key", model: "not-in-catalog" })],
+            loadSessionEvents: () => [
+                { ...event("thread-unpriced", "2026-10-13T10:30:00.000Z"), model: "not-in-catalog" },
+            ],
+        });
+        expect(report.total).toMatchObject({ unpricedRequests: 1, billedUsd: 0, unbilledRequests: 1 });
+    });
+
+    it("includes deleted and reused-name sessions from booked rows, respecting filters", () => {
+        const rows = [
+            booked({ name: "reused", day: "2026-10-12", auth: "api-key" }),
+            booked({ name: "deleted", day: "2026-10-13", auth: "api-key" }),
+        ];
+        const report = buildWorkerStats({
+            home: "/nonexistent",
+            timezone: "UTC",
+            dimensions: ["name"],
+            label: "historic",
+            sessions: [{ ...session("reused", "new-label"), sessionId: "new-thread" }],
+            rows,
+            loadSessionEvents: () => {
+                throw new Error("ledger-only sessions must use booked rows");
+            },
+        });
+        expect(report.total).toMatchObject({ sessions: 2, turns: 2, ledgerOnlySessions: 2, requests: 2 });
+        expect(report.total.billedUsd).toBeCloseTo(0.4);
+        const filtered = buildWorkerStats({
+            home: "/nonexistent",
+            timezone: "UTC",
+            dimensions: ["name"],
+            rows,
+            sessions: [],
+            sinceDay: "2026-10-13",
+            backends: ["codex"],
+        });
+        expect(filtered.groups.map((group) => group.key.name)).toEqual(["deleted"]);
+    });
+
+    it("uses each booked turn's login and leaves unmatched history unknown", () => {
+        for (const auths of [
+            ["subscription", "api-key"],
+            ["api-key", "subscription"],
+        ] as const) {
+            const report = buildWorkerStats({
+                home: "/nonexistent",
+                timezone: "UTC",
+                dimensions: ["day"],
+                sessions: [session("history", null)],
+                rows: [
+                    booked({ name: "history", day: "2026-10-12", auth: auths[0] }),
+                    booked({ name: "history", day: "2026-10-13", auth: auths[1] }),
+                ],
+                loadSessionEvents: () => [
+                    event("thread-history", "2026-10-12T10:30:00.000Z"),
+                    event("thread-history", "2026-10-13T10:30:00.000Z"),
+                    event("thread-history", "2026-10-11T10:30:00.000Z"),
+                ],
+            });
+            const days = Object.fromEntries(report.groups.map((group) => [group.key.day, group]));
+            expect(days["2026-10-12"].billedUsd).toBeCloseTo(auths[0] === "api-key" ? 0.2 : 0);
+            expect(days["2026-10-13"].billedUsd).toBeCloseTo(auths[1] === "api-key" ? 0.2 : 0);
+            expect(days["2026-10-11"].unbilledRequests).toBe(1);
+        }
     });
 
     it("prices the transcripts per request and groups by label; a missing transcript falls back to its ledger rows", () => {

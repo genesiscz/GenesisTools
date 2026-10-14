@@ -256,7 +256,7 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
             parseTurnEvents(transcript, "").filter(isTurnCompleted).at(-1)?.sessionId || undefined;
         const usage = claudeTurnUsage(transcript);
         // A pinned worker runs on an `anthropic-sub` long-lived token: always a subscription login.
-        const booked = recordWorkerTurnCost({
+        const booked = await recordWorkerTurnCost({
             backend: "claude",
             name: meta.name,
             sessionId: meta.sessionId,

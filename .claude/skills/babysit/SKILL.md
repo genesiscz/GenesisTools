@@ -114,8 +114,8 @@ No subagents inside a worker: the brief says so, and the master treats a spawned
 How each backend commits (measured 2026-10-14 with probe workers in linked worktrees of this repo):
 
 - Grok's jail stops its file tools outside `--cwd`, but not git's own writes: a Grok worker commits normally in a
-  linked worktree. After a turn whose changes were all committed, its report prints "turn N changed NOTHING". That
-  line counts uncommitted files only; read `git log` instead.
+  linked worktree. Its report includes both uncommitted changes and `commitsThisTurn`, the number of commits added
+  to HEAD during the turn. Independently verify those commits with `git log` when judging the worker.
 - Codex's sandbox keeps every `.git` path read-only, even one passed as `--writable-root`, so `git add` and
   `git commit` fail with `index.lock: Operation not permitted` in every mode. Under `--write ask` each one becomes an
   escalation that the approval driver (step 5) accepts when it matches the brief. The brief therefore tells a Codex

@@ -40,7 +40,6 @@ export function eventJsonLine(event: MonitorEvent): string {
 
     const { body, from_agent_name, ...rest } = event;
     return SafeJSON.stringify({ body, from_agent_name, ...rest }, { strict: true });
-
 }
 
 export function learnAgentNames(names: AgentNames, event: FeedEvent): void {

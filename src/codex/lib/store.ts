@@ -20,6 +20,11 @@ export interface PendingApproval {
     rpcId: string | number;
     method: string;
     detail: string;
+    /** Exact file-change paths for authorization; detail is only a display label. */
+    paths?: string[];
+    /** Actual executable command and cwd from the RPC, never inferred from its display reason. */
+    command?: string;
+    cwd?: string;
     requestedAt: string;
 }
 

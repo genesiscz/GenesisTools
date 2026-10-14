@@ -413,7 +413,7 @@ export class CodexProvider extends MCPProvider {
     async setPluginServersEnabled(serverNames: string[], enabled: boolean): Promise<WriteResult> {
         let applied = false;
 
-        for (const home of this.pluginHomes()) {
+        for (const home of this.syncToHomes) {
             const configPath = codexConfigPathForHome(home);
             if (!existsSync(configPath)) {
                 continue;

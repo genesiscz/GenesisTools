@@ -446,7 +446,7 @@ async function runTurn({
         );
 
         const usage = grokTurnUsage(transcript);
-        const booked = recordWorkerTurnCost({
+        const booked = await recordWorkerTurnCost({
             backend: "grok",
             name: meta.name,
             sessionId: meta.sessionId,

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
 import type { ClaudeGenericConfig, ClaudeMCPServerConfig } from "./claude.types.js";
@@ -296,7 +297,7 @@ export class ClaudeProvider extends MCPProvider {
 
         await this.backupManager.createBackup(settingsPath, this.providerName);
         await mkdir(path.dirname(settingsPath), { recursive: true });
-        await writeFile(settingsPath, newContent, "utf-8");
+        atomicWriteFileSync(settingsPath, newContent, { mode: 0o600 });
         logger.info(chalk.green(`✓ Configuration written to ${settingsPath}`));
         return WriteResult.Applied;
     }

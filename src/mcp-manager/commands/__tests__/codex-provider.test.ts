@@ -246,6 +246,18 @@ describe("CodexProvider plugin-provided MCP servers", () => {
             plugins?: Record<string, { enabled?: boolean; mcp_servers?: Record<string, { enabled?: boolean }> }>;
         };
 
+    it("discovers syncFrom-only plugin homes without writing their overrides", async () => {
+        const primary = join(homeDir, "primary");
+        const source = join(homeDir, "source");
+        await seedHome(primary, { enabled: true });
+        const original = await seedHome(source, { enabled: true });
+        const provider = new CodexProvider({ syncToHomes: [primary], syncFromHomes: [primary, source] });
+        expect((await provider.listPluginServers()).map((row) => row.home)).toContain(source);
+        await provider.setPluginServersEnabled(["expo"], false);
+        expect(readToml(primary).plugins?.["expo@market"]?.mcp_servers?.expo).toEqual({ enabled: false });
+        expect(readFileSync(join(source, "config.toml"), "utf8")).toBe(original);
+    });
+
     it("lists the servers of an enabled plugin per home and skips a home where the plugin is off", async () => {
         const primary = join(homeDir, ".codex");
         const extra = join(homeDir, ".codex-shop");

@@ -616,6 +616,32 @@ describe("CodexSessionRuntime", () => {
         });
     });
 
+    test("pending commands preserve executable text and cwd independently of the reason", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-approval-command-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), writePolicy: "ask" as const, approvalPolicy: "untrusted" as const };
+            store.writeMeta(meta);
+            const runtime = new CodexSessionRuntime({ client: new FakeRpcClient(), store, meta });
+            const pending = runtime.handleServerRequest({
+                id: "command-context",
+                method: "item/commandExecution/requestApproval",
+                params: { reason: "bunx biome check src/a.ts", command: "touch outside.ts", cwd: home },
+            });
+            await Bun.sleep(0);
+            try {
+                expect(store.readMeta(meta.name)?.pendingApprovals["command-context"]).toMatchObject({
+                    detail: "bunx biome check src/a.ts",
+                    command: "touch outside.ts",
+                    cwd: home,
+                });
+            } finally {
+                await runtime.execute({ op: "deny", requestId: "command-context" });
+                await expect(pending).resolves.toEqual({ decision: "decline" });
+            }
+        });
+    });
+
     test("declines and clears unresolved approvals while closing", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-close-approval-"));
 
@@ -875,6 +901,19 @@ describe("an ask worker's own bus commands", () => {
         ).toBe(true);
     });
 
+    test("only absolute system shells may wrap an automatically approved script", () => {
+        const bus = { agentName: "codex_reviewer", session: "parent-123" };
+        const script = "tools agents login --agent-name codex_reviewer --once --session parent-123";
+        for (const shell of ["/tmp/bash", "./zsh", "/repo/sh", "bash", "zsh", "sh"]) {
+            expect(isOwnBusCommand(shell + " -lc '" + script + "'", bus)).toBe(false);
+            expect(isReadOnlyCommand(shell + " -lc 'cat README.md'")).toBe(false);
+        }
+        for (const shell of ["/bin/sh", "/bin/bash", "/bin/zsh"]) {
+            expect(isOwnBusCommand(shell + " -lc '" + script + "'", bus)).toBe(true);
+            expect(isReadOnlyCommand(shell + " -lc 'cat README.md'")).toBe(true);
+        }
+    });
+
     test("anything chained, expanded, redirected, another identity or another swarm is not", () => {
         const bus = { agentName: "codex_reviewer", session: "parent-123" };
 
@@ -947,20 +986,36 @@ describe("an ask worker's own bus commands", () => {
 describe("an ask worker's read-only commands", () => {
     const zsh = (script: string) => `/bin/zsh -lc '${script}'`;
 
+    test.each(["constructor", "toString", "toLocaleString", "__proto__", "valueOf", "hasOwnProperty"])(
+        "an inherited allowlist name must require approval: %s",
+        (name) => {
+            for (const command of [
+                name,
+                `${name} payload`,
+                zsh(`${name} payload`),
+                `cat README.md && ${name} payload`,
+            ]) {
+                expect(isReadOnlyCommand(command)).toBe(false);
+            }
+        }
+    );
+
     test("reads, searches and read-only git need no approval, as Codex's own safe set intends", () => {
         for (const command of [
             zsh("cat CLAUDE.md"),
             zsh("sed -n '\"'\"'140,410p'\"'\"' src/a.ts"),
             zsh("nl -ba src/a.ts | head -430\nnl -ba README.md | head -75"),
             `/bin/zsh -lc "rg -n 'background|openBackground' src/a.test.ts | head -40"`,
-            zsh("git diff --stat\ngit diff --cached --name-only\ngit branch --show-current"),
-            zsh("git show origin/feature:src/a.ts | sed -n 315,380p"),
+            zsh(
+                "git diff --no-ext-diff --no-textconv --stat\ngit diff --no-ext-diff --no-textconv --cached --name-only\ngit branch --show-current"
+            ),
+            zsh("git show --no-ext-diff --no-textconv origin/feature:src/a.ts | sed -n 315,380p"),
             zsh("cd src && ls -la && wc -l a.ts"),
             zsh("find src -name '\"'\"'*.ts'\"'\"' -newer a.ts"),
-            // Shapes a Sol worker sent on 2026-10-14: a glob, a backslash in a double-quoted wrapper, a discarded stream.
+            // Backslashes in a double-quoted wrapper and discarded streams remain read-only.
             `/bin/zsh -lc "rg -n 'parse\\\\(' src/utils/json.ts | head -15"`,
-            `/bin/zsh -lc "rg -n 'WebSocket|Bun.serve' src/utils/chrome-devtools/*.test.ts | head -40"`,
-            zsh("ls missing 2>/dev/null\ngit log --oneline -5 2>&1 | head"),
+
+            zsh("ls missing 2>/dev/null\ngit log --no-ext-diff --no-textconv --oneline -5 2>&1 | head"),
             zsh("cat ~/notes.md src/\\(a\\).ts"),
         ]) {
             expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: true });
@@ -974,8 +1029,16 @@ describe("an ask worker's read-only commands", () => {
             zsh("sed -n '\"'\"'w out'\"'\"' a.ts"),
             zsh("sed -n 1,5p -i a.ts"),
             zsh("rg --pre ./run.sh x src"),
+            `/bin/zsh -lc "rg -n 'WebSocket|Bun.serve' src/utils/chrome-devtools/*.test.ts | head -40"`,
             zsh("git -c core.pager=./run.sh log"),
             zsh("git diff --output=patch.diff"),
+            zsh("git grep --open-files-in-pager=./run.sh pattern"),
+            zsh("git grep --no-textconv -O./run.sh pattern"),
+            zsh("git diff --ext-diff"),
+            zsh("git show --textconv"),
+            zsh("git show HEAD"),
+            zsh("git cat-file --filters HEAD:src/a.ts"),
+            zsh("git log --no-ext-diff --no-textconv --exec=./run.sh"),
             zsh("git branch new-branch"),
             zsh("git commit -m x"),
             zsh("find . -name x -delete"),
@@ -998,6 +1061,47 @@ describe("an ask worker's read-only commands", () => {
         ]) {
             expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: false });
         }
+    });
+
+    test.each([
+        "find . -ex\\\nec /bin/sh -c 'touch /tmp/approval-bypass' ';'",
+        'find . "-ex\\\nec" /bin/sh -c "touch /tmp/approval-bypass" ";"',
+        "rg --p\\\nre=./runner needle .",
+        'rg "--p\\\nre=./runner" needle .',
+        "find . -ex\\\r\nec /bin/sh -c 'touch /tmp/approval-bypass' ';'",
+        "rg --p\\\r\nre=./runner needle .",
+    ])("shell line continuations cannot conceal dangerous options: %s", (script) => {
+        expect(isReadOnlyCommand(script)).toBe(false);
+        const quoted = "'" + script.replaceAll("'", "'\"'\"'") + "'";
+        expect(isReadOnlyCommand(`/bin/sh -c ${quoted}`)).toBe(false);
+        expect(isReadOnlyCommand(`/bin/zsh -lc ${quoted}`)).toBe(false);
+    });
+
+    test("ordinary escapes and quoted newlines still qualify as read-only", () => {
+        expect(isReadOnlyCommand("cat with\\ space.ts")).toBe(true);
+        expect(isReadOnlyCommand("cat 'first\nsecond'")).toBe(true);
+        expect(isReadOnlyCommand('rg "needle" README.md')).toBe(true);
+    });
+
+    test("unquoted globs cannot introduce executable options from filenames", () => {
+        const cwd = mkdtempSync(join(tmpdir(), "gt-approval-glob-"));
+        writeFileSync(join(cwd, "--pre=sh"), "");
+        writeFileSync(join(cwd, "payload"), "fixture data only");
+        const expansion = Bun.spawnSync(["/bin/sh", "-c", "printf '%s\\n' *"], { cwd, env: env.getProcessEnv() });
+        expect(expansion.exitCode).toBe(0);
+        expect(expansion.stdout.toString()).toContain("--pre=sh");
+        for (const command of ["rg needle *", "rg needle ?", "rg needle [a-z]*", zsh("rg needle *")]) {
+            expect(isReadOnlyCommand(command)).toBe(false);
+        }
+        expect(isReadOnlyCommand("rg -g '*.ts' needle src")).toBe(true);
+        expect(isReadOnlyCommand("cat literal\\*name")).toBe(true);
+    });
+
+    test("shell comments cannot hide a write behind unmatched quotes", () => {
+        expect(isReadOnlyCommand("cat README.md # '\ntouch /tmp/approval-bypass\n# '")).toBe(false);
+        expect(isReadOnlyCommand('cat README.md # "\ntouch /tmp/approval-bypass\n# "')).toBe(false);
+        expect(isReadOnlyCommand("cat 'a#b.ts'")).toBe(true);
+        expect(isReadOnlyCommand("cat a\\#b.ts")).toBe(true);
     });
 
     test("the runtime accepts a read-only command itself and names the files of a file change it forwards", async () => {
@@ -1034,7 +1138,10 @@ describe("an ask worker's read-only commands", () => {
                     item: {
                         type: "fileChange",
                         id: "exec-1",
-                        changes: [{ path: join(meta.cwd, "src", "a.ts") }, { path: join(meta.cwd, "README.md") }],
+                        changes: [
+                            { path: join(meta.cwd, "src", "a.ts (copy).ts") },
+                            { path: join(meta.cwd, "src", "a,b.ts") },
+                        ],
                     },
                 },
             });
@@ -1045,7 +1152,13 @@ describe("an ask worker's read-only commands", () => {
             });
             await Bun.sleep(0);
 
-            expect(notices.map((notice) => notice.detail)).toEqual([`edit ${join("src", "a.ts")}, README.md`]);
+            expect(notices.map((notice) => notice.detail)).toEqual([
+                `edit ${join("src", "a.ts (copy).ts")}, ${join("src", "a,b.ts")}`,
+            ]);
+            expect(store.readMeta(meta.name)?.pendingApprovals["2"].paths).toEqual([
+                join("src", "a.ts (copy).ts"),
+                join("src", "a,b.ts"),
+            ]);
             await runtime.execute({ op: "approve", requestId: "2" });
             await expect(edit).resolves.toEqual({ decision: "accept" });
         });
