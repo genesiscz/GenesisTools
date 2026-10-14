@@ -457,14 +457,24 @@ export function systemTimeZone(): string | undefined {
     const fromEnv = process.env.TZ?.replace(/^:/, "");
 
     if (fromEnv) {
-        return fromEnv;
+        // A path (`:/etc/localtime`, `/usr/share/zoneinfo/Europe/Prague`) names its zone by where it links or lies.
+        return fromEnv.startsWith("/") ? zoneOfFile(fromEnv) : fromEnv;
     }
 
+    return zoneOfFile("/etc/localtime");
+}
+
+/** The IANA zone a zoneinfo file stands for: the path it links to, or its own path when it is no link. */
+function zoneOfFile(path: string): string | undefined {
+    let target = path;
+
     try {
-        return readlinkSync("/etc/localtime").split("zoneinfo/")[1];
+        target = readlinkSync(path);
     } catch {
-        return undefined;
+        // Not a link: the file's own path names the zone, or nothing does.
     }
+
+    return target.split("zoneinfo/")[1];
 }
 
 const lstartFormats = new Map<string, Intl.DateTimeFormat>();

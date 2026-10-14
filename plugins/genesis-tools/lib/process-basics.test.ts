@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
-import { formatLstart, listProcessBasics, readProcessBasics } from "./process-basics";
+import { formatLstart, listProcessBasics, readProcessBasics, systemTimeZone } from "./process-basics";
 
 const REPO = join(import.meta.dir, "..", "..", "..");
 
@@ -81,6 +81,23 @@ describe.skipIf(process.platform === "win32")("readProcessBasics", () => {
         const text = formatLstart(0, "CET-1CEST,M3.5.0,M10.5.0/3");
         expect(text).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \d{4}$/);
         expect(formatLstart(0, "UTC")).toBe("Thu Jan  1 00:00:00 1970");
+    });
+
+    test.skipIf(process.platform === "win32")("a TZ that names a zone file formats in that file's zone", () => {
+        const local = systemTimeZone();
+        const saved = process.env.TZ;
+
+        try {
+            process.env.TZ = ":/etc/localtime";
+            expect(systemTimeZone()).toBe(local);
+            expect(formatLstart(0)).toBe(formatLstart(0, local));
+        } finally {
+            if (saved === undefined) {
+                delete process.env.TZ;
+            } else {
+                process.env.TZ = saved;
+            }
+        }
     });
 
     test("a pid that does not exist, and nonsense input", () => {
