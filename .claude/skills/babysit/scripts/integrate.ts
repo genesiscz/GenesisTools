@@ -29,7 +29,10 @@ const shaMap = Object.fromEntries(
     (flag("--sha-map") ?? "")
         .split(",")
         .filter(Boolean)
-        .map((pair) => pair.split("="))
+        .map((pair): [string, string] => {
+            const [from = "", to = ""] = pair.split("=");
+            return [from, to];
+        })
 );
 const dry = has("--dry");
 

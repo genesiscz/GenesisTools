@@ -6,6 +6,7 @@ import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
+import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
 import { summarize } from "./plant";
 import { hitsInAddedLines } from "./probe";
 import { reviewBrief } from "./review-brief";
@@ -405,5 +406,92 @@ describe("planted-regression summary", () => {
             )
         ).toBe("Executed 158 tests, with 0 failures (0 unexpected) in 10.1 (10.2) seconds");
         expect(summarize("bun test v1.4.2")).toBe("no test count");
+    });
+});
+
+// d9687720a (2026-10-14): an inline resolver returned any string pick as text, so ["ours", "ours"] wrote the word
+// `ours` into both plugin manifests and the plugin did not load for 12 hours.
+describe("conflict resolution helper", () => {
+    const two = [
+        "{\n",
+        "<<<<<<< HEAD\n",
+        '    "version": "1.0.101",\n',
+        "=======\n",
+        '    "version": "1.0.99",\n',
+        ">>>>>>> pick\n",
+        '    "name": "genesis-tools",\n',
+        "<<<<<<< HEAD\n",
+        '    "a": 1\n',
+        "||||||| base\n",
+        '    "a": 0\n',
+        "=======\n",
+        '    "a": 2\n',
+        ">>>>>>> pick\n",
+        "}\n",
+    ].join("");
+    const picks = (...sides: Array<"ours" | "theirs" | "both" | "base">): ConflictPick[] =>
+        sides.map((side) => ({ side }));
+
+    test("a pick is a side or explicit text, so a side's name is never written into the file", () => {
+        expect(resolveConflictText(two, picks("ours", "theirs"))).toBe(
+            '{\n    "version": "1.0.101",\n    "name": "genesis-tools",\n    "a": 2\n}\n'
+        );
+        expect(resolveConflictText(two, picks("theirs", "base"))).toBe(
+            '{\n    "version": "1.0.99",\n    "name": "genesis-tools",\n    "a": 0\n}\n'
+        );
+        expect(resolveConflictText(two, [{ text: "" }, { side: "ours" }])).toBe(
+            '{\n    "name": "genesis-tools",\n    "a": 1\n}\n'
+        );
+        // The d9687720a call, made the way its untyped inline script made it.
+        expect(() => Reflect.apply(resolveConflictText, null, [two, ["ours", "ours"]])).toThrow("never a bare string");
+    });
+
+    test("one pick per block, every block closed, and base only from the diff3 form", () => {
+        expect(() => resolveConflictText(two, picks("ours"))).toThrow("conflict block 2 has no pick (1 given)");
+        expect(() => resolveConflictText(two, picks("ours", "ours", "ours"))).toThrow(
+            "3 pick(s) for 2 conflict block(s)"
+        );
+        expect(() => resolveConflictText("<<<<<<< HEAD\na\n=======\n", picks("ours"))).toThrow("is not closed");
+        expect(() => resolveConflictText(two, picks("base", "ours"))).toThrow("conflict block 1 has no base section");
+        expect(resolveConflictText(two, picks("both", "ours"))).toContain('"1.0.101",\n    "version": "1.0.99",\n');
+    });
+
+    test("the check names a conflict marker left and a JSON file that does not parse, and nothing else", () => {
+        const files: Record<string, string> = {
+            "src/a.ts": "export const a = 1;\n<<<<<<< HEAD\n",
+            ".claude-plugin/marketplace.json": '{\nours    "description": "Skills"\n}\n',
+            "plugins/p/.claude-plugin/plugin.json": '{ "version": "1.0.101" }\n',
+            "docs/a.md": "Title\n=======\n",
+        };
+
+        expect(resolutionProblems(Object.keys(files), (file) => files[file] ?? "")).toEqual([
+            "src/a.ts:2: conflict marker left",
+            expect.stringContaining(".claude-plugin/marketplace.json: JSON Parse error"),
+        ]);
+    });
+
+    test("the version resolver refuses a side whose manifest does not parse", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-broken-manifest-"));
+        const git = prepGit(dir);
+        const file = ".claude-plugin/marketplace.json";
+        const manifest = (version: string) => `{\n    "name": "genesis-tools",\n    "version": "${version}"\n}\n`;
+        const commit = (text: string, message: string) => {
+            fs.mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
+            fs.writeFileSync(join(dir, file), text);
+            git(["add", "-A"]);
+            git(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", message]);
+        };
+
+        git(["init", "-q", "-b", "main"]);
+        commit(manifest("1.0.80"), "base");
+        git(["checkout", "-qb", "child"]);
+        commit(manifest("1.0.81"), "child bump");
+        git(["checkout", "-q", "main"]);
+        // The higher version is on the side that already carries the stray word, as unified did after d9687720a.
+        commit(manifest("1.0.96").replace('    "name"', 'ours    "name"'), "broken bump");
+
+        expect(git(["cherry-pick", "child"]).code).not.toBe(0);
+        expect(resolveVersionConflicts(git, conflictedFiles(git))).toBe(false);
+        git(["cherry-pick", "--abort"]);
     });
 });
