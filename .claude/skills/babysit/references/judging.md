@@ -21,6 +21,11 @@ report, its reply file (every verdict and every reply text it wants posted) and 
    fixed file aside first, `git show <base>:<path> > <path>`, run the test, copy the fixed file back; the shell guard
    blocks `git checkout --` for this). A test that still passes proves nothing. Do it in the PR worktree, never in the
    shared main checkout.
+   - A plant that stops the COMPILE proves only that the test calls the new code, not that it catches the fault. Plant
+     a behaviour fault instead (flip the fail-closed branch, drop the check) and see the assertion fail.
+   - Run the new test by its own name (`swift test --filter <Class>/<testName>`, `bun scripts/test.ts <file> -t
+     <name>`), never by the file name: on 2026-10-14 `--filter SnapshotDispatchTests` ran 30 tests from that class
+     and skipped the new test in `CursorFeedbackTests` in the same file, so a fail-open plant "passed".
 4. **Contracts and callers.** Read the module's doc comments for what a function promises (errors it throws, values
    it returns) and grep its callers. On 2026-10-14 Sol's fix threw a raw error from a function documented to throw
    only `CdpLaunchError`; `browse.ts` rethrew anything else, so a user would have seen a stack trace. The tests were
