@@ -21,7 +21,7 @@ describe("cmux client", () => {
         const runJson = async <T>(args: string[]): Promise<T> => {
             if (args[0] === "list-workspaces") {
                 return {
-                    workspaces: [{ ref: "workspace:1", id: "main", title: "Main", current_directory: "/tmp" }],
+                    workspaces: [{ ref: "workspace:1", id: "WS-UUID", title: "Main", current_directory: "/tmp" }],
                 } as T;
             }
 
@@ -29,7 +29,9 @@ describe("cmux client", () => {
                 return {
                     panes: [
                         {
+                            id: "PANE-UUID",
                             ref: "pane:1",
+                            selected_surface_id: "S2-UUID",
                             selected_surface_ref: "surface:2",
                             focused: true,
                             surface_count: 2,
@@ -41,8 +43,8 @@ describe("cmux client", () => {
             if (args[0] === "list-pane-surfaces") {
                 return {
                     surfaces: [
-                        { ref: "surface:1", title: "one", type: "terminal", index: 0, selected: false },
-                        { ref: "surface:2", title: "two", type: "terminal", index: 1, selected: true },
+                        { id: "S1-UUID", ref: "surface:1", title: "one", type: "terminal", index: 0, selected: false },
+                        { id: "S2-UUID", ref: "surface:2", title: "two", type: "terminal", index: 1, selected: true },
                     ],
                 } as T;
             }
@@ -62,38 +64,43 @@ describe("cmux client", () => {
         const snapshot = await fetchSnapshot({ run, runJson });
 
         expect(snapshot.available).toBe(true);
-        expect(snapshot.workspaces).toEqual([{ id: "workspace:1", name: "Main" }]);
+        // Every id is the cmux UUID; the refs ride along for display (cmux renumbers them at a relaunch).
+        expect(snapshot.workspaces).toEqual([{ id: "WS-UUID", ref: "workspace:1", name: "Main" }]);
         expect(snapshot.panes[0]).toEqual({
-            id: "pane:1",
-            workspaceId: "workspace:1",
+            id: "PANE-UUID",
+            ref: "pane:1",
+            workspaceId: "WS-UUID",
             title: "pane:1",
             active: true,
             cwd: "/tmp",
+            selectedSurfaceId: "S2-UUID",
             selectedSurfaceRef: "surface:2",
             surfaceCount: 2,
             surfaces: [
                 {
-                    id: "surface:1",
+                    id: "S1-UUID",
+                    ref: "surface:1",
                     title: "one",
                     type: "terminal",
                     index: 0,
                     selected: false,
                     active: false,
                     url: undefined,
-                    preview: "preview surface:1",
+                    preview: "preview S1-UUID",
                 },
                 {
-                    id: "surface:2",
+                    id: "S2-UUID",
+                    ref: "surface:2",
                     title: "two",
                     type: "terminal",
                     index: 1,
                     selected: true,
                     active: false,
                     url: undefined,
-                    preview: "preview surface:2",
+                    preview: "preview S2-UUID",
                 },
             ],
-            preview: "preview surface:2",
+            preview: "preview S2-UUID",
         });
     });
 

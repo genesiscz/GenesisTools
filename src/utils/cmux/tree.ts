@@ -13,10 +13,10 @@ import { profiler } from "@genesiscz/utils/profile";
  * `tools ai cmux tree` and `tools claude cmux tree`.
  */
 export interface CmuxTreeSurface {
-    /** The `surface:N` ref; cmux renumbers it at every relaunch. */
-    id: string;
     /** The surface UUID, stable across a relaunch; what the session journal records. */
-    uuid?: string;
+    id: string;
+    /** The `surface:N` ref, for display; cmux renumbers it at every relaunch. */
+    ref?: string;
     title: string;
     type: string;
     index: number;
@@ -25,10 +25,14 @@ export interface CmuxTreeSurface {
 }
 
 export interface CmuxTreePane<S extends CmuxTreeSurface = CmuxTreeSurface> {
+    /** Pane UUID. */
     id: string;
+    /** `pane:N`, for display. */
+    ref?: string;
     title: string;
     active: boolean;
     cwd?: string;
+    /** UUID of the surface the pane shows. */
     selectedSurfaceId?: string;
     /** Pane rectangle inside the workspace, in points; with `container`, the real split layout. */
     frame?: CmuxPaneFrame;
@@ -37,7 +41,10 @@ export interface CmuxTreePane<S extends CmuxTreeSurface = CmuxTreeSurface> {
 }
 
 export interface CmuxTreeWorkspace<S extends CmuxTreeSurface = CmuxTreeSurface> {
+    /** Workspace UUID. */
     id: string;
+    /** `workspace:N`, for display. */
+    ref?: string;
     name: string;
     panes: CmuxTreePane<S>[];
 }
@@ -67,15 +74,16 @@ const prof = profiler.scope("cmux");
 function toTreePane(pane: CmuxLivePane): CmuxTreePane {
     return {
         id: pane.id,
+        ...(pane.ref ? { ref: pane.ref } : {}),
         title: pane.title,
         active: pane.active,
         cwd: pane.cwd,
         frame: pane.frame,
         container: pane.container,
-        selectedSurfaceId: pane.selectedSurfaceRef,
+        selectedSurfaceId: pane.selectedSurfaceId,
         surfaces: pane.surfaces.map((surface) => ({
             id: surface.id,
-            ...(surface.uuid ? { uuid: surface.uuid } : {}),
+            ...(surface.ref ? { ref: surface.ref } : {}),
             title: surface.title,
             type: surface.type,
             index: surface.index,
@@ -106,7 +114,12 @@ export async function fetchCmuxTree(deps: CmuxTreeDeps = {}): Promise<CmuxTree> 
         ref: window.ref,
         index: window.index,
         key: window.key,
-        workspaces: window.workspaces.map((ws) => ({ id: ws.id, name: ws.name, panes: ws.panes.map(toTreePane) })),
+        workspaces: window.workspaces.map((ws) => ({
+            id: ws.id,
+            ...(ws.ref ? { ref: ws.ref } : {}),
+            name: ws.name,
+            panes: ws.panes.map(toTreePane),
+        })),
     }));
 
     return { fetchedAt: snapshot.fetchedAt, available: true, windows, totalMs: performance.now() - started };

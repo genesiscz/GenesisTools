@@ -40,7 +40,7 @@ describe("enrichPanesWithTtyd", () => {
 
     it("prefers the selected terminal surface for the join", () => {
         const p = pane({
-            selectedSurfaceRef: "surface:b",
+            selectedSurfaceId: "surface:b",
             surfaces: [
                 surface({ id: "surface:a", title: "other-session", selected: false }),
                 surface({ id: "surface:b", title: "dev-dashboard-abc12345", selected: true }),

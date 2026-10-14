@@ -7,7 +7,10 @@ import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveWindow } from "@genesiscz/
  */
 
 export interface CmuxHierarchyWorkspace {
+    /** Workspace UUID. */
     id: string;
+    /** `workspace:N`, for display. */
+    ref?: string;
     name: string;
     panes: CmuxLivePane[];
 }
@@ -32,9 +35,13 @@ export function buildCmuxHierarchy(snapshot: CmuxLiveSnapshot): CmuxHierarchyWin
     const windows: CmuxHierarchyWindow[] = windowMetas.map((meta) => {
         const workspaces = listed.length
             ? snapshot.workspaces.filter((ws) => {
-                  // Compare refs only when BOTH sides have one: with several windows
-                  // carrying no ref, `ws.windowRef === meta.ref` was undefined ===
-                  // undefined, which put every unreferenced workspace in every window.
+                  // The window UUID when the listing has it. Otherwise compare refs only when BOTH sides
+                  // have one: with several windows carrying no ref, `ws.windowRef === meta.ref` was
+                  // undefined === undefined, which put every unreferenced workspace in every window.
+                  if (ws.windowId) {
+                      return ws.windowId === meta.id;
+                  }
+
                   if (ws.windowRef && meta.ref) {
                       return ws.windowRef === meta.ref;
                   }
@@ -50,6 +57,7 @@ export function buildCmuxHierarchy(snapshot: CmuxLiveSnapshot): CmuxHierarchyWin
             key: meta.key,
             workspaces: workspaces.map((ws) => ({
                 id: ws.id,
+                ...(ws.ref ? { ref: ws.ref } : {}),
                 name: ws.name,
                 panes: snapshot.panes.filter((p) => p.workspaceId === ws.id),
             })),

@@ -3,10 +3,19 @@ import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
+/**
+ * Every `id` in a snapshot is the cmux UUID, which survives a relaunch and is what every journal records. A
+ * `ref` (`surface:12`) is for display only: cmux renumbers refs at each relaunch. cmux accepts the UUID
+ * everywhere it accepts a ref.
+ */
 export interface CmuxLiveWorkspace {
     id: string;
+    /** `workspace:N`, for display. */
+    ref?: string;
     name: string;
-    /** Owning cmux window ref (e.g. `window:1`), when the listing was window-scoped. */
+    /** Owning cmux window UUID, when the listing reports it. */
+    windowId?: string;
+    /** Owning cmux window ref (e.g. `window:1`), for display. */
     windowRef?: string;
 }
 
@@ -30,12 +39,19 @@ export interface CmuxPaneFrame {
 
 export interface CmuxLivePane {
     id: string;
+    /** `pane:N`, for display. */
+    ref?: string;
     workspaceId: string;
     title: string;
     active: boolean;
     cwd?: string;
-    /** Owning cmux window, from `pane.list`. Lets focus skip a second `identify`. */
+    /** Owning cmux window UUID, from `pane.list`. Lets focus skip a second `identify`. */
+    windowId?: string;
+    /** Owning cmux window ref, for display. */
     windowRef?: string;
+    /** UUID of the surface the pane shows. */
+    selectedSurfaceId?: string;
+    /** Its ref, for display. */
     selectedSurfaceRef?: string;
     surfaceCount: number;
     surfaces: CmuxLiveSurface[];
@@ -56,6 +72,8 @@ export interface CmuxLivePane {
 
 export interface CmuxLiveSurface {
     id: string;
+    /** `surface:N`, for display. */
+    ref?: string;
     title: string;
     type: string;
     index: number;
@@ -63,11 +81,6 @@ export interface CmuxLiveSurface {
     active: boolean;
     preview?: string;
     url?: string;
-    /**
-     * The surface UUID, from `tree --all --id-format both`. `id` is the `surface:N` ref, which cmux
-     * renumbers at every relaunch; the UUID stays, so it is what joins a surface to the session journal.
-     */
-    uuid?: string;
     /**
      * The terminal's tty (`ttys001`), from `tree --all`. It is what joins a surface to a process: a
      * `tmux attach` client running in it reports the same tty as `#{client_tty}`.
@@ -98,6 +111,7 @@ type CmuxRunner = (args: string[]) => Promise<CmuxRunResult>;
 
 interface WorkspaceListRpc {
     workspaces?: WorkspaceRpc[];
+    window_id?: string;
     window_ref?: string;
 }
 
@@ -118,7 +132,9 @@ interface WorkspaceRpc {
 
 interface PaneListRpc {
     panes?: PaneRpc[];
+    window_id?: string;
     window_ref?: string;
+    workspace_id?: string;
     workspace_ref?: string;
     container_frame?: { width: number; height: number };
 }
@@ -132,6 +148,7 @@ interface PaneRpc {
     selected?: boolean;
     focused?: boolean;
     cwd?: string;
+    selected_surface_id?: string;
     selected_surface_ref?: string;
     surface_count?: number;
     surface_refs?: string[];
@@ -201,7 +218,7 @@ export function redactTerminalPreview(preview: string): string {
 }
 
 function workspaceId(workspace: WorkspaceRpc): string {
-    return workspace.ref ?? workspace.id ?? "workspace:unknown";
+    return workspace.id ?? workspace.ref ?? "workspace:unknown";
 }
 
 function workspaceName(workspace: WorkspaceRpc): string {
@@ -209,19 +226,19 @@ function workspaceName(workspace: WorkspaceRpc): string {
 }
 
 function paneId(pane: PaneRpc): string {
-    return pane.ref ?? pane.id ?? "pane:unknown";
+    return pane.id ?? pane.ref ?? "pane:unknown";
 }
 
 function paneTitle(pane: PaneRpc): string {
-    return pane.title ?? paneId(pane);
+    return pane.title ?? pane.ref ?? paneId(pane);
 }
 
 function surfaceId(surface: SurfaceRpc): string {
-    return surface.ref ?? surface.id ?? "surface:unknown";
+    return surface.id ?? surface.ref ?? "surface:unknown";
 }
 
 function surfaceTitle(surface: SurfaceRpc): string {
-    return surface.title ?? surfaceId(surface);
+    return surface.title ?? surface.ref ?? surfaceId(surface);
 }
 
 async function readSurfacePreview({
@@ -266,7 +283,8 @@ function shouldCapturePreview(previews: SnapshotPreviewMode, selected: boolean):
 
 async function fetchOnePane({
     pane,
-    workspaceId: id,
+    workspaceId: workspace,
+    windowId,
     windowRef,
     container,
     rawWorkspace,
@@ -277,6 +295,7 @@ async function fetchOnePane({
 }: {
     pane: PaneRpc;
     workspaceId: string;
+    windowId?: string;
     windowRef?: string;
     container?: { width: number; height: number };
     rawWorkspace: WorkspaceRpc;
@@ -285,32 +304,32 @@ async function fetchOnePane({
     previews: SnapshotPreviewMode;
     surfaces: Promise<SurfaceLookup>;
 }): Promise<CmuxLivePane> {
-    const selectedSurfaceRef = pane.selected_surface_ref;
     const rawSurfaces =
-        (await surfacesFor)(id, paneId(pane)) ??
-        (await runJson<SurfaceListRpc>(["list-pane-surfaces", "--workspace", id, "--pane", paneId(pane)])).surfaces ??
+        (await surfacesFor)(workspace, paneId(pane)) ??
+        (await runJson<SurfaceListRpc>(["list-pane-surfaces", "--workspace", workspace, "--pane", paneId(pane)]))
+            .surfaces ??
         [];
     const anyMarkedSelected = rawSurfaces.some(
         (surface) => surface.selected_in_pane === true || surface.selected === true
     );
     const surfaces: CmuxLiveSurface[] = await Promise.all(
         rawSurfaces.map(async (surface, index) => {
-            const surfaceRef = surfaceId(surface);
+            const id = surfaceId(surface);
             const selected =
                 surface.selected_in_pane === true || surface.selected === true || (!anyMarkedSelected && index === 0);
 
             return {
-                id: surfaceRef,
+                id,
+                ...(surface.ref ? { ref: surface.ref } : {}),
                 title: surfaceTitle(surface),
                 type: surface.type ?? "terminal",
                 index: surface.index_in_pane ?? surface.index ?? index,
                 selected,
                 active: surface.focused === true || surface.active === true,
                 url: surface.url,
-                ...(surface.id && surface.id !== surfaceRef ? { uuid: surface.id } : {}),
                 ...(surface.tty ? { tty: surface.tty } : {}),
                 preview: shouldCapturePreview(previews, selected)
-                    ? await readSurfacePreview({ run, workspace: id, surface: surfaceRef })
+                    ? await readSurfacePreview({ run, workspace: workspace, surface: id })
                     : undefined,
             };
         })
@@ -320,12 +339,15 @@ async function fetchOnePane({
 
     return {
         id: paneId(pane),
-        workspaceId: pane.workspace ?? id,
+        ...(pane.ref ? { ref: pane.ref } : {}),
+        workspaceId: workspace,
         title: paneTitle(pane),
         active: pane.selected === true || pane.focused === true,
         cwd: pane.cwd ?? rawWorkspace.current_directory,
+        windowId,
         windowRef,
-        selectedSurfaceRef: selectedSurfaceRef ?? selectedSurface?.id,
+        selectedSurfaceId: pane.selected_surface_id ?? selectedSurface?.id,
+        selectedSurfaceRef: pane.selected_surface_ref ?? selectedSurface?.ref,
         surfaceCount: pane.surface_count ?? surfaces.length,
         surfaces,
         frame: pane.pixel_frame,
@@ -343,6 +365,7 @@ async function fetchWorkspacePanes(
 ): Promise<CmuxLivePane[]> {
     const id = workspaceId(rawWorkspace);
     const paneResponse = await runJson<PaneListRpc>(["list-panes", "--workspace", id]);
+    const windowId = paneResponse.window_id;
     const windowRef = paneResponse.window_ref;
     const rawPanes = paneResponse.panes ?? [];
 
@@ -351,6 +374,7 @@ async function fetchWorkspacePanes(
             fetchOnePane({
                 pane,
                 workspaceId: id,
+                windowId,
                 windowRef,
                 container: paneResponse.container_frame,
                 rawWorkspace,
@@ -470,11 +494,18 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
         }
 
         const rawWorkspaces = workspaceLists.flatMap(
-            (list) => list.workspaces?.map((workspace) => ({ workspace, windowRef: list.window_ref })) ?? []
+            (list) =>
+                list.workspaces?.map((workspace) => ({
+                    workspace,
+                    windowId: list.window_id,
+                    windowRef: list.window_ref,
+                })) ?? []
         );
-        const workspaces: CmuxLiveWorkspace[] = rawWorkspaces.map(({ workspace, windowRef }) => ({
+        const workspaces: CmuxLiveWorkspace[] = rawWorkspaces.map(({ workspace, windowId, windowRef }) => ({
             id: workspaceId(workspace),
+            ...(workspace.ref ? { ref: workspace.ref } : {}),
             name: workspaceName(workspace),
+            windowId,
             windowRef,
         }));
 

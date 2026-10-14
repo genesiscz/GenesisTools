@@ -17,7 +17,7 @@ function paneTmuxSessionName(pane: CmuxLivePane): string | undefined {
         return undefined;
     }
 
-    const selected = terminals.find((surface) => surface.id === pane.selectedSurfaceRef || surface.selected);
+    const selected = terminals.find((surface) => surface.id === pane.selectedSurfaceId || surface.selected);
     const chosen = selected ?? terminals[0];
 
     return chosen?.title;

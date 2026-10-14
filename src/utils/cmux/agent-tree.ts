@@ -59,9 +59,10 @@ function keeps(
 }
 
 /**
- * surfaceId AND surfaceRef both key the session, whichever form the RPC reports. Resuming a new
- * session in a tab that hosted an older one leaves both holding the same surface; map iteration
- * follows journal insertion order, not recency, so the newest line must win explicitly.
+ * The surface UUID keys the session. A record's `surface:N` ref never does: it is from the cmux run that
+ * wrote it, and after a relaunch the same ref names another tab. Resuming a new session in a tab that hosted
+ * an older one leaves both on the same surface; map iteration follows journal insertion order, not recency,
+ * so the newest line must win explicitly.
  */
 function surfaceSessionIndex({
     refs,
@@ -84,21 +85,19 @@ function surfaceSessionIndex({
 
         const at = entry.at ?? 0;
 
-        for (const raw of [entry.surfaceId, entry.surfaceRef]) {
-            if (!raw) {
-                continue;
-            }
-
-            // cmux prints UUIDs upper case; the journal keeps whatever the env held.
-            const key = raw.toLowerCase();
-
-            if (index.has(key) && (seenAt.get(key) ?? 0) >= at) {
-                continue;
-            }
-
-            index.set(key, { sessionId, provider: provider ?? null });
-            seenAt.set(key, at);
+        if (!entry.surfaceId) {
+            continue;
         }
+
+        // cmux prints UUIDs upper case; the journal keeps whatever the env held.
+        const key = entry.surfaceId.toLowerCase();
+
+        if (index.has(key) && (seenAt.get(key) ?? 0) >= at) {
+            continue;
+        }
+
+        index.set(key, { sessionId, provider: provider ?? null });
+        seenAt.set(key, at);
     }
 
     return index;
@@ -120,11 +119,7 @@ export async function fetchAgentCmuxTree(options: AgentCmuxTreeOptions = {}): Pr
         providerOf: (entry) => resolveRefsProvider(entry, pins.get(entry.sessionId)),
     });
     const annotated = mapCmuxTreeSurfaces(tree, (surface) => {
-        // The UUID first: the journal's `surface:N` ref is from the cmux run that wrote it, and after a
-        // relaunch every ref is renumbered, so a ref-only lookup found no session for any surface.
-        const session =
-            (surface.uuid ? bySurface.get(surface.uuid.toLowerCase()) : undefined) ??
-            bySurface.get(surface.id.toLowerCase());
+        const session = bySurface.get(surface.id.toLowerCase());
 
         return {
             ...surface,

@@ -100,6 +100,9 @@ describe("buildCmuxHierarchy", () => {
 
 describe("fetchAgentCmuxTree", () => {
     const at = 1_758_700_000_000;
+    const S1 = "11111111-AAAA-4AAA-8AAA-000000000001";
+    const S2 = "11111111-AAAA-4AAA-8AAA-000000000002";
+    const S3 = "11111111-AAAA-4AAA-8AAA-000000000003";
     const livePane: CmuxLivePane = {
         id: "pane:1",
         workspaceId: "workspace:1",
@@ -109,19 +112,32 @@ describe("fetchAgentCmuxTree", () => {
         frame: { x: 0, y: 0, width: 800, height: 600 },
         container: { width: 1600, height: 600 },
         surfaces: [
-            { id: "surface:1", title: "claude", type: "terminal", index: 0, selected: true, active: true },
-            { id: "surface:2", title: "codex", type: "terminal", index: 1, selected: false, active: false },
-            { id: "surface:3", title: "old · 1a2b3c4d", type: "terminal", index: 2, selected: false, active: false },
+            { id: S1, ref: "surface:1", title: "claude", type: "terminal", index: 0, selected: true, active: true },
+            { id: S2, ref: "surface:2", title: "codex", type: "terminal", index: 1, selected: false, active: false },
+            {
+                id: S3,
+                ref: "surface:3",
+                title: "old · 1a2b3c4d",
+                type: "terminal",
+                index: 2,
+                selected: false,
+                active: false,
+            },
         ],
     };
     const snapshot = snapshotOf([workspace("workspace:1")], [livePane]);
 
-    function ref(sessionId: string, surfaceRef: string, provider?: "claude" | "codex"): SessionCmuxRefs {
+    function ref(
+        sessionId: string,
+        surfaceRef: string,
+        provider?: "claude" | "codex",
+        surfaceId: string | null = null
+    ): SessionCmuxRefs {
         return {
             sessionId,
             provider,
             workspaceId: null,
-            surfaceId: null,
+            surfaceId,
             workspaceRef: "workspace:1",
             paneRef: "pane:1",
             surfaceRef,
@@ -136,8 +152,8 @@ describe("fetchAgentCmuxTree", () => {
     const codexId = "bbbbbbbb-2222-7222-8222-222222222222";
     // The Claude line is tagged; the Codex line predates the tag and only its pin names the agent.
     const refs = new Map([
-        [claudeId, ref(claudeId, "surface:1", "claude")],
-        [codexId, ref(codexId, "surface:2")],
+        [claudeId, ref(claudeId, "surface:1", "claude", S1.toLowerCase())],
+        [codexId, ref(codexId, "surface:2", undefined, S2)],
     ]);
     const codexPin: SessionPin = {
         sessionId: codexId,
@@ -179,8 +195,8 @@ describe("fetchAgentCmuxTree", () => {
                     ...livePane,
                     surfaces: [
                         {
-                            id: "surface:9",
-                            uuid,
+                            id: uuid,
+                            ref: "surface:9",
                             title: "nabidky-2.0",
                             type: "terminal",
                             index: 0,
@@ -201,6 +217,20 @@ describe("fetchAgentCmuxTree", () => {
         });
 
         expect(tree.windows[0].workspaces[0].panes[0].surfaces[0].sessionId).toBe(claudeId);
+    });
+
+    // A record without a UUID names a tab only by a ref from its own cmux run, which can be another tab now.
+    test("a journal line with only a ref labels no surface", async () => {
+        const tree = await fetchAgentCmuxTree({
+            ...deps,
+            loadRefs: () => new Map([[claudeId, ref(claudeId, "surface:1", "claude")]]),
+        });
+
+        expect(tree.windows[0].workspaces[0].panes[0].surfaces.map((surface) => surface.sessionId)).toEqual([
+            null,
+            null,
+            null,
+        ]);
     });
 
     test("a provider filter drops the other agents' sessions", async () => {

@@ -256,7 +256,7 @@ function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): Del
         paneTitle,
         surfaceId:
             target.surfaceId ??
-            pane?.selectedSurfaceRef ??
+            pane?.selectedSurfaceId ??
             pane?.surfaces.find((candidate) => candidate.selected)?.id ??
             "",
     };
