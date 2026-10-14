@@ -7,6 +7,7 @@ import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
 import { hitsInAddedLines } from "./probe";
+import { loadRun } from "./run";
 import { conflictedFiles, higherVersionSide, prepGit, resolveVersionConflicts } from "./versions";
 import { pump } from "./watch-workers";
 
@@ -359,4 +360,16 @@ test("the probe for another repository's push fails only on a hit in a line the 
     expect(hitsInAddedLines(probe, diff)).toEqual(["src/a.swift:12"]);
     // The same hits with a diff that adds nothing near them: an older hit does not block the push.
     expect(hitsInAddedLines(probe, "+++ b/src/a.swift\n@@ -1,0 +2,3 @@\n+x")).toEqual([]);
+});
+
+test("a run card for another repository supplies its own verify bullets", () => {
+    const dir = fs.mkdtempSync(join(tmpdir(), "babysit-run-"));
+    fs.writeFileSync(
+        join(dir, "run.json"),
+        SafeJSON.stringify({ repo: "owner/other", verify: ["swift typecheck only"] })
+    );
+    expect(loadRun(dir).verify).toEqual(["swift typecheck only"]);
+    // No list (or a list that is not all strings): fill-brief falls back to this repository's commands.
+    fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "owner/other", verify: [1] }));
+    expect(loadRun(dir).verify).toBeUndefined();
 });
