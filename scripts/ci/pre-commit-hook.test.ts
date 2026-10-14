@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { jsonProblem } from "./check-json";
 
 /**
  * Runs the real `.githooks/pre-commit` in a scratch repository. The hook formats each staged blob by piping it
@@ -233,12 +234,22 @@ beforeAll(() => {
     mkdirSync(join(repo, ".githooks"));
     copyFileSync(join(ROOT, ".githooks", "pre-commit"), join(repo, ".githooks", "pre-commit"));
     chmodSync(join(repo, ".githooks", "pre-commit"), 0o755);
+    mkdirSync(join(repo, "scripts", "ci"), { recursive: true });
+    copyFileSync(join(ROOT, "scripts", "ci", "check-json.ts"), join(repo, "scripts", "ci", "check-json.ts"));
     git("config", "core.hooksPath", ".githooks");
     write("tsconfig.json", '{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true},"files":["ok.ts"]}\n');
     write("ok.ts", "export const ok = 1;\n");
     write(".gitignore", "node_modules\naside\n");
     mkdirSync(join(repo, "aside"));
-    git("add", ".gitignore", "biome.json", "tsconfig.json", "ok.ts", ".githooks/pre-commit");
+    git(
+        "add",
+        ".gitignore",
+        "biome.json",
+        "tsconfig.json",
+        "ok.ts",
+        ".githooks/pre-commit",
+        "scripts/ci/check-json.ts"
+    );
     const init = git("commit", "-qm", "init");
     expect(init.code, init.out).toBe(0);
 });
@@ -292,5 +303,32 @@ describe("pre-commit hook: staged content survives the biome pass", () => {
         expect(readFileSync(join(repo, "src/app/d.ts"), "utf8")).toBe(
             "export const d = 1;\nexport const e = 2;\nexport const f = 3;\n"
         );
+    }, 60_000);
+});
+
+// d9687720a (2026-10-14): a conflict resolver wrote the word `ours` into both plugin manifests. Biome reads only the
+// root's JSON files, so the hook passed it with "Checked 0 files", and the plugin did not load for 12 hours.
+describe("pre-commit hook: staged JSON must parse", () => {
+    const stray = '{\n    "name": "genesis-tools",\nours    "description": "Skills"\n}\n';
+
+    test("tsconfig, .jsonc and .vscode files may carry comments; every other JSON file is strict", () => {
+        expect(jsonProblem("src/app/tsconfig.json", '{ // paths\n    "compilerOptions": {},\n}\n')).toBeNull();
+        expect(jsonProblem(".vscode/settings.json", '{ /* editor */ "a": 1 }')).toBeNull();
+        expect(jsonProblem("plugins/p/.claude-plugin/plugin.json", '{ // version\n    "a": 1\n}\n')).not.toBeNull();
+    });
+
+    test("the stray word fails with comments allowed and without", () => {
+        expect(jsonProblem(".claude-plugin/marketplace.json", stray)).not.toBeNull();
+        expect(jsonProblem("src/app/tsconfig.json", stray)).not.toBeNull();
+    });
+
+    test("a nested manifest that does not parse blocks the commit and is named", () => {
+        write(".claude-plugin/plugin.json", stray);
+        git("add", ".claude-plugin/plugin.json");
+        const commit = git("commit", "-qm", "broken manifest");
+        git("rm", "-q", "--cached", "--", ".claude-plugin/plugin.json");
+        expect(commit.code, commit.out).not.toBe(0);
+        expect(commit.out).toContain("✖ .claude-plugin/plugin.json:");
+        expect(git("log", "-1", "--format=%s").out.trim()).not.toBe("broken manifest");
     }, 60_000);
 });
