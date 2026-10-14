@@ -183,13 +183,19 @@ function resolveEntry(
     tmux: ReadonlyMap<string, TmuxPaneSurface>
 ): ResolvedEntry | null {
     const joined = !entry.surfaceRef && entry.tmuxPane ? (tmux.get(entry.tmuxPane) ?? null) : null;
-    const ref = entry.surfaceRef ?? joined?.surface;
+    // The UUID first: cmux renumbers every `surface:N` ref at a relaunch, so the journal's ref names
+    // nothing (or another tab) afterwards, while the UUID still names the tab the session ran in.
+    const surfaceId = entry.surfaceId?.toLowerCase();
+    const byUuid = surfaceId
+        ? [...tree.surfaces.values()].find((surface) => surface.id?.toLowerCase() === surfaceId)
+        : undefined;
+    const ref = byUuid?.ref ?? entry.surfaceRef ?? joined?.surface;
 
     if (!ref || ref === tree.caller) {
         return null;
     }
 
-    const live = tree.surfaces.get(ref);
+    const live = byUuid ?? tree.surfaces.get(ref);
 
     if (!live?.id) {
         return null;

@@ -1,5 +1,5 @@
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -41,6 +41,22 @@ const HOME = env.tools.getHome();
 
 export const CMUX_REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs.jsonl");
 
+/**
+ * Append one record, in the format the SessionStart / UserPromptSubmit hook writes
+ * (`plugins/genesis-tools/hooks/record-session-cmux.ts`). For a writer that KNOWS which
+ * session runs in which surface without the hook: a restore that typed the resume
+ * itself. The hook only runs where the plugin loaded, and on 2026-10-14 a broken
+ * marketplace manifest kept it off in every session started for twelve hours, so the
+ * tabs those sessions held were unknown at the next relaunch.
+ */
+export function appendSessionCmuxRef(
+    entry: Omit<SessionCmuxRefs, "at"> & { at?: number },
+    refsPath: string = CMUX_REFS_PATH
+): void {
+    mkdirSync(dirname(refsPath), { recursive: true });
+    appendFileSync(refsPath, `${SafeJSON.stringify({ ...entry, at: entry.at ?? Date.now() })}\n`, "utf8");
+}
+
 /** Entries older than this are treated as gone — the pane is long closed. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -51,11 +67,13 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  * is capped at the tail and a truncated first line is dropped.
  *
  * The cap is not free: a session whose ONLY record sits in the truncated head
- * resolves as unrecorded. `MAX_AGE_MS` keeps the journal from growing there in
- * normal use, and the cost when it happens is one stage of the matcher rather
- * than a failure, so the session still resolves from tab titles or a capture.
+ * resolves as unrecorded. The hook writes a line per prompt, so one busy session
+ * fills a small window fast: on 2026-10-14 a 512 KB tail of the 6.8 MB journal
+ * held the last few hours (25 sessions of 129), and a cmux restart lost the tab
+ * of every session idle for longer. The cap is now a runaway guard, not a
+ * window: the whole 6.8 MB file parses in about 10 ms (1 ms for the old tail).
  */
-const MAX_JOURNAL_READ_BYTES = 512 * 1024;
+const MAX_JOURNAL_READ_BYTES = 32 * 1024 * 1024;
 
 function readJournalTail(refsPath: string, historical: boolean = false): string | null {
     if (!existsSync(refsPath)) {

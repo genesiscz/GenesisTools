@@ -41,7 +41,7 @@ describe("fetchCmuxLiveSnapshot", () => {
     test("the optional tree call has its own short timeout, so a stalled tree falls back to per-pane calls quickly", async () => {
         let treeTimeout: number | null | undefined;
         const runJson = async <T>(args: string[], opts?: { timeoutMs?: number | null }): Promise<T> => {
-            if (args[0] === "tree") {
+            if (args.includes("tree")) {
                 treeTimeout = opts?.timeoutMs;
                 throw new Error("cmux tree --all timed out");
             }
@@ -288,7 +288,7 @@ describe("fetchCmuxLiveSnapshot", () => {
                 return { panes: [{ ref: "pane:1" }, { ref: "pane:2" }] } as T;
             }
 
-            if (args[0] === "tree") {
+            if (args.includes("tree")) {
                 const surfaces = [
                     {
                         ref: "surface:1",
@@ -320,7 +320,7 @@ describe("fetchCmuxLiveSnapshot", () => {
             previews: "none",
         });
 
-        expect(calls.filter((args) => args[0] === "tree")).toEqual([["tree", "--all"]]);
+        expect(calls.filter((args) => args.includes("tree"))).toEqual([["--id-format", "both", "tree", "--all"]]);
         expect(calls.filter((args) => args[0] === "list-pane-surfaces")).toEqual([
             ["list-pane-surfaces", "--workspace", "workspace:1", "--pane", "pane:2"],
         ]);

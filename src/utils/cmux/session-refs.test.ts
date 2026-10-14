@@ -63,8 +63,8 @@ test("a record with no cmux surface is not a target", () => {
 });
 
 test("a journal larger than the read cap still resolves the newest entry", () => {
-    // The reader caps at 512 KB of tail. Newest-wins means older bytes cannot
-    // change the answer, so the cap must not change it either.
+    // Newest-wins means older bytes cannot change the answer, so a bound on the
+    // read must not change it either.
     const filler = Array.from({ length: 4000 }, (_, i) =>
         entry({ sessionId: `old-${i}-2222-3333-4444-555555555555`, at: Date.now() - 60_000, note: "x".repeat(200) })
     );
@@ -72,4 +72,16 @@ test("a journal larger than the read cap still resolves the newest entry", () =>
 
     expect(statSync(path).size).toBeGreaterThan(512 * 1024);
     expect(lookupSessionCmuxRefs(SESSION.slice(0, 8), path)?.surfaceId).toBe("surf-newest");
+});
+
+// 2026-10-14: one busy session writes a line per prompt. Behind 512 KB of its lines, a session whose
+// only record was a day old read as unrecorded, and a cmux restart could not find its tab.
+test("a session whose only record sits behind 512 KB of newer lines is still found", () => {
+    const busy = Array.from({ length: 4000 }, () =>
+        entry({ sessionId: "b5b5b5b5-2222-4333-8444-555555555555", surfaceId: "surf-busy", note: "x".repeat(200) })
+    );
+    const path = journal([entry({ surfaceId: "surf-quiet", at: Date.now() - 86_400_000 }), ...busy]);
+
+    expect(statSync(path).size).toBeGreaterThan(512 * 1024);
+    expect(loadAllSessionCmuxRefs(path).get(SESSION.toLowerCase())?.surfaceId).toBe("surf-quiet");
 });

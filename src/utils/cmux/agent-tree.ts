@@ -84,10 +84,13 @@ function surfaceSessionIndex({
 
         const at = entry.at ?? 0;
 
-        for (const key of [entry.surfaceId, entry.surfaceRef]) {
-            if (!key) {
+        for (const raw of [entry.surfaceId, entry.surfaceRef]) {
+            if (!raw) {
                 continue;
             }
+
+            // cmux prints UUIDs upper case; the journal keeps whatever the env held.
+            const key = raw.toLowerCase();
 
             if (index.has(key) && (seenAt.get(key) ?? 0) >= at) {
                 continue;
@@ -117,7 +120,11 @@ export async function fetchAgentCmuxTree(options: AgentCmuxTreeOptions = {}): Pr
         providerOf: (entry) => resolveRefsProvider(entry, pins.get(entry.sessionId)),
     });
     const annotated = mapCmuxTreeSurfaces(tree, (surface) => {
-        const session = bySurface.get(surface.id);
+        // The UUID first: the journal's `surface:N` ref is from the cmux run that wrote it, and after a
+        // relaunch every ref is renumbered, so a ref-only lookup found no session for any surface.
+        const session =
+            (surface.uuid ? bySurface.get(surface.uuid.toLowerCase()) : undefined) ??
+            bySurface.get(surface.id.toLowerCase());
 
         return {
             ...surface,

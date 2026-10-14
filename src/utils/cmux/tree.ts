@@ -13,7 +13,10 @@ import { profiler } from "@genesiscz/utils/profile";
  * `tools ai cmux tree` and `tools claude cmux tree`.
  */
 export interface CmuxTreeSurface {
+    /** The `surface:N` ref; cmux renumbers it at every relaunch. */
     id: string;
+    /** The surface UUID, stable across a relaunch; what the session journal records. */
+    uuid?: string;
     title: string;
     type: string;
     index: number;
@@ -72,6 +75,7 @@ function toTreePane(pane: CmuxLivePane): CmuxTreePane {
         selectedSurfaceId: pane.selectedSurfaceRef,
         surfaces: pane.surfaces.map((surface) => ({
             id: surface.id,
+            ...(surface.uuid ? { uuid: surface.uuid } : {}),
             title: surface.title,
             type: surface.type,
             index: surface.index,

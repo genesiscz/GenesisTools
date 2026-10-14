@@ -64,6 +64,11 @@ export interface CmuxLiveSurface {
     preview?: string;
     url?: string;
     /**
+     * The surface UUID, from `tree --all --id-format both`. `id` is the `surface:N` ref, which cmux
+     * renumbers at every relaunch; the UUID stays, so it is what joins a surface to the session journal.
+     */
+    uuid?: string;
+    /**
      * The terminal's tty (`ttys001`), from `tree --all`. It is what joins a surface to a process: a
      * `tmux attach` client running in it reports the same tty as `#{client_tty}`.
      */
@@ -302,6 +307,7 @@ async function fetchOnePane({
                 selected,
                 active: surface.focused === true || surface.active === true,
                 url: surface.url,
+                ...(surface.id && surface.id !== surfaceRef ? { uuid: surface.id } : {}),
                 ...(surface.tty ? { tty: surface.tty } : {}),
                 preview: shouldCapturePreview(previews, selected)
                     ? await readSurfacePreview({ run, workspace: id, surface: surfaceRef })
@@ -366,7 +372,9 @@ async function treeSurfaces(runJson: CmuxJsonRunner): Promise<SurfaceLookup> {
     const byPane = new Map<string, SurfaceRpc[]>();
 
     try {
-        const tree = await runJson<TreeRpc>(["tree", "--all"], { timeoutMs: TREE_TIMEOUT_MS });
+        // `--id-format both` adds each surface's UUID beside its ref. The refs renumber at every cmux
+        // relaunch; the UUIDs stay, and the session journal records them.
+        const tree = await runJson<TreeRpc>(["--id-format", "both", "tree", "--all"], { timeoutMs: TREE_TIMEOUT_MS });
 
         for (const window of tree.windows ?? []) {
             for (const workspace of window.workspaces ?? []) {

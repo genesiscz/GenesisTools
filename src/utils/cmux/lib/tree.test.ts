@@ -168,6 +168,41 @@ describe("fetchAgentCmuxTree", () => {
         expect(pane.frame).toEqual({ x: 0, y: 0, width: 800, height: 600 });
     });
 
+    // 2026-10-14: after a cmux relaunch every `surface:N` ref is renumbered, so the journal's refs name
+    // nothing live. The UUID survives the relaunch, and it is what finds the session.
+    test("after a relaunch the session is found by surface UUID, not by the renumbered ref", async () => {
+        const uuid = "5E0B4485-9AA4-452E-9814-5C366F66D8C2";
+        const relaunched = snapshotOf(
+            [workspace("workspace:1")],
+            [
+                {
+                    ...livePane,
+                    surfaces: [
+                        {
+                            id: "surface:9",
+                            uuid,
+                            title: "nabidky-2.0",
+                            type: "terminal",
+                            index: 0,
+                            selected: true,
+                            active: true,
+                        },
+                    ],
+                },
+            ]
+        );
+        const journal = new Map([
+            [claudeId, { ...ref(claudeId, "surface:1", "claude"), surfaceId: uuid.toLowerCase() }],
+        ]);
+        const tree = await fetchAgentCmuxTree({
+            ...deps,
+            fetchSnapshot: async () => relaunched,
+            loadRefs: () => journal,
+        });
+
+        expect(tree.windows[0].workspaces[0].panes[0].surfaces[0].sessionId).toBe(claudeId);
+    });
+
     test("a provider filter drops the other agents' sessions", async () => {
         const tree = await fetchAgentCmuxTree({ ...deps, providers: ["claude"] });
         const surfaces = tree.windows[0].workspaces[0].panes[0].surfaces;
