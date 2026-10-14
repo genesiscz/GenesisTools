@@ -18,6 +18,7 @@ One target, folders by job. A file goes where its job is, not where its first ca
 |---|---|
 | `Style/` | hover styles (`.genHover*`, `.genHoverEffect`), `.instantTooltip` + `TooltipGuard`, `.rowButton` / `RowButtonStyle`, `KitPalette` / `KitTheme`, `GenesisKitHost`, `.hoverHighlight()` / `.axMarker(_:)`, `SWR` (stale-while-revalidate: `changed`, `fade`, `rowTransition`, `animation`) + `.swrFlash` |
 | `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data) |
+| `Keymap/` | keyboard shortcuts as data: `KeyChord` (a key by position or by character, plus modifiers; labels in the user's layout), `KeymapLibrary` (an app's commands and default keys), `KeymapConfiguration` + `KeymapStore` (the user's keys, JSON), `Keymap` (both together: keys in force, hints, conflicts, menu items), `KeymapDispatcher` + `.keymapAction` (runs a command from its key), `KeyChordRecorder`, `KeymapHelpView` / `KeymapListView` / `KeymapHelpWindow` (the list, with an editor) |
 | `Media/` | `MediaThumbnailView` (the picture of any image, video or document: off-main decode, file-identity cache, Retina pixel buckets, poster frame and length for a video, a named placeholder with Retry on failure, a click previews it) on `MediaThumbnailCache`; `.mediaPreviewHost()` + `MediaPreviewState` (an in-place Quick Look style preview over a surface, ← / → through the set) and `MediaPreviewKeyboard` (Esc / Space / arrows, for a window's key handler); `ImageViewer.present` (a window that grows from the picture's place: pinch / ⌘± / ⌘0 zoom anchored at the pointer, pan, ← / → through the source's pictures, "Compare with…" as a slider or side by side, same table row first; `ImageViewer.prefetch` on the first click; `ImageViewerSnapshot` renders any state off screen) and `MediaDataURL` (an embedded `data:image/` picture as a private temporary file) |
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`) |
 | `Diff/` | git and diffs for any host: `GenesisKitGTProvider` (the data source, swappable), `GitWorkingTreeSource` + `DiffScope`, `GitDiffView` + `GitScopePicker` + `GitCommitPicker` (popover choosers built when opened, `GitPickerChip`), `GitFileDiffModel`, `GitRepos` (one status per repository, refreshed by git's own folder events), the file state badge and marks, the gutter (`GitGutterModel`, `GitHunks`, `GitHunkPopover`), history and commits (`GitHistoryModel`, `GitCommitList`, `GitRepoPanel`, `GitCommitView`), tree marks, agent blame |
@@ -3461,6 +3462,109 @@ HStack(spacing: 4) {
 .frame(height: 12)
 ```
 
+### Keymap
+
+Keyboard shortcuts as data (Martin, 2026-10-15): every app keeps its keys in one `KeymapLibrary`, the user's own keys
+in a `KeymapConfiguration` beside it, and the menu, the tooltips, the help list and the key handling all read the same
+`Keymap`. Before it, a key lived on a hidden `Button` with `.keyboardShortcut`, a `performKeyEquivalent` override, a
+menu item or an event monitor, matched by character in some places and by key code in others, and a hand-typed
+"(⌘S)" in a tooltip could say anything.
+
+#### Keys: `KeyChord`, `KeyStroke`, `KeyModifiers`
+
+A `KeyChord` is a key and `KeyModifiers` (⌃ ⌥ ⇧ ⌘). The key is one of two kinds, and the choice matters on any
+keyboard that is not US:
+
+- `.code(UInt16)`: a position (virtual key code), whatever the layout types there. Use it for keys picked for where
+  they sit: the two keys right of P (`33`, `30`; "[" and "]" on US, "ú" and ")" on Czech), arrows, Return, F-keys.
+- `.character(String)`: what the key types. Use it for letters (⌘Z follows the Z of a QWERTZ layout) and for
+  symbols whose meaning is the symbol (⌘+ zooms in on whichever key types +).
+
+`matches(_ stroke: KeyStroke)`: a position compares the key code and all four modifiers. A character compares the
+typed character (`charactersIgnoringModifiers`); Shift counts only for a letter or when the chord holds Shift,
+because the layout decides whether a symbol needs Shift (⌘+ is Shift and = on US, one key on Czech).
+`matchesByUSPosition` is the fallback for keys that type no ASCII character: ⌘ with the Czech ě key reaches ⌘2.
+Letters never fall back. `Keymap` matches in three passes (`KeyMatchPass`): positions, then characters, then the
+fallback, so ⇧⌘ on the ú key is Previous Tab even though it also types "/".
+
+Measured on the Czech layout (UCKeyTranslate, 2026-10-15): ⌘ on the number row types "+ ě š č ř ž ý á í é", so a
+chord written as `.character("1", .command)` fires on ⌘⇧ there; "=" sits where US has "-", "-" where US has "/", and
+the US "=" key is a dead key.
+
+Labels: `chord.label` (main actor, the current layout) or `label(layout:)`; "⇧⌘Ú" on Czech, "⇧⌘[" on US, "⌘↩",
+"F6". `SystemKeyLayout` reads the current input source (or a pinned one, `SystemKeyLayout(sourceID:)`) and caches per
+layout; `TableKeyLayout` is a fixed table (`.us`, or a layout in a test). The saved form is `description`:
+`"shift+cmd+code:33"`, `"cmd+char:+"`. `KeyChord.recorded(_:)` is what a recorder keeps: an ASCII letter by
+character, every other key by position. `menuKeyEquivalent` is the string for an `NSMenuItem`.
+
+#### Commands: `KeymapCommand`, `KeymapLibrary`, `KeymapScope`
+
+```swift
+static let library = KeymapLibrary(id: "markdown", title: "Markdown Viewer", commands: [
+    KeymapCommand("markdown.tab.next", "Next Tab", group: "Tabs", keys: [.code(30, [.shift, .command])]),
+    KeymapCommand("markdown.view.bigger", "Bigger Text", group: "View",
+                  keys: [.character("+", .command), .character("=", .command)]),
+    KeymapCommand("markdown.find.next", "Next Match", group: "Find", keys: [.character("g", .command)],
+                  scope: "markdown.find"),
+    KeymapCommand("markdown.app.quit", "Quit", group: "Window", keys: [.character("q", .command)], scope: .app,
+                  configurable: false),
+])
+```
+
+An id is dotted and stable (it is saved in the user's file). `detail` is one more sentence for the help list. A
+command with `configurable: false` (Return in a field, Copy) is listed in the help but not offered in the editor;
+list it anyway, so the conflict check knows the key is taken. `scope`: `.window` (default), `.app` (the menu bar: it
+meets every scope but `.global`), `.global` (system-wide), or a name of your own for a part that comes and goes (a
+find bar, a sheet, a text view). Two commands in one scope must not share a key; a narrower scope may reuse a
+window key, because its handler is newer and takes the key only while it is on screen.
+
+#### The user's keys: `KeymapConfiguration`, `KeymapStore`
+
+Only what differs from the defaults is saved, by command id; an empty list turns the key off.
+`KeymapStore.standard(library:)` is `<GenesisKitHost.keymapDirectory>/<library id>.json`, else
+`~/Library/Application Support/GenesisKit/Keymaps`. A missing file is no override; an unreadable one is logged and
+ignored until the next save.
+
+#### In force: `Keymap`
+
+`@MainActor ObservableObject`, one per library and process (a `static let shared = Keymap(library: library)`).
+`chords(for:)`, `chord(for:)`, `label(for:)` ("⇧⌘Ú" or nil), `hint("Save", id)` ("Save (⌘S)", the tooltip
+convention), `isCustomized(_:)`, `setChords(_:for:)` (the defaults again clear the override), `reset(_:)`,
+`resetAll()`, `reload()`, `commands(for: KeyStroke, in: scopes)`, `conflicts()`, `commands(using:besides:)` (what a
+recorder warns about), and `bind(_ item: NSMenuItem, to: id)`, which keeps a menu item's key current.
+
+Tests: `Keymap(library:store: nil, layout: TableKeyLayout(...))` keeps changes in memory and names keys from a table.
+
+#### Running commands: `KeymapDispatcher`, `.keymapAction`
+
+One local key-down monitor per process. A press goes to the live handlers of its window (that window's own first,
+then app-wide ones, each newest first) before any view, the menu or SwiftUI's shortcuts see it; a press no handler
+takes goes on unchanged. A chord with no ⌘ and no ⌃ never fires while text input (an editable text view, a field
+editor, a web view) has the focus.
+
+- SwiftUI: `.keymapAction("markdown.file.pdf", in: keymap, enabled: canExport) { exportPDF() }`, in place of a hidden
+  `Button(...).keyboardShortcut(...)`. It is live while the view is in a window; where `ViewThatFits` keeps several
+  copies alive, the newest runs.
+- AppKit: `KeymapDispatcher.shared.register(id, in: keymap, window: window) { ... }` returns a `KeymapRegistration`;
+  hold it (it ends when released or cancelled). `window: nil` is any window of the app.
+- A menu item shows the key (`keymap.bind(item, to: id)`) and runs on a click; the handler above takes the key.
+  A SwiftUI menu (`Commands`, `MenuBarExtra`) shows it with `.keymapShortcut(id, in: keymap)`
+  (`KeyChord.keyboardShortcut`); SwiftUI then runs it by character, so register it with the dispatcher as well when
+  it must work by position or on another layout.
+- A text view that handles its own keys asks `keymap.commands(for: KeyStroke(event)!, in: [scope])`
+  (`MarkdownKeymap.sourceCommand(for:)`).
+
+#### Showing and changing keys: `KeymapHelpWindow`, `KeymapHelpView`, `KeymapListView`, `KeyChordRecorder`, `KeyCaps`
+
+`KeymapHelpWindow.show(keymap)` opens one window per library: a search field, the commands by group with their keys
+as `KeyCaps`, "Changed" on a user key, an orange line on a key two commands share, and "Change Keys…", which turns each
+row into a `KeyChordRecorder` with buttons for no key and for the default. `KeymapListView(keymap:editing:)` is the
+same list for a settings page. The recorder needs ⌘, ⌃ or ⌥ (a function key may stand alone), refuses macOS's own
+keys (⌘Tab, ⌘Space, ⌘`, ⇧⌘3/4/5), and suspends the dispatcher while it listens. Ids: `keymap-search`, `keymap-edit`,
+`keymap-restore-all`, `keymap-row-<id>`, `keymap-recorder-<id>`, `keymap-conflict-<id>`.
+
+The markdown viewer is the first library (`Markdown/Window/MarkdownKeymap.swift`).
+
 ### Markdown
 
 The Markdown folder is the Genesis Markdown viewer: one window with tabs that reads and edits markdown and other text files, plus building blocks for a host that draws markdown in its own screens. A host runs the viewer as its own process with `MarkdownViewerApp.run(_:)` and a `MarkdownViewerAppConfiguration`, or keeps its own process and opens files with `MarkdownDocumentWindowController.shared.show(paths:focus:range:)`. `GenesisKitMarkdownConfiguration.shared` holds the viewer's tunables, which the window reads live, and the markdown members of `GenesisKitHost` lend it the notes vault, completion values, the default-app offer and the `tools` binary. For markdown inside a host's own screens, `MarkdownContentView` with a tunable `MarkdownStyle` draws it natively (a host's find marks it through `MarkdownFindMarks`), `MarkdownPreviewView` is a scrolling reading pane, `MarkdownWebPage` is the offline web renderer, and `MarkdownRenderer` names the three engines. The parsers and helpers (`MarkdownBlocks`, `WikilinkParser`, `MarkdownLineRange`, `MarkdownDocumentLinks`, `MarkdownFrontmatter`, `VaultIndex`) are public and need no view. The window's own parts (documents model and view, web view, toolbar, path bar, source editor, find panel, status bar, outline, file tree, hover preview, go to sheet, conflict banner, export, drop, default app dialog, dashboard share) are internal to GenesisKit, so a host reaches them only through the window controller and the configuration.
@@ -3923,9 +4027,9 @@ NSApplication.shared.delegate = delegate
 
 #### `MarkdownViewerMenu`
 
-The menu bar of the viewer process. It carries only what the window needs, because the document shortcuts already live on the buttons inside the window. The type is `@MainActor`.
+The menu bar of the viewer process. Its keys come from `MarkdownKeymap` (`Keymap.bind`), so a key the user changes shows there too; the window's commands take the key press first (`MarkdownKeymap.registerWindowCommands`), so the menu shows the key and runs on a click. The type is `@MainActor`.
 
-- `static func build(appName: String) -> NSMenu`: builds the main menu with these menus. The app menu has Hide, Hide Others, Show All and Quit, and "Set as Default App..." first when `GenesisKitHost.markdownDefaultAppBundleID` is set. The File menu has Close Tab (command W), Close Window (shift command W), Go to Location (shift command G) and Save (command S). The Edit menu has Undo, Redo, Cut, Copy, Paste and Select All, which the text views need to receive those shortcuts. The Window menu has Minimize and Zoom.
+- `static func build(appName: String) -> NSMenu`: builds the main menu with these menus. The app menu has Hide, Hide Others, Show All and Quit, and "Set as Default App..." first when `GenesisKitHost.markdownDefaultAppBundleID` is set. The File menu has Close Tab, Close Window, Go to Location and Save. The Edit menu has Undo, Redo, Cut, Copy, Paste and Select All, which the text views need to receive those shortcuts. The Go menu has Back and Forward (the notes shown, ⌘ with the two keys right of P by default; a closed tab opens again), Next Tab, Previous Tab and Reopen Closed Tab; Back, Forward and the tab items are dimmed when there is nowhere to go. The Window menu has Minimize and Zoom. The Help menu has Keyboard Shortcuts (⇧⌘K), the list of every viewer key with "Change Keys…" (`KeymapHelpWindow`).
 
 ```swift
 let menu = MarkdownViewerMenu.build(appName: "Example Markdown")
