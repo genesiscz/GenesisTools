@@ -67,7 +67,12 @@ struct VaultCaller {
     /// The script an interpreter runs (`bun run …/src/ai/commands/usage/poll-daemon.ts`): with the executable, the
     /// identity a remembered approval is for.
     var script: String? {
-        scriptIndex.flatMap { args?.arguments[$0] }
+        guard let raw = scriptIndex.flatMap({ args?.arguments[$0] }) else { return nil }
+        if raw.hasPrefix("/") { return (raw as NSString).standardizingPath }
+        // `bun scratch/x.ts` names a different program in every folder: remembered as typed, an approval matched
+        // the same relative path anywhere (live check, 2026-10-15 00:49). Without the working folder it is unknown.
+        guard let cwd else { return nil }
+        return ((cwd as NSString).appendingPathComponent(raw) as NSString).standardizingPath
     }
 
     /// bun, node, deno, or a `gt-<tool>` link of bun: the program is the script, not the executable.

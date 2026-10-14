@@ -51,6 +51,9 @@ final class VaultUnlockTests: XCTestCase {
         let hook = caller(arguments: ["gt-claude", "/repo/hooks/statusline.ts"])
         XCTAssertEqual(hook.toolName, "claude", "no src/<tool>/ in the script: the gt- link names the tool")
 
+        let relative = caller("/Users/alice/.bun/bin/bun", arguments: ["/Users/alice/.bun/bin/bun", "scratch/../scratch/x.ts"])
+        XCTAssertEqual(relative.script, "/Users/alice/project/scratch/x.ts", "a relative script is the one in the caller's folder")
+
         let bare = caller("/Users/alice/.bun/bin/bun", arguments: ["/Users/alice/.bun/bin/bun", "repl"])
         XCTAssertNil(bare.script)
         XCTAssertEqual(bare.onceOnlyReason, "the script it runs is not known")
