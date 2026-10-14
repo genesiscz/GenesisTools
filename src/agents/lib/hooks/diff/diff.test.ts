@@ -22,7 +22,7 @@ import { commandSlices, formatEntry, readDiffLog, readMessage } from "../diff-lo
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
-import { readOnlyCommand } from "./attribution";
+import { readOnlyCommand, recordTouches } from "./attribution";
 import { beforeCopy } from "./before";
 import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
 import { claimChange, claimFileName } from "./claim";
@@ -3418,7 +3418,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
                 dress: themedDress({ palette, path: "x.ts", width }),
             };
         };
-        const budget = (bytes: number) => ({ ...quiet, maxMessageChars: bytes });
+        const budget = (bytes: number) => ({ ...quiet, fill: "terminal" as const, maxMessageChars: bytes });
         const rows = (message: string) =>
             message.split("\n").filter((line) => /[+-](old|new) line/.test(stripAnsi(line)));
 
@@ -3431,6 +3431,26 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         const tight = rows(assembleMessage([themed(60)], budget(plainBytes + 50)));
         expect(tight).toHaveLength(2);
         expect(tight.every((line) => Bun.stringWidth(stripAnsi(line)) < 60)).toBe(true);
+    });
+
+    it("fills the changed rows of a block to its widest row by default, so a narrower pane does not wrap them", () => {
+        const patch = ["@@ -1,2 +1,2 @@", "-old line that is long", "+new", " same"].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.ts", width: 120 }),
+        };
+        const message = assembleMessage([block], { ...quiet, maxMessageChars: 100_000 });
+        const widths = message
+            .split("\n")
+            .filter((line) => /[+-](old|new)/.test(stripAnsi(line)))
+            .map((line) => Bun.stringWidth(stripAnsi(line)));
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.fill).toBe("block");
+        expect(widths).toHaveLength(2);
+        expect(widths[0]).toBe(widths[1]);
+        expect(widths[0]).toBeLessThan(40);
     });
 
     it("wraps a long row under its own content, band and colour carried onto every part", () => {
@@ -3763,6 +3783,48 @@ describe("the misfires of 2026-10-14", () => {
         } finally {
             rmSync(callDir("claude", "gt-diff-test", abandoned.toolUseId ?? ""), { recursive: true, force: true });
             git(["checkout", "-q", "--", "kept.ts"]);
+        }
+    });
+
+    it("leaves a file inside a folder the command names to the actor that recorded editing it", () => {
+        const folder = join(repo, "lib-folder");
+        const target = join(folder, "wizard.ts");
+
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(target, "one\n");
+        git(["add", "-A"]);
+        git(["commit", "-qm", "folder"]);
+
+        const mine = begin({ command: "bun run codegen lib-folder/" });
+
+        writeFileSync(target, "one\nOTHER-AGENT\n");
+        recordTouches([
+            { session: "gt-other:agent-y", start: Date.now() - 500, end: Date.now(), kind: "named", path: target },
+        ]);
+
+        try {
+            expect(runDiffPost({ payload: mine, config: plain }).files).not.toContain(target);
+        } finally {
+            git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
+        }
+    });
+
+    it("negative control: a file the command names exactly stays its own, and the log says why", () => {
+        const target = join(repo, "lib-folder", "wizard.ts");
+        const mine = begin({ command: `bun /x/fix.ts ${target}` });
+
+        writeFileSync(target, "one\nMINE-EXACTLY\n");
+        recordTouches([
+            { session: "gt-other:agent-y", start: Date.now() - 500, end: Date.now(), kind: "named", path: target },
+        ]);
+
+        try {
+            const decision = runDiffPost({ payload: mine, config: plain });
+
+            expect(decision.files).toContain(target);
+            expect(decision.attributed?.[target]).toBe("named");
+        } finally {
+            git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
         }
     });
 

@@ -53,6 +53,8 @@ export interface DiffLogEntry {
     elided?: number;
     dropped?: number;
     fullDiff?: string;
+    /** Why each printed file counted as the call's (logged since 2026-10-15): named, named folder, mentioned, runner, writer. */
+    attributed?: Record<string, string>;
 }
 
 type LogRecord = Record<string, unknown>;
@@ -140,6 +142,7 @@ export function readDiffLog(options: { logPath: string; since: number; session?:
             elided: typeof record.elided === "number" ? record.elided : undefined,
             dropped: typeof record.dropped === "number" ? record.dropped : undefined,
             fullDiff: typeof record.fullDiff === "string" ? record.fullDiff : undefined,
+            attributed: attributedOf(record.attributed),
         });
     }
 
@@ -491,6 +494,36 @@ function namedBy(command: string | undefined, path: string): boolean {
     return command?.includes(basename(path)) === true;
 }
 
+function attributedOf(value: unknown): Record<string, string> | undefined {
+    if (typeof value !== "object" || value === null) {
+        return undefined;
+    }
+
+    return Object.fromEntries(
+        Object.entries(value).filter((pair): pair is [string, string] => typeof pair[1] === "string")
+    );
+}
+
+/** What the post record says made a printed file the call's, or a guess from the command text for older records. */
+function attributionNote(entry: DiffLogEntry, path: string, colours: LogColours): string {
+    const label = path.replace(/^…/, "");
+    const recorded = Object.entries(entry.attributed ?? {}).find(([file]) => file.endsWith(label))?.[1];
+    const meaning: Record<string, string> = {
+        named: "named by the command",
+        "named folder": "inside a folder the command names",
+        mentioned: "mentioned earlier in the session",
+        runner: "changed while it ran, no other writer known",
+        writer: "reported by a writer's journal",
+    };
+
+    if (recorded) {
+        const text = meaning[recorded] ?? recorded;
+        return recorded === "named" ? text : colours.yellow(text);
+    }
+
+    return namedBy(entry.command, path) ? "named by the command" : colours.yellow("NOT named by the command");
+}
+
 function decisionWord(decision: string, colours: LogColours): string {
     if (decision === "emitted") {
         return colours.green(decision);
@@ -567,9 +600,7 @@ export function formatEntry(entry: DiffLogEntry, options: FormatOptions): string
                     block.changedShown >= changed
                         ? "every changed line shown"
                         : colours.yellow(`${block.changedShown} of ${changed} changed lines shown`);
-                const named = namedBy(entry.command, block.path)
-                    ? "named by the command"
-                    : colours.yellow("NOT named by the command");
+                const named = attributionNote(entry, block.path, colours);
                 const counts = `${colours.green(`+${block.added}`)} ${colours.red(`-${block.removed}`)}`;
                 lines.push(`     -> ${block.verb} ${colours.bold(block.path)} (${counts}): ${shown}, ${named}`);
             }

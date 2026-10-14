@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import {
+    FILL_MODES,
     type HarnessName,
     HIGHLIGHT_MODES,
     type HookOutcome,
@@ -42,6 +43,7 @@ export const SETTABLE_KEYS = [
     "diff.othersSummary",
     "diff.theme",
     "diff.highlight",
+    "diff.fill",
     "diff.columns",
     "diff.fullDiff",
     "diff.replaceNative",
@@ -310,6 +312,17 @@ export function applySetting(
         throw new Error(
             `unknown key: ${key}. Settable: unpushed.enabled, maxCommits, maxAgeMinutes, remindEveryMinutes`
         );
+    }
+
+    if (key === "diff.fill") {
+        const mode = FILL_MODES.find((candidate) => candidate === value);
+
+        if (!mode) {
+            throw new Error(`${key} takes ${FILL_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.fill = mode;
+        return next;
     }
 
     if (key === "diff.highlight") {

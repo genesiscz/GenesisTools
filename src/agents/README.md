@@ -197,6 +197,11 @@ the call's full diff (`diff.fullDiff`: `genesis`, `path` or `off`). The `genesis
 only while the browser router routes Markdown on this Mac; otherwise the message names the path.
 `tools agents hooks diff show <call>` prints it too.
 
+`diff.fill` sets how far a changed row's band reaches. `block` (default) fills to the widest row of
+the file. `terminal` fills to the pane's width, like Claude Code's own diff; but a hook message is fixed
+text, so when the pane later gets narrower, every row wraps into an empty band row. `none` ends the band
+with the text.
+
 A file with more than `diff.maxBlockLines` (400) changed lines prints its header and a count only,
 and the message links its full diff. A named file in a temp folder outside every git work tree (a
 PR body, a repro script) is not printed unless `diff.showTempScratch` is on.

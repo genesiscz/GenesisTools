@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import type { DiffConfig } from "../config";
+import type { DiffConfig, FillMode } from "../config";
 import type { DiffCategory } from "./classify";
 import type { ChangedFile } from "./collect";
 import type { Palette } from "./theme";
@@ -445,6 +445,8 @@ export interface RowShape {
     width: number;
     fill: boolean;
     painted?: string;
+    /** Content columns the band fills to; the full `width` when unset. */
+    fillTo?: number;
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: classifies ANSI escape sequences
@@ -538,7 +540,7 @@ function themedRow({ line, palette, shape }: { line: PatchLine; palette: Palette
     return wrapVisible(shown, columns)
         .map((row, at) => {
             const head = at === 0 ? `${band}${DIM}${number}${UNDIM} ${mark}` : `${band}${" ".repeat(INDENT)}`;
-            const room = columns - row.width;
+            const room = (shape.fillTo === undefined ? columns : Math.min(columns, shape.fillTo)) - row.width;
             // A row whose last span restored the band (a word highlight does) needs no second copy of it.
             const reopen = row.text.endsWith(band) ? "" : band;
             const fill = shape.fill && band && room > 0 ? `${reopen}${" ".repeat(room)}` : "";
@@ -829,6 +831,22 @@ function textLength(text: string): number {
 }
 
 /**
+ * The right edge of a `block` fill: the widest kept row of the file plus two columns. A hook message
+ * is fixed text, so a band padded to the terminal's width wrapped into an empty band row under every
+ * row once the pane got narrower (2026-10-15 01:17: rows of 163 columns, padded for a 170-column pane
+ * that was 167 columns by then). A block-wide band wraps only where the text itself would.
+ */
+function blockWidth(body: PatchLine[], held: Set<number> | undefined): number {
+    let widest = 0;
+
+    for (const at of held ?? []) {
+        widest = Math.max(widest, Bun.stringWidth(body[at]?.content ?? ""));
+    }
+
+    return widest + 2;
+}
+
+/**
  * Spends what the content left on the full-width band of every kept changed row, while it fits.
  * Colour and wrapping are already in the rows (`prepareThemed`); the fill is the one luxury left.
  * Returns the budget left.
@@ -838,13 +856,19 @@ function dressBlocks({
     kept,
     tinted,
     budget,
+    fill,
 }: {
     blocks: DiffBlock[];
     kept: Set<number>[];
     tinted: Map<number, string>[];
     budget: number;
+    fill: FillMode;
 }): number {
     let left = budget;
+
+    if (fill === "none") {
+        return left;
+    }
 
     blocks.forEach((block, index) => {
         const dress = block.dress;
@@ -852,6 +876,8 @@ function dressBlocks({
         if (!dress || dress.width <= 0) {
             return;
         }
+
+        const fillTo = fill === "block" ? blockWidth(block.body, kept[index]) : undefined;
 
         for (const at of [...(kept[index] ?? [])].sort((first, second) => first - second)) {
             const line = block.body[at];
@@ -867,6 +893,7 @@ function dressBlocks({
                     width: dress.width,
                     fill: true,
                     painted: dress.painted?.[at],
+                    fillTo,
                 },
             });
             const extra = textLength(next) - textLength(line.text);
@@ -952,7 +979,7 @@ export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: 
         }
     }
 
-    left = dressBlocks({ blocks, kept, tinted, budget: left });
+    left = dressBlocks({ blocks, kept, tinted, budget: left, fill: config.fill });
 
     blocks.forEach((block, index) => {
         const held = kept[index];

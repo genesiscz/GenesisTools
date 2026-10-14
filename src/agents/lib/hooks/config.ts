@@ -59,6 +59,13 @@ export interface DiffConfig {
      */
     highlight: HighlightMode;
     /**
+     * How far a changed row's band reaches. `block` (default): the widest row of the file, so a pane
+     * made narrower after the message was printed wraps only the rows that are long anyway. `terminal`:
+     * the pane's width, like Claude Code's own diff; a hook message is fixed text, so once the pane gets
+     * narrower every row wraps into an empty band row. `none`: the band ends with the text.
+     */
+    fill: FillMode;
+    /**
      * How a block looks; see `diff/theme.ts`. `claude` copies Claude Code's own Bash diff in the
      * theme Claude Code is set to, so the hook can replace that diff (`bashEditDiffEnabled: false`)
      * without a change of look. `classic` is the original look.
@@ -337,6 +344,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxCaptureMB: 8,
         maxCaptureFileMB: 0.256,
         highlight: "256",
+        fill: "block",
         theme: "claude",
         columns: "auto",
         fullDiff: "genesis",
@@ -550,6 +558,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             fallback: base.maxCaptureFileMB,
         }),
         highlight: highlightOr(stored?.highlight, base.highlight),
+        fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
         theme: themeOr(stored?.theme, base.theme),
         columns: columnsOr(stored?.columns, base.columns),
         fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
@@ -589,6 +598,9 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         harnesses: mergedHarnesses(stored?.harnesses),
     };
 }
+
+export const FILL_MODES = ["block", "terminal", "none"] as const;
+export type FillMode = (typeof FILL_MODES)[number];
 
 export const HIGHLIGHT_MODES = ["256", "truecolor", "none"] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
@@ -732,6 +744,12 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
         if (typeof value === "boolean") {
             checked[key] = value;
         }
+    }
+
+    const fill = FILL_MODES.find((mode) => mode === stored.fill);
+
+    if (fill) {
+        checked.fill = fill;
     }
 
     const highlight: unknown = stored.highlight;

@@ -51,7 +51,7 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { fullDiffLine, writeFullDiff } from "./full";
-import { appendMentions, canonical, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
+import { appendMentions, canonical, covers, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
 import { terminalColumns } from "./terminal";
@@ -67,6 +67,8 @@ export interface DiffDecision {
     files: string[];
     /** Changed files left to another writer, for the decision log. */
     others?: string[];
+    /** Why each printed file counted as this call's: named, named folder, mentioned, runner or writer. */
+    attributed?: Record<string, string>;
     /** What the message carried, for the decision log and `diff log`. */
     stats?: { chars: number; blocks: number; elided: number; dropped: number; fullDiff?: string };
     /** Set on a background call's diff, taken when its task ended (`flushDeferred`). */
@@ -862,6 +864,7 @@ export function runDiffPost({
     const native = new Set(diff.standDownWhenNative ? payload.nativeDiffFiles : []);
     const blocks: DiffBlock[] = [];
     const files: string[] = [];
+    const attributed: Record<string, string> = {};
     const captures: CapturedEdit[] = [];
     // The render cap bounds the diff blocks only. A command that edits files keeps scanning
     // past it, so the session change log gets every file it touched; a read-only command
@@ -1042,6 +1045,10 @@ export function runDiffPost({
             }
 
             files.push(file.path);
+            attributed[file.path] =
+                kind === "named" && !covers({ mentions: attribution.named, file: file.path, root, reach: "file" })
+                    ? "named folder"
+                    : kind;
             blocks.push(block);
         }
 
@@ -1161,6 +1168,7 @@ export function runDiffPost({
         }
 
         files.push(change.path);
+        attributed[change.path] = namedPaths.has(change.path) ? "named" : "writer";
         blocks.push(block);
     }
 
@@ -1245,6 +1253,7 @@ export function runDiffPost({
         reason: "rendered a diff the harness did not",
         message,
         files,
+        attributed,
         others,
         stats: {
             chars: message.length,

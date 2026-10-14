@@ -478,16 +478,31 @@ export function attribute({
         return "others";
     }
 
-    if (covers({ mentions: context.named, file, root, reach: "deep" })) {
+    if (covers({ mentions: context.named, file, root, reach: "file" })) {
         return "named";
     }
 
     // Before the mention index, which is per SESSION: a subagent's Edit, or a parallel call, puts the
     // file there too, and the call that happened to finish first used to print it (2026-10-14:
-    // `tools grok usage --help` showed a sibling's `agents-bridge.ts +1-1`). A file another actor
-    // touched during this call, or another call in flight names, is that actor's.
-    if (context.siblings().has(file) || context.others().has(file)) {
+    // `tools grok usage --help` showed a sibling's `agents-bridge.ts +1-1`). A file another actor NAMED
+    // during this call (its Edit, its command), or another call in flight names, is that actor's. An
+    // "ambiguous" or "runner" touch is no such evidence: that actor did not know either.
+    if (
+        context.siblings().has(file) ||
+        context
+            .others()
+            .get(file)
+            ?.some((touch) => touch.kind === "named")
+    ) {
         return "others";
+    }
+
+    // A FOLDER the command names covers every file in it, which says less than naming the file: it
+    // comes after another actor's record. 2026-10-15 01:15: a gate's `bun test src/`, run in a worktree
+    // after `cd $G`, also resolved against the first `cd` and claimed a subagent's `wizard.ts` edit
+    // recorded 2 s earlier.
+    if (covers({ mentions: context.named, file, root, reach: "deep" })) {
+        return "named";
     }
 
     if (covers({ mentions: context.mentions(), file, root, reach: "file" })) {
