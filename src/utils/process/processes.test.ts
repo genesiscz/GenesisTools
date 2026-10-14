@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
+import { skip } from "@genesiscz/utils/test/skip";
 import * as kernel from "./libproc-table";
 import * as linux from "./linux-proc";
 import {
@@ -583,26 +585,32 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         expect(files.some((file) => file.name.includes(`:${server.port} (LISTEN)`))).toBe(true);
     });
 
-    test("a moved executable keeps its inode, as lsof -d txt reports it", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "moved-exe-"));
-        const exe = join(dir, "first-name");
-        const darwin = process.platform === "darwin";
-        copyFileSync(darwin ? process.execPath : "/bin/sleep", exe, constants.COPYFILE_FICLONE);
-        const child = Bun.spawn([exe, ...(darwin ? ["-e", "setTimeout(() => {}, 30000)"] : ["30"])], {
-            stdout: "ignore",
-            stderr: "ignore",
-            env: process.env,
-        });
+    // The move is the point, so the file the process started from must leave its path. On macOS that is a new
+    // executable renamed at once, which crashed syspolicyd five times on 2026-10-14 and froze the Mac, so there it
+    // runs only on request (RUN_LIVE=1). Linux has no syspolicyd and runs it every time.
+    test.skipIf(process.platform === "darwin" && skip.live)(
+        "a moved executable keeps its inode, as lsof -d txt reports it",
+        async () => {
+            const dir = mkdtempSync(join(tmpdir(), "moved-exe-"));
+            const exe = join(dir, "first-name");
+            const darwin = process.platform === "darwin";
+            copyFileSync(darwin ? process.execPath : "/bin/sleep", exe, constants.COPYFILE_FICLONE);
+            const child = Bun.spawn([exe, ...(darwin ? ["-e", "setTimeout(() => {}, 30000)"] : ["30"])], {
+                stdout: "ignore",
+                stderr: "ignore",
+                env: process.env,
+            });
 
-        try {
-            const inode = statSync(exe).ino;
-            renameSync(exe, join(dir, "moved-name"));
-            expect(executableInode(child.pid)).toBe(inode);
-        } finally {
-            child.kill();
-            await child.exited;
+            try {
+                const inode = statSync(exe).ino;
+                renameSync(exe, join(dir, "moved-name"));
+                expect(executableInode(child.pid)).toBe(inode);
+            } finally {
+                child.kill();
+                await child.exited;
+            }
         }
-    });
+    );
 
     test("the whole table agrees with ps on who is whose parent", () => {
         const fromPs = new Map(
@@ -722,11 +730,14 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
 
     test("a name the kernel cut matches only in full", async () => {
         // A real executable with a 25-byte name: the kernel name comes from the file, not from a symlink or a script.
-        // macOS runs a copy of bun (an APFS clone, instant); a copied system binary is refused there.
-        const dir = mkdtempSync(join(tmpdir(), "long-name-"));
-        const exe = join(dir, "genesis-long-process-name");
+        // macOS runs a copy of bun (an APFS clone, instant); a copied system binary is refused there. The copy is a
+        // persistent fixture: a new executable per run, deleted with the temp root, crashed syspolicyd on 2026-10-14.
         const darwin = process.platform === "darwin";
-        copyFileSync(darwin ? process.execPath : "/bin/sleep", exe, constants.COPYFILE_FICLONE);
+        const source = darwin ? process.execPath : "/bin/sleep";
+        const { size, mtimeMs } = statSync(source);
+        const exe = persistentFixture("genesis-long-process-name", `${source}:${size}:${mtimeMs}`, (path) =>
+            copyFileSync(source, path, constants.COPYFILE_FICLONE)
+        );
         const child = Bun.spawn([exe, ...(darwin ? ["-e", "setTimeout(() => {}, 30000)"] : ["30"])], {
             stdout: "ignore",
             stderr: "ignore",

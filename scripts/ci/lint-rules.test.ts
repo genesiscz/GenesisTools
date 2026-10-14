@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { applyProcessToolBaseline, checkSource, pluginsDisabledFor, renderProcessToolBaseline } from "./lint-rules";
 
 /**
@@ -327,17 +328,33 @@ describe("swift-wait-without-timeout", () => {
     });
 });
 
+/**
+ * A fake tool the wrapper starts, made once per body and kept: a new script per run, deleted with the run's folder,
+ * was one of the executables syspolicyd crashed on when the Mac froze on 2026-10-14.
+ */
+function fakeTool(name: string, body: string): string {
+    return persistentFixture(name, body, (path) => {
+        writeFileSync(path, body);
+        chmodSync(path, 0o755);
+    });
+}
+
 describe("lint-changed wrapper dispatch", () => {
     test("Swift-only and empty diffs still run repo rules while Biome remains scoped", () => {
         const dir = mkdtempSync(join(tmpdir(), "lint-changed-"));
         const trace = join(dir, "trace");
+        const bun = fakeTool(
+            "bun",
+            '#!/bin/sh\nprintf "bun %s\\n" "$*" >> "$LINT_TRACE"\nexit "${FAKE_BUN_EXIT:-0}"\n'
+        );
+        const biome = fakeTool("biome", '#!/bin/sh\nprintf "biome %s\\n" "$*" >> "$LINT_TRACE"\n');
         const run = (args: string[], extraEnv: Record<string, string> = {}) =>
             spawnSync(args[0]!, args.slice(1), {
                 cwd: dir,
                 encoding: "utf8",
                 env: {
                     ...process.env,
-                    PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}`,
+                    PATH: `${dirname(bun)}:${process.env.PATH ?? ""}`,
                     LINT_TRACE: trace,
                     ...extraEnv,
                 },
@@ -346,18 +363,8 @@ describe("lint-changed wrapper dispatch", () => {
         try {
             mkdirSync(join(dir, "scripts", "ci"), { recursive: true });
             mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
-            mkdirSync(join(dir, "bin"), { recursive: true });
             cpSync(join(import.meta.dir, "lint-changed.sh"), join(dir, "scripts", "ci", "lint-changed.sh"));
-            writeFileSync(
-                join(dir, "node_modules", ".bin", "biome"),
-                '#!/bin/sh\nprintf "biome %s\\n" "$*" >> "$LINT_TRACE"\n'
-            );
-            writeFileSync(
-                join(dir, "bin", "bun"),
-                '#!/bin/sh\nprintf "bun %s\\n" "$*" >> "$LINT_TRACE"\nexit "${FAKE_BUN_EXIT:-0}"\n'
-            );
-            chmodSync(join(dir, "node_modules", ".bin", "biome"), 0o755);
-            chmodSync(join(dir, "bin", "bun"), 0o755);
+            symlinkSync(biome, join(dir, "node_modules", ".bin", "biome"));
             expect(run(["git", "init", "-q"]).status).toBe(0);
             expect(run(["git", "config", "user.name", "Fixture User"]).status).toBe(0);
             expect(run(["git", "config", "user.email", "fixture@example.com"]).status).toBe(0);
