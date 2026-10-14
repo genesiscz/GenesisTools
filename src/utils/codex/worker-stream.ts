@@ -90,6 +90,19 @@ function toolCallOf(item: CodexItem, sessionId: string, ts?: string): WorkerEven
  * echoes); unknown methods are also null but logged at debug so a protocol
  * addition never disappears silently.
  */
+/**
+ * The app-server nests its text as `params.error.message` (a 503 stream drop arrives as "Reconnecting... 3/5"), so
+ * reading `params.message` alone printed "unknown codex error" for every one, retries included (2026-10-14).
+ */
+function errorMessageOf(params: Record<string, unknown> | undefined): string {
+    const nested = params?.error as
+        | { message?: unknown; codexErrorInfo?: { responseStreamDisconnected?: { httpStatusCode?: unknown } } }
+        | undefined;
+    const message = str(params?.message) ?? str(nested?.message) ?? "unknown codex error";
+    const status = nested?.codexErrorInfo?.responseStreamDisconnected?.httpStatusCode;
+    return typeof status === "number" ? `${message} (stream dropped, HTTP ${status})` : message;
+}
+
 export function toWorkerEvent(event: StoredCodexEvent): WorkerEvent | null {
     const { method, ts } = event;
     const params = paramsOf(event);
@@ -179,7 +192,7 @@ export function toWorkerEvent(event: StoredCodexEvent): WorkerEvent | null {
             }
         }
         case "error":
-            return { kind: "error", sessionId, message: str(params?.message) ?? "unknown codex error", ts };
+            return { kind: "error", sessionId, message: errorMessageOf(params), ts };
         case "thread/status/changed": {
             const status = params?.status as { type?: string } | undefined;
             return status?.type === "closed" ? { kind: "session.closed", sessionId, ts } : null;
