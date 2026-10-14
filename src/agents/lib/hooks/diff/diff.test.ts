@@ -3698,6 +3698,8 @@ describe("the misfires of 2026-10-14", () => {
         writeFileSync(join(repo, "mv-src.ts"), "moved\nbody\n");
         git(["add", "mv-src.ts"]);
         git(["commit", "-qm", "mv"]);
+        const past = new Date(Date.now() - 60_000);
+        utimesSync(join(repo, "mv-src.ts"), past, past);
 
         const current = begin({ command: "git mv mv-src.ts mv-dst.ts" });
 

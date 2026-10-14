@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
@@ -201,14 +202,34 @@ const RENAME_SCAN_LIMIT = 400;
  * fixtures folder, 18 blocks); now one line names them. Two git spawns, only when a root has both
  * a deletion and another change.
  */
-function renamesIn({ root, base, files }: { root: string; base: string; files: ChangedFile[] }): Array<{
+function renamesIn({
+    root,
+    base,
+    files,
+    entries,
+}: {
+    root: string;
+    base: string;
+    files: ChangedFile[];
+    entries: StatusEntry[];
+}): Array<{
     from: string;
     to: string;
 }> {
     const gone = files.filter((file) => file.deleted);
-    const fresh = files.filter((file) => !file.deleted);
+    // From `git status`, not from `files`: `git mv` and `mv` keep the file's old mtime, so the moved
+    // copy is older than the call and the mtime filter behind `files` drops it (2026-10-15: the test
+    // passed only when the write and the move fell in one second).
+    const fresh = [
+        ...new Set([
+            ...files.filter((file) => !file.deleted).map((file) => file.path),
+            ...entries
+                .filter((entry) => (entry.kind === "untracked" && !entry.path.endsWith("/")) || entry.index === "A")
+                .map((entry) => join(root, entry.path)),
+        ]),
+    ];
 
-    if (gone.length === 0 || fresh.length === 0 || files.length > RENAME_SCAN_LIMIT) {
+    if (gone.length === 0 || fresh.length === 0 || fresh.length + gone.length > RENAME_SCAN_LIMIT) {
         return [];
     }
 
@@ -229,15 +250,15 @@ function renamesIn({ root, base, files }: { root: string; base: string; files: C
         return [];
     }
 
-    const hashes = gitOut(root, ["hash-object", "--", ...fresh.map((file) => file.path)], { quiet: true }).split("\n");
+    const hashes = gitOut(root, ["hash-object", "--", ...fresh], { quiet: true }).split("\n");
     const pairs: Array<{ from: string; to: string }> = [];
 
-    fresh.forEach((file, index) => {
+    fresh.forEach((path, index) => {
         const hash = hashes[index]?.trim() ?? "";
         const from = blobs.get(hash);
 
         if (from) {
-            pairs.push({ from, to: file.path });
+            pairs.push({ from, to: path });
             blobs.delete(hash);
         }
     });
@@ -940,7 +961,7 @@ export function runDiffPost({
         }
 
         const changed = changedFiles({ root, since, config: diff, source: { entries: summary.entries, committed } });
-        const renames = renamesIn({ root, base, files: changed });
+        const renames = renamesIn({ root, base, files: changed, entries: summary.entries });
         const renamed = new Set(renames.flatMap((pair) => [pair.from, pair.to]));
         const carried: string[] = [];
         const ownCommits = new Set(committed.map((name) => join(root, name)));
