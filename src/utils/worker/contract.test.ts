@@ -11,6 +11,9 @@ describe("buildWorkerContract", () => {
             expect(text).toContain("Honor any `Stop and report` block in your task brief literally");
             expect(text).toContain("fails twice in a row, STOP");
             expect(text).toContain("CHARACTER FOR CHARACTER");
+            // A brief or a steer that grants "commit once" is honoured; without one the worker still asks.
+            expect(text).toContain("running any git commit/push or destructive command,");
+            expect(text).toContain("explicitly authorizes that exact action");
             for (const key of WORKER_REPORT_KEYS) {
                 expect(text).toMatch(new RegExp(`^${key}: `, "m"));
             }

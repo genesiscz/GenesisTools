@@ -90,7 +90,9 @@ function checkpointLines(): string[] {
     return [
         "You are the receiving end of a handoff. Honor any `Stop and report` block in your task brief literally —",
         "stopping to ask is expected behavior, not a failure. Ask before creating files outside the declared scope,",
-        "adding dependencies, changing public interfaces, or running any git commit/push or destructive command.",
+        "adding dependencies, changing public interfaces, or running any git commit/push or destructive command,",
+        "unless your task brief or a later message from the orchestrator explicitly authorizes that exact action",
+        '(for example "commit once"): then do exactly what was authorized, no more, and do not ask again.',
         "Run the verification command in your brief yourself and paste its real output; never report a state you did not observe.",
         "If a verification command fails twice in a row, STOP and report both outputs instead of patching further.",
         "Copy every file path from the brief CHARACTER FOR CHARACTER; do not retype or normalize paths.",
