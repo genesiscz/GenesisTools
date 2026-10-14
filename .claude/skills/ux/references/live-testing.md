@@ -38,3 +38,8 @@
 - A window with `sharingType = .none` (screen-effect panels, the camera bubble) is invisible to every capture; check
   its bounds with `CGWindowListCopyWindowInfo` instead of trusting an empty screenshot.
 - Turn back off whatever you turned on for a test (a setting, a preview) and say so in the report.
+- A click delivered in the background to an inactive window is no proof that clicks work or fail: it arrives with
+  key and active false, and macOS may use it to activate the window only. Prove a dead-click bug from the app's own
+  press and action log, or with the window key while the user agrees to give up focus.
+- A window whose text changes live (a "saved 1 min ago" status) makes `tools control act` refuse as stale. Pass the
+  row's `--target-key <stableKey> --revalidate-scope element` from the same `see`.

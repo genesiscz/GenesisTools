@@ -339,3 +339,16 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **Render a dialog for review without showing it:** `NSHostingView` in a borderless `NSWindow` that is never ordered
   front, then `cacheDisplay(in:to:)`. Unlike `ImageRenderer`, it draws AppKit-backed controls (buttons, pop-up
   menus). `VaultUnlockTests.testRenderTheVaultWindowWhenAsked` does it behind `APPROVAL_SNAPSHOT_DIR`.
+
+## Dead clicks and accessibility cost in a big SwiftUI window — 2026-10-15 01:07
+
+- **Log presses and actions, not just presses.** To diagnose "clicks do nothing", override the window's
+  `sendEvent` and log every left down and up with the hit view, `clickCount`, key, active, modal and sheet state, and
+  log the action each control runs. A press with no action after it is a click SwiftUI dropped; a press that never
+  arrives is a window or event-routing problem (markdown viewer: f7eaab043, 5c8691e5b).
+- **One click handler per control.** A `Button` with an `.onTapGesture` on the same view, under a parent
+  `.onTapGesture(count: 2)`, gives SwiftUI three gestures to arbitrate for one click; the viewer's tabs had exactly
+  that when its clicks went dead with 100 tabs (cause not proven).
+- **Accessibility hit tests scale with the number of views.** With 100 tabs (about 880 accessibility elements), one
+  `NSHostingView.accessibilityHitTest` from an outside AX client held the main thread 785 ms (HangWatch stack,
+  2026-10-15 00:08). Every AX client (window managers, `tools control see`) pays it. Keep long strips lazy or capped.
