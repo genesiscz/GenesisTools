@@ -14,6 +14,10 @@ describe("buildWorkerContract", () => {
             // A brief or a steer that grants "commit once" is honoured; without one the worker still asks.
             expect(text).toContain("running any git commit/push or destructive command,");
             expect(text).toContain("explicitly authorizes that exact action");
+            // A grant in the brief is not a cue to ask once first (2026-10-14: a worker with "Commit exactly ONCE"
+            // in its brief still stopped for confirmation, reading "do not ask again" as "ask once").
+            expect(text).toContain("given in advance: do the authorized action without stopping");
+            expect(text).not.toContain("do not ask again");
             for (const key of WORKER_REPORT_KEYS) {
                 expect(text).toMatch(new RegExp(`^${key}: `, "m"));
             }
