@@ -19,6 +19,19 @@ checklist.md or motion.md as well.
     `bun run`; a relative script matched from any folder. The program is now the absolute script.
   - Unified d48b6131b, 12bf77b14, 64b3a6186. Shots: GenesisTools.native/Approvals/Screenshot/.
 
+- 2026-10-15 01:07 — **The markdown viewer's dead clicks came back with 100 tabs open (cause not proven yet).**
+  - *After an agent session opened many notes, Martin's tab clicks did nothing.* The window-background drag of
+    a1e436652 was already off. The press log showed every tab press arriving at the hosting view, key and active, no
+    modal, no sheet, CPU 9.7%, no hang logged then. So the presses arrived and SwiftUI did not act on them.
+  - *Suspects, unproven:* three click layers on one tab (the tab's `Button`, an `.onTapGesture` on the tab, and an
+    `.onTapGesture(count: 2)` on the whole tab bar), and a 2.5 s press-and-drag in the web view just before.
+  - *The log could not tell a dropped click from a slow one*, so it now also writes `tab action select <title>
+    via=button|tap`, `tab action close` and `tab bar double click` (5c8691e5b). A press with no action line after it
+    is a click SwiftUI dropped. Read: `log show --predicate 'subsystem == "genesiskit" && category == "markdown.input"'`.
+  - *With 100 tabs one accessibility hit test froze the main thread for 785 ms* (swift skill gotchas).
+  - *A background click is no test here:* `tools control --background` on the inactive viewer arrived with key and
+    active false, and macOS may spend that first click on activation. Without the user's focus, read the app's own log.
+
 - 2026-10-14 22:43 — **Markdown viewer dead clicks, PostureWatcher's message, and the agent's own live-test mistakes.**
   - *Holding a tab moved the window a little; from then on no click in the viewer did anything (tabs, toolbar)
     until a restart, while accessibility presses still worked.* The window had `isMovableByWindowBackground = true`.
