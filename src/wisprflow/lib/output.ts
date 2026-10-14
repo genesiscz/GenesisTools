@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { renderUnifiedDiff } from "@genesiscz/utils/diff";
 import { splitFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
@@ -70,7 +70,7 @@ export function writeGuarded(options: {
 
     if (!existsSync(path)) {
         mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, options.content);
+        atomicWriteFileSync(path, options.content);
         log.debug({ path }, "created output file");
         return { status: "created", path };
     }

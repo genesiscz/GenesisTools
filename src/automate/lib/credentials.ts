@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { atomicWriteFileSync, isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import type { StoredCredential } from "./types";
 
 const CREDENTIALS_DIR = join(env.tools.getHome(), ".genesis-tools", "automate", "credentials");
@@ -32,6 +32,7 @@ function ensureDir(): void {
 export async function saveCredential(credential: StoredCredential): Promise<void> {
     ensureDir();
     const filePath = join(CREDENTIALS_DIR, `${safeName(credential.name)}.json`);
+    readJsonFileForUpdateSync(filePath, { accepts: isJsonObject });
     atomicWriteFileSync(filePath, SafeJSON.stringify(credential, null, 2), { mode: 0o600 });
     logger.debug(`Credential saved: ${credential.name}`);
 }

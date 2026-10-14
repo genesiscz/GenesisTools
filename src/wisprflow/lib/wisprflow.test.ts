@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { completeTranscript, parseLive } from "./live";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
@@ -137,6 +138,41 @@ describe("applyFixes", () => {
 
 describe("output guard", () => {
     const generated = "---\ntitle: New\nspeakers:\n  - Bob\n---\n\n# New\n\nBody.\n";
+
+    test("a failed atomic creation leaves neither a partial note nor a temp file", () => {
+        const dir = mkdtempSync(join(tmpdir(), "wisprflow-write-"));
+        const path = join(dir, "Transcript.md");
+        const write = spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            writeSync(fd, bytes, offset, Math.floor(length / 2));
+            throw Object.assign(new Error("fixture disk full"), { code: "ENOSPC" });
+        });
+        try {
+            expect(() => writeGuarded({ path, content: generated, confirm: false, keepFrontmatter: true })).toThrow(
+                "fixture disk full"
+            );
+            expect(write).toHaveBeenCalledTimes(1);
+            expect(existsSync(path)).toBe(false);
+            expect(readdirSync(dir)).toEqual([]);
+        } finally {
+            write.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("a new note is created with its complete content", () => {
+        const dir = mkdtempSync(join(tmpdir(), "wisprflow-write-"));
+        const path = join(dir, "nested", "Transcript.md");
+        try {
+            expect(writeGuarded({ path, content: generated, confirm: false, keepFrontmatter: true })).toEqual({
+                status: "created",
+                path,
+            });
+            expect(readFileSync(path, "utf8")).toBe(generated);
+            expect(readdirSync(join(dir, "nested"))).toEqual(["Transcript.md"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 
     test("keeps the file's own frontmatter and adds only the missing keys", () => {
         const merged = mergeFrontmatter("---\ntitle: Mine\ntags: [x]\n---\n\n# Old\n", generated);

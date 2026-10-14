@@ -134,6 +134,56 @@ describe("SettingsRepository (per-user)", () => {
         expect(readFileSync(join(baseDir, "2.json"), "utf8")).toBe(torn);
     });
 
+    it.each([
+        { notification_channels: "saved-token-data" },
+        { notification_channels: null },
+        { notification_channels: [] },
+        { notification_channels: { telegram: "yes" } },
+        { notification_channels: { telegram_bot_token: { token: "fixture-token" } } },
+        { notification_channels: { telegram_chat_id: 123 } },
+        { shops: "saved-shop-data" },
+        { shops: null },
+        { shops: [] },
+        { shops: { "shop.example": null } },
+        { shops: { "shop.example": { enabled: "yes", rate_limit_per_second: 2 } } },
+        { shops: { "shop.example": { enabled: true, rate_limit_per_second: "2" } } },
+    ])("refuses damaged nested settings without rewriting them: %j", async (damaged) => {
+        const baseDir = join(dir, "settings");
+        mkdirSync(baseDir, { recursive: true });
+        const path = join(baseDir, "2.json");
+        const bytes = SafeJSON.stringify(damaged);
+        writeFileSync(path, bytes);
+        const repo = new SettingsRepository(baseDir);
+
+        await expect(repo.patch(2, { theme: "wow" })).rejects.toThrow(/left untouched/);
+        await expect(repo.read(2)).rejects.toThrow(/left untouched/);
+        expect(readFileSync(path, "utf8")).toBe(bytes);
+        expect(readdirSync(baseDir)).toEqual(["2.json"]);
+    });
+
+    it("fills absent nested fields while retaining valid saved channels and shop settings", async () => {
+        const baseDir = join(dir, "settings");
+        mkdirSync(baseDir, { recursive: true });
+        writeFileSync(
+            join(baseDir, "2.json"),
+            SafeJSON.stringify({
+                notification_channels: { telegram_bot_token: "fixture-token", telegram_chat_id: null },
+                shops: { "shop.example": { enabled: false, rate_limit_per_second: null } },
+            })
+        );
+        const repo = new SettingsRepository(baseDir);
+        const result = await repo.patch(2, { theme: "wow" });
+
+        expect(result.notification_channels).toMatchObject({
+            macos: true,
+            web_sse: true,
+            telegram: false,
+            telegram_bot_token: "fixture-token",
+            telegram_chat_id: null,
+        });
+        expect(result.shops).toEqual({ "shop.example": { enabled: false, rate_limit_per_second: null } });
+    });
+
     it("treats a read error other than a missing file as an error, not as defaults", async () => {
         const baseDir = join(dir, "settings");
         mkdirSync(join(baseDir, "2.json"), { recursive: true });

@@ -123,6 +123,10 @@ export class SettingsRepository {
             throw new Error(`settings: ${filePath} is not a JSON object; left untouched, fix or move it`);
         }
 
+        if (!validNestedSettings(parsed)) {
+            throw new Error(`settings: ${filePath} has invalid nested fields; left untouched, fix or move it`);
+        }
+
         return mergeWithDefaults(parsed as Partial<SettingsPayload>);
     }
 
@@ -190,6 +194,47 @@ function mergeWithDefaults(parsed: Partial<SettingsPayload>): SettingsPayload {
         notification_channels: { ...DEFAULTS.notification_channels, ...(parsed.notification_channels ?? {}) },
         shops: { ...DEFAULTS.shops, ...(parsed.shops ?? {}) },
     };
+}
+
+/** Absent nested settings inherit defaults; present values must retain their persisted field types. */
+function validNestedSettings(parsed: Record<string, unknown>): boolean {
+    if (Object.hasOwn(parsed, "notification_channels")) {
+        const channels = parsed.notification_channels;
+        if (!isJsonObject(channels)) {
+            return false;
+        }
+
+        for (const key of ["macos", "web_sse", "telegram"]) {
+            if (Object.hasOwn(channels, key) && typeof channels[key] !== "boolean") {
+                return false;
+            }
+        }
+
+        for (const key of ["telegram_bot_token", "telegram_chat_id"]) {
+            if (Object.hasOwn(channels, key) && channels[key] !== null && typeof channels[key] !== "string") {
+                return false;
+            }
+        }
+    }
+
+    if (Object.hasOwn(parsed, "shops")) {
+        if (!isJsonObject(parsed.shops)) {
+            return false;
+        }
+
+        for (const config of Object.values(parsed.shops)) {
+            if (!isJsonObject(config) || typeof config.enabled !== "boolean") {
+                return false;
+            }
+
+            const rate = config.rate_limit_per_second;
+            if (rate !== null && (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 function validatePatch(patch: SettingsPatch): void {
