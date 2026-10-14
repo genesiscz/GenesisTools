@@ -107,7 +107,7 @@ struct MarkdownDocumentsView: View {
                     }
                     if model.showOutline {
                         MarkdownOutlineView(doc: doc, model: model)
-                            .frame(width: 220)
+                            .frame(width: MarkdownSidebarWidth.outline)
                         Rectangle().fill(model.theme.border).frame(width: 1)
                     }
                     // The old tab's page stays until the new one has rendered: no blank frame on a switch.
@@ -192,7 +192,7 @@ private struct MarkdownTabBar: View {
             if configuration.wrapTabs {
                 MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
                     ForEach(model.docs) { doc in
-                        MarkdownDocumentTab(doc: doc, model: model)
+                        tab(doc)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -209,6 +209,17 @@ private struct MarkdownTabBar: View {
         .accessibilityIdentifier("markdown-tab-bar")
     }
 
+    /// A tab gets the few model values it shows. It does not observe the model, so an unrelated publish (the
+    /// preview's section, a find count) skips all tab bodies: with 24 tabs each publish re-ran 24 of them
+    /// (2026-10-14, MarkdownTreeLagBenchTests: 480 tab bodies for 20 section changes).
+    private func tab(_ doc: MarkdownDocument) -> some View {
+        MarkdownDocumentTab(
+            doc: doc, model: model, active: doc.id == model.selected?.id, preview: model.isPreview(doc),
+            fill: model.theme.fill
+        )
+        .equatable()
+    }
+
     /// A newly opened or switched-to tab can sit past the edge of an
     /// overflowing strip, so the strip follows the selection. A nil anchor
     /// scrolls the least amount that shows the whole tab.
@@ -217,7 +228,7 @@ private struct MarkdownTabBar: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
                     ForEach(model.docs) { doc in
-                        MarkdownDocumentTab(doc: doc, model: model)
+                        tab(doc)
                             .id(doc.id)
                     }
                 }
@@ -246,15 +257,22 @@ private struct MarkdownWrapTabsToggle: View {
 /// list of tabs, not the edits inside them, so the dirty dot and the
 /// changed-on-disk mark would otherwise wait for an unrelated model update.
 /// Selecting is a real button, so the keyboard and VoiceOver can reach it.
-private struct MarkdownDocumentTab: View {
+private struct MarkdownDocumentTab: View, Equatable {
     @ObservedObject var doc: MarkdownDocument
-    @ObservedObject var model: MarkdownDocumentsModel
+    /// For the tab's actions only: not observed (see `MarkdownTabBar.tab`).
+    let model: MarkdownDocumentsModel
+    let active: Bool
+    let preview: Bool
+    let fill: Color
     @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
+
+    static func == (left: MarkdownDocumentTab, right: MarkdownDocumentTab) -> Bool {
+        left.doc === right.doc && left.model === right.model && left.active == right.active
+            && left.preview == right.preview && left.fill == right.fill
+    }
 
     var body: some View {
         let _ = RenderProbe.hit("md.tab")
-        let active = doc.id == model.selected?.id
-        let preview = model.isPreview(doc)
         // A tab that previews on hover shows its path in the preview's header instead: a tooltip there
         // would sit under the preview.
         let previews = !active && model.configuration.hoverPreview
@@ -300,7 +318,7 @@ private struct MarkdownDocumentTab: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(active ? model.theme.fill : Color.clear)
+        .background(active ? fill : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         .onTapGesture { selectOrKeep(via: "tap") }
@@ -333,7 +351,7 @@ private struct MarkdownDocumentTab: View {
 
     private var accessibilityTitle: String {
         var parts = [doc.title]
-        if model.isPreview(doc) { parts.append("preview") }
+        if preview { parts.append("preview") }
         if doc.isDirty { parts.append("unsaved") }
         if doc.hasDiskChange { parts.append("changed on disk") }
         return parts.joined(separator: ", ")

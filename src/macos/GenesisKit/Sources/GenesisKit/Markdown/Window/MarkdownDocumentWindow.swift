@@ -36,6 +36,7 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
     private var titleSink: AnyCancellable?
     private var floatSink: AnyCancellable?
     private var themeSink: AnyCancellable?
+    private var minimumSink: AnyCancellable?
     /// The window's keys (`MarkdownKeymap.registerWindowCommands`), for as long as the window lives.
     private var keyRegistrations: [KeymapRegistration] = []
 
@@ -46,7 +47,6 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
             backing: .buffered,
             defer: false
         )
-        window.minSize = NSSize(width: 560, height: 400)
         window.title = "Markdown"
         // The breadcrumb (`MarkdownPathBar`) stands where the title text was. The title itself stays
         // set, with `representedURL`, for the Window menu, Mission Control and VoiceOver.
@@ -59,7 +59,7 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         window.isMovableByWindowBackground = false
         window.backgroundColor = NSColor(MarkdownTheme.genesis.page)
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: Self.root(model: model))
+        window.contentView = Self.contentView(model: model)
         super.init(window: window)
         keyRegistrations = MarkdownKeymap.registerWindowCommands(model: model, window: window) { [weak self] in
             self?.closeSelectedTabOrWindow()
@@ -88,9 +88,29 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
                 self.window?.title = doc?.title ?? "Markdown"
                 self.window?.representedURL = doc?.url
             }
+        // The minimum follows the sidebars: the content no longer imposes it (`contentView(model:)`).
+        MarkdownWindowMinimum.apply(to: window, model: model)
+        minimumSink = model.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let window = self.window else { return }
+                MarkdownWindowMinimum.apply(to: window, model: self.model)
+            }
     }
 
     public required init?(coder: NSCoder) { fatalError("not supported") }
+
+
+    /// The window's content view: `root(model:)` in a hosting view that states no sizes of its own. Deriving min,
+    /// max and intrinsic size re-measured the whole tree (both sidebars, every tab, each candidate row of the path
+    /// bar) on every update: 59% of the main thread's layout time in a 24-tab window, on every publish of the
+    /// documents model (2026-10-14, MarkdownTreeLagBenchTests; the hub had the same, HubGlass). The window's
+    /// minimum (`MarkdownWindowMinimum`) keeps it from shrinking past the content.
+    static func contentView(model: MarkdownDocumentsModel) -> NSHostingView<some View> {
+        let hosting = NSHostingView(rootView: root(model: model))
+        hosting.sizingOptions = []
+        return hosting
+    }
 
     /// The window's root. The title bar and the toolbar under it are one strip (Window/WindowTitlebar.swift):
     /// its empty part zooms (to the visible screen, see `windowWillUseStandardFrame`) on a double-click,

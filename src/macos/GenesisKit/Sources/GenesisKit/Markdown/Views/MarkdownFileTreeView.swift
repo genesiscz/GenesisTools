@@ -165,18 +165,11 @@ struct MarkdownFileTreeView: View {
         let pulse = rowPulse
         let git: GitTreeDecorations? = gitMarks ? gitTree.decorations : nil
         let rows = git.map { changedOnly ? FileTreeView.changedRows(tree.rows, $0) : tree.rows } ?? tree.rows
-        return LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(rows) { row in
-                FileTreeRowView(
-                    row: row, selected: row.id == selected, icon: FileTreeView.defaultIcon(row), style: style,
-                    model: tree, actions: actions, pulse: pulse?.id == row.id ? pulse : nil,
-                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
-                    lines: git?.count(for: row.id)
-                )
-                .equatable()
-                .markdownHoverPreview(row.isFolder ? nil : row.url, model: model)
-            }
-        }
+        return MarkdownFileTreeRows(
+            rows: rows, selected: selected, style: style, actions: actions, pulse: pulse, git: git, tree: tree,
+            model: model
+        )
+        .equatable()
     }
 
     /// ⌘⇧F, or "Search in Folder…" with its folder in `model.treeSearchScope`: the scope is taken once,
@@ -526,6 +519,45 @@ struct MarkdownFileTreeView: View {
 
 /// One search hit: the file name, its folder under the root, and for a text
 /// hit the line number and the matching line. Its type follows the tree's.
+/// The tree's rows, apart from the tree view so a documents-model publish that changes none of them (the
+/// preview's section, a tab switch elsewhere) skips the whole `ForEach`. The tree view observes the model; this
+/// view compares its inputs instead (2026-10-14: every publish walked all ~340 rows of an expanded vault folder).
+private struct MarkdownFileTreeRows: View, Equatable {
+    let rows: [FileTreeRow]
+    let selected: String?
+    let style: FileTreeStyle
+    let actions: FileTreeActions
+    let pulse: FileTreePulse?
+    let git: GitTreeDecorations?
+    let tree: FileTreeModel
+    /// For the hover preview only: not observed.
+    let model: MarkdownDocumentsModel
+
+    static func == (left: MarkdownFileTreeRows, right: MarkdownFileTreeRows) -> Bool {
+        left.selected == right.selected && left.pulse == right.pulse && left.actions.revision == right.actions.revision
+            && left.style.metrics == right.style.metrics && left.style.text == right.style.text
+            && left.style.secondary == right.style.secondary && left.style.muted == right.style.muted
+            && left.style.accent == right.style.accent && left.style.selection == right.style.selection
+            && left.tree === right.tree && left.model === right.model && left.git == right.git && left.rows == right.rows
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("md.fileTreeRows")
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(rows) { row in
+                FileTreeRowView(
+                    row: row, selected: row.id == selected, icon: FileTreeView.defaultIcon(row), style: style,
+                    model: tree, actions: actions, pulse: pulse?.id == row.id ? pulse : nil,
+                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
+                    lines: git?.count(for: row.id)
+                )
+                .equatable()
+                .markdownHoverPreview(row.isFolder ? nil : row.url, model: model)
+            }
+        }
+    }
+}
+
 private struct MarkdownFileTreeResultRow: View {
     let hit: FileTreeSearch.Hit
     @ObservedObject var model: MarkdownDocumentsModel

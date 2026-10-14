@@ -535,7 +535,7 @@ final class MarkdownWindowChromeTests: XCTestCase {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: MarkdownDocumentWindowController.root(model: model))
+        window.contentView = MarkdownDocumentWindowController.contentView(model: model)
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
         window.orderFrontRegardless()

@@ -440,6 +440,9 @@ struct FileTreeRowView: View, Equatable {
     init(row: FileTreeRow, selected: Bool, icon: String, style: FileTreeStyle,
          model: FileTreeModel, actions: FileTreeActions, pulse: FileTreePulse? = nil,
          change: GitChangeKind? = nil, holdsChanges: Bool = false, lines: GitLineCount? = nil) {
+        // Counts how often a list builds its rows, not how often a row draws (`tree.row`): a list that walks its
+        // `ForEach` on every unrelated publish builds every visible row again even when no row then draws.
+        RenderProbe.hit("tree.rowItem")
         self.row = row
         self.selected = selected
         self.icon = icon
