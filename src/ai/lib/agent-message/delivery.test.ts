@@ -553,6 +553,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         alias: "grok",
         sessionId: target.sessionId,
         text: "hello",
+        agentsOnTty: () => new Set(["grok"]),
         live: async () => [target],
         run: async (args) => {
             calls.push(args);
@@ -568,6 +569,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         alias: "grok",
         sessionId: target.sessionId,
         text: "hello",
+        agentsOnTty: () => new Set(["grok"]),
         live: async () => [target],
         run: async () => ({ code: -1, stdout: "", stderr: "cmux paste timed out after 30000 ms", timedOut: true }),
     });
@@ -578,6 +580,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         alias: "grok",
         sessionId: target.sessionId,
         text: "hello",
+        agentsOnTty: () => new Set(["grok"]),
         live: async () => [{ ...target, surface: { ...target.surface, id: null } }],
         run: async () => {
             throw new Error("cmux paste must not run without a surface UUID");
@@ -594,6 +597,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         alias: "grok",
         sessionId: target.sessionId,
         text: "hello",
+        agentsOnTty: () => new Set(["grok"]),
         live: async () => [tmuxTarget],
         stillShown: async () => ({ ok: false, reason: "tmux shows another pane of work-grok now" }),
         run: async () => {
@@ -607,6 +611,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         alias: "grok",
         sessionId: target.sessionId,
         text: "hello",
+        agentsOnTty: () => new Set(["grok"]),
         live: async () => [tmuxTarget],
         stillShown: async () => ({ ok: true }),
         run: async (args) => {
@@ -615,6 +620,30 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         },
     });
     expect(shownCalls).toHaveLength(1);
+
+    // Sonnet F13: a worker started inside a Claude tab owns the tab's newest journal line. The paste must not
+    // submit the text to the Claude prompt, and a tab that runs both agents is just as unsafe.
+    const never = async (): Promise<never> => {
+        throw new Error("cmux paste must not run into another agent's prompt");
+    };
+    const otherAgent = pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [target],
+        agentsOnTty: () => new Set(["claude"]),
+        run: never,
+    });
+    await expect(otherAgent).rejects.toThrow("it runs claude, not grok");
+    const both = pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [target],
+        agentsOnTty: () => new Set(["claude", "grok"]),
+        run: never,
+    });
+    await expect(both).rejects.toThrow("it also runs claude");
 });
 
 test("the live-session listing checks every registry pid in ONE batch, not one probe per entry", () => {

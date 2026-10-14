@@ -1,6 +1,6 @@
 import { NoSessionMatchError, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
-import { liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
+import { agentsOnTtyNow, liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     attestingSender,
@@ -422,6 +422,8 @@ export async function pasteIntoSurface(input: {
     run?: (args: string[]) => Promise<CmuxRunResult>;
     /** Right before the paste: does a --via-tmux session's surface still show the agent's pane? */
     stillShown?: (target: LiveAgentSurface) => Promise<{ ok: true } | { ok: false; reason: string }>;
+    /** The agents running on a tty now. */
+    agentsOnTty?: (tty: string) => Set<string>;
 }): Promise<MessageDelivery> {
     const surfaces = await (input.live ?? liveAgentSurfacesNow)();
     const target = surfaces.find((entry) => entry.sessionId === input.sessionId && entry.agent === input.alias);
@@ -434,6 +436,22 @@ export async function pasteIntoSurface(input: {
     // ref can name another terminal, and the message would be submitted there.
     if (!target.surface.id) {
         throw new MessageError(`${target.surface.ref} has no surface UUID, so the paste has no safe target`);
+    }
+
+    // The tab must run this agent and no other: a worker started inside another agent's tab inherits that tab and
+    // can own its newest journal line, and the paste would then submit to the tab's real agent (Sonnet F13).
+    const tty = target.tmux?.paneTty ?? target.surface.tty;
+    const running = tty ? (input.agentsOnTty ?? agentsOnTtyNow)(tty) : new Set<string>();
+
+    if (!running.has(input.alias) || running.size > 1) {
+        const others = [...running].filter((agent) => agent !== input.alias);
+        throw new MessageError(
+            `nothing was pasted into ${target.surface.ref}: ${
+                running.has(input.alias)
+                    ? `it also runs ${others.join(", ")}, so the paste could reach that agent`
+                    : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${input.alias}`
+            }`
+        );
     }
 
     // A --via-tmux surface types into whichever tmux pane it shows now; the user may have switched since the

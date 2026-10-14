@@ -204,6 +204,14 @@ export async function tmuxPaneStillShownNow(
 }
 
 /** Every live agent session in cmux with its tab and workspace titles (newest per surface, caller excluded). */
+/** The agents (`claude`, `codex`, `grok`) this user runs on one tty now. */
+export function agentsOnTtyNow(tty: string): Set<SessionAgentId> {
+    const own = processesOnTty(tty).filter(
+        (entry) => entry.uid === globalThis.process.getuid?.() && !entry.zombie && entry.command
+    );
+    return new Set(SESSION_AGENT_IDS.filter((agent) => own.some((entry) => ttyRunsAgent(entry.command ?? "", agent))));
+}
+
 export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
     const tree = await liveTree();
     const pins = await loadPins({ readOnly: true });
