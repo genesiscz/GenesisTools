@@ -12,17 +12,18 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
-import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
+import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { readOnlyCommand } from "./attribution";
 import { beforeCopy } from "./before";
-import { type CaptureResult, capturePre, captureRoots } from "./capture";
+import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
@@ -3377,5 +3378,20 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             rmSync(alias);
             git(["checkout", "--", "kept.ts"]);
         }
+    });
+});
+
+describe("files the harness writes during every call", () => {
+    it("are never watched as named paths: the decision log, its rotation, the hooks' scratch, transcripts", () => {
+        const log = defaultLogPath();
+
+        expect(harnessOwnFile(log)).toBe(true);
+        expect(harnessOwnFile(`${log}.1`)).toBe(true);
+        expect(harnessOwnFile(join(claimsRoot(), "x.json"))).toBe(true);
+        const claude = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+
+        expect(harnessOwnFile(join(claude, "projects", "-repo", "session.jsonl"))).toBe(true);
+        expect(harnessOwnFile(join(claude, "projects", "-repo", "memory", "note.md"))).toBe(false);
+        expect(harnessOwnFile(join(repo, "kept.ts"))).toBe(false);
     });
 });

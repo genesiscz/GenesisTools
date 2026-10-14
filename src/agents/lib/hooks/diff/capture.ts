@@ -1,16 +1,50 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, readdirSync, type Stats, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
-import { type DiffConfig, megabytes } from "../config";
+import { type DiffConfig, defaultLogPath, megabytes } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
-import { callDir, safeSegment } from "../paths";
+import { callDir, hookDataRoot, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
 import { commandDirs, namedArguments } from "./command-paths";
-import { coverage, refreshMentions } from "./mentions";
+import { canonical, coverage, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
 import { makePrivateDir } from "./private-dir";
+
+/**
+ * Files the hooks and the harness append to during EVERY call: the decision log and its rotated
+ * generation, the hooks' own scratch, and Claude's transcripts. A command that only reads one
+ * still "changes" it, because the hooks write it while the command runs. Observed 2026-10-14
+ * 23:23: once the log rotated below the 2 MB named-path cap, a `tail` of it printed
+ * `Updated ~/.genesis-tools/logs/agents-hooks.jsonl (+2 -0)`. Before, only the cap hid this.
+ */
+export function harnessOwnFile(path: string): boolean {
+    const forms = new Set([path, canonical(path)]);
+    const log = defaultLogPath();
+    const scratch = dirname(hookDataRoot());
+    const transcripts = join(env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude"), "projects");
+
+    for (const form of forms) {
+        if (form === log || form.startsWith(`${log}.`)) {
+            return true;
+        }
+
+        for (const dir of new Set([scratch, canonical(scratch)])) {
+            if (form.startsWith(`${dir}/`)) {
+                return true;
+            }
+        }
+
+        if (form.startsWith(`${transcripts}/`) && form.endsWith(".jsonl")) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 /** The Claude transcript this call belongs to, from the payload. */
 function transcriptOf(payload: HookPayload): string | null {
@@ -322,7 +356,9 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     const dirs = commandDirs(payload.command, payload.cwd);
     const captured_roots = rootsOf(dirs, config);
     const roots = captured_roots.map((entry) => entry.root);
-    const wanted = config.watchNamedPaths ? namedArguments(payload.command, dirs) : [];
+    const wanted = config.watchNamedPaths
+        ? namedArguments(payload.command, dirs).filter((path) => !harnessOwnFile(path))
+        : [];
     const skipped: string[] = [];
     let captured = 0;
 
