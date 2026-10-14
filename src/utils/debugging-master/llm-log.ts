@@ -14,6 +14,18 @@
  *   dbg.session('my-feature');
  *   dbg.info('request received', { url: req.url });
  *   dbg.dump('response', data);
+ *   dbg.timerStart('db-query');
+ *   // ... do work ...
+ *   dbg.timerEnd('db-query');
+ *   dbg.snapshot('state', { user, cart, flags });
+ *
+ * Every entry captures the full call stack by default (callers up the chain).
+ * To opt out per-call:           dbg.info('msg', undefined, { stack: false });
+ * To opt out globally (one-time): dbg.configure({ captureStackByDefault: false });
+ *
+ * Every method accepts a final `opts` argument with `{ h?, stack? }`:
+ *   - `h`     — hypothesis tag to filter by in the dashboard
+ *   - `stack` — false to skip stack capture for this call; string to override
  */
 
 // ─── Config ──────────────────────────────────────────────────────────────────
