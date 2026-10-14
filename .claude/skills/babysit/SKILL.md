@@ -328,6 +328,12 @@ everything that arrived after a merge; it exits 1 while any of those needs work.
 follow-up commit on a branch from master, with a reply on the thread naming it. Never write "every thread answered" or
 "clean at merge" without a fresh exit 0, or a list of what is still open.
 
+A CodeRabbit thread that WE resolved without a reply is not a gap: post-replies resolves a fixed CodeRabbit thread
+silently on purpose, because a thread reply spends CodeRabbit's hourly chat budget, and the round summary comment
+carries the answer. The audit counts those apart ("resolved by us with the answer in the round summary"). Answer by
+hand only a thread the reviewer resolved itself with no answer anywhere (2026-10-14: five #515 threads were answered
+by hand for nothing).
+
 ## 10. Bugs in the harness: fix them, after the user confirms
 
 A defect in handoff-to, agents-talk, `tools codex`, `tools grok`, `tools claude worker` or `tools agents` that broke a
