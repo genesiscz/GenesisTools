@@ -1,13 +1,13 @@
 import type { WindowEntry } from "@genesiscz/utils/cmux/lib/socket";
 
 /**
- * Accept every spelling of a window a user can see: the internal `window:N`
+ * The UUID of the window a user names, in every spelling they can see: the internal `window:N`
  * ref a saved profile stores, the uuid and the index `cmux list-windows`
  * prints. Only the ref used to match, and `list-windows` never prints it, so
  * the only way to learn a valid `--window` was to save `--scope all` and read
- * the profile JSON.
+ * the profile JSON. Every cmux call then names the window by this UUID.
  */
-export function resolveWindowRef(input: string, windows: WindowEntry[]): string {
+export function resolveWindowId(input: string, windows: WindowEntry[]): string {
     const wanted = input.trim();
     const index = /^\d+$/.test(wanted) ? Number(wanted) : undefined;
     const hit = windows.find(
@@ -18,7 +18,7 @@ export function resolveWindowRef(input: string, windows: WindowEntry[]): string 
     );
 
     if (hit) {
-        return hit.ref;
+        return hit.id;
     }
 
     const known = windows.map((window) => `  ${window.ref}  index ${window.index}  ${window.id}`).join("\n");

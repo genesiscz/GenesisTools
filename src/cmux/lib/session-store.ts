@@ -26,6 +26,8 @@ export interface SessionCreatedRecord {
      */
     workspaceId?: string | null;
     surfaceId?: string | null;
+    /** The UUID of `window`. Absent on older lines. */
+    windowId?: string | null;
     tmuxSession: string | null;
     /** The tmux pane (`%41`) the agent runs in; the exit command targets it. Absent on older lines. */
     tmuxPane?: string | null;

@@ -369,7 +369,7 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         }
         if (opts.enter) {
             await reportWaitingPrompts(
-                outcome.workspaces.map((w) => w.ref),
+                outcome.workspaces.map((w) => w.id),
                 "Restore"
             );
         }

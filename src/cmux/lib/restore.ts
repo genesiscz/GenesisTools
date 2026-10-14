@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { queueReplayCommand } from "@app/cmux/lib/replay-input";
 import { isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
-import { resolveWindowRef } from "@app/cmux/lib/window-ref";
+import { resolveWindowId } from "@app/cmux/lib/window-ref";
 import * as p from "@clack/prompts";
 import { runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
@@ -84,9 +84,7 @@ export function buildPlan(profile: Profile, opts: RestoreOptions): RestorePlan {
 
 /** The UUID of the window `--window` names (a ref, an index or a UUID); `workspace.create` takes the UUID. */
 async function windowIdFor(input: string): Promise<string> {
-    const windows = await windowList();
-    const ref = resolveWindowRef(input, windows);
-    return windows.find((window) => window.ref === ref)?.id ?? ref;
+    return resolveWindowId(input, await windowList());
 }
 
 /**

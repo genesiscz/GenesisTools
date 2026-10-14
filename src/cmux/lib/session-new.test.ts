@@ -43,7 +43,7 @@ function harness(overrides: Partial<SessionNewIO> = {}): { io: SessionNewIO; cal
     const calls: string[][] = [];
     let windows = [{ ref: "window:5", id: "created", visible: true }];
     const io: SessionNewIO = {
-        focusedWindow: async () => "window:1",
+        focusedWindow: async () => "uuid-window:1",
         listWindows: async () => {
             calls.push(["list-windows"]);
             const found = windows;
@@ -244,6 +244,7 @@ test("the focused window is passed even when the caller is outside cmux, and foc
         workspace: "workspace:9",
         surface: "surface:8",
         window: "window:1",
+        windowId: "uuid-window:1",
         workspaceId: "uuid-workspace:9",
         surfaceId: "uuid-surface:8",
         tmuxSession: null,
@@ -252,8 +253,9 @@ test("the focused window is passed even when the caller is outside cmux, and foc
         cwd: DEMO,
         command: CLAUDE,
     });
+    // The workspace is created in the window named by its UUID: a ref is renumbered at every cmux relaunch.
     expect(calls).toEqual([
-        ["workspace", "create", "--window", "window:1", "--cwd", DEMO, "--focus", "false", "--command", CLAUDE],
+        ["workspace", "create", "--window", "uuid-window:1", "--cwd", DEMO, "--focus", "false", "--command", CLAUDE],
     ]);
 });
 
@@ -305,7 +307,7 @@ test("a missing focused window uses an existing one, and creates a window only w
         existing.io
     );
     expect(existing.calls.some((call) => call.includes("new-window"))).toBe(false);
-    expect(existing.calls.find((call) => call[0] === "workspace")).toContain("window:4");
+    expect(existing.calls.find((call) => call[0] === "workspace")).toContain("already");
 
     let listed = 0;
     const created = harness({
@@ -320,7 +322,7 @@ test("a missing focused window uses an existing one, and creates a window only w
         created.io
     );
     expect(created.calls).toContainEqual(["ok", "new-window"]);
-    expect(created.calls.find((call) => call[0] === "workspace")).toContain("window:5");
+    expect(created.calls.find((call) => call[0] === "workspace")).toContain("new");
     expect(created.calls.find((call) => call[0] === "workspace")).toContain(`${TOOLS} 'claude' 'run' 'work'`);
 });
 
@@ -342,7 +344,7 @@ test("--name goes to create, then the title is checked once, with no legacy rena
     expect(result.workspace).toBe("workspace:9");
     expect(calls[0]).toContain("--name");
     expect(calls[0]).toContain("Ship");
-    expect(calls[1]).toEqual(["title", "workspace:9", "window:1", "Ship"]);
+    expect(calls[1]).toEqual(["title", "uuid-workspace:9", "uuid-window:1", "Ship"]);
     expect(calls.some((call) => call.includes("rename-workspace"))).toBe(false);
 });
 

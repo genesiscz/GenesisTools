@@ -119,15 +119,15 @@ export interface SurfaceCaptureResult {
  * to add the right command for those panes.
  */
 export async function captureSurfaceState(
-    workspaceRef: string,
-    surfaceRef: string,
+    workspaceId: string,
+    surfaceId: string,
     options: { screen: boolean; history: boolean }
 ): Promise<SurfaceCaptureResult> {
     if (!options.screen && !options.history) {
         return { command: NO_COMMAND };
     }
 
-    const visible = await runCaptureSafely(workspaceRef, surfaceRef);
+    const visible = await runCaptureSafely(workspaceId, surfaceId);
     if (!visible) {
         return { command: NO_COMMAND };
     }

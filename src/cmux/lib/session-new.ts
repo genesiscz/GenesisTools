@@ -29,6 +29,8 @@ export interface SessionNewResult {
     workspace: string;
     surface: string;
     window: string;
+    /** The UUID of the window the workspace was created in. */
+    windowId: string;
     workspaceId: string | null;
     surfaceId: string | null;
     tmuxSession: string | null;
@@ -65,6 +67,7 @@ export interface RepoFs {
 }
 
 export interface SessionNewIO {
+    /** The focused window's UUID. */
     focusedWindow(): Promise<string | undefined>;
     listWindows(): Promise<{ ref: string; id: string; visible: boolean }[]>;
     runJSON<T>(args: string[]): Promise<T>;
@@ -312,13 +315,13 @@ export async function resolveSessionWindow(
         windows = await io.listWindows();
     }
 
-    const chosen = windows.find((window) => window.visible && window.ref) ?? windows.find((window) => window.ref);
+    const chosen = windows.find((window) => window.visible && window.id) ?? windows.find((window) => window.id);
 
     if (!chosen) {
         throw new Error("cmux has no window to open a workspace in");
     }
 
-    return chosen.ref;
+    return chosen.id;
 }
 
 /**
@@ -340,7 +343,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         crossMessages: input.crossMessages,
     });
     const agentLine = input.pidFile ? withPidNote(run, input.pidFile) : run;
-    const windowRef = await resolveSessionWindow(io);
+    const windowId = await resolveSessionWindow(io);
     let tmuxSession: string | null = null;
     let tmuxPane: string | null = null;
     let tmuxSessionCreatedMs: number | null = null;
@@ -366,7 +369,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
 
         created = await io.runJSON<WorkspaceCreated>(
             buildWorkspaceCreateArgs({
-                window: windowRef,
+                window: windowId,
                 cwd,
                 command,
                 focus: input.focus === true,
@@ -375,7 +378,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         );
         workspace = created.workspace_ref?.trim() ?? "";
         surface = created.surface_ref?.trim() ?? "";
-        window = created.window_ref?.trim() || windowRef;
+        window = created.window_ref?.trim() || windowId;
 
         if (!workspace || !surface) {
             throw new Error("cmux created a workspace but returned no workspace or surface ref");
@@ -394,7 +397,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     const ids = await createdIds({ created, surface, io });
 
     if (name) {
-        await io.ensureTitle({ workspace, window, title: name });
+        await io.ensureTitle({ workspace: ids.workspaceId ?? workspace, window: windowId, title: name });
     }
 
     return {
@@ -402,6 +405,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         workspace,
         surface,
         window,
+        windowId,
         ...ids,
         tmuxSession,
         tmuxPane,
@@ -468,7 +472,7 @@ export function liveRepoFs(): RepoFs {
 
 export function liveSessionIO(): SessionNewIO {
     return {
-        focusedWindow: async () => (await focusedPlace()).window_ref,
+        focusedWindow: async () => (await focusedPlace()).window_id,
         listWindows: async () => {
             const windows = await windowList();
             return windows.map((window) => ({ ref: window.ref, id: window.id, visible: window.visible }));

@@ -205,6 +205,7 @@ export async function runSessionNew(
             model: model ?? null,
             cwd: started.cwd,
             window: started.window,
+            windowId: started.windowId,
             workspace: started.workspace,
             surface: started.surface,
             workspaceId: started.workspaceId,

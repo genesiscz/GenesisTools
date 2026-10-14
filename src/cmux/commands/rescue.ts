@@ -160,9 +160,9 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
     await new Promise((resolve) => setTimeout(resolve, 5000));
 
     const entries = collectReplayEntries(profile);
-    const workspaceRefs = await replayIntoReopenedSurfaces(profile, entries);
+    const workspaceIds = await replayIntoReopenedSurfaces(profile, entries);
 
-    await reportWaitingPrompts(workspaceRefs, "Rescue");
+    await reportWaitingPrompts(workspaceIds, "Rescue");
 
     p.outro(pc.green("Rescue complete."));
 }
@@ -215,7 +215,8 @@ interface ListPaneSurfacesResponse {
  */
 async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry[]): Promise<string[]> {
     const live = await workspaceList();
-    const workspaceRefs: string[] = [];
+    /** The UUIDs of the workspaces typed into, for the prompt scan. */
+    const workspaceIds: string[] = [];
     // cmux titles derive from directories/branches, so two workspaces can share a
     // title — an already-claimed live workspace must never match a second saved one.
     const claimed = new Set<string>();
@@ -225,26 +226,26 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
         const saved = profileWorkspaces[wsIndex];
         const positional = live.workspaces[wsIndex];
         const liveWs =
-            live.workspaces.find((ws) => !claimed.has(ws.ref) && ws.title === saved.title) ??
-            (positional && !claimed.has(positional.ref) ? positional : undefined);
+            live.workspaces.find((ws) => !claimed.has(ws.id) && ws.title === saved.title) ??
+            (positional && !claimed.has(positional.id) ? positional : undefined);
         if (!liveWs) {
             p.log.warn(`No reopened workspace matches "${saved.title}" — skipped.`);
             continue;
         }
 
-        claimed.add(liveWs.ref);
-        workspaceRefs.push(liveWs.ref);
+        claimed.add(liveWs.id);
+        workspaceIds.push(liveWs.id);
         const wsEntries = entries.filter((e) => e.workspaceIndex === wsIndex);
 
         const liveSurfaces: LiveSurfaceEntry[] = [];
-        const layout = await paneList(liveWs.ref);
+        const layout = await paneList(liveWs.id);
         for (const pane of layout.panes) {
             const response = await runCmuxJSON<ListPaneSurfacesResponse>([
                 "list-pane-surfaces",
                 "--workspace",
-                liveWs.ref,
+                liveWs.id,
                 "--pane",
-                pane.ref,
+                pane.id,
             ]);
             liveSurfaces.push(...[...response.surfaces].sort((a, b) => a.index - b.index));
         }
@@ -293,7 +294,14 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
                 continue;
             }
 
-            await sendSurfaceText({ surfaceRef: target.id ?? target.ref, text: `${entry.command}\n` });
+            // Typed by UUID only: a ref names whichever tab holds that number now.
+            if (!target.id) {
+                p.log.warn(`  skipped ${target.ref}: cmux listed it without a surface UUID.`);
+                skipped += 1;
+                continue;
+            }
+
+            await sendSurfaceText({ surfaceRef: target.id, text: `${entry.command}\n` });
             sent += 1;
             await new Promise((resolve) => setTimeout(resolve, 300));
         }
@@ -303,5 +311,5 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
         );
     }
 
-    return workspaceRefs;
+    return workspaceIds;
 }

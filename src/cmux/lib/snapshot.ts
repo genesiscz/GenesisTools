@@ -24,7 +24,7 @@ import {
 } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
-import { resolveWindowRef } from "@app/cmux/lib/window-ref";
+import { resolveWindowId } from "@app/cmux/lib/window-ref";
 import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import {
     browserUrl,
@@ -35,6 +35,7 @@ import {
     windowList,
     workspaceList,
 } from "@genesiscz/utils/cmux/lib/socket";
+import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { logger } from "@genesiscz/utils/logger";
 
 interface SurfaceListEntry {
@@ -224,7 +225,7 @@ export interface SnapshotProgress {
 }
 
 interface CollectedWorkspace extends WorkspaceEntry {
-    window_ref: string;
+    window_id: string;
 }
 
 export async function captureProfile(options: SnapshotOptions, progress: SnapshotProgress = {}): Promise<Profile> {
@@ -236,16 +237,16 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
         options.captureHistory || options.captureScreen || options.captureCwd
             ? await buildCommandCaptureContext({ commands: options.captureHistory })
             : undefined;
-    const targetWindowRef = options.targetWindowRef ? resolveWindowRef(options.targetWindowRef, allWindows) : undefined;
-    const targetWorkspaces = filterWorkspaces(allWorkspaces, { ...options, targetWindowRef }, ctx.focusedWorkspaceRef);
-    const targetWindowRefs = new Set(targetWorkspaces.map((ws) => ws.window_ref));
-    const targetWindows = allWindows.filter((w) => targetWindowRefs.has(w.ref));
+    const targetWindowId = options.targetWindowRef ? resolveWindowId(options.targetWindowRef, allWindows) : undefined;
+    const targetWorkspaces = filterWorkspaces(allWorkspaces, { ...options, targetWindowId }, ctx.focusedWorkspaceId);
+    const targetWindowIds = new Set(targetWorkspaces.map((ws) => ws.window_id));
+    const targetWindows = allWindows.filter((w) => targetWindowIds.has(w.id));
 
     const windowsOut: Window[] = [];
     let visited = 0;
     for (const window of targetWindows) {
         const wsForWindow = targetWorkspaces
-            .filter((ws) => ws.window_ref === window.ref)
+            .filter((ws) => ws.window_id === window.id)
             .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 
         const workspacesOut: Workspace[] = [];
@@ -265,8 +266,8 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
             // (a `--list`, a `--dry-run`) visibly swapped the user's active workspace about 5 s per
             // workspace. cmux 0.65 answers `list-pane-surfaces` and `capture-pane` for a background
             // workspace (2026-10-14: 11 tabs in 4 background workspaces all read, focus untouched).
-            const panes = await capturePanes(ws.ref, options, ctx.callerSurfaceRef, capture);
-            const fresh = await paneList(ws.ref);
+            const panes = await capturePanes(ws.id, options, ctx.callerSurfaceId, capture);
+            const fresh = await paneList(ws.id);
             const captured = { panes, container: fresh.container_frame };
 
             if (captured.container.width > 0 && captured.container.height > 0) {
@@ -306,67 +307,70 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
 async function collectAllWorkspaces(windows: WindowEntry[]): Promise<CollectedWorkspace[]> {
     const out: CollectedWorkspace[] = [];
     for (const window of windows) {
-        const list = await workspaceList(window.ref);
+        const list = await workspaceList(window.id);
         for (const ws of list.workspaces) {
-            out.push({ ...ws, window_ref: window.ref });
+            out.push({ ...ws, window_id: window.id });
         }
     }
     return out;
 }
 
 interface IdentifyContext {
-    focusedWorkspaceRef?: string;
+    focusedWorkspaceId?: string;
     /**
      * Surface where the save command itself is running. Capturing its visible screen
      * would record `tools cmux profiles save` as the bottom-of-screen content, which
      * then gets replayed verbatim into the restored pane — meta-circular and useless.
      * We skip screen capture for this one surface.
      */
-    callerSurfaceRef?: string;
+    callerSurfaceId?: string;
 }
 
 export async function getIdentifyContext(): Promise<IdentifyContext> {
     try {
         const identify = await runCmuxJSON<{
-            focused?: { workspace_ref?: string };
-            caller?: { surface_ref?: string };
-        }>(["identify"]);
+            focused?: { workspace_id?: string };
+            caller?: { surface_id?: string };
+        }>(["--id-format", "both", "identify"]);
         return {
-            focusedWorkspaceRef: identify.focused?.workspace_ref,
-            callerSurfaceRef: identify.caller?.surface_ref,
+            focusedWorkspaceId: identify.focused?.workspace_id,
+            callerSurfaceId: identify.caller?.surface_id,
         };
     } catch {
         return {};
     }
 }
 
+/** Joins by UUID; `--workspace` may name a workspace by its ref or its UUID. */
 function filterWorkspaces(
     all: CollectedWorkspace[],
-    options: SnapshotOptions,
-    focusedWorkspaceRef: string | undefined
+    options: SnapshotOptions & { targetWindowId?: string },
+    focusedWorkspaceId: string | undefined
 ): CollectedWorkspace[] {
     if (options.scope === "all") {
         return all;
     }
     if (options.scope === "window") {
-        const focusedWindowRef = focusedWorkspaceRef
-            ? all.find((ws) => ws.ref === focusedWorkspaceRef)?.window_ref
+        const focusedWindowId = focusedWorkspaceId
+            ? all.find((ws) => sameCmuxId(ws.id, focusedWorkspaceId))?.window_id
             : undefined;
-        const ref = options.targetWindowRef ?? focusedWindowRef ?? all[0]?.window_ref;
-        if (!ref) {
+        const windowId = options.targetWindowId ?? focusedWindowId ?? all[0]?.window_id;
+        if (!windowId) {
             throw new Error("scope=window requires a focused workspace or --window <ref>");
         }
-        const filtered = all.filter((ws) => ws.window_ref === ref);
+        const filtered = all.filter((ws) => sameCmuxId(ws.window_id, windowId));
         if (filtered.length === 0 && options.targetWindowRef) {
             throw new Error(`No window matches --window ${options.targetWindowRef}`);
         }
         return filtered;
     }
-    const ref = options.targetWorkspaceRef ?? focusedWorkspaceRef ?? all.find((ws) => ws.selected)?.ref;
-    if (!ref) {
+    const wanted = options.targetWorkspaceRef?.trim();
+    const filtered = wanted
+        ? all.filter((ws) => ws.ref === wanted || sameCmuxId(ws.id, wanted))
+        : all.filter((ws) => (focusedWorkspaceId ? sameCmuxId(ws.id, focusedWorkspaceId) : ws.selected === true));
+    if (filtered.length === 0 && !wanted) {
         throw new Error("scope=workspace requires a focused workspace or --workspace <ref>");
     }
-    const filtered = all.filter((ws) => ws.ref === ref);
     if (filtered.length === 0 && options.targetWorkspaceRef) {
         throw new Error(`No workspace matches --workspace ${options.targetWorkspaceRef}`);
     }
@@ -379,12 +383,12 @@ function cellSizeOf(panes: PaneListPane[], field: "cell_width_px" | "cell_height
 }
 
 async function capturePanes(
-    workspaceRef: string,
+    workspaceId: string,
     options: SnapshotOptions,
-    callerSurfaceRef: string | undefined,
+    callerSurfaceId: string | undefined,
     capture: CommandCaptureContext | undefined
 ): Promise<Pane[]> {
-    const layout = await paneList(workspaceRef);
+    const layout = await paneList(workspaceId);
     const panes: Pane[] = [];
 
     for (const paneInfo of layout.panes) {
@@ -393,9 +397,9 @@ async function capturePanes(
             "both",
             "list-pane-surfaces",
             "--workspace",
-            workspaceRef,
+            workspaceId,
             "--pane",
-            paneInfo.ref,
+            paneInfo.id,
         ]);
 
         const sortedEntries = [...surfacesInfo.surfaces].sort((a, b) => a.index - b.index);
@@ -405,7 +409,7 @@ async function capturePanes(
             if (surfaceEntry.selected) {
                 selectedIndex = surfaces.length;
             }
-            surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options, callerSurfaceRef, capture));
+            surfaces.push(await captureSurface(surfaceEntry, workspaceId, options, callerSurfaceId, capture));
         }
 
         // A pane cmux has not rendered reports no cell geometry, only pixels. The saved
@@ -445,14 +449,14 @@ async function capturePanes(
 
 async function captureSurface(
     entry: SurfaceListEntry,
-    workspaceRef: string,
+    workspaceId: string,
     options: SnapshotOptions,
-    callerSurfaceRef: string | undefined,
+    callerSurfaceId: string | undefined,
     capture: CommandCaptureContext | undefined
 ): Promise<Surface> {
     const title = entry.title ?? "";
     if (entry.type === "browser") {
-        const url = await browserUrl(entry.ref);
+        const url = await browserUrl(entry.id ?? entry.ref);
         return {
             type: "browser",
             title,
@@ -464,11 +468,11 @@ async function captureSurface(
     // visible content is dominated by the `tools cmux profiles save` invocation
     // and the running clack prompts, which would replay back into the restored
     // pane verbatim. Other panes still get full screen capture.
-    const isCaller = callerSurfaceRef !== undefined && entry.ref === callerSurfaceRef;
+    const isCaller = callerSurfaceId !== undefined && entry.id !== undefined && sameCmuxId(entry.id, callerSurfaceId);
     if (isCaller && options.captureScreen) {
         logger.debug({ surfaceRef: entry.ref }, "[snapshot] skipping screen capture for caller surface");
     }
-    const captured = await captureSurfaceState(workspaceRef, entry.ref, {
+    const captured = await captureSurfaceState(workspaceId, entry.id ?? entry.ref, {
         screen: options.captureScreen && !isCaller,
         history: options.captureHistory,
     });
