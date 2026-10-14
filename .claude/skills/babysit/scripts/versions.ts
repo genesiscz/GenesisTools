@@ -11,11 +11,37 @@ export const VERSION_FILES = new Set([
 
 export type GitRun = (args: string[]) => { code: number; out: string };
 
-/** Hooks off (a post-checkout hook froze for minutes on a stuck syspolicyd) and rerere off (a remembered resolution
+const HOOK_EVENTS = [
+    "pre-commit",
+    "commit-msg",
+    "post-commit",
+    "post-checkout",
+    "pre-push",
+    "post-merge",
+    "post-rewrite",
+];
+
+/**
+ * Git options that turn every hook off. `core.hooksPath=/dev/null` alone stops only the hooks directory: hooks set in
+ * config (`[hook "<name>"] command/event`, git 2.48+) ignore it, and 84dcc30a1 moved this repo's hooks there
+ * (measured 2026-10-14 on git 2.55: only `hook.<event>.enabled=false` or `hook.<name>.enabled=false` stopped one).
+ */
+export const HOOKS_OFF = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    ...HOOK_EVENTS.flatMap((event) => [
+        "-c",
+        `hook.${event}.enabled=false`,
+        "-c",
+        `hook.genesis-tools-${event}.enabled=false`,
+    ]),
+];
+
+/** Hooks off (HOOKS_OFF; a post-checkout hook froze for minutes on a stuck syspolicyd) and rerere off (a remembered resolution
  * staged itself, hiding the conflict and an old version number). */
 export function prepGit(cwd: string): GitRun {
     return (args) => {
-        const p = Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", "-c", "rerere.enabled=false", ...args], {
+        const p = Bun.spawnSync(["git", ...HOOKS_OFF, "-c", "rerere.enabled=false", ...args], {
             cwd,
             stdout: "pipe",
             stderr: "pipe",

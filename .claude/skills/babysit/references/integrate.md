@@ -30,7 +30,11 @@ When syspolicyd is stuck (one core at 100%), the first launch of a binary that m
 worktree's own `biome`, a pre-push or pre-commit hook that starts one, a fresh Swift test bundle. Then run Biome from
 the main checkout's `node_modules/.bin/biome` on the worktree files, authorize the worker's commit with
 `git -c core.hooksPath=/dev/null commit`, and push with `integrate.ts … --no-push-hooks` (the gates already ran the
-hook's probe, typecheck and repo rules). Swift checks wait: record them as NOT RUN and run them when it recovers.
+hook's probe, typecheck and repo rules). Swift tests wait: record them as NOT RUN and run them when it recovers, but
+`bun .claude/skills/babysit/scripts/swift-typecheck.ts --package <dir>` still proves the Swift code compiles (every
+target through `swiftc` alone, no binary launched; GenesisKit takes about two minutes). Use it also when another
+session holds the one Swift build slot. Hooks set in config ignore `core.hooksPath`: the scripts pass `HOOKS_OFF`
+from `versions.ts`; type it by hand as `-c hook.<event>.enabled=false` for each event you need off.
 
 Then in the main checkout (unified branch):
 `bun .claude/skills/babysit/scripts/pick-unified.ts --branch <unified> <worker sha> <correction sha>`. It skips a
