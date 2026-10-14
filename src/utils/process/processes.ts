@@ -894,8 +894,11 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
     if (fillFromPs) {
         const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
         const missing = entries.filter((entry) => !entry.zombie && (commands || !usages.has(entry.pid)));
-        const uids = missing.flatMap((entry) => (entry.uid === null ? [] : [entry.uid]));
-        const owners = uids.length === missing.length ? [...new Set(uids)] : [];
+        // Without command lines a row of this user's lacks usage only when its process ended between the listing and
+        // the read (a `git` or `jq` in 2 of 10 listings), and no `ps` shows it either, so only other users are asked.
+        const asked = commands ? missing : missing.filter((entry) => entry.uid !== ownUid());
+        const uids = asked.flatMap((entry) => (entry.uid === null ? [] : [entry.uid]));
+        const owners = uids.length === asked.length ? [...new Set(uids)] : [];
         const names = options.names === true && !commands;
         const tail = commands ? ",command=" : names ? ",comm=" : "";
         const columns = `pid=,rss=,time=${options.cpuPercent ? ",pcpu=" : ""}${tail}`;

@@ -809,6 +809,23 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             expect(ps[0]).toContain("-u");
             expect(ps[0]?.join(" ")).toContain("comm=");
 
+            // One of this user's processes that ended between the listing and its usage read (a `git` or `jq`, in 2
+            // of 10 listings) is in no `ps` either, so it must not turn the call into the whole table.
+            const realUsage = kernel.readProcessUsage;
+            const ended = spyOn(kernel, "readProcessUsage").mockImplementation((pid) =>
+                pid === process.pid ? null : realUsage(pid)
+            );
+
+            try {
+                calls = spawnedCommands(() =>
+                    listProcessesWithUsage({ otherUsers: true, commands: false, names: true })
+                );
+            } finally {
+                ended.mockRestore();
+            }
+
+            expect(calls.filter((argv) => argv[0] === "ps").map((argv) => argv.includes("-u"))).toEqual([true]);
+
             // With command lines this user's processes are asked too, and `-u` over every user cost 65.5 ms where
             // `-A` cost 58.0 (medians of 9, alternating), so the whole table stays `-A`.
             calls = spawnedCommands(() => listProcessesWithUsage({ otherUsers: true }));
