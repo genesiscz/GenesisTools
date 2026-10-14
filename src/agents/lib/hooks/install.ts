@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { agentsDataDir, decisionHooksWanted, loadHooksConfig } from "./config";
+import { agentsDataDir, decisionHooksWanted, diffFor, loadHooksConfig } from "./config";
 import { hookDiag } from "./log";
 import { writeJsonFile } from "./write-json";
 
@@ -103,6 +103,15 @@ export function entriesFor(
             event: "PostToolUse",
             entry: {
                 matcher: "Bash|Edit|MultiEdit|Write",
+                hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
+            },
+        },
+        {
+            // A Bash call that FAILS gets no PostToolUse, so its edits were never shown: 98 failed
+            // calls in a day, 48 of them editing files (2026-10-14). Same entry point, its own event.
+            event: "PostToolUseFailure",
+            entry: {
+                matcher: "Bash",
                 hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
             },
         },
@@ -249,6 +258,8 @@ export interface InstallResult {
     changed: boolean;
     backup?: string;
     dist: string;
+    /** What became of Claude Code's own Bash diff; see `diff.replaceNative`. */
+    nativeDiff?: "turned-off" | "already-off" | "kept";
 }
 
 /** Does this entry belong to this installer? */
@@ -338,10 +349,18 @@ export function installHooks(options: {
         (ours.length === 0 ? added : updated).push(event);
     }
 
+    // The hook replaces Claude Code's own Bash diff, in the same write as the wiring.
+    let nativeDiff: InstallResult["nativeDiff"] = "kept";
+
+    if (config.diff.replaceNative && diffFor(config, "claude").enabled) {
+        nativeDiff = settings.bashEditDiffEnabled === false ? "already-off" : "turned-off";
+        settings.bashEditDiffEnabled = false;
+    }
+
     const changed = SafeJSON.stringify(settings) !== before;
 
     if (!options.write || !changed) {
-        return { added, updated, unchanged, removed, changed, dist };
+        return { added, updated, unchanged, removed, changed, dist, nativeDiff };
     }
 
     const backup = `${settingsPath}.pre-agents-hooks`;
@@ -352,7 +371,7 @@ export function installHooks(options: {
 
     writeJsonFile(settingsPath, settings);
 
-    return { added, updated, unchanged, removed, changed, backup, dist };
+    return { added, updated, unchanged, removed, changed, backup, dist, nativeDiff };
 }
 
 export interface WiringStatus {

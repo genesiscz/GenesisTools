@@ -18,7 +18,8 @@ setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 
-if (!payload || normalizeEvent(payload.event) !== "posttooluse") {
+// PostToolUseFailure is a Bash call that failed: its edits are as real as a successful one's.
+if (!payload || !["posttooluse", "posttoolusefailure"].includes(normalizeEvent(payload.event))) {
     process.exit(0);
 }
 

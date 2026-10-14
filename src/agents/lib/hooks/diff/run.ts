@@ -18,7 +18,7 @@ import { type DiffConfig, diffFor, type HooksConfig } from "../config";
 import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
-import type { HookPayload } from "../payload";
+import { type HookPayload, normalizeEvent } from "../payload";
 import {
     type Attribution,
     type AttributionContext,
@@ -760,6 +760,9 @@ export function runDiffPost(
             ? [summaryLine("file(s) changed by others in this root", unattributed)]
             : []),
         ...(notShown.length > 0 ? [`${notShown.length} more changed file(s) past diff.maxFiles ${diff.maxFiles}`] : []),
+        ...(blocks.length > 0 && normalizeEvent(payload.event) === "posttoolusefailure"
+            ? ["the command failed: this is what it changed before it stopped"]
+            : []),
     ];
     const others = unattributed.map((item) => item.path);
 

@@ -1,0 +1,52 @@
+import { copyFileSync, existsSync } from "node:fs";
+import { claudeSettingsPath, readSettings } from "./install";
+import { writeJsonFile } from "./write-json";
+
+/**
+ * Claude Code's own Bash diff (`bashEditDiffEnabled`, 2.1.296). It has no attribution: it draws
+ * whatever changed in the cwd repository while a Bash call ran, another session's edit included
+ * (observed 2026-10-14 22:59: another session's `run.ts` under an unrelated `cat > step1.ts`). With
+ * `diff.replaceNative` on, the hook draws every Bash diff and this one is switched off.
+ *
+ * `on` and `off` are what the settings file says; `default` is no key, which Claude Code reads as
+ * on in auto and bypassPermissions mode. The `CLAUDE_CODE_BASH_EDIT_DIFF` variable wins over all of
+ * them in a session that has it.
+ */
+export type NativeDiffState = "on" | "off" | "default";
+
+export function nativeDiffState(settingsPath = claudeSettingsPath()): NativeDiffState {
+    const value = (readSettings(settingsPath) as { bashEditDiffEnabled?: unknown }).bashEditDiffEnabled;
+
+    return value === false ? "off" : value === true ? "on" : "default";
+}
+
+export interface NativeDiffChange {
+    before: NativeDiffState;
+    after: NativeDiffState;
+    changed: boolean;
+    backup?: string;
+}
+
+/** Sets `bashEditDiffEnabled`; writes only with `write`. The first write keeps a backup beside the file. */
+export function setNativeDiff(options: { enabled: boolean; write: boolean; settingsPath?: string }): NativeDiffChange {
+    const settingsPath = options.settingsPath ?? claudeSettingsPath();
+    const settings = readSettings(settingsPath) as Record<string, unknown>;
+    const before = nativeDiffState(settingsPath);
+    const after: NativeDiffState = options.enabled ? "on" : "off";
+    const changed = before !== after;
+
+    if (!changed || !options.write) {
+        return { before, after, changed };
+    }
+
+    const backup = `${settingsPath}.pre-native-diff`;
+
+    if (existsSync(settingsPath) && !existsSync(backup)) {
+        copyFileSync(settingsPath, backup);
+    }
+
+    settings.bashEditDiffEnabled = options.enabled;
+    writeJsonFile(settingsPath, settings);
+
+    return { before, after, changed, backup };
+}

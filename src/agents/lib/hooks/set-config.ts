@@ -40,6 +40,7 @@ export const SETTABLE_KEYS = [
     "diff.theme",
     "diff.columns",
     "diff.fullDiff",
+    "diff.replaceNative",
     "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
     "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
     "maxLogMB",
@@ -270,6 +271,11 @@ export function applySetting(
 
     if (key === "diff.enabled") {
         next.diff.enabled = asBoolean(key, value);
+        return next;
+    }
+
+    if (key === "diff.replaceNative") {
+        next.diff.replaceNative = asBoolean(key, value);
         return next;
     }
 

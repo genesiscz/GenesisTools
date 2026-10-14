@@ -349,7 +349,7 @@ describe("installHooks", () => {
 
         expect(second.added).toEqual([]);
         expect(second.updated).toEqual([]);
-        expect(second.unchanged).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(second.unchanged).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(second.changed).toBe(false);
         expect(readFileSync(path, "utf8")).toBe(bytes);
         // A no-op must be a NO-OP: the earlier version rewrote the file every time.
@@ -364,7 +364,7 @@ describe("installHooks", () => {
         const moved = installHooks({ dist: "/dist-B", settingsPath: path, write: true });
         const after = readFileSync(path, "utf8");
 
-        expect(moved.updated).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(moved.updated).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(moved.changed).toBe(true);
         expect(after).toContain("/dist-B/src/agents/bin/hook-pre.ts");
         expect(after).not.toContain("/dist-A");
@@ -436,7 +436,7 @@ describe("installHooks", () => {
         const removed = uninstallHooks({ settingsPath: path, write: true });
         const after = readSettings(path);
 
-        expect(removed.removed).toBe(4);
+        expect(removed.removed).toBe(5);
         expect(after.hooks?.PreToolUse).toEqual([{ hooks: [{ type: "command", command: "/existing.sh" }] }]);
         expect(after.hooks?.PostToolUse).toEqual([]);
         expect(after.hooks?.SessionEnd).toEqual([]);
@@ -452,7 +452,7 @@ describe("installHooks", () => {
 
         expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false, unpushed: false })).toEqual({
             state: "stale",
-            events: ["PreToolUse", "SessionEnd", "PostToolUse"],
+            events: ["PreToolUse", "PostToolUseFailure", "SessionEnd", "PostToolUse"],
         });
 
         installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false, unpushed: false });
@@ -470,7 +470,7 @@ describe("installHooks", () => {
         const path = settingsFile({ hooks: {} });
         const result = installHooks({ dist: "/dist", settingsPath: path, write: false });
 
-        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(result.changed).toBe(true);
         expect(readSettings(path).hooks).toEqual({});
     });
@@ -1095,7 +1095,7 @@ describe("installHooks on a machine with no settings file", () => {
         const path = join(dir, "nested", "settings.json");
         const result = installHooks({ dist: "/dist", settingsPath: path, write: true });
 
-        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(result.backup).toBe(`${path}.pre-agents-hooks`);
         expect(existsSync(`${path}.pre-agents-hooks`)).toBe(false);
         expect(readSettings(path).hooks?.PreToolUse).toHaveLength(1);

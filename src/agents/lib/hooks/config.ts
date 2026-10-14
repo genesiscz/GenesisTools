@@ -63,6 +63,12 @@ export interface DiffConfig {
     fullDiff: FullDiffMode;
     standDownWhenNative: boolean;
     /**
+     * The hook replaces Claude Code's own Bash diff: `tools agents hooks install --write` sets
+     * `bashEditDiffEnabled: false` in `~/.claude/settings.json`, and `doctor` warns while it is on.
+     * Claude Code's diff has no attribution and shows other sessions' edits; see `native-diff.ts`.
+     */
+    replaceNative: boolean;
+    /**
      * Also watch files the command NAMES as a path, not only those inside a git root it
      * works in. It is what makes an edit to a vault note, a `~/.claude` memory file or any
      * other path outside the cwd repository visible at all. Costs one `stat` per path-shaped
@@ -314,6 +320,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         columns: "auto",
         fullDiff: "genesis",
         standDownWhenNative: true,
+        replaceNative: true,
         watchNamedPaths: true,
         maxNamedPaths: 8,
         maxNamedPathMB: 2,
@@ -533,6 +540,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         }),
         namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
         dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
+        replaceNative: boolOr(stored?.replaceNative, base.replaceNative),
         othersSummary: othersSummaryOr(stored?.othersSummary, base.othersSummary),
         maxMessageChars: countOr({
             field: "diff.maxMessageChars",
@@ -630,6 +638,7 @@ const OVERRIDE_BOOLEANS = [
     "watchNamedPaths",
     "namedPathsShowCreated",
     "dedupeAcrossSessions",
+    "replaceNative",
 ] as const;
 
 /**

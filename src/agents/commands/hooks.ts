@@ -40,6 +40,7 @@ import {
     uninstallHooks,
     wiringStatus,
 } from "../lib/hooks/install";
+import { nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
@@ -85,6 +86,12 @@ function printInstallResult(result: InstallResult, write: boolean, file: string)
         ui.raw(`${pc.bold("backup")}     ${result.backup}`);
     }
 
+    if (result.nativeDiff === "turned-off") {
+        ui.raw(
+            `${pc.bold("native")}     Claude Code's own Bash diff ${write ? "turned off" : "would be turned off"} (bashEditDiffEnabled: false): the hook draws every Bash diff`
+        );
+    }
+
     if (!result.changed) {
         ui.raw("");
         ui.raw(pc.dim(`already wired exactly like this; ${file} was not touched`));
@@ -111,6 +118,23 @@ function ruleOverrides(config: HooksConfig, rules: readonly ShellRule[]): { off:
             .map((rule) => `${rule.id} ${rule.state.slice(3)}`)
             .join(", "),
     };
+}
+
+/** Claude Code's own Bash diff, as `doctor` reports it; loud while it duplicates and misattributes. */
+function nativeDiffLabel(config: HooksConfig): string {
+    const state = nativeDiffState();
+
+    if (state === "off") {
+        return "off: the hook draws every Bash diff";
+    }
+
+    if (!config.diff.replaceNative) {
+        return `${state} (diff.replaceNative false: the hook stands down per file)`;
+    }
+
+    return pc.red(
+        `🛑 ${state === "on" ? "ON" : "ON (default)"}: it shows other sessions' edits. Fix: tools agents hooks native-diff off --write`
+    );
 }
 
 function seenLabel(at: string | undefined): string {
@@ -207,6 +231,7 @@ export function registerHooksCommands(program: Command): void {
             table.push(["diff.enabled", String(config.diff.enabled)]);
             table.push(["diff.maxFiles", String(config.diff.maxFiles)]);
             table.push(["diff.standDownWhenNative", String(config.diff.standDownWhenNative)]);
+            table.push(["native Bash diff", nativeDiffLabel(config)]);
             table.push(["diff per harness", perHarnessDiff(config)]);
             table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
             table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
@@ -428,6 +453,52 @@ export function registerHooksCommands(program: Command): void {
             }
 
             out.result(filtered);
+        });
+
+    hooks
+        .command("native-diff [state]")
+        .description(
+            "Claude Code's own Bash diff (bashEditDiffEnabled): status, off or on. It has no attribution and shows other sessions' edits, so the hook replaces it"
+        )
+        .option("--write", "Actually change ~/.claude/settings.json; without it this is a dry run")
+        .action((state: string | undefined, options: { write?: boolean }) => {
+            const wanted = state ?? "status";
+
+            if (wanted === "status") {
+                const now = nativeDiffState();
+                ui.raw(`Claude Code's own Bash diff: ${now === "off" ? pc.green("off") : pc.red(now)}`);
+
+                if (now !== "off") {
+                    ui.raw(
+                        pc.yellow("🛑 It shows other sessions' edits. Run: tools agents hooks native-diff off --write")
+                    );
+                }
+
+                return;
+            }
+
+            if (wanted !== "off" && wanted !== "on") {
+                ui.err(`native-diff takes status, off or on, not ${wanted}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const result = setNativeDiff({ enabled: wanted === "on", write: Boolean(options.write) });
+
+            if (!result.changed) {
+                ui.raw(pc.dim(`already ${result.after}; ${claudeSettingsPath()} was not touched`));
+                return;
+            }
+
+            ui.raw(`Claude Code's own Bash diff: ${result.before} -> ${result.after}`);
+
+            if (result.backup) {
+                ui.raw(`${pc.bold("backup")} ${result.backup}`);
+            }
+
+            if (!options.write) {
+                ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));
+            }
         });
 
     const diffCommand = hooks.command("diff").description("The Bash diff hook");
