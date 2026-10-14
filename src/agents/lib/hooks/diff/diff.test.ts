@@ -2157,7 +2157,7 @@ describe("highlighting is skipped when nothing would use it", () => {
     // 🛑 One `bat` spawn per changed file sits on the hot path. Measured 2026-09-22 on a
     // 15-file change that rewrote every line: 597 ms with highlighting against 159 ms
     // without, for BYTE-IDENTICAL output, because only CONTEXT lines are ever coloured.
-    const batty = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "bat" as const };
+    const batty = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "truecolor" as const };
     const range = { from: 1, to: 4 };
     const rewrite = "@@ -1,2 +1,2 @@\n-old one\n-old two\n+new one\n+new two";
     const edited = "@@ -1,3 +1,3 @@\n kept line\n-old two\n+new two\n kept three";
@@ -3351,7 +3351,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             return {
                 head: "head",
                 body: rendered.body,
-                dress: themedDress(rendered.body, palette, "x.ts", quiet, width),
+                dress: themedDress(palette, "x.ts", width),
             };
         };
         const budget = (bytes: number) => ({ ...quiet, maxMessageChars: bytes });
@@ -3376,7 +3376,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         const block: DiffBlock = {
             head: "head",
             body: rendered.body,
-            dress: themedDress(rendered.body, palette, "x.ts", quiet, 40),
+            dress: themedDress(palette, "x.ts", 40),
         };
         const rows = assembleMessage([block], { ...quiet, maxMessageChars: 100_000 })
             .split("\n")
@@ -3398,6 +3398,29 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(stripAnsi(compact)).toBe(stripAnsi(bat));
         expect(compact).toBe(`${pink}const ${white}total =\u001b[1m${pink}x\u001b[22;23;24m\u001b[39m`);
         expect(compact).not.toContain("\u001b[0m");
+    });
+
+    it("keeps the context rows right around a change before any other context", () => {
+        const patch = ["@@ -1,7 +1,7 @@", " alpha", " bravo", " charlie", "-old", "+new", " delta", " echo"].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = { head: "head", body: rendered.body, dress: themedDress(palette, "x.txt", 0) };
+        // The two changed rows and their two neighbours fit; the outer context does not.
+        const budget = 4 + 60 + 4 * 40;
+        const shown = stripAnsi(assembleMessage([block], { ...quiet, maxMessageChars: budget }));
+
+        expect(shown).toContain("charlie");
+        expect(shown).toContain("delta");
+        expect(shown).not.toContain("alpha");
+    });
+
+    it("colours every themed row from the start, in 256 colours by default", () => {
+        const rendered = renderPatch(["@@ -1,1 +1,1 @@", "-const a = 1;", "+const a = 2;"].join("\n"), palette);
+        const block: DiffBlock = { head: "head", body: rendered.body, dress: themedDress(palette, "x.ts", 0) };
+        const message = assembleMessage([block], { ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: 100_000 });
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.highlight).toBe("256");
+        expect(message).toContain("\u001b[38;5;");
+        expect(message).not.toContain("\u001b[0m\u001b[38;");
     });
 
     it("keeps a colour that a cut splits across two rows", () => {

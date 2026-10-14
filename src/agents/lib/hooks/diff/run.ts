@@ -149,7 +149,7 @@ function blockFrom(
     block.source = { label: `${label} (+${rendered.added} -${rendered.removed})`, patch };
 
     if (look) {
-        block.dress = themedDress(rendered.body, look.palette, file.path, config, look.width);
+        block.dress = themedDress(look.palette, file.path, look.width);
         return block;
     }
 

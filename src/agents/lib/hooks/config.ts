@@ -43,7 +43,15 @@ export interface DiffConfig {
      * ceiling keeps 58 entries in 1.8 MB.
      */
     maxCaptureFileMB: number;
-    highlight: "bat" | "none";
+    /**
+     * Syntax colour, through `bat`. `256` (default): 256-colour codes, about half the characters of
+     * truecolor after compaction; the colours are the nearest of the 256-colour palette, which a
+     * terminal theme that remaps that palette can shift. `truecolor`: `bat`'s exact theme colours,
+     * so fewer lines fit the 10,000-character message. `none`: no syntax colour; rows keep their
+     * bands and markers. Every mode drops escape codes that change nothing (`compactColour`), which
+     * loses no colour, so there is no raw mode.
+     */
+    highlight: HighlightMode;
     /**
      * How a block looks; see `diff/theme.ts`. `claude` copies Claude Code's own Bash diff in the
      * theme Claude Code is set to, so the hook can replace that diff (`bashEditDiffEnabled: false`)
@@ -315,7 +323,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxCaptureFiles: 400,
         maxCaptureMB: 8,
         maxCaptureFileMB: 0.256,
-        highlight: "bat",
+        highlight: "256",
         theme: "claude",
         columns: "auto",
         fullDiff: "genesis",
@@ -522,7 +530,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             value: stored?.maxCaptureFileMB,
             fallback: base.maxCaptureFileMB,
         }),
-        highlight: stored?.highlight === "bat" || stored?.highlight === "none" ? stored.highlight : base.highlight,
+        highlight: highlightOr(stored?.highlight, base.highlight),
         theme: themeOr(stored?.theme, base.theme),
         columns: columnsOr(stored?.columns, base.columns),
         fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
@@ -560,6 +568,18 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         // delete the shipped Grok one, which is what turns the diff off there.
         harnesses: mergedHarnesses(stored?.harnesses),
     };
+}
+
+export const HIGHLIGHT_MODES = ["256", "truecolor", "none"] as const;
+export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
+
+/** A stored highlight mode; `bat`, the old name of the only colour mode, reads as `truecolor`. */
+export function highlightOr(value: unknown, fallback: HighlightMode): HighlightMode {
+    if (value === "bat") {
+        return "truecolor";
+    }
+
+    return HIGHLIGHT_MODES.find((mode) => mode === value) ?? fallback;
 }
 
 export function themeOr(value: unknown, fallback: DiffThemeName): DiffThemeName {
@@ -692,8 +712,10 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
         }
     }
 
-    if (stored.highlight === "bat" || stored.highlight === "none") {
-        checked.highlight = stored.highlight;
+    const highlight: unknown = stored.highlight;
+
+    if (highlight === "bat" || HIGHLIGHT_MODES.some((mode) => mode === highlight)) {
+        checked.highlight = highlightOr(highlight, "256");
     }
 
     if (stored.othersSummary === "line" || stored.othersSummary === "hidden") {

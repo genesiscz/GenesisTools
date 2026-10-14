@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { basename } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import type { DiffConfig } from "../config";
 import type { DiffCategory } from "./classify";
@@ -105,7 +106,7 @@ export function highlightRange(
     // 2026-09-22 on a 15-file change that rewrote every line: 597 ms with highlighting
     // against 159 ms without, for BYTE-IDENTICAL output, because a full rewrite leaves no
     // context line to colour. Raising `maxFiles` made that 438 ms of waste scale with it.
-    if (config.highlight !== "bat" || !range || !hasContext(patch)) {
+    if (config.highlight === "none" || !range || !hasContext(patch)) {
         return [];
     }
 
@@ -120,7 +121,7 @@ export function highlightRange(
             "--",
             path,
         ],
-        { encoding: "utf8", maxBuffer: 16_000_000 }
+        { encoding: "utf8", maxBuffer: 16_000_000, env: { ...env.getProcessEnv(), COLORTERM: colourTerm(config) } }
     );
 
     if (run.status !== 0 || typeof run.stdout !== "string") {
@@ -525,68 +526,123 @@ function themedRow(line: PatchLine, palette: Palette, shape: RowShape): string {
         .join("\n");
 }
 
-/**
- * Syntax colour for every row of one block, through ONE `bat` that reads the rows from stdin in
- * patch order. `--file-name` picks the syntax, so a removed row and a deleted file are coloured too,
- * which reading the file on disk could not do. Indexed like `body`; `[]` when `bat` is off or fails.
- */
-function paintRows(path: string, body: PatchLine[], config: DiffConfig, light: boolean): Array<string | undefined> {
-    if (config.highlight !== "bat") {
-        return [];
-    }
-
-    // A dark palette keeps whatever theme the user gave `bat`; a light one needs a light theme,
-    // or the default Monokai foregrounds would sit on near-white bands.
-    const theme = light ? ["--theme=GitHub"] : [];
-    // No COLORTERM, so `bat` writes 256-colour codes (`38;5;n`, at most 11 characters) rather than
-    // truecolor (`38;2;r;g;b`, up to 19). With `compactColour` a 121-line TypeScript slice costs
-    // 6,124 characters of colour instead of 28,098 (measured 2026-10-14); the bands stay truecolor.
-    const run = spawnSync(
-        "bat",
-        ["--color=always", "--style=plain", "--paging=never", "--wrap=never", ...theme, `--file-name=${path}`, "-"],
-        {
-            input: `${body.map((line) => line.content ?? "").join("\n")}\n`,
-            encoding: "utf8",
-            maxBuffer: 16_000_000,
-            env: { ...env.getProcessEnv(), COLORTERM: "" },
-        }
-    );
-
-    if (run.status !== 0 || typeof run.stdout !== "string") {
-        return [];
-    }
-
-    const rows = run.stdout.split("\n");
-
-    return body.map((line, index) => {
-        const row = rows[index];
-        return line.kind && row !== undefined ? compactColour(row) : undefined;
-    });
+/** The `COLORTERM` that makes `bat` write the colour form `highlight` asks for. */
+function colourTerm(config: DiffConfig): string {
+    return config.highlight === "truecolor" ? "truecolor" : "";
 }
 
-/** The upgrades a themed block offers `assembleMessage`; see `DiffBlock.dress`. */
-export function themedDress(
-    body: PatchLine[],
-    palette: Palette,
-    path: string,
-    config: DiffConfig,
-    width: number
-): BlockDress {
-    let painted: Array<string | undefined> | undefined;
+/**
+ * The key `bat` picks a syntax by: the extension, or the whole name for `Makefile` and the like.
+ * Blocks with one key share one `bat` run.
+ */
+function syntaxKey(path: string): string {
+    const name = basename(path);
+    const dot = name.lastIndexOf(".");
 
-    return {
-        width,
-        // Kept, because a message that links its full diff is fitted twice.
-        paint: () => {
-            painted ??= paintRows(path, body, config, palette.light);
-            return painted;
-        },
-        row: (index, shape) => {
-            const line = body[index];
+    return dot > 0 ? `x${name.slice(dot)}` : name;
+}
 
-            return line?.kind ? themedRow(line, palette, shape) : (line?.text ?? "");
-        },
-    };
+/**
+ * Syntax colour for the themed blocks, ONE `bat` per syntax rather than one per file: every row of
+ * every block of that syntax goes through stdin in order, and `--file-name` picks the syntax, so a
+ * removed row and a deleted file are coloured too, which reading the file on disk could not do.
+ * Each row is then run through `compactColour`. Sets `dress.painted`; a failed `bat` leaves it empty.
+ */
+function paintThemed(blocks: DiffBlock[], config: DiffConfig): void {
+    if (config.highlight === "none") {
+        return;
+    }
+
+    const groups = new Map<string, DiffBlock[]>();
+
+    for (const block of blocks) {
+        if (block.dress && !block.dress.painted) {
+            const key = `${syntaxKey(block.dress.path)}\0${block.dress.palette.light}`;
+            groups.set(key, [...(groups.get(key) ?? []), block]);
+        }
+    }
+
+    for (const group of groups.values()) {
+        const first = group[0]?.dress;
+
+        if (!first) {
+            continue;
+        }
+
+        // A dark palette keeps whatever theme the user gave `bat`; a light one needs a light
+        // theme, or the default Monokai foregrounds would sit on near-white bands.
+        const theme = first.palette.light ? ["--theme=GitHub"] : [];
+        const input = group.flatMap((block) => block.body.map((line) => line.content ?? ""));
+        const run = spawnSync(
+            "bat",
+            [
+                "--color=always",
+                "--style=plain",
+                "--paging=never",
+                "--wrap=never",
+                ...theme,
+                `--file-name=${syntaxKey(first.path)}`,
+                "-",
+            ],
+            {
+                input: `${input.join("\n")}\n`,
+                encoding: "utf8",
+                maxBuffer: 16_000_000,
+                env: { ...env.getProcessEnv(), COLORTERM: colourTerm(config) },
+            }
+        );
+
+        if (run.status !== 0 || typeof run.stdout !== "string") {
+            continue;
+        }
+
+        const rows = run.stdout.split("\n");
+        let at = 0;
+
+        for (const block of group) {
+            if (block.dress) {
+                block.dress.painted = block.body.map((line, index) => {
+                    const row = rows[at + index];
+                    return line.kind && row !== undefined ? compactColour(row) : undefined;
+                });
+            }
+
+            at += block.body.length;
+        }
+    }
+}
+
+/**
+ * Gives every row of a themed block the text it is fitted with: syntax-coloured and wrapped at the
+ * terminal width. Colour is part of the row from the start, not a luxury bought from what the
+ * budget leaves, because a diff without it was the first thing missed (Martin, 2026-10-15). Only
+ * the full-width fill is bought afterwards.
+ */
+function prepareThemed(blocks: DiffBlock[], config: DiffConfig): void {
+    paintThemed(blocks, config);
+
+    for (const block of blocks) {
+        const dress = block.dress;
+
+        if (!dress) {
+            continue;
+        }
+
+        block.body.forEach((line, index) => {
+            if (line.kind) {
+                line.text = themedRow(line, dress.palette, {
+                    width: dress.width,
+                    fill: false,
+                    painted: dress.painted?.[index],
+                });
+            }
+        });
+    }
+}
+
+/** What a themed block needs for its rows; see `DiffBlock.dress`. */
+export function themedDress(palette: Palette, path: string, width: number): BlockDress {
+    return { width, palette, path };
 }
 
 /** One file's rendered change, still separable so the message can be fitted to a budget. */
@@ -603,8 +659,8 @@ export interface DiffBlock {
      */
     colour?: () => string[];
     /**
-     * A Claude theme's two luxuries, bought after every changed line is placed: first the band to
-     * full width, then syntax colour. A tight budget therefore keeps content and loses polish.
+     * A Claude theme: rows are coloured and wrapped before fitting, and the band's full-width fill
+     * is bought from what the budget leaves.
      */
     dress?: BlockDress;
     /** The block's file and raw patch, for the full diff a cut message links to. */
@@ -614,10 +670,11 @@ export interface DiffBlock {
 export interface BlockDress {
     /** Columns a row may use: long rows wrap there and bands fill to it. 0 when the terminal is unknown. */
     width: number;
-    /** Syntax-coloured content per body row, one `bat` spawn. */
-    paint: () => Array<string | undefined>;
-    /** Body row `index` as printed in `shape`. */
-    row: (index: number, shape: RowShape) => string;
+    palette: Palette;
+    /** The file the rows are from; its name picks the syntax. */
+    path: string;
+    /** Syntax-coloured content per body row, set by `paintThemed`. */
+    painted?: Array<string | undefined>;
 }
 
 export function renderBlock(
@@ -678,6 +735,10 @@ function moreLines(count: number): string {
 
 /** The order the budget spends in: every changed line first, then the context around them. */
 function byImportance(block: DiffBlock): number[] {
+    if (block.dress) {
+        return byNearness(block.body);
+    }
+
     const changed: number[] = [];
     const rest: number[] = [];
 
@@ -689,6 +750,42 @@ function byImportance(block: DiffBlock): number[] {
 }
 
 /**
+ * The themed order: every changed row together with the context row right above and below it, in
+ * patch order, then the other context rows, nearest to a change first. A removed line with nothing
+ * around it says what went but not where (Martin, 2026-10-15), so its neighbours come with it.
+ */
+function byNearness(body: PatchLine[]): number[] {
+    const distance = body.map(() => Number.POSITIVE_INFINITY);
+    let last = Number.NEGATIVE_INFINITY;
+
+    body.forEach((line, index) => {
+        if (line.changed) {
+            last = index;
+        }
+
+        distance[index] = index - last;
+    });
+
+    last = Number.POSITIVE_INFINITY;
+
+    for (let index = body.length - 1; index >= 0; index -= 1) {
+        if (body[index]?.changed) {
+            last = index;
+        }
+
+        distance[index] = Math.min(distance[index] ?? Number.POSITIVE_INFINITY, last - index);
+    }
+
+    const indices = body.map((_, index) => index);
+    const near = indices.filter((index) => (distance[index] ?? Number.POSITIVE_INFINITY) <= 1);
+    const far = indices
+        .filter((index) => (distance[index] ?? Number.POSITIVE_INFINITY) > 1)
+        .sort((first, second) => (distance[first] ?? 0) - (distance[second] ?? 0) || first - second);
+
+    return near.concat(far);
+}
+
+/**
  * What Claude Code's ceiling counts: `.length`, UTF-16 units, escape codes included (see
  * `DiffConfig.maxMessageChars`). The budget used to charge UTF-8 bytes, which spent `Č` twice.
  */
@@ -697,81 +794,37 @@ function textLength(text: string): number {
 }
 
 /**
- * Spends what the content left on the themed blocks: the full-width band of every kept changed
- * row first, across all blocks, then syntax colour, changed rows before context. Each upgrade is
- * taken only while it fits. Returns the budget left.
+ * Spends what the content left on the full-width band of every kept changed row, while it fits.
+ * Colour and wrapping are already in the rows (`prepareThemed`); the fill is the one luxury left.
+ * Returns the budget left.
  */
 function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<number, string>[], budget: number): number {
     let left = budget;
-    const shapes = blocks.map(() => new Map<number, RowShape>());
-    const upgrade = (index: number, at: number, shape: RowShape) => {
-        const dress = blocks[index]?.dress;
-        const current = tinted[index]?.get(at) ?? blocks[index]?.body[at]?.text;
 
-        if (!dress || current === undefined) {
-            return;
-        }
-
-        const next = dress.row(at, shape);
-        const extra = textLength(next) - textLength(current);
-
-        if (extra <= left) {
-            tinted[index]?.set(at, next);
-            shapes[index]?.set(at, shape);
-            left -= extra;
-        }
-    };
-    const rowsOf = (index: number, wanted: (line: PatchLine) => boolean) =>
-        [...(kept[index] ?? [])]
-            .sort((first, second) => first - second)
-            .filter((at) => {
-                const line = blocks[index]?.body[at];
-                return line?.kind !== undefined && wanted(line);
-            });
-
-    // 1. A row wider than the terminal wraps under its own content, not at column 0. Cheap: a
-    //    newline and an indent per cut.
-    blocks.forEach((block, index) => {
-        const width = block.dress?.width ?? 0;
-
-        for (const at of width > 0
-            ? rowsOf(index, (line) => Bun.stringWidth(line.content ?? "") > width - INDENT)
-            : []) {
-            upgrade(index, at, { width, fill: false });
-        }
-    });
-
-    // 2. The band of every changed row to the edge.
-    blocks.forEach((block, index) => {
-        const width = block.dress?.width ?? 0;
-
-        for (const at of width > 0 ? rowsOf(index, (line) => line.changed) : []) {
-            upgrade(index, at, { width, fill: true });
-        }
-    });
-
-    // 3. Syntax colour, changed rows before context.
     blocks.forEach((block, index) => {
         const dress = block.dress;
-        const held = kept[index];
 
-        if (!dress || !held) {
+        if (!dress || dress.width <= 0) {
             return;
         }
 
-        const order = byImportance(block).filter((at) => held.has(at) && block.body[at]?.kind !== undefined);
+        for (const at of [...(kept[index] ?? [])].sort((first, second) => first - second)) {
+            const line = block.body[at];
 
-        if (order.length === 0 || order.length * COLOUR_FLOOR > left) {
-            return;
-        }
+            if (!line?.changed) {
+                continue;
+            }
 
-        const painted = dress.paint();
+            const next = themedRow(line, dress.palette, {
+                width: dress.width,
+                fill: true,
+                painted: dress.painted?.[at],
+            });
+            const extra = textLength(next) - textLength(line.text);
 
-        for (const at of order) {
-            const shade = painted[at];
-
-            if (shade !== undefined) {
-                upgrade(index, at, { ...(shapes[index]?.get(at) ?? { width: 0, fill: false }), painted: shade });
+            if (extra <= left) {
+                tinted[index]?.set(at, next);
+                left -= extra;
             }
         }
     });
@@ -802,6 +855,8 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
 
 /** `assembleMessage`, plus how many body lines the budget cut. */
 export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: string; elided: number } {
+    prepareThemed(blocks, config);
+
     const queues = blocks.map(byImportance);
     const kept: Set<number>[] = blocks.map(() => new Set());
     const tinted: Map<number, string>[] = blocks.map(() => new Map());
