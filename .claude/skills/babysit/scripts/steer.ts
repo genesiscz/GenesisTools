@@ -18,6 +18,18 @@ if (!worker || !file) {
     process.exit(2);
 }
 
+const pr = flag("--pr") ? { pr: Number(flag("--pr")) } : {};
+const round = flag("--round") ? { round: Number(flag("--round")) } : {};
+// Logged BEFORE the delivery: the worker's turn starts while `codex steer` still runs, and watch-workers names a
+// worker's PR from its latest steer, so a steer logged afterwards labelled the new turn with the old PR (2026-10-14).
+appendEvent(run.dir, {
+    kind: "steer",
+    worker,
+    model: flag("--model"),
+    ...pr,
+    ...round,
+    text: readFileSync(file, "utf8"),
+});
 const p = Bun.spawnSync(["./tools", "codex", "steer", "--name", worker, "--prompt-file", file], {
     cwd: run.main,
     stdout: "pipe",
@@ -25,14 +37,15 @@ const p = Bun.spawnSync(["./tools", "codex", "steer", "--name", worker, "--promp
     env: process.env,
 });
 const ok = p.exitCode === 0;
-appendEvent(run.dir, {
-    kind: "steer",
-    worker,
-    model: flag("--model"),
-    ...(flag("--pr") ? { pr: Number(flag("--pr")) } : {}),
-    ...(flag("--round") ? { round: Number(flag("--round")) } : {}),
-    text: readFileSync(file, "utf8"),
-    meta: ok ? { delivered: true } : { delivered: false, error: p.stderr.toString().slice(0, 300) },
-});
+
+if (!ok) {
+    appendEvent(run.dir, {
+        kind: "note",
+        worker,
+        ...pr,
+        ...round,
+        text: `steer NOT delivered: ${p.stderr.toString().slice(0, 300)}`,
+    });
+}
 console.log(`steer ${worker} exit=${p.exitCode}`);
 process.exit(ok ? 0 : 1);
