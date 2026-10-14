@@ -18,7 +18,7 @@ const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
 const NUMERIC_DIFF = [
     "maxFiles",
     "maxLinesPerFile",
-    "maxMessageBytes",
+    "maxMessageChars",
     "maxCaptureMB",
     "maxCaptureFileMB",
     "maxNamedPathMB",
@@ -31,7 +31,7 @@ export const SETTABLE_KEYS = [
     "diff.enabled",
     "diff.maxFiles",
     "diff.maxLinesPerFile",
-    "diff.maxMessageBytes",
+    "diff.maxMessageChars",
     "diff.maxCaptureMB",
     "diff.maxCaptureFileMB",
     "diff.maxNamedPathMB",

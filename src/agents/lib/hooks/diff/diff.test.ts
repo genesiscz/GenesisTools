@@ -32,6 +32,7 @@ import { commandDirs, namedArguments } from "./command-paths";
 import { covers, mentionsFrom, textPaths } from "./mentions";
 import {
     assembleMessage,
+    compactColour,
     type DiffBlock,
     fitPath,
     hasContext,
@@ -1918,9 +1919,9 @@ describe("one message, fitted to what the harness will actually show", () => {
             at: index + 1,
         })),
     });
-    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageBytes: bytes });
+    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: bytes });
 
-    it("never exceeds maxMessageBytes", () => {
+    it("never exceeds maxMessageChars", () => {
         expect(assembleMessage([block("a", 60), block("b", 60)], budget(600)).length).toBeLessThanOrEqual(600);
     });
 
@@ -1935,7 +1936,9 @@ describe("one message, fitted to what the harness will actually show", () => {
         };
         const message = assembleMessage([accented, block("b", 10)], budget(600));
 
-        expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(600);
+        // Claude Code counts `.length`, so an accented letter costs one unit, not two bytes.
+        expect(message.length).toBeLessThanOrEqual(600);
+        expect(Buffer.byteLength(message, "utf8")).toBeGreaterThan(600);
     });
 
     it("keeps EVERY header, because losing the last file is the bug being fixed", () => {
@@ -2012,7 +2015,7 @@ describe("the budget buys the change before the context", () => {
             { text: `${name} context four ${"x".repeat(79)}`, changed: false, at: 4 },
         ],
     });
-    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageBytes: bytes });
+    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: bytes });
 
     it("prints the added and removed lines and not the context around them", () => {
         const message = assembleMessage([edit("a")], budget(300));
@@ -3351,7 +3354,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
                 dress: themedDress(rendered.body, palette, "x.ts", quiet, width),
             };
         };
-        const budget = (bytes: number) => ({ ...quiet, maxMessageBytes: bytes });
+        const budget = (bytes: number) => ({ ...quiet, maxMessageChars: bytes });
         const rows = (message: string) =>
             message.split("\n").filter((line) => /[+-](old|new) line/.test(stripAnsi(line)));
 
@@ -3375,7 +3378,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             body: rendered.body,
             dress: themedDress(rendered.body, palette, "x.ts", quiet, 40),
         };
-        const rows = assembleMessage([block], { ...quiet, maxMessageBytes: 100_000 })
+        const rows = assembleMessage([block], { ...quiet, maxMessageChars: 100_000 })
             .split("\n")
             .slice(2);
 
@@ -3384,6 +3387,17 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(stripAnsi(rows[1] ?? "")).toBe(`${" ".repeat(8)}${"x".repeat(32)}`);
         expect(stripAnsi(rows[2] ?? "")).toMatch(/^ {8}x+";\s*$/);
         expect(rows.every((row) => row.startsWith(palette.added) || row.startsWith(palette.removed))).toBe(true);
+    });
+
+    it("writes a colour only where the visible text needs a new one, and never a full reset", () => {
+        const pink = "\u001b[38;5;197m";
+        const white = "\u001b[38;5;231m";
+        const bat = `${pink}const\u001b[0m${white} \u001b[0m${white}total\u001b[0m${white} \u001b[0m${white}=\u001b[0m\u001b[1m${pink}x\u001b[0m`;
+        const compact = compactColour(bat);
+
+        expect(stripAnsi(compact)).toBe(stripAnsi(bat));
+        expect(compact).toBe(`${pink}const ${white}total =\u001b[1m${pink}x\u001b[22;23;24m\u001b[39m`);
+        expect(compact).not.toContain("\u001b[0m");
     });
 
     it("keeps a colour that a cut splits across two rows", () => {

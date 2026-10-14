@@ -772,8 +772,8 @@ export function runDiffPost(
         return { decision: "noted", reason, message: notes.join("\n"), files: [], others };
     }
 
-    const noteBytes = notes.reduce((total, line) => total + Buffer.byteLength(line) + 2, 0);
-    const body = assembleMessage(blocks, { ...diff, maxMessageBytes: Math.max(0, diff.maxMessageBytes - noteBytes) });
+    const noteChars = notes.reduce((total, line) => total + line.length + 2, 0);
+    const body = assembleMessage(blocks, { ...diff, maxMessageChars: Math.max(0, diff.maxMessageChars - noteChars) });
 
     return {
         decision: "emitted",

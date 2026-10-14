@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { env } from "@genesiscz/utils/env";
 import type { DiffConfig } from "../config";
 import type { DiffCategory } from "./classify";
 import type { ChangedFile } from "./collect";
@@ -6,11 +7,7 @@ import type { Palette } from "./theme";
 
 const DIM = "\u001b[2m";
 const UNDIM = "\u001b[22m";
-/**
- * Ends a foreground colour, bold, italic and underline, and keeps the background. `bat` closes
- * every token with a full reset, which inside a band would end the band at the first token.
- */
-const KEEP_BAND = "\u001b[22;23;24;39m";
+/** Ends a foreground colour and keeps the background, so a band survives the colour inside it. */
 const DEFAULT_FOREGROUND = "\u001b[39m";
 const TAB = "    ";
 const BOLD = "\u001b[1m";
@@ -364,14 +361,64 @@ function paintWords(text: string, [start, end]: [number, number], word: string, 
     return visible === end ? out + band : out;
 }
 
-/** `bat` output made safe inside a band: no reset, no background of its own. */
-function keepBand(painted: string): string {
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: rewrites ANSI resets inside a band
-    const reset = /\u001b\[0?m/g;
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: drops ANSI backgrounds inside a band
-    const background = /\u001b\[(?:4[0-9]|10[0-7]|48;[0-9;]*)m/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: splits text from ANSI escape sequences
+const TOKENS = /\u001b\[[0-9;]*m|[^\u001b]+|\u001b/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: classifies ANSI escape sequences
+const RESET_SEQUENCE = /^\u001b\[(?:0|22;23;24;39|39)?m$/;
+/** Bold, dim, italic and underline off; the foreground and background stay. */
+const ATTRIBUTES_OFF = "\u001b[22;23;24m";
 
-    return painted.replace(reset, KEEP_BAND).replace(background, "");
+/**
+ * `bat` output with every escape code that changes nothing taken out. `bat` colours each token on
+ * its own and resets after it, blanks included, so a row of code costs five to seven times its
+ * width (measured 2026-10-14: 4,507 characters of TypeScript became 32,605). Here a colour is
+ * written only when the next visible text needs a different one, blanks take whatever is active,
+ * and no full reset is written at all, so the result is also safe inside a band: the background
+ * is never touched.
+ */
+export function compactColour(painted: string): string {
+    let out = "";
+    let active = "";
+    let wanted = "";
+    let styled = false;
+    let unstyle = false;
+
+    for (const token of painted.match(TOKENS) ?? []) {
+        if (token.startsWith("\u001b")) {
+            if (FOREGROUND_SEQUENCE.test(token)) {
+                wanted = token;
+            } else if (RESET_SEQUENCE.test(token)) {
+                wanted = "";
+                unstyle = styled;
+            } else if (!BACKGROUND_SEQUENCE.test(token) && token.length > 1) {
+                out += token;
+                styled = true;
+                unstyle = false;
+            }
+
+            continue;
+        }
+
+        if (token.trim().length === 0) {
+            out += token;
+            continue;
+        }
+
+        if (unstyle) {
+            out += ATTRIBUTES_OFF;
+            styled = false;
+            unstyle = false;
+        }
+
+        if (wanted !== active) {
+            out += wanted === "" ? DEFAULT_FOREGROUND : wanted;
+            active = wanted;
+        }
+
+        out += token;
+    }
+
+    return `${out}${styled ? ATTRIBUTES_OFF : ""}${active === "" ? "" : DEFAULT_FOREGROUND}`;
 }
 
 /** Columns before a row's content: the line number, a space, and the marker or a second space. */
@@ -413,7 +460,7 @@ export function wrapVisible(text: string, columns: number): Array<{ text: string
                 shade = sequence;
             } else if (FOREGROUND_SEQUENCE.test(sequence)) {
                 colour = sequence;
-            } else if (sequence === KEEP_BAND || sequence === OFF || sequence === DEFAULT_FOREGROUND) {
+            } else if (RESET_SEQUENCE.test(sequence)) {
                 colour = "";
             }
 
@@ -459,7 +506,7 @@ function themedRow(line: PatchLine, palette: Palette, shape: RowShape): string {
 
     const added = line.kind === "added";
     const band = added ? palette.added : palette.removed;
-    let shown = shape.painted === undefined ? (line.content ?? "") : keepBand(shape.painted);
+    let shown = shape.painted ?? line.content ?? "";
 
     if (line.word && band) {
         shown = paintWords(shown, line.word, added ? palette.addedWord : palette.removedWord, band);
@@ -491,10 +538,18 @@ function paintRows(path: string, body: PatchLine[], config: DiffConfig, light: b
     // A dark palette keeps whatever theme the user gave `bat`; a light one needs a light theme,
     // or the default Monokai foregrounds would sit on near-white bands.
     const theme = light ? ["--theme=GitHub"] : [];
+    // No COLORTERM, so `bat` writes 256-colour codes (`38;5;n`, at most 11 characters) rather than
+    // truecolor (`38;2;r;g;b`, up to 19). With `compactColour` a 121-line TypeScript slice costs
+    // 6,124 characters of colour instead of 28,098 (measured 2026-10-14); the bands stay truecolor.
     const run = spawnSync(
         "bat",
         ["--color=always", "--style=plain", "--paging=never", "--wrap=never", ...theme, `--file-name=${path}`, "-"],
-        { input: `${body.map((line) => line.content ?? "").join("\n")}\n`, encoding: "utf8", maxBuffer: 16_000_000 }
+        {
+            input: `${body.map((line) => line.content ?? "").join("\n")}\n`,
+            encoding: "utf8",
+            maxBuffer: 16_000_000,
+            env: { ...env.getProcessEnv(), COLORTERM: "" },
+        }
     );
 
     if (run.status !== 0 || typeof run.stdout !== "string") {
@@ -503,7 +558,10 @@ function paintRows(path: string, body: PatchLine[], config: DiffConfig, light: b
 
     const rows = run.stdout.split("\n");
 
-    return body.map((line, index) => (line.kind ? rows[index] : undefined));
+    return body.map((line, index) => {
+        const row = rows[index];
+        return line.kind && row !== undefined ? compactColour(row) : undefined;
+    });
 }
 
 /** The upgrades a themed block offers `assembleMessage`; see `DiffBlock.dress`. */
@@ -623,12 +681,11 @@ function byImportance(block: DiffBlock): number[] {
 }
 
 /**
- * The ceiling is measured in UTF-8 BYTES (`Output too large (9.9KB)`), so the budget is charged
- * in bytes. `.length` counts UTF-16 units: `Č` is 2 bytes and a CJK glyph 3, so an accented
- * note used to pass the limit and then lose its tail to the harness.
+ * What Claude Code's ceiling counts: `.length`, UTF-16 units, escape codes included (see
+ * `DiffConfig.maxMessageChars`). The budget used to charge UTF-8 bytes, which spent `Č` twice.
  */
-function utf8Bytes(text: string): number {
-    return Buffer.byteLength(text, "utf8");
+function textLength(text: string): number {
+    return text.length;
 }
 
 /**
@@ -648,7 +705,7 @@ function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<numbe
         }
 
         const next = dress.row(at, shape);
-        const extra = utf8Bytes(next) - utf8Bytes(current);
+        const extra = textLength(next) - textLength(current);
 
         if (extra <= left) {
             tinted[index]?.set(at, next);
@@ -715,7 +772,7 @@ function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<numbe
 }
 
 /**
- * Joins the blocks into ONE message that fits `maxMessageBytes`.
+ * Joins the blocks into ONE message that fits `maxMessageChars`.
  *
  * 🛑 Every HEADER is kept. Breaching the harness ceiling loses the tail silently, so the file
  * names and their counts are the part that must survive; the hunks are what gets traded away.
@@ -737,9 +794,9 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
     const tinted: Map<number, string>[] = blocks.map(() => new Map());
     // The `\n\n` between blocks is charged too, so the limit holds exactly rather than nearly.
     const separators = 2 * Math.max(0, blocks.length - 1);
-    const headers = blocks.reduce((total, block) => total + utf8Bytes(block.head) + 1, 0) + separators;
-    const footers = blocks.length * (utf8Bytes(moreLines(9_999_999)) + 1);
-    let left = config.maxMessageBytes - headers - footers;
+    const headers = blocks.reduce((total, block) => total + textLength(block.head) + 1, 0) + separators;
+    const footers = blocks.length * (textLength(moreLines(9_999_999)) + 1);
+    let left = config.maxMessageChars - headers - footers;
 
     for (let round = 0; left > 0; round += 1) {
         let pending = false;
@@ -762,7 +819,7 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
                 continue;
             }
 
-            if (utf8Bytes(line.text) + 1 > left) {
+            if (textLength(line.text) + 1 > left) {
                 // One over-long line is skipped rather than ending the whole fitting. It used
                 // to zero the budget, so a single 400-byte minified line cost every file
                 // below it every line it had left.
@@ -770,7 +827,7 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
             }
 
             held.add(at);
-            left -= utf8Bytes(line.text) + 1;
+            left -= textLength(line.text) + 1;
         }
 
         if (!pending) {
@@ -816,7 +873,7 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
             }
 
             const next = contextLine(absolute, paint);
-            const extra = utf8Bytes(next) - utf8Bytes(line.text);
+            const extra = textLength(next) - textLength(line.text);
 
             // Colour is a luxury: it is applied only while it still fits. Without this the
             // escape sequences it adds would push the message back over the ceiling.

@@ -24,7 +24,7 @@ export interface DiffConfig {
     enabled: boolean;
     /**
      * How many changed files one message may name. Every file that fits gets its header, and
-     * `maxMessageBytes` then decides how much of each DIFF is shown. So raising this trades
+     * `maxMessageChars` then decides how much of each DIFF is shown. So raising this trades
      * depth per file for breadth: at 15 a wide sweep is fully listed, and each file shows a
      * few lines rather than thirty.
      */
@@ -87,19 +87,18 @@ export interface DiffConfig {
      */
     othersSummary: "line" | "hidden";
     /**
-     * The most bytes ONE message may carry, escape codes included.
+     * The most characters (UTF-16 units, escape codes included) ONE message may carry.
      *
-     * 🛑 The harness has its own ceiling, and breaching it loses the TAIL silently. Measured
-     * 2026-09-21 across 206 PostToolUse messages in one session: the largest shown whole was
-     * 9814 bytes, the smallest replaced by `Output too large (9.9KB)` was about 10138, and 13
-     * of the 206 (6%) were cut. A cut message keeps the FIRST file and drops the last, which
-     * is usually the one the command was about: one call rendered `parity.ts` and `proofs.ts`,
-     * and only `parity.ts` survived.
+     * 🛑 Claude Code's own ceiling: `systemMessage.length <= 1e4` (`gce`, `aTs = 1e4` in the 2.1.296
+     * binary, read 2026-10-14); a longer message is replaced by `Output too large` and a preview.
+     * It counts `.length`, not bytes, so `Č` is one unit here although it is two UTF-8 bytes. The
+     * budget used to be 9,000 BYTES, an inference from 206 measured messages (largest whole 9,814,
+     * smallest cut about 10,138) that matched the real rule only by luck.
      *
-     * `maxFiles` and `maxLinesPerFile` cannot prevent this on their own, because a bat-coloured
-     * line costs about 175 bytes rather than its visible width.
+     * `maxFiles` and `maxLinesPerFile` cannot prevent this on their own, because a coloured line
+     * costs far more than its visible width.
      */
-    maxMessageBytes: number;
+    maxMessageChars: number;
     /**
      * Which KINDS of change are printed. `source` is anything that is not one of the others.
      *
@@ -314,14 +313,14 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         namedPathsShowCreated: false,
         dedupeAcrossSessions: true,
         othersSummary: "line",
-        maxMessageBytes: 9_000,
+        maxMessageChars: 9_900,
         categories: { source: true, formatting: true, log: false, generated: false },
         harnesses: {
             // 🛑 OFF for Grok, because Grok cannot show a diff. Observed 2026-09-22 on a real
             // PostToolUse message: it prints the escape sequences as literal text (`[1mUpdated`
             // with the ESC byte eaten), and it cuts the message after about 200 characters,
             // ending `-impo… [+7768 chars]`. So one file HEADER already overflows it, and no
-            // setting of `maxMessageBytes` or `highlight` makes 200 characters a diff. The
+            // setting of `maxMessageChars` or `highlight` makes 200 characters a diff. The
             // capture is skipped too, so a Grok session pays nothing for a render it cannot
             // have. Claude and Codex both render it correctly and are unaffected.
             grok: { enabled: false },
@@ -527,10 +526,10 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
         dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
         othersSummary: othersSummaryOr(stored?.othersSummary, base.othersSummary),
-        maxMessageBytes: countOr({
-            field: "diff.maxMessageBytes",
-            value: stored?.maxMessageBytes,
-            fallback: base.maxMessageBytes,
+        maxMessageChars: countOr({
+            field: "diff.maxMessageChars",
+            value: stored?.maxMessageChars,
+            fallback: base.maxMessageChars,
         }),
         // Merged FIELD BY FIELD for the same reason `longCommand` is: a hand-edited `hooks.json`
         // that turns one category on would otherwise blank every other one, and `undefined`
@@ -612,7 +611,7 @@ const OVERRIDE_COUNTS = [
     "untrackedExpansionCap",
     "maxCaptureFiles",
     "maxNamedPaths",
-    "maxMessageBytes",
+    "maxMessageChars",
 ] as const;
 
 const OVERRIDE_MEGABYTES = ["maxCaptureMB", "maxCaptureFileMB", "maxNamedPathMB"] as const;

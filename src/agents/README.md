@@ -177,9 +177,10 @@ tools agents hooks config set diff.theme claude --write
 tools agents hooks config set diff.columns auto --write
 ```
 
-The message has a 9,000-byte budget (`diff.maxMessageBytes`; Claude Code cuts a hook message near
-10 KB). Changed lines are bought first, then the full-width fill, then syntax colour, so a large
-diff keeps its content and loses the polish.
+The message has a budget of 9,900 characters (`diff.maxMessageChars`). Claude Code replaces a hook
+message longer than 10,000 characters (`.length`, escape codes included) with "Output too large".
+Changed lines are bought first, then wrapping, then the full-width fill, then syntax colour, so a
+large diff keeps its content and loses the polish.
 
 With the hook drawing every Bash diff, Claude Code's own one can be switched off with
 `"bashEditDiffEnabled": false` in `~/.claude/settings.json`. That one has no attribution: it shows

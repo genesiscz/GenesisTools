@@ -540,7 +540,7 @@ describe("applySetting", () => {
         for (const [key, value] of [
             ["diff.maxFiles", "-1"],
             ["diff.maxFiles", "2.5"],
-            ["diff.maxMessageBytes", "0"],
+            ["diff.maxMessageChars", "0"],
             ["guard.longCommand.lines", ""],
             ["guard.contextCapPerSession", "-1"],
         ]) {
@@ -957,7 +957,7 @@ describe("the config writers build on the file they write", () => {
                 diff: {
                     maxFiles: "3",
                     enabled: "no",
-                    harnesses: { grok: { enabled: "true" }, codex: { maxFiles: "9", maxMessageBytes: 4000 } },
+                    harnesses: { grok: { enabled: "true" }, codex: { maxFiles: "9", maxMessageChars: 4000 } },
                 },
             })
         );
@@ -971,7 +971,7 @@ describe("the config writers build on the file they write", () => {
         // diff back on for Grok, and a string number must not reach Codex, while a valid one does.
         expect(diffFor(config, "grok").enabled).toBe(false);
         expect(diffFor(config, "codex").maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
-        expect(diffFor(config, "codex").maxMessageBytes).toBe(4000);
+        expect(diffFor(config, "codex").maxMessageChars).toBe(4000);
     });
 });
 
