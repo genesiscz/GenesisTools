@@ -1,7 +1,9 @@
-import { lstatSync, mkdirSync, readdirSync, readlinkSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
+import { readExistingAncestorSync } from "./file";
 import { readZstdFramesSync, SeekableZstdWriter, type ZstdParams } from "./zstd";
 
 /** The suffix of a folder packed by {@link packDirectory}: `video_files` becomes `video_files.zst` (tar inside zstd). */
@@ -68,6 +70,11 @@ function numericField(block: Uint8Array, offset: number, length: number): number
     }
 
     const text = cString(block, offset, length).trim();
+
+    if (text !== "" && !/^[0-7]+$/.test(text)) {
+        throw new Error("invalid tar numeric field");
+    }
+
     return text === "" ? 0 : Number.parseInt(text, 8);
 }
 
@@ -188,14 +195,34 @@ export class TarLister {
         const block = this.header;
 
         if (block.every((byte) => byte === 0)) {
+            if (Object.keys(this.pax).length > 0 || this.longName !== undefined || this.longLink !== undefined) {
+                throw new Error("tar metadata has no following entry");
+            }
+
             this.zeroBlocks += 1;
             this.done = this.zeroBlocks >= 2;
             return;
         }
 
         this.zeroBlocks = 0;
+        const expectedChecksum = numericField(block, 148, 8);
+        let checksum = 0;
+
+        for (let index = 0; index < BLOCK; index++) {
+            checksum += index >= 148 && index < 156 ? 32 : block[index]!;
+        }
+
+        if (checksum !== expectedChecksum) {
+            throw new Error("invalid tar header checksum");
+        }
+
         const flag = block[156] ?? 0;
         const size = numericField(block, 124, 12);
+
+        if (!Number.isSafeInteger(size) || size < 0) {
+            throw new Error("invalid tar entry size");
+        }
+
         const kind = String.fromCharCode(flag);
         this.padding = (BLOCK - (size % BLOCK)) % BLOCK;
 
@@ -214,7 +241,16 @@ export class TarLister {
         const name = cString(block, 0, 100);
         const prefix = cString(block, 345, 155);
         const rawPath = this.pax.path ?? this.longName ?? (prefix ? `${prefix}/${name}` : name);
-        const realSize = this.pax.size !== undefined ? Number.parseInt(this.pax.size, 10) : size;
+        const realSize = this.pax.size !== undefined ? Number(this.pax.size) : size;
+
+        if (
+            !Number.isSafeInteger(realSize) ||
+            realSize < 0 ||
+            (this.pax.size !== undefined && !/^\d+$/.test(this.pax.size))
+        ) {
+            throw new Error("invalid tar entry size");
+        }
+
         const linkTarget = this.pax.linkpath ?? this.longLink ?? cString(block, 157, 100);
         const type = entryType(flag);
         this.pax = {};
@@ -291,6 +327,20 @@ export interface PackResult {
     frames: number;
 }
 
+/** Refuses an output inside the folder being archived, including paths through a symlinked parent. */
+export function assertArchiveOutsideSource(source: string, archive: string): void {
+    // The atomic writer creates a sibling temp file and replaces the last component, including a symlink.
+    const output = resolve(archive);
+    const parent = dirname(output);
+    const { ancestor, value: canonicalParent } = readExistingAncestorSync(parent, (path) => realpathSync(path));
+    const canonicalTarget = resolve(canonicalParent, relative(ancestor, parent), basename(output));
+    const child = relative(realpathSync(source), canonicalTarget);
+
+    if (child === "" || (!isAbsolute(child) && child !== ".." && !child.startsWith(`..${sep}`))) {
+        throw new Error(`archive output must be outside the source folder: ${archive}`);
+    }
+}
+
 /**
  * Packs a folder into one `.tar.zst` with the system `tar` (bsdtar on macOS and Windows, GNU tar on Linux) streamed
  * into seekable zstd frames, through a temp file and a rename: the folder is never held in memory and a failed or
@@ -298,8 +348,8 @@ export interface PackResult {
  * after the source folder. Extended attributes are left out (`--no-xattrs`, `COPYFILE_DISABLE=1`).
  */
 export async function packDirectory({
-    source,
-    archive = `${source}${FOLDER_ARCHIVE_SUFFIX}`,
+    source: inputSource,
+    archive: inputArchive,
     frameBytes,
     threads,
     ...params
@@ -309,32 +359,39 @@ export async function packDirectory({
     frameBytes?: number;
     threads?: number;
 }): Promise<PackResult> {
+    const source = resolve(inputSource);
+    const archive = inputArchive ?? `${source}${FOLDER_ARCHIVE_SUFFIX}`;
+    assertArchiveOutsideSource(source, archive);
     const result: PackResult = { archive, tarBytes: 0, compressedBytes: 0, frames: 0 };
 
-    await atomicWriteFileStreamed(archive, async (write) => {
-        const writer = new SeekableZstdWriter({ write, frameBytes, threads, ...params });
-        const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(source), basename(source)], {
-            stdout: "pipe",
-            stderr: "pipe",
-            env: { ...process.env, COPYFILE_DISABLE: "1" },
-        });
-        const stderr = drain(proc.stderr);
+    await atomicWriteFileStreamed(
+        archive,
+        async (write) => {
+            const writer = new SeekableZstdWriter({ write, frameBytes, threads, ...params });
+            const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(source), basename(source)], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" },
+            });
+            const stderr = drain(proc.stderr);
 
-        for await (const chunk of proc.stdout) {
-            await writer.push(chunk);
-        }
+            for await (const chunk of proc.stdout) {
+                await writer.push(chunk);
+            }
 
-        const exitCode = await proc.exited;
+            const exitCode = await proc.exited;
 
-        if (exitCode !== 0) {
-            throw new Error(`tar failed packing ${source} (exit ${exitCode}): ${(await stderr).trim()}`);
-        }
+            if (exitCode !== 0) {
+                throw new Error(`tar failed packing ${source} (exit ${exitCode}): ${(await stderr).trim()}`);
+            }
 
-        const stats = await writer.finish();
-        result.tarBytes = stats.inputBytes;
-        result.compressedBytes = stats.outputBytes;
-        result.frames = stats.frames;
-    });
+            const stats = await writer.finish();
+            result.tarBytes = stats.inputBytes;
+            result.compressedBytes = stats.outputBytes;
+            result.frames = stats.frames;
+        },
+        { mode: 0o600 }
+    );
 
     return result;
 }
@@ -345,10 +402,10 @@ export function listArchive(archive: string, { hash = false }: { hash?: boolean 
 
     for (const frame of readZstdFramesSync(archive)) {
         lister.push(frame);
+    }
 
-        if (lister.finished) {
-            break;
-        }
+    if (!lister.finished) {
+        throw new Error("incomplete tar archive: missing data, padding or end markers");
     }
 
     return lister.entries;
@@ -360,7 +417,7 @@ export function listArchive(archive: string, { hash = false }: { hash?: boolean 
  */
 export async function unpackArchive({ archive, destination }: { archive: string; destination: string }): Promise<void> {
     mkdirSync(destination, { recursive: true });
-    const proc = Bun.spawn(["tar", "-xf", "-", "-C", destination], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["tar", "-kxf", "-", "-C", destination], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     const stderr = drain(proc.stderr);
     const stdout = drain(proc.stdout);
 
@@ -465,14 +522,25 @@ export function verifyArchiveAgainstFolder({
         }
 
         // tar stores the second name of a hard-linked file as a link to the first, with no content of its own.
-        const hardLinked = entry.type === "file" && inArchive.type === "hardlink";
+        let stored = inArchive;
+        const visited = new Set<string>();
+
+        while (stored.type === "hardlink" && stored.linkTarget && !visited.has(stored.path)) {
+            visited.add(stored.path);
+            const target = listed.get(stored.linkTarget.replace(/^\.\//, "").replace(/\/+$/, ""));
+
+            if (!target) {
+                break;
+            }
+
+            stored = target;
+        }
+
         const sameShape =
-            hardLinked ||
-            (inArchive.type === entry.type &&
-                inArchive.size === entry.size &&
-                (entry.type !== "symlink" || inArchive.linkTarget === entry.linkTarget));
-        const sameContent =
-            !content || hardLinked || entry.type !== "file" || inArchive.sha256 === sha256File(entry.absolute);
+            stored.type === entry.type &&
+            stored.size === entry.size &&
+            (entry.type !== "symlink" || inArchive.linkTarget === entry.linkTarget);
+        const sameContent = !content || entry.type !== "file" || stored.sha256 === sha256File(entry.absolute);
 
         if (!sameShape || !sameContent) {
             mismatched.push(key);
@@ -480,5 +548,11 @@ export function verifyArchiveAgainstFolder({
     }
 
     const extra = [...listed.keys()].filter((key) => !walked.has(key));
-    return { ok: missing.length === 0 && mismatched.length === 0, entries: listed.size, missing, mismatched, extra };
+    return {
+        ok: missing.length === 0 && mismatched.length === 0 && extra.length === 0,
+        entries: listed.size,
+        missing,
+        mismatched,
+        extra,
+    };
 }

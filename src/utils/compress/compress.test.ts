@@ -1,14 +1,17 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import {
     chmodSync,
     closeSync,
     existsSync,
     fstatSync,
+    linkSync,
     mkdirSync,
     mkdtempSync,
     openSync,
     readdirSync,
     readFileSync,
+    readlinkSync,
+    renameSync,
     rmSync,
     statSync,
     symlinkSync,
@@ -17,14 +20,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { readFirstLines, readLastLines, readLinesSync, readTextChunks } from "@genesiscz/utils/fs/read-lines";
 import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
 import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { planDailyCompression } from "./daily";
-import { compressFile, digestZstdContent, verifyCompressedFile } from "./file";
+import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
-import { compressPath, expandPath, planCompressPath, verifyPath } from "./operations";
+import { compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
 import { PRESETS, resolvePreset, sniffSample } from "./presets";
 import {
     applyFolderRetention,
@@ -33,7 +38,13 @@ import {
     planOldFileCompression,
 } from "./retention";
 import { ripgrepFiles } from "./search";
-import { listArchive, packDirectory, unpackArchive, verifyArchiveAgainstFolder } from "./tar";
+import {
+    assertArchiveOutsideSource,
+    listArchive,
+    packDirectory,
+    unpackArchive,
+    verifyArchiveAgainstFolder,
+} from "./tar";
 import { readSeekTable, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
 
 const root = mkdtempSync(join(tmpdir(), "compress-test-"));
@@ -148,6 +159,10 @@ describe("compressFile", () => {
         expect(statSync(result.target).mode & 0o777).toBe(0o600);
         expect(verifyCompressedFile(result.target, result)).toBe(true);
         expect(digestZstdContent(result.target).sha256).toBe(result.sha256);
+        const restored = join(dir, "restored.jsonl");
+        await decompressFile({ source: result.target, target: restored });
+        expect(statSync(restored).mode & 0o777).toBe(0o600);
+        expect(readFileSync(restored, "utf8")).toBe(logText(500));
 
         const bytes = readFileSync(result.target);
         bytes[Math.floor(bytes.length / 2)]! ^= 0xff;
@@ -195,6 +210,218 @@ describe("folder archives", () => {
         const changed = verifyArchiveAgainstFolder({ archive: packed.archive, source: tree });
         expect(changed.ok).toBe(false);
         expect(changed.mismatched).toEqual(["tree/top.txt"]);
+    });
+
+    it("keeps restricted folder archives private from their first write", async () => {
+        const dir = scratch("private-folder");
+        const tree = makeTree(dir);
+        chmodSync(tree, 0o700);
+        chmodSync(join(tree, "top.txt"), 0o600);
+        const modes: number[] = [];
+        const write = atomicWriteIo.writeSync;
+        const probe = spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            modes.push(fstatSync(fd).mode & 0o777);
+            return write(fd, bytes, offset, length);
+        });
+
+        try {
+            const packed = await packDirectory({ source: tree });
+            expect(modes.length).toBeGreaterThan(0);
+            expect(modes.every((mode) => (mode & 0o077) === 0)).toBe(true);
+            expect(statSync(packed.archive).mode & 0o777).toBe(0o600);
+            expect(verifyArchiveAgainstFolder({ archive: packed.archive, source: tree }).ok).toBe(true);
+        } finally {
+            probe.mockRestore();
+        }
+    });
+
+    it("rejects an archive with entries deleted from its source", async () => {
+        const dir = scratch("deleted-entry");
+        const tree = makeTree(dir);
+        const packed = await packDirectory({ source: tree });
+        rmSync(join(tree, "top.txt"));
+        const check = verifyArchiveAgainstFolder({ archive: packed.archive, source: tree });
+        expect(check.extra).toEqual(["tree/top.txt"]);
+        expect(check.ok).toBe(false);
+        expect(verifyPath({ archive: packed.archive, against: tree }).ok).toBe(false);
+    });
+
+    it("refuses renamed and multi-root archives before touching any destination", async () => {
+        const dir = scratch("restore-destinations");
+        const tree = makeTree(dir);
+        const renamed = join(dir, "renamed.zst");
+        await packDirectory({ source: tree, archive: renamed });
+        writeFileSync(join(tree, "top.txt"), "keep newer content");
+        await expect(expandPath({ archive: renamed, caller: "test", removeArchive: true })).rejects.toThrow();
+        expect(readFileSync(join(tree, "top.txt"), "utf8")).toBe("keep newer content");
+        expect(existsSync(renamed)).toBe(true);
+        expect(existsSync(join(dir, "renamed"))).toBe(false);
+
+        const other = join(dir, "other");
+        mkdirSync(other);
+        writeFileSync(join(other, "keep.txt"), "archived content");
+        const tar = Bun.spawnSync(["tar", "--no-xattrs", "-cf", "-", "-C", dir, "tree", "other"], {
+            env: { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        expect(tar.exitCode).toBe(0);
+        const multi = join(dir, "tree.zst");
+        writeFileSync(multi, Bun.zstdCompressSync(tar.stdout));
+        rmSync(tree, { recursive: true });
+        writeFileSync(join(other, "keep.txt"), "keep existing content");
+        await expect(expandPath({ archive: multi, caller: "test", removeArchive: true })).rejects.toThrow();
+        expect(readFileSync(join(other, "keep.txt"), "utf8")).toBe("keep existing content");
+        expect(existsSync(tree)).toBe(false);
+        expect(existsSync(multi)).toBe(true);
+    });
+
+    it("unpackArchive never replaces an existing file", async () => {
+        const dir = scratch("unpack-existing");
+        const tree = makeTree(dir);
+        const packed = await packDirectory({ source: tree });
+        writeFileSync(join(tree, "top.txt"), "keep existing content");
+        // Some tar implementations report skipped files as an error, others exit successfully.
+        await unpackArchive({ archive: packed.archive, destination: dir }).catch((error: Error) => {
+            expect(error.message).toContain("tar failed unpacking");
+        });
+        expect(readFileSync(join(tree, "top.txt"), "utf8")).toBe("keep existing content");
+    });
+
+    it("normalizes trailing separators and refuses archives inside the source, including symlink aliases", async () => {
+        const dir = scratch("placement");
+        const tree = makeTree(dir);
+        const plan = await planCompressPath({ source: `${tree}/` });
+        expect(plan.target).toBe(`${tree}.zst`);
+        const alias = join(dir, "alias");
+        symlinkSync(tree, alias);
+
+        for (const target of [join(tree, "nested", "out.zst"), join(alias, "nested", "out.zst")]) {
+            await expect(compressPath({ source: tree, target, caller: "test", removeOriginal: true })).rejects.toThrow(
+                "outside the source"
+            );
+            await expect(packDirectory({ source: tree, archive: target })).rejects.toThrow("outside the source");
+            expect(existsSync(target)).toBe(false);
+            expect(existsSync(tree)).toBe(true);
+        }
+
+        const packed = await packDirectory({ source: `${tree}/` });
+        expect(packed.archive).toBe(`${tree}.zst`);
+        expect(verifyArchiveAgainstFolder({ archive: packed.archive, source: tree }).ok).toBe(true);
+    });
+
+    it("checks the archive's parent without following the output symlink", async () => {
+        const dir = scratch("output-symlink");
+        const tree = makeTree(dir);
+        const outside = join(dir, "outside.txt");
+        writeFileSync(outside, "keep outside");
+        const inside = join(tree, "out.zst");
+        symlinkSync(outside, inside);
+        const before = readdirSync(tree);
+
+        expect(() => assertArchiveOutsideSource(tree, inside)).toThrow("outside the source");
+        await expect(planCompressPath({ source: tree, target: inside })).rejects.toThrow("outside the source");
+        await expect(packDirectory({ source: tree, archive: inside })).rejects.toThrow("outside the source");
+        expect(readlinkSync(inside)).toBe(outside);
+        expect(readFileSync(outside, "utf8")).toBe("keep outside");
+        expect(readdirSync(tree)).toEqual(before);
+
+        // Replacing a sibling symlink is safe: its target inside the source is not written through.
+        const sibling = join(dir, "tree.zst");
+        symlinkSync(join(tree, "top.txt"), sibling);
+        expect(() => assertArchiveOutsideSource(tree, sibling)).not.toThrow();
+        await packDirectory({ source: tree, archive: sibling });
+        expect(verifyArchiveAgainstFolder({ archive: sibling, source: tree }).ok).toBe(true);
+        expect(readFileSync(outside, "utf8")).toBe("keep outside");
+    });
+
+    it("compares a hardlink's stored content and size with the current file", async () => {
+        const dir = scratch("hardlinks");
+        const tree = join(dir, "tree");
+        mkdirSync(tree);
+        writeFileSync(join(tree, "first"), "same");
+        linkSync(join(tree, "first"), join(tree, "second"));
+        const packed = await packDirectory({ source: tree });
+        const linked = listArchive(packed.archive).find((entry) => entry.type === "hardlink")!;
+        expect(linked).toBeDefined();
+        expect(verifyArchiveAgainstFolder({ archive: packed.archive, source: tree }).ok).toBe(true);
+        const replacement = join(dir, "replacement");
+        writeFileSync(replacement, "else");
+        renameSync(replacement, join(dir, linked.path));
+        expect(verifyArchiveAgainstFolder({ archive: packed.archive, source: tree }).mismatched).toEqual([linked.path]);
+        writeFileSync(join(dir, linked.path), "longer");
+        expect(
+            verifyArchiveAgainstFolder({ archive: packed.archive, source: tree, content: false }).mismatched
+        ).toEqual([linked.path]);
+    });
+
+    it("rejects incomplete tar headers, bodies, padding, end markers and invalid headers", async () => {
+        const dir = scratch("truncated-tar");
+        const header = Buffer.alloc(512);
+        header.write("tree/file");
+        header.write("00000000004\0", 124);
+        header.write("0", 156);
+        header.write("ustar\0", 257);
+        const checksum = (block: Buffer) => {
+            block.fill(32, 148, 156);
+            block.write(
+                `${block
+                    .reduce((sum, byte) => sum + byte, 0)
+                    .toString(8)
+                    .padStart(6, "0")}\0 `,
+                148
+            );
+        };
+        checksum(header);
+        const valid = Buffer.concat([header, Buffer.from("data"), Buffer.alloc(508 + 1024)]);
+        const archive = join(dir, "tree.zst");
+        writeFileSync(archive, Bun.zstdCompressSync(valid));
+        expect(verifyPath({ archive }).ok).toBe(true);
+
+        for (const length of [300, 514, 517, 1024, 1536]) {
+            writeFileSync(archive, Bun.zstdCompressSync(valid.subarray(0, length)));
+            expect(() => listArchive(archive, { hash: true })).toThrow();
+            expect(() => verifyPath({ archive })).toThrow();
+        }
+
+        const badChecksum = Buffer.from(valid);
+        badChecksum[0] = 88;
+        writeFileSync(archive, Bun.zstdCompressSync(badChecksum));
+        expect(() => verifyPath({ archive })).toThrow();
+        const badSize = Buffer.from(valid);
+        badSize.write("invalid-size", 124);
+        checksum(badSize.subarray(0, 512));
+        writeFileSync(archive, Bun.zstdCompressSync(badSize));
+        expect(() => verifyPath({ archive })).toThrow();
+    });
+
+    it("restores files and folders into missing nested destinations", async () => {
+        const dir = scratch("new-destination");
+        const tree = makeTree(dir);
+        const packed = await packDirectory({ source: tree });
+        const folderInto = join(dir, "new", "folder");
+        await expandPath({ archive: packed.archive, into: folderInto, caller: "test" });
+        expect(readFileSync(join(folderInto, "tree", "top.txt"), "utf8")).toBe("top\n");
+        const plain = join(dir, "plain.txt");
+        writeFileSync(plain, "plain text");
+        const file = await compressFile({ source: plain });
+        const fileInto = join(dir, "new", "file");
+        await expandPath({ archive: file.target, into: fileInto, caller: "test" });
+        expect(readFileSync(join(fileInto, "plain.txt"), "utf8")).toBe("plain text");
+    });
+
+    it("uses the shared environment snapshot for tar sampling and packing", async () => {
+        const dir = scratch("spawn-env");
+        const tree = makeTree(dir);
+        const snapshot = spyOn(env, "getProcessEnv");
+
+        try {
+            await sampleFolder(tree);
+            await packDirectory({ source: tree });
+            expect(snapshot).toHaveBeenCalledTimes(2);
+        } finally {
+            snapshot.mockRestore();
+        }
     });
 
     it("compressPath keeps the original unless asked, records the ledger, and expandPath restores the folder", async () => {

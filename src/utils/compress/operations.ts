@@ -1,7 +1,15 @@
 import { existsSync, lstatSync, readdirSync, statfsSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { sha256File } from "@genesiscz/utils/fs/hash";
-import { compressFile, decompressFile, digestZstdContent, sourceUnchanged, verifyCompressedFile } from "./file";
+import {
+    compressFile,
+    decompressFile,
+    digestZstdContent,
+    readExistingAncestorSync,
+    sourceUnchanged,
+    verifyCompressedFile,
+} from "./file";
 import { type LedgerRecord, recordCompression, searchLedger } from "./ledger";
 import {
     type CompressPreset,
@@ -14,6 +22,7 @@ import {
 import { removePath } from "./retention";
 import {
     archiveBaseName,
+    assertArchiveOutsideSource,
     FOLDER_ARCHIVE_SUFFIX,
     isTarArchive,
     listArchive,
@@ -30,7 +39,7 @@ const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 export class CompressRefusal extends Error {}
 
 function freeBytes(path: string): number {
-    const stats = statfsSync(path);
+    const { value: stats } = readExistingAncestorSync(path, statfsSync);
     return Number(stats.bavail) * Number(stats.bsize);
 }
 
@@ -120,7 +129,7 @@ export async function sampleFolder(path: string, bytes = 32 * 1024 * 1024): Prom
     const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(path), basename(path)], {
         stdout: "pipe",
         stderr: "ignore",
-        env: { ...process.env, COPYFILE_DISABLE: "1" },
+        env: { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" },
     });
     const chunks: Uint8Array[] = [];
     let total = 0;
@@ -146,7 +155,7 @@ export async function sampleFolder(path: string, bytes = 32 * 1024 * 1024): Prom
 export async function planCompressPath(
     options: Omit<CompressPathOptions, "caller" | "removeOriginal">
 ): Promise<CompressPathPlan> {
-    const { source } = options;
+    const source = resolve(options.source);
 
     if (!existsSync(source)) {
         throw new CompressRefusal(`${source} does not exist`);
@@ -157,6 +166,11 @@ export async function planCompressPath(
     const preset = options.preset ?? choice.preset;
     const level = options.level ?? preset.level;
     const target = options.target ?? `${source}${isFolder ? FOLDER_ARCHIVE_SUFFIX : ZSTD_SUFFIX}`;
+
+    if (isFolder) {
+        assertArchiveOutsideSource(source, target);
+    }
+
     const inputBytes = isFolder ? folderBytes(source) : statSync(source).size;
     const saving = isFolder ? trialSaving(await sampleFolder(source), { level: 3 }) : choice.trialSaving;
     const minSaving = options.minSaving ?? DEFAULT_MIN_SAVING;
@@ -192,7 +206,8 @@ export async function planCompressPath(
  * not change meanwhile. Every run lands in the ledger.
  */
 export async function compressPath(options: CompressPathOptions): Promise<CompressPathResult> {
-    const { source, caller } = options;
+    const source = resolve(options.source);
+    const { caller } = options;
 
     if (!existsSync(source)) {
         throw new CompressRefusal(`${source} does not exist`);
@@ -311,12 +326,31 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
     let restoredBytes: number;
     let outputSha256: string | undefined;
 
-    // From the seek table, so the archive is decompressed once (the restore), not twice: restoring a 68 MB bundle
-    // took 644 ms with a listing pass first. Every frame's checksum is checked by the decoder on the way.
+    // File restores use the seek table for their space estimate. Folder restores also list destinations before
+    // extraction: an archive filename alone cannot tell us which paths tar will write.
     const knownBytes = zstdContentBytes(archive);
 
     if (isTar) {
-        restoredBytes = knownBytes ?? listArchive(archive).reduce((sum, entry) => sum + entry.size, 0);
+        const entries = listArchive(archive);
+        const insideTarget = (path: string): boolean => {
+            const parts = path.split(/[/\\]/);
+            return parts[0] === name && parts.every((part) => part !== "" && part !== "." && part !== "..");
+        };
+        const root = entries.find((entry) => entry.path === name);
+
+        if (
+            root?.type !== "directory" ||
+            entries.some(
+                (entry) =>
+                    !insideTarget(entry.path) ||
+                    (entry.path === name && entry.type !== "directory") ||
+                    (entry.type === "hardlink" && !insideTarget(entry.linkTarget ?? ""))
+            )
+        ) {
+            throw new CompressRefusal(`${archive} must contain only the top folder ${name}; nothing extracted`);
+        }
+
+        restoredBytes = knownBytes ?? entries.reduce((sum, entry) => sum + entry.size, 0);
         assertRoomFor({ outputDir: into, inputBytes: restoredBytes, keptShare: 1 });
         await unpackArchive({ archive, destination: into });
 

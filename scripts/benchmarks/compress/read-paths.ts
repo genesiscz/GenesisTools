@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
@@ -157,7 +158,7 @@ async function sample(scenario: Scenario, arm: Arm): Promise<Sample> {
         stdout: "pipe",
         stderr: "pipe",
         env: {
-            ...process.env,
+            ...env.getProcessEnv(),
             GENESIS_TOOLS_HOME: armHome(arm),
             // The arm links the real daemon logs, configs and caches; the commands are read-only diagnostics.
             GENESIS_TOOLS_ALLOW_REAL_HOME_IN_TESTS: "1",

@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
 import { unpackArchive } from "@genesiscz/utils/compress/tar";
+import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { finishBench, median, parseBenchArgs } from "../fs/shared";
@@ -56,7 +57,7 @@ for (let index = 0; index < args.warmup + args.runs; index++) {
         const proc = Bun.spawn([...ARMS[arm](dest)], {
             stdout: "ignore",
             stderr: "pipe",
-            env: { ...process.env, GENESIS_TOOLS_NO_DAILY_COMPRESS: "1" },
+            env: { ...env.getProcessEnv(), GENESIS_TOOLS_NO_DAILY_COMPRESS: "1" },
         });
         const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
 

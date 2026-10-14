@@ -1,7 +1,30 @@
 import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileStreamed, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { readZstdFramesSync, SeekableZstdWriter, ZSTD_SUFFIX, type ZstdParams } from "./zstd";
+
+/** Retry a filesystem read at the nearest existing ancestor, propagating every error except ENOENT. */
+export function readExistingAncestorSync<T>(
+    path: string,
+    read: (ancestor: string) => T
+): { ancestor: string; value: T } {
+    let ancestor = resolve(path);
+
+    for (;;) {
+        try {
+            return { ancestor, value: read(ancestor) };
+        } catch (error) {
+            const parent = dirname(ancestor);
+
+            if (!isMissingFileError(error) || parent === ancestor) {
+                throw error;
+            }
+
+            ancestor = parent;
+        }
+    }
+}
 
 const READ_CHUNK_BYTES = 1024 * 1024;
 
@@ -136,13 +159,17 @@ export async function decompressFile({ source, target }: { source: string; targe
     const hasher = new Bun.CryptoHasher("sha256");
     let bytes = 0;
 
-    await atomicWriteFileStreamed(target, (write) => {
-        for (const frame of readZstdFramesSync(source)) {
-            hasher.update(frame);
-            write(frame);
-            bytes += frame.length;
-        }
-    });
+    await atomicWriteFileStreamed(
+        target,
+        (write) => {
+            for (const frame of readZstdFramesSync(source)) {
+                hasher.update(frame);
+                write(frame);
+                bytes += frame.length;
+            }
+        },
+        { mode: statSync(source).mode & 0o777 }
+    );
 
     return { bytes, sha256: hasher.digest("hex") };
 }
