@@ -1,9 +1,17 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { decodeJwtClaims, getActiveAuthEntry, getTokenPrefix, isTokenExpired, readAuthFile } from "./auth";
+import { logger } from "@genesiscz/utils/logger";
+import {
+    decodeJwtClaims,
+    getActiveAuthEntry,
+    getTokenPrefix,
+    isTokenExpired,
+    readAuthFile,
+    readAuthFileAsync,
+} from "./auth";
 
 const TEST_PAYLOAD = {
     tier: 5,
@@ -47,6 +55,29 @@ describe("grok auth", () => {
 
         expect(entries.get("https://auth.x.ai::client-id")?.email).toBe("genesiscz@example.com");
         expect(entries.get("https://auth.x.ai::client-id")?.key).toBe("token-abc");
+    });
+
+    it("a malformed auth file is logged without its token text, by both readers", async () => {
+        tempDir = mkdtempSync(join(tmpdir(), "grok-auth-"));
+        const authPath = join(tempDir, "auth.json");
+        writeFileSync(authPath, '{"https://auth.x.ai::client-id": {"key": "fixture-secret-token", broken}');
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+        try {
+            expect(readAuthFile(authPath).size).toBe(0);
+            expect((await readAuthFileAsync(authPath)).size).toBe(0);
+            expect(warn).toHaveBeenCalledTimes(2);
+            // The day log serializes an Error's message, which JSON.stringify would drop: read it the same way.
+            const logged = warn.mock.calls
+                .flat()
+                .flatMap((arg) => (arg && typeof arg === "object" ? Object.values(arg) : [arg]))
+                .map((value) => (value instanceof Error ? value.message : String(value)))
+                .join(" ");
+            expect(logged).toContain(authPath);
+            expect(logged).not.toContain("fixture-secret-token");
+        } finally {
+            warn.mockRestore();
+        }
     });
 
     it("selects first active auth entry", () => {

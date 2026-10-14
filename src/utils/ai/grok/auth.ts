@@ -36,6 +36,12 @@ function parseAuthEntries(raw: unknown): Map<string, GrokAuthEntry> {
     return entries;
 }
 
+// A parser error quotes the malformed document, and this one holds access and refresh tokens: log a category only.
+function logAuthReadFailure(authPath: string, err: unknown): void {
+    const reason = err instanceof SyntaxError ? "invalid JSON" : "unreadable";
+    logger.warn({ authPath, reason }, "grok: failed to parse auth file");
+}
+
 export function readAuthFile(path?: string): Map<string, GrokAuthEntry> {
     const authPath = path ?? grokAuthPath();
 
@@ -46,7 +52,7 @@ export function readAuthFile(path?: string): Map<string, GrokAuthEntry> {
     try {
         return parseAuthEntries(SafeJSON.parse(readFileSync(authPath, "utf-8")));
     } catch (err) {
-        logger.warn({ err, authPath }, "grok: failed to parse auth file");
+        logAuthReadFailure(authPath, err);
         return new Map();
     }
 }
@@ -62,7 +68,7 @@ export async function readAuthFileAsync(path?: string): Promise<Map<string, Grok
         const text = await Bun.file(authPath).text();
         return parseAuthEntries(SafeJSON.parse(text));
     } catch (err) {
-        logger.warn({ err, authPath }, "grok: failed to parse auth file");
+        logAuthReadFailure(authPath, err);
         return new Map();
     }
 }
