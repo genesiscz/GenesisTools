@@ -24,6 +24,13 @@ export interface OpenHubOptions {
     pr?: string;
     /** With `pr`: this repo-relative file opens in that PR's review. */
     reveal?: string;
+    /**
+     * A commit sha (7 to 40 hex characters, a prefix is enough). With `pr` it is selected in that PR's
+     * review; without it, `repo` names its project and it opens in the Worktrees mode's diff.
+     */
+    commit?: string;
+    /** With `commit` and no `pr`: the commit's project, a checkout path or its forge path (`owner/repo`). */
+    repo?: string;
     /** Opens the Worktrees mode on this checkout folder. */
     worktree?: string;
     tab?: HubTab;
@@ -84,6 +91,14 @@ export function hubArgs(options: OpenHubOptions): string[] {
         }
     }
 
+    if (options.repo) {
+        args.push("--repo", options.repo);
+    }
+
+    if (options.commit) {
+        args.push("--commit", options.commit);
+    }
+
     if (options.worktree) {
         args.push("--worktree", options.worktree);
     }
@@ -126,10 +141,24 @@ export function hubArgs(options: OpenHubOptions): string[] {
     return args;
 }
 
+const HUB_URL_KEYS = [
+    "mode",
+    "session",
+    "agent",
+    "pr",
+    "reveal",
+    "repo",
+    "commit",
+    "tab",
+    "filter",
+    "worktree",
+] as const;
+
 /**
  * The same target as a link: `genesis-tools://hub?session=<parent>&agent=<child>`, with `mode`,
- * `pr`, `reveal`, `tab`, `filter` and `worktree` as further query items (keys of `HubRequest.linkKeys`
- * in the app). A link without `worktree` and `reveal` lost them: `--print-url` named neither.
+ * `pr`, `reveal`, `repo`, `commit`, `tab`, `filter` and `worktree` as further query items (keys of
+ * `HubRequest.linkKeys` in the app). A link without `worktree` and `reveal` lost them: `--print-url`
+ * named neither. A commit link: `?pr=owner%2Frepo%2342&commit=<sha>`, or `?repo=<path>&commit=<sha>`.
  */
 export function hubUrl(
     options: Pick<OpenHubOptions, "mode" | "session" | "agent" | "pr" | "reveal" | "tab" | "filter" | "worktree">

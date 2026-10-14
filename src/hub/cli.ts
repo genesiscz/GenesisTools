@@ -46,7 +46,7 @@ import {
     THREAD_SIDES,
     type ThreadSide,
 } from "./lib/pr";
-import { isHubPrRef } from "./lib/pr-ref";
+import { commitFlagsProblem, isHubPrRef } from "./lib/pr-ref";
 import { prSessions } from "./lib/pr-sessions";
 import {
     hubStatus,
@@ -132,6 +132,11 @@ program
     .option("--print-url", "print the hub link for these flags instead of opening")
     .option("--pr <ref>", "select this PR/MR in the PRs mode: 42, with its project: group/app#42, or its page URL")
     .option("--reveal <path>", "with --pr: open this repo-relative file in that PR's review")
+    .option(
+        "--commit <sha>",
+        "select this commit (7 to 40 hex characters) in the --pr review, or open it in the --repo project's diff"
+    )
+    .option("--repo <path|owner/repo>", "with --commit and no --pr: the commit's checkout path or forge project")
     .option("--worktree <path>", "open the Worktrees mode on this checkout folder")
     .option("--tab [tab]", `${HUB_TABS.join("|")}: the pane to show`)
     .option("--filter <text>", "filter the session list (also searches every project's history)")
@@ -152,6 +157,8 @@ program
             printUrl?: boolean;
             pr?: string;
             reveal?: string;
+            commit?: string;
+            repo?: string;
             worktree?: string;
             tab?: string | true;
             filter?: string;
@@ -185,6 +192,15 @@ program
                 return;
             }
 
+            const commit = opts.commit?.trim();
+            const repo = opts.repo?.trim();
+            const commitProblem = commitFlagsProblem({ commit, repo, pr });
+            if (commitProblem) {
+                out.log.error(commitProblem);
+                process.exitCode = 1;
+                return;
+            }
+
             if (opts.printUrl) {
                 out.println(
                     hubUrl({
@@ -193,6 +209,8 @@ program
                         agent: opts.agent,
                         pr,
                         reveal: opts.reveal,
+                        commit,
+                        repo,
                         tab,
                         filter: opts.filter,
                         worktree: opts.worktree,
@@ -213,6 +231,8 @@ program
                     tab,
                     pr,
                     reveal: opts.reveal,
+                    commit,
+                    repo,
                     worktree: opts.worktree,
                     session: opts.session,
                     filter: opts.filter,

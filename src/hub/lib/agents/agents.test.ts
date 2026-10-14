@@ -11,6 +11,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { registerAgentsCommand } from "../../commands/agents";
 import { hubArgs, hubUrl } from "../open";
+import { commitFlagsProblem, isHubCommitSha } from "../pr-ref";
 import * as codexAgents from "./codex-agents";
 import { agentCounts } from "./counts";
 import { freshMtime, hubAgents, parentsOfRecentAgents } from "./index";
@@ -436,6 +437,43 @@ describe("hub open deep link", () => {
             "--session",
             SESSION,
         ]);
+    });
+
+    test("a commit link names its PR with an encoded #, or its project", () => {
+        expect(hubUrl({ pr: "acme/app#7", commit: "abc1234" })).toBe(
+            "genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234"
+        );
+        expect(hubArgs({ pr: "acme/app#7", commit: "abc1234" })).toEqual([
+            "--hub",
+            "--pr",
+            "acme/app#7",
+            "--commit",
+            "abc1234",
+        ]);
+        expect(hubUrl({ repo: "/tmp/my app", commit: "abc1234def" })).toBe(
+            "genesis-tools://hub?repo=%2Ftmp%2Fmy%20app&commit=abc1234def"
+        );
+        expect(hubArgs({ repo: "acme/app", commit: "abc1234" })).toEqual([
+            "--hub",
+            "--repo",
+            "acme/app",
+            "--commit",
+            "abc1234",
+        ]);
+    });
+
+    test("--commit takes 7 to 40 hex characters and needs its PR or its project", () => {
+        expect(isHubCommitSha("ABC1234")).toBe(true);
+        expect(isHubCommitSha("abc123")).toBe(false);
+        expect(isHubCommitSha("abc123g")).toBe(false);
+        expect(isHubCommitSha("a".repeat(41))).toBe(false);
+        expect(commitFlagsProblem({ pr: "acme/app#7", commit: "abc1234" })).toBeUndefined();
+        expect(commitFlagsProblem({ repo: "acme/app", commit: "abc1234" })).toBeUndefined();
+        expect(commitFlagsProblem({})).toBeUndefined();
+        expect(commitFlagsProblem({ commit: "abc1234" })).toContain("--pr");
+        expect(commitFlagsProblem({ commit: "main" })).toContain("7 to 40 hex");
+        expect(commitFlagsProblem({ repo: "acme/app" })).toContain("--commit");
+        expect(commitFlagsProblem({ repo: "acme/app", pr: "7", commit: "abc1234" })).toContain("one of them");
     });
 });
 
