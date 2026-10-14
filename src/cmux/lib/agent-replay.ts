@@ -9,7 +9,8 @@ import {
     resumeTargetFromCommand,
     stripModelFlags,
 } from "@app/cmux/lib/command-capture";
-import type { Profile, ResumeEvidence, Surface, TerminalSurface } from "@app/cmux/lib/types";
+import { mapTerminalSurfaces } from "@app/cmux/lib/profile-walk";
+import type { Profile, ResumeEvidence, TerminalSurface } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
@@ -359,86 +360,51 @@ export function replayCommandForSurface(
 }
 
 export function withInferredReplayCommands(profile: Profile, catalog: ReplayCatalog): Profile {
-    return {
-        ...profile,
-        windows: profile.windows.map((window) => ({
-            ...window,
-            workspaces: window.workspaces.map((workspace) => ({
-                ...workspace,
-                panes: workspace.panes.map((pane) => ({
-                    ...pane,
-                    surfaces: pane.surfaces.map((surface) => {
-                        if (surface.type !== "terminal") {
-                            return surface;
-                        }
+    return mapTerminalSurfaces(profile, (surface) => {
+        if (
+            (surface.resume ||
+                (surface.command_source === "shell-journal" &&
+                    (!isAgentLauncher(surface.command ?? "") || resumeTargetFromCommand(surface.command ?? "")))) &&
+            surface.command
+        ) {
+            return surface;
+        }
 
-                        if (
-                            (surface.resume ||
-                                (surface.command_source === "shell-journal" &&
-                                    (!isAgentLauncher(surface.command ?? "") ||
-                                        resumeTargetFromCommand(surface.command ?? "")))) &&
-                            surface.command
-                        ) {
-                            return surface;
-                        }
+        const resolved = replayCommandForSurface(surface, catalog, pinnedSessionForSurface(surface));
+        if (!resolved.command) {
+            const launcher = inferLauncherFromTitle(surface.title);
+            const saved = surface.command?.trim();
+            if (launcher && saved && isAgentLauncher(saved)) {
+                const savedKind = agentKindFromLauncher(saved);
+                if (savedKind !== launcher) {
+                    return {
+                        ...surface,
+                        command: undefined,
+                        command_original: saved,
+                        command_source: undefined,
+                        drift: [`discarded stale ${savedKind} capture on a ${launcher} tab`],
+                    };
+                }
+            }
 
-                        const resolved = replayCommandForSurface(surface, catalog, pinnedSessionForSurface(surface));
-                        if (!resolved.command) {
-                            const launcher = inferLauncherFromTitle(surface.title);
-                            const saved = surface.command?.trim();
-                            if (launcher && saved && isAgentLauncher(saved)) {
-                                const savedKind = agentKindFromLauncher(saved);
-                                if (savedKind !== launcher) {
-                                    return {
-                                        ...surface,
-                                        command: undefined,
-                                        command_original: saved,
-                                        command_source: undefined,
-                                        drift: [`discarded stale ${savedKind} capture on a ${launcher} tab`],
-                                    };
-                                }
-                            }
+            return surface;
+        }
 
-                            return surface;
-                        }
+        if (resolved.command === surface.command) {
+            return resolved.drift.length > 0
+                ? { ...surface, drift: resolved.drift, resume_evidence: resolved.evidence }
+                : surface;
+        }
 
-                        if (resolved.command === surface.command) {
-                            return resolved.drift.length > 0
-                                ? { ...surface, drift: resolved.drift, resume_evidence: resolved.evidence }
-                                : surface;
-                        }
-
-                        return {
-                            ...surface,
-                            command: resolved.command,
-                            command_source: surface.command ? surface.command_source : "inferred",
-                            command_original: surface.command,
-                            drift: resolved.drift.length > 0 ? resolved.drift : surface.drift,
-                            resume_evidence: resolved.evidence,
-                        };
-                    }),
-                })),
-            })),
-        })),
-    };
-}
-
-function mapTerminalSurfaces(profile: Profile, map: (surface: TerminalSurface, path: string) => Surface): Profile {
-    return {
-        ...profile,
-        windows: profile.windows.map((window, w) => ({
-            ...window,
-            workspaces: window.workspaces.map((workspace, ws) => ({
-                ...workspace,
-                panes: workspace.panes.map((pane, p) => ({
-                    ...pane,
-                    surfaces: pane.surfaces.map((surface, s) =>
-                        surface.type === "terminal" ? map(surface, `${w}/${ws}/${p}/${s}`) : surface
-                    ),
-                })),
-            })),
-        })),
-    };
+        return {
+            ...surface,
+            command: resolved.command,
+            command_source: surface.command ? surface.command_source : "inferred",
+            command_original: surface.command,
+            drift: resolved.drift.length > 0 ? resolved.drift : surface.drift,
+            resume_evidence: resolved.evidence,
+        };
+    });
 }
 
 interface ResumeClaim {

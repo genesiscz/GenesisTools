@@ -1,10 +1,12 @@
 import { agentKindFromLauncher, isAgentLauncher, resumeTargetFromCommand } from "@app/cmux/lib/command-capture";
+import { profileSurfaces } from "@app/cmux/lib/profile-walk";
 import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
 import { liveTree } from "@app/cmux/lib/session-close-live";
 import { isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runCmux, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
+import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
@@ -221,27 +223,21 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
 export function planInPlaceRestore(profile: Profile, state: InPlaceLiveState): InPlaceStep[] {
     const steps: InPlaceStep[] = [];
 
-    for (const window of profile.windows) {
-        for (const workspace of window.workspaces) {
-            for (const pane of workspace.panes) {
-                for (const surface of pane.surfaces) {
-                    if (surface.type !== "terminal") {
-                        continue;
-                    }
-
-                    const live = surface.surface_id ? state.tabs.get(surface.surface_id.toLowerCase()) : undefined;
-
-                    steps.push({
-                        workspaceTitle: workspace.title,
-                        live,
-                        title: surface.title,
-                        surface,
-                        kind: surface.command && isAgentLauncher(surface.command) ? "agent" : "command",
-                        ...decide(surface, live, state),
-                    });
-                }
-            }
+    for (const { workspace, surface } of profileSurfaces(profile)) {
+        if (surface.type !== "terminal") {
+            continue;
         }
+
+        const live = surface.surface_id ? state.tabs.get(cmuxIdKey(surface.surface_id)) : undefined;
+
+        steps.push({
+            workspaceTitle: workspace.title,
+            live,
+            title: surface.title,
+            surface,
+            kind: surface.command && isAgentLauncher(surface.command) ? "agent" : "command",
+            ...decide(surface, live, state),
+        });
     }
 
     return steps;

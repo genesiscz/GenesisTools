@@ -1,4 +1,5 @@
 import { agentKindFromLauncher, cleanLaunchCommand } from "@app/cmux/lib/command-capture";
+import { mapTerminalSurfaces } from "@app/cmux/lib/profile-walk";
 import type { Profile } from "@app/cmux/lib/types";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 
@@ -51,46 +52,29 @@ export function parseAgentList(raw: string | undefined): AgentKind[] {
 export function filterReplayByAgents(profile: Profile, agents: AgentKind[]): Profile {
     const allowed = new Set(agents);
 
-    return {
-        ...profile,
-        windows: profile.windows.map((window) => ({
-            ...window,
-            workspaces: window.workspaces.map((workspace) => ({
-                ...workspace,
-                panes: workspace.panes.map((pane) => ({
-                    ...pane,
-                    surfaces: pane.surfaces.map((surface) => {
-                        if (surface.type !== "terminal") {
-                            return surface;
-                        }
+    return mapTerminalSurfaces(profile, (surface) => {
+        // Filter the prepared command that will actually run; the tab
+        // title can still name an agent that ran here previously.
+        const command = cleanLaunchCommand(surface.command ?? "").replace(
+            /^\S*\/(?=(?:codex|claude|grok|tools)(?:\s|$))/,
+            ""
+        );
+        const kind = agentKindFromLauncher(command);
+        const restoresItself = /^tools\s+cmux\s+(?:restore-after-restart|profiles\s+restore)(?:\s|$)/.test(command);
+        if (restoresItself || (kind && !allowed.has(kind))) {
+            return {
+                ...surface,
+                command: undefined,
+                command_source: undefined,
+                command_original: surface.command,
+                drift: [
+                    restoresItself
+                        ? "skipped restore command to avoid recursive restoration"
+                        : `skipped ${kind}: agent not selected`,
+                ],
+            };
+        }
 
-                        // Filter the prepared command that will actually run; the tab
-                        // title can still name an agent that ran here previously.
-                        const command = cleanLaunchCommand(surface.command ?? "").replace(
-                            /^\S*\/(?=(?:codex|claude|grok|tools)(?:\s|$))/,
-                            ""
-                        );
-                        const kind = agentKindFromLauncher(command);
-                        const restoresItself =
-                            /^tools\s+cmux\s+(?:restore-after-restart|profiles\s+restore)(?:\s|$)/.test(command);
-                        if (restoresItself || (kind && !allowed.has(kind))) {
-                            return {
-                                ...surface,
-                                command: undefined,
-                                command_source: undefined,
-                                command_original: surface.command,
-                                drift: [
-                                    restoresItself
-                                        ? "skipped restore command to avoid recursive restoration"
-                                        : `skipped ${kind}: agent not selected`,
-                                ],
-                            };
-                        }
-
-                        return surface;
-                    }),
-                })),
-            })),
-        })),
-    };
+        return surface;
+    });
 }

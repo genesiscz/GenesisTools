@@ -1,3 +1,4 @@
+import { profileSurfaces } from "@app/cmux/lib/profile-walk";
 import type { Profile } from "@app/cmux/lib/types";
 import { APP_BINARY_SUFFIX } from "@genesiscz/utils/cmux/lib/health";
 import { env } from "@genesiscz/utils/env";
@@ -219,30 +220,15 @@ export interface ReplayEntry {
 }
 
 export function collectReplayEntries(profile: Profile): ReplayEntry[] {
-    const entries: ReplayEntry[] = [];
-    let workspaceIndex = 0;
-
-    for (const window of profile.windows) {
-        for (const ws of window.workspaces) {
-            for (const pane of ws.panes) {
-                pane.surfaces.forEach((surface, tabIndex) => {
-                    entries.push({
-                        workspaceIndex,
-                        workspaceTitle: ws.title,
-                        paneRef: pane.ref,
-                        tabIndex,
-                        title: surface.title,
-                        command: surface.type === "terminal" ? surface.command : undefined,
-                        ...(surface.type === "terminal" && surface.surface_id ? { surfaceId: surface.surface_id } : {}),
-                    });
-                });
-            }
-
-            workspaceIndex += 1;
-        }
-    }
-
-    return entries;
+    return profileSurfaces(profile).map(({ workspace, workspaceIndex, pane, surface, tabIndex }) => ({
+        workspaceIndex,
+        workspaceTitle: workspace.title,
+        paneRef: pane.ref,
+        tabIndex,
+        title: surface.title,
+        command: surface.type === "terminal" ? surface.command : undefined,
+        ...(surface.type === "terminal" && surface.surface_id ? { surfaceId: surface.surface_id } : {}),
+    }));
 }
 
 /**
