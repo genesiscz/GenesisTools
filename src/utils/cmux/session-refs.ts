@@ -188,8 +188,9 @@ export function lookupSessionCmuxRefs(query: string, refsPath: string = CMUX_REF
     }
 
     let latest: SessionCmuxRefs | null = null;
+    const all = loadAllSessionCmuxRefs(refsPath);
 
-    for (const [id, entry] of loadAllSessionCmuxRefs(refsPath)) {
+    for (const [id, entry] of all) {
         if (id !== needle && !id.startsWith(needle)) {
             continue;
         }
@@ -199,13 +200,22 @@ export function lookupSessionCmuxRefs(query: string, refsPath: string = CMUX_REF
         }
     }
 
-    // A record with no cmux surface (plain Terminal / tmux session) cannot
-    // produce a cmux target; callers fall through to the text matcher.
-    if (!latest || (!latest.surfaceId && !latest.surfaceRef)) {
+    // A record with no surface UUID (plain Terminal / tmux session, or a line from before UUIDs) cannot
+    // produce a cmux target: its ref is from the cmux run that wrote it. Callers fall through to the matcher.
+    if (!latest?.surfaceId || latest.ended) {
         return null;
     }
 
-    return latest;
+    // The tab is the session's only while no other session was recorded there later: `focus`/`send` act on the
+    // tab's current occupant, and typing into a tab another session took over reaches the wrong agent.
+    const surface = latest.surfaceId.toLowerCase();
+    const at = latest.at ?? 0;
+    const sessionId = latest.sessionId;
+    const takenOver = [...all.values()].some(
+        (entry) => entry.sessionId !== sessionId && entry.surfaceId?.toLowerCase() === surface && (entry.at ?? 0) > at
+    );
+
+    return takenOver ? null : latest;
 }
 
 const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

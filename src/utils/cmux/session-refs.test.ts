@@ -85,3 +85,24 @@ test("a session whose only record sits behind 512 KB of newer lines is still fou
     expect(statSync(path).size).toBeGreaterThan(512 * 1024);
     expect(loadAllSessionCmuxRefs(path).get(SESSION.toLowerCase())?.surfaceId).toBe("surf-quiet");
 });
+
+// `focus`/`send` act on the tab's current occupant: once another session was recorded in the tab, or the session
+// ended with /exit, its old line no longer names a target and the caller falls back to the matcher.
+test("a tab another session took over, or a session ended on purpose, is not a target", () => {
+    const now = Date.now();
+    const takenOver = journal([
+        entry({ surfaceId: "surf-1", at: now - 60_000 }),
+        entry({ sessionId: "99999999-2222-3333-4444-555555555555", surfaceId: "SURF-1", at: now - 30_000 }),
+    ]);
+    const ended = journal([
+        entry({ surfaceId: "surf-1", at: now - 60_000 }),
+        entry({ surfaceId: "surf-1", ended: true }),
+    ]);
+    const refOnly = journal([entry({ surfaceId: null, surfaceRef: "surface:190" })]);
+
+    expect(lookupSessionCmuxRefs(SESSION, takenOver)).toBeNull();
+    expect(lookupSessionCmuxRefs(SESSION, ended)).toBeNull();
+    expect(lookupSessionCmuxRefs(SESSION, refOnly)).toBeNull();
+    // Control: the same session alone in its tab still resolves.
+    expect(lookupSessionCmuxRefs(SESSION, journal([entry({ surfaceId: "surf-1" })]))?.surfaceId).toBe("surf-1");
+});
