@@ -1,16 +1,9 @@
 import { readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
+import { parseProcRssBytes, parseProcStatCpuMs, parseProcThreads } from "@genesiscz/utils/process/linux-proc";
 import { capture, parseCpuTime } from "@genesiscz/utils/process/ps";
 
 const { log } = logger.scoped("benchmark-sample");
-
-/**
- * Linux reports per-process CPU time in clock ticks. USER_HZ is 100 on every
- * mainstream build, and there is no cheap userspace way to read the real value,
- * so the Linux path assumes it. A wrong assumption here scales cpuTimeMs by a
- * constant factor, which a baseline diff (same host, same kernel) cancels out.
- */
-const LINUX_USER_HZ = 100;
 
 /**
  * CPU and memory consumed by one process over a measured window.
@@ -53,57 +46,7 @@ function delay(ms: number): Promise<void> {
     });
 }
 
-export { parseCpuTime };
-
-/** Parse `Threads:\t7` out of a Linux /proc/<pid>/status body. */
-export function parseProcThreads(status: string): number | null {
-    const match = status.match(/^Threads:\s+(\d+)$/m);
-
-    if (!match) {
-        return null;
-    }
-
-    return Number(match[1]);
-}
-
-/** Parse `VmRSS:\t  12345 kB` out of a Linux /proc/<pid>/status body, in bytes. */
-export function parseProcRssBytes(status: string): number | null {
-    const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-
-    if (!match) {
-        return null;
-    }
-
-    return Number(match[1]) * 1024;
-}
-
-/**
- * Parse utime + stime out of a Linux /proc/<pid>/stat line, in milliseconds.
- * The comm field can contain spaces and parentheses, so everything before the
- * LAST `)` is discarded rather than split.
- */
-export function parseProcStatCpuMs(stat: string): number | null {
-    const close = stat.lastIndexOf(")");
-
-    if (close < 0) {
-        return null;
-    }
-
-    // After the comm field, index 0 is `state` (stat field 3), so stat field N
-    // sits at index N - 3: utime is 14 and stime is 15.
-    const fields = stat
-        .slice(close + 1)
-        .trim()
-        .split(/\s+/);
-    const utime = Number(fields[11]);
-    const stime = Number(fields[12]);
-
-    if (!Number.isFinite(utime) || !Number.isFinite(stime)) {
-        return null;
-    }
-
-    return ((utime + stime) / LINUX_USER_HZ) * 1000;
-}
+export { parseCpuTime, parseProcRssBytes, parseProcStatCpuMs, parseProcThreads };
 
 async function psStdout(args: string[]): Promise<string | null> {
     const result = await capture("ps", args);

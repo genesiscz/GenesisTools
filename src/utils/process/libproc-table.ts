@@ -40,8 +40,16 @@ const KP_COMM_SIZE = 17;
 /** `kp_eproc.e_ucred.cr_uid`: the effective uid, what `ps -o uid` prints. */
 const KP_UID = 420;
 const KP_PPID = 560;
+/** `kp_eproc.e_pgid`, right after `e_ppid`. */
+const KP_PGID = 564;
 const KP_TDEV = 572;
 const SZOMB = 5;
+/**
+ * `p_stat` (`sys/proc.h`) as a `ps -o state=` letter. Every live process is `SRUN` at this level: `ps` tells R from
+ * S (and I, idle over 20 s) by its threads' run states, so a live process reads S here and
+ * {@link readProcessUsage}'s `running` says whether a thread is on a CPU. SIDL (being created) reads I.
+ */
+const STATE_LETTERS = ["?", "I", "S", "S", "T", "Z"];
 const NODEV = -1;
 const S_IFCHR = 0o020000;
 
@@ -51,11 +59,16 @@ const PROC_TASKINFO_SIZE = 96;
 const PTI_RESIDENT_SIZE = 8;
 const PTI_TOTAL_USER = 16;
 const PTI_TOTAL_SYSTEM = 24;
+/** `proc_taskinfo.pti_threadnum` and `pti_numrunning`, after six 64-bit fields and nine 32-bit counters. */
+const PTI_THREADNUM = 84;
+const PTI_NUMRUNNING = 88;
 const PROC_PIDPATHINFO_MAXSIZE = 4096;
 
 export interface ProcessTableRow {
     pid: number;
     ppid: number;
+    /** Process group, as `ps -o pgid=` prints it. */
+    pgid: number;
     /** Effective uid. */
     uid: number;
     /** Start time in epoch milliseconds (microsecond source, so finer than `ps lstart`). */
@@ -63,6 +76,8 @@ export interface ProcessTableRow {
     /** The kernel's 16-byte command name (`p_comm`). */
     comm: string;
     zombie: boolean;
+    /** S live, T stopped, Z zombie, I being created: `p_stat` cannot tell running from sleeping. */
+    state: string;
     /** The controlling terminal as `ps -o tty=` prints it (`ttys003`), or null where `ps` prints `??`. */
     tty: string | null;
 }
@@ -79,6 +94,10 @@ export interface ProcessUsage {
     rssBytes: number;
     /** User plus system CPU time. */
     cpuTimeMs: number;
+    /** Threads, as `ps -M` counts them. */
+    threads: number;
+    /** A thread is on a CPU right now: what makes `ps -o state=` print R rather than S. */
+    running: boolean;
 }
 
 let selfCheck: "pending" | "ok" | "failed" = "pending";
@@ -158,10 +177,12 @@ function decodeRow(symbols: LibSystem, bytes: Uint8Array, view: DataView, base: 
     return {
         pid: view.getInt32(base + KP_PID, true),
         ppid: view.getInt32(base + KP_PPID, true),
+        pgid: view.getInt32(base + KP_PGID, true),
         uid: view.getUint32(base + KP_UID, true),
         startMs: startSec * 1000 + Math.floor(startUsec / 1000),
         comm: Buffer.from(bytes.buffer, bytes.byteOffset + base + KP_COMM, commEnd - base - KP_COMM).toString("utf8"),
         zombie: bytes[base + KP_STAT] === SZOMB,
+        state: STATE_LETTERS[bytes[base + KP_STAT]] ?? "?",
         tty: ttyName(symbols, view.getInt32(base + KP_TDEV, true)),
     };
 }
@@ -436,7 +457,12 @@ export function readProcessUsage(pid: number): ProcessUsage | null {
     const userUs = Math.floor((word(PTI_TOTAL_USER) * nsPerMachUnit) / 1000);
     const systemUs = Math.floor((word(PTI_TOTAL_SYSTEM) * nsPerMachUnit) / 1000);
 
-    return { rssBytes: word(PTI_RESIDENT_SIZE), cpuTimeMs: (userUs + systemUs) / 1000 };
+    return {
+        rssBytes: word(PTI_RESIDENT_SIZE),
+        cpuTimeMs: (userUs + systemUs) / 1000,
+        threads: taskWords[PTI_THREADNUM / 4],
+        running: taskWords[PTI_NUMRUNNING / 4] > 0,
+    };
 }
 
 /**

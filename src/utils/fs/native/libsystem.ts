@@ -50,6 +50,8 @@ export const libSystem = defineSystemLibrary({
         devname: { args: [FFIType.i32, FFIType.u16], returns: FFIType.ptr },
         /** `const char *inet_ntop(int af, const void *src, char *dst, socklen_t size)`: an address as text. */
         inet_ntop: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
+        /** `struct passwd *getpwuid(uid_t)`: `pw_name` is the struct's first field. Null for an unknown uid. */
+        getpwuid: { args: [FFIType.u32], returns: FFIType.ptr },
     },
 });
 

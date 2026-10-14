@@ -562,6 +562,10 @@ export const CALL_SITES: CallSite[] = [
     // Found once the rule also read absolute paths, the `{ cmd }` form, `env` and `Bun.which` (2026-10-14 02:20).
     {
         id: "retire-cache-open-files",
+        budget: {
+            spawns: 1,
+            reason: "which processes hold a path open is the layer's open-files.ts, through lsof, for a one-off script",
+        },
         file: "scripts/history/retire-native-cache.ts",
         spawn: "lsof -Fpc -- <paths>",
         frequency: "one-off",
