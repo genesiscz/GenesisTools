@@ -262,24 +262,36 @@ public final class GitTreeDecorationsModel: ObservableObject {
     private var counts: [String: GitLineCount] = [:]
     private var ticket = 0
 
-    /// The marks at once (with the last counts), then the line counts from one `git diff --numstat` off the main thread.
+    /// The marks with the last counts, then the line counts from one `git diff --numstat` and the marks again: all built
+    /// and compared off the main thread. Built on it, one refresh of a vault's status (1,825 entries) held the main
+    /// thread about 250 ms in a debug build, at every git change, every start and every move of the tree's root
+    /// (2026-10-14, 24% of the main thread in MarkdownTreeLagBenchTests).
     private func update() {
         guard let root, let repo = GitRepos.shared.model(for: root) else { return }
         hasRepository = true
         guard let status = repo.status else { return }
-        let marked = status.decorations(under: root, numstat: counts)
-        if marked != decorations { decorations = marked }
         ticket += 1
         let ticket = ticket
+        let counts = counts
+        let shown = decorations
         let provider = GenesisKitGT.provider
         let repoRoot = repo.root
         DispatchQueue.global(qos: .utility).async {
-            let counts = GitQueries(provider: provider).numstat(in: repoRoot)
+            let marked = status.decorations(under: root, numstat: counts)
+            let markedChanged = marked != shown
+            if markedChanged {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.ticket == ticket, self.root == root else { return }
+                    self.decorations = marked
+                }
+            }
+            let fresh = GitQueries(provider: provider).numstat(in: repoRoot)
+            let recounted = status.decorations(under: root, numstat: fresh)
+            let recountChanged = recounted != (markedChanged ? marked : shown)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.ticket == ticket, self.root == root else { return }
-                self.counts = counts
-                let fresh = status.decorations(under: root, numstat: counts)
-                if fresh != self.decorations { self.decorations = fresh }
+                self.counts = fresh
+                if recountChanged { self.decorations = recounted }
             }
         }
     }

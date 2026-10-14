@@ -171,6 +171,29 @@ final class GitReposTests: XCTestCase {
         XCTAssertNil(marks.count(for: "/tmp/gk-counts-repo/notes/new.md"), "an untracked file has no numstat")
     }
 
+    /// The folder walks cut paths at "/" in UTF-8 (2026-10-14); accented names keep their marks and sums, and the
+    /// tree's own root is never marked.
+    func testTheTreeMarksWalkFoldersWithAccentedNames() {
+        let root = URL(fileURLWithPath: "/tmp/gk-accents-repo")
+        let status = GitRepoStatus(root: root, branch: "main", upstream: nil, ahead: 0, behind: 0, entries: [
+            GitStatusEntry(path: "ČEZ/úkoly/žádost/a.md", unstaged: .modified),
+            GitStatusEntry(path: "ČEZ/úkoly/b.md", unstaged: .modified),
+            GitStatusEntry(path: "ČEZ/c.md", unstaged: .untracked),
+            GitStatusEntry(path: "jinde/d.md", unstaged: .modified),
+        ])
+        let numstat = [
+            "ČEZ/úkoly/žádost/a.md": GitLineCount(additions: 2, deletions: 1),
+            "ČEZ/úkoly/b.md": GitLineCount(additions: 1, deletions: 3),
+        ]
+        let marks = status.decorations(under: root.appendingPathComponent("ČEZ"), numstat: numstat)
+        let tree = "/tmp/gk-accents-repo/ČEZ"
+        XCTAssertEqual(Set(marks.files.keys), ["\(tree)/úkoly/žádost/a.md", "\(tree)/úkoly/b.md", "\(tree)/c.md"])
+        XCTAssertEqual(marks.folders, ["\(tree)/úkoly/žádost", "\(tree)/úkoly"], "the tree's root is not marked")
+        XCTAssertEqual(marks.count(for: "\(tree)/úkoly/žádost"), GitLineCount(additions: 2, deletions: 1))
+        XCTAssertEqual(marks.count(for: "\(tree)/úkoly"), GitLineCount(additions: 3, deletions: 4))
+        XCTAssertNil(marks.count(for: tree), "the tree's root sums nothing")
+    }
+
     func testAFolderOutsideARepositoryHasNoModel() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("norepo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
