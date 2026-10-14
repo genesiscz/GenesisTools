@@ -218,6 +218,44 @@ export function readProcExe(pid: number, root = PROC_ROOT): string | null {
     return readLink(join(root, String(pid), "exe"));
 }
 
+/**
+ * Every path `pid` holds the way `lsof` lists them: its descriptors, working directory, root, executable and mapped
+ * files (`/proc/<pid>/{fd/*,cwd,root,exe,maps}`). A path the kernel marks ` (deleted)` keeps the mark, since it is no
+ * longer the file at that path (`lsof` matches by inode). Null when the process is gone or belongs to another user.
+ */
+export function procHeldPaths(pid: number, root = PROC_ROOT): Set<string> | null {
+    const dir = join(root, String(pid));
+    let fds: string[];
+
+    try {
+        fds = readdirSync(join(dir, "fd"));
+    } catch {
+        return null;
+    }
+
+    const paths = new Set<string>();
+
+    for (const name of [...fds.map((fd) => join("fd", fd)), "cwd", "root", "exe"]) {
+        const target = readLink(join(dir, name));
+
+        // Sockets, pipes and anonymous inodes (`socket:[123]`) are not paths.
+        if (target?.startsWith("/")) {
+            paths.add(target);
+        }
+    }
+
+    for (const line of (readText(join(dir, "maps")) ?? "").split("\n")) {
+        // address perms offset dev inode, then the path (which may hold spaces); `[heap]` and the like are not paths.
+        const match = line.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\d+\s+(\/.*)$/);
+
+        if (match?.[1]) {
+            paths.add(match[1]);
+        }
+    }
+
+    return paths;
+}
+
 /** How many descriptors the process has open; null when its `fd` directory is unreadable. */
 export function countProcFds(pid: number, root = PROC_ROOT): number | null {
     try {

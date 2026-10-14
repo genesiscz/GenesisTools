@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { closeSync, existsSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,30 @@ describe("openFiles", () => {
             expect(Array.isArray(result) ? result.map((entry) => entry.pid) : []).toContain(process.pid);
         } finally {
             closeSync(handle);
+        }
+    });
+
+    test.skipIf(process.platform !== "linux")("on Linux /proc answers, with no lsof started", async () => {
+        const root = mkdtempSync(join(tmpdir(), "open-files-"));
+        const path = join(root, "held.txt");
+        writeFileSync(path, "held");
+        const handle = openSync(path, "r");
+        const child = Bun.spawn(["sleep", "30"], { cwd: root, stdout: "ignore", stderr: "ignore", env: process.env });
+        const spawned = spyOn(Bun, "spawnSync");
+
+        try {
+            const files = openFiles({ files: [path] });
+            const tree = openFiles({ directories: [root] });
+
+            expect(Array.isArray(files) ? files.map((entry) => entry.pid) : files).toContain(process.pid);
+            // The child's working directory is inside the tree, as `lsof +D` lists it.
+            expect(Array.isArray(tree) ? tree.map((entry) => entry.pid) : tree).toContain(child.pid);
+            expect(spawned).not.toHaveBeenCalled();
+        } finally {
+            spawned.mockRestore();
+            closeSync(handle);
+            child.kill();
+            await child.exited;
         }
     });
 

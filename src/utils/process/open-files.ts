@@ -1,6 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcPids, procHeldPaths, readProcProcess } from "./linux-proc";
+import { processPlatform } from "./os";
 
 export interface OpenFileHandle {
     pid: number;
@@ -10,8 +12,8 @@ export interface OpenFileHandle {
 
 /**
  * `"unknown"` is not "nothing is open". It means the question could not be answered — no `lsof`
- * on the box, or `lsof` complained. A caller deciding whether it is safe to move a file must
- * treat it exactly like a positive hit, never like a clear result.
+ * on the box, or `lsof` complained (never on Linux, where `/proc` answers). A caller deciding whether it is safe to
+ * move a file must treat it exactly like a positive hit, never like a clear result.
  */
 export type OpenFilesResult = OpenFileHandle[] | "unknown";
 
@@ -35,18 +37,22 @@ function lsofBinary(): string | undefined {
  * and the result degrades to `"unknown"`.
  */
 export function openFiles(query: OpenFilesQuery): OpenFilesResult {
-    const binary = lsofBinary();
-
-    if (!binary) {
-        logger.debug("lsof is unavailable; open-file inspection is unknown");
-        return "unknown";
-    }
-
     const files = (query.files ?? []).filter((path) => existsSync(path));
     const directories = (query.directories ?? []).filter((path) => existsSync(path));
 
     if (files.length === 0 && directories.length === 0) {
         return [];
+    }
+
+    if (processPlatform() === "linux") {
+        return openFilesFromProc(files, directories);
+    }
+
+    const binary = lsofBinary();
+
+    if (!binary) {
+        logger.debug("lsof is unavailable; open-file inspection is unknown");
+        return "unknown";
     }
 
     const args = ["-Fpcn"];
@@ -84,6 +90,35 @@ export function openFiles(query: OpenFilesQuery): OpenFilesResult {
             command = value;
         } else if (line.startsWith("n") && pid !== undefined && Number.isSafeInteger(pid)) {
             handles.push({ pid, command, path: value });
+        }
+    }
+
+    return handles;
+}
+
+/** The path the kernel shows for an open file: symlinks resolved, as `/proc` links are. */
+function realPath(path: string): string {
+    try {
+        return realpathSync(path);
+    } catch {
+        return path;
+    }
+}
+
+/**
+ * Linux with no `lsof` spawned: every readable process's held paths ({@link procHeldPaths}) matched against the files
+ * and directory trees asked for. Like `lsof` run as this user, another user's process is not readable and is left out.
+ */
+function openFilesFromProc(files: string[], directories: string[]): OpenFileHandle[] {
+    const wanted = new Set(files.map(realPath));
+    const trees = directories.map(realPath);
+    const handles: OpenFileHandle[] = [];
+
+    for (const pid of listProcPids()) {
+        for (const path of procHeldPaths(pid) ?? []) {
+            if (wanted.has(path) || trees.some((tree) => path === tree || path.startsWith(`${tree}/`))) {
+                handles.push({ pid, command: readProcProcess(pid)?.comm ?? "", path });
+            }
         }
     }
 

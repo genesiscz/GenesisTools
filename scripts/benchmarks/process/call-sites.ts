@@ -535,7 +535,7 @@ export const CALL_SITES: CallSite[] = [
         id: "retire-cache-open-files",
         budget: {
             spawns: 1,
-            reason: "which processes hold a path open is the layer's open-files.ts, through lsof, for a one-off script",
+            reason: "which processes hold a path open is the layer's open-files.ts: lsof on macOS, /proc on Linux (no spawn)",
         },
         file: "scripts/history/retire-native-cache.ts",
         spawn: "lsof -Fpc -- <paths>",
