@@ -707,6 +707,17 @@ describe("worktree-lock", () => {
         expect(isLockStale(parseLockReason("parked for the release"))).toBe(false);
     });
 
+    it("a failed process read keeps a live owner's lock; only a pid that no process holds is gone", () => {
+        // The reader answers null on EACCES, a failed sysctl or a ps timeout too, so null alone frees nothing.
+        const failedRead = () => null;
+        const now = new Date().toISOString();
+
+        expect(isLockStale(parseLockReason(`claude session x pid ${process.pid} since ${now}`), failedRead)).toBe(
+            false
+        );
+        expect(isLockStale(parseLockReason(`claude session x (pid ${DEAD_PID})`), failedRead)).toBe(true);
+    });
+
     it("a live pid that another program now holds is a recycled pid, so its lock is stale", () => {
         // This test process is bun, not claude, codex or grok.
         const now = new Date().toISOString();

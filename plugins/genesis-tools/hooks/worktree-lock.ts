@@ -346,16 +346,17 @@ type ProcessCheck = { state: "gone" } | { state: "unknown" } | { state: "live"; 
  * else whether the process is claude, codex or grok and when it started. A bare kill(pid, 0) cannot
  * tell the lock's agent from a recycled pid that another program now holds.
  */
-function checkProcess(pid: number): ProcessCheck {
+function checkProcess(pid: number, read = readProcessBasics): ProcessCheck {
     // pid 0 and below are process groups, and pid 1 is launchd: none names a session.
     if (!Number.isInteger(pid) || pid <= 1) {
         return { state: "gone" };
     }
 
-    const basics = readProcessBasics(pid);
+    const basics = read(pid);
 
+    // A failed read is not proof: the reader also answers null on EACCES, a failed sysctl or a ps timeout.
     if (!basics) {
-        return { state: "gone" };
+        return pidExists(pid) ? { state: "unknown" } : { state: "gone" };
     }
 
     if (basics.command === null || basics.startMs === null) {
@@ -363,6 +364,16 @@ function checkProcess(pid: number): ProcessCheck {
     }
 
     return { state: "live", agent: agentNamed(basics.command) !== null, startMs: basics.startMs };
+}
+
+/** Whether any process holds `pid`. kill(pid, 0) sends nothing: only ESRCH says no process has it (EPERM is another user's). */
+function pidExists(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return errorCode(error) !== "ESRCH";
+    }
 }
 
 /** Read each distinct owner once through the kernel; share those results across the ownership scan. */
@@ -383,8 +394,8 @@ function agentAlive(pid: number): boolean {
  * pid). Claude Code's own lock carries no time we can compare, so only its pid and program count. When
  * the kernel cannot answer, the lock is kept: a wrong "stale" lets a worktree in use be removed.
  */
-export function isLockStale(holder: LockHolder): boolean {
-    return staleFromCheck(holder, holder.kind === "other" ? { state: "unknown" } : checkProcess(holder.pid));
+export function isLockStale(holder: LockHolder, read = readProcessBasics): boolean {
+    return staleFromCheck(holder, holder.kind === "other" ? { state: "unknown" } : checkProcess(holder.pid, read));
 }
 
 function staleFromCheck(holder: LockHolder, check: ProcessCheck): boolean {
