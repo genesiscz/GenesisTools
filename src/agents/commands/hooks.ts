@@ -546,7 +546,7 @@ export function registerHooksCommands(program: Command): void {
         )
         .option("-n, --lines <count>", "At most this many calls, the newest", "50")
         .option("--extended", "Join each call with its Claude transcript")
-        .option("--full-command", "Print each command whole, in a fence")
+        .option("--full-command", "Print each command whole, in a fence (implies --extended, which reads the command)")
         .option("--json", "The entries as JSON")
         .action(
             (options: {
@@ -584,7 +584,10 @@ export function registerHooksCommands(program: Command): void {
                 });
                 const entries = all.filter((entry) => wanted.has("all") || wanted.has(entry.decision)).slice(-count);
 
-                if (options.extended) {
+                // The command comes from the transcript, so asking for it whole is asking for --extended.
+                const extended = options.extended === true || options.fullCommand === true;
+
+                if (extended) {
                     extendFromTranscripts(entries);
                 }
 
@@ -597,7 +600,7 @@ export function registerHooksCommands(program: Command): void {
 
                 for (const entry of entries) {
                     const lines = formatEntry(entry, {
-                        extended: options.extended === true,
+                        extended,
                         fullCommand: options.fullCommand === true,
                         colours,
                     });
