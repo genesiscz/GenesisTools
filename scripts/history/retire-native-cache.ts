@@ -11,12 +11,14 @@
  * Run once, after the merge: `bun scripts/history/retire-native-cache.ts` inspects and prints,
  * and only `--confirm-delete-native-history` deletes.
  */
+
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { openFiles } from "@genesiscz/utils/process/open-files";
 
 const EXPECTED_TABLES = [
     "_migrations",
@@ -69,36 +71,9 @@ function databaseSchema(path: string): { tables: string[]; migrationIds: string[
     }
 }
 
-function openProcesses(paths: string[]): NativeCacheRetirementReport["openProcesses"] {
-    const lsof = Bun.which("lsof") ?? (existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : undefined);
-
-    if (!lsof || paths.length === 0) {
-        return lsof ? [] : "unknown";
-    }
-
-    const child = Bun.spawnSync([lsof, "-Fpc", "--", ...paths], {
-        env: env.getProcessEnv(),
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-
-    if ((child.exitCode !== 0 && child.exitCode !== 1) || child.stderr.toString().trim()) {
-        return "unknown";
-    }
-
-    const found: Array<{ pid: number; command: string }> = [];
-    let current: { pid: number; command: string } | undefined;
-
-    for (const line of child.stdout.toString().split("\n")) {
-        if (line.startsWith("p")) {
-            current = { pid: Number(line.slice(1)), command: "" };
-            found.push(current);
-        } else if (line.startsWith("c") && current) {
-            current.command = line.slice(1);
-        }
-    }
-
-    return found.filter((process) => Number.isSafeInteger(process.pid));
+export function openProcesses(paths: string[]): NativeCacheRetirementReport["openProcesses"] {
+    const result = openFiles({ files: paths });
+    return result === "unknown" ? result : result.map(({ pid, command }) => ({ pid, command }));
 }
 
 export function inspectNativeCache(

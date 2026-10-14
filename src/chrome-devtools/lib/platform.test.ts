@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { processFixture } from "./__tests__/process-fixture";
 import {
     artifactPath,
     listListeningTcpPorts,
@@ -203,11 +204,11 @@ describe("process samples", () => {
 describe("terminatePid", () => {
     test("POSIX sends kill; win32 sends taskkill /PID without /F", () => {
         const calls: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             calls.push(argv);
 
             return { exitCode: 0, stdout: "", stderr: "" };
-        };
+        });
 
         terminatePid(42, exec, "linux");
         terminatePid(42, exec, "win32");

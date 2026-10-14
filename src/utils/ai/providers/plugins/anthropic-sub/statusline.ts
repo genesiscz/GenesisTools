@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +13,7 @@ import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcess, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 /**
@@ -319,26 +319,17 @@ export function accountNameFromPsDump(dump: string): string | null {
     return accountFromEnv(dump, "claude").account;
 }
 
-/** Walk up to six ancestors reading their environment; one `ps eww` per hop, once per session. */
-function accountFromAncestors(): string | null {
+/** Walk up to six ancestors reading their environment, once per session. */
+export function accountFromAncestors(): string | null {
     let pid = process.ppid;
-
     for (let hop = 0; hop < 6 && pid > 1; hop++) {
-        const envDump = spawnSync("ps", ["eww", String(pid)], { encoding: "utf8" });
-        const live = accountNameFromPsDump(envDump.stdout ?? "");
-
+        const value = readProcessEnvironment(pid)?.TOOLS_CLAUDE_ACCOUNT;
+        const live = value === undefined ? null : accountNameFromPsDump(`TOOLS_CLAUDE_ACCOUNT=${value}`);
         if (live) {
             return live;
         }
-
-        const parent = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" });
-        pid = Number.parseInt((parent.stdout ?? "").trim(), 10);
-
-        if (!Number.isFinite(pid)) {
-            break;
-        }
+        pid = readProcess(pid)?.ppid ?? 0;
     }
-
     return null;
 }
 

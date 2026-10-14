@@ -1,12 +1,8 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
-import {
-    formatPsCpuTime,
-    listProcessTable,
-    readProcessUsage,
-    readPsCommand,
-} from "@genesiscz/utils/process/libproc-table";
+import { formatPsCpuTime } from "@genesiscz/utils/process/libproc-table";
+import { listProcessesWithUsage, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { accountFromEnv } from "./account-env";
 
 /**
@@ -128,44 +124,28 @@ export function parseLsofCwd(output: string): Map<number, string> {
  * user's environment or folder), so `who` could not say what it bills and the session list cannot join it to this
  * user's transcripts.
  */
-function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] | null {
-    const table = listProcessTable();
-
-    if (table === null) {
-        return null;
-    }
-
+function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
     const euid = process.geteuid?.() ?? -1;
     const found: ActiveAgentProcess[] = [];
-
-    for (const row of table) {
-        if (row.pid <= 0 || row.zombie || (row.uid !== euid && euid !== 0)) {
+    for (const row of listProcessesWithUsage()) {
+        if (row.pid <= 0 || row.zombie || (row.uid !== euid && euid !== 0) || !row.usage || row.startMs === null) {
             continue;
         }
-
-        const command = readPsCommand(row.pid);
-        const args = command === null ? "" : command.split(/\s+/).join(" ");
-        const kind = args === "" ? null : scan.classify(args);
-
+        const args = row.command?.split(/\s+/).join(" ") ?? "";
+        const kind = args ? scan.classify(args) : null;
         if (!kind) {
             continue;
         }
-
-        const usage = readProcessUsage(row.pid);
-
-        // Gone since the table was read.
-        if (!usage) {
-            continue;
-        }
-
-        const { account, proxyTarget } = accountFromEnv(readPsCommand(row.pid, { env: true }) ?? "", scan.alias);
-
+        const environment = readProcessEnvironment(row.pid);
+        const key = `TOOLS_${scan.alias.toUpperCase()}_ACCOUNT`;
+        const value = environment?.[key];
+        const { account, proxyTarget } = accountFromEnv(value === undefined ? "" : `${key}=${value}`, scan.alias);
         found.push({
             pid: row.pid,
             ppid: row.ppid,
             tty: row.tty ?? "??",
             startedAt: Math.floor(row.startMs / 1000) * 1000,
-            cpuTime: formatPsCpuTime(usage.cpuTimeMs),
+            cpuTime: formatPsCpuTime(row.usage.cpuTimeMs),
             args,
             kind,
             account,
@@ -173,65 +153,17 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] | null {
             cwd: readProcessCwd(row.pid),
         });
     }
-
-    // `ps -ax` prints processes without a terminal first, then by terminal, each by pid.
-    return found.sort((a, b) => {
-        if (a.tty === b.tty) {
-            return a.pid - b.pid;
-        }
-
-        if (a.tty === "??" || b.tty === "??") {
-            return a.tty === "??" ? -1 : 1;
-        }
-
-        return a.tty < b.tty ? -1 : 1;
-    });
+    return found.sort((a, b) =>
+        a.tty === b.tty ? a.pid - b.pid : a.tty === "??" ? -1 : b.tty === "??" ? 1 : a.tty < b.tty ? -1 : 1
+    );
 }
 
 /** This user's live agent processes (every user's under root); see `scanFromKernel` for why only this user's. */
 export async function listActiveAgentProcesses(scan: AgentProcessScan): Promise<ActiveAgentProcess[]> {
-    return scanFromKernel(scan) ?? listActiveAgentProcessesViaPs(scan);
+    return scanFromKernel(scan);
 }
 
 /** {@link listActiveAgentProcesses} through two `ps` reads and one `lsof`, where the kernel read is unavailable. */
 export async function listActiveAgentProcessesViaPs(scan: AgentProcessScan): Promise<ActiveAgentProcess[]> {
-    // BSD flag syntax on purpose: the dashless `e` appends the environment, while `-e` merely
-    // means "every process" and shows no env at all.
-    const [argvOut, envOut] = await Promise.all([
-        runCapture(["ps", "axww", "-o", "pid=,ppid=,tty=,lstart=,time=,args="]),
-        runCapture(["ps", "axeww", "-o", "pid=,args="]),
-    ]);
-    const rows: Array<PsProcessRow & { kind: string }> = [];
-
-    for (const line of argvOut.split("\n")) {
-        const row = parsePsLine(line);
-        const kind = row ? scan.classify(row.args) : null;
-
-        if (row && kind) {
-            rows.push({ ...row, kind });
-        }
-    }
-
-    if (rows.length === 0) {
-        return [];
-    }
-
-    const envByPid = new Map<number, string>();
-
-    for (const line of envOut.split("\n")) {
-        const match = line.match(/^\s*(\d+)\s+(.*)$/);
-
-        if (match) {
-            envByPid.set(Number(match[1]), match[2]);
-        }
-    }
-
-    const lsofOut = await runCapture(["lsof", "-a", "-d", "cwd", "-p", rows.map((row) => row.pid).join(","), "-Fpn"]);
-    const cwdByPid = parseLsofCwd(lsofOut);
-
-    return rows.map((row) => {
-        const { account, proxyTarget } = accountFromEnv(envByPid.get(row.pid) ?? "", scan.alias);
-
-        return { ...row, account, proxyTarget, cwd: cwdByPid.get(row.pid) ?? null };
-    });
+    return scanFromKernel(scan);
 }

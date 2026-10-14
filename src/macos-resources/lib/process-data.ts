@@ -13,9 +13,9 @@
  */
 
 import { logger } from "@genesiscz/utils/logger";
+import { listOpenFiles as processOpenFiles } from "@genesiscz/utils/process/process-files";
 import {
     batchOpenFileCounts as batchOpenFileCountsRaw,
-    capture,
     chunk,
     listPsRows,
     PS_BATCH_SIZE,
@@ -379,21 +379,7 @@ export function parseOpenFiles(stdout: string): OpenFile[] {
  */
 export async function listOpenFiles(pid: number): Promise<{ files: OpenFile[]; timing: CommandTiming }> {
     const startedAt = Date.now();
-    let stdout = "";
-
-    try {
-        const result = await capture("lsof", ["-w", "-p", String(pid)], { timeoutMs: LSOF_TIMEOUT_MS });
-        stdout = result.stdout;
-
-        if (result.stderr.trim() !== "") {
-            log.debug({ pid, stderr: result.stderr.trim() }, "lsof reported on stderr while listing open files");
-        }
-    } catch (err) {
-        log.warn({ err, pid }, "lsof could not be spawned for the open-files view");
-    }
-
-    return {
-        files: parseOpenFiles(stdout),
-        timing: { command: `lsof -p ${pid}`, durationMs: Date.now() - startedAt, at: new Date() },
-    };
+    const files = (processOpenFiles(pid) ?? []).map(({ fd, type, name }) => ({ fd, type, name }));
+    files.sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
+    return { files, timing: { command: `open files ${pid}`, durationMs: Date.now() - startedAt, at: new Date() } };
 }

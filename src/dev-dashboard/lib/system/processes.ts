@@ -1,6 +1,7 @@
 import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 
 // macOS `ps comm=` yields the full executable path. Surface a readable name:
@@ -73,31 +74,19 @@ export function sortProcesses(list: ProcessInfo[], sort: ProcessSort): ProcessIn
     return copy;
 }
 
-async function runShell(cmd: string[]): Promise<string | null> {
-    try {
-        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-        const out = await new Response(proc.stdout).text();
-        await proc.exited;
-
-        if (proc.exitCode !== 0) {
-            return null;
-        }
-
-        return out;
-    } catch (err) {
-        logger.debug({ err, cmd }, "process-monitor: ps spawn failed");
-        return null;
-    }
-}
-
 export async function collectProcesses(): Promise<ProcessInfo[]> {
-    const out = await runShell(["ps", "-axo", "pid=,rss=,etime=,%cpu=,comm="]);
-
-    if (out === null) {
-        return [];
-    }
-
-    return parseProcessRows(out);
+    const now = Date.now();
+    return listProcessesWithUsage({ otherUsers: true }).map((entry) => {
+        const uptimeMs = entry.startMs === null ? 0 : Math.max(0, now - entry.startMs);
+        return {
+            pid: entry.pid,
+            rssBytes: entry.usage?.rssBytes ?? 0,
+            uptimeMs,
+            // Lifetime average: the kernel has no ps-style decayed CPU percentage.
+            cpuPct: uptimeMs > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / uptimeMs : 0,
+            name: friendlyProcessName(readExecutablePath(entry.pid) ?? entry.name),
+        };
+    });
 }
 
 /**

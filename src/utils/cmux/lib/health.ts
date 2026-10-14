@@ -1,7 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
-import { logger } from "@genesiscz/utils/logger";
+import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 /**
  * cmux health triage. The socket layer answers `ping`/`capabilities` off the app's
@@ -66,26 +66,13 @@ export function classifyCmuxHealth(input: {
 export const APP_BINARY_SUFFIX = "cmux.app/Contents/MacOS/cmux";
 
 async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> {
-    try {
-        const proc = Bun.spawn(["ps", "-axo", "pid=,%cpu=,comm="], {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-        const text = await new Response(proc.stdout).text();
-        await proc.exited;
-
-        for (const line of text.split("\n")) {
-            const match = line.trim().match(/^(\d+)\s+([\d.]+)\s+(.+)$/);
-            if (match?.[3]?.endsWith(APP_BINARY_SUFFIX)) {
-                return { pid: Number(match[1]), cpu: Number(match[2]) };
-            }
-        }
-    } catch (error) {
-        logger.debug({ error }, "[cmux-health] ps scan failed");
+    const entry = listProcessesWithUsage().find((entry) => readExecutablePath(entry.pid)?.endsWith(APP_BINARY_SUFFIX));
+    if (!entry) {
+        return undefined;
     }
-
-    return undefined;
+    const elapsed = entry.startMs === null ? 0 : Date.now() - entry.startMs;
+    // CPU is diagnostic display only; use the lifetime average instead of ps's decayed percentage.
+    return { pid: entry.pid, cpu: elapsed > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / elapsed : 0 };
 }
 
 async function timedProbe(args: string[], timeoutMs: number, expect?: string): Promise<CmuxProbeResult> {

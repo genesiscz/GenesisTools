@@ -10,6 +10,7 @@ import type {
     ExecutorContext,
     Finding,
 } from "@app/doctor/lib/types";
+import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 const STRICT_PS_LINE = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+(?:\s\S+)*?)\s\s+(.*)$/;
 const LOOSE_PS_LINE = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+(?:\s\S+)*?)\s+(\S.*)$/;
@@ -207,6 +208,26 @@ function createKillGroupAction(comm: string, label: string, group: ProcessRecord
     };
 }
 
+export function readProcessRecords(): Array<ProcessRecord & { cpuTimeMs: number; startMs: number | null }> {
+    return listProcessesWithUsage({ otherUsers: true }).map((entry) => {
+        const comm = readExecutablePath(entry.pid) ?? entry.name;
+        const command = entry.command ?? comm;
+        return {
+            pid: entry.pid,
+            ppid: entry.ppid,
+            cpu: 0,
+            cpuTimeMs: entry.usage?.cpuTimeMs ?? 0,
+            startMs: entry.startMs,
+            rssBytes: entry.usage?.rssBytes ?? 0,
+            stat: entry.usage?.running ? "R" : entry.state,
+            comm,
+            command,
+            label: labelForProcess({ comm, command }),
+            isZombie: entry.zombie,
+        };
+    });
+}
+
 export class ProcessesAnalyzer extends Analyzer {
     readonly id = "processes";
     readonly name = "Processes";
@@ -215,13 +236,18 @@ export class ProcessesAnalyzer extends Analyzer {
     readonly cacheTtlMs = 0;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const res = await run("ps", ["-axo", "pid,ppid,pcpu,rss,stat,comm,command"]);
-
-        if (res.status !== 0) {
-            return;
+        const before = new Map(readProcessRecords().map((entry) => [entry.pid, entry]));
+        const started = performance.now();
+        await Bun.sleep(250);
+        const records = readProcessRecords();
+        const windowMs = performance.now() - started;
+        for (const record of records) {
+            const previous = before.get(record.pid);
+            // A CPU decision needs a measured delta, and a recycled pid cannot share its predecessor's sample.
+            if (previous && previous.startMs === record.startMs && windowMs > 0) {
+                record.cpu = (100 * Math.max(0, record.cpuTimeMs - previous.cpuTimeMs)) / windowMs;
+            }
         }
-
-        const records = parsePsOutput(res.stdout);
         const tree = buildTree(records);
 
         for (const zombie of records.filter((record) => record.isZombie)) {

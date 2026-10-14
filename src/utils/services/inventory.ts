@@ -1,9 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
 import { classifyCommand } from "@genesiscz/utils/process/classify";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { captureSync, PS_COLUMNS_SPEC, type PsRow, parsePsLine } from "@genesiscz/utils/process/ps";
+import { listProcessesWithUsage, userName } from "@genesiscz/utils/process/processes";
+import { captureSync, type PsRow } from "@genesiscz/utils/process/ps";
+import { listListeningTcp } from "@genesiscz/utils/process/sockets";
 import { listPortRegistry, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
-import { netstatIsUsable, parseNetstatListeners, runNetstat } from "./netstat";
 
 /** Every GenesisTools launchd job carries this prefix (`src/utils/DashboardApp/launchd.ts`, `src/daemon`). */
 export const LAUNCHD_PREFIX = "com.genesis-tools.";
@@ -153,30 +154,35 @@ function probeRun(name: string, command: string, args: string[]): string {
  * so a changed output format reads as a slow answer and never as "no servers".
  */
 function liveListeners(): Map<number, number[]> {
-    if (netstatIsUsable()) {
-        const run = runNetstat();
-        const listeners = run.status === 0 ? parseNetstatListeners(run.stdout) : null;
-
-        if (listeners && listeners.size > 0) {
-            logger.debug({ probe: "listeners", via: "netstat", pids: listeners.size }, "services: probe");
-            return listeners;
+    const listeners = new Map<number, number[]>();
+    for (const socket of listListeningTcp()) {
+        const ports = listeners.get(socket.pid) ?? [];
+        if (!ports.includes(socket.port)) {
+            ports.push(socket.port);
         }
-
-        logger.warn(
-            { status: run.status, bytes: run.stdout.length, stderr: run.stderr.trim() || undefined },
-            "services: netstat listed no listeners; falling back to lsof"
-        );
+        listeners.set(socket.pid, ports);
     }
-
-    return parseLsofListeners(probeRun("listeners", "lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]));
+    return listeners;
 }
 
 export function liveProbe(): ServiceProbe {
     return {
         processes: () => {
-            // lstart is strftime's %c: a localized LC_TIME would spell it in words Date cannot read.
-            const stdout = probeRun("processes", "env", ["LC_ALL=C", "ps", "-axo", PS_COLUMNS_SPEC]);
-            return stdout.split("\n").flatMap((line) => parsePsLine(line) ?? []);
+            const now = Date.now();
+            return listProcessesWithUsage().map((entry) => ({
+                pid: entry.pid,
+                ppid: entry.ppid,
+                user: entry.uid === null ? "" : (userName(entry.uid) ?? String(entry.uid)),
+                stat: entry.usage?.running ? "R" : entry.state,
+                // The kernel exposes cumulative CPU time, so this display uses the lifetime average.
+                cpu:
+                    entry.startMs !== null && now > entry.startMs
+                        ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / (now - entry.startMs)
+                        : 0,
+                rss: (entry.usage?.rssBytes ?? 0) / 1024,
+                startTime: entry.startMs === null ? null : new Date(entry.startMs),
+                command: entry.command ?? entry.name,
+            }));
         },
         listeners: liveListeners,
         launchdJobs: () => parseLaunchctlList(probeRun("launchd", "launchctl", ["list"])),

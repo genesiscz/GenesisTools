@@ -4,7 +4,9 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { type CaptureResult, capture, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { listOpenFiles } from "@genesiscz/utils/process/process-files";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { type CaptureResult, capture } from "@genesiscz/utils/process/ps";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -51,6 +53,12 @@ type Run = (
 ) => Promise<CaptureResult>;
 
 export interface FsmonitorDeps {
+    processes?: () => Array<{
+        pid: number;
+        command: string | null;
+        usage: { rssBytes: number; cpuTimeMs: number } | null;
+    }>;
+    openFiles?: typeof listOpenFiles;
     run: Run;
     statePath: string;
     /** Another global git config file instead of `~/.gitconfig`; tests only. */
@@ -192,50 +200,31 @@ export function worktreeOfSocket(socketPath: string): string {
 
 /** Every running `git fsmonitor--daemon`, with the worktree it watches. One `ps`, then one `lsof` for those pids. */
 export async function listMonitorDaemons(deps: FsmonitorDeps): Promise<MonitorDaemon[]> {
-    const ps = await deps.run("ps", ["-Ao", "pid=,rss=,time=,command="]);
-
-    if (ps.status !== 0) {
-        throw new Error(`ps failed (${ps.status}): ${ps.stderr.trim()}`);
+    const entries = (deps.processes ?? listProcessesWithUsage)();
+    if (entries.length === 0) {
+        throw new Error("process table unavailable");
     }
-
     const daemons: MonitorDaemon[] = [];
-
-    for (const line of ps.stdout.split("\n")) {
-        const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
-
-        if (!match || !/\bfsmonitor--daemon run\b/.test(match[4])) {
+    for (const entry of entries) {
+        if (!/\bfsmonitor--daemon run\b/.test(entry.command ?? "")) {
             continue;
         }
-
+        const files = (deps.openFiles ?? listOpenFiles)(entry.pid) ?? [];
+        const fields = [
+            `p${entry.pid}`,
+            ...files
+                .filter((file) => file.fd !== "cwd")
+                .flatMap((file) => [`f${file.fd.replace(/[a-z]$/, "")}`, `t${file.type}`, `n${file.name}`]),
+        ].join("\n");
+        const worktree = worktreesFromLsof(fields).get(entry.pid) ?? null;
         daemons.push({
-            pid: Number(match[1]),
-            worktree: null,
-            rssKb: Number(match[2]),
-            cpuMs: parseCpuTime(match[3]),
+            pid: entry.pid,
+            worktree,
+            rssKb: (entry.usage?.rssBytes ?? 0) / 1024,
+            cpuMs: entry.usage?.cpuTimeMs ?? null,
         });
     }
-
-    if (daemons.length === 0) {
-        return daemons;
-    }
-
-    // Every open file of these pids except the working folder (always the home folder). Exit 1 means none matched.
-    const lsof = await deps.run("lsof", [
-        "-a",
-        "-p",
-        daemons.map((daemon) => daemon.pid).join(","),
-        "-d",
-        "^cwd",
-        "-F",
-        "pftn",
-    ]);
-    const worktrees = worktreesFromLsof(lsof.stdout);
-
-    if (worktrees.size < daemons.length) {
-        logger.debug({ daemons: daemons.length, found: worktrees.size, status: lsof.status }, "[git fsmonitor] lsof");
-    }
-
-    return daemons.map((daemon) => ({ ...daemon, worktree: worktrees.get(daemon.pid) ?? null }));
+    return daemons;
 }
 
 /**

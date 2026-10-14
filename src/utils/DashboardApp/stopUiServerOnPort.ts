@@ -1,26 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
-import { parsePidLines } from "@genesiscz/utils/network";
-import { listeningPids } from "@genesiscz/utils/process/socket-owner";
+import { childPids as processChildPids } from "@genesiscz/utils/process/processes";
+import { listeningPidsOnPort } from "@genesiscz/utils/process/sockets";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 
-function readPidsOnPort(port: number): number[] {
-    // libproc answers what `lsof -t` answers without its 267 ms; lsof only where libproc is unavailable.
-    const fromKernel = listeningPids(port);
-
-    if (fromKernel !== null) {
-        return fromKernel;
-    }
-
-    const result = Bun.spawnSync(["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-
-    if (result.exitCode !== 0) {
-        return [];
-    }
-
-    return parsePidLines(new TextDecoder().decode(result.stdout));
+export function readPidsOnPort(port: number): number[] {
+    return listeningPidsOnPort(port);
 }
 
 /** What `ps -p <pid> -o command=` prints (from the kernel for this user's processes), or "" for a pid that is gone. */
@@ -38,17 +22,8 @@ function isUiServerCommand(command: string, commandMatch: string): boolean {
     return command.includes(commandMatch) && command.includes("__ui-server");
 }
 
-function childPids(parentPid: number): number[] {
-    const result = Bun.spawnSync(["pgrep", "-P", String(parentPid)], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-
-    if (result.exitCode !== 0) {
-        return [];
-    }
-
-    return parsePidLines(new TextDecoder().decode(result.stdout));
+export function childPids(parentPid: number): number[] {
+    return processChildPids(parentPid);
 }
 
 export interface StopUiServerOptions {

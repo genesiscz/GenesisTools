@@ -13,9 +13,9 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 
 import type { DesktopAppInfo } from "./types";
 
@@ -105,12 +105,11 @@ export function replaceAsarIntegrityHash(plist: string, previousHash: string, ne
 }
 
 export function codexDesktopIsRunning(appPath: string): boolean {
-    const result = Bun.spawnSync(["ps", "-axww", "-o", "command="], { stdout: "pipe", stderr: "pipe" });
-    if (result.exitCode !== 0) {
-        throw new Error(`ps failed: ${result.stderr.toString()}`);
+    const entries = listProcesses();
+    if (entries.length === 0) {
+        throw new Error("process table unavailable");
     }
-
-    return result.stdout.toString().includes(`${join(appPath, "Contents", "MacOS")}/`);
+    return entries.some((entry) => entry.command?.includes(`${join(appPath, "Contents", "MacOS")}/`));
 }
 
 export interface BackupMeta {

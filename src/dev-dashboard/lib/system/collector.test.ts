@@ -102,23 +102,29 @@ describe("parseWifiSsid", () => {
 });
 
 describe("collectTopProcesses", () => {
-    test("uses a cheaper top-N path instead of enumerating + sorting every process", async () => {
-        const spawnSpy = mock(Bun.spawn);
-        const original = Bun.spawn;
-        // @ts-expect-error -- intentional test override
-        Bun.spawn = spawnSpy;
-
-        try {
-            const { collectTopProcesses } = await import("./collector");
-            await collectTopProcesses(5);
-
-            const psCall = spawnSpy.mock.calls.find((c) => Array.isArray(c[0]) && c[0][0] === "ps");
-            expect(psCall).toBeDefined();
-            const argv = psCall?.[0] as string[];
-            expect(argv.some((a) => a.includes("-r") || a.includes("-m"))).toBe(true);
-        } finally {
-            Bun.spawn = original;
-        }
+    test("returns the largest RSS rows and requests cross-user usage once", async () => {
+        const entry = (pid: number, rssBytes: number) => ({
+            pid,
+            ppid: 1,
+            pgid: 1,
+            uid: 1000,
+            name: "fixture",
+            command: "fixture",
+            tty: null,
+            startMs: null,
+            zombie: false,
+            state: "S",
+            usage: { pid, rssBytes, cpuTimeMs: 0, threads: 1, running: false },
+        });
+        const read = mock(() => [entry(4000001, 20), entry(4000002, 90), entry(4000003, 50)]);
+        const { collectTopProcesses } = await import("./collector");
+        const result = await collectTopProcesses(2, read);
+        expect(result.map(({ pid, rssBytes }) => ({ pid, rssBytes }))).toEqual([
+            { pid: 4000002, rssBytes: 90 },
+            { pid: 4000003, rssBytes: 50 },
+        ]);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(read).toHaveBeenCalledWith({ otherUsers: true });
     });
 });
 

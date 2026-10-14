@@ -111,21 +111,6 @@ async function withListener<T>(fn: (port: number) => T | Promise<T>): Promise<T>
     }
 }
 
-/** `pid` and up to `depth` ancestors, one `ps` per step, as the account hooks walk them today. */
-function walkAncestorsWithPs(columns: string[], depth = 8): string[] {
-    const lines: string[] = [];
-    let pid = process.pid;
-
-    for (let step = 0; step < depth && pid > 1; step++) {
-        const line = bare(["ps", "-o", "ppid=,command=", "-p", String(pid)]).trim();
-        lines.push(...columns.map((column) => bare(["ps", column, String(pid)]).trim()));
-        lines.push(line);
-        pid = Number(line.split(/\s+/)[0]);
-    }
-
-    return lines;
-}
-
 const AGENT_SCAN = { alias: "claude" as const, classify: (args: string) => (args.includes("claude") ? "tui" : null) };
 
 /*
@@ -168,8 +153,7 @@ export const CALL_SITES: CallSite[] = [
         file: "scripts/native/widget-drive.ts",
         spawn: "pgrep -f <widget face>",
         frequency: "one-off",
-        standIn: "a script that drives the live widget",
-        run: () => bare(["pgrep", "-f", "MacOS/GenesisTools --widget"]),
+        run: async () => (await import("../../native/widget-drive")).readWidgetPid(),
     },
     {
         id: "benchmark-sample-process",
@@ -227,11 +211,7 @@ export const CALL_SITES: CallSite[] = [
         findings: 2,
         spawn: "pgrep -f claude, then ps eww -o pid=,tty=,command= -p <pids>",
         frequency: "one-off",
-        standIn: "a private helper of the doctor command, which prints a full report",
-        run: () => {
-            const pids = bare(["pgrep", "-f", "claude"]).trim().split("\n").filter(Boolean);
-            return pids.length > 0 ? bare(["ps", "eww", "-o", "pid=,tty=,command=", "-p", pids.join(",")]) : "";
-        },
+        run: async () => (await import("@app/claude/commands/doctor-impl")).readPinnedCandidates(),
     },
     {
         id: "teams-live-processes",
@@ -253,8 +233,8 @@ export const CALL_SITES: CallSite[] = [
         spawn: "ps -t <tty> -o args=",
         frequency: "per-poll",
         platforms: ["darwin"],
-        standIn: "a private check inside the close loop; it needs a live adopted surface",
-        run: () => bare(["ps", "-t", "console", "-o", "args="]),
+        run: async () =>
+            (await import("@app/cmux/lib/session-close-live")).adoptedAgentRunning({ tty: "console", agent: "claude" }),
     },
     {
         id: "cmux-close-shell-children",
@@ -262,8 +242,7 @@ export const CALL_SITES: CallSite[] = [
         spawn: "pgrep -P <shell pid>",
         frequency: "per-poll",
         platforms: ["darwin"],
-        standIn: "a method of the close IO, which needs a session store",
-        run: () => bare(["pgrep", "-P", String(process.ppid)]),
+        run: async () => (await import("@app/cmux/lib/session-close-live")).shellHasChildren(process.ppid),
     },
     {
         id: "peekaboo-kill-tree",
@@ -271,8 +250,7 @@ export const CALL_SITES: CallSite[] = [
         spawn: "pgrep -P <pid>, once per level",
         frequency: "one-off",
         platforms: ["darwin"],
-        standIn: "killTree sends SIGTERM",
-        run: () => bare(["pgrep", "-P", String(process.pid)]),
+        run: async () => (await import("@app/control/lib/peekaboo")).childPidsOf(process.pid),
     },
     {
         id: "chrome-running-browsers",
@@ -288,8 +266,7 @@ export const CALL_SITES: CallSite[] = [
         findings: 3,
         spawn: "pgrep -x <app>, polled until the browser exits",
         frequency: "one-off",
-        standIn: "quitBrowser quits a running browser",
-        run: () => bare(["pgrep", "-x", "Google Chrome"]),
+        run: async () => (await import("@app/chrome-devtools/lib/resolve-attach")).browserIsRunning("Google Chrome"),
     },
     {
         id: "cmux-tty-capture",
@@ -303,8 +280,7 @@ export const CALL_SITES: CallSite[] = [
         file: "src/codex/lib/active-writer.ts",
         spawn: "ps -o lstart= -p <pid>",
         frequency: "per-command",
-        standIn: "a private helper; its caller needs a Codex thread lock",
-        run: () => bare(["ps", "-o", "lstart=", "-p", String(process.pid)]),
+        run: async () => (await import("@app/codex/lib/active-writer")).startedAt(process.pid),
     },
     {
         id: "codex-desktop-running",
@@ -365,8 +341,7 @@ export const CALL_SITES: CallSite[] = [
         file: "src/doctor/analyzers/cpu-spin.ts",
         spawn: "ps -axo pid=,cputime=,command= (twice, 1.5 s apart)",
         frequency: "one-off",
-        standIn: "a private method of the analyzer, which waits a 1.5 s window",
-        run: () => bare(["ps", "-axo", "pid=,cputime=,command="]),
+        run: async () => (await import("@app/doctor/analyzers/cpu-spin")).sampleCpuTimes(),
     },
     {
         id: "dev-dashboard-processes",
@@ -422,8 +397,7 @@ export const CALL_SITES: CallSite[] = [
         spawn: "lsof -d txt -Fi -n",
         frequency: "per-command",
         platforms: ["darwin"],
-        standIn: "pruneRetiredBundles deletes app bundles",
-        run: () => bare(["lsof", "-d", "txt", "-Fi", "-n"]),
+        run: async () => (await import("@app/macos/lib/permissions/app")).readRunningExecutableInodes(),
     },
     {
         id: "app-reap-stale-faces",
@@ -431,8 +405,7 @@ export const CALL_SITES: CallSite[] = [
         spawn: "ps -Ao pid=,args=",
         frequency: "per-command",
         platforms: ["darwin"],
-        standIn: "reapStaleAppFaces kills processes",
-        run: () => bare(["ps", "-Ao", "pid=,args="]),
+        run: async () => (await import("@app/macos/lib/permissions/app")).readAppFaceProcesses(),
     },
     {
         id: "app-kill-stale-faces",
@@ -440,8 +413,7 @@ export const CALL_SITES: CallSite[] = [
         spawn: "ps -Ao pid=,args=",
         frequency: "per-command",
         platforms: ["darwin"],
-        standIn: "killStaleFaces kills processes",
-        run: () => bare(["ps", "-Ao", "pid=,args="]),
+        run: async () => (await import("@app/macos/lib/permissions/app")).readAppFaceProcesses(),
     },
     {
         id: "statusline-account-ancestors",
@@ -449,8 +421,8 @@ export const CALL_SITES: CallSite[] = [
         findings: 2,
         spawn: "ps eww <pid> and ps -o ppid= -p <pid>, once per ancestor",
         frequency: "per-poll",
-        standIn: "a private helper of the statusline feature",
-        run: () => walkAncestorsWithPs(["eww"]),
+        run: async () =>
+            (await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline")).accountFromAncestors(),
     },
     {
         id: "port-details",
@@ -511,16 +483,17 @@ export const CALL_SITES: CallSite[] = [
         file: "src/utils/DashboardApp/stopUiServerOnPort.ts",
         spawn: "lsof -nP -iTCP:<port> -sTCP:LISTEN -t",
         frequency: "per-command",
-        standIn: "stopUiServerOnPort kills the server",
-        run: () => withListener((port) => bare(["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])),
+        run: async () => {
+            const { readPidsOnPort } = await import("@genesiscz/utils/DashboardApp/stopUiServerOnPort");
+            return withListener(readPidsOnPort);
+        },
     },
     {
         id: "dashboard-stop-ui-children",
         file: "src/utils/DashboardApp/stopUiServerOnPort.ts",
         spawn: "pgrep -P <pid>",
         frequency: "per-command",
-        standIn: "stopUiServerOnPort kills the server",
-        run: () => bare(["pgrep", "-P", String(process.pid)]),
+        run: async () => (await import("@genesiscz/utils/DashboardApp/stopUiServerOnPort")).childPids(process.pid),
     },
     {
         id: "tmux-snapshot",
@@ -570,8 +543,7 @@ export const CALL_SITES: CallSite[] = [
         file: "scripts/history/retire-native-cache.ts",
         spawn: "lsof -Fpc -- <paths>",
         frequency: "one-off",
-        standIn: "a private helper of a one-off migration script",
-        run: () => bare(["lsof", "-Fpc", "--", process.execPath]),
+        run: async () => (await import("../../history/retire-native-cache")).openProcesses([process.execPath]),
     },
     {
         id: "cmux-screen-collector-status",
@@ -602,8 +574,7 @@ export const CALL_SITES: CallSite[] = [
         file: "src/doctor/analyzers/processes.ts",
         spawn: "ps -axo pid,ppid,pcpu,rss,stat,comm,command",
         frequency: "one-off",
-        standIn: "a method of the analyzer, which needs a doctor context",
-        run: () => bare(["ps", "-axo", "pid,ppid,pcpu,rss,stat,comm,command"]),
+        run: async () => (await import("@app/doctor/analyzers/processes")).readProcessRecords(),
     },
     {
         id: "dev-dashboard-port-meta",
@@ -618,24 +589,21 @@ export const CALL_SITES: CallSite[] = [
         findings: 2,
         spawn: "/bin/ps -p <pid> -o command=",
         frequency: "per-poll",
-        standIn: "two private checks of a ttyd session record",
-        run: () => bare(["/bin/ps", "-p", String(process.pid), "-o", "command="]),
+        run: async () => (await import("@app/dev-dashboard/lib/ttyd/manager")).sessionCommand(process.pid),
     },
     {
         id: "dev-dashboard-port-kill-command",
         file: "src/dev-dashboard/lib/ports/scanner.ts",
         spawn: "/bin/ps -p <pid> -o command=",
         frequency: "one-off",
-        standIn: "a private identity check before a port's owner is killed",
-        run: () => bare(["/bin/ps", "-p", String(process.pid), "-o", "command="]),
+        run: async () => (await import("@app/dev-dashboard/lib/ports/scanner")).liveCommand(process.pid),
     },
     {
         id: "dev-dashboard-restart-snapshot",
         file: "src/dev-dashboard/lib/restart-diag.ts",
         spawn: "/bin/ps -axo pid,ppid,pgid,command",
         frequency: "one-off",
-        standIn: "logTtydTmuxSnapshot writes a diagnostic log",
-        run: () => bare(["/bin/ps", "-axo", "pid,ppid,pgid,command"]),
+        run: async () => (await import("@app/dev-dashboard/lib/restart-diag")).readTtydProcessSnapshot(),
     },
     {
         id: "git-fsmonitor-daemons",
@@ -657,8 +625,7 @@ export const CALL_SITES: CallSite[] = [
         file: "src/doctor/analyzers/memory.ts",
         spawn: "ps -axo pid=,rss=,comm=,command=",
         frequency: "one-off",
-        standIn: "a private helper of the memory analyzer",
-        run: () => bare(["ps", "-axo", "pid=,rss=,comm=,command="]),
+        run: async () => (await import("@app/doctor/analyzers/memory")).getTopProcessesByRss(5),
     },
     {
         id: "services-inventory-probe",

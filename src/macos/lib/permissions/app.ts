@@ -17,6 +17,8 @@ import {
 } from "@genesiscz/utils/macos/genesis-app";
 import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { executableInode } from "@genesiscz/utils/process/process-files";
+import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
@@ -884,6 +886,23 @@ export function pinnedRetiredBundles({
     );
 }
 
+/** Deletes every retired bundle except the newest and the ones a running process executes. */
+export function readRunningExecutableInodes(): Set<number> | null {
+    const entries = listProcesses({ commands: false });
+    if (entries.length === 0) {
+        return null;
+    }
+    const inodes = new Set<number>();
+    for (const entry of entries) {
+        const inode = executableInode(entry.pid);
+        if (inode === null) {
+            return null;
+        }
+        inodes.add(inode);
+    }
+    return inodes;
+}
+
 /**
  * Keeps the newest {@link RETIRED_KEEP_FOLDERS} retired bundles and every pinned one as folders, packs the
  * other idle ones into `<ms>.zst` (tar inside seekable zstd, checked file by file before the folder goes;
@@ -895,14 +914,9 @@ export async function packRetiredBundles(retiredRoot: string): Promise<void> {
         return;
     }
 
-    const listing = run(["lsof", "-d", "txt", "-Fi", "-n"]);
-    const running = runningExecutableInodes(listing);
-
+    const running = readRunningExecutableInodes();
     if (running === null) {
-        logger.debug(
-            { code: listing.code, stderr: listing.stderr },
-            "cannot list running executables; keeping retired bundles"
-        );
+        logger.debug("cannot list running executables; keeping retired bundles");
         return;
     }
 
@@ -945,20 +959,23 @@ export async function packRetiredBundles(retiredRoot: string): Promise<void> {
 
 const STALE_FACE_TERM_GRACE_MS = 500;
 
-/** Classify `ps -Ao pid=,args=` lines. Exported so the window / `--rpc` / launcher split is tested. */
-export function staleAppFacePids(psStdout: string, launcherPath: string): string[] {
+/** Read-only process snapshot shared by the reap and its pre-kill recheck. */
+export function readAppFaceProcesses(): ProcessEntry[] {
+    return listProcesses();
+}
+
+export function staleAppFacePids(processes: Pick<ProcessEntry, "pid" | "command">[], launcherPath: string): string[] {
     const stale: string[] = [];
 
-    for (const line of psStdout.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(.*)$/);
-        if (!match) {
+    for (const entry of processes) {
+        if (entry.command === null) {
             continue;
         }
 
         // The launcher path has to end at a word boundary: a sibling binary whose name merely
         // starts with it (`GenesisTools-helper`) would otherwise leave a `-helper` rest and read
         // as a flag-argument face.
-        const command = match[2];
+        const command = entry.command;
         const boundary = command[launcherPath.length];
         if (!command.startsWith(launcherPath) || (boundary !== undefined && !/\s/.test(boundary))) {
             continue;
@@ -971,7 +988,7 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
         // (2026-10-06: 5 h). Anything else starts with a program path, which means it is the launcher and
         // must be left alone.
         if (rest === "" || rest.startsWith("-") || /^https?:\/\//.test(rest)) {
-            stale.push(match[1]);
+            stale.push(String(entry.pid));
         }
     }
 
@@ -1000,14 +1017,13 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
  */
 async function reapStaleAppFaces(step: (message: string) => void, relaunch: boolean): Promise<void> {
     const launcher = genesisAppLauncherPath();
-    const listing = run(["ps", "-Ao", "pid=,args="]);
-
-    if (listing.code !== 0) {
-        logger.debug({ stderr: listing.stderr }, "could not list processes; skipping the stale-face reap");
+    const listing = readAppFaceProcesses();
+    if (listing.length === 0) {
+        logger.debug("could not list processes; skipping the stale-face reap");
         return;
     }
 
-    const stale = staleAppFacePids(listing.stdout, launcher);
+    const stale = staleAppFacePids(listing, launcher);
 
     if (stale.length === 0) {
         return;
@@ -1019,11 +1035,11 @@ async function reapStaleAppFaces(step: (message: string) => void, relaunch: bool
     if (relaunch) {
         // A failed capture only costs the reopen; the reap below must still run.
         try {
-            reopen = captureRelaunch({ psStdout: listing.stdout, launcherPath: launcher, stalePids: stale });
+            reopen = captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale });
         } catch (err) {
             // The relay decision needs only the listing, so a relay that was running still comes back.
             const relay = linkRelayAmong({
-                psStdout: listing.stdout,
+                processes: listing,
                 launcherPath: launcher,
                 stalePids: new Set(stale),
             });
@@ -1059,8 +1075,7 @@ async function killStaleFaces(stale: string[], launcher: string, step: (message:
 
     // A pid freed during the grace period can be reused, so classify the pids again instead of
     // trusting liveness alone.
-    const recheck = run(["ps", "-Ao", "pid=,args="]);
-    const stillStale = new Set(recheck.code === 0 ? staleAppFacePids(recheck.stdout, launcher) : []);
+    const stillStale = new Set(staleAppFacePids(readAppFaceProcesses(), launcher));
     const survivors = stale.filter((pid) => stillStale.has(pid) && isProcessAlive(Number(pid)));
 
     for (const pid of survivors) {

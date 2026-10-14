@@ -4,6 +4,8 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { type OpenFilesQuery, type OpenFilesResult, openFiles } from "@genesiscz/utils/process/open-files";
+import { formatLstart } from "@genesiscz/utils/process/processes";
+import { processStartMs } from "@genesiscz/utils/process-identity";
 import pc from "picocolors";
 
 const { log } = logger.scoped("codex-active-writer");
@@ -36,16 +38,9 @@ export interface ActiveWriterReport {
     lastActivity?: Date;
 }
 
-function startedAt(pid: number): string | undefined {
-    try {
-        const child = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)]);
-        const text = new TextDecoder().decode(child.stdout).trim();
-
-        return text.length > 0 ? text : undefined;
-    } catch (err) {
-        log.debug({ pid, error: err }, "could not read the holder's start time");
-        return undefined;
-    }
+export function startedAt(pid: number): string | undefined {
+    const startMs = processStartMs(pid);
+    return startMs === null ? undefined : formatLstart(startMs).trim();
 }
 
 export function inspectActiveWriter(input: {

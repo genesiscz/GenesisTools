@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { psEnvValue } from "@genesiscz/utils/ai/account-env";
 import { logger } from "@genesiscz/utils/logger";
 import { statusOf } from "./discover";
 import {
@@ -23,9 +24,34 @@ function psFail(stderr = "ps: operation not permitted"): PsResult {
  * rather than hook-based so each test states the runner it depends on, and the
  * shared module-level seam is never left installed past the line that needed it.
  */
-function withPsRunner<T>(runner: PsRunner, fn: () => T): T {
-    __setPsRunnerForTest(runner);
-
+function withPsRunner<T>(runner: (cmd: string[]) => PsResult, fn: () => T): T {
+    const reader: PsRunner = {
+        processes: () => {
+            const result = runner(["ps", "-ax"]);
+            if (result.exitCode !== 0) {
+                return null;
+            }
+            return result.stdout.split("\n").flatMap((line) => {
+                const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+                return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }] : [];
+            });
+        },
+        environment: (pid) => {
+            const result = runner(["ps", "eww", "-p", String(pid)]);
+            if (result.exitCode !== 0) {
+                return null;
+            }
+            const values: Record<string, string> = {};
+            for (const match of result.stdout.matchAll(/(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=/g)) {
+                const value = psEnvValue(result.stdout, match[1]);
+                if (value !== undefined) {
+                    values[match[1]] = value;
+                }
+            }
+            return values;
+        },
+    };
+    __setPsRunnerForTest(reader);
     try {
         return fn();
     } finally {
@@ -94,8 +120,8 @@ describe("listLiveTeammateProcesses reports scan failure distinctly", () => {
 
         expect(result).toEqual({ processes: [], failed: true });
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].context).toMatchObject({ exitCode: 1, stderr: "ps: operation not permitted" });
-        expect(warnings[0].message).toContain("ps -ax failed");
+        expect(warnings[0].context).toEqual({});
+        expect(warnings[0].message).toContain("process table unavailable");
     });
 
     test("a ps that cannot be spawned at all is also a failure, and warns with the error", () => {
@@ -112,7 +138,7 @@ describe("listLiveTeammateProcesses reports scan failure distinctly", () => {
 
         expect(result).toEqual({ processes: [], failed: true });
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].message).toContain("could not be spawned");
+        expect(warnings[0].message).toContain("could not be read");
         // The thrown error itself must reach the log, not just a generic notice.
         expect((warnings[0].context.error as Error).message).toBe("spawn ENOENT");
     });

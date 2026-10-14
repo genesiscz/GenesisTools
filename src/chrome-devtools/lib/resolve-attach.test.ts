@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
+import { processFixture } from "./__tests__/process-fixture";
 import {
     browserById,
     browserExecutable,
@@ -40,7 +41,7 @@ const suggest = (add: string[]) => `tools chrome-devtools ${add.join(" ")}`;
 
 /** One combined ps/lsof fake: pid ppid command triples + lsof listener lines. */
 function posixExec(opts: { procs?: string; lsof?: string }) {
-    return (argv: string[]) => {
+    return processFixture((argv: string[]) => {
         if (argv[0] === "ps" && argv.includes("pid=,ppid=,command=")) {
             return { exitCode: 0, stdout: opts.procs ?? "", stderr: "" };
         }
@@ -50,49 +51,49 @@ function posixExec(opts: { procs?: string; lsof?: string }) {
         }
 
         return { exitCode: 1, stdout: "", stderr: `unexpected ${argv.join(" ")}` };
-    };
+    });
 }
 
 describe("listRunningBrowsers", () => {
     test("darwin: includes Brave from pgrep -x on the app name even when it has no CDP port", () => {
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             const name = argv.at(-1);
             if (argv[0] === "pgrep" && argv.includes("-x") && (name === "Google Chrome" || name === "Brave Browser")) {
                 return { exitCode: 0, stdout: "123\n", stderr: "" };
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         expect(listRunningBrowsers(exec, "darwin")).toEqual(["chrome", "brave"]);
     });
 
     test("darwin: omits Brave when pgrep -x does not find it", () => {
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "pgrep" && argv.at(-1) === "Google Chrome") {
                 return { exitCode: 0, stdout: "1\n", stderr: "" };
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         expect(listRunningBrowsers(exec, "darwin")).toEqual(["chrome"]);
     });
 
     test("linux: matches bin names, not macOS app names", () => {
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "pgrep" && (argv.at(-1) === "google-chrome" || argv.at(-1) === "brave-browser")) {
                 return { exitCode: 0, stdout: "42\n", stderr: "" };
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         expect(listRunningBrowsers(exec, "linux")).toEqual(["chrome", "brave"]);
     });
 
     test("win32: matches tasklist image names", () => {
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "tasklist") {
                 return {
                     exitCode: 0,
@@ -102,7 +103,7 @@ describe("listRunningBrowsers", () => {
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         expect(listRunningBrowsers(exec, "win32")).toEqual(["chrome", "edge"]);
         expect(parseTasklistImages('"brave.exe","9"\n')).toEqual(new Set(["brave.exe"]));
@@ -401,7 +402,7 @@ describe("discoverListeningCdpPorts", () => {
     });
 
     test("win32 uses netstat listeners with the same classification", () => {
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "netstat") {
                 return {
                     exitCode: 0,
@@ -419,7 +420,7 @@ describe("discoverListeningCdpPorts", () => {
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         expect(discoverListeningCdpPorts(exec, "win32")).toEqual([9222]);
     });
@@ -506,7 +507,7 @@ describe("quitBrowser", () => {
     test("darwin: returns after pgrep goes quiet without sending KILL", async () => {
         let pgrepCalls = 0;
         const argvLog: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             argvLog.push(argv);
             if (argv[0] === "osascript") {
                 return { exitCode: 0, stdout: "", stderr: "" };
@@ -522,7 +523,7 @@ describe("quitBrowser", () => {
             }
 
             return { exitCode: 1, stdout: "", stderr: `unexpected ${argv.join(" ")}` };
-        };
+        });
 
         expect(await quitBrowser({ app: "Brave Browser", exec, sleep: async () => {}, platform: "darwin" })).toEqual({
             exited: true,
@@ -533,7 +534,7 @@ describe("quitBrowser", () => {
 
     test("darwin: sends kill -KILL only when force is set and quit stuck", async () => {
         let live = true;
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "osascript") {
                 return { exitCode: 0, stdout: "", stderr: "" };
             }
@@ -548,7 +549,7 @@ describe("quitBrowser", () => {
             }
 
             return { exitCode: 1, stdout: "", stderr: `unexpected ${argv.join(" ")}` };
-        };
+        });
 
         expect(
             await quitBrowser({
@@ -565,7 +566,7 @@ describe("quitBrowser", () => {
     test("linux: pkill -TERM the bins, then pgrep until quiet", async () => {
         const argvLog: string[][] = [];
         let alive = true;
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             argvLog.push(argv);
             if (argv[0] === "pkill") {
                 alive = false;
@@ -577,7 +578,7 @@ describe("quitBrowser", () => {
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         const brave = { id: "brave", app: "Brave Browser", match: ["brave"], linuxBins: ["brave-browser", "brave"] };
         expect(
@@ -590,7 +591,7 @@ describe("quitBrowser", () => {
     test("win32: taskkill /IM without /F, then tasklist until the image is gone", async () => {
         const argvLog: string[][] = [];
         let alive = true;
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             argvLog.push(argv);
             if (argv[0] === "taskkill") {
                 alive = false;
@@ -606,7 +607,7 @@ describe("quitBrowser", () => {
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         const chrome = { id: "chrome", app: "Google Chrome", match: ["chrome"], winExes: ["chrome.exe"] };
         expect(
@@ -640,7 +641,7 @@ describe("launchBrowser", () => {
         throw new Error("chrome missing from BROWSERS");
     }
 
-    const okExec = () => ({ exitCode: 0, stdout: "", stderr: "" });
+    const okExec = processFixture(() => ({ exitCode: 0, stdout: "", stderr: "" }));
 
     test("darwin: goes through `open -na <app> --args`", () => {
         const argvLog: string[][] = [];
@@ -697,10 +698,11 @@ describe("launchBrowser", () => {
 
     test("linux: picks the first bin that `which` finds and spawns it detached", () => {
         const spawned: string[][] = [];
-        const exec = (argv: string[]) =>
+        const exec = processFixture((argv: string[]) =>
             argv[0] === "which" && argv[1] === "google-chrome-stable"
                 ? okExec()
-                : { exitCode: 1, stdout: "", stderr: "" };
+                : { exitCode: 1, stdout: "", stderr: "" }
+        );
 
         const r = launchBrowser({
             browser: chrome,
@@ -719,7 +721,7 @@ describe("launchBrowser", () => {
             browser: chrome,
             args: [],
             url: "about:blank",
-            exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+            exec: processFixture(() => ({ exitCode: 1, stdout: "", stderr: "" })),
             platform: "linux",
             spawnDetached: () => {
                 throw new Error("must not spawn without a bin");
@@ -752,8 +754,9 @@ describe("launchBrowser", () => {
             args: [],
             url: "about:blank",
             platform: "win32",
-            exec: (argv) =>
-                argv[0] === "where" && argv[1] === "chrome.exe" ? okExec() : { exitCode: 1, stdout: "", stderr: "" },
+            exec: processFixture((argv) =>
+                argv[0] === "where" && argv[1] === "chrome.exe" ? okExec() : { exitCode: 1, stdout: "", stderr: "" }
+            ),
             spawnDetached: (cmd) => spawned.push(cmd),
             fileExists: () => false,
         });
@@ -769,7 +772,7 @@ describe("launchBrowser", () => {
             args: [],
             url: "about:blank",
             platform: "win32",
-            exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+            exec: processFixture(() => ({ exitCode: 1, stdout: "", stderr: "" })),
             spawnDetached: () => {
                 throw new Error("must not spawn a browser that is not installed");
             },
@@ -830,10 +833,11 @@ describe("browserExecutable", () => {
         const bin = browserExecutable({
             browser: brave,
             platform: "linux",
-            exec: (argv) =>
+            exec: processFixture((argv) =>
                 argv[0] === "which" && argv[1] === "brave"
                     ? { exitCode: 0, stdout: "", stderr: "" }
-                    : { exitCode: 1, stdout: "", stderr: "" },
+                    : { exitCode: 1, stdout: "", stderr: "" }
+            ),
         });
         expect(bin).toBe("brave");
     });
@@ -852,26 +856,28 @@ describe("installedBrowsers / defaultOpenBrowser / browserNotInstalledMessage", 
     // Regression test: PR #457 review — on Windows every browser with an exe mapping counted as
     // installed, so with only Brave present `open` picked Chrome and the launch failed.
     test("installedBrowsers on win32 lists only browsers found under an install root or on PATH", () => {
-        const exec = (argv: string[]) =>
+        const exec = processFixture((argv: string[]) =>
             argv[0] === "where" && argv[1] === "brave.exe"
                 ? { exitCode: 0, stdout: "C:\\Brave\\brave.exe\r\n", stderr: "" }
-                : { exitCode: 1, stdout: "", stderr: "" };
+                : { exitCode: 1, stdout: "", stderr: "" }
+        );
 
         expect(installedBrowsers({ platform: "win32", exec, fileExists: () => false })).toEqual(["brave"]);
         expect(
             installedBrowsers({
                 platform: "win32",
-                exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+                exec: processFixture(() => ({ exitCode: 1, stdout: "", stderr: "" })),
                 fileExists: () => false,
             })
         ).toEqual([]);
     });
 
     test("defaultOpenBrowser prefers the running browser `attach` detects over anything installed", () => {
-        const exec = (argv: string[]) =>
+        const exec = processFixture((argv: string[]) =>
             argv[0] === "pgrep" && argv.at(-1) === "Brave Browser"
                 ? { exitCode: 0, stdout: "1\n", stderr: "" }
-                : { exitCode: 1, stdout: "", stderr: "" };
+                : { exitCode: 1, stdout: "", stderr: "" }
+        );
 
         expect(defaultOpenBrowser({ platform: "darwin", exec, fileExists: () => false })).toBe("brave");
     });
@@ -880,7 +886,7 @@ describe("installedBrowsers / defaultOpenBrowser / browserNotInstalledMessage", 
         expect(
             defaultOpenBrowser({
                 platform: "darwin",
-                exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+                exec: processFixture(() => ({ exitCode: 1, stdout: "", stderr: "" })),
                 ...onlyBraveInstalled,
             })
         ).toBe("brave");
@@ -890,7 +896,7 @@ describe("installedBrowsers / defaultOpenBrowser / browserNotInstalledMessage", 
         expect(
             defaultOpenBrowser({
                 platform: "darwin",
-                exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+                exec: processFixture(() => ({ exitCode: 1, stdout: "", stderr: "" })),
                 fileExists: () => false,
             })
         ).toBeUndefined();

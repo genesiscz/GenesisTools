@@ -126,6 +126,13 @@ describe("grantsFor", () => {
     });
 });
 
+function processRows(text: string): Array<{ pid: number; command: string }> {
+    return text.split("\n").flatMap((line) => {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+        return match ? [{ pid: Number(match[1]), command: match[2] }] : [];
+    });
+}
+
 describe("staleAppFacePids", () => {
     const launcher = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
 
@@ -139,7 +146,7 @@ describe("staleAppFacePids", () => {
             `  666 ${launcher} --notify`,
         ].join("\n");
 
-        expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222", "333", "666"]);
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["111", "222", "333", "666"]);
     });
 
     it("kills a link router that outlived its link, but not a launcher whose program takes a URL", () => {
@@ -150,12 +157,12 @@ describe("staleAppFacePids", () => {
             `  444 ${launcher} genesis-tools://hub?mode=prs`,
         ].join("\n");
 
-        expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222"]);
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["111", "222"]);
     });
 
     it("ignores unrelated processes and empty listings", () => {
-        expect(staleAppFacePids("", launcher)).toEqual([]);
-        expect(staleAppFacePids("  1 /sbin/launchd", launcher)).toEqual([]);
+        expect(staleAppFacePids([], launcher)).toEqual([]);
+        expect(staleAppFacePids([{ pid: 1, command: "/sbin/launchd" }], launcher)).toEqual([]);
     });
 
     it("never takes a sibling binary whose name only starts with the launcher's", () => {
@@ -163,7 +170,7 @@ describe("staleAppFacePids", () => {
             "\n"
         );
 
-        expect(staleAppFacePids(stdout, launcher)).toEqual(["999"]);
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["999"]);
     });
 });
 

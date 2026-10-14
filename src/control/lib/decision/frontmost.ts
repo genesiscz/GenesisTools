@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { readParentPid } from "@genesiscz/utils/process/cwd";
 import { runAxAsync } from "../runner";
 
 const { log } = logger.scoped("control-frontmost");
@@ -56,25 +56,14 @@ export function isBrowserApp(app: string): boolean {
  * needs no list of terminal names.
  */
 export function ancestorPids(pid: number = process.pid, table?: Map<number, number>): Set<number> {
-    const parents = table ?? readParentTable();
+    const parentOf = (id: number) => (table ? table.get(id) : readParentPid(id));
     const seen = new Set<number>();
-    let current = parents.get(pid);
-    while (current !== undefined && current > 1 && !seen.has(current)) {
+    let current = parentOf(pid);
+    while (current != null && current > 1 && !seen.has(current)) {
         seen.add(current);
-        current = parents.get(current);
+        current = parentOf(current);
     }
-
     return seen;
-}
-
-function readParentTable(): Map<number, number> {
-    const result = captureSync("ps", ["-axo", "pid=,ppid="], { timeoutMs: 5000 });
-    if (result.status !== 0) {
-        log.warn({ status: result.status, stderr: result.stderr.slice(0, 200) }, "ps failed; no ancestor exclusion");
-        return new Map();
-    }
-
-    return parseParentTable(result.stdout);
 }
 
 export function parseParentTable(stdout: string): Map<number, number> {

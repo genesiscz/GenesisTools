@@ -7,6 +7,7 @@ import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-l
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 
 /**
  * Foreground-command capture and replay-command derivation for profile save.
@@ -61,29 +62,22 @@ interface TtyProcess {
 }
 
 async function readTtyProcessTable(): Promise<TtyProcess[]> {
-    const out: TtyProcess[] = [];
-    try {
-        const proc = Bun.spawn(["ps", "-axo", "tty=,etime=,command="], {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-        const text = await new Response(proc.stdout).text();
-        await proc.exited;
-
-        for (const line of text.split("\n")) {
-            const match = line.match(/^\s*(ttys\d+)\s+([\d:-]+)\s+(.+)$/);
-            if (!match) {
-                continue;
-            }
-            const [, tty, etime, command] = match;
-            out.push({ tty, ageSeconds: etimeToSeconds(etime), command });
+    const now = Date.now();
+    return listProcesses({ commands: false }).flatMap((entry) => {
+        if (!entry.tty || !/^ttys\d+$/.test(entry.tty)) {
+            return [];
         }
-    } catch (error) {
-        logger.warn({ error }, "[command-capture] ps tty scan failed");
-    }
-
-    return out;
+        const command = readProcess(entry.pid)?.command;
+        return command
+            ? [
+                  {
+                      tty: entry.tty,
+                      ageSeconds: entry.startMs === null ? 0 : Math.max(0, Math.floor((now - entry.startMs) / 1000)),
+                      command,
+                  },
+              ]
+            : [];
+    });
 }
 
 export interface TtyCapture {

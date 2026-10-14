@@ -1,7 +1,8 @@
 import { classifyPortBatch, enrichPortsMeta } from "@app/dev-dashboard/lib/ports/enrich";
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@genesiscz/utils/logger";
-import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
+import { readProcess } from "@genesiscz/utils/process/processes";
+import { canReadSockets, listListeningTcp } from "@genesiscz/utils/process/sockets";
 
 /**
  * Parse `lsof -nP -iTCP -sTCP:LISTEN` output into PortInfo[]. PURE + the unit-tested boundary.
@@ -66,32 +67,31 @@ export function parseLsofListen(stdout: string): PortInfo[] {
  * Pair with `classifyListeningPorts` / SSE for progressive kind labels.
  */
 export async function listListeningPorts(): Promise<PortsResult> {
-    // The rows lsof prints, from libproc, without its 267 ms of CPU per refresh.
-    const fromKernel = listListeningTcpAsLsof();
-
-    if (fromKernel !== null) {
-        return {
-            lsofAvailable: true,
-            ports: await enrichPortsMeta(parseLsofListen(fromKernel)),
-            scannedAt: Date.now(),
-        };
-    }
-
     try {
-        const proc = Bun.spawn(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], { stdout: "pipe", stderr: "pipe" });
-        await proc.exited;
-
-        if (proc.exitCode !== 0 && proc.exitCode !== 1) {
-            const stderr = await new Response(proc.stderr).text();
-            logger.warn({ exitCode: proc.exitCode, stderr }, "lsof exited non-zero; treating as unavailable");
+        if (!canReadSockets()) {
             return { lsofAvailable: false, ports: [], scannedAt: Date.now() };
         }
-
-        const stdout = await new Response(proc.stdout).text();
-        const raw = parseLsofListen(stdout);
-        return { lsofAvailable: true, ports: await enrichPortsMeta(raw), scannedAt: Date.now() };
+        const seen = new Set<string>();
+        const ports: PortInfo[] = [];
+        for (const socket of listListeningTcp()) {
+            const proto = socket.family === "IPv6" ? "tcp6" : "tcp4";
+            const key = `${socket.pid}:${socket.port}:${proto}`;
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            ports.push({
+                port: socket.port,
+                pid: socket.pid,
+                command: readProcess(socket.pid)?.name ?? "unknown",
+                address: socket.address,
+                proto,
+            });
+        }
+        ports.sort((a, b) => a.port - b.port || a.proto.localeCompare(b.proto));
+        return { lsofAvailable: true, ports: await enrichPortsMeta(ports), scannedAt: Date.now() };
     } catch (err) {
-        logger.debug({ err }, "lsof spawn failed; treating as unavailable");
+        logger.debug({ err }, "socket lookup failed; treating as unavailable");
         return { lsofAvailable: false, ports: [], scannedAt: Date.now() };
     }
 }
@@ -106,15 +106,8 @@ export async function classifyListeningPorts(ports: PortInfo[]): Promise<PortInf
  * so without this we could kill an unrelated process (same discipline as ttyd manager's
  * processMatchesSession). Returns the live command string, or null when no such process exists.
  */
-function liveCommand(pid: number): string | null {
-    const res = Bun.spawnSync(["/bin/ps", "-p", String(pid), "-o", "command="], {
-        stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (res.exitCode !== 0) {
-        return null;
-    }
-
-    return res.stdout.toString().trim();
+export function liveCommand(pid: number): string | null {
+    return readProcess(pid, { otherUsers: true })?.command?.trim() ?? null;
 }
 
 export function killPort(pid: number, expectedCommand?: string): KillPortResult {

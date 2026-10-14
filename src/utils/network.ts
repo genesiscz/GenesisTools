@@ -1,9 +1,8 @@
 import { createServer } from "node:net";
 import { networkInterfaces, userInfo } from "node:os";
 import { logger } from "@genesiscz/utils/logger";
-import { readProcessRow } from "@genesiscz/utils/process/libproc-table";
-import { listeningPids } from "@genesiscz/utils/process/socket-owner";
-import { readProcessCommand } from "@genesiscz/utils/process-identity";
+import { readProcess } from "@genesiscz/utils/process/processes";
+import { listeningPidsOnPort } from "@genesiscz/utils/process/sockets";
 
 /**
  * Returns the first non-internal IPv4 address (LAN IP).
@@ -80,77 +79,17 @@ export interface PortOwner {
  * characters, so a caller matching it (`isAiProxyServeCommand`) never matched.
  */
 export async function getPortOwner(port: number): Promise<PortOwner | null> {
-    if (process.platform === "win32") {
-        return null;
-    }
-
-    const fromKernel = listeningPids(port);
-
-    if (fromKernel !== null) {
-        const pid = fromKernel[0];
-
+    try {
+        const pid = listeningPidsOnPort(port)[0];
         if (pid === undefined) {
             return null;
         }
-
-        const command = readProcessCommand(pid);
-
-        if (command === null) {
-            return { pid, command: "(unknown)", sameUser: false };
-        }
-
-        return { pid, command, sameUser: readProcessRow(pid)?.uid === userInfo().uid };
-    }
-
-    try {
-        // /usr/sbin/lsof on macOS; some sandboxed PATHs don't include /usr/sbin.
-        const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";
-        const lsofProc = Bun.spawn([lsofBinary, "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-        const lsofOut = await new Response(lsofProc.stdout).text();
-        const lsofExit = await lsofProc.exited;
-
-        if (lsofExit !== 0) {
-            logger.debug({ port, exitCode: lsofExit }, "lsof returned non-zero exit");
-            return null;
-        }
-
-        const pid = parsePidLines(lsofOut)[0];
-        if (!pid) {
-            return null;
-        }
-
-        // uid first: ps cuts every column but the last one to its width, so the command must come last.
-        const psProc = Bun.spawn(["ps", "-p", String(pid), "-o", "uid=,command="], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-        const psOut = (await new Response(psProc.stdout).text()).trim();
-        const psExit = await psProc.exited;
-
-        if (psExit !== 0) {
-            logger.debug({ port, pid, exitCode: psExit }, "ps returned non-zero exit");
-            return { pid, command: "(unknown)", sameUser: false };
-        }
-
-        if (!psOut) {
-            return { pid, command: "(unknown)", sameUser: false };
-        }
-
-        // `ps -p N -o uid=,command=` prints "<uid> <cmd...>" — uid is the first token.
-        const firstSpace = psOut.indexOf(" ");
-        let command = psOut;
-        let uid = Number.NaN;
-        if (firstSpace > 0) {
-            uid = Number.parseInt(psOut.slice(0, firstSpace), 10);
-            command = psOut.slice(firstSpace + 1).trim();
-        }
-
-        const myUid = userInfo().uid;
-
-        return { pid, command, sameUser: !Number.isNaN(uid) && uid === myUid };
+        const entry = readProcess(pid, { otherUsers: true });
+        return {
+            pid,
+            command: entry?.command ?? "(unknown)",
+            sameUser: entry?.command != null && entry.uid === userInfo().uid,
+        };
     } catch (err) {
         logger.debug({ err, port }, "getPortOwner failed");
         return null;

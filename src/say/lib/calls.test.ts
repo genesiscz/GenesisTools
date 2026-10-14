@@ -120,15 +120,21 @@ describe("process ancestry", () => {
 });
 
 describe.skipIf(process.platform !== "darwin")("captureAncestry on live processes", () => {
-    test("walks a child of ours up through this process, each frame carrying what ps prints for it", async () => {
-        const child = Bun.spawn(["/bin/sh", "-c", "sleep 30; : 'tab\there'", "zero"], {
+    test("walks a child of ours with exact commands or executable paths when argv is withheld", async () => {
+        const child = Bun.spawn(["/bin/sh", "-c", "echo ready; sleep 30; : 'tab\there'", "zero"], {
             env: process.env,
             stdin: "ignore",
-            stdout: "ignore",
+            stdout: "pipe",
             stderr: "ignore",
         });
 
         try {
+            const reader = child.stdout.getReader();
+            const ready = await reader.read();
+            reader.releaseLock();
+            expect(ready.done).toBe(false);
+            expect(new TextDecoder().decode(ready.value)).toBe("ready\n");
+
             const frames = await captureAncestry(child.pid);
             const pids = frames.map((frame) => frame.pid);
             const printed = parsePidCommands(
@@ -138,25 +144,44 @@ describe.skipIf(process.platform !== "darwin")("captureAncestry on live processe
             );
 
             expect(pids.slice(0, 3)).toEqual([child.pid, process.pid, process.ppid]);
-            expect(frames[0]?.command).toBe("/bin/sh -c sleep 30; : 'tab\\011here' zero");
+            expect(frames[0]?.command).toBe("/bin/sh -c echo ready; sleep 30; : 'tab\\011here' zero");
             expect(pids).not.toContain(1);
-            expect(frames.map((frame) => frame.command)).toEqual(pids.map((pid) => printed.get(pid) ?? ""));
+            for (const frame of frames) {
+                const expected = printed.get(frame.pid) ?? "";
+                expect(expected).not.toBe("");
+                expect(frame.command).not.toBe("");
+
+                // Full command lines remain byte-exact; an executable-only fallback must name this same process.
+                if (/\s/.test(frame.command)) {
+                    expect(frame.command).toBe(expected);
+                } else {
+                    expect(frame.command).toBe(expected.split(/\s+/)[0]);
+                }
+            }
         } finally {
             child.kill();
             await child.exited;
         }
     });
 
-    test("walks the chain from the kernel: no ps table, at most one ps for frames of other users", async () => {
+    test("walks the chain without ps, using executable paths for withheld argv", async () => {
         const spawn = spyOn(Bun, "spawn");
+        const spawnSync = spyOn(Bun, "spawnSync");
 
         try {
-            expect((await captureAncestry(process.pid)).length).toBeGreaterThan(1);
-            const psCalls = spawn.mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === "ps");
+            const frames = await captureAncestry(process.pid);
+            expect(frames.length).toBeGreaterThan(1);
 
-            expect(psCalls.some((call) => Array.isArray(call[0]) && call[0].includes("-axo"))).toBe(false);
-            expect(psCalls.length).toBeLessThanOrEqual(1);
+            for (const frame of frames) {
+                expect(frame.command).not.toBe("");
+            }
+
+            const psCalls = [...spawn.mock.calls, ...spawnSync.mock.calls].filter(
+                (call) => Array.isArray(call[0]) && /(?:^|[/\\])ps$/.test(call[0][0])
+            );
+            expect(psCalls).toHaveLength(0);
         } finally {
+            spawnSync.mockRestore();
             spawn.mockRestore();
         }
     });

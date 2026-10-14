@@ -1,21 +1,21 @@
 /**
- * OS primitives behind the tool, one place per platform:
- *
- * - darwin/linux share the POSIX path (`ps`, `lsof`, `pgrep`); they differ only
- *   in browser naming and how a browser is launched/quit (resolve-attach.ts).
- * - win32 goes through PowerShell CIM (one call returns pid/ppid/commandline),
- *   `netstat -ano` and `tasklist`.
- *
- * Every function takes an injectable ExecFn and, where behavior differs, an
- * explicit `platform` — the pure parsers are exported so each platform's shape
- * is unit-tested without that OS.
+ * Process inspection goes through the shared process layer. Tests attach a ProcessReader
+ * to their ExecFn fixture; browser-control commands still use ExecFn directly.
  */
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { readProcessArgs, readProcessPath } from "@genesiscz/utils/process/libproc-table";
-import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
+import { formatPsCpuTime, readProcessArgs } from "@genesiscz/utils/process/libproc-table";
+import {
+    findProcesses,
+    listProcesses as processList,
+    readExecutablePath,
+    readProcess,
+    readProcessUsages,
+    runningNames,
+} from "@genesiscz/utils/process/processes";
+import { listListeningTcp } from "@genesiscz/utils/process/sockets";
 
 const { log } = logger.scoped("chrome-devtools:platform");
 
@@ -30,7 +30,58 @@ export function currentPlatform(): Platform {
 }
 
 export type ExecResult = { exitCode: number; stdout: string; stderr: string };
-export type ExecFn = (argv: string[]) => ExecResult;
+export type ExecFn = ((argv: string[]) => ExecResult) & { processReader?: (platform: Platform) => ProcessReader };
+
+export interface ProcessReader {
+    processes: () => ProcessEntry[];
+    executable: (pid: number) => string | null;
+    listeners: () => ListeningPort[];
+    sample: (pid: number) => ProcessSample | null;
+    runningNames: (names: string[]) => Set<string>;
+    namedPids: (name: string) => number[];
+}
+
+const defaultProcessReader: ProcessReader = {
+    processes: () =>
+        processList().map((entry) => ({ pid: entry.pid, ppid: entry.ppid, command: entry.command ?? entry.name })),
+    executable: readExecutablePath,
+    listeners: () => listListeningTcp().map(({ pid, port }) => ({ pid, port })),
+    sample: (pid) => {
+        const entry = readProcess(pid);
+        const usage = readProcessUsages([pid]).get(pid);
+        if (!entry || !usage) {
+            return null;
+        }
+        const elapsedMs = entry.startMs === null ? 0 : Math.max(0, Date.now() - entry.startMs);
+        const seconds = Math.floor(elapsedMs / 1000);
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor(seconds / 3600) % 24;
+        const minutes = Math.floor(seconds / 60) % 60;
+        const tail = `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+        const elapsed =
+            days > 0
+                ? `${days}-${String(hours).padStart(2, "0")}:${tail}`
+                : hours > 0
+                  ? `${String(hours).padStart(2, "0")}:${tail}`
+                  : tail;
+        return {
+            pid,
+            // Lifetime average: the kernel exposes cumulative time, not ps's decayed %cpu.
+            cpuPercent: elapsedMs > 0 ? (100 * usage.cpuTimeMs) / elapsedMs : 0,
+            rssKb: usage.rssBytes / 1024,
+            cpuTime: formatPsCpuTime(usage.cpuTimeMs),
+            elapsed,
+            state: entry.state,
+            command: entry.command ?? entry.name,
+        };
+    },
+    runningNames,
+    namedPids: (name) => findProcesses({ name }).map((entry) => entry.pid),
+};
+
+export function processReaderFor(exec: ExecFn, platform: Platform): ProcessReader {
+    return exec.processReader?.(platform) ?? defaultProcessReader;
+}
 
 export function defaultExec(argv: string[]): ExecResult {
     const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
@@ -110,20 +161,9 @@ export function parseCimProcesses(stdout: string): ProcessEntry[] {
     return entries;
 }
 
-const CIM_PROCESS_QUERY =
-    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine,Name | ConvertTo-Json -Depth 2";
-
 /** Every process with its full command line and parent pid. ONE exec call on every platform. */
 export function listProcesses(exec: ExecFn = defaultExec, platform: Platform = currentPlatform()): ProcessEntry[] {
-    if (platform === "win32") {
-        const r = exec(["powershell", "-NoProfile", "-Command", CIM_PROCESS_QUERY]);
-
-        return r.exitCode === 0 ? parseCimProcesses(r.stdout) : [];
-    }
-
-    const r = exec(["ps", "-axo", "pid=,ppid=,command="]);
-
-    return r.exitCode === 0 ? parsePsProcesses(r.stdout) : [];
+    return processReaderFor(exec, platform).processes();
 }
 
 /**
@@ -135,25 +175,7 @@ export function processExecutable(
     exec: ExecFn = defaultExec,
     platform: Platform = currentPlatform()
 ): string | null {
-    // The kernel's own path (proc_pidpath) without a spawn; an injected exec (tests) still gets its own output.
-    const fromKernel = platform !== "win32" && exec === defaultExec ? readProcessPath(pid) : null;
-
-    if (fromKernel !== null) {
-        return fromKernel;
-    }
-
-    const r =
-        platform === "win32"
-            ? exec([
-                  "powershell",
-                  "-NoProfile",
-                  "-Command",
-                  `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").Name`,
-              ])
-            : exec(["ps", "-o", "comm=", "-p", String(pid)]);
-    const executable = r.stdout.trim();
-
-    return r.exitCode === 0 && executable ? executable : null;
+    return processReaderFor(exec, platform).executable(pid);
 }
 
 /** Structured argv only: never infer POSIX argument boundaries from space-joined ps output. */
@@ -242,22 +264,7 @@ export function listListeningTcpPorts(
     exec: ExecFn = defaultExec,
     platform: Platform = currentPlatform()
 ): ListeningPort[] {
-    if (platform === "win32") {
-        const r = exec(["netstat", "-ano", "-p", "TCP"]);
-
-        return r.exitCode === 0 ? parseNetstatListeners(r.stdout) : [];
-    }
-
-    // The same rows from libproc, without lsof's 267 ms; an injected exec (tests) still gets its own output.
-    const fromKernel = exec === defaultExec ? listListeningTcpAsLsof() : null;
-
-    if (fromKernel !== null) {
-        return parseLsofListeners(fromKernel);
-    }
-
-    const r = exec(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]);
-
-    return r.exitCode === 0 ? parseLsofListeners(r.stdout) : [];
+    return processReaderFor(exec, platform).listeners();
 }
 
 /**
@@ -369,21 +376,5 @@ export function sampleProcess(
     exec: ExecFn = defaultExec,
     platform: Platform = currentPlatform()
 ): ProcessSample | null {
-    if (platform === "win32") {
-        const r = exec([
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | Select-Object WorkingSetSize,KernelModeTime,UserModeTime,CommandLine,Name | ConvertTo-Json`,
-        ]);
-
-        return r.exitCode === 0 ? parseCimSample(pid, r.stdout) : null;
-    }
-
-    const r = exec(["ps", "-p", String(pid), "-o", "pcpu=,rss=,time=,etime=,stat=,command="]);
-    if (r.exitCode !== 0) {
-        return null;
-    }
-
-    return parsePsSample(pid, r.stdout.trim().split("\n")[0] ?? "");
+    return processReaderFor(exec, platform).sample(pid);
 }

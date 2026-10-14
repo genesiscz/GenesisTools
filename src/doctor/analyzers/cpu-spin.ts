@@ -4,7 +4,8 @@ import { Analyzer } from "@app/doctor/lib/analyzer";
 import { labelForProcess } from "@app/doctor/lib/process-labels";
 import { classifyProcess } from "@app/doctor/lib/safety";
 import type { Action, AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
-import { capture, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { parseCpuTime } from "@genesiscz/utils/process/ps";
 
 export { parseCpuTime };
 
@@ -144,6 +145,25 @@ function ownerHint(owner: ProcessOwner): string {
     return "";
 }
 
+export function sampleCpuTimes(): Map<number, CpuTimeSample> | null {
+    const entries = listProcessesWithUsage({ otherUsers: true });
+    if (entries.length === 0) {
+        return null;
+    }
+    return new Map(
+        entries.flatMap((entry) =>
+            entry.usage
+                ? [
+                      [
+                          entry.pid,
+                          { pid: entry.pid, cpuMs: entry.usage.cpuTimeMs, command: entry.command ?? entry.name },
+                      ] as const,
+                  ]
+                : []
+        )
+    );
+}
+
 export class CpuSpinAnalyzer extends Analyzer {
     readonly id = CPU_SPIN_ANALYZER_ID;
     readonly name = "CPU spin";
@@ -210,12 +230,6 @@ export class CpuSpinAnalyzer extends Analyzer {
     }
 
     private async sample(): Promise<Map<number, CpuTimeSample> | null> {
-        const res = await capture("ps", ["-axo", "pid=,cputime=,command="], { timeoutMs: 5_000 });
-
-        if (res.status !== 0) {
-            return null;
-        }
-
-        return parseCpuTimeSamples(res.stdout);
+        return sampleCpuTimes();
     }
 }

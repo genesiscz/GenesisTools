@@ -11,7 +11,8 @@ import {
     sampleCpuBusyPercent,
     type VmPageCounts,
 } from "@genesiscz/utils/macos/host-stats";
-import { parseProcessRows } from "./processes";
+import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { friendlyProcessName } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
 export function parseCpuIdlePct(topOut: string): number | null {
@@ -317,16 +318,15 @@ async function collectWifi(): Promise<string | null> {
     return parseWifiSsid(out);
 }
 
-export async function collectTopProcesses(limit = 5): Promise<TopProcess[]> {
-    const out = await runShell(["ps", "-ax", "-m", "-o", "pid=,rss=,etime=,%cpu=,comm="]);
-
-    if (out === null) {
-        return [];
-    }
-
-    return parseProcessRows(out)
+export async function collectTopProcesses(limit = 5, read = listProcessesWithUsage): Promise<TopProcess[]> {
+    return read({ otherUsers: true })
+        .sort((a, b) => (b.usage?.rssBytes ?? 0) - (a.usage?.rssBytes ?? 0))
         .slice(0, limit)
-        .map((r) => ({ pid: r.pid, name: r.name, rssBytes: r.rssBytes }));
+        .map((entry) => ({
+            pid: entry.pid,
+            name: friendlyProcessName(readExecutablePath(entry.pid) ?? entry.name),
+            rssBytes: entry.usage?.rssBytes ?? 0,
+        }));
 }
 
 export async function collectPulse(): Promise<PulseSnapshot> {

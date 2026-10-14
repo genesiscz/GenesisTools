@@ -35,7 +35,7 @@ describe("dev-dashboard tmux presets lib", () => {
     beforeEach(() => {
         store = new TmuxPresetStore({ dir: mkdtempSync(join(tmpdir(), "dd-presets-")) });
         setTmuxBinForTests("/usr/bin/tmux");
-        setTmuxSnapshotSpawnForTests(makeSpawn(LIST_PANES_PAYLOAD));
+        setTmuxSnapshotSpawnForTests(makeSpawn(LIST_PANES_PAYLOAD), () => []);
     });
 
     afterEach(() => {
@@ -63,7 +63,7 @@ describe("dev-dashboard tmux presets lib", () => {
     });
 
     it("throws when no tmux sessions are captured", async () => {
-        setTmuxSnapshotSpawnForTests(makeSpawn(""));
+        setTmuxSnapshotSpawnForTests(makeSpawn(""), () => []);
 
         expect(savePreset({ name: "empty" }, store)).rejects.toThrow(/No tmux sessions to capture/);
     });
@@ -77,7 +77,7 @@ describe("dev-dashboard tmux presets lib", () => {
     it("re-saving the same name overwrites (force) without throwing", async () => {
         await savePreset({ name: "dev" }, store);
         // Second capture: only "alpha" (1 window, 2 panes).
-        setTmuxSnapshotSpawnForTests(makeSpawn(LIST_PANES_PAYLOAD.split("\n").slice(0, 2).join("\n")));
+        setTmuxSnapshotSpawnForTests(makeSpawn(LIST_PANES_PAYLOAD.split("\n").slice(0, 2).join("\n")), () => []);
         const second = await savePreset({ name: "dev" }, store);
 
         expect(second.sessions).toBe(1);

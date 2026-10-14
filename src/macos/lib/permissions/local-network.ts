@@ -3,6 +3,8 @@ import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_NAME, genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
+import { executableInode } from "@genesiscz/utils/process/process-files";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 import { retiredRootFor } from "./app";
 
 /**
@@ -224,28 +226,25 @@ export function oldBuildsInUse(launcherPath: string, rules: LocalNetworkRules | 
         return [];
     }
 
-    const ps = Bun.spawnSync(["ps", "-Ao", "pid=,lstart=,args="], { stdout: "pipe", stderr: "pipe" });
-
-    if (ps.exitCode !== 0) {
-        logger.debug({ exitCode: ps.exitCode }, "old builds: ps failed");
-        return [];
+    const processes = listProcesses().flatMap((entry): AppProcess[] => {
+        if (
+            entry.startMs === null ||
+            !entry.command ||
+            (entry.command !== launcherPath && !entry.command.startsWith(`${launcherPath} `))
+        ) {
+            return [];
+        }
+        const rest = entry.command.slice(launcherPath.length).trim();
+        const [program, ...args] = rest.split(" ");
+        const command = !program ? "(window)" : program.startsWith("-") ? rest : [basename(program), ...args].join(" ");
+        return [{ pid: entry.pid, started: new Date(entry.startMs), command }];
+    });
+    const inodesByPid = new Map<number, Set<number>>();
+    for (const entry of processes) {
+        const inode = executableInode(entry.pid);
+        if (inode !== null) {
+            inodesByPid.set(entry.pid, new Set([inode]));
+        }
     }
-
-    const processes = genesisAppProcesses(new TextDecoder().decode(ps.stdout), launcherPath);
-
-    if (processes.length === 0) {
-        return [];
-    }
-
-    // lsof exits 1 when one of the pids has gone; the others are still listed.
-    const lsof = Bun.spawnSync(
-        ["lsof", "-a", "-d", "txt", "-Fpi", "-n", "-p", processes.map((appProcess) => appProcess.pid).join(",")],
-        { stdout: "pipe", stderr: "pipe" }
-    );
-    const inodesByPid = txtInodesByPid(new TextDecoder().decode(lsof.stdout));
-    logger.debug(
-        { processes: processes.length, listed: inodesByPid.size, lsofExit: lsof.exitCode, retired: retired.length },
-        "old builds: listed GenesisTools processes"
-    );
     return groupOldBuilds({ processes, inodesByPid, retired, rules });
 }

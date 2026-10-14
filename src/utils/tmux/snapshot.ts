@@ -1,5 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 import { capture } from "@genesiscz/utils/process/ps";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -73,6 +74,7 @@ const PANE_LIST_FORMAT = [
 ].join("\t");
 
 let spawnImpl: SyncTmuxSpawn | null = null;
+let processReader = listProcesses;
 
 /**
  * Run one external command off the event loop, unless a test double is installed —
@@ -100,8 +102,12 @@ async function spawnTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSp
 }
 
 /** Override spawn for tests. Also forwards to sessions.ts so create/kill mock too. */
-export function setTmuxSnapshotSpawnForTests(impl: SyncTmuxSpawn | null): void {
+export function setTmuxSnapshotSpawnForTests(
+    impl: SyncTmuxSpawn | null,
+    reader: typeof listProcesses = listProcesses
+): void {
     spawnImpl = impl;
+    processReader = reader;
     setTmuxSpawnSyncForTests(impl);
 }
 
@@ -131,8 +137,9 @@ export async function captureTmuxSnapshot(opts: CaptureOptions = {}): Promise<Tm
 
     // ONE process table for the whole sweep. This used to be a full `ps -ax` per pane,
     // which is what made capture cost grow with pane count.
-    const psResult = await spawnTmux(["ps", "-o", "pid=,ppid=,args=", "-ax"]);
-    const processTable = psResult.exitCode === 0 ? psResult.stdout : "";
+    const processTable = processReader()
+        .map((entry) => `${entry.pid} ${entry.ppid} ${entry.command ?? ""}`)
+        .join("\n");
 
     const sessionMap = new Map<string, TmuxSessionSnapshot>();
     const windowMap = new Map<string, TmuxWindowSnapshot>();
