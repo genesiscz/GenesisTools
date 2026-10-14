@@ -1,6 +1,6 @@
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import type { AsyncSubscription, Event } from "@parcel/watcher";
+import type { AsyncSubscription, BackendType, Event } from "@parcel/watcher";
 
 // No static import of the logger here. `tools ts imports analyze src/utils/fs/watcher.ts` put
 // 17.8 ms of this module's 19 ms import cost on `@genesiscz/utils/logger` (its prompt backend
@@ -33,8 +33,35 @@ export interface WatcherOptions {
     subscribe?: (
         dir: string,
         callback: (err: Error | null, events: Event[]) => void,
-        opts: { ignore?: string[] }
+        opts: { ignore?: string[]; backend?: BackendType }
     ) => Promise<AsyncSubscription>;
+}
+
+/**
+ * The @parcel/watcher backend to ask for, or undefined for its default. With no `backend`, every subscribe first
+ * probes `watchman` through `popen()`, and @parcel/watcher 2.6.0 throws on the empty answer before it calls
+ * `pclose()`: where watchman is not installed, each subscribe leaks one zombie `sh` and one file descriptor (CI's
+ * worker log named 6 from outbox.test.ts and 1 from watcher.test.ts, 2026-10-14). So without watchman on PATH the
+ * platform's own backend is named and no probe runs; with watchman installed the default (watchman) stays.
+ */
+export function nativeWatcherBackend(
+    platform: NodeJS.Platform = process.platform,
+    hasWatchman = Bun.which("watchman") !== null
+): BackendType | undefined {
+    if (hasWatchman) {
+        return undefined;
+    }
+
+    switch (platform) {
+        case "darwin":
+            return "fs-events";
+        case "linux":
+            return "inotify";
+        case "win32":
+            return "windows";
+        default:
+            return undefined;
+    }
 }
 
 export interface WatcherSubscription {
@@ -117,6 +144,7 @@ export async function createWatcher(
     const onTransientError = opts?.onTransientError;
     // Lazy-import @parcel/watcher (native addon), unless the caller brings its own event source.
     const subscribe = opts?.subscribe ?? (await import("@parcel/watcher")).default.subscribe;
+    const backend = nativeWatcherBackend();
 
     // Accumulate events for debounce (latest event type per path wins)
     const pendingEvents = new Map<string, WatcherEvent>();
@@ -224,6 +252,7 @@ export async function createWatcher(
         },
         {
             ignore: ignorePatterns,
+            ...(backend ? { backend } : {}),
         }
     );
 

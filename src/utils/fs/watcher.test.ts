@@ -9,6 +9,7 @@ import { watchFileFeed } from "./file-feed-watcher";
 import {
     createWatcher,
     isTransientError,
+    nativeWatcherBackend,
     type WatcherEvent,
     type WatcherOptions,
     type WatcherSubscription,
@@ -102,6 +103,28 @@ function batchesOf() {
         until,
     };
 }
+
+describe("nativeWatcherBackend", () => {
+    test("names the platform's backend when watchman is missing, so @parcel/watcher never probes for it", () => {
+        expect(nativeWatcherBackend("linux", false)).toBe("inotify");
+        expect(nativeWatcherBackend("darwin", false)).toBe("fs-events");
+        expect(nativeWatcherBackend("win32", false)).toBe("windows");
+        expect(nativeWatcherBackend("freebsd", false)).toBeUndefined();
+        expect(nativeWatcherBackend("linux", true)).toBeUndefined();
+    });
+
+    test("createWatcher hands that backend to subscribe", async () => {
+        let asked: Parameters<NonNullable<WatcherOptions["subscribe"]>>[2] | undefined;
+        sub = await createWatcher(tempDir, () => {}, {
+            subscribe: async (_dir, _callback, opts) => {
+                asked = opts;
+                return { unsubscribe: async () => {} };
+            },
+        });
+
+        expect(asked?.backend).toBe(nativeWatcherBackend());
+    });
+});
 
 describe("createWatcher", () => {
     test("maps native create, update and delete events into one debounced batch", async () => {
