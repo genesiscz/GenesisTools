@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { psEnvValue } from "@genesiscz/utils/ai/account-env";
 import { logger } from "@genesiscz/utils/logger";
+import * as tmuxBin from "@genesiscz/utils/tmux/bin";
 import { statusOf } from "./discover";
 import {
     __setPsRunnerForTest,
@@ -160,6 +161,25 @@ describe("listLiveTeammateProcesses reports scan failure distinctly", () => {
             agentName: "mate",
             teamName: "session-abc",
         });
+    });
+
+    test("a machine without tmux still lists its teammates, with no pane", () => {
+        const resolve = spyOn(tmuxBin, "resolveTmuxBin").mockImplementation(() => {
+            throw new Error("tmux not found");
+        });
+
+        try {
+            const scan = withPsRunner(
+                () => psOk(`${TEAMMATE_LINE}\n`),
+                () => listLiveTeammateProcesses()
+            );
+
+            expect(resolve).toHaveBeenCalled();
+            expect(scan.failed).toBe(false);
+            expect(scan.processes.map((process) => process.pid)).toEqual([4242]);
+        } finally {
+            resolve.mockRestore();
+        }
     });
 
     test("the seam never outlives the call that installed it", () => {

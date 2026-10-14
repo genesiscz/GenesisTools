@@ -111,8 +111,9 @@ interface TmuxPaneRow {
 }
 
 function listTmuxPanes(): TmuxPaneRow[] {
-    const tmux = resolveTmuxBin();
     try {
+        // Inside the try: a machine without tmux has no panes, and the scan still lists its teammates.
+        const tmux = resolveTmuxBin();
         const proc = Bun.spawnSync(
             [
                 tmux,
