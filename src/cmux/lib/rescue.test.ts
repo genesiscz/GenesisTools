@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { PROFILE_VERSION, type Profile } from "@app/cmux/lib/types";
 import { START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
-import { collectReplayEntries, isAlive, killApp, mayReplayIntoSurface, type RescueSystem } from "./rescue";
+import { isAlive, killApp, type RescueSystem } from "./rescue";
 
 /**
  * Records every signal, every simulated sleep AND stays controllable, so the
@@ -229,69 +228,5 @@ describe("isAlive", () => {
                 },
             })
         ).toBe(true);
-    });
-});
-
-describe("mayReplayIntoSurface", () => {
-    test("a real title mismatch refuses the surface", () => {
-        // Positional replay into a renamed surface types a captured command into
-        // a different terminal than the reviewed plan showed.
-        expect(mayReplayIntoSurface({ title: "bun test" }, { title: "vim" })).toBe(false);
-        expect(mayReplayIntoSurface({ title: "bun test" }, { title: "bun test" })).toBe(true);
-    });
-
-    test("an unknown title on either side is not treated as a mismatch", () => {
-        expect(mayReplayIntoSurface({ title: undefined }, { title: "vim" })).toBe(true);
-        expect(mayReplayIntoSurface({ title: "bun test" }, { title: undefined })).toBe(true);
-    });
-});
-
-describe("collectReplayEntries", () => {
-    test("flattens windows → workspaces → panes → surfaces, keeping terminal commands only", () => {
-        // Typed, not `as never`: the cast would hide a Profile field rename.
-        const pane = {
-            ref: "pane:1",
-            index: 0,
-            columns: 80,
-            rows: 24,
-            pixel_frame: { x: 0, y: 0, width: 800, height: 600 },
-            selected_surface_index: 0,
-            surfaces: [
-                {
-                    title: "zsh",
-                    type: "terminal" as const,
-                    command: "bun run test",
-                    surface_id: "5E0B4485-9AA4-452E-9814-5C366F66D8C2",
-                },
-                { title: "docs", type: "browser" as const },
-            ],
-        };
-        const profile: Profile = {
-            version: PROFILE_VERSION,
-            name: "rescue",
-            scope: "all",
-            captured_at: "2026-08-27T12:00:00.000Z",
-            cmux_version: "test",
-            windows: [
-                {
-                    ref: "window:1",
-                    title: "main",
-                    container_frame: { width: 1920, height: 1080 },
-                    workspaces: [{ ref: "workspace:1", title: "GenesisTools", selected: true, panes: [pane] }],
-                },
-            ],
-        };
-
-        const entries = collectReplayEntries(profile);
-
-        expect(entries).toHaveLength(2);
-        // The UUID pairs the reopened tab exactly; cmux keeps it across the relaunch.
-        expect(entries[0]).toMatchObject({
-            workspaceIndex: 0,
-            tabIndex: 0,
-            command: "bun run test",
-            surfaceId: "5E0B4485-9AA4-452E-9814-5C366F66D8C2",
-        });
-        expect(entries[1].command).toBeUndefined();
     });
 });

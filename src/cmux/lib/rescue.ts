@@ -1,5 +1,3 @@
-import { profileSurfaces } from "@app/cmux/lib/profile-walk";
-import type { Profile } from "@app/cmux/lib/types";
 import { APP_BINARY_SUFFIX } from "@genesiscz/utils/cmux/lib/health";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -206,36 +204,4 @@ export function cleanRelaunchEnv(): Record<string, string> {
         LOGNAME: env.device.getLogname() ?? user,
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     };
-}
-
-export interface ReplayEntry {
-    workspaceIndex: number;
-    workspaceTitle: string;
-    paneRef: string;
-    tabIndex: number;
-    title: string;
-    command?: string;
-    /** The surface UUID the capture recorded; cmux keeps it across the relaunch, so it pairs the tab exactly. */
-    surfaceId?: string;
-}
-
-export function collectReplayEntries(profile: Profile): ReplayEntry[] {
-    return profileSurfaces(profile).map(({ workspace, workspaceIndex, pane, surface, tabIndex }) => ({
-        workspaceIndex,
-        workspaceTitle: workspace.title,
-        paneRef: pane.ref,
-        tabIndex,
-        title: surface.title,
-        command: surface.type === "terminal" ? surface.command : undefined,
-        ...(surface.type === "terminal" && surface.surface_id ? { surfaceId: surface.surface_id } : {}),
-    }));
-}
-
-/**
- * A saved surface may only be typed into when the reopened one is the same
- * surface. Titles derive from the running command, so a mismatch means the
- * layout moved and positional replay would type into a different terminal.
- */
-export function mayReplayIntoSurface(saved: { title?: string }, live: { title?: string }): boolean {
-    return !live.title || !saved.title || live.title === saved.title;
 }

@@ -20,9 +20,9 @@ import {
     type RestoreRestartSource,
 } from "@app/cmux/lib/restore-after-restart";
 import {
-    type InPlaceStep,
     planInPlaceRestore,
     readInPlaceLiveState,
+    renderInPlaceStep,
     runInPlaceRestore,
 } from "@app/cmux/lib/restore-in-place";
 import { loadSavedScreens } from "@app/cmux/lib/screen-cache";
@@ -53,19 +53,6 @@ interface RestartFlags {
 }
 
 const SOURCES: RestoreRestartSource[] = ["previous", "live", "profile"];
-
-function renderInPlaceStep(step: InPlaceStep): string {
-    const where = `${pc.cyan(step.workspaceTitle)} › ${step.title || pc.dim("(untitled)")} ${pc.dim(step.live?.ref ?? "(gone)")}`;
-
-    if (step.skip) {
-        return `  ${pc.dim("·")} ${where}\n      ${pc.dim(`skip: ${step.skip}`)}`;
-    }
-
-    const label = step.kind === "agent" ? "resume" : "type (shell command)";
-    const prepare = step.prepareNote ? `\n      ${pc.yellow(`first: ${step.prepareNote}`)}` : "";
-
-    return `  ${pc.green("▶")} ${where}${prepare}\n      ${pc.dim(`${label}:`)} ${step.surface.command}`;
-}
 
 async function captureLiveProfile(): Promise<Profile> {
     try {

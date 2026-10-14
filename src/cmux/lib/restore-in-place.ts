@@ -11,6 +11,7 @@ import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
+import pc from "picocolors";
 
 /**
  * A terminal tab of the live layout, from `cmux --id-format both tree --all`. Every identity is a UUID: cmux
@@ -472,4 +473,18 @@ export async function runInPlaceRestore(
     }
 
     return failures;
+}
+
+/** One plan line per tab: what is typed, what is done first, or why the tab is skipped. */
+export function renderInPlaceStep(step: InPlaceStep): string {
+    const where = `${pc.cyan(step.workspaceTitle)} › ${step.title || pc.dim("(untitled)")} ${pc.dim(step.live?.ref ?? "(gone)")}`;
+
+    if (step.skip) {
+        return `  ${pc.dim("·")} ${where}\n      ${pc.dim(`skip: ${step.skip}`)}`;
+    }
+
+    const label = step.kind === "agent" ? "resume" : "type (shell command)";
+    const prepare = step.prepareNote ? `\n      ${pc.yellow(`first: ${step.prepareNote}`)}` : "";
+
+    return `  ${pc.green("▶")} ${where}${prepare}\n      ${pc.dim(`${label}:`)} ${step.surface.command}`;
 }

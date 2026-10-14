@@ -1,34 +1,34 @@
+import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
 import { renderProfileCommandDetail } from "@app/cmux/lib/format";
 import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
-import {
-    cleanRelaunchEnv,
-    collectReplayEntries,
-    killApp,
-    mayReplayIntoSurface,
-    type ReplayEntry,
-} from "@app/cmux/lib/rescue";
+import { cleanRelaunchEnv, killApp } from "@app/cmux/lib/rescue";
 import { reportWaitingPrompts } from "@app/cmux/lib/restore";
+import {
+    planInPlaceRestore,
+    readInPlaceLiveState,
+    renderInPlaceStep,
+    runInPlaceRestore,
+} from "@app/cmux/lib/restore-in-place";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
-import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-import { runCmuxJSON, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
-import { paneList, workspaceList } from "@genesiscz/utils/cmux/lib/socket";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
 import pc from "picocolors";
 
 /**
  * Guided recovery from a cmux UI-thread livelock: offline capture → confirmed
- * kill → CLEAN-ENV relaunch → wait for the app's own session reopen → replay each
- * pane's launch command into the reopened surfaces. The app restores the layout
- * itself, so no duplicate workspace is created.
+ * kill → CLEAN-ENV relaunch → wait for the app's own session reopen → the
+ * `--in-place` restore of `restore-after-restart` into the reopened tabs. The app
+ * restores the layout itself, so no duplicate workspace is created, and cmux keeps
+ * every surface UUID across the relaunch, so each tab is paired by its UUID.
  *
- * Interaction policy (t9): the only automation is typing each command + Enter.
- * Whatever appears afterwards (account-headroom gate, resume-mode dialog, session
- * picker) is reported, never answered.
+ * Interaction policy (t9): the only automation is typing each command + Enter,
+ * into an idle shell tab, on recorded evidence. Whatever appears afterwards
+ * (account-headroom gate, resume-mode dialog, session picker) is reported, never
+ * answered.
  */
 
 interface RescueFlags {
@@ -71,7 +71,10 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
     }
 
     p.log.step("Capturing offline profile (autosave + process table)…");
-    const profile = await captureOfflineProfile({ name, note: `rescue capture (cmux was ${health.state})` });
+    // The same preparation the restore applies: title inference, one tab per session, no model pins.
+    const profile = await prepareProfileForRestore(
+        await captureOfflineProfile({ name, note: `rescue capture (cmux was ${health.state})` })
+    );
 
     const detail = renderProfileCommandDetail(profile);
     if (detail.length > 0) {
@@ -82,7 +85,7 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
         `  1. kill -TERM ${health.appPid ?? "<cmux pid>"} (escalate to -KILL after 5 s)`,
         "  2. relaunch with a CLEAN env: env -i HOME USER PATH /usr/bin/open -a cmux",
         "  3. wait for the socket to be healthy and the app to reopen its own workspaces",
-        "  4. type each pane's command + Enter into the reopened surfaces (order-matched, title-checked)",
+        "  4. restore in place: each tab's resume or command + Enter into the reopened tab with the same surface UUID (idle shell tabs only, on recorded evidence)",
         "  5. report panes stopped at interactive prompts — rescue never answers them",
     ];
     p.note(steps.join("\n"), "Plan");
@@ -159,12 +162,25 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
     // Give the app a moment to finish reopening its autosaved workspaces.
     await new Promise((resolve) => setTimeout(resolve, 5000));
 
-    const entries = collectReplayEntries(profile);
-    const workspaceIds = await replayIntoReopenedSurfaces(profile, entries);
+    const tabs = planInPlaceRestore(profile, await readInPlaceLiveState());
+    p.note(tabs.map(renderInPlaceStep).join("\n") || "(no terminal tabs)", "In-place plan (reopened tabs)");
+    // A rescue runs what each pane ran (an ssh logs back in), as it always did; the plan already holds back every
+    // tab that is busy, unreadable, or has no evidence for its session.
+    const failures = await runInPlaceRestore(tabs, { enter: true, replay: true, runCommands: true });
 
-    await reportWaitingPrompts(workspaceIds, "Rescue");
+    if (failures.length > 0) {
+        process.exitCode = 1;
+        p.note(failures.join("\n"), "Tabs not resumed");
+    }
 
-    p.outro(pc.green("Rescue complete."));
+    const workspaceIds = tabs.flatMap((step) =>
+        !step.skip && step.live ? [step.live.workspaceId ?? step.live.workspaceRef] : []
+    );
+    await reportWaitingPrompts([...new Set(workspaceIds)], "Rescue");
+
+    p.outro(
+        failures.length > 0 ? pc.yellow("Rescue finished; some tabs were not resumed.") : pc.green("Rescue complete.")
+    );
 }
 
 async function cleanRelaunch(): Promise<void> {
@@ -193,123 +209,4 @@ async function waitForHealthy(timeoutMs: number): Promise<boolean> {
     }
 
     return false;
-}
-
-interface LiveSurfaceEntry {
-    /** Surface UUID (`list-pane-surfaces --json` reports it beside the ref). */
-    id?: string;
-    ref: string;
-    title?: string;
-    index: number;
-}
-
-interface ListPaneSurfacesResponse {
-    surfaces: LiveSurfaceEntry[];
-}
-
-/**
- * Type each captured command into the matching reopened surface. Surfaces are
- * matched positionally per workspace (the reopen recreates the autosave order —
- * the same order the offline profile was built from) and cross-checked by title;
- * a count mismatch aborts instead of typing into the wrong pane.
- */
-async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry[]): Promise<string[]> {
-    const live = await workspaceList();
-    /** The UUIDs of the workspaces typed into, for the prompt scan. */
-    const workspaceIds: string[] = [];
-    // cmux titles derive from directories/branches, so two workspaces can share a
-    // title — an already-claimed live workspace must never match a second saved one.
-    const claimed = new Set<string>();
-    const profileWorkspaces = profile.windows.flatMap((w) => w.workspaces);
-
-    for (let wsIndex = 0; wsIndex < profileWorkspaces.length; wsIndex += 1) {
-        const saved = profileWorkspaces[wsIndex];
-        const positional = live.workspaces[wsIndex];
-        const liveWs =
-            live.workspaces.find((ws) => !claimed.has(ws.id) && ws.title === saved.title) ??
-            (positional && !claimed.has(positional.id) ? positional : undefined);
-        if (!liveWs) {
-            p.log.warn(`No reopened workspace matches "${saved.title}" — skipped.`);
-            continue;
-        }
-
-        claimed.add(liveWs.id);
-        workspaceIds.push(liveWs.id);
-        const wsEntries = entries.filter((e) => e.workspaceIndex === wsIndex);
-
-        const liveSurfaces: LiveSurfaceEntry[] = [];
-        const layout = await paneList(liveWs.id);
-        for (const pane of layout.panes) {
-            const response = await runCmuxJSON<ListPaneSurfacesResponse>([
-                "list-pane-surfaces",
-                "--workspace",
-                liveWs.id,
-                "--pane",
-                pane.id,
-            ]);
-            liveSurfaces.push(...[...response.surfaces].sort((a, b) => a.index - b.index));
-        }
-
-        if (liveSurfaces.length !== wsEntries.length) {
-            p.log.error(
-                `Workspace "${saved.title}": ${liveSurfaces.length} reopened surface(s) vs ${wsEntries.length} saved — refusing to type into a mismatched layout.`
-            );
-            continue;
-        }
-
-        let sent = 0;
-        let skipped = 0;
-        for (let i = 0; i < wsEntries.length; i += 1) {
-            const entry = wsEntries[i];
-            if (!entry.command) {
-                continue;
-            }
-
-            // The surface UUID pairs the tab exactly: cmux keeps it across the relaunch. Only a capture without
-            // one falls back to the position, cross-checked by title below.
-            const byId = entry.surfaceId?.toLowerCase();
-            const target = byId ? liveSurfaces.find((surface) => surface.id?.toLowerCase() === byId) : liveSurfaces[i];
-
-            if (!target) {
-                p.log.warn(`  skipped "${entry.title}": its surface ${entry.surfaceId} was not reopened.`);
-                skipped += 1;
-                continue;
-            }
-
-            // The contract says surfaces are title-checked, and equal surface
-            // COUNTS do not prove the panes still correspond. Replaying by
-            // position into a renamed surface types a captured command into a
-            // different terminal than the reviewed plan showed, so a real
-            // mismatch refuses this surface exactly as a count mismatch does.
-            const titleMatches = byId !== undefined || mayReplayIntoSurface(entry, target);
-            if (!titleMatches) {
-                logger.debug(
-                    { saved: entry.title, live: target.title, surface: target.ref },
-                    "[rescue] title mismatch — refusing to type into this surface"
-                );
-                p.log.warn(
-                    `  skipped ${target.ref}: saved "${entry.title}" but the reopened surface is "${target.title}".`
-                );
-                skipped += 1;
-                continue;
-            }
-
-            // Typed by UUID only: a ref names whichever tab holds that number now.
-            if (!target.id) {
-                p.log.warn(`  skipped ${target.ref}: cmux listed it without a surface UUID.`);
-                skipped += 1;
-                continue;
-            }
-
-            await sendSurfaceText({ surfaceRef: target.id, text: `${entry.command}\n` });
-            sent += 1;
-            await new Promise((resolve) => setTimeout(resolve, 300));
-        }
-
-        p.log.info(
-            `Workspace "${saved.title}": replayed ${sent} command(s) into ${wsEntries.length} surface(s)${skipped ? `, skipped ${skipped} on a title mismatch` : ""}.`
-        );
-    }
-
-    return workspaceIds;
 }

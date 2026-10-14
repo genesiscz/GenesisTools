@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import * as agentReplay from "@app/cmux/lib/agent-replay";
 import * as offline from "@app/cmux/lib/offline-snapshot";
 import { ProfileStore } from "@app/cmux/lib/store";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
@@ -62,6 +63,8 @@ beforeEach(() => {
         cmux_version: "test",
         windows: [],
     });
+    // The preparation reads the session catalogs; these tests only exercise the kill and relaunch guards.
+    spyOn(agentReplay, "prepareProfileForRestore").mockImplementation(async (profile) => profile);
     spyOn(ProfileStore.prototype, "write").mockReturnValue("/tmp/does-not-matter.json");
     spyOn(prompts, "confirm").mockImplementation(async () => confirmAnswer);
 
