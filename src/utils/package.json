@@ -466,6 +466,11 @@
             "types": "./storage/atomic-file.ts",
             "default": "./storage/atomic-file.ts"
         },
+        "./storage/root": {
+            "bun": "./storage/root.ts",
+            "types": "./storage/root.ts",
+            "default": "./storage/root.ts"
+        },
         "./string": {
             "bun": "./string.ts",
             "types": "./string.ts",
