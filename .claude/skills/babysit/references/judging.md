@@ -17,6 +17,12 @@ report, its reply file (every verdict and every reply text it wants posted) and 
 2. **Rerun every check the worker claims**, in your own shell: the brief's test command, `bunx tsgo --noEmit`, Biome
    on the changed files, Swift tests when Swift changed. A worker's sandbox can fail where yours passes (Sol's
    loopback tests) and the other way round; your run is the one that counts. Compare counts with the report.
+   - The worker's own tests are not the regression check. Also run every test class that exercises the changed
+     source files (`rg -l <TypeName> Tests/`), or the whole package (`swift test --filter GenesisKitTests` matches
+     every class in the module), and compare any failure against the base head before blaming either side. On
+     2026-10-14 #510's round 2 passed its Clicky and Flow filters, yet it broke the master test
+     `FlowFocusRuntimeTests.testForwardedWritesFailBeforeAcknowledgementAndConfigurationRollsBack`, which the full
+     module run found a round later.
 3. **Planted regression for every new or changed test.** Put the pre-fix version of the fixed source back (copy the
    fixed file aside first, `git show <base>:<path> > <path>`, run the test, copy the fixed file back; the shell guard
    blocks `git checkout --` for this). A test that still passes proves nothing. Do it in the PR worktree, never in the
