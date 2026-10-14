@@ -226,6 +226,13 @@ then posts the thread replies and resolves them, and logs `push` and `post`. Det
 - unified mode: correction on unified; cherry-pick both onto a scratch worktree of the PR branch; resolve context
   conflicts by keeping the PR branch's side plus the worker's change; verify; push.
 
+Every conflict, in any step, is resolved through `bun .claude/skills/babysit/scripts/conflicts.ts`: `resolve <file>
+<ours|theirs|both|base> ...` (one side per block, in file order), or edit the file yourself and run `check <file> ...`,
+which fails on a leftover conflict marker and on a JSON file that does not parse. Run `check` before `cherry-pick
+--continue` or `rebase --continue`, and before you copy a resolved file into another checkout. Never resolve with an
+inline `bun -e` script: on 2026-10-14 one returned the pick names as text, wrote the word `ours` into both plugin
+manifests (d9687720a), and the genesis-tools plugin did not load in any new session for 12 hours.
+
 Gates before each push: the test files of the scope (not the PR's whole suite: a test that launches a real
 browser or app, such as the chrome-devtools headless tests, makes a 1.4 GB app copy per launch, so run it only when
 the fix touches that path, and report it as NOT RUN otherwise), `bunx tsgo --noEmit`, Biome on the changed files,

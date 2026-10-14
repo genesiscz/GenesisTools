@@ -7,6 +7,7 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolutionProblems } from "./conflicts";
 
 export const VERSION_FILES = new Set([
     ".claude-plugin/marketplace.json",
@@ -124,7 +125,9 @@ export function higherVersionSide(ours: string, theirs: string): "--ours" | "--t
     return i >= 0 && (a[i] ?? 0) > (b[i] ?? 0) ? "--ours" : "--theirs";
 }
 
-/** Stages the higher version of each conflicted version file. False, touching nothing, when another file conflicts. */
+/** Stages the higher version of each conflicted version file. False, touching nothing, when another file conflicts;
+ * false too when a staged result does not parse (a side can already carry a broken manifest, as d9687720a did), and
+ * the caller aborts the pick or rebase. */
 export function resolveVersionConflicts(git: GitRun, conflicted: string[]): boolean {
     if (conflicted.length === 0 || conflicted.some((file) => !VERSION_FILES.has(file))) {
         return false;
@@ -141,5 +144,11 @@ export function resolveVersionConflicts(git: GitRun, conflicted: string[]): bool
         git(["add", "--", file]);
     }
 
-    return true;
+    const problems = resolutionProblems(conflicted, (file) => git(["show", `:${file}`]).out);
+
+    for (const problem of problems) {
+        console.error(`✖ ${problem}`);
+    }
+
+    return problems.length === 0;
 }
