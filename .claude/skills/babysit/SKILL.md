@@ -220,6 +220,27 @@ add the correction to the affected items and to `alsoInPush`, set every item's `
 (fable-judge)"`, and render `round-summary.ts --range <old head>..<new head> --cwd <pr worktree>`. Post per review-loop
 step 4 only when `post` is true.
 
+## 7b. Optional: land a PR in master (only with the user's explicit approval)
+
+Off unless the user approves it in their own words for this run ("drive the PRs into master after 3 rounds"), and
+only for PRs the run owns: never another session's PR, never the integration branch. Ask once, early, and keep
+running review rounds while the question is open: a missing answer never blocks a round, it only means no merge.
+
+A PR lands when all hold: at least 3 review rounds done; no open critical or high finding; the reviewer bot reviewed
+the CURRENT head; CI green on that head; its base is master or a parent the run merges first (a PR stacked on another
+session's branch waits for that branch). Then the review-loop landing recipe:
+
+1. Squash the review commits (the `#<N> followup` ones on top of the feature commits) into one
+   `fix(<scopes>): #<N> followup - address PR review (<k> commits)` whose body lists each squashed subject; prove the
+   tree is identical (`git rev-parse HEAD^{tree}` before and after) and run `bun scripts/git/check-commits.ts
+   origin/master..HEAD`.
+2. Push with `--force-with-lease=<branch>:<old head>`. An identical tree on a green head needs no new CI run
+   (review-loop 4e); a rebase that resolved a conflict is new code: wait for CI and the bot.
+3. `git fetch origin <branch>` in the main checkout (`tools github merge` compares against the local remote ref and
+   refuses a "moved" branch otherwise), then `tools github merge --rebase <N>`. Stacks merge bottom-up; the tool
+   retargets dependents.
+4. Log a `note` event with the merge SHA, and list every PR that did not land with its reason in the report.
+
 ## 8. Clean up after every round, automatically
 
 Do not wait to be asked. When a round's pushes and unified picks are done:
