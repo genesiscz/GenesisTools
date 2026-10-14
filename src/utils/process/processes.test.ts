@@ -632,25 +632,40 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
     test.skipIf(process.platform !== "darwin")(
         "children and terminals from the kernel's own filters agree with the whole table",
         () => {
-            const table = listProcesses({ commands: false });
-            const childrenInTable = (pid: number) =>
-                table
-                    .filter((entry) => entry.ppid === pid && entry.pid !== pid)
-                    .map((entry) => entry.pid)
-                    .sort((a, b) => a - b);
+            const sorted = (pids: number[]) => [...pids].sort((a, b) => a - b);
+            // A process can start or end between the table read and the filtered read (the suite's own workers
+            // do, on this terminal), so compare up to three fresh pairs. A real disagreement repeats in all three.
+            const agreement = (select: (table: ReturnType<typeof listProcesses>) => number[], read: () => number[]) => {
+                let pair = { filtered: [] as number[], inTable: [] as number[] };
+
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    const inTable = sorted(select(listProcesses({ commands: false })));
+                    pair = { filtered: sorted(read()), inTable };
+
+                    if (pair.filtered.join() === pair.inTable.join()) {
+                        break;
+                    }
+                }
+
+                return pair;
+            };
+
             // launchd has most of the machine as children, other users' included.
-            expect(childPids(1)).toEqual(childrenInTable(1));
+            const launchd = agreement(
+                (table) => table.filter((entry) => entry.ppid === 1 && entry.pid !== 1).map((entry) => entry.pid),
+                () => childPids(1)
+            );
+            expect(launchd.filtered).toEqual(launchd.inTable);
             expect(descendantPids(process.ppid)).toContain(process.pid);
 
-            const tty = table.find((entry) => entry.tty !== null)?.tty;
+            const tty = listProcesses({ commands: false }).find((entry) => entry.tty !== null)?.tty;
 
             if (tty) {
-                const inTable = table.filter((entry) => entry.tty === tty).map((entry) => entry.pid);
-                expect(
-                    processesOnTty(tty)
-                        .map((entry) => entry.pid)
-                        .sort((a, b) => a - b)
-                ).toEqual(inTable.sort((a, b) => a - b));
+                const terminal = agreement(
+                    (table) => table.filter((entry) => entry.tty === tty).map((entry) => entry.pid),
+                    () => processesOnTty(tty).map((entry) => entry.pid)
+                );
+                expect(terminal.filtered).toEqual(terminal.inTable);
             }
         }
     );
