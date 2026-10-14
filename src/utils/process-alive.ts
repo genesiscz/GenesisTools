@@ -15,6 +15,10 @@
  * On Windows, Node returns `EPERM` for nearly every signal-zero probe of a
  * pid not owned by the caller; this helper still reports those as alive,
  * which matches the "PID may exist" intent.
+ *
+ * Two byte-identical copies: `src/utils/process-alive.ts` and `plugins/genesis-tools/lib/process-alive.ts`, because
+ * the plugin's hooks cannot import `@genesiscz` (`plugins/genesis-tools/lib/process-basics.test.ts` fails when they
+ * differ). Edit the `src` one, then copy it over the plugin one.
  */
 
 interface ErrnoException {

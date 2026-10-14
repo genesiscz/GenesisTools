@@ -13,6 +13,13 @@ test("the plugin's copy is byte-identical to the one in src/utils/process", () =
     expect(copy === canonical).toBe(true);
 });
 
+test("the plugin's liveness probe is byte-identical to src/utils/process-alive.ts", () => {
+    const canonical = readFileSync(join(REPO, "src/utils/process-alive.ts"), "utf8");
+    const copy = readFileSync(join(import.meta.dir, "process-alive.ts"), "utf8");
+    // pid-safety-guard.sh allows the signal-0 probe only in files named process-alive.ts, so the copy must stay that helper.
+    expect(copy === canonical).toBe(true);
+});
+
 // The standalone reader must answer exactly what the utils layer answers, for the processes a hook reads: itself,
 // its parent (the agent), and a long-lived root process.
 describe.skipIf(process.platform === "win32")("readProcessBasics", () => {

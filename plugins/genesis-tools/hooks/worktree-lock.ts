@@ -52,6 +52,7 @@ import {
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { isProcessAlive } from "../lib/process-alive";
 import { readProcessBasics } from "../lib/process-basics";
 import { EDIT_TOOLS, filePathsOf, type HookInput, normalize, writeFailed } from "./edit-payload";
 import type { Harness } from "./harness";
@@ -354,9 +355,10 @@ function checkProcess(pid: number, read = readProcessBasics): ProcessCheck {
 
     const basics = read(pid);
 
-    // A failed read is not proof: the reader also answers null on EACCES, a failed sysctl or a ps timeout.
+    // A failed read is not proof: the reader also answers null on EACCES, a failed sysctl or a ps timeout. Only
+    // ESRCH says no process has the pid; a recycled pid reads as alive, which keeps the lock (the safe side).
     if (!basics) {
-        return pidExists(pid) ? { state: "unknown" } : { state: "gone" };
+        return isProcessAlive(pid) ? { state: "unknown" } : { state: "gone" };
     }
 
     if (basics.command === null || basics.startMs === null) {
@@ -364,16 +366,6 @@ function checkProcess(pid: number, read = readProcessBasics): ProcessCheck {
     }
 
     return { state: "live", agent: agentNamed(basics.command) !== null, startMs: basics.startMs };
-}
-
-/** Whether any process holds `pid`. kill(pid, 0) sends nothing: only ESRCH says no process has it (EPERM is another user's). */
-function pidExists(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return errorCode(error) !== "ESRCH";
-    }
 }
 
 /** Read each distinct owner once through the kernel; share those results across the ownership scan. */
