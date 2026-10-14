@@ -319,7 +319,8 @@ async function collectWifi(): Promise<string | null> {
 }
 
 export async function collectTopProcesses(limit = 5, read = listProcessesWithUsage): Promise<TopProcess[]> {
-    return read({ otherUsers: true })
+    // Named by the executable, so the one ps skips the command lines.
+    return read({ otherUsers: true, commands: false })
         .sort((a, b) => (b.usage?.rssBytes ?? 0) - (a.usage?.rssBytes ?? 0))
         .slice(0, limit)
         .map((entry) => ({

@@ -422,8 +422,17 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         });
 
         expect(programs.filter((program) => PROCESS_TOOLS.test(program))).toEqual(["ps"]);
-        // launchd is root's: its usage comes from that one ps.
+        // launchd is root's: its usage and command line come from that one ps.
         expect(rows.find((row) => row.pid === 1)?.usage?.rssBytes).toBeGreaterThan(0);
+        expect(rows.find((row) => row.pid === 1)?.command).toBe("/sbin/launchd");
+
+        // Without command lines: still one ps, still other users' usage, no command anywhere.
+        const bare = spawnedPrograms(() => {
+            rows = listProcessesWithUsage({ otherUsers: true, commands: false });
+        });
+        expect(bare.filter((program) => PROCESS_TOOLS.test(program))).toEqual(["ps"]);
+        expect(rows.find((row) => row.pid === 1)?.usage?.rssBytes).toBeGreaterThan(0);
+        expect(rows.filter((row) => row.command !== null)).toEqual([]);
     });
 
     test("sockets are readable here, so an empty list means none", () => {

@@ -35,7 +35,8 @@ export function sortProcesses(list: ProcessInfo[], sort: ProcessSort): ProcessIn
 
 export async function collectProcesses(): Promise<ProcessInfo[]> {
     const now = Date.now();
-    return listProcessesWithUsage({ otherUsers: true }).map((entry) => {
+    // Named by the executable, so the one ps skips the command lines.
+    return listProcessesWithUsage({ otherUsers: true, commands: false }).map((entry) => {
         const uptimeMs = entry.startMs === null ? 0 : Math.max(0, now - entry.startMs);
         return {
             pid: entry.pid,

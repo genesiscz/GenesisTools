@@ -66,7 +66,7 @@ describe("readSwapProcessRows", () => {
         const rows = readSwapProcessRows({ processes, executablePath, now: () => 120_345 });
 
         expect(processes).toHaveBeenCalledTimes(1);
-        expect(processes).toHaveBeenCalledWith({ otherUsers: true });
+        expect(processes).toHaveBeenCalledWith({ otherUsers: true, commands: false });
         expect(executablePath).toHaveBeenCalledWith(123);
         expect(rows).toEqual([
             {

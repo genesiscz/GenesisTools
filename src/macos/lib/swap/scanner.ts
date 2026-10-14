@@ -145,7 +145,8 @@ export function readSwapProcessRows(
         now?: () => number;
     } = {}
 ): PsRow[] {
-    const entries = (readers.processes ?? listProcessesWithUsage)({ otherUsers: true });
+    // Named by the executable, so the one ps skips the command lines.
+    const entries = (readers.processes ?? listProcessesWithUsage)({ otherUsers: true, commands: false });
 
     if (entries.length === 0) {
         throw new Error("swap process table unavailable");

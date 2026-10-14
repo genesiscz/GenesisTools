@@ -627,24 +627,29 @@ export interface ProcessWithUsage extends ProcessEntry {
 /**
  * Every process with its command line and usage: `ps -axo pid,ppid,user,state,pcpu,rss,lstart,command` without the
  * spawn. On macOS, `otherUsers` fills in what the kernel withholds from this user (another user's command line,
- * memory and CPU time) with ONE batched `ps`, never one per question.
+ * memory and CPU time) with ONE batched `ps`, never one per question. `commands: false` leaves every command line
+ * null, for a caller that names a process by its executable: the `ps` then skips its most expensive column (about
+ * 25 ms instead of 55 on 1,300 processes).
  */
-export function listProcessesWithUsage(options: Pick<ListProcessesOptions, "otherUsers"> = {}): ProcessWithUsage[] {
+export function listProcessesWithUsage(
+    options: Pick<ListProcessesOptions, "otherUsers" | "commands"> = {}
+): ProcessWithUsage[] {
+    const commands = options.commands !== false;
     const fillFromPs = options.otherUsers === true && processPlatform() !== "linux" && processPlatform() !== "win32";
     // The `ps` that fills other users' rows prints every command line anyway, so reading them from the kernel first
     // would read each one twice (about 10 ms of sysctls on 1,300 processes).
-    const entries = listProcesses({ commands: !fillFromPs });
+    const entries = listProcesses({ commands: commands && !fillFromPs });
     const usages = readProcessUsages(entries.map((entry) => entry.pid));
 
     if (fillFromPs) {
         const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
-        const missing = entries.filter((entry) => !entry.zombie);
+        const missing = entries.filter((entry) => !entry.zombie && (commands || !usages.has(entry.pid)));
 
         for (const [pid, rest] of psLinesFor(
             missing.map((entry) => entry.pid),
-            "pid=,rss=,time=,command="
+            commands ? "pid=,rss=,time=,command=" : "pid=,rss=,time="
         )) {
-            const match = rest.match(/^(\d+)\s+(\S+)\s(.*)$/);
+            const match = rest.match(commands ? /^(\d+)\s+(\S+)\s(.*)$/ : /^(\d+)\s+(\S+)\s*$/);
 
             if (!match) {
                 continue;
@@ -652,7 +657,7 @@ export function listProcessesWithUsage(options: Pick<ListProcessesOptions, "othe
 
             const entry = byPid.get(pid);
 
-            if (entry) {
+            if (entry && commands) {
                 entry.command ??= match[3].trimEnd();
             }
 
