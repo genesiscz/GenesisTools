@@ -2,7 +2,7 @@ import { agentKindFromLauncher, isAgentLauncher, resumeTargetFromCommand } from 
 import { profileSurfaces } from "@app/cmux/lib/profile-walk";
 import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
 import { liveTree } from "@app/cmux/lib/session-close-live";
-import { isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
+import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runCmux, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
@@ -77,6 +77,8 @@ export interface InPlaceLiveState {
 }
 
 /** Grok's first-run dialog. Until it is answered, grok has not opened the session it was asked to resume. */
+const TYPABLE_EVIDENCE: ReadonlySet<string> = new Set(["journal", "typed", "title"]);
+
 const GROK_TRUST_PROMPT = /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/;
 
 /**
@@ -166,9 +168,16 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
         return { skip: "no session id resolved, so the command would open a new session or a picker" };
     }
 
-    if (surface.resume_evidence === "weak") {
+    if (agent && surface.resume_evidence === "weak") {
         return {
             skip: `only weak evidence ties this tab to the session (see the drift); if it is right, type: ${surface.command}`,
+        };
+    }
+
+    // An allowlist, not a denylist: a path that forgot to say why it chose the session is not typed (Sonnet F7).
+    if (agent && !TYPABLE_EVIDENCE.has(surface.resume_evidence ?? "none")) {
+        return {
+            skip: `no evidence recorded for this session (see the drift); if it is right, type: ${surface.command}`,
         };
     }
 
@@ -178,7 +187,7 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
         return { skip: "cmux reports no tty for this tab yet (it was never shown); show the tab once and run again" };
     }
 
-    const screen = state.screens.get(live.id.toLowerCase()) ?? "";
+    const screen = state.screens.get(live.id.toLowerCase());
 
     if (!state.idleTtys.has(live.tty)) {
         const running = state.ttyAgents.get(live.tty);
@@ -189,7 +198,7 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
 
         // cmux's own relaunch restore can start a stale session in the tab. While that agent still waits at
         // its trust prompt it has opened nothing, so quitting it loses nothing.
-        if (agent && running?.kind === "grok" && GROK_TRUST_PROMPT.test(screen)) {
+        if (agent && running?.kind === "grok" && screen !== undefined && GROK_TRUST_PROMPT.test(screen)) {
             return {
                 prepare: "quit-stale-agent",
                 prepareNote: `quits grok ${running.sessionId ?? "(no session)"}, which waits at its trust prompt; the surface journal names this tab's session`,
@@ -203,11 +212,21 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
         };
     }
 
-    if (!isShellPromptReady(screen)) {
+    if (screen === undefined) {
+        return { skip: "cmux could not read this tab's screen, so nothing proves its prompt is empty" };
+    }
+
+    const prompt = classifyPrompt(screen);
+
+    if (prompt.kind === "typed") {
         return {
             prepare: "clear-prompt",
-            prepareNote: `clears the prompt line first (Ctrl-E, Ctrl-U; zsh keeps the text, Ctrl-Y brings it back): ${lastLine(screen).slice(0, 100)}`,
+            prepareNote: `clears the prompt line first (Ctrl-E, Ctrl-U; zsh keeps the text, Ctrl-Y brings it back): ${prompt.text.slice(0, 100)}`,
         };
+    }
+
+    if (prompt.kind === "unknown") {
+        return { skip: `the last line is not a shell prompt this restore knows: ${lastLine(screen).slice(0, 100)}` };
     }
 
     return {};
@@ -427,7 +446,14 @@ export async function runInPlaceRestore(
                 { ...step.surface, screen: undefined },
                 live.workspaceId ?? live.workspaceRef,
                 live.id,
-                { prefix: "", replay: opts.replay, enter: enter && opts.replay, yes: true, dryRun: false }
+                {
+                    prefix: "",
+                    replay: opts.replay,
+                    enter: enter && opts.replay,
+                    yes: true,
+                    dryRun: false,
+                    neverFocus: true,
+                }
             );
 
             if (reason) {

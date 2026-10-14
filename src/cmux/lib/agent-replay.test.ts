@@ -113,6 +113,23 @@ describe("matchGrokSession", () => {
 });
 
 describe("replayCommandForSurface", () => {
+    // The shell journal saw the user type the session id; a title match must not replace it.
+    test("a typed resume id with no journal session is resumed as typed, with typed evidence", () => {
+        const typed = "tools claude start work -- --resume 6bdfb457-cee9-4202-8105-21be8a801757";
+        const other = {
+            kind: "claude" as const,
+            sessionId: "11111111-2222-4333-8444-555555555555",
+            cwd: "/repo",
+            title: "fix the bug",
+        };
+        const result = replayCommandForSurface(
+            { title: "✳ fix the bug", cwd: "/repo", command: typed, command_source: "shell-journal" },
+            { sessions: [other] }
+        );
+
+        expect(result).toEqual({ command: typed, drift: [], evidence: "typed" });
+    });
+
     test("infers grok -r when the profile only saved a cwd (crash offline capture)", () => {
         // Regression test: 2026-09-02 — tools cmux profiles restore crash-20260902-1238
         // only typed `cd` because 30/35 surfaces had no command field.

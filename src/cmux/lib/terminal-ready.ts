@@ -3,26 +3,54 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
 
-export function isShellPromptReady(text: string): boolean {
-    if (/Claude Code|OpenAI Codex|(?:^|\n)\s*Grok(?:\s+CLI|\s+v?\d|\s*$)/i.test(stripAnsi(text))) {
-        return false;
-    }
+/**
+ * Shell prompts that carry context (a directory, a host, a git branch), each with the typed text, if any, as group 1.
+ * No agent UI draws these, so a screen whose last line is one of them is a shell, whatever older lines show.
+ */
+const CONTEXT_PROMPTS: readonly RegExp[] = [
+    /^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?(?:\s+(\S.*?))?\s*$/u,
+    /^\[[^\]]+\]\s*[$#%](?:\s+(\S.*?))?\s*$/u,
+    /^[\w.-]+@[\w.-]+:\S*[$#%](?:\s+(\S.*?))?\s*$/u,
+    // macOS ships `PS1="%n@%m %1~ %# "`, so an untouched default shell prints
+    // `user@host ~ %` — space separated, no colon.
+    /^[\w.-]+@[\w.-]+(?:\s+\S+)+?\s+[%#$](?:\s+(\S.*?))?\s*$/u,
+];
+
+/** Bare prompts (`name%`, `$`, `❯`). An agent's input box draws the same glyphs. */
+const BARE_PROMPTS: readonly RegExp[] = [/^[a-zA-Z_][\w.-]*[%#$]\s*$/u, /^\s*[$#%❯]\s*$/u];
+
+const AGENT_UI = /Claude Code|OpenAI Codex|(?:^|\n)\s*Grok(?:\s+CLI|\s+v?\d|\s*$)/i;
+
+/** What a terminal's last line shows: an empty shell prompt, a shell prompt with typed text, or anything else. */
+export type PromptState = { kind: "empty" } | { kind: "typed"; text: string } | { kind: "unknown" };
+
+export function classifyPrompt(screen: string): PromptState {
+    const clean = stripAnsi(screen);
     const last =
-        stripAnsi(text)
+        clean
             .split("\n")
             .map((line) => line.trimEnd())
             .filter(Boolean)
             .at(-1) ?? "";
-    return (
-        /^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?\s*$/u.test(last) ||
-        /^\[[^\]]+\]\s*[$#%]\s*$/u.test(last) ||
-        /^[\w.-]+@[\w.-]+:\S*[$#%]\s*$/u.test(last) ||
-        // macOS ships `PS1="%n@%m %1~ %# "`, so an untouched default shell prints
-        // `user@host ~ %` — space separated, no colon. It matched no other branch.
-        /^[\w.-]+@[\w.-]+(?:\s+\S+)+\s+[%#$]\s*$/u.test(last) ||
-        /^[a-zA-Z_][\w.-]*[%#$]\s*$/u.test(last) ||
-        /^\s*[$#%❯]\s*$/u.test(last)
-    );
+
+    for (const pattern of CONTEXT_PROMPTS) {
+        const match = pattern.exec(last);
+
+        if (match) {
+            return match[1] ? { kind: "typed", text: match[1] } : { kind: "empty" };
+        }
+    }
+
+    // A bare glyph is a shell only while no agent UI is on screen: Claude Code's input box is `❯ `.
+    if (BARE_PROMPTS.some((pattern) => pattern.test(last)) && !AGENT_UI.test(clean)) {
+        return { kind: "empty" };
+    }
+
+    return { kind: "unknown" };
+}
+
+export function isShellPromptReady(text: string): boolean {
+    return classifyPrompt(text).kind === "empty";
 }
 
 export async function waitForTerminalText({

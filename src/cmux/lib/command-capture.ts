@@ -167,29 +167,39 @@ export interface SurfaceSessionInfo {
 }
 
 /**
- * The session of the tab's own agent among the journal's candidates (Sonnet review F11, 2026-10-14):
- * - the typed command names an agent (`grok -r …`, `tools codex run …`): that agent's newest session;
+ * The session of the tab's own agent among the journal's candidates (Sonnet review F9 and F11, 2026-10-14):
+ * - the typed command names an agent (`grok -r …`, `tools codex run …`): that agent's newest session, and only
+ *   when the journal saw it after the command started. An older one belongs to an earlier run in the tab: resuming
+ *   it under the new command's account opened another session's history (probe E of the review);
  * - otherwise (any alias, `cr work`, a shell function): of the sessions seen after the command started, the one the
  *   command started first, because workers start later, from inside it;
  * - no command, or nothing after it: the newest session.
  */
+/** When the journal saw the session; a session read off a live process (no `at`) runs now. */
+function seenAt(session: SurfaceSessionInfo): number {
+    return session.at ?? Number.POSITIVE_INFINITY;
+}
+
 export function pickSurfaceSession(
     info: SurfaceSessionInfo | undefined,
     typed?: Pick<CapturedCommand, "command" | "atMs">
 ): SurfaceSessionInfo | undefined {
-    const candidates = info?.candidates;
-
-    if (!info || !candidates || candidates.length < 2 || !typed) {
+    if (!info || !typed) {
         return info;
     }
 
+    const candidates = info.candidates ?? [info];
     const kind = agentKindFromLauncher(typed.command);
 
     if (kind) {
-        return candidates.find((candidate) => candidate.provider === kind) ?? info;
+        return candidates.find((candidate) => candidate.provider === kind && seenAt(candidate) >= typed.atMs);
     }
 
-    const after = candidates.filter((candidate) => (candidate.at ?? 0) >= typed.atMs);
+    if (candidates.length < 2) {
+        return info;
+    }
+
+    const after = candidates.filter((candidate) => seenAt(candidate) >= typed.atMs);
 
     if (after.length === 0) {
         return info;
@@ -198,6 +208,21 @@ export function pickSurfaceSession(
     return after.reduce((first, candidate) =>
         (candidate.firstAt ?? candidate.at ?? 0) < (first.firstAt ?? first.at ?? 0) ? candidate : first
     );
+}
+
+/** The drift line for a tab whose journal session `pickSurfaceSession` set aside as older than the typed launcher. */
+export function staleSessionNote(
+    recorded: SurfaceSessionInfo | undefined,
+    picked: SurfaceSessionInfo | undefined,
+    typed: Pick<CapturedCommand, "command"> | undefined
+): string[] {
+    if (!recorded || picked || !typed) {
+        return [];
+    }
+
+    return [
+        `the surface journal saw ${recorded.provider} session ${recorded.sessionId} here only before \`${typed.command.split("\n")[0].slice(0, 60)}\` started, so that session is not resumed`,
+    ];
 }
 
 /** surface uuid (CMUX_SURFACE_ID) → newest known agent session + account. */

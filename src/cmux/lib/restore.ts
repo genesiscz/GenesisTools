@@ -28,6 +28,11 @@ export interface RestoreOptions {
     dryRun: boolean;
     /** Explicit destination; otherwise cmux uses the current window. */
     window?: string;
+    /**
+     * Never focus a tab, not even one cmux cannot read yet. The in-place restore types into tabs the user is not
+     * looking at; only the new-workspace restore may raise one (Sonnet F16).
+     */
+    neverFocus?: boolean;
 }
 
 export interface RestorePlanWorkspace {
@@ -608,7 +613,7 @@ export async function replayTerminal(
         surfaceId: surfaceId,
         matches: isShellPromptReady,
         description: "shell prompt",
-        activateOnUnavailable: true,
+        activateOnUnavailable: opts.neverFocus !== true,
     });
     if (!opts.replay) {
         if (surface.cwd) {

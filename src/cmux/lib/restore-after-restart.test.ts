@@ -199,6 +199,8 @@ describe("planInPlaceRestore", () => {
             cwd: "/Users/me/Projects/App",
             command,
             command_source: "shell-journal",
+            // What a live capture sets when the surface journal named the session.
+            resume_evidence: "journal",
             ...extra,
         };
     }
@@ -283,6 +285,28 @@ describe("planInPlaceRestore", () => {
         expect(byTitle.get("gone")).toMatchObject({ live: undefined, skip: "the tab is no longer in the live layout" });
         expect(planned("stale grok")).toEqual(["agent", undefined, "quit-stale-agent"]);
         expect(byTitle.get("already")?.skip).toBe("already runs the recorded session");
+    });
+
+    // Sonnet F7 and F18 (2026-10-14): a path that set no evidence, or a tab whose screen cmux could not read, is
+    // never typed into. The old rule skipped only "weak", and an unread screen became a blind Ctrl-U.
+    test("a session with no recorded evidence, or a tab with an unreadable screen, is skipped with its reason", () => {
+        const noEvidence = planInPlaceRestore(
+            liveProfile([{ ...tab(1, "alias", `ffff work -- --resume ${CLAUDE_ID}`), resume_evidence: undefined }]),
+            state
+        );
+        expect(noEvidence[0]?.skip).toContain("no evidence recorded for this session");
+
+        const unread = { ...state, screens: new Map([...state.screens].filter(([key]) => key !== uuid(1))) };
+        const blind = planInPlaceRestore(liveProfile([tab(1, "alias", `ffff work -- --resume ${CLAUDE_ID}`)]), unread);
+        expect(blind[0]?.prepare).toBeUndefined();
+        expect(blind[0]?.skip).toContain("could not read this tab's screen");
+
+        const strange = { ...state, screens: new Map([...state.screens, [uuid(1), "some program output"]]) };
+        const unknown = planInPlaceRestore(
+            liveProfile([tab(1, "alias", `ffff work -- --resume ${CLAUDE_ID}`)]),
+            strange
+        );
+        expect(unknown[0]?.skip).toContain("not a shell prompt this restore knows");
     });
 
     test("a stale agent that already opened its session is never quit", () => {

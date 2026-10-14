@@ -61,14 +61,14 @@ export interface TerminalSurface {
      */
     drift?: string[];
     /**
-     * What picked the session the command resumes: the tab's own surface journal, the tab title in the tab's
-     * directory, or weaker evidence (first-prompt words, a title in another directory). `--in-place` does
-     * not type a `weak` pick by itself.
+     * What picked the session the command resumes: the tab's own surface journal, the session id the typed
+     * command names, the tab title in the tab's directory, or weaker evidence (first-prompt words, a title in
+     * another directory). `--in-place` types only `journal`, `typed` and `title`; an unset value is no evidence.
      */
     resume_evidence?: ResumeEvidence;
 }
 
-export type ResumeEvidence = "journal" | "title" | "weak";
+export type ResumeEvidence = "journal" | "typed" | "title" | "weak";
 
 export interface BrowserSurface {
     type: "browser";

@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
+import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import * as cli from "@genesiscz/utils/cmux/lib/cli";
 
 afterEach(() => mock.restore());
@@ -104,7 +104,6 @@ test("the stock macOS zsh prompt is ready, and its running commands are not", ()
 
     expect(isShellPromptReady("alice@Alices-MacBook-Pro ~ % bun run test")).toBe(false);
     expect(isShellPromptReady("alice@Alices-MacBook-Pro ~ % echo 100%")).toBe(false);
-    expect(isShellPromptReady("Claude Code\nalice@Alices-MacBook-Pro ~ % ")).toBe(false);
 });
 
 test("a failed optional focus RPC does not abort readiness polling", async () => {
@@ -124,10 +123,28 @@ test("a failed optional focus RPC does not abort readiness polling", async () =>
     expect(activate).toHaveBeenCalledTimes(1);
 });
 
-test("agent-screen rejection applies to every supported prompt shape", () => {
-    for (const prompt of ["➜ repo", "[status]#", "user@host:path$", "host%", "❯"]) {
-        expect(isShellPromptReady(`Claude Code\n${prompt}`)).toBe(false);
+// After a cmux relaunch every tab that ran an agent repaints its old scrollback, Claude Code's banner included,
+// above the new shell prompt. A prompt with a directory or host is a shell whatever older lines show; only a bare
+// glyph, which an agent's input box draws too, needs the agent words to be absent.
+test("agent words above a context prompt are old scrollback; above a bare glyph they are an agent's input box", () => {
+    for (const prompt of ["➜ repo", "[status]#", "user@host:path$", "alice@Alices-MacBook-Pro ~ % "]) {
+        expect(isShellPromptReady(`Claude Code\n${prompt}`)).toBe(true);
     }
+
+    for (const prompt of ["host%", "❯", "$"]) {
+        expect(isShellPromptReady(`Claude Code\n${prompt}`)).toBe(false);
+        expect(isShellPromptReady(prompt)).toBe(true);
+    }
+
     expect(isShellPromptReady("100%")).toBe(false);
     expect(isShellPromptReady("➜ grok")).toBe(true);
+});
+
+test("classifyPrompt tells an empty prompt from typed text and from a screen it does not know", () => {
+    expect(classifyPrompt("➜  repo git:(main) ✗ ")).toEqual({ kind: "empty" });
+    expect(classifyPrompt("➜  repo git:(main) ✗ git sta")).toEqual({ kind: "typed", text: "git sta" });
+    expect(classifyPrompt("alice@Alices-MacBook-Pro Google Drive % ls -la")).toEqual({ kind: "typed", text: "ls -la" });
+    expect(classifyPrompt("")).toEqual({ kind: "unknown" });
+    expect(classifyPrompt("Claude Code\n❯ ")).toEqual({ kind: "unknown" });
+    expect(classifyPrompt("Last login: today\nYou have mail.")).toEqual({ kind: "unknown" });
 });

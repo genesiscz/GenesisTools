@@ -297,6 +297,16 @@ export function replayCommandForSurface(
     // only for the kind of agent the pane shows: a claude journal id typed into
     // `grok -r` names a session grok has never seen.
     const journal = kind && preferred?.kind === kind ? preferred : undefined;
+    // The command the shell journal saw typed in this tab names its own session (`cr work -- --resume <id>`,
+    // cmux's own `cmux restore claude <id>` rewritten): that id beats a title guess, which would replace it. A
+    // process-table command is not typed: a crash capture can attribute another tab's process to this one.
+    const typedId =
+        trusted && !journal && original && capturedKind === kind ? resumeTargetFromCommand(original) : undefined;
+
+    if (typedId && original) {
+        return { command: original, drift: [], evidence: "typed" };
+    }
+
     const matched =
         journal || !kind
             ? undefined

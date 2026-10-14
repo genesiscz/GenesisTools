@@ -23,6 +23,7 @@ import {
     loadSurfaceSessions,
     pickSurfaceSession,
     type SurfaceSessionInfo,
+    staleSessionNote,
 } from "@app/cmux/lib/command-capture";
 import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
@@ -223,7 +224,8 @@ export function buildOfflinePanes(
             const screen =
                 deps.captureScreen !== false && !isCaller && text ? { text, rows: text.split("\n").length } : undefined;
             // The tab's own agent among the journal's candidates, by what the tab last ran.
-            const session = pickSurfaceSession(deps.surfaceSessions.get(cmuxIdKey(panel.id)), captured);
+            const recordedSession = deps.surfaceSessions.get(cmuxIdKey(panel.id));
+            const session = pickSurfaceSession(recordedSession, captured);
             const capturedReplay = captured ? journalReplayCommand(captured, session) : undefined;
             const capturedCommand = capturedReplay?.command;
             const recorded =
@@ -242,6 +244,7 @@ export function buildOfflinePanes(
                 const bound = nativeResumeRecord(panel);
                 surfaces.push({
                     type: "terminal",
+                    surface_id: panel.id,
                     title: panel.title ?? "",
                     screen,
                     cwd,
@@ -284,6 +287,7 @@ export function buildOfflinePanes(
                 });
                 surfaces.push({
                     type: "terminal",
+                    surface_id: panel.id,
                     title: panel.title ?? "",
                     screen,
                     cwd: captured?.cwd ?? agent?.workingDirectory ?? binding?.cwd ?? cwd,
@@ -324,10 +328,17 @@ export function buildOfflinePanes(
                 preferred
             );
 
-            const drift = derived.command ? [...(capturedReplay?.drift ?? []), ...derived.drift] : derived.drift;
+            const drift = derived.command
+                ? [
+                      ...staleSessionNote(recordedSession, session, captured),
+                      ...(capturedReplay?.drift ?? []),
+                      ...derived.drift,
+                  ]
+                : derived.drift;
 
             surfaces.push({
                 type: "terminal",
+                surface_id: panel.id,
                 title: panel.title ?? "",
                 screen,
                 cwd,

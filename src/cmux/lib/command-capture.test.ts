@@ -16,6 +16,7 @@ import {
     resumeQueryFromCommand,
     resumeTargetFromCommand,
     setCcRunAliases,
+    staleSessionNote,
     stripModelFlags,
 } from "@app/cmux/lib/command-capture";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -711,6 +712,22 @@ describe("pickSurfaceSession", () => {
         expect(pickSurfaceSession(info)?.sessionId).toBe(codexWorker.sessionId);
         expect(pickSurfaceSession({ ...claude }, { command: "ffff work", atMs: 1_000 })?.sessionId).toBe(
             claude.sessionId
+        );
+    });
+
+    // Sonnet F9, probe E: `cr other` typed after the journal last saw a session in the tab. That session belongs
+    // to an earlier run; resuming it under the new command's account opened another account's history.
+    test("a launcher that names its agent takes only a session the journal saw after it started", () => {
+        expect(pickSurfaceSession({ ...claude }, { command: "claude --model x", atMs: 5_000 })).toBeUndefined();
+        expect(pickSurfaceSession({ ...claude }, { command: "claude --model x", atMs: 1_500 })?.sessionId).toBe(
+            claude.sessionId
+        );
+        // A session read off a live process has no record time: it runs now.
+        expect(
+            pickSurfaceSession({ ...claude, at: undefined }, { command: "claude --model x", atMs: 5_000 })?.sessionId
+        ).toBe(claude.sessionId);
+        expect(staleSessionNote({ ...claude }, undefined, { command: "claude --model x" })[0]).toContain(
+            "only before `claude --model x` started"
         );
     });
 });
