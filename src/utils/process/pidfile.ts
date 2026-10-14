@@ -154,13 +154,15 @@ export function parsePidRecord(raw: string): PidRecord | null {
  */
 export function classifyPidRecord(record: PidRecord, expected?: PidExpectation): PidIdentity {
     const identity = classifyPid(record.pid, record.command ?? expected);
-    if (identity.status === "live" && record.startedAt !== null) {
+    // A record without a command (one taken before a child's exec, or of a process this user cannot read) still
+    // carries its start time, and a different start time is a recycled pid.
+    if ((identity.status === "live" || identity.status === "unverified") && record.startedAt !== null) {
         const startedAt = processStartMs(record.pid);
         if (startedAt !== null && Math.abs(startedAt - record.startedAt) > START_MS_TOLERANCE) {
             return {
                 status: "foreign",
                 pid: record.pid,
-                command: identity.command ?? "(unknown)",
+                command: (identity.status === "live" ? identity.command : null) ?? "(unknown)",
             };
         }
     }
@@ -184,7 +186,12 @@ export function readPidRecord(path: string): PidRecord | null {
 
 /** Capture a pid together with the identity that makes it verifiable later. */
 export function buildPidRecord(pid: number = process.pid): PidRecord {
-    return { pid, command: readProcessCommand(pid), startedAt: processStartMs(pid), writtenAt: Date.now() };
+    const command = readProcessCommand(pid);
+    // Linux spawns by fork then exec, and until the exec the child shows this process's command line; the kernel read
+    // is fast enough to see that. A record naming us would read as foreign once the child execs, so it keeps only the
+    // start time, which the exec does not change. macOS starts children with posix_spawn, which has no such window.
+    const beforeExec = pid !== process.pid && command !== null && command === readProcessCommand(process.pid);
+    return { pid, command: beforeExec ? null : command, startedAt: processStartMs(pid), writtenAt: Date.now() };
 }
 
 /** The on-disk form of a record. Paired with {@link buildPidRecord} for callers that own their write. */

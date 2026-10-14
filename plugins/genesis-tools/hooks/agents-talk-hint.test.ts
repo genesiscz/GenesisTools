@@ -198,13 +198,14 @@ describe("native-inbox-hint", () => {
         const home = mkdtempSync(join(tmpdir(), "native-inbox-hint-live-"));
         const bundle = join(home, "Applications", "GenesisTools Preview.app");
         const lock = join(home, "worker.lock");
-        const watcher = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)", "widget", "watch"], {
-            env: process.env,
-            stdout: "ignore",
-            stderr: "ignore",
-        });
+        const watcher = Bun.spawn(
+            [process.execPath, "-e", "console.log('ready'); setTimeout(() => {}, 30000)", "widget", "watch"],
+            { env: process.env, stdout: "pipe", stderr: "ignore" }
+        );
 
         try {
+            // Linux runs a child's exec after the spawn returns; until then the child shows this test's command line.
+            await watcher.stdout.getReader().read();
             mkdirSync(bundle, { recursive: true });
             mkdirSync(join(home, ".genesis-tools", "app"), { recursive: true });
             writeFileSync(lock, serializePidRecord(buildPidRecord(watcher.pid)));

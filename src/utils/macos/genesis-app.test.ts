@@ -246,13 +246,14 @@ describe("nativeInboxState", () => {
         expect(isWidgetWatchCommand("bun /repo/src/watch/index.ts watchwidget")).toBe(false);
         const dir = mkdtempSync(join(tmpdir(), "native-inbox-lock-"));
         const lock = join(dir, "worker.lock");
-        const watcher = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)", "widget", "watch"], {
-            env: process.env,
-            stdout: "ignore",
-            stderr: "ignore",
-        });
+        const watcher = Bun.spawn(
+            [process.execPath, "-e", "console.log('ready'); setTimeout(() => {}, 30000)", "widget", "watch"],
+            { env: process.env, stdout: "pipe", stderr: "ignore" }
+        );
 
         try {
+            // Linux runs a child's exec after the spawn returns; until then the child shows this test's command line.
+            await watcher.stdout.getReader().read();
             writeFileSync(lock, serializePidRecord(buildPidRecord(watcher.pid)));
             expect(isWidgetWatchCommand(buildPidRecord(watcher.pid).command)).toBe(true);
             expect(isLiveWidgetLock(lock)).toBe(true);
