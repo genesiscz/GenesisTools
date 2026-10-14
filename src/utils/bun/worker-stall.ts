@@ -47,7 +47,8 @@ export function readStallSnapshot(pid: number, procRoot = "/proc"): StallSnapsho
     let tids: string[];
 
     try {
-        tids = readdirSync(`${procRoot}/${pid}/task`);
+        // Sorted: Linux lists /proc in no fixed order (macOS sorts), and a report reads better by tid.
+        tids = readdirSync(`${procRoot}/${pid}/task`).sort((a, b) => Number(a) - Number(b));
     } catch {
         return { threads: [], children: [] };
     }
@@ -68,11 +69,13 @@ export function readStallSnapshot(pid: number, procRoot = "/proc"): StallSnapsho
         }
     }
 
-    const children = [...childPids].map((child) => ({
-        pid: child,
-        state: nameAndState(read(`${procRoot}/${child}/stat`)).state,
-        command: (read(`${procRoot}/${child}/cmdline`) ?? "").replaceAll("\0", " ").trim().slice(0, 200),
-    }));
+    const children = [...childPids]
+        .sort((a, b) => a - b)
+        .map((child) => ({
+            pid: child,
+            state: nameAndState(read(`${procRoot}/${child}/stat`)).state,
+            command: (read(`${procRoot}/${child}/cmdline`) ?? "").replaceAll("\0", " ").trim().slice(0, 200),
+        }));
 
     return { threads, children };
 }
