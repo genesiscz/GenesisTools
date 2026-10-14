@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { homedir } from "node:os";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { configCandidates, resolveActiveVault } from "@genesiscz/utils/obsidian/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
 /**
@@ -48,5 +52,80 @@ describe("test sandbox preload", () => {
         // lint-rules-ignore: asserts against the REAL home on purpose — the repair must not restore it to the real store
         expect(root).not.toBe(homedir());
         expect(new Storage("sandbox-probe").getBaseDir()).toContain(".genesis-tools/sandbox-probe");
+    });
+});
+
+describe("Obsidian sandbox between tests", () => {
+    const sandbox = env.getTrimmed("OBSIDIAN_CONFIG_DIR");
+    const home = mkdtempSync(join(tmpdir(), "obsidian-preload-home-"));
+    const vault = join(home, "fixture-vault");
+    const config = configCandidates({ HOME: home })[0];
+    mkdirSync(vault);
+    mkdirSync(dirname(config), { recursive: true });
+    writeFileSync(config, SafeJSON.stringify({ vaults: { fixture: { path: vault, ts: 1, open: true } } }));
+    const discover = () =>
+        resolveActiveVault({ HOME: home, OBSIDIAN_CONFIG_DIR: env.getTrimmed("OBSIDIAN_CONFIG_DIR") });
+
+    test("the real preload blocks a fake platform vault by default", () => {
+        expect(sandbox).toBeTruthy();
+        expect(resolveActiveVault({ HOME: home })).toBe(vault);
+        expect(discover()).toBeNull();
+    });
+
+    // Each mutation and its assertion run in separate tests so the real preload's afterEach runs between them.
+    for (const cleared of [undefined, "", " \t "]) {
+        test(`fixture cleanup may clear the override to ${SafeJSON.stringify(cleared)}`, () => {
+            if (cleared === undefined) {
+                env.testing.unset("OBSIDIAN_CONFIG_DIR");
+            } else {
+                env.testing.set("OBSIDIAN_CONFIG_DIR", cleared);
+            }
+
+            expect(env.getTrimmed("OBSIDIAN_CONFIG_DIR")).toBeUndefined();
+        });
+
+        test(`the next test is isolated after clearing to ${SafeJSON.stringify(cleared)}`, () => {
+            expect(env.getTrimmed("OBSIDIAN_CONFIG_DIR")).toBe(sandbox);
+            expect(discover()).toBeNull();
+        });
+    }
+
+    test("a test may select a nonempty fixture override", () => {
+        env.testing.set("OBSIDIAN_CONFIG_DIR", dirname(config));
+        expect(discover()).toBe(vault);
+    });
+
+    test("the next test retains the nonempty fixture override", () => {
+        try {
+            expect(env.getTrimmed("OBSIDIAN_CONFIG_DIR")).toBe(dirname(config));
+            expect(discover()).toBe(vault);
+        } finally {
+            env.testing.unset("OBSIDIAN_CONFIG_DIR");
+        }
+    });
+
+    const originalOptOut = env.get("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME");
+    test("the explicit real-home escape hatch may leave the override absent", () => {
+        env.testing.set("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME", "1");
+        env.testing.unset("OBSIDIAN_CONFIG_DIR");
+        expect(discover()).toBe(vault);
+    });
+
+    test("the next test respects the escape hatch", () => {
+        try {
+            expect(env.getTrimmed("OBSIDIAN_CONFIG_DIR")).toBeUndefined();
+            expect(discover()).toBe(vault);
+        } finally {
+            if (originalOptOut === undefined) {
+                env.testing.unset("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME");
+            } else {
+                env.testing.set("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME", originalOptOut);
+            }
+        }
+    });
+
+    test("isolation resumes after the escape hatch is removed", () => {
+        expect(env.getTrimmed("OBSIDIAN_CONFIG_DIR")).toBe(sandbox);
+        expect(discover()).toBeNull();
     });
 });

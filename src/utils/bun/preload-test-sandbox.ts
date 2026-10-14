@@ -111,7 +111,15 @@ function isolateObsidian(): void {
         return;
     }
 
-    env.testing.set("OBSIDIAN_CONFIG_DIR", mkdtempSync(join(tmpdir(), "gt-test-obsidian-")));
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "gt-test-obsidian-"));
+    env.testing.set("OBSIDIAN_CONFIG_DIR", sandboxRoot);
+    afterEach(() => {
+        if (env.test.allowsRealHome() || env.getTrimmed("OBSIDIAN_CONFIG_DIR")) {
+            return;
+        }
+
+        env.testing.set("OBSIDIAN_CONFIG_DIR", sandboxRoot);
+    });
 }
 
 installSandbox();
