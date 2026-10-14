@@ -24,6 +24,11 @@ export interface RunCard {
     /** Parent folder of the per-PR worker worktrees (`bs-<N>`). */
     worktrees: string;
     reviewLoopScripts: string;
+    /**
+     * The brief's verify bullets for a repository whose checks are not GenesisTools' (run.json `verify`, one string
+     * per bullet). Unset: fill-brief writes GenesisTools' test, tsgo, Biome and lint-rules commands.
+     */
+    verify?: string[];
 }
 
 export function flag(name: string): string | undefined {
@@ -63,6 +68,10 @@ export function loadRun(dir = flag("--run") ?? process.env.BABYSIT_RUN): RunCard
         judge: text("judge") ?? "Claude",
         worktrees: text("worktrees") ?? join(runDir, "worktrees"),
         reviewLoopScripts: text("reviewLoopScripts") ?? join(homedir(), ".claude/skills/review-loop/scripts"),
+        verify:
+            Array.isArray(card.verify) && card.verify.every((line) => typeof line === "string")
+                ? (card.verify as string[])
+                : undefined,
     };
 }
 

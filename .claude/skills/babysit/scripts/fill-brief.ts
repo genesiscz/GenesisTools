@@ -35,17 +35,23 @@ const policy =
     round <= 2
         ? `Round ${round}: fix EVERY valid finding, critical, high, medium and low.`
         : `Round ${round}: fix only critical and high findings. A new medium or low finding gets a verdict and a reply (no code change unless it is a one-line obvious fix), so the lead can resolve it.`;
-const verify = [
-    "   - `bun scripts/test.ts <the test file of every file you changed>` (never bare `bun test`; it must end with `[test] suite complete`)",
-    "   - `./node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo --noEmit` (not `bunx tsgo`: it hangs in /tmp worktrees)",
-    "   - `bunx biome check <each changed file>`",
-    "   - `bun run lint:rules` and `bun scripts/ci/check-tool-commands.ts`",
-    ...(has("--swift")
-        ? [
-              "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen.",
-          ]
-        : []),
-].join("\n");
+// Another repository's run card names its own checks: GenesisTools' commands do not exist there (2026-10-14,
+// GenesisPlayground #94 round 2 got `bun scripts/test.ts` and lint-rules in its brief).
+const verify = run.verify ? run.verify.map((line) => `   - ${line}`).join("\n") : defaultVerify();
+
+function defaultVerify(): string {
+    return [
+        "   - `bun scripts/test.ts <the test file of every file you changed>` (never bare `bun test`; it must end with `[test] suite complete`)",
+        "   - `./node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo --noEmit` (not `bunx tsgo`: it hangs in /tmp worktrees)",
+        "   - `bunx biome check <each changed file>`",
+        "   - `bun run lint:rules` and `bun scripts/ci/check-tool-commands.ts`",
+        ...(has("--swift")
+            ? [
+                  "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen.",
+              ]
+            : []),
+    ].join("\n");
+}
 const judgeSection = judgeFile
     ? `## The lead's judge findings on your earlier commit (fix these in this round too)\n\n${readFileSync(judgeFile, "utf8").trim()}\n\nTreat each like a review finding: fix it, test it where behaviour changes, and add one reply item per finding with no threadId and reviewer "lead".\n\n`
     : "";
