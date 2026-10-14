@@ -10,7 +10,7 @@ import {
     symlinkSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -647,7 +647,10 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         // This test is on a CPU while it reads itself.
         expect(usage?.running).toBe(true);
         expect(countOpenFiles(process.pid)).toBeGreaterThanOrEqual(3);
-        expect(userName(process.getuid?.() ?? -1)).toBe(userInfo().username);
+        // The system database's name, as `id -un` prints it: Bun's userInfo() reads $USER, which a container leaves unset.
+        expect(userName(process.getuid?.() ?? -1)).toBe(
+            Bun.spawnSync(["id", "-un"], { env: process.env }).stdout.toString().trim()
+        );
         expect(userName(0)).toBe("root");
     });
 
@@ -784,14 +787,14 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         "cpu: a process idle at first and busy now shows busy, as ps -o %cpu= shows it",
         async () => {
             // The running bun, not a new executable: a fresh file per run is what crashed syspolicyd on 2026-10-14.
-            const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => { for (;;) {} }, 1500)"], {
+            const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => { for (;;) {} }, 3000)"], {
                 stdout: "ignore",
                 stderr: "ignore",
                 env: process.env,
             });
 
             try {
-                await Bun.sleep(4_000);
+                await Bun.sleep(6_000);
                 const ours = readCpuPercents([child.pid]).get(child.pid) ?? 0;
                 const fromPs = Number(
                     Bun.spawnSync(["ps", "-o", "pcpu=", "-p", String(child.pid)], { env: process.env })
@@ -802,9 +805,10 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
                 const usage = readProcessUsages([child.pid]).get(child.pid);
                 const lifetime = (100 * (usage?.cpuTimeMs ?? 0)) / (Date.now() - startMs);
 
-                // About 2.5 s of 4 busy: the lifetime average is near 60%, recent usage near 100%.
+                // Half the life busy: the lifetime average is half of the share of a core the child got, recent usage
+                // most of it. A ratio, because a loaded machine gives the child less than a whole core.
                 expect(Math.abs(ours - fromPs)).toBeLessThan(15);
-                expect(ours).toBeGreaterThan(lifetime + 15);
+                expect(ours).toBeGreaterThan(lifetime * 1.3);
             } finally {
                 child.kill();
                 await child.exited;
