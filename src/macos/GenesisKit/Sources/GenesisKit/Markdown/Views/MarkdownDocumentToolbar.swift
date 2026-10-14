@@ -98,7 +98,10 @@ struct MarkdownDocumentToolbar: View {
                 }
             }
             .layoutPriority(1)
-            .background(alignment: .leading) { shortcuts }
+            // The window runs every other key (`MarkdownKeymap.registerWindowCommands`); these two need the share
+            // model's error line.
+            .keymapAction("markdown.file.pdf", in: MarkdownKeymap.shared, perform: exportPDF)
+            .keymapAction("markdown.file.print", in: MarkdownKeymap.shared, perform: printDocument)
 
             Spacer(minLength: 8)
 
@@ -145,14 +148,14 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "sidebar.left", label: "Files",
                     tint: model.showFiles ? model.theme.accent : nil,
-                    tooltip: "Files (⌘⇧B)", id: "markdown-files-toggle", labels: labels,
+                    tooltip: MarkdownKeymap.hint("Files", "markdown.view.files"), id: "markdown-files-toggle", labels: labels,
                     action: toggleFiles
                 )
                 groupDivider
                 toolButton(
                     "list.bullet.indent", label: "Outline",
                     tint: model.showOutline ? model.theme.accent : nil,
-                    tooltip: "Outline (⌘⇧O)", id: "markdown-outline-toggle", labels: labels,
+                    tooltip: MarkdownKeymap.hint("Outline", "markdown.view.outline"), id: "markdown-outline-toggle", labels: labels,
                     action: toggleOutline
                 )
                 if modes.contains(.changes) {
@@ -176,7 +179,8 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "square.and.arrow.down", label: "Save",
                     tint: doc.isDirty ? model.theme.accent : model.theme.textMuted,
-                    tooltip: doc.hasDiskChange ? "Save (⌘S) — resolve the change on disk first" : "Save (⌘S)",
+                    tooltip: MarkdownKeymap.hint("Save", "markdown.file.save")
+                        + (doc.hasDiskChange ? " — resolve the change on disk first" : ""),
                     id: "markdown-save", labels: labels
                 ) {
                     model.saveSelected()
@@ -199,12 +203,12 @@ struct MarkdownDocumentToolbar: View {
             MarkdownToolbarGroup(theme: model.theme) {
                 toolButton(
                     "arrow.triangle.2.circlepath", label: "Reload",
-                    tooltip: "Reload from disk (⌘R)", id: "markdown-reload", labels: labels
+                    tooltip: MarkdownKeymap.hint("Reload from disk", "markdown.file.reload"), id: "markdown-reload", labels: labels
                 ) {
                     doc.reload()
                 }
                 groupDivider
-                toolButton("folder", label: "Finder", tooltip: "Reveal in Finder (⌘⇧R)", id: "markdown-reveal", labels: labels, action: revealInFinder)
+                toolButton("folder", label: "Finder", tooltip: MarkdownKeymap.hint("Reveal in Finder", "markdown.file.reveal"), id: "markdown-reveal", labels: labels, action: revealInFinder)
                 groupDivider
                 toolButton("square.and.pencil", label: "Editor", tooltip: "Open in the default editor", id: "markdown-open-external", labels: labels) {
                     NSWorkspace.shared.open(doc.url)
@@ -223,7 +227,7 @@ struct MarkdownDocumentToolbar: View {
             // Smaller, the size, bigger: one control, so the percentage reads as the size it sets rather
             // than as a third button.
             MarkdownToolbarGroup(theme: model.theme) {
-                toolButton("textformat.size.smaller", label: "Smaller", tooltip: "Smaller (⌘-)", id: "markdown-zoom-out", labels: false) {
+                toolButton("textformat.size.smaller", label: "Smaller", tooltip: MarkdownKeymap.hint("Smaller", "markdown.view.smaller"), id: "markdown-zoom-out", labels: false) {
                     model.zoomStep(-1)
                 }
                 groupDivider
@@ -237,12 +241,12 @@ struct MarkdownDocumentToolbar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
-                .instantTooltip("Reset the reading size (⌘0)")
+                .instantTooltip(MarkdownKeymap.hint("Reset the reading size", "markdown.view.actualSize"))
                 .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
                 .accessibilityLabel("Reading size \(MarkdownZoom.percent(model.zoom)), reset")
                 .accessibilityIdentifier("markdown-zoom-reset")
                 groupDivider
-                toolButton("textformat.size.larger", label: "Bigger", tooltip: "Bigger (⌘+)", id: "markdown-zoom-in", labels: false) {
+                toolButton("textformat.size.larger", label: "Bigger", tooltip: MarkdownKeymap.hint("Bigger", "markdown.view.bigger"), id: "markdown-zoom-in", labels: false) {
                     model.zoomStep(1)
                 }
             }
@@ -251,14 +255,14 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "arrow.down.doc", label: "PDF",
                     tint: model.canExport ? nil : model.theme.textMuted,
-                    tooltip: "Save as PDF (⇧⌘S)", id: "markdown-export-pdf", labels: labels,
+                    tooltip: MarkdownKeymap.hint("Save as PDF", "markdown.file.pdf"), id: "markdown-export-pdf", labels: labels,
                     action: exportPDF
                 )
                 groupDivider
                 toolButton(
                     "printer", label: "Print",
                     tint: model.canExport ? nil : model.theme.textMuted,
-                    tooltip: "Print (⌘P)", id: "markdown-print", labels: labels,
+                    tooltip: MarkdownKeymap.hint("Print", "markdown.file.print"), id: "markdown-print", labels: labels,
                     action: printDocument
                 )
                 if share.available {
@@ -278,29 +282,6 @@ struct MarkdownDocumentToolbar: View {
         }
         // Each candidate row at its own width: `ViewThatFits` compares it with the room there is.
         .fixedSize()
-    }
-
-    /// Every keyboard shortcut of the row, on hidden buttons. `ViewThatFits` keeps each candidate row
-    /// alive, so a shortcut on a visible button would be there once per row.
-    private var shortcuts: some View {
-        ZStack {
-            Button("Files", action: toggleFiles).keyboardShortcut("b", modifiers: [.command, .shift])
-            Button("Outline", action: toggleOutline).keyboardShortcut("o", modifiers: [.command, .shift])
-            // ⌘E stays a toggle (reading view ↔ source), unlike the three segments of the mode picker.
-            Button("Source") { model.toggleSource() }.keyboardShortcut("e", modifiers: .command)
-            Button("Save") { model.saveSelected() }.keyboardShortcut("s", modifiers: .command)
-            Button("Reload") { doc.reload() }.keyboardShortcut("r", modifiers: .command)
-            Button("Reveal in Finder", action: revealInFinder).keyboardShortcut("r", modifiers: [.command, .shift])
-            Button("Smaller") { model.zoomStep(-1) }.keyboardShortcut("-", modifiers: .command)
-            Button("Actual Size") { model.zoomReset() }.keyboardShortcut("0", modifiers: .command)
-            Button("Bigger") { model.zoomStep(1) }.keyboardShortcut("+", modifiers: .command)
-            Button("Save as PDF", action: exportPDF).keyboardShortcut("s", modifiers: [.command, .shift])
-            Button("Print", action: printDocument).keyboardShortcut("p", modifiers: .command)
-        }
-        .buttonStyle(.genHoverPlain())
-        .frame(width: 0, height: 0)
-        .opacity(0)
-        .accessibilityHidden(true)
     }
 
     private func toggleFiles() {

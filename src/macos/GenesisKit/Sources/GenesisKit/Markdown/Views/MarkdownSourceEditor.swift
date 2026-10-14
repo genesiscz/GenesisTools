@@ -474,23 +474,21 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             parent.text = view.string
         }
 
-        /// ⌘B, ⌘I, ⌘K, ⌘⇧X. None of these are AppKit commands in a plain text
-        /// view, so they arrive as key equivalents rather than through
+        /// Bold, italic, link and task (`MarkdownKeymap`, scope `markdown.source`; ⌘B, ⌘I, ⌘K, ⇧⌘X by default). None of
+        /// these are AppKit commands in a plain text view, so they arrive as key equivalents rather than through
         /// `doCommandBy`.
         func handle(_ event: NSEvent) -> Bool {
-            guard let view else { return false }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else { return false }
-            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-            let shift = flags.contains(.shift)
+            // Key equivalents arrive on the main thread.
+            guard let view, let command = MainActor.assumeIsolated({ MarkdownKeymap.sourceCommand(for: event) })
+            else { return false }
             let text = view.string
             let sel = view.selectedRange()
             let edit: SourceEditing.Edit
-            switch (key, shift) {
-            case ("b", false): edit = SourceEditing.wrap(text, selection: sel, marks: "**")
-            case ("i", false): edit = SourceEditing.wrap(text, selection: sel, marks: "*")
-            case ("k", false): edit = SourceEditing.link(text, selection: sel)
-            case ("x", true): edit = SourceEditing.toggleTask(text, selection: sel)
+            switch command {
+            case "markdown.edit.bold": edit = SourceEditing.wrap(text, selection: sel, marks: "**")
+            case "markdown.edit.italic": edit = SourceEditing.wrap(text, selection: sel, marks: "*")
+            case "markdown.edit.link": edit = SourceEditing.link(text, selection: sel)
+            case "markdown.edit.task": edit = SourceEditing.toggleTask(text, selection: sel)
             default: return false
             }
             Self.apply(edit, to: view)

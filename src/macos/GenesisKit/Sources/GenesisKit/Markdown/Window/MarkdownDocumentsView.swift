@@ -169,38 +169,8 @@ struct MarkdownDocumentsView: View {
             model.acceptDrop(urls)
             return true
         }
-        .overlay(alignment: .topLeading) {
-            // ⌘F has no button of its own; the shortcut needs a live view to hang on.
-            VStack {
-                Button("Find") { model.openFind() }
-                    .keyboardShortcut("f", modifiers: .command)
-                Button("Bigger") { model.zoomStep(1) }
-                    .keyboardShortcut("=", modifiers: .command)
-                Button("Reopen closed tab") { model.reopenLastClosed() }
-                    .keyboardShortcut("t", modifiers: [.command, .shift])
-                Button("Split editor and preview") { model.toggleSplit() }
-                    .keyboardShortcut("e", modifiers: [.command, .shift])
-                // ⌘W used to reach the main menu's Close and take the whole
-                // window with every tab in it. Caught here, before the menu,
-                // it closes the selected tab; ⌘⇧W is the window.
-                Button("Close tab") { MarkdownDocumentWindowController.shared.closeSelectedTabOrWindow() }
-                    .keyboardShortcut("w", modifiers: .command)
-                Button("Close window") { MarkdownDocumentWindowController.shared.window?.performClose(nil) }
-                    .keyboardShortcut("w", modifiers: [.command, .shift])
-                Button("Find in files") { model.openTreeSearch() }
-                    .keyboardShortcut("f", modifiers: [.command, .shift])
-                // Here as well as in the viewer's menu: the window also runs inside Genesis.app,
-                // whose menu does not have it.
-                Button("Go to Location") { model.goToOpen = true }
-                    .keyboardShortcut("g", modifiers: [.command, .shift])
-                // ⌘⇧] / ⌘⇧[ live in `MarkdownDocumentWindow.performKeyEquivalent`,
-                // matched by key position rather than by character.
-            }
-            .buttonStyle(.genHoverPlain())
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .accessibilityHidden(true)
-        }
+        // The window's keys run through `MarkdownKeymap.registerWindowCommands`, in Genesis.app's process as well
+        // as the viewer's own.
     }
 
     private var tabBar: some View {

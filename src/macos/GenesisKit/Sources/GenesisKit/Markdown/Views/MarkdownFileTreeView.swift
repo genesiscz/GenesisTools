@@ -502,7 +502,7 @@ struct MarkdownFileTreeView: View {
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityIdentifier("markdown-files-search-toggle")
-            .instantTooltip("Find a file by name, or text in files (⌘⇧F)")
+            .instantTooltip(MarkdownKeymap.hint("Find a file by name, or text in files", "markdown.find.files"))
 
             Button {
                 tree.reload()

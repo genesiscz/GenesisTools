@@ -109,7 +109,9 @@ struct MarkdownRevisionBanner: View {
             Button("Compare with current") { model.compareRevision(revision.commit, with: nil, of: doc) }
                 .accessibilityIdentifier("markdown-revision-compare")
             Button("Restore") { model.restoreRevision(revision, in: doc) }
-                .instantTooltip("This version becomes the unsaved text: ⌘Z takes it back, ⌘S saves it")
+                .instantTooltip(
+                    "This version becomes the unsaved text: \(MarkdownKeymap.label("markdown.edit.undo")) takes it back, "
+                        + "\(MarkdownKeymap.label("markdown.file.save")) saves it")
                 .accessibilityIdentifier("markdown-revision-restore")
             Button("Close") { model.revisionView = nil }
                 .accessibilityIdentifier("markdown-revision-close")
