@@ -347,7 +347,15 @@ export function loadMentions(sessionId: string | undefined): Mentions {
 }
 
 /** Appends what `known` does not already hold, and adds it to `known`. Never throws. */
-export function appendMentions(sessionId: string | undefined, known: Mentions, entries: string[]): number {
+export function appendMentions({
+    sessionId,
+    known,
+    entries,
+}: {
+    sessionId: string | undefined;
+    known: Mentions;
+    entries: string[];
+}): number {
     const session = safeSegment(sessionId);
 
     if (session === null) {
@@ -572,7 +580,7 @@ export function refreshMentions(options: {
         hookDiag("Could not refresh the session's mention index", { err, session });
     }
 
-    appendMentions(options.sessionId, known, [...entries, ...own]);
+    appendMentions({ sessionId: options.sessionId, known, entries: [...entries, ...own] });
 
     return { index: known, current };
 }
@@ -684,7 +692,15 @@ function globsByPrefix(globs: string[]): Map<string, string[]> {
  * first, so a capture that weighs 800 dirty files against a session index of thousands of paths
  * pays for the few entries that can match, not for the whole index each time.
  */
-export function coverage(mentions: Mentions, root: string, reach: Reach): (file: string) => boolean {
+export function coverage({
+    mentions,
+    root,
+    reach,
+}: {
+    mentions: Mentions;
+    root: string;
+    reach: Reach;
+}): (file: string) => boolean {
     const floor = root.endsWith(sep) ? root : `${root}${sep}`;
     const inside: Mentions = {
         paths: new Set([...mentions.paths].filter((path) => path.startsWith(floor))),

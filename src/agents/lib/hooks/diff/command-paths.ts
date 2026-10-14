@@ -78,7 +78,15 @@ function scan(command: string, what: string): ShellScan | null {
  * keeps them (`V=/x cat "$V"` sets V for that one command), and a value `plainArgument` does not
  * accept (`V=$(pwd)`) forgets the earlier one rather than keep a value the shell no longer has.
  */
-function applyAssignments(command: string, tokens: Span[], known: Map<string, string>): void {
+function applyAssignments({
+    command,
+    tokens,
+    known,
+}: {
+    command: string;
+    tokens: Span[];
+    known: Map<string, string>;
+}): void {
     const assigned: Array<[string, string | null]> = [];
     // `export P=/x` (and `readonly`, `declare`) sets P for the rest of the command as a bare assignment does.
     const declares = tokens.length > 0 && DECLARING.has(rawToken(command, tokens[0] as Span));
@@ -165,7 +173,7 @@ function cdTargets(command: string): string[] {
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
                 if (elements.length === 1) {
-                    applyAssignments(command, tokens, known);
+                    applyAssignments({ command, tokens, known });
                 }
             }
         }
@@ -270,7 +278,17 @@ function expandVariable(raw: string | null, known: Map<string, string>): string 
     return base ? base + (match?.[3] ?? "") : null;
 }
 
-function add(into: string[], raw: string | null, bases: string[], known: Map<string, string> = new Map()): void {
+function add({
+    into,
+    raw,
+    bases,
+    known = new Map(),
+}: {
+    into: string[];
+    raw: string | null;
+    bases: string[];
+    known?: Map<string, string>;
+}): void {
     const plain = plainArgument(raw) ?? expandVariable(raw, known);
 
     if (plain === null) {
@@ -335,13 +353,13 @@ export function namedArguments(command: string, bases: string[]): string[] {
                 const tokens = tokenize(element);
 
                 for (const token of tokens) {
-                    add(found, rawToken(command, token), bases, known);
-                    add(found, nextRawArgument(command, token.start + token.text.length), bases, known);
+                    add({ into: found, raw: rawToken(command, token), bases, known });
+                    add({ into: found, raw: nextRawArgument(command, token.start + token.text.length), bases, known });
                 }
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
                 if (elements.length === 1) {
-                    applyAssignments(command, tokens, known);
+                    applyAssignments({ command, tokens, known });
                 }
             }
         }

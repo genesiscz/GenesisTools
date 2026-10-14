@@ -45,7 +45,7 @@ function rootIndex(dir: string, root: string): number {
  * seven minutes, once per later command that worked in that repository, and stopped only when
  * the deletion was committed. 13 of the 14 were spurious.
  */
-export function alreadyGone(dir: string, root: string, absolute: string): boolean {
+export function alreadyGone({ dir, root, absolute }: { dir: string; root: string; absolute: string }): boolean {
     const index = rootIndex(dir, root);
 
     if (index < 0) {
@@ -68,7 +68,7 @@ export function alreadyGone(dir: string, root: string, absolute: string): boolea
         .some((entry) => entry.normalize("NFC") === member);
 }
 
-export function leftOutOfCapture(dir: string, root: string, absolute: string): boolean {
+export function leftOutOfCapture({ dir, root, absolute }: { dir: string; root: string; absolute: string }): boolean {
     const index = rootIndex(dir, root);
 
     if (index < 0) {
@@ -97,7 +97,7 @@ export function leftOutOfCapture(dir: string, root: string, absolute: string): b
         .some((entry) => entry === member || (entry.endsWith("/") && member.startsWith(entry)));
 }
 
-export function beforeCopy(dir: string, root: string, absolute: string): string | null {
+export function beforeCopy({ dir, root, absolute }: { dir: string; root: string; absolute: string }): string | null {
     const index = rootIndex(dir, root);
 
     if (index < 0) {

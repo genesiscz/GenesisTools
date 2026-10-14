@@ -417,7 +417,7 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     // The named-path pass runs FIRST so a capture with no git root still produces a call
     // directory. The post phase gates on `roots.txt`, and returning early when `roots` was
     // empty is exactly what made an edit outside every repository unreportable.
-    const named = captureNamed(dir, wanted, config);
+    const named = captureNamed({ dir, paths: wanted, config });
 
     skipped.push(...named.skipped);
     writePrivateFile(join(dir, "stamp"), String(Math.floor(Date.now() / 1000)));
@@ -452,8 +452,8 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         // exits 1, and one such entry discards the whole archive — the root then loses its
         // before-state for every file. Observed on 2026-09-20 during a `git rm`. The post
         // phase renders a deletion from `git diff HEAD` and needs no captured copy.
-        const named = coverage(mentions.current, root, "deep");
-        const earlier = coverage(mentions.index, root, "shallow");
+        const named = coverage({ mentions: mentions.current, root, reach: "deep" });
+        const earlier = coverage({ mentions: mentions.index, root, reach: "shallow" });
         const mentioned = (name: string) => named(join(root, name)) || earlier(join(root, name));
         const { files, namesOnly, tooWide } = captureList({ root, entries, config, mentioned });
         // Excluding them from the archive also leaves the post phase unable to tell a

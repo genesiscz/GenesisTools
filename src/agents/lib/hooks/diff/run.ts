@@ -444,7 +444,7 @@ function blockFrom({
 }): DiffBlock | null {
     // The KIND is decided before any rendering work, so a category that is switched off
     // costs one classification rather than a `bat` spawn and a full render.
-    const category = classifyChange(file.path, patch, file.root);
+    const category = classifyChange({ path: file.path, patch, root: file.root });
 
     if (!config.categories[category]) {
         suppressed.set(category, (suppressed.get(category) ?? 0) + 1);
@@ -936,7 +936,7 @@ export function runDiffPost({
             );
         }
 
-        const changed = changedFiles(root, since, diff, { entries: summary.entries, committed });
+        const changed = changedFiles({ root, since, config: diff, source: { entries: summary.entries, committed } });
         const renames = renamesIn({ root, base, files: changed });
         const renamed = new Set(renames.flatMap((pair) => [pair.from, pair.to]));
         const carried: string[] = [];
@@ -951,7 +951,7 @@ export function runDiffPost({
                 break;
             }
 
-            if (file.deleted && alreadyGone(dir, root, file.path)) {
+            if (file.deleted && alreadyGone({ dir, root, absolute: file.path })) {
                 // It was already deleted when this command began, so this command did not
                 // delete it. A deletion carries no mtime and therefore bypasses the `since`
                 // filter every edit passes, which made `git status` reprint it on every
@@ -992,12 +992,12 @@ export function runDiffPost({
                 continue;
             }
 
-            const before = file.deleted ? null : beforeCopy(dir, root, file.path);
+            const before = file.deleted ? null : beforeCopy({ dir, root, absolute: file.path });
             // It was already dirty when the command began, and its before-state did not fit the
             // capture budget. The commit is then NOT its before-state: it lacks every earlier
             // uncommitted edit, from this session or another. So the log gets no before-state for
             // it, and the diff says nothing.
-            const leftOut = before === null && !file.deleted && leftOutOfCapture(dir, root, file.path);
+            const leftOut = before === null && !file.deleted && leftOutOfCapture({ dir, root, absolute: file.path });
             // Every changed file reaches the log, a natively rendered one included: the native
             // stand-down below only decides what THIS hook prints.
             captures.push({
@@ -1178,7 +1178,7 @@ export function runDiffPost({
     const othersWorthALine = attribution.readOnly()
         ? []
         : unattributed.filter((item) => {
-              const kind = classifyChange(item.path, "", item.root);
+              const kind = classifyChange({ path: item.path, patch: "", root: item.root });
               return kind !== "log" && kind !== "generated";
           });
     const notes = [
@@ -1472,7 +1472,7 @@ export function noteFileToolInput(payload: HookPayload): void {
             return;
         }
 
-        appendMentions(payload.sessionId, loadMentions(payload.sessionId), named);
+        appendMentions({ sessionId: payload.sessionId, known: loadMentions(payload.sessionId), entries: named });
 
         const now = Date.now();
 

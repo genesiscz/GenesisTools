@@ -119,7 +119,7 @@ function isFormattingOnly(patch: string): boolean {
  * also test the repository's own ancestors, so every file of a checkout at `~/build/app` or
  * `~/dev/logs/tool` classified as generated or log, and both kinds are hidden by default.
  */
-export function classifyChange(path: string, patch: string, root?: string): DiffCategory {
+export function classifyChange({ path, patch, root }: { path: string; patch: string; root?: string }): DiffCategory {
     const scoped = root ? relative(root, path) : path;
 
     return pathCategory(scoped) ?? (isFormattingOnly(patch) ? "formatting" : "source");

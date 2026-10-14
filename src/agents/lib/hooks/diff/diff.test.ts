@@ -133,14 +133,14 @@ describe("changedFiles", () => {
         mkdirSync(join(repo, "scratch"), { recursive: true });
         writeFileSync(join(repo, "scratch/deep.ts"), "one\n");
 
-        const found = changedFiles(repo, Date.now() - 60_000, DEFAULT_HOOKS_CONFIG.diff);
+        const found = changedFiles({ root: repo, since: Date.now() - 60_000, config: DEFAULT_HOOKS_CONFIG.diff });
 
         expect(found.map((file) => file.path)).toContain(join(repo, "scratch/deep.ts"));
         expect(found.find((file) => file.path.endsWith("deep.ts"))?.untracked).toBe(true);
     });
 
     it("ignores a file older than the stamp", () => {
-        const found = changedFiles(repo, Date.now() + 60_000, DEFAULT_HOOKS_CONFIG.diff);
+        const found = changedFiles({ root: repo, since: Date.now() + 60_000, config: DEFAULT_HOOKS_CONFIG.diff });
 
         expect(found.filter((file) => !file.deleted)).toEqual([]);
     });
@@ -190,7 +190,7 @@ describe("beforeCopy", () => {
 
         writeFileSync(join(repo, "scratch/deep.ts"), "one\nTWO-EDIT\nthree\n");
 
-        const copy = beforeCopy(dir, repo, join(repo, "scratch/deep.ts"));
+        const copy = beforeCopy({ dir, root: repo, absolute: join(repo, "scratch/deep.ts") });
 
         expect(copy).not.toBeNull();
         expect(readFileSync(copy as string, "utf8")).toBe("one\ntwo\nthree\n");
@@ -200,7 +200,7 @@ describe("beforeCopy", () => {
         const current = begin();
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
 
-        expect(beforeCopy(dir, repo, join(repo, "kept.ts"))).toBeNull();
+        expect(beforeCopy({ dir, root: repo, absolute: join(repo, "kept.ts") })).toBeNull();
     });
 });
 
@@ -1245,7 +1245,7 @@ describe("a path with a non-ASCII name", () => {
 
         writeFileSync(accented, "one\nTWO-CHANGED\n");
 
-        const copy = beforeCopy(dir, repo, accented);
+        const copy = beforeCopy({ dir, root: repo, absolute: accented });
 
         expect(copy).not.toBeNull();
         expect(readFileSync(copy as string, "utf8")).toBe("one\ntwo\n");
@@ -1396,7 +1396,7 @@ describe("a path with glob characters", () => {
 
         const current = begin();
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
-        const before = beforeCopy(dir, repo, join(repo, "app/[id].ts"));
+        const before = beforeCopy({ dir, root: repo, absolute: join(repo, "app/[id].ts") });
 
         expect(before).not.toBeNull();
         expect(readFileSync(before ?? "", "utf8")).toBe("one\nDIRTY-BEFORE\n");
@@ -1492,7 +1492,7 @@ describe("what KIND of change it is", () => {
     ];
 
     it.each(cases)("calls %s %s", (_label, path, expected) => {
-        expect(classifyChange(path, "@@ -1 +1 @@\n-one\n+two\n")).toBe(expected);
+        expect(classifyChange({ path, patch: "@@ -1 +1 @@\n-one\n+two\n" })).toBe(expected);
     });
 
     it("calls a reindentation formatting, and a real edit source", () => {
@@ -1501,22 +1501,28 @@ describe("what KIND of change it is", () => {
             "@@ -1,2 +1,2 @@\n-import b from 'b';\n-import a from 'a';\n+import a from 'a';\n+import b from 'b';\n";
         const real = "@@ -1,2 +1,2 @@\n-const a = 1;\n-const b = 2;\n+const a = 1;\n+const b = 99;\n";
 
-        expect(classifyChange("/repo/src/x.ts", reindented)).toBe("formatting");
-        expect(classifyChange("/repo/src/x.ts", reordered)).toBe("formatting");
-        expect(classifyChange("/repo/src/x.ts", real)).toBe("source");
+        expect(classifyChange({ path: "/repo/src/x.ts", patch: reindented })).toBe("formatting");
+        expect(classifyChange({ path: "/repo/src/x.ts", patch: reordered })).toBe("formatting");
+        expect(classifyChange({ path: "/repo/src/x.ts", patch: real })).toBe("source");
     });
 
     it("tests the directories below the repository root, never the root's own ancestors", () => {
         const patch = "@@ -1 +1 @@\n-one\n+two\n";
 
-        expect(classifyChange("/home/u/build/app/src/x.ts", patch, "/home/u/build/app")).toBe("source");
-        expect(classifyChange("/home/u/dev/logs/tool/src/x.ts", patch, "/home/u/dev/logs/tool")).toBe("source");
-        expect(classifyChange("/home/u/build/app/dist/x.js", patch, "/home/u/build/app")).toBe("generated");
-        expect(classifyChange("/tmp/z1.log", patch, "/tmp")).toBe("log");
+        expect(classifyChange({ path: "/home/u/build/app/src/x.ts", patch, root: "/home/u/build/app" })).toBe("source");
+        expect(classifyChange({ path: "/home/u/dev/logs/tool/src/x.ts", patch, root: "/home/u/dev/logs/tool" })).toBe(
+            "source"
+        );
+        expect(classifyChange({ path: "/home/u/build/app/dist/x.js", patch, root: "/home/u/build/app" })).toBe(
+            "generated"
+        );
+        expect(classifyChange({ path: "/tmp/z1.log", patch, root: "/tmp" })).toBe("log");
     });
 
     it("never calls a brand new file formatting, however tidy it is", () => {
-        expect(classifyChange("/repo/src/new.ts", "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n")).toBe("source");
+        expect(
+            classifyChange({ path: "/repo/src/new.ts", patch: "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n" })
+        ).toBe("source");
     });
 });
 
