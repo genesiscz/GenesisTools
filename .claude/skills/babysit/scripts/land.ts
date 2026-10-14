@@ -111,6 +111,17 @@ if (review.length >= 2) {
 }
 
 must(spawnIn(wt, ["bun", "scripts/git/check-commits.ts", `origin/${base}..HEAD`]), "check-commits");
+
+// Martin's rule (2026-10-14 06:48): at most 10 commits per PR when it lands. Regroup a longer history into thematic
+// commits with the same final tree first; this script never invents groups.
+const count = Number(must(git(["rev-list", "--count", `origin/${base}..HEAD`]), "count"));
+
+if (count > 10) {
+    console.error(
+        `✖ #${pr} has ${count} commits after the review squash; the limit is 10. Regroup it first (same tree).`
+    );
+    process.exit(1);
+}
 const newHead = must(git(["rev-parse", "HEAD"]), "rev-parse");
 
 if (!has("--merge")) {

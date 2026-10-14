@@ -241,6 +241,9 @@ session's branch waits for that branch). Then the review-loop landing recipe, wh
 only prepares and prints the squash; every git call is an argument array, because a hand-typed
 `--force-with-lease=$B:c1a…` in zsh read `:c` as a modifier and pushed without the lease):
 
+0. At most 10 commits per PR when it lands (Martin, 2026-10-14 06:48). A longer history is regrouped first into
+   thematic commits with exactly the same final tree (`git diff <old head> <new head>` prints nothing), reset to the
+   PR's fork point (`git merge-base HEAD origin/master`), never to a moved `origin/master`. `land.ts` refuses more.
 1. Squash the review commits (the `#<N> followup` ones on top of the feature commits) into one
    `fix(<scopes>): #<N> followup - address PR review (<k> commits)` whose body lists each squashed subject; prove the
    tree is identical (`git rev-parse HEAD^{tree}` before and after) and run `bun scripts/git/check-commits.ts
