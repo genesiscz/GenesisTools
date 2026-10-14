@@ -388,6 +388,12 @@ public final class FlowStore {
         let target = url.deletingLastPathComponent()
             .appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)")
         do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                // A directory is an obstruction, not unreadable file data. Leave it for the save to fail on.
+                keptInPlace.remove(url.lastPathComponent)
+                return
+            }
             try FileManager.default.moveItem(at: url, to: target)
             keptInPlace.remove(url.lastPathComponent)
         } catch {

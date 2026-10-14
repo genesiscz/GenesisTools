@@ -40,6 +40,54 @@ final class FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testDirectoryAtAFlowFilePathIsKeptAndTheSaveFails() throws {
+        let fm = FileManager.default
+        for name in ["dictionary.json", "snippets.json", "scratchpad.md"] {
+            for nonempty in [false, true] {
+                let root = fm.temporaryDirectory.appendingPathComponent("flow-directory-\(UUID())")
+                defer { try? fm.removeItem(at: root) }
+                let obstruction = root.appendingPathComponent(name)
+                try fm.createDirectory(at: obstruction, withIntermediateDirectories: true)
+                let child = obstruction.appendingPathComponent("kept.txt")
+                if nonempty { try Data("keep".utf8).write(to: child) }
+                let store = FlowStore(directory: root)
+                var writes = 0
+                store.didWrite = { writes += 1 }
+                let save: () -> Void
+                switch name {
+                case "dictionary.json":
+                    XCTAssertTrue(store.loadDictionary().isEmpty)
+                    save = { store.saveDictionary([]) }
+                case "snippets.json":
+                    XCTAssertTrue(store.loadSnippets().isEmpty)
+                    save = { store.saveSnippets([]) }
+                default:
+                    XCTAssertEqual(store.loadScratchpad(), "")
+                    save = { store.saveScratchpad("new draft") }
+                }
+                XCTAssertEqual(try fm.contentsOfDirectory(atPath: root.path), [name], "no backup is made")
+                XCTAssertThrowsError(try store.verifyingWrites { save() }) { error in
+                    XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain, "the rename fails, not a read fence")
+                }
+                if name == "scratchpad.md" {
+                    XCTAssertThrowsError(try store.writeFromClient(name: name, data: Data("client draft".utf8))) { error in
+                        XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+                    }
+                }
+                XCTAssertEqual(writes, 0, "failed saves must not publish an acknowledgement")
+                XCTAssertEqual(try fm.contentsOfDirectory(atPath: root.path), [name])
+                XCTAssertEqual(try fm.contentsOfDirectory(atPath: obstruction.path), nonempty ? ["kept.txt"] : [])
+                if nonempty { XCTAssertEqual(try String(contentsOf: child, encoding: .utf8), "keep") }
+
+                try fm.removeItem(at: obstruction)
+                XCTAssertNoThrow(try store.verifyingWrites { save() }, "no stale fence remains after removing the obstruction")
+                XCTAssertEqual(writes, 1)
+                XCTAssertTrue(fm.fileExists(atPath: obstruction.path))
+            }
+        }
+    }
+
+    @MainActor
     func testAnUnreadableFileIsMovedAsideBeforeASaveReplacesIt() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-unreadable-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
