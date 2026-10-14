@@ -3,6 +3,13 @@
 The stance is fable-judge's: a report is a set of claims, not evidence. Judge every commit as if a stranger wrote
 it, and give the verdict with the evidence. Inline, never delegated: the verdict is the product of this loop.
 
+🛑 **Rule: invoke the `fable-judge` skill and read the whole thing before every push** (Martin, 2026-10-14). Checks
+and planted regressions alone are not a judgement: on the first overnight run four commits (one of 807 lines) went
+out with green checks and plants but no line-by-line read. The judge reads, side by side, the worker's summary
+report, its reply file (every verdict and every reply text it wants posted) and the FULL diff, tests and sources:
+`judge-pack` prints all three in one file. Then it judges the code itself (repo rules in `.claude/rules/code.md` and
+`tools.md`, contracts, duplication, type safety, scope), the claims against the code, and every refusal.
+
 ## Checklist, in order
 
 1. **The diff is the truth.** `git show --stat <sha>` and the full diff. One commit, only scope files, nothing staged
@@ -26,6 +33,16 @@ it, and give the verdict with the evidence. Inline, never delegated: the verdict
 7. **The ready-to-post replies.** Each reply must be true of the final code after your correction: file names,
    counts, behaviour. Grok's said "the table is in prs.test.ts" after the move; such a line is corrected in the vault
    copy, not posted as is.
+   - **Every refusal and deferral is judged on its merits.** A `rejected` needs the file:line that disproves the
+     finding. A `no-change` or "follow-up" whose fix belongs in this PR (it is small, it is about this PR's change,
+     or it is not code at all, like a wrong PR description) is not accepted: do it in this round. On 2026-10-14 a
+     worker answered "the PR description calls login-io.ts a new file" with no-change; the fix was a one-line body
+     edit.
+   - **Removed test lines are guilty until explained.** List them (`judge-pack` puts the test diff first); a deleted
+     or loosened assertion must be replaced by a stronger one, or it is a weakened check.
+9. **Plants run the tests the commit changed.** Plant each fixed source and run the test files the worker's commit
+   touched (`git show --stat`), not the source's folder: on 2026-10-14 two plants "passed" only because the folder
+   held none of the new tests.
 8. **Cherry-pickability** (unified mode): test-pick onto the PR branch before you correct, so the correction can avoid
    the conflicting lines.
 
