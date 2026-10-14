@@ -1,6 +1,7 @@
-import { afterAll, beforeAll } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
 import { appendFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { readStallSnapshot } from "@genesiscz/utils/bun/worker-stall";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { collectProcessTree, listPsTable, PS_COLUMNS_SPEC } from "@genesiscz/utils/process/ps";
@@ -20,7 +21,13 @@ import { collectProcessTree, listPsTable, PS_COLUMNS_SPEC } from "@genesiscz/uti
  * Every test file runs isolated (scripts/test.ts), so this preload, and its hooks, run once per file.
  * It sits BEFORE preload-test-tmpdir.ts in bunfig.toml: the path is resolved while the real temp folder
  * and the real cwd are still in place.
+ *
+ * A test still running after {@link STALL_MS} also gets a `stall` line: what the worker's threads wait on and
+ * which children it has, from `/proc`, with no spawn. On CI (2026-10-14) one worker's tests hung at 20 s,
+ * each with 5 to 14 "killed 1 dangling process" lines, while the other workers ran normally; the start and
+ * end lines cannot show what that worker was waiting on.
  */
+const STALL_MS = 15_000;
 const setting = env.test.getWorkerLog();
 
 if (setting) {
@@ -47,6 +54,27 @@ if (setting) {
         appendFileSync(logPath, `${SafeJSON.stringify(line, { strict: true })}\n`);
     };
 
+    // A queue, not one variable: tests of a file can run concurrently, and each afterEach clears one timer.
+    const stallTimers: Array<ReturnType<typeof setTimeout>> = [];
+
     beforeAll(() => record("start"));
     afterAll(() => record("end"));
+    beforeEach(() => {
+        const startedAt = Date.now();
+        const stallTimer = setTimeout(() => {
+            const line = {
+                event: "stall",
+                at: new Date().toISOString(),
+                worker,
+                pid: process.pid,
+                file,
+                ms: Date.now() - startedAt,
+                ...readStallSnapshot(process.pid),
+            };
+            appendFileSync(logPath, `${SafeJSON.stringify(line, { strict: true })}\n`);
+        }, STALL_MS);
+        stallTimer.unref?.();
+        stallTimers.push(stallTimer);
+    });
+    afterEach(() => clearTimeout(stallTimers.shift()));
 }

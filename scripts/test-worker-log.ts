@@ -57,9 +57,35 @@ function isWorkerLogLine(value: unknown): value is WorkerLogLine {
     );
 }
 
-/** One line per file start or end; a line from another writer, or a cut-off last line, is skipped. */
-export function parseWorkerLog(text: string): WorkerLogLine[] {
-    const lines: WorkerLogLine[] = [];
+/** A test still running after 15 s (`preload-test-worker-log.ts`): its worker's threads and children then. */
+export interface WorkerStallLine {
+    event: "stall";
+    at: string;
+    worker: string;
+    pid: number;
+    file: string;
+    ms: number;
+    threads: Array<{ tid: number; name: string; state: string; wchan: string }>;
+    children: Array<{ pid: number; state: string; command: string }>;
+}
+
+function isWorkerStallLine(value: unknown): value is WorkerStallLine {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+
+    const line = value as Record<string, unknown>;
+    return (
+        line.event === "stall" &&
+        typeof line.file === "string" &&
+        typeof line.ms === "number" &&
+        Array.isArray(line.threads) &&
+        Array.isArray(line.children)
+    );
+}
+
+function parseLines<T>(text: string, accept: (value: unknown) => value is T, warn: boolean): T[] {
+    const lines: T[] = [];
 
     for (const raw of text.split("\n")) {
         if (!raw.trim()) {
@@ -69,15 +95,44 @@ export function parseWorkerLog(text: string): WorkerLogLine[] {
         try {
             const value: unknown = SafeJSON.parse(raw, { strict: true });
 
-            if (isWorkerLogLine(value)) {
+            if (accept(value)) {
                 lines.push(value);
             }
         } catch {
-            process.stderr.write(`test-worker-log: skipped an unreadable line: ${raw.slice(0, 80)}\n`);
+            if (warn) {
+                process.stderr.write(`test-worker-log: skipped an unreadable line: ${raw.slice(0, 80)}\n`);
+            }
         }
     }
 
     return lines;
+}
+
+/** One line per file start or end; a line from another writer, or a cut-off last line, is skipped. */
+export function parseWorkerLog(text: string): WorkerLogLine[] {
+    return parseLines(text, isWorkerLogLine, true);
+}
+
+/** The `stall` lines; parseWorkerLog already reported any unreadable line. */
+export function parseWorkerStalls(text: string): WorkerStallLine[] {
+    return parseLines(text, isWorkerStallLine, false);
+}
+
+/** "S 12, D 1 (wait_log_commit)": how many threads sit in each state, with the wait of any not merely sleeping. */
+export function describeStallThreads(threads: WorkerStallLine["threads"]): string {
+    const counts = new Map<string, number>();
+    const waits = new Set<string>();
+
+    for (const thread of threads) {
+        counts.set(thread.state, (counts.get(thread.state) ?? 0) + 1);
+
+        if (thread.state !== "S" && thread.wchan !== "0" && thread.wchan !== "?") {
+            waits.add(thread.wchan);
+        }
+    }
+
+    const summary = [...counts].map(([state, count]) => `${state} ${count}`).join(", ");
+    return waits.size > 0 ? `${summary} (${[...waits].join(", ")})` : summary;
 }
 
 /** Walks each worker's files in time order and attributes every child process to the file that left it. */
@@ -147,11 +202,13 @@ if (import.meta.main) {
         process.exit(2);
     }
 
-    const lines = parseWorkerLog(readFileSync(path, "utf8"));
+    const text = readFileSync(path, "utf8");
+    const lines = parseWorkerLog(text);
+    const stalls = parseWorkerStalls(text);
     const report = analyzeWorkerLog(lines);
 
     if (args.includes("--json")) {
-        process.stdout.write(`${SafeJSON.stringify(report, { strict: true })}\n`);
+        process.stdout.write(`${SafeJSON.stringify({ ...report, stalls }, { strict: true })}\n`);
         process.exit(0);
     }
 
@@ -181,6 +238,19 @@ if (import.meta.main) {
             process.stdout.write(
                 `  ${relative(item.file)}: ${item.processes.length} from ${sources.join(", ")} (worker ${item.worker})\n`
             );
+        }
+    }
+
+    if (stalls.length > 0) {
+        process.stdout.write("\nTests still running after 15 s (threads by state, then children):\n");
+
+        for (const stall of stalls) {
+            const threads = describeStallThreads(stall.threads) || "no /proc";
+            process.stdout.write(`  ${relative(stall.file)} (worker ${stall.worker}, ${stall.ms} ms): ${threads}\n`);
+
+            for (const child of stall.children.slice(0, 8)) {
+                process.stdout.write(`       pid ${child.pid} ${child.state}: ${child.command || "?"}\n`);
+            }
         }
     }
 }
