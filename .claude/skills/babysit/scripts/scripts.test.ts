@@ -6,6 +6,7 @@ import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
+import { summarize } from "./plant";
 import { hitsInAddedLines } from "./probe";
 import { reviewBrief } from "./review-brief";
 import { loadRun } from "./run";
@@ -393,5 +394,16 @@ describe("independent review brief", () => {
             expect(new Set(numbers)).toEqual(new Set(["498"]));
             expect(text).toContain(postMerge ? "gh pr diff 498" : "git diff origin/master...HEAD");
         }
+    });
+});
+describe("planted-regression summary", () => {
+    test("reads bun counts and the XCTest total, and says so when there is none", () => {
+        expect(summarize("x\n 53 pass\n 3 fail\nRan 56 tests")).toBe("53 pass 3 fail");
+        expect(
+            summarize(
+                "Executed 2 tests, with 1 failure (0 unexpected) in 0.1 (0.1) seconds\nExecuted 158 tests, with 0 failures (0 unexpected) in 10.1 (10.2) seconds"
+            )
+        ).toBe("Executed 158 tests, with 0 failures (0 unexpected) in 10.1 (10.2) seconds");
+        expect(summarize("bun test v1.4.2")).toBe("no test count");
     });
 });
