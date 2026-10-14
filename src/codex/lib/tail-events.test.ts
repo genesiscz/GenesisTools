@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { planFollowRead, takeCompleteLines } from "./tail-events";
+import { countStartedTurns, numberTurnLine, planFollowRead, takeCompleteLines } from "./tail-events";
 
 describe("takeCompleteLines", () => {
     // The regression: a size snapshot cut a record in half, the half failed to
@@ -77,5 +77,27 @@ describe("planFollowRead", () => {
 
     test("an emptied file rewinds too", () => {
         expect(planFollowRead(0, 120)).toEqual({ from: 0, rewound: true });
+    });
+});
+
+describe("turn numbers", () => {
+    test("numbers a Codex turn's start and end lines, continuing after the turns already in the log", () => {
+        const turns = { n: 2 };
+
+        expect(numberTurnLine("▶ turn ? started", turns)).toBe("▶ turn 3 started");
+        expect(numberTurnLine("✔ turn ? completed ($0.0100)", turns)).toBe("✔ turn 3 completed ($0.0100)");
+        expect(numberTurnLine("🔧 command ls", turns)).toBe("🔧 command ls");
+        expect(numberTurnLine("▶ turn 7 started", turns)).toBe("▶ turn 7 started");
+    });
+
+    test("counts the turns a log already started", () => {
+        const started = SafeJSON.stringify({ source: "app-server", method: "turn/started", params: { threadId: "t" } });
+        const done = SafeJSON.stringify({
+            source: "app-server",
+            method: "turn/completed",
+            params: { threadId: "t", turn: {} },
+        });
+
+        expect(countStartedTurns(`${started}\n${done}\n${started}\n`)).toBe(2);
     });
 });

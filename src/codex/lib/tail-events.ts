@@ -20,7 +20,54 @@ export function takeCompleteLines(buffer: string): { complete: string; rest: str
     return { complete: buffer.slice(0, cut + 1), rest: buffer.slice(cut + 1) };
 }
 
-export function printFollowedChunk(text: string, asEvents: boolean): void {
+/**
+ * Codex's app-server names a turn by id, not by number, so a rendered turn line read "▶ turn ? started". The
+ * follower counts the turns it renders (seeded from the log it skipped) and numbers the start and end lines.
+ */
+export interface TurnCounter {
+    n: number;
+}
+
+export function numberTurnLine(line: string, turns: TurnCounter): string {
+    if (line.startsWith("▶ turn ? ")) {
+        turns.n += 1;
+        return line.replace("turn ?", `turn ${turns.n}`);
+    }
+
+    if (line.startsWith("✔ turn ? ") && turns.n > 0) {
+        return line.replace("turn ?", `turn ${turns.n}`);
+    }
+
+    return line;
+}
+
+function renderedLines(text: string): string[] {
+    const lines: string[] = [];
+
+    for (const rawLine of text.split("\n")) {
+        if (!rawLine.trim()) {
+            continue;
+        }
+
+        try {
+            const line = formatStoredEventLine(SafeJSON.parse(rawLine, { strict: true }) as StoredCodexEvent);
+            if (line) {
+                lines.push(line);
+            }
+        } catch (err) {
+            logger.debug({ err, rawLine: rawLine.slice(0, 200) }, "[codex:tail] skipping unparseable event line");
+        }
+    }
+
+    return lines;
+}
+
+/** How many turns the skipped part of the log already started, so the first followed turn gets the next number. */
+export function countStartedTurns(text: string): number {
+    return renderedLines(text).filter((line) => line.startsWith("▶ turn")).length;
+}
+
+export function printFollowedChunk(text: string, asEvents: boolean, turns: TurnCounter = { n: 0 }): void {
     if (!asEvents) {
         out.print(text);
         return;
@@ -41,7 +88,7 @@ export function printFollowedChunk(text: string, asEvents: boolean): void {
 
         const line = formatStoredEventLine(stored);
         if (line) {
-            out.println(line);
+            out.println(numberTurnLine(line, turns));
         }
     }
 }
@@ -78,6 +125,9 @@ export async function followSessionEvents(name: string, asEvents: boolean): Prom
     const path = sessionEventsPath(name);
     let offset = existsSync(path) ? statSync(path).size : 0;
     let carry = "";
+    const turns: TurnCounter = {
+        n: asEvents && offset > 0 ? countStartedTurns(await Bun.file(path).slice(0, offset).text()) : 0,
+    };
     // A streaming decoder, not `.text()` per read: a size snapshot can cut
     // a multi-byte codepoint in half, and decoding each byte slice on its
     // own turned every such character into U+FFFD. The decoder holds the
@@ -104,7 +154,7 @@ export async function followSessionEvents(name: string, asEvents: boolean): Prom
                 const { complete, rest } = takeCompleteLines(carry + chunk);
                 carry = rest;
                 if (complete) {
-                    printFollowedChunk(complete, asEvents);
+                    printFollowedChunk(complete, asEvents, turns);
                 }
                 offset = size;
             }
@@ -117,7 +167,7 @@ export async function followSessionEvents(name: string, asEvents: boolean): Prom
             // first, in case the file ends mid-codepoint.
             const tail = carry + decoder.decode();
             if (tail) {
-                printFollowedChunk(tail, asEvents);
+                printFollowedChunk(tail, asEvents, turns);
             }
             return;
         }
