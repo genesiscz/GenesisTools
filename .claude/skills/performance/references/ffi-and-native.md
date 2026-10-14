@@ -86,6 +86,45 @@ socket info; `src/utils/process/socket-owner.ts`).
 - Check the struct layout at start-up against your own row and fall back to the spawn if it looks wrong; a layout
   change in a future macOS then costs speed, not correctness.
 
+## 3c. Moving call sites onto the process layer (#516, 2026-10-14 22:43)
+
+62 call sites spawned `ps`, `lsof` or `pgrep` (`scripts/benchmarks/process/call-sites.ts`). After the move: total
+cold CPU 3,446 → 1,467 ms, 8 sites still spawn once each (other users' data, one cache-retirement `lsof`). The
+`lsof` sites fell 90 to 99% (bundle pruning 371 → 29 ms, `tools port <port>` 245 → 12 ms). Ledger entry
+"2026-10-14 02:40" in `.claude/docs/performance.md`.
+
+- **A new spawn is a lint error.** `no-process-tool-spawn` in `scripts/ci/lint-rules.ts` (db5f3983d) also catches an
+  absolute program path, the `{ cmd }` form, an env prefix and a program passed before its argv (d2c2b8dff). The
+  existing spawns sit in a baseline that `lint-rules --update-process-baseline` rewrites and never raises (e6c34af56).
+- **The platform fallback is the layer's decision, never the caller's.** A call site asks
+  `@genesiscz/utils/process` one question; the layer picks the kernel read on macOS, `/proc` on Linux, CIM on
+  Windows, and the one spawn when a self-check fails (90ba3b431). A caller that branches on `process.platform` to
+  spawn `ps` is the defect this migration removed.
+- **Skip what you cannot read.** Every Mac has rows the kernel will not describe: `kernel_task`, a binary that an
+  upgrade deleted, root's `login` on a terminal (its command line is withheld). Two migrated sites turned ONE such
+  row into "unknown" for the whole answer: the retired-bundle prune never ran (b0e9238ae), and the cmux agent check
+  always said "running" (877454d42). No test caught either; the judge pass did. Say "skip what you cannot read" in
+  every migration brief.
+- **A failed read is not proof that a process is gone.** The readers answer null on EACCES, a failed `sysctl` or a
+  `ps` timeout too. Before null frees anything (a worktree lock, a pidfile), ask `isProcessAlive` (only ESRCH means
+  gone; a recycled pid reads as alive, which keeps the lock): e4b96508d, then 4d8e6b1f5. The plugin cannot import
+  `@genesiscz`, so it keeps a byte-identical copy in `plugins/genesis-tools/lib/process-alive.ts`;
+  `scripts/ci/pid-safety-guard.sh` allows the signal-0 probe only in files of that name, and it greps comments too.
+- **Costs the move added at first, each found by measuring:** `devname()` per row (0.5 ms a call, 52 ms for 104 rows)
+  became a per-device cache plus one `/dev` scan (1.1 ms for 143 devices); `childPids` read the whole table (10 to 21
+  ms) until `proc_listchildpids` (1.1 ms); a terminal's processes came from the whole table until
+  `sysctl(KERN_PROC_TTY)` (2.6 ms cold) (217e4857c). Other users' rows cost one `ps -A -o pid=,rss=,time=` (about 25
+  ms) instead of a command column (about 55 ms) (4750efac4), and one `ps` instead of one per 60 pids (f8ee72cb4).
+- **Test fixtures must answer through `processFixture`.** The layer reads listeners and tables from
+  `exec.processReader`, never from a raw `exec` answer, so a test that fakes `netstat` output through plain `exec`
+  reads the real machine and finds nothing (b4f698373, a Windows case from #519).
+- **A spawn count is a per-platform claim.** "Looking up pid 1 spawns `ps` twice" is true on macOS only (launchd is
+  root's, so its argv needs the setuid `ps`); Linux reads `/proc/1/cmdline` and spawns nothing. Keep such a control
+  in its own `test.skipIf(process.platform !== "darwin")` (fd0486ee0).
+- **Two reads of a live table race.** A process the suite started or ended between the table read and a filtered
+  read failed a comparison once in a full-suite run (18,719 tests), then passed 5 of 5 alone. Compare up to three
+  fresh pairs; a real disagreement repeats in all three (9d0d0f824).
+
 ## 4. `defineNativeLibrary`: our own C, compiled once
 
 ```ts
