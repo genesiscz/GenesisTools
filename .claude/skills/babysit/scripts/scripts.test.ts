@@ -10,7 +10,7 @@ import { type ConflictPick, resolutionProblems, resolveConflictText } from "./co
 import { summarize } from "./plant";
 import { hitsInAddedLines } from "./probe";
 import { reviewBrief } from "./review-brief";
-import { loadRun } from "./run";
+import { loadRun, runPaths } from "./run";
 import { conflictedFiles, higherVersionSide, prepGit, resolveVersionConflicts } from "./versions";
 import { pump } from "./watch-workers";
 
@@ -528,5 +528,21 @@ test("a status that keeps failing names the exit and the output, then hands over
     } finally {
         output.mockRestore();
         errors.mockRestore();
+    }
+});
+
+test("--run takes the run folder or its run.json, and refuses anything that would fall back to another repo", () => {
+    const dir = fs.mkdtempSync(join(tmpdir(), "babysit-run-"));
+    try {
+        const card = join(dir, "run.json");
+        fs.writeFileSync(card, SafeJSON.stringify({ repo: "example/playground" }));
+        expect(runPaths(dir)).toEqual({ runDir: dir, cardPath: card });
+        expect(runPaths(card)).toEqual({ runDir: dir, cardPath: card });
+        expect(() => runPaths(join(dir, "missing"))).toThrow("is not a folder");
+        expect(() => runPaths(join(dir, "missing", "run.json"))).toThrow("no run card");
+        fs.writeFileSync(join(dir, "notes.md"), "x");
+        expect(() => runPaths(join(dir, "notes.md"))).toThrow("is not a folder");
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
     }
 });
