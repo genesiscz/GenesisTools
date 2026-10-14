@@ -7,6 +7,16 @@
 # of them fire on removal), so there is nowhere to put a rescue step at the end. Syncing
 # forward on every commit is the closest thing to a guarantee that git offers.
 
+# A rebase replays commits one by one, and none of them is new work: the partial-commit repair
+# below cannot apply, and syncing plans per pick started a whole `tools` run for every commit
+# (21 for a 21-commit rebase), each process waiting for macOS's exec check in syspolicyd.
+# Git hands every hook the index path, whose folder is this checkout's git dir, so the test
+# starts no process.
+index_dir="${GIT_INDEX_FILE%/*}"
+if [ -n "$GIT_INDEX_FILE" ] && { [ -d "$index_dir/rebase-merge" ] || [ -d "$index_dir/rebase-apply" ]; }; then
+    exit 0
+fi
+
 # A partial commit (`git commit -- <paths>`) runs pre-commit against a temporary index. Its biome
 # pass formats that index and the working file, but git then writes the REAL index with the copy
 # it staged before the hook ran, so the tree shows `MM` with HEAD == working tree and a stale
