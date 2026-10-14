@@ -1,3 +1,4 @@
+import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { type ActiveAgentProcess, listActiveAgentProcesses, runCapture } from "@genesiscz/utils/ai/active-processes";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
@@ -23,6 +24,8 @@ export interface AgentSessionFacts {
     filePath?: string;
     /** Written to recently enough to be a live session; only these take part in the cwd rung. Default true. */
     active?: boolean;
+    /** When the transcript was last written (epoch ms): the last-turn clock where no `tail` reads one. */
+    mtimeMs?: number;
 }
 
 export interface AgentSessionTail {
@@ -45,6 +48,30 @@ export interface AgentWhoSource {
     activeSessions?(): Promise<AgentSessionFacts[]>;
     /** The last user message and the last activity of one session. */
     tail?(session: AgentSessionFacts): Promise<AgentSessionTail>;
+}
+
+/** How long after its last write a session still counts as live for the cwd rung. */
+const ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * An agent's sessions from its history adapter (the shared index, read only): each name, folder and transcript
+ * clock. The default `activeSessions` for an agent whose plugin has no richer reader.
+ */
+export async function sessionsFromAdapter(
+    adapter: Pick<AgentSessionAdapter, "list" | "listCached">,
+    now: number = Date.now()
+): Promise<AgentSessionFacts[]> {
+    const filters = { all: true, since: new Date(now - 7 * 24 * 60 * 60 * 1000), limit: 500 };
+    const sessions = (await adapter.listCached?.(filters)) ?? (await adapter.list(filters));
+
+    return sessions.map((session) => ({
+        sessionId: session.sessionId,
+        cwd: session.cwd || null,
+        title: session.title || null,
+        filePath: session.filePath,
+        mtimeMs: session.mtime.getTime(),
+        active: now - session.mtime.getTime() < ACTIVE_WINDOW_MS,
+    }));
 }
 
 export interface ActiveAgentSession extends ActiveAgentProcess {
@@ -361,6 +388,8 @@ export async function listActiveAgentSessions(
 
             if (facts && source.tail) {
                 tails.set(sessionId, await source.tail(facts));
+            } else if (facts?.mtimeMs !== undefined) {
+                tails.set(sessionId, { lastUserMessage: null, lastActivityAt: facts.mtimeMs });
             }
         })
     );
