@@ -257,7 +257,12 @@ describe("collectReplayEntries", () => {
             pixel_frame: { x: 0, y: 0, width: 800, height: 600 },
             selected_surface_index: 0,
             surfaces: [
-                { title: "zsh", type: "terminal" as const, command: "bun run test" },
+                {
+                    title: "zsh",
+                    type: "terminal" as const,
+                    command: "bun run test",
+                    surface_id: "5E0B4485-9AA4-452E-9814-5C366F66D8C2",
+                },
                 { title: "docs", type: "browser" as const },
             ],
         };
@@ -280,7 +285,13 @@ describe("collectReplayEntries", () => {
         const entries = collectReplayEntries(profile);
 
         expect(entries).toHaveLength(2);
-        expect(entries[0]).toMatchObject({ workspaceIndex: 0, tabIndex: 0, command: "bun run test" });
+        // The UUID pairs the reopened tab exactly; cmux keeps it across the relaunch.
+        expect(entries[0]).toMatchObject({
+            workspaceIndex: 0,
+            tabIndex: 0,
+            command: "bun run test",
+            surfaceId: "5E0B4485-9AA4-452E-9814-5C366F66D8C2",
+        });
         expect(entries[1].command).toBeUndefined();
     });
 });

@@ -214,6 +214,8 @@ export interface ReplayEntry {
     tabIndex: number;
     title: string;
     command?: string;
+    /** The surface UUID the capture recorded; cmux keeps it across the relaunch, so it pairs the tab exactly. */
+    surfaceId?: string;
 }
 
 export function collectReplayEntries(profile: Profile): ReplayEntry[] {
@@ -231,6 +233,7 @@ export function collectReplayEntries(profile: Profile): ReplayEntry[] {
                         tabIndex,
                         title: surface.title,
                         command: surface.type === "terminal" ? surface.command : undefined,
+                        ...(surface.type === "terminal" && surface.surface_id ? { surfaceId: surface.surface_id } : {}),
                     });
                 });
             }

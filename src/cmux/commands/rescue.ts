@@ -196,6 +196,8 @@ async function waitForHealthy(timeoutMs: number): Promise<boolean> {
 }
 
 interface LiveSurfaceEntry {
+    /** Surface UUID (`list-pane-surfaces --json` reports it beside the ref). */
+    id?: string;
     ref: string;
     title?: string;
     index: number;
@@ -258,8 +260,18 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
         let skipped = 0;
         for (let i = 0; i < wsEntries.length; i += 1) {
             const entry = wsEntries[i];
-            const target = liveSurfaces[i];
             if (!entry.command) {
+                continue;
+            }
+
+            // The surface UUID pairs the tab exactly: cmux keeps it across the relaunch. Only a capture without
+            // one falls back to the position, cross-checked by title below.
+            const byId = entry.surfaceId?.toLowerCase();
+            const target = byId ? liveSurfaces.find((surface) => surface.id?.toLowerCase() === byId) : liveSurfaces[i];
+
+            if (!target) {
+                p.log.warn(`  skipped "${entry.title}": its surface ${entry.surfaceId} was not reopened.`);
+                skipped += 1;
                 continue;
             }
 
@@ -268,7 +280,7 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
             // position into a renamed surface types a captured command into a
             // different terminal than the reviewed plan showed, so a real
             // mismatch refuses this surface exactly as a count mismatch does.
-            const titleMatches = mayReplayIntoSurface(entry, target);
+            const titleMatches = byId !== undefined || mayReplayIntoSurface(entry, target);
             if (!titleMatches) {
                 logger.debug(
                     { saved: entry.title, live: target.title, surface: target.ref },
@@ -281,7 +293,7 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
                 continue;
             }
 
-            await sendSurfaceText({ surfaceRef: target.ref, text: `${entry.command}\n` });
+            await sendSurfaceText({ surfaceRef: target.id ?? target.ref, text: `${entry.command}\n` });
             sent += 1;
             await new Promise((resolve) => setTimeout(resolve, 300));
         }
