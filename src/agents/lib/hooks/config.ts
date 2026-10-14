@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
+import { FULL_DIFF_MODES, type FullDiffMode } from "./diff/full";
 import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
@@ -55,6 +56,11 @@ export interface DiffConfig {
      * bought only after every changed line fits.
      */
     columns: number | "auto";
+    /**
+     * Where a message whose lines were cut points for the rest: `genesis` (a Genesis viewer link),
+     * `path` (the file), `off`. The file is `~/.genesis-tools/agents/hook-diffs/<call>.md`, kept a week.
+     */
+    fullDiff: FullDiffMode;
     standDownWhenNative: boolean;
     /**
      * Also watch files the command NAMES as a path, not only those inside a git root it
@@ -306,6 +312,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         highlight: "bat",
         theme: "claude",
         columns: "auto",
+        fullDiff: "genesis",
         standDownWhenNative: true,
         watchNamedPaths: true,
         maxNamedPaths: 8,
@@ -511,6 +518,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         highlight: stored?.highlight === "bat" || stored?.highlight === "none" ? stored.highlight : base.highlight,
         theme: themeOr(stored?.theme, base.theme),
         columns: columnsOr(stored?.columns, base.columns),
+        fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
         standDownWhenNative: boolOr(stored?.standDownWhenNative, base.standDownWhenNative),
         watchNamedPaths: boolOr(stored?.watchNamedPaths, base.watchNamedPaths),
         maxNamedPaths: countOr({
@@ -689,6 +697,10 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
 
     if (stored.columns === "auto" || isCount(stored.columns, 0)) {
         checked.columns = stored.columns;
+    }
+
+    if (FULL_DIFF_MODES.some((mode) => mode === stored.fullDiff)) {
+        checked.fullDiff = stored.fullDiff;
     }
 
     const categories: Partial<Record<DiffCategory, boolean>> = {};

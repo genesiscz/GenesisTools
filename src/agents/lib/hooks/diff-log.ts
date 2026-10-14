@@ -45,9 +45,14 @@ export interface DiffLogEntry {
     finished?: boolean;
     blocks?: ShownBlock[];
     notes?: string[];
-    bytes?: number;
+
     /** Files Claude Code's own Bash diff drew for the call. */
     native?: string[];
+    /** From the post record (logged since 2026-10-14): message size, lines cut, files past the cap, full diff. */
+    chars?: number;
+    elided?: number;
+    dropped?: number;
+    fullDiff?: string;
 }
 
 type LogRecord = Record<string, unknown>;
@@ -131,6 +136,10 @@ export function readDiffLog(options: { logPath: string; since: number; session?:
             captured: typeof before?.captured === "number" ? before.captured : undefined,
             named: typeof before?.named === "number" ? before.named : undefined,
             skipped: strings(before?.skipped),
+            chars: typeof record.chars === "number" ? record.chars : undefined,
+            elided: typeof record.elided === "number" ? record.elided : undefined,
+            dropped: typeof record.dropped === "number" ? record.dropped : undefined,
+            fullDiff: typeof record.fullDiff === "string" ? record.fullDiff : undefined,
         });
     }
 
@@ -162,7 +171,7 @@ const NOTE = /^(\d+ file\(s\) changed by others|\d+ dirty file\(s\) changed with
 const MARKER = 7;
 
 /** What one hook message showed, read back from the text Claude Code recorded. */
-export function readMessage(message: string): { blocks: ShownBlock[]; notes: string[]; bytes: number } {
+export function readMessage(message: string): { blocks: ShownBlock[]; notes: string[]; chars: number } {
     const blocks: ShownBlock[] = [];
     const notes: string[] = [];
     let current: ShownBlock | null = null;
@@ -193,7 +202,7 @@ export function readMessage(message: string): { blocks: ShownBlock[]; notes: str
         }
     }
 
-    return { blocks, notes, bytes: Buffer.byteLength(message) };
+    return { blocks, notes, chars: message.length };
 }
 
 function claudeDir(): string {
@@ -359,7 +368,11 @@ function readRow(row: unknown, calls: Map<string, DiffLogEntry>, agent: string |
             const message = text(field(SafeJSON.parse(stdout, { strict: true }), "systemMessage"));
 
             if (message.length > 0) {
-                Object.assign(entry, readMessage(message));
+                const read = readMessage(message);
+
+                entry.blocks = read.blocks;
+                entry.notes = read.notes;
+                entry.chars ??= read.chars;
             }
         } catch {
             // Another hook's output on the same event.
@@ -372,84 +385,206 @@ function localTime(at: string): string {
     return new Date(at).toLocaleString("sv-SE");
 }
 
-function excerpt(command: string): string {
-    const first = command.trim().split("\n")[0] ?? "";
-    const flat = first.replace(/\s+/g, " ");
-    const more = command.trim().includes("\n") ? " ⏎…" : "";
+/** Colour for `diff log`: picocolors on a terminal, these no-ops elsewhere. */
+export interface LogColours {
+    dim: (text: string) => string;
+    bold: (text: string) => string;
+    green: (text: string) => string;
+    red: (text: string) => string;
+    yellow: (text: string) => string;
+    cyan: (text: string) => string;
+}
 
-    return flat.length > 110 ? `${flat.slice(0, 110)}…${more}` : `${flat}${more}`;
+const PLAIN: LogColours = {
+    dim: (text) => text,
+    bold: (text) => text,
+    green: (text) => text,
+    red: (text) => text,
+    yellow: (text) => text,
+    cyan: (text) => text,
+};
+
+export interface FormatOptions {
+    extended: boolean;
+    /** The whole command in a fence, rather than its first line and the lines that name a file. */
+    fullCommand?: boolean;
+    colours?: LogColours;
+}
+
+const SLICE = 110;
+
+/** `line` cut to about `SLICE` columns around `needle`, so the part that names the file stays visible. */
+function around(line: string, needle: string | undefined): string {
+    const flat = line.trim().replace(/\s+/g, " ");
+
+    if (flat.length <= SLICE) {
+        return flat;
+    }
+
+    const at = needle ? flat.indexOf(needle) : -1;
+    const start = at < 0 ? 0 : Math.max(0, Math.min(at - 40, flat.length - SLICE));
+
+    return `${start > 0 ? "…" : ""}${flat.slice(start, start + SLICE)}${start + SLICE < flat.length ? "…" : ""}`;
+}
+
+/**
+ * What to print of the command: its first line, then every other line that names one of the
+ * files (by file name), in command order, with the names highlighted. That is the part that
+ * decided whether a file counted as named by the command.
+ */
+export function commandSlices(command: string, files: string[], colours: LogColours = PLAIN): string[] {
+    const lines = command.trim().split("\n");
+    const names = [...new Set(files.map((path) => basename(path)).filter((name) => name.length > 0))];
+    const mark = (text: string) =>
+        names.reduce((marked, name) => marked.split(name).join(colours.bold(colours.yellow(name))), text);
+    // The first line from its start, because that says what ran; a name it holds past the cut
+    // gets a slice of its own.
+    const first = (lines[0] ?? "").trim().replace(/\s+/g, " ");
+    const out = [mark(around(first, undefined))];
+    const late = names.find((name) => first.indexOf(name) > SLICE - name.length);
+
+    if (late) {
+        out.push(mark(around(first, late)));
+    }
+
+    let last = 0;
+
+    lines.forEach((line, index) => {
+        const name = names.find((candidate) => line.includes(candidate));
+
+        if (index === 0 || !name) {
+            return;
+        }
+
+        if (index > last + 1) {
+            out.push(colours.dim("…"));
+        }
+
+        out.push(mark(around(line, name)));
+        last = index;
+    });
+
+    if (lines.length > last + 1 && lines.length > 1) {
+        out.push(colours.dim(`… (${lines.length} lines)`));
+    }
+
+    return out;
 }
 
 function namedBy(command: string | undefined, path: string): boolean {
     return command?.includes(basename(path)) === true;
 }
 
+function decisionWord(decision: string, colours: LogColours): string {
+    if (decision === "emitted") {
+        return colours.green(decision);
+    }
+
+    if (decision === "failed") {
+        return colours.red(decision);
+    }
+
+    return decision === "noted" ? colours.yellow(decision) : colours.dim(decision);
+}
+
 /** The narrative lines for one entry. `extended` adds the transcript facts. */
-export function formatEntry(entry: DiffLogEntry, extended: boolean): string[] {
-    const who = `${entry.session.slice(0, 8)}${entry.agent ? `/${entry.agent.slice(0, 14)}` : ""}`;
-    const ran = entry.command === undefined ? "a Bash call" : `"${excerpt(entry.command)}"`;
-    const lines = [`[${localTime(entry.at)}] ${who} ran ${ran}`];
+export function formatEntry(entry: DiffLogEntry, options: FormatOptions): string[] {
+    const colours = options.colours ?? PLAIN;
+    const who = `${colours.bold(entry.session.slice(0, 8))}${entry.agent ? colours.dim(`/${entry.agent.slice(0, 14)}`) : ""}`;
+    const files = [...entry.files, ...entry.others, ...(entry.blocks ?? []).map((block) => block.path)];
+    const lines = [
+        `${colours.dim(`[${localTime(entry.at)}]`)} ${who} ran ${entry.command === undefined ? "a Bash call" : ""}`.trimEnd(),
+    ];
+
+    if (entry.command !== undefined) {
+        if (options.fullCommand) {
+            lines.push(
+                "    ```sh",
+                ...entry.command
+                    .trim()
+                    .split("\n")
+                    .map((line) => `    ${line}`),
+                "    ```"
+            );
+        } else {
+            lines.push(...commandSlices(entry.command, files, colours).map((line) => `    ${colours.cyan(line)}`));
+        }
+    }
 
     if (entry.decision === "failed") {
-        if (extended && entry.finished !== true) {
-            lines.push("  -> no post record yet: the call is still running, or its session ended first");
+        if (options.extended && entry.finished !== true) {
+            lines.push(
+                `  -> ${colours.yellow("no post record yet")}: the call is still running, or its session ended first`
+            );
         } else if (entry.errored) {
-            lines.push(`  -> no diff: the call failed (${entry.errored}), and a failed call gets no post phase`);
+            lines.push(
+                `  -> ${colours.red("no diff")}: the call failed (${entry.errored}), and a failed call gets no post phase`
+            );
         } else {
-            lines.push(`  -> no diff: ${entry.reason}`);
+            lines.push(`  -> ${colours.red("no diff")}: ${entry.reason}`);
         }
 
         return lines;
     }
 
     if (entry.background) {
-        lines.push("  -> the call went to the background, so the post phase ran when it started, not when it ended");
+        lines.push(`  -> ${colours.yellow("background")}: the post phase ran when the call started, not when it ended`);
     }
 
     if (entry.decision === "emitted") {
         const blocks = entry.blocks ?? [];
-        const size = entry.bytes === undefined ? "" : `, ${entry.bytes.toLocaleString("en-US")} bytes`;
-        lines.push(`  -> emitted a diff block for ${entry.files.length} file(s)${size}:`);
+        const facts = [
+            entry.chars === undefined ? "" : `${entry.chars.toLocaleString("en-US")} chars`,
+            entry.elided ? `${entry.elided} lines cut` : "",
+            entry.dropped ? `${entry.dropped} files past the cap` : "",
+        ].filter((fact) => fact.length > 0);
+        lines.push(
+            `  -> ${decisionWord("emitted", colours)} a diff block for ${entry.files.length} file(s)${facts.length > 0 ? ` (${facts.join(", ")})` : ""}:`
+        );
 
-        if (extended && blocks.length > 0) {
+        if (options.extended && blocks.length > 0) {
             for (const block of blocks) {
                 const changed = block.added + block.removed;
                 const shown =
                     block.changedShown >= changed
                         ? "every changed line shown"
-                        : `${block.changedShown} of ${changed} changed lines shown`;
-                const named = namedBy(entry.command, block.path) ? "named by the command" : "NOT named by the command";
-                lines.push(
-                    `     -> ${block.verb} ${block.path} (+${block.added} -${block.removed}): ${shown}, ${named}`
-                );
+                        : colours.yellow(`${block.changedShown} of ${changed} changed lines shown`);
+                const named = namedBy(entry.command, block.path)
+                    ? "named by the command"
+                    : colours.yellow("NOT named by the command");
+                const counts = `${colours.green(`+${block.added}`)} ${colours.red(`-${block.removed}`)}`;
+                lines.push(`     -> ${block.verb} ${colours.bold(block.path)} (${counts}): ${shown}, ${named}`);
             }
         } else {
             for (const file of entry.files) {
-                lines.push(`     -> ${file}`);
+                lines.push(`     -> ${colours.bold(file)}`);
             }
         }
     } else {
-        lines.push(
-            `  -> ${entry.decision}: ${entry.decision === "noted" ? "one-line notes, no diff block" : "nothing printed"}`
-        );
+        const what = entry.decision === "noted" ? "one-line notes, no diff block" : "nothing printed";
+        lines.push(`  -> ${decisionWord(entry.decision, colours)}: ${what}`);
     }
 
-    lines.push(`  -> because: ${entry.reason}`);
+    lines.push(`  -> ${colours.dim("because:")} ${entry.reason}`);
 
     for (const note of entry.notes ?? []) {
-        lines.push(`  -> note: ${note}`);
+        lines.push(`  -> ${colours.dim("note:")} ${note}`);
     }
 
     if (entry.others.length > 0 && !(entry.notes ?? []).some((note) => note.includes("changed by others"))) {
-        lines.push(`  -> left to others: ${entry.others.map((path) => basename(path)).join(", ")}`);
+        lines.push(`  -> ${colours.dim("left to others:")} ${entry.others.map((path) => basename(path)).join(", ")}`);
     }
 
-    if (extended && entry.skipped.length > 0) {
-        lines.push(`  -> capture skipped: ${entry.skipped.join("; ")}`);
+    if (options.extended && entry.skipped.length > 0) {
+        lines.push(`  -> ${colours.dim("capture skipped:")} ${entry.skipped.join("; ")}`);
+    }
+
+    if (entry.fullDiff) {
+        lines.push(`  -> ${colours.dim("full diff:")} ${entry.fullDiff}`);
     }
 
     if (entry.native && entry.native.length > 0) {
-        lines.push(`  -> Claude Code's own Bash diff showed: ${entry.native.join(", ")}`);
+        lines.push(`  -> ${colours.red("Claude Code's own Bash diff")} showed: ${entry.native.join(", ")}`);
     }
 
     return lines;

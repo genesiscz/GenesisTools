@@ -10,6 +10,7 @@ import {
     loadHooksConfigForWrite,
     OTHERS_SUMMARIES,
 } from "./config";
+import { FULL_DIFF_MODES } from "./diff/full";
 import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 import { writeHooksFile } from "./hooks-file";
 
@@ -38,6 +39,7 @@ export const SETTABLE_KEYS = [
     "diff.othersSummary",
     "diff.theme",
     "diff.columns",
+    "diff.fullDiff",
     "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
     "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
     "maxLogMB",
@@ -301,6 +303,17 @@ export function applySetting(
 
     if (key === "diff.columns") {
         next.diff.columns = asColumns(key, value);
+        return next;
+    }
+
+    if (key === "diff.fullDiff") {
+        const mode = FULL_DIFF_MODES.find((candidate) => candidate === value);
+
+        if (!mode) {
+            throw new Error(`${key} takes ${FULL_DIFF_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.fullDiff = mode;
         return next;
     }
 

@@ -47,6 +47,7 @@ logDecision(
         reason: decision.reason,
         files: decision.files,
         ...(decision.others && decision.others.length > 0 ? { others: decision.others } : {}),
+        ...(decision.stats ? decision.stats : {}),
     },
     config.logPath
 );

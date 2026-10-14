@@ -18,7 +18,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
-import { formatEntry, readDiffLog, readMessage } from "../diff-log";
+import { commandSlices, formatEntry, readDiffLog, readMessage } from "../diff-log";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
@@ -3423,6 +3423,27 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(rendered.body[1]?.text).not.toContain("\u001b[48;");
     });
 
+    it("links the full diff when the budget cuts lines, and the file holds every line", () => {
+        const long = Array.from({ length: 80 }, (_, index) => `line ${index}`).join("\n");
+        const current = begin({ command: "perl -pi -e 1 big.ts", toolUseId: `call-full-${calls}` }, quiet);
+        writeFileSync(join(repo, "big.ts"), `${long}\n`);
+        const decision = runDiffPost(current, {
+            ...DEFAULT_HOOKS_CONFIG,
+            diff: { ...quiet, maxMessageChars: 900, fullDiff: "path" },
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            expect(decision.stats?.elided).toBeGreaterThan(0);
+            expect(stripAnsi(decision.message ?? "")).toContain(`Full diff: ${path}`);
+            expect((decision.message ?? "").length).toBeLessThanOrEqual(900);
+            expect(readFileSync(path, "utf8")).toContain("+line 79");
+        } finally {
+            rmSync(join(repo, "big.ts"), { force: true });
+            rmSync(path, { force: true });
+        }
+    });
+
     it("renders a file once when the command names it through another path to the same folder", () => {
         // `/tmp` is a symlink to `/private/tmp` on macOS: git names the root by its real path and
         // the command by the typed one, and both used to render, 84 times in one day.
@@ -3477,6 +3498,24 @@ describe("tools agents hooks diff log", () => {
         expect(read.notes).toEqual(["1 file(s) changed by others in this root: b.ts"]);
     });
 
+    it("shows a command's first line and then only the lines that name a file", () => {
+        const command = [
+            "cd /repo && python3 - <<'PY'",
+            "import json",
+            "p = 'src/a.ts'",
+            "print(1)",
+            "PY",
+            "git status",
+        ].join("\n");
+
+        expect(commandSlices(command, ["/repo/src/a.ts"])).toEqual([
+            "cd /repo && python3 - <<'PY'",
+            "…",
+            "p = 'src/a.ts'",
+            "… (6 lines)",
+        ]);
+    });
+
     it("joins the pre and post record of a call, and a pre record alone is a failed or running call", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-difflog-"));
         const log = join(dir, "hooks.jsonl");
@@ -3507,7 +3546,7 @@ describe("tools agents hooks diff log", () => {
                 ["t1", "emitted", 3],
                 ["t2", "failed", 0],
             ]);
-            expect(entries[0] ? formatEntry(entries[0], false) : []).toContain("     -> /r/a.ts");
+            expect(entries[0] ? formatEntry(entries[0], { extended: false }) : []).toContain("     -> /r/a.ts");
             expect(readDiffLog({ logPath: log, since: now - 60_000, session: "other" })).toEqual([]);
         } finally {
             rmSync(dir, { recursive: true, force: true });

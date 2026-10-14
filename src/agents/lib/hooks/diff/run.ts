@@ -34,17 +34,10 @@ import { alreadyGone, beforeCopy, leftOutOfCapture } from "./before";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
+import { fullDiffLine, writeFullDiff } from "./full";
 import { appendMentions, canonical, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
-import {
-    assembleMessage,
-    type DiffBlock,
-    highlightRange,
-    hunkRange,
-    renderBlock,
-    renderPatch,
-    themedDress,
-} from "./render";
+import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
 import { terminalColumns } from "./terminal";
 import { type Palette, resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
@@ -57,6 +50,8 @@ export interface DiffDecision {
     files: string[];
     /** Changed files left to another writer, for the decision log. */
     others?: string[];
+    /** What the message carried, for the decision log and `diff log`. */
+    stats?: { chars: number; blocks: number; elided: number; dropped: number; fullDiff?: string };
 }
 
 /**
@@ -150,6 +145,8 @@ function blockFrom(
 
     const label = look ? displayPath(file.path, look.cwd) : file.path;
     const block = renderBlock(file, rendered, hadBefore, category, label, look?.width ?? 0);
+
+    block.source = { label: `${label} (+${rendered.added} -${rendered.removed})`, patch };
 
     if (look) {
         block.dress = themedDress(rendered.body, look.palette, file.path, config, look.width);
@@ -525,6 +522,8 @@ export function runDiffPost(
     const touches: Touch[] = [];
     const historyNotes: string[] = [];
     const unattributed: Array<{ path: string; root: string }> = [];
+    // Changed files the root pass reached after `maxFiles` blocks: named in a note, listed in the full diff.
+    const notShown: string[] = [];
     const uncapturedFiles: Array<{ path: string; root: string }> = [];
     const touch = (path: string, kind: Attribution) =>
         touches.push({ session: payload.sessionId ?? "", start: since, end: attribution.now, kind, path });
@@ -604,6 +603,7 @@ export function runDiffPost(
             });
 
             if (full()) {
+                notShown.push(file.path);
                 continue;
             }
 
@@ -759,6 +759,7 @@ export function runDiffPost(
         ...(unattributed.length > 0 && diff.othersSummary === "line"
             ? [summaryLine("file(s) changed by others in this root", unattributed)]
             : []),
+        ...(notShown.length > 0 ? [`${notShown.length} more changed file(s) past diff.maxFiles ${diff.maxFiles}`] : []),
     ];
     const others = unattributed.map((item) => item.path);
 
@@ -773,14 +774,44 @@ export function runDiffPost(
     }
 
     const noteChars = notes.reduce((total, line) => total + line.length + 2, 0);
-    const body = assembleMessage(blocks, { ...diff, maxMessageChars: Math.max(0, diff.maxMessageChars - noteChars) });
+    const budget = Math.max(0, diff.maxMessageChars - noteChars);
+    let fitted = fitMessage(blocks, { ...diff, maxMessageChars: budget });
+    let body = fitted.message;
+    let fullDiff: string | undefined;
+
+    // Lines or files had to go: the whole diff goes to a file, and the message ends with a link to
+    // it, fitted again with the link's room taken out of the budget.
+    if ((fitted.elided > 0 || notShown.length > 0) && diff.fullDiff !== "off") {
+        const path = writeFullDiff({
+            toolUseId: payload.toolUseId,
+            command: payload.command,
+            parts: blocks.flatMap((block) => (block.source ? [block.source] : [])),
+            notShown,
+        });
+        const line = path ? fullDiffLine(path, diff.fullDiff) : null;
+
+        if (path && line) {
+            fullDiff = path;
+            fitted = fitMessage(blocks, { ...diff, maxMessageChars: Math.max(0, budget - line.length - 1) });
+            body = `${fitted.message}\n${line}`;
+        }
+    }
+
+    const message = notes.length > 0 ? `${body}\n\n${notes.join("\n")}` : body;
 
     return {
         decision: "emitted",
         reason: "rendered a diff the harness did not",
-        message: notes.length > 0 ? `${body}\n\n${notes.join("\n")}` : body,
+        message,
         files,
         others,
+        stats: {
+            chars: message.length,
+            blocks: blocks.length,
+            elided: fitted.elided,
+            dropped: notShown.length,
+            ...(fullDiff ? { fullDiff } : {}),
+        },
     };
 }
 

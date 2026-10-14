@@ -26,6 +26,7 @@ import {
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { type CustomRules, loadRuleSet } from "../lib/hooks/custom-rules";
+import { findFullDiff, fullDiffDir } from "../lib/hooks/diff/full";
 import { decisionCounts, extendFromTranscripts, formatEntry, readDiffLog } from "../lib/hooks/diff-log";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
 import { lastSeenPerHarness } from "../lib/hooks/harnesses";
@@ -429,9 +430,24 @@ export function registerHooksCommands(program: Command): void {
             out.result(filtered);
         });
 
-    hooks
-        .command("diff")
-        .description("The Bash diff hook")
+    const diffCommand = hooks.command("diff").description("The Bash diff hook");
+
+    diffCommand
+        .command("show <call>")
+        .description("Print the full diff a cut message linked, by tool call id or a prefix of it")
+        .action((call: string) => {
+            const path = findFullDiff(call);
+
+            if (!path) {
+                ui.err(`no full diff for ${call} in ${fullDiffDir()}: only a message that had to cut lines writes one`);
+                process.exitCode = 1;
+                return;
+            }
+
+            out.println(readFileSync(path, "utf8"));
+        });
+
+    diffCommand
         .command("log")
         .description(
             "What the diff hook decided per Bash call, told against the call: --extended reads the transcript for the command, what the message showed, and Claude Code's own diff"
@@ -445,6 +461,7 @@ export function registerHooksCommands(program: Command): void {
         )
         .option("-n, --lines <count>", "At most this many calls, the newest", "50")
         .option("--extended", "Join each call with its Claude transcript")
+        .option("--full-command", "Print each command whole, in a fence")
         .option("--json", "The entries as JSON")
         .action(
             (options: {
@@ -453,6 +470,7 @@ export function registerHooksCommands(program: Command): void {
                 decision?: string;
                 lines?: string;
                 extended?: boolean;
+                fullCommand?: boolean;
                 json?: boolean;
             }) => {
                 const count = Number(options.lines ?? "50");
@@ -490,8 +508,16 @@ export function registerHooksCommands(program: Command): void {
                     return;
                 }
 
+                const colours = pc.createColors(process.stdout.isTTY === true);
+
                 for (const entry of entries) {
-                    out.println(formatEntry(entry, options.extended === true).join("\n"));
+                    const lines = formatEntry(entry, {
+                        extended: options.extended === true,
+                        fullCommand: options.fullCommand === true,
+                        colours,
+                    });
+
+                    out.println(lines.join("\n"));
                     out.println("");
                 }
 

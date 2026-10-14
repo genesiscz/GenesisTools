@@ -572,9 +572,15 @@ export function themedDress(
     config: DiffConfig,
     width: number
 ): BlockDress {
+    let painted: Array<string | undefined> | undefined;
+
     return {
         width,
-        paint: () => paintRows(path, body, config, palette.light),
+        // Kept, because a message that links its full diff is fitted twice.
+        paint: () => {
+            painted ??= paintRows(path, body, config, palette.light);
+            return painted;
+        },
         row: (index, shape) => {
             const line = body[index];
 
@@ -601,6 +607,8 @@ export interface DiffBlock {
      * full width, then syntax colour. A tight budget therefore keeps content and loses polish.
      */
     dress?: BlockDress;
+    /** The block's file and raw patch, for the full diff a cut message links to. */
+    source?: { label: string; patch: string };
 }
 
 export interface BlockDress {
@@ -789,6 +797,11 @@ function dressBlocks(blocks: DiffBlock[], kept: Set<number>[], tinted: Map<numbe
  * path lengths conspire; the message is then headers only, which is still readable.
  */
 export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string {
+    return fitMessage(blocks, config).message;
+}
+
+/** `assembleMessage`, plus how many body lines the budget cut. */
+export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: string; elided: number } {
     const queues = blocks.map(byImportance);
     const kept: Set<number>[] = blocks.map(() => new Set());
     const tinted: Map<number, string>[] = blocks.map(() => new Map());
@@ -886,7 +899,8 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
         }
     });
 
-    return blocks
+    let elidedTotal = 0;
+    const message = blocks
         .map((block, index) => {
             const held = kept[index];
             const shown = [...(held ?? [])]
@@ -894,7 +908,10 @@ export function assembleMessage(blocks: DiffBlock[], config: DiffConfig): string
                 .map((at) => tinted[index]?.get(at) ?? block.body[at]?.text ?? "");
             const elided = block.body.length - shown.length;
 
+            elidedTotal += elided;
             return [block.head, ...shown, ...(elided > 0 ? [moreLines(elided)] : [])].join("\n");
         })
         .join("\n\n");
+
+    return { message, elided: elidedTotal };
 }
