@@ -13,7 +13,8 @@ export type CloseReason =
     | "own-workspace"
     | "turn-running"
     | "agent-still-running"
-    | "in-use";
+    | "in-use"
+    | "other-agent";
 
 export interface CloseSteps {
     exitSent: boolean;
@@ -277,6 +278,11 @@ export interface SessionCloseIO {
     listWorkspaces(window: string | null): Promise<ListedWorkspace[]>;
     /** A live agent session by session id (or 8+ char prefix), surface ref or workspace ref; null when none or several. */
     adopt?(query: string): Promise<AdoptedSession | null>;
+    /**
+     * Another agent than the adopted one running on its tty now (`claude` in a tab whose journal line is a Codex
+     * worker's), or null. A worker started from a tab inherits the tab's identity and can leave the newest line.
+     */
+    otherAgentOnTty?(subject: AdoptedSession): Promise<string | null>;
     /** The UUID of the surface cmux lists under this UUID (or, for an old record, this ref) now; null when none. */
     surfaceId(surface: string): Promise<string | null>;
     /** `surface` is a ref or a UUID (`surfaceTarget`); a UUID needs no window. */
@@ -358,7 +364,7 @@ const CLOSE_SETTLE_MS = 3_000;
 type Target =
     | { kind: "record"; record: CloseSubject }
     | { kind: "bare"; workspace: string }
-    | { kind: "none"; reason: "not-found" | "ambiguous" | "in-use"; note: string };
+    | { kind: "none"; reason: "not-found" | "ambiguous" | "in-use" | "other-agent"; note: string };
 
 /** A record name, a unique name prefix, or the record's workspace ref. A bare `workspace:N` is a candidate for --force. */
 export function resolveCloseTarget(query: string, records: readonly SessionCreatedRecord[]): Target {
@@ -510,7 +516,17 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         // UUID decides, never the ref: after a restart a stale record's `surface:N` can name the adopted surface.
         const recorded = adopted ? recordedSessionFor(open, adopted.surfaceId) : undefined;
 
-        if (adopted) {
+        const other = adopted && !recorded && io.otherAgentOnTty ? await io.otherAgentOnTty(adopted) : null;
+
+        // The tab runs another agent: closing it as the adopted session would quit nothing (the adopted agent is
+        // not running) and then close someone else's tab.
+        if (adopted && other) {
+            target = {
+                kind: "none",
+                reason: "other-agent",
+                note: `${adopted.surface} runs ${other}, not ${adopted.agent} ${adopted.sessionId.slice(0, 8)}: that journal line is from a session started inside this tab, so nothing is closed`,
+            };
+        } else if (adopted) {
             target = { kind: "record", record: recorded ?? adopted };
         }
     }

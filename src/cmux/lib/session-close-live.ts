@@ -297,6 +297,19 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             log.debug({ query, adopted: adopted?.sessionId ?? null, surface: adopted?.surface ?? null }, "adopt");
             return adopted;
         },
+        async otherAgentOnTty(subject) {
+            if (!subject.tty) {
+                return null;
+            }
+
+            const entries = processesOnTty(subject.tty);
+            const uid = process.getuid?.() ?? -1;
+            return (
+                SESSION_AGENT_IDS.find(
+                    (agent) => agent !== subject.agent && ttyProcessesShowAgent(entries, agent, uid)
+                ) ?? null
+            );
+        },
         async surfaceId(surface) {
             const surfaces = (await liveTree()).surfaces;
             const wanted = surface.toLowerCase();

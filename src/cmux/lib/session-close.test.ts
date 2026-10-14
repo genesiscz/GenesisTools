@@ -51,6 +51,8 @@ function fake(input: {
     /** How many `agentRunning` checks answer true before the agent is gone. */
     runningChecks?: number;
     adoptable?: AdoptedSession | null;
+    /** The other agent running on the adopted session's tty, if any. */
+    otherAgent?: string | null;
     /** What cmux lists now; called once per listing, so a test can renumber refs mid-close. */
     listing?: (call: number) => ListedWorkspace[];
     /**
@@ -98,6 +100,7 @@ function fake(input: {
             calls.push(`adopt ${query}`);
             return input.adoptable ?? null;
         },
+        otherAgentOnTty: async () => input.otherAgent ?? null,
         surfaceId: async (surface) => {
             lookups += 1;
 
@@ -226,6 +229,24 @@ test("a dry run plans and touches nothing, and tmux stays unless --kill-tmux", a
     await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, killed.io);
     expect(killed.calls).toContain("kill cmux-app-ab12cd");
 });
+// 2026-10-14: a Codex worker started from a Claude tab left the newest journal line on that tab. Adopting it, close
+// saw no Codex running, skipped the exit, and would have closed the Claude tab.
+test("a tab that runs another agent than the adopted journal line names is never closed", async () => {
+    const workerLine: AdoptedSession = {
+        ...created({ name: "019a0000-0000-7000-8000-00000000c0de", surface: "surface:21", pidFile: "" }),
+        createdBy: "adopted",
+        surfaceId: "S21",
+        sessionId: "019a0000-0000-7000-8000-00000000c0de",
+        tty: "ttys009",
+    };
+    const { io, calls } = fake({ adoptable: workerLine, otherAgent: "claude", forbidIrreversible: true });
+    const report = await closeSession("019a0000", { graceMs: 0, force: true }, io);
+
+    expect(report).toMatchObject({ outcome: "refused", reason: "other-agent" });
+    expect(report.notes[0]).toContain("runs claude, not codex 019a0000");
+    expect(calls).toEqual(["adopt 019a0000"]);
+});
+
 test("an agent session agents new did not open is adopted: the agent quits, only its surface closes, nothing is recorded", async () => {
     const adoptable: AdoptedSession = {
         ...created({
