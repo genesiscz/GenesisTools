@@ -15,13 +15,15 @@
  */
 
 import { CString, type Pointer, read } from "bun:ffi";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename } from "node:path";
 import { libSystem } from "@genesiscz/utils/fs/native/libsystem";
 import { ownLineage } from "./cwd";
 import {
+    listChildPids,
     listProcessTable,
+    listTtyTable,
     type ProcessTableRow,
     readProcessUsage as readLibprocUsage,
     readProcessArgs,
@@ -314,6 +316,12 @@ export function readProcess(pid: number, options: Pick<ListProcessesOptions, "ot
 
 /** The direct children of `pid`, ascending (`pgrep -P`). */
 export function childPids(pid: number): number[] {
+    const fromKernel = darwinKernel() ? listChildPids(pid) : null;
+
+    if (fromKernel) {
+        return fromKernel.filter((child) => child !== pid).sort((a, b) => a - b);
+    }
+
     return listProcesses({ commands: false })
         .filter((entry) => entry.ppid === pid && entry.pid !== pid)
         .map((entry) => entry.pid)
@@ -322,27 +330,38 @@ export function childPids(pid: number): number[] {
 
 /** Every descendant of `pid`, breadth first. */
 export function descendantPids(pid: number): number[] {
+    const found: number[] = [];
+    const seen = new Set([pid]);
+    // macOS: one kernel call per process in the tree, which is a handful. Elsewhere, or without libproc: the table once.
+    let queue = darwinKernel() ? listChildPids(pid) : null;
+    const childrenOf = queue !== null ? (parent: number) => listChildPids(parent) ?? [] : tableChildren();
+    queue ??= childrenOf(pid);
+
+    while (queue.length > 0) {
+        const next: number[] = [];
+
+        for (const child of queue) {
+            if (!seen.has(child)) {
+                seen.add(child);
+                found.push(child);
+                next.push(...childrenOf(child));
+            }
+        }
+
+        queue = next;
+    }
+
+    return found;
+}
+
+function tableChildren(): (parent: number) => number[] {
     const byParent = new Map<number, number[]>();
 
     for (const entry of listProcesses({ commands: false })) {
         byParent.set(entry.ppid, [...(byParent.get(entry.ppid) ?? []), entry.pid]);
     }
 
-    const found: number[] = [];
-    const queue = [pid];
-    const seen = new Set(queue);
-
-    while (queue.length > 0) {
-        for (const child of byParent.get(queue.shift() as number) ?? []) {
-            if (!seen.has(child)) {
-                seen.add(child);
-                found.push(child);
-                queue.push(child);
-            }
-        }
-    }
-
-    return found;
+    return (parent) => byParent.get(parent) ?? [];
 }
 
 /** `pid`, its parent, its grandparent, … up to `maxDepth` or the root, each with its command when readable. */
@@ -437,10 +456,25 @@ export function findProcesses(match: ProcessMatch): ProcessEntry[] {
 export function processesOnTty(tty: string): ProcessEntry[] {
     const bare = tty.replace(/^\/dev\//, "");
     const wanted = new Set([bare, bare.startsWith("tty") ? bare.slice(3) : `tty${bare}`]);
+    const rows = darwinKernel() ? ttyRows(bare) : null;
+
+    if (rows) {
+        return rows.map((row) => fromDarwinRow(row, readPsCommand(row.pid)));
+    }
+
     // The table first and the command lines of the few processes on the terminal after, not of every process.
     return listProcesses({ commands: false })
         .filter((entry) => entry.tty !== null && wanted.has(entry.tty))
         .map((entry) => readProcess(entry.pid) ?? entry);
+}
+
+/** The kernel's rows for terminal `bare` (`ttys003` or `s003`); null when the device or the read is not there. */
+function ttyRows(bare: string): ProcessTableRow[] | null {
+    try {
+        return listTtyTable(statSync(`/dev/${bare.startsWith("tty") ? bare : `tty${bare}`}`).rdev);
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -596,12 +630,15 @@ export interface ProcessWithUsage extends ProcessEntry {
  * memory and CPU time) with ONE batched `ps`, never one per question.
  */
 export function listProcessesWithUsage(options: Pick<ListProcessesOptions, "otherUsers"> = {}): ProcessWithUsage[] {
-    const entries = listProcesses({ commands: true });
+    const fillFromPs = options.otherUsers === true && processPlatform() !== "linux" && processPlatform() !== "win32";
+    // The `ps` that fills other users' rows prints every command line anyway, so reading them from the kernel first
+    // would read each one twice (about 10 ms of sysctls on 1,300 processes).
+    const entries = listProcesses({ commands: !fillFromPs });
     const usages = readProcessUsages(entries.map((entry) => entry.pid));
 
-    if (options.otherUsers && processPlatform() !== "linux" && processPlatform() !== "win32") {
+    if (fillFromPs) {
         const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
-        const missing = entries.filter((entry) => !entry.zombie && (entry.command === null || !usages.has(entry.pid)));
+        const missing = entries.filter((entry) => !entry.zombie);
 
         for (const [pid, rest] of psLinesFor(
             missing.map((entry) => entry.pid),

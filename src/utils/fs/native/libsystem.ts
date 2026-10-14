@@ -44,6 +44,8 @@ export const libSystem = defineSystemLibrary({
         },
         /** `int proc_pidpath(int pid, void *buffer, uint32_t buffersize)` (libproc). */
         proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+        /** `int proc_listchildpids(pid_t ppid, void *buffer, int buffersize)` (libproc): the number of child pids written. */
+        proc_listchildpids: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
         /** `kern_return_t mach_timebase_info(mach_timebase_info_t)`: numer and denom of mach time units. */
         mach_timebase_info: { args: [FFIType.ptr], returns: FFIType.i32 },
         /** `char *devname(dev_t, mode_t)`: the `/dev` name of a device number, from a static buffer. */

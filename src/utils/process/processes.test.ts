@@ -28,12 +28,14 @@ import { countOpenFiles, executableInode, listOpenFiles } from "./process-files"
 import {
     ancestry,
     childPids,
+    descendantPids,
     findProcesses,
     formatLstart,
     listProcesses,
     listProcessesWithUsage,
     parseFallbackPsTable,
     parsePasswd,
+    processesOnTty,
     readExecutablePath,
     readProcess,
     readProcessEnvironment,
@@ -386,6 +388,32 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         );
         expect(me?.pgid).toBe(fromPs);
     });
+
+    test.skipIf(process.platform !== "darwin")(
+        "children and terminals from the kernel's own filters agree with the whole table",
+        () => {
+            const table = listProcesses({ commands: false });
+            const childrenInTable = (pid: number) =>
+                table
+                    .filter((entry) => entry.ppid === pid && entry.pid !== pid)
+                    .map((entry) => entry.pid)
+                    .sort((a, b) => a - b);
+            // launchd has most of the machine as children, other users' included.
+            expect(childPids(1)).toEqual(childrenInTable(1));
+            expect(descendantPids(process.ppid)).toContain(process.pid);
+
+            const tty = table.find((entry) => entry.tty !== null)?.tty;
+
+            if (tty) {
+                const inTable = table.filter((entry) => entry.tty === tty).map((entry) => entry.pid);
+                expect(
+                    processesOnTty(tty)
+                        .map((entry) => entry.pid)
+                        .sort((a, b) => a - b)
+                ).toEqual(inTable.sort((a, b) => a - b));
+            }
+        }
+    );
 
     test.skipIf(process.platform !== "darwin")("other users' rows cost exactly one ps, however many there are", () => {
         let rows: ReturnType<typeof listProcessesWithUsage> = [];

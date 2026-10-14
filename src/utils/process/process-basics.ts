@@ -15,7 +15,7 @@
  */
 import { CString, dlopen, FFIType, type Pointer, read } from "bun:ffi";
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 
 export interface ProcessBasics {
     pid: number;
@@ -113,8 +113,57 @@ const sizeWord = new BigUint64Array(1);
 const rowBuffer = new Uint8Array(KINFO_PROC_SIZE);
 let argsBuffer: Buffer | null = null;
 
-function decodeDarwinRow(lib: Darwin, bytes: Uint8Array, base: number): Omit<ProcessBasics, "command"> {
-    const view = new DataView(bytes.buffer, bytes.byteOffset);
+// devname() costs about 0.5 ms a call, and a terminal holds many processes: 104 rows on 10 terminals took 52 ms
+// uncached. A pty's device number always names the same /dev entry, so a name is looked up once.
+const ttyNames = new Map<number, string | null>();
+
+/**
+ * The `/dev` name of every terminal device, read once: one `readdir` and a `stat` per `tty*` entry cost about 1 ms,
+ * while `devname()` costs about 0.5 ms a call. A terminal opened later is not in it, and falls back to `devname()`.
+ */
+function terminalNames(): Map<number, string> {
+    const names = new Map<number, string>();
+
+    try {
+        for (const name of readdirSync("/dev")) {
+            if (name.startsWith("tty") || name === "console") {
+                try {
+                    names.set(statSync(`/dev/${name}`).rdev, name);
+                } catch {
+                    // Gone between the readdir and the stat.
+                }
+            }
+        }
+    } catch {
+        // No /dev listing: every lookup goes to devname().
+    }
+
+    return names;
+}
+
+function ttyName(lib: Darwin, dev: number): string | null {
+    if (dev === NODEV) {
+        return null;
+    }
+
+    if (ttyNames.size === 0) {
+        for (const [device, terminal] of terminalNames()) {
+            ttyNames.set(device, terminal);
+        }
+    }
+
+    let name = ttyNames.get(dev);
+
+    if (name === undefined) {
+        const pointer = lib.devname(dev, S_IFCHR);
+        name = pointer ? new CString(pointer).toString() : null;
+        ttyNames.set(dev, name);
+    }
+
+    return name;
+}
+
+function decodeDarwinRow(lib: Darwin, bytes: Uint8Array, base: number, view: DataView): Omit<ProcessBasics, "command"> {
     const startSec =
         view.getUint32(base + KP_START_SEC, true) + view.getUint32(base + KP_START_SEC + 4, true) * 2 ** 32;
     let commEnd = base + KP_COMM;
@@ -123,14 +172,11 @@ function decodeDarwinRow(lib: Darwin, bytes: Uint8Array, base: number): Omit<Pro
         commEnd++;
     }
 
-    const dev = view.getInt32(base + KP_TDEV, true);
-    const ttyPointer = dev === NODEV ? null : lib.devname(dev, S_IFCHR);
-
     return {
         pid: view.getInt32(base + KP_PID, true),
         ppid: view.getInt32(base + KP_PPID, true),
         name: Buffer.from(bytes.buffer, bytes.byteOffset + base + KP_COMM, commEnd - base - KP_COMM).toString("utf8"),
-        tty: ttyPointer ? new CString(ttyPointer).toString() : null,
+        tty: ttyName(lib, view.getInt32(base + KP_TDEV, true)),
         startMs: startSec * 1000 + Math.floor(view.getInt32(base + KP_START_USEC, true) / 1000),
     };
 }
@@ -149,7 +195,7 @@ function readDarwinRow(pid: number): Omit<ProcessBasics, "command"> | null {
         return null;
     }
 
-    return decodeDarwinRow(lib, rowBuffer, 0);
+    return decodeDarwinRow(lib, rowBuffer, 0, new DataView(rowBuffer.buffer));
 }
 
 function readDarwinTable(lib: Darwin): Omit<ProcessBasics, "command">[] | null {
@@ -166,9 +212,10 @@ function readDarwinTable(lib: Darwin): Omit<ProcessBasics, "command">[] | null {
 
         if (lib.sysctl(mibAll, 3, table, sizeWord, null, 0) === 0) {
             const rows: Omit<ProcessBasics, "command">[] = [];
+            const view = new DataView(table.buffer);
 
             for (let base = 0; base + KINFO_PROC_SIZE <= Number(sizeWord[0]); base += KINFO_PROC_SIZE) {
-                rows.push(decodeDarwinRow(lib, table, base));
+                rows.push(decodeDarwinRow(lib, table, base, view));
             }
 
             return rows;
@@ -445,8 +492,9 @@ export function formatLstart(ms: number, timeZone = systemTimeZone()): string {
         lstartFormats.set(key, format);
     }
 
-    const part = (type: Intl.DateTimeFormatPartTypes) =>
-        format.formatToParts(ms).find((candidate) => candidate.type === type)?.value ?? "";
+    // One formatToParts per call: it is the expensive part, and a table of 1,300 processes formats 1,300 times.
+    const parts = new Map(format.formatToParts(ms).map((candidate) => [candidate.type, candidate.value]));
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.get(type) ?? "";
     const time = `${part("hour")}:${part("minute")}:${part("second")}`;
     return `${part("weekday")} ${part("month")} ${part("day").padStart(2, " ")} ${time} ${part("year")}`;
 }

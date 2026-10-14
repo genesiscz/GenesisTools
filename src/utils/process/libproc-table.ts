@@ -16,6 +16,7 @@
  * 2026-10-12 (Darwin 25.3, arm64).
  */
 import { CString } from "bun:ffi";
+import { readdirSync, statSync } from "node:fs";
 import { errnoNow, type LibSystem, libSystem } from "@genesiscz/utils/fs/native/libsystem";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -25,6 +26,7 @@ const CTL_KERN = 1;
 const KERN_PROC = 14;
 const KERN_PROC_ALL = 0;
 const KERN_PROC_PID = 1;
+const KERN_PROC_TTY = 4;
 const KERN_ARGMAX = 8;
 const KERN_PROCARGS2 = 49;
 const ENOMEM = 12;
@@ -103,6 +105,7 @@ export interface ProcessUsage {
 let selfCheck: "pending" | "ok" | "failed" = "pending";
 const sizeWord = new BigUint64Array(1);
 const mibAll = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_ALL]);
+const mibTty = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_TTY, 0]);
 const mibPid = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_PID, 0]);
 const mibArgs = new Int32Array([CTL_KERN, KERN_PROCARGS2, 0]);
 const mibArgmax = new Int32Array([CTL_KERN, KERN_ARGMAX]);
@@ -147,9 +150,39 @@ export function processTableAvailable(): boolean {
     return calls() !== null;
 }
 
+/**
+ * The `/dev` name of every terminal device, read once: one `readdir` and a `stat` per `tty*` entry cost about 1 ms,
+ * while `devname()` costs about 0.5 ms a call. A terminal opened later is not in it, and falls back to `devname()`.
+ */
+function terminalNames(): Map<number, string> {
+    const names = new Map<number, string>();
+
+    try {
+        for (const name of readdirSync("/dev")) {
+            if (name.startsWith("tty") || name === "console") {
+                try {
+                    names.set(statSync(`/dev/${name}`).rdev, name);
+                } catch {
+                    // Gone between the readdir and the stat.
+                }
+            }
+        }
+    } catch {
+        // No /dev listing: every lookup goes to devname().
+    }
+
+    return names;
+}
+
 function ttyName(symbols: LibSystem, dev: number): string | null {
     if (dev === NODEV) {
         return null;
+    }
+
+    if (ttyNames.size === 0) {
+        for (const [device, name] of terminalNames()) {
+            ttyNames.set(device, name);
+        }
     }
 
     const cached = ttyNames.get(dev);
@@ -211,6 +244,19 @@ export function readProcessRow(pid: number): ProcessTableRow | null {
 
 /** Every process on the machine, any user, from one `sysctl(KERN_PROC_ALL)`. Null when unavailable. */
 export function listProcessTable(): ProcessTableRow[] | null {
+    return readTable(mibAll);
+}
+
+/**
+ * The processes whose controlling terminal is device `dev` (`stat(/dev/ttys003).rdev`), any user, from one
+ * `sysctl(KERN_PROC_TTY)`: the kernel filters, so a terminal's dozen rows cost what a dozen rows cost, not 1,300.
+ */
+export function listTtyTable(dev: number): ProcessTableRow[] | null {
+    mibTty[3] = dev;
+    return readTable(mibTty);
+}
+
+function readTable(mib: Int32Array): ProcessTableRow[] | null {
     const symbols = calls();
 
     if (!symbols) {
@@ -220,8 +266,8 @@ export function listProcessTable(): ProcessTableRow[] | null {
     for (let attempt = 0; attempt < 4; attempt++) {
         sizeWord[0] = 0n;
 
-        if (symbols.sysctl(mibAll, 3, null, sizeWord, null, 0) !== 0) {
-            log.warn({ errno: errnoNow(symbols) }, "sysctl(KERN_PROC_ALL) size query failed");
+        if (symbols.sysctl(mib, mib.length, null, sizeWord, null, 0) !== 0) {
+            log.warn({ errno: errnoNow(symbols), mib: [...mib] }, "sysctl(KERN_PROC) size query failed");
             return null;
         }
 
@@ -234,7 +280,7 @@ export function listProcessTable(): ProcessTableRow[] | null {
 
         sizeWord[0] = BigInt(tableBuffer.byteLength);
 
-        if (symbols.sysctl(mibAll, 3, tableBuffer, sizeWord, null, 0) === 0) {
+        if (symbols.sysctl(mib, mib.length, tableBuffer, sizeWord, null, 0) === 0) {
             const count = Math.floor(Number(sizeWord[0]) / KINFO_PROC_SIZE);
             const view = new DataView(tableBuffer.buffer);
             const rows: ProcessTableRow[] = [];
@@ -249,12 +295,12 @@ export function listProcessTable(): ProcessTableRow[] | null {
         const errno = errnoNow(symbols);
 
         if (errno !== ENOMEM) {
-            log.warn({ errno }, "sysctl(KERN_PROC_ALL) failed");
+            log.warn({ errno, mib: [...mib] }, "sysctl(KERN_PROC) failed");
             return null;
         }
     }
 
-    log.warn("sysctl(KERN_PROC_ALL) kept growing past four attempts");
+    log.warn({ mib: [...mib] }, "sysctl(KERN_PROC) kept growing past four attempts");
     return null;
 }
 
@@ -431,6 +477,35 @@ export function readProcessPath(pid: number): string | null {
 
     const length = symbols.proc_pidpath(pid, pathBuffer, PROC_PIDPATHINFO_MAXSIZE);
     return length > 0 ? pathBuffer.toString("utf8", 0, length) : null;
+}
+
+let childBuffer = new Int32Array(256);
+
+/**
+ * The children of `pid` straight from the kernel (`proc_listchildpids`), for any user's process: one call instead of
+ * the whole table when only one process's children matter. Null when libproc is not there.
+ */
+export function listChildPids(pid: number): number[] | null {
+    const symbols = calls();
+
+    if (!symbols) {
+        return null;
+    }
+
+    for (;;) {
+        const count = symbols.proc_listchildpids(pid, childBuffer, childBuffer.byteLength);
+
+        if (count < 0) {
+            return null;
+        }
+
+        // A full buffer may have cut the list short: read again with more room.
+        if (count < childBuffer.length) {
+            return [...childBuffer.subarray(0, count)];
+        }
+
+        childBuffer = new Int32Array(childBuffer.length * 4);
+    }
 }
 
 /** RSS and CPU time of one of this user's processes, or null for anyone else's, a zombie, or a pid that is gone. */
