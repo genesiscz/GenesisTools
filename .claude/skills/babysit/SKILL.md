@@ -141,7 +141,9 @@ reply arrive (Sol answered in 20 s, Grok in 59 s). During the confirmation perio
 
 ## 6. Judge each worker commit (fable-judge, inline)
 
-[references/judging.md](references/judging.md) is the checklist. In short: the diff is the truth, not the report;
+🛑 Invoke the `fable-judge` skill for every round, before the push, and read the worker's summary, its reply file and
+the full diff together ([references/judging.md](references/judging.md) is the checklist, the rule comes first there).
+Checks plus planted regressions are not a judgement; the code itself is judged. In short: the diff is the truth, not the report;
 rerun every claimed check yourself; plant the old code back to prove each new test fails without the fix; check the
 fix against the module's documented contracts and its callers (the #511 defect hid in a caller); check scope, one
 commit, nothing staged that is not the worker's; check the ready-to-post replies against the final code. Verdict per
