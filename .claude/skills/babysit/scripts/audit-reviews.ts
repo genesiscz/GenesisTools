@@ -47,6 +47,7 @@ interface Pr {
     reviews: { nodes: Review[]; pageInfo: { hasNextPage: boolean } };
     reviewThreads: { nodes: Thread[]; pageInfo: { hasNextPage: boolean } };
     comments: { nodes: Comment[]; pageInfo: { hasNextPage: boolean } };
+    timelineItems: { nodes: Array<{ createdAt?: string }> };
 }
 
 const run = loadRun();
@@ -57,7 +58,8 @@ const query = `query($n:Int!){viewer{login} repository(owner:"${owner}",name:"${
  title state mergedAt headRefOid
  reviews(first:100){${page} nodes{author{login} state createdAt:submittedAt body commit{oid}}}
  reviewThreads(first:100){${page} nodes{id isResolved resolvedBy{login} path line comments(first:50){nodes{author{login} createdAt body}}}}
- comments(first:100){${page} nodes{author{login} createdAt body}}}}}`;
+ comments(first:100){${page} nodes{author{login} createdAt body}}
+ timelineItems(last:1,itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]){nodes{... on HeadRefForcePushedEvent{createdAt}}}}}}`;
 
 const local = (iso: string) =>
     new Date(iso).toLocaleString("cs-CZ", {
@@ -129,7 +131,9 @@ for (const n of prs) {
 
     const reviewers = [...byReviewer].map(([who, list]) => {
         const last = list.at(-1);
-        const atHead = list.some((r) => r.commit?.oid === pr.headRefOid);
+        // GitHub moves an earlier review onto the new head after a patch-identical force-push (round-ready.ts).
+        const forcedAt = pr.timelineItems.nodes.at(-1)?.createdAt ?? "";
+        const atHead = list.some((r) => r.commit?.oid === pr.headRefOid && r.createdAt > forcedAt);
         return `${who} ${list.length}× last ${last?.state} ${last ? local(last.createdAt) : ""}${atHead ? " @head" : ""}`;
     });
     console.log(`  reviewers: ${reviewers.join(" · ") || "none"}`);
