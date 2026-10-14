@@ -26,6 +26,12 @@ bash scripts/ci/placeholder-check.sh
 git push origin HEAD:refs/heads/<pr-branch>        # a rejected push: fetch, rebase onto origin/<pr-branch>, re-gate
 ```
 
+When syspolicyd is stuck (one core at 100%), the first launch of a binary that macOS has not assessed yet hangs: a
+worktree's own `biome`, a pre-push or pre-commit hook that starts one, a fresh Swift test bundle. Then run Biome from
+the main checkout's `node_modules/.bin/biome` on the worktree files, authorize the worker's commit with
+`git -c core.hooksPath=/dev/null commit`, and push with `integrate.ts … --no-push-hooks` (the gates already ran the
+hook's probe, typecheck and repo rules). Swift checks wait: record them as NOT RUN and run them when it recovers.
+
 Then in the main checkout (unified branch): `git cherry-pick <worker sha> <correction sha>`, exact paths only if a
 conflict needs hand-editing. A version-only conflict in `.claude-plugin/marketplace.json` or
 `plugins/genesis-tools/.claude-plugin/plugin.json` keeps the higher version.
