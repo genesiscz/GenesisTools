@@ -1,5 +1,6 @@
-import { describe, expect, it } from "bun:test";
-import { parseEtime, parsePsOutput, parseSwapUsage, parseVmmapSwap } from "./scanner";
+import { describe, expect, it, mock } from "bun:test";
+import type { ProcessWithUsage } from "@genesiscz/utils/process/processes";
+import { parseEtime, parsePsOutput, parseSwapUsage, parseVmmapSwap, readSwapProcessRows } from "./scanner";
 
 describe("parseSwapUsage", () => {
     it("parses standard sysctl output in MB", () => {
@@ -82,5 +83,78 @@ describe("parseVmmapSwap", () => {
 
     it("returns 0 when no Writable regions line is present", () => {
         expect(parseVmmapSwap("garbage\noutput")).toBe(0);
+    });
+});
+
+function processEntry(overrides: Partial<ProcessWithUsage> = {}): ProcessWithUsage {
+    return {
+        pid: 123,
+        ppid: 1,
+        pgid: 123,
+        uid: 1000,
+        name: "Example Browser",
+        command: "/Applications/Example Browser.app/Contents/MacOS/Example Browser --profile work",
+        tty: null,
+        startMs: 100_100,
+        zombie: false,
+        state: "S",
+        usage: { pid: 123, rssBytes: 2 * 1024 ** 2, cpuTimeMs: 500, threads: 2, running: false },
+        ...overrides,
+    };
+}
+
+describe("readSwapProcessRows", () => {
+    it("requests other-user usage once and preserves the comm path and whole-second uptime", () => {
+        const processes = mock(() => [processEntry()]);
+        const executablePath = mock(() => "/Applications/Example Browser.app/Contents/MacOS/Example Browser");
+        const rows = readSwapProcessRows({ processes, executablePath, now: () => 120_345 });
+
+        expect(processes).toHaveBeenCalledTimes(1);
+        expect(processes).toHaveBeenCalledWith({ otherUsers: true });
+        expect(executablePath).toHaveBeenCalledWith(123);
+        expect(rows).toEqual(
+            parsePsOutput("123 2048 00:20 /Applications/Example Browser.app/Contents/MacOS/Example Browser")
+        );
+
+        const later = readSwapProcessRows({ processes, executablePath, now: () => 121_100 });
+        expect(later[0].uptimeMs).toBe(21_000);
+        // Quantizing etime must not make this unchanged process look five seconds younger or older.
+        expect(Math.abs(120_345 - rows[0].uptimeMs - (121_100 - later[0].uptimeMs))).toBeLessThan(1000);
+    });
+
+    it("skips unavailable usage and start times without inventing cache identities", () => {
+        const executablePath = mock(() => "/unused");
+        const rows = readSwapProcessRows({
+            processes: () => [processEntry({ usage: null }), processEntry({ pid: 124, startMs: null })],
+            executablePath,
+            now: () => 120_345,
+        });
+
+        expect(rows).toEqual([]);
+        expect(executablePath).not.toHaveBeenCalled();
+    });
+
+    it("an empty table is unknown and throws instead of reporting no processes", () => {
+        expect(() => readSwapProcessRows({ processes: () => [] })).toThrow("swap process table unavailable");
+    });
+
+    it("keeps a layer read failure visible", () => {
+        expect(() =>
+            readSwapProcessRows({
+                processes: () => {
+                    throw new Error("table read failed");
+                },
+            })
+        ).toThrow("table read failed");
+    });
+
+    it("uses the command executable, without its arguments, when the path is unavailable", () => {
+        const rows = readSwapProcessRows({
+            processes: () => [processEntry({ command: "/usr/sbin/exampled --foreground", name: "exampled" })],
+            executablePath: () => null,
+            now: () => 120_345,
+        });
+
+        expect(rows[0].name).toBe("/usr/sbin/exampled");
     });
 });

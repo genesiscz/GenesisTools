@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
 import type { ProcessSwap, ScanOptions, ScanResult, SystemSwap } from "./types";
 
 const UNIT_MULT: Record<string, number> = {
@@ -189,14 +190,40 @@ async function getSystemSwap(): Promise<SystemSwap> {
     return parseSwapUsage(stdout);
 }
 
-async function getAllPsRows(): Promise<PsRow[]> {
-    const { stdout, exitCode } = await spawn(["ps", "-A", "-o", "pid=,rss=,etime=,comm="]);
+export function readSwapProcessRows(
+    readers: {
+        processes?: typeof listProcessesWithUsage;
+        executablePath?: typeof readExecutablePath;
+        now?: () => number;
+    } = {}
+): PsRow[] {
+    const entries = (readers.processes ?? listProcessesWithUsage)({ otherUsers: true });
 
-    if (exitCode !== 0) {
-        throw new Error(`ps -A failed with exit code ${exitCode}`);
+    if (entries.length === 0) {
+        throw new Error("swap process table unavailable");
     }
 
-    return parsePsOutput(stdout);
+    const now = (readers.now ?? Date.now)();
+    const executablePath = readers.executablePath ?? readExecutablePath;
+
+    return entries.flatMap((entry): PsRow[] => {
+        // Without a start time there is no reliable identity for the per-pid swap cache.
+        if (entry.usage === null || entry.startMs === null) {
+            return [];
+        }
+
+        // The executable path preserves spaces in app names and excludes command arguments.
+        const name = executablePath(entry.pid) ?? (entry.command?.split(/\s+/)[0] || entry.name);
+        return [
+            {
+                pid: entry.pid,
+                rssBytes: entry.usage.rssBytes,
+                // Match ps etime's whole seconds: reconstructed starts stay within the 5 s cache tolerance.
+                uptimeMs: Math.max(0, Math.floor((now - entry.startMs) / 1000) * 1000),
+                name,
+            },
+        ];
+    });
 }
 
 interface ProbeResult {
@@ -230,7 +257,11 @@ async function pool<T, R>(items: T[], concurrency: number, worker: (item: T) => 
 }
 
 export async function scan(options: ScanOptions): Promise<ScanResult> {
-    const [system, psRows, cache] = await Promise.all([getSystemSwap(), getAllPsRows(), loadCache()]);
+    const [system, psRows, cache] = await Promise.all([
+        getSystemSwap(),
+        Promise.resolve().then(() => readSwapProcessRows()),
+        loadCache(),
+    ]);
     const now = Date.now();
 
     const sortedByRss = [...psRows].sort((a, b) => b.rssBytes - a.rssBytes);

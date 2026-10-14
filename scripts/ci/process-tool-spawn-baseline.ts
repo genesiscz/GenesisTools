@@ -6,5 +6,5 @@
  * which lowers the counts and refuses to raise one.
  */
 export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
-    "src/macos/lib/swap/scanner.ts": 1,
+
 };

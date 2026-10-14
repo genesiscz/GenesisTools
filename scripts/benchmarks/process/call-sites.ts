@@ -5,9 +5,8 @@
  * (`call-sites-bench.ts`) and the test (`call-sites.test.ts`) exercise the real call path before and after the
  * migration to `@genesiscz/utils/process`.
  *
- * A site whose reachable function has side effects (it kills, stops a server, or prompts) runs a `standIn`
- * instead: the bare spawn as the site issues it. The migration extracts a read-only reader from such a site and
- * points the entry's `run` at it in the same commit.
+ * Sites whose entry points have side effects (kill, stop a server, or prompt) expose read-only readers.
+ * Each entry's `run` calls that site's reader so the benchmark never performs those side effects.
  */
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -93,11 +92,6 @@ export function checkValue(result: unknown): number {
     }
 
     return 1;
-}
-
-/** A bare spawn, for a stand-in. The benchmark folder is exempt from `no-process-tool-spawn`. */
-function bare(argv: string[]): string {
-    return Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" }).stdout.toString();
 }
 
 /** Runs `fn` while this process listens on a loopback TCP port, so a port reader has an owner to find. */
@@ -371,8 +365,7 @@ export const CALL_SITES: CallSite[] = [
         spawn: "ps -A -o pid=,rss=,etime=,comm=",
         frequency: "per-command",
         platforms: ["darwin"],
-        standIn: "a private helper of the swap scan, which also runs vmmap per process",
-        run: () => bare(["ps", "-A", "-o", "pid=,rss=,etime=,comm="]),
+        run: async () => (await import("@app/macos/lib/swap/scanner")).readSwapProcessRows(),
     },
     {
         id: "local-network-old-builds",
