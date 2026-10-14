@@ -7,10 +7,10 @@ import type {
     ShopConfig,
     ThemeChoice,
 } from "@app/shops/types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "SettingsRepository" });
 
@@ -296,8 +296,7 @@ let _singleton: SettingsRepository | null = null;
 
 export function getSettingsRepository(): SettingsRepository {
     if (!_singleton) {
-        const home = env.paths.getHome() ?? env.paths.getUserProfile() ?? "/tmp";
-        _singleton = new SettingsRepository(`${home}/.genesis-tools/shops/settings`);
+        _singleton = new SettingsRepository(genesisToolsDir("shops", "settings"));
     }
 
     return _singleton;

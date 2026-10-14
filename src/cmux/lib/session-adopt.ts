@@ -15,6 +15,9 @@ export interface LiveSurface {
     /** The workspace UUID (`--id-format both`); stable across cmux restarts, unlike `workspace`. */
     workspaceId: string | null;
     window: string;
+    /** The pane and window UUIDs, where the tree named them. */
+    paneId?: string | null;
+    windowId?: string | null;
     /** The tab title (`vybava - grok`). */
     title: string | null;
     workspaceTitle: string | null;
@@ -78,6 +81,8 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
                             workspace: String(workspace.ref),
                             workspaceId: text(workspace.id),
                             window: String(window.ref),
+                            paneId: text(pane.id),
+                            windowId: text(window.id),
                             title: text(surface.title),
                             workspaceTitle: text(workspace.title),
                         });

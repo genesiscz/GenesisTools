@@ -16,8 +16,10 @@ import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/proce
 export interface LiveTab {
     /** Surface UUID. */
     id: string;
-    /** Workspace UUID. */
+    /** Workspace, pane and window UUIDs. */
     workspaceId: string | null;
+    paneId?: string | null;
+    windowId?: string | null;
     tty: string | null;
     title: string | null;
     /** `surface:N`, for the plan's display only. */
@@ -264,6 +266,8 @@ export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
         tabs.set(id, {
             id: tab.id,
             workspaceId: tab.workspaceId,
+            paneId: tab.paneId ?? null,
+            windowId: tab.windowId ?? null,
             tty: tab.tty,
             title: tab.title,
             ref: tab.ref,
@@ -379,6 +383,8 @@ function recordResumedSession(step: InPlaceStep): void {
             provider,
             workspaceId: step.live.workspaceId,
             surfaceId: step.live.id,
+            paneId: step.live.paneId ?? null,
+            windowId: step.live.windowId ?? null,
             workspaceRef: step.live.workspaceRef,
             paneRef: null,
             surfaceRef: step.live.ref,
