@@ -123,6 +123,7 @@ function protectedIds(): string[] {
 }
 
 function openPaths(): string[] {
+    // lint-rules-ignore: a deletion guard needs every open AND mapped file (lsof's mem rows), which the process layer does not read
     const p = Bun.spawnSync(["lsof", "-n", "-Fn", "-w"], { stdout: "pipe", stderr: "pipe" });
     const out = p.stdout.toString();
 
