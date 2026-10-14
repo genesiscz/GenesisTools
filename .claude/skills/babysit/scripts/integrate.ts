@@ -1,0 +1,187 @@
+#!/usr/bin/env bun
+/**
+ * One PR round, after the lead has judged the worker commit(s) in the PR's worktree:
+ * gates → fast-forward push of the judged SHA → reply file to the vault with the judge → round summary comment (once)
+ * → thread replies + resolve. Logs `push` and `post` to the run ledger.
+ *
+ *   bun integrate.ts --run <dir> --pr 508 --round 1 [--wt <dir>] [--replies <json>] [--session bs-508-r1]
+ *                    [--sha-map old=new,…] [--range a..b] [--skip-gates] [--no-post] [--dry]
+ */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { appendEvent } from "./ledger";
+import { flag, has, loadRun, worktreeFor } from "./run";
+
+const run = loadRun();
+const pr = flag("--pr") ?? "";
+const round = flag("--round") ?? "1";
+const wt = flag("--wt") ?? worktreeFor(run, pr);
+const session = flag("--session") ?? `bs-${pr}-r${round}`;
+const repliesIn = flag("--replies") ?? join(wt, ".claude/work/babysit", `${pr}-r${round}-replies.json`);
+const shaMap = Object.fromEntries(
+    (flag("--sha-map") ?? "")
+        .split(",")
+        .filter(Boolean)
+        .map((pair) => pair.split("="))
+);
+const dry = has("--dry");
+
+function exec(cmd: string[], opts: { cwd?: string; quiet?: boolean } = {}): { code: number; out: string } {
+    const p = Bun.spawnSync(cmd, { cwd: opts.cwd ?? wt, stdout: "pipe", stderr: "pipe", env: process.env });
+    const out = `${p.stdout.toString()}${p.stderr.toString()}`;
+
+    if (!opts.quiet) {
+        console.log(`$ ${cmd.join(" ").slice(0, 140)} → exit ${p.exitCode}`);
+    }
+
+    return { code: p.exitCode ?? 1, out };
+}
+
+function must(cmd: string[], label: string, cwd?: string): string {
+    const r = exec(cmd, { cwd });
+
+    if (r.code !== 0) {
+        console.log(`✖ ${label} failed:\n${r.out.split("\n").slice(-25).join("\n")}`);
+        process.exit(1);
+    }
+
+    return r.out;
+}
+
+const view = must(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName"], "pr view");
+const branch = (SafeJSON.parse(view, { strict: true }) as { headRefName: string }).headRefName;
+must(["git", "fetch", "-q", "origin", branch], "fetch");
+const oldHead = must(["git", "rev-parse", `origin/${branch}`], "rev-parse").trim();
+const newHead = must(["git", "rev-parse", "HEAD"], "rev-parse HEAD").trim();
+
+if (exec(["git", "merge-base", "--is-ancestor", oldHead, newHead], { quiet: true }).code !== 0) {
+    console.log(
+        `✖ HEAD ${newHead.slice(0, 9)} does not contain origin/${branch} ${oldHead.slice(0, 9)}: someone pushed; rebase first`
+    );
+    process.exit(1);
+}
+
+const dirty = must(["git", "status", "--short", "--untracked-files=no"], "status").trim();
+
+if (dirty) {
+    console.log(`✖ worktree has uncommitted changes:\n${dirty}`);
+    process.exit(1);
+}
+
+if (!has("--skip-gates") && oldHead !== newHead) {
+    const tsgo = join(wt, "node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo");
+    must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
+    must(["bun", "run", "lint:rules"], "lint-rules");
+    must(["bun", "scripts/ci/check-tool-commands.ts"], "check-tool-commands");
+    must(["bash", "scripts/ci/placeholder-check.sh"], "placeholder-check");
+    const commits = must(["bun", "scripts/git/check-commits.ts", `${oldHead}..${newHead}`], "check-commits");
+
+    if (!/0 with a subject to fix/.test(commits)) {
+        console.log(`✖ check-commits:\n${commits}`);
+        process.exit(1);
+    }
+}
+
+if (oldHead !== newHead && !dry) {
+    // Push the SHA that was judged and gated, never HEAD at push time: a worker steered into its next round in the
+    // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
+    must(["git", "push", "origin", `${newHead}:refs/heads/${branch}`], "push");
+    console.log(`✔ pushed ${branch} ${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}`);
+    appendEvent(run.dir, {
+        kind: "push",
+        pr: Number(pr),
+        round: Number(round),
+        meta: { branch, range: `${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}` },
+    });
+} else {
+    console.log(oldHead === newHead ? "no new commits: nothing to push" : "dry: push skipped");
+}
+
+if (!existsSync(repliesIn)) {
+    console.log(`no reply file at ${repliesIn}: nothing to post`);
+    process.exit(0);
+}
+
+mkdirSync(run.vault, { recursive: true });
+let text = readFileSync(repliesIn, "utf8");
+
+for (const [from, to] of Object.entries(shaMap)) {
+    text = text.replaceAll(from, to);
+}
+
+const data = SafeJSON.parse(text, { strict: true }) as { judge?: string; items?: Array<{ model?: unknown }> };
+data.judge = run.judge;
+
+for (const item of data.items ?? []) {
+    if (typeof item.model === "string" && item.model.startsWith(run.judge)) {
+        delete item.model;
+    }
+}
+
+const replies = join(run.vault, basename(repliesIn));
+writeFileSync(replies, `${SafeJSON.stringify(data, null, 2)}\n`);
+const summary = replies.replace(/-replies\.json$/, "-summary.md");
+const range = flag("--range") ?? (oldHead !== newHead ? `${oldHead}..${newHead}` : undefined);
+must(
+    [
+        "bun",
+        join(run.reviewLoopScripts, "round-summary.ts"),
+        replies,
+        "--repo",
+        run.repo,
+        ...(range ? ["--range", range, "--cwd", wt] : []),
+        "--out",
+        summary,
+    ],
+    "round-summary",
+    run.vault
+);
+
+if (has("--no-post") || dry) {
+    console.log(`not posted (flag): ${summary}`);
+    process.exit(0);
+}
+
+// A rerun (a killed push, a retry) must not post the round's summary twice (2026-10-14: #503 got two).
+const postedMarker = summary.replace(/\.md$/, ".posted");
+
+if (existsSync(postedMarker)) {
+    console.log(`summary already posted (${postedMarker}): skipped`);
+} else {
+    must(["gh", "pr", "comment", pr, "--repo", run.repo, "--body-file", summary], "summary comment", run.vault);
+    writeFileSync(postedMarker, `${new Date().toISOString()}\n`);
+}
+
+const posted = exec(
+    [
+        "bun",
+        join(run.reviewLoopScripts, "post-replies.ts"),
+        session,
+        replies,
+        "--phase",
+        "final",
+        "--resolve-after-s",
+        "20",
+        "--delay-ms",
+        "3000",
+        "--cwd",
+        wt,
+    ],
+    { cwd: run.vault }
+);
+console.log(posted.out.split("\n").slice(-12).join("\n"));
+console.log(posted.code === 0 ? `✔ #${pr} round ${round} posted` : `⚠ #${pr} post-replies exit ${posted.code}`);
+appendEvent(run.dir, {
+    kind: "post",
+    pr: Number(pr),
+    round: Number(round),
+    text: readFileSync(summary, "utf8"),
+    meta: {
+        replies,
+        postReplies: posted.out
+            .split("\n")
+            .filter((l) => l.startsWith("final:"))
+            .join(" "),
+    },
+});

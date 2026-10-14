@@ -42,6 +42,11 @@ Write it to `/tmp/cc/<project>/<session>/babysit/run.json` at the start; the scr
 | `post` | ask | Post the round summary and replies after the push (review-loop step 4), or hold them in the vault. |
 | `report` | vault note | Optionally also a bus message: `{ "session": "grok-dev", "to": "grokbot-developer" }`. |
 | `stopAfter` | the user's words | A phase or round to stop at. Stop there even if everything is green. |
+| `vault` | `<run>/vault` | The notes folder of this run: reply files, summaries, the rendered ledger. Set it. |
+| `judge` | `Claude` | The name the round summary credits as judge ("… from <worker> judged by <judge>"). |
+| `worktrees` | `<run>/worktrees` | Parent of the per-PR worker worktrees `bs-<N>`. |
+
+Every script below takes `--run <run dir>` (or `BABYSIT_RUN`) and reads this card through `scripts/run.ts`.
 
 ## 2. Mode: a worktree per worker, or the unified branch
 
@@ -84,7 +89,12 @@ the stop point. After the confirmation period, state the plan in one line and pr
    and whether unified differs from the PR branch per file. That list is the outer bound. The brief allows the files
    the findings cite plus their tests, and any other PR file a fix provably needs. Missing a test file in the scope
    put Grok's tests in the wrong file on 2026-10-14.
-7. Baseline the cost: `tools grok usage --json --fresh` (the SuperGrok weekly percentage) for Grok workers. Every
+7. **Worktree** (worktree mode): `bun .claude/skills/babysit/scripts/setup-wt.ts --run <dir> --pr <N>`. Detached at
+   the PR head, `bun install --ignore-scripts` plus the repo's patches, the test wrapper's install stamp (else
+   `scripts/test.ts` reinstalls everything inside the worker's sandbox), native files linked to the main checkout's
+   twins (`link-native.ts`: on 2026-10-14 a stuck syspolicyd hung every NEW native binary at `_dyld_start`), nested
+   app `node_modules` linked. About 7 s with a warm bun cache.
+8. Baseline the cost: `tools grok usage --json --fresh` (the SuperGrok weekly percentage) for Grok workers. Every
    worker turn is booked in the cost ledger with its ai-spend price, login and label, and its report (Codex: the
    `turn_completed` bus event and `status --json` `cost`) ends with one line: API-equivalent, billed, and a Claude
    Opus/Sonnet estimate for the same tokens. The API-credit
@@ -94,7 +104,12 @@ the stop point. After the confirmation period, state the plan in one line and pr
 
 ## 4. Brief and dispatch
 
-Fill [references/brief-template.md](references/brief-template.md) per PR (the findings pasted in full, the scope,
+Two brief forms. **Self-fetch** (the default since 2026-10-14):
+`bun .claude/skills/babysit/scripts/fill-brief.ts --run <dir> --pr <N> --round <R> --model "<label>" --scopes "<a, b>"
+[--swift] [--judge <findings.md>]` fills [references/brief-self-fetch.md](references/brief-self-fetch.md): the worker
+lists and expands the threads itself with `tools github review`, fixes, commits once and writes the reply file; the
+lead's judge findings on an earlier commit ride along with `--judge`. **Pasted findings**: fill
+[references/brief-template.md](references/brief-template.md) per PR (the findings pasted in full, the scope,
 the verify commands, the commit subject `fix(<scopes>): #<N> followup - <what>`, the reply-JSON shape, the bus
 lines, the stop point). The handoff-to readiness gate applies: self-contained, a verify command the sandbox can
 run, explicit negative constraints, a named checkpoint, a deliverable the sandbox can write.
@@ -161,10 +176,18 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
 reply arrive (Sol answered in 20 s, Grok in 59 s). During the confirmation period do it for every worker.
 
+Waiting on a Codex turn: `bun .claude/skills/babysit/scripts/wait-turn.ts --run <dir> --worker <name> --thread <id>
+--pr <N> --round <R>` with Bash `run_in_background`; the harness wakes the lead when the turn ends, and the worker's
+final message lands in the ledger. Never poll. Steer with `scripts/steer.ts` (same flags plus `--file`), which logs the
+prompt. `bun .claude/skills/babysit/scripts/round-ready.ts --run <dir> <N>…` says which PRs the reviewer bot has
+re-reviewed at their current head, so their next round can start.
+
 ## 6. Judge each worker commit (fable-judge, inline)
 
 🛑 Invoke the `fable-judge` skill for every round, before the push, and read the worker's summary, its reply file and
-the full diff together ([references/judging.md](references/judging.md) is the checklist, the rule comes first there).
+the full diff together ([references/judging.md](references/judging.md) is the checklist, the rule comes first there):
+`bun .claude/skills/babysit/scripts/judge-pack.ts --wt <worktree> --range origin/<branch>..HEAD --replies <reply json>
+--out <file>` puts the claims, the flagged refusals and deferrals, and the diff (tests first) in one file.
 Checks plus planted regressions are not a judgement; the code itself is judged. In short: the diff is the truth, not the report;
 rerun every claimed check yourself; plant the old code back to prove each new test fails without the fix; check the
 fix against the module's documented contracts and its callers (the #511 defect hid in a caller); check scope, one
@@ -174,7 +197,11 @@ PR: VERIFIED, VERIFIED WITH CAVEATS, or REFUTED, with evidence.
 ## 7. Correct, integrate, push
 
 At most **one correction commit** per PR per round, for what is wrong or below the bar (a defect, a test in the wrong
-place, a misleading reply). None when the judge found nothing; say so. Then
+place, a misleading reply). None when the judge found nothing; say so. Worktree mode, one command for the rest:
+`bun .claude/skills/babysit/scripts/integrate.ts --run <dir> --pr <N> --round <R>` runs the gates, pushes the judged
+SHA (never HEAD at push time: a worker steered into its next round may commit meanwhile), copies the reply file to the
+vault with the judge, renders and posts the round summary once (a `.posted` marker stops a rerun from posting twice),
+then posts the thread replies and resolves them, and logs `push` and `post`. Details:
 [references/integrate.md](references/integrate.md):
 
 - worktree mode: the correction goes on the worker's worktree; verify there; push `HEAD:refs/heads/<pr-branch>`;
