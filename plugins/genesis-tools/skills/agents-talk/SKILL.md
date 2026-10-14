@@ -335,7 +335,7 @@ Write policies, steering, approvals, and the driver-subagent pattern live in **`
 
 ## What you receive on the `login` stream
 
-Each event is a JSON line. The most important `type` values:
+With `--format json`, each stdout line is one JSON event. With the default piped `--format monitor`, each event is a headline followed by its JSON line; parse only the JSON line, or request `--format json` for JSONL-only output. The most important `type` values:
 
 | type | meaning |
 |---|---|
