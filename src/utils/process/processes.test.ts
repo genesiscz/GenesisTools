@@ -247,6 +247,7 @@ describe("linux /proc parsers", () => {
 
     describe("a fixture /proc tree", () => {
         let root: string;
+        const fixtureStatus = "Name:\tnode\nUid:\t1000\t1000\t1000\t1000\nVmRSS:\t4000 kB\n";
 
         beforeAll(() => {
             root = mkdtempSync(join(tmpdir(), "proc-fixture-"));
@@ -254,7 +255,7 @@ describe("linux /proc parsers", () => {
             const pid = join(root, "42");
             mkdirSync(join(pid, "fd"), { recursive: true });
             writeFileSync(join(pid, "stat"), "42 (node) S 7 42 42 34817 42 0 0 0 0 0 100 50 0 0 20 0 9 0 500 0 1000 1");
-            writeFileSync(join(pid, "status"), "Name:\tnode\nUid:\t1000\t1000\t1000\t1000\n");
+            writeFileSync(join(pid, "status"), fixtureStatus);
             writeFileSync(join(pid, "cmdline"), `${["node", "server.js", "--port", "3000"].join("\0")}\0`);
             writeFileSync(join(pid, "environ"), "HOME=/home/alice\0LANG=C\0");
             symlinkSync("/usr/bin/node", join(pid, "exe"));
@@ -286,6 +287,22 @@ describe("linux /proc parsers", () => {
             expect(readProcExe(42, root)).toBe("/usr/bin/node");
             expect(socketInodeOwners(root)).toEqual(new Map([[777, new Set([42, 43])]]));
             expect(readProcEnviron(43, root)).toBeNull();
+        });
+
+        test("resident bytes use VmRSS on 16 KiB and 64 KiB page hosts", () => {
+            const status = join(root, "42", "status");
+            try {
+                // stat still reports 1000 resident pages; status already expresses their size in kB.
+                for (const pageKiB of [16, 64]) {
+                    writeFileSync(status, `Name:\tnode\nUid:\t1000\t1000\t1000\t1000\nVmRSS:\t${1000 * pageKiB} kB\n`);
+                    expect(linux.readProcProcess(42, root)?.rssBytes).toBe(1000 * pageKiB * 1024);
+                }
+
+                writeFileSync(status, "Name:\tkworker\nUid:\t0\t0\t0\t0\n");
+                expect(linux.readProcProcess(42, root)?.rssBytes).toBe(0);
+            } finally {
+                writeFileSync(status, fixtureStatus);
+            }
         });
 
         test("every holder of a shared socket is emitted once", () => {

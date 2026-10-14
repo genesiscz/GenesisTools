@@ -12,7 +12,6 @@ export const PROC_ROOT = "/proc";
  * cheap userspace way to read the real value, so this assumes it.
  */
 export const LINUX_USER_HZ = 100;
-const PAGE_BYTES = 4096;
 
 export interface ProcStat {
     pid: number;
@@ -189,7 +188,7 @@ export function readProcProcess(pid: number, root = PROC_ROOT, bootMs = bootTime
         tty: ttyName(stat.ttyNr),
         startMs: bootMs === null ? null : bootMs + (stat.startTicks * 1000) / LINUX_USER_HZ,
         cpuTimeMs: ((stat.utimeTicks + stat.stimeTicks) * 1000) / LINUX_USER_HZ,
-        rssBytes: stat.rssPages * PAGE_BYTES,
+        rssBytes: parseProcRssBytes(status) ?? 0,
         threads: stat.threads,
     };
 }
