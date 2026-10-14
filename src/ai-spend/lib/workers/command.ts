@@ -243,7 +243,7 @@ function runReprice(flags: WorkersFlags): void {
 export function registerWorkersCommand(program: Command): Command {
     return program
         .command("workers")
-        .description("Spend of headless workers (tools codex / grok / claude worker), with a Claude estimate")
+        .description("Spend of headless workers (Codex, Grok and Claude workers), with a Claude estimate")
         .option(
             "--by [dims]",
             `Group by a comma list of: ${WORKER_STATS_DIMENSIONS.join(", ")} (default: backend,model)`
