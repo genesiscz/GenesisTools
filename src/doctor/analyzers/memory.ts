@@ -12,7 +12,7 @@ import type {
     Finding,
 } from "@app/doctor/lib/types";
 import { readSwapUsage, readVmPageCounts } from "@genesiscz/utils/macos/host-stats";
-import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import clipboardy from "clipboardy";
 
 export interface VmStatParsed {
@@ -133,7 +133,7 @@ interface TopProcess {
 export async function getTopProcessesByRss(limit: number): Promise<TopProcess[]> {
     return listProcessesWithUsage({ otherUsers: true })
         .map((entry) => {
-            const comm = readExecutablePath(entry.pid) ?? entry.name;
+            const comm = entry.name;
             const command = entry.command ?? comm;
             return {
                 pid: entry.pid,

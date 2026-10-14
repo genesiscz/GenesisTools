@@ -10,7 +10,7 @@ import type {
     ExecutorContext,
     Finding,
 } from "@app/doctor/lib/types";
-import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 
 const STRICT_PS_LINE = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+(?:\s\S+)*?)\s\s+(.*)$/;
 const LOOSE_PS_LINE = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+(?:\s\S+)*?)\s+(\S.*)$/;
@@ -210,7 +210,7 @@ function createKillGroupAction(comm: string, label: string, group: ProcessRecord
 
 export function readProcessRecords(): Array<ProcessRecord & { cpuTimeMs: number; startMs: number | null }> {
     return listProcessesWithUsage({ otherUsers: true }).map((entry) => {
-        const comm = readExecutablePath(entry.pid) ?? entry.name;
+        const comm = entry.name;
         const command = entry.command ?? comm;
         return {
             pid: entry.pid,

@@ -163,7 +163,7 @@ export async function listActiveAgentProcesses(scan: AgentProcessScan): Promise<
     return scanFromKernel(scan);
 }
 
-/** {@link listActiveAgentProcesses} through two `ps` reads and one `lsof`, where the kernel read is unavailable. */
+/** Compatibility entry point using the same process-layer scan as {@link listActiveAgentProcesses}. */
 export async function listActiveAgentProcessesViaPs(scan: AgentProcessScan): Promise<ActiveAgentProcess[]> {
     return scanFromKernel(scan);
 }

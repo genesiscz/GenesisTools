@@ -384,7 +384,7 @@ function spawnsProcessTool(node: SgNode): boolean {
         return PROGRAM_FIRST_CALLEES.has(callee);
     }
 
-    return COMMAND_STRING_CALLEES.has(callee) && PROCESS_TOOLS.has(text.split(/\s+/)[0]);
+    return COMMAND_STRING_CALLEES.has(callee) && PROCESS_TOOLS.has(text.trim().split(/\s+/)[0].split("/").pop() ?? "");
 }
 
 /**

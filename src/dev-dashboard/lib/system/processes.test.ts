@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { friendlyProcessName, killProcess, sortProcesses } from "./processes";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as processOs from "@genesiscz/utils/process/os";
+import * as ps from "@genesiscz/utils/process/ps";
+import { collectProcesses, friendlyProcessName, killProcess, sortProcesses } from "./processes";
 import type { ProcessInfo } from "./types";
 
 const LIST: ProcessInfo[] = [
@@ -69,4 +71,23 @@ describe("killProcess guards", () => {
     test("refuses a live pid whose command does not match", () => {
         expect(killProcess(process.pid, "definitely-not-this-process")).toBe(false);
     });
+});
+test("collectProcesses uses one Windows snapshot for every row", async () => {
+    const platform = spyOn(processOs, "processPlatform").mockReturnValue("win32");
+    const capture = spyOn(ps, "captureSync").mockReturnValue({
+        stderr: "",
+        status: 0,
+        stdout: '[{"ProcessId":81001,"Name":"worker.exe","CommandLine":"worker.exe --job fixture","WorkingSetSize":1024},{"ProcessId":81002,"Name":"helper.exe","WorkingSetSize":2048}]',
+    });
+    try {
+        const rows = await collectProcesses();
+        expect(rows.map(({ pid, name, rssBytes }) => ({ pid, name, rssBytes }))).toEqual([
+            { pid: 81001, name: "worker.exe", rssBytes: 1024 },
+            { pid: 81002, name: "helper.exe", rssBytes: 2048 },
+        ]);
+        expect(capture).toHaveBeenCalledTimes(1);
+    } finally {
+        capture.mockRestore();
+        platform.mockRestore();
+    }
 });

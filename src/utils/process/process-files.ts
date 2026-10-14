@@ -80,7 +80,8 @@ function linuxOpenFiles(pid: number): OpenFile[] | null {
             if (found) {
                 const { row, protocol } = found;
                 const v6 = row.localAddress.includes(":");
-                const end = (address: string, port: number) => `${v6 ? `[${address}]` : address}:${port}`;
+                const end = (address: string, port: number) =>
+                    `${address === "0.0.0.0" || address === "::" ? "*" : v6 ? `[${address}]` : address}:${port}`;
                 const remote = row.remotePort === 0 ? "" : `->${end(row.remoteAddress, row.remotePort)}`;
                 const state = protocol === "TCP" ? ` (${TCP_STATE_NAMES[row.state] ?? "UNKNOWN"})` : "";
                 files.push({

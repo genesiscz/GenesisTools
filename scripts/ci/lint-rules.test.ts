@@ -242,6 +242,8 @@ describe("no-process-tool-spawn", () => {
             'spawnSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" });',
             'childProcess.execFileSync("lsof", ["-p", "1"]);',
             'execSync("pgrep -f claude");',
+            'execSync("/bin/ps -ax");',
+            "await $`/usr/sbin/lsof -nP`;",
             "await $`ps -axo pid=`;",
             'Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "command="]);',
             'const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";',

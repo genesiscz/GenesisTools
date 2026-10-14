@@ -755,3 +755,35 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         }
     });
 });
+test("Linux open socket names normalize wildcard addresses for port descriptor matching", () => {
+    const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+    const fds = spyOn(linux, "listProcFds").mockReturnValue([
+        { fd: 3, target: "socket:[101]", mode: "u" },
+        { fd: 4, target: "socket:[102]", mode: "u" },
+        { fd: 5, target: "socket:[103]", mode: "u" },
+    ]);
+    const tcp = spyOn(linux, "readProcTcp").mockReturnValue(
+        ["0.0.0.0", "::", "::1"].map((localAddress, index) => ({
+            localAddress,
+            localPort: 8123,
+            remoteAddress: "0.0.0.0",
+            remotePort: 0,
+            state: TCP_LISTEN,
+            inode: 101 + index,
+        }))
+    );
+    const udp = spyOn(linux, "readProcUdp").mockReturnValue([]);
+    const cwd = spyOn(linux, "readProcCwd").mockReturnValue(null);
+    const exe = spyOn(linux, "readProcExe").mockReturnValue(null);
+    try {
+        expect(listOpenFiles(81001)).toEqual([
+            { fd: "3u", type: "IPv4", name: "TCP *:8123 (LISTEN)" },
+            { fd: "4u", type: "IPv6", name: "TCP *:8123 (LISTEN)" },
+            { fd: "5u", type: "IPv6", name: "TCP [::1]:8123 (LISTEN)" },
+        ]);
+    } finally {
+        for (const spy of [platform, fds, tcp, udp, cwd, exe]) {
+            spy.mockRestore();
+        }
+    }
+});
