@@ -73,6 +73,20 @@ if (dirty) {
 if (!has("--skip-gates") && oldHead !== newHead) {
     const tsgo = join(wt, "node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo");
     must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
+    // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
+    // error through to the pre-push hook (2026-10-14, #502 round 6). The main checkout's binary is already assessed.
+    const changed = must(["git", "diff", "--name-only", "--diff-filter=d", `${oldHead}..${newHead}`], "changed files")
+        .split("\n")
+        .filter((file) => /\.(ts|tsx|js|jsx|json)$/.test(file));
+
+    if (changed.length > 0) {
+        const biome = join(run.main, "node_modules/.bin/biome");
+        must(
+            [existsSync(biome) ? biome : "bunx", ...(existsSync(biome) ? [] : ["biome"]), "check", ...changed],
+            "biome"
+        );
+    }
+
     must(["bun", "run", "lint:rules"], "lint-rules");
     must(["bun", "scripts/ci/check-tool-commands.ts"], "check-tool-commands");
     must(["bash", "scripts/ci/placeholder-check.sh"], "placeholder-check");
