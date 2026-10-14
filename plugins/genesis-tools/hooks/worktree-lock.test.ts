@@ -407,15 +407,15 @@ describe("worktree-lock", () => {
         }
     });
 
-    it("checks one owner with one targeted ps instead of reading the process table", async () => {
+    it("checks one owner through the kernel without spawning a process", async () => {
         const reason = `claude session single pid ${me.pid} since ${new Date().toISOString()}`;
         const check = await withSpawnCounter(async () => isLockStale(parseLockReason(reason)));
         expect(check.result).toBe(false);
-        expect(check.count).toBe(1);
-        expect(check.spawns[0]?.cmd).toEqual(["ps", "-o", "etime=,command=", "-p", String(me.pid)]);
+        expect(check.count).toBe(0);
+        expect(check.spawns).toEqual([]);
     });
 
-    it("a stale scan uses one ps and agrees with single-owner checks for live, dead, reused and repeated PIDs", async () => {
+    it("a stale scan uses kernel reads without spawning and agrees with single-owner checks for live, dead, reused and repeated PIDs", async () => {
         const now = Date.now();
         const reasons = [
             DEAD_LOCK,
@@ -438,10 +438,10 @@ describe("worktree-lock", () => {
         }
 
         try {
-            const individual = reasons.map((reason) => isLockStale(parseLockReason(reason), { now }));
+            const individual = reasons.map((reason) => isLockStale(parseLockReason(reason)));
             expect(individual).toEqual([true, false, true, false]);
-            const scan = await withSpawnCounter(async () => findStaleWorktreeLocks(main, now));
-            expect(scan.count).toBe(1);
+            const scan = await withSpawnCounter(async () => findStaleWorktreeLocks(main));
+            expect(scan.count).toBe(0);
             const stale = new Set(scan.result.map((lock) => lock.adminDir));
             expect(directories.map((directory) => stale.has(directory))).toEqual(individual);
         } finally {
@@ -456,7 +456,8 @@ describe("worktree-lock", () => {
         plantLock(DEAD_LOCK);
         const scan = await withSpawnCounter(async () => findStaleWorktreeLocks(main));
         expect(scan.result).toEqual([]);
-        expect(scan.count).toBe(1);
+        // Owners are read from the kernel (readProcessBasics): the scan spawns no process at all.
+        expect(scan.count).toBe(0);
         expect(lockReason()).toBe(DEAD_LOCK);
         expect(clearStaleWorktreeLocks(main)).toEqual([]);
         expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "stale-survivor" });

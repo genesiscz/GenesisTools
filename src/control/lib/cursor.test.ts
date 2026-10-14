@@ -20,8 +20,16 @@ import {
     CURSOR_SESSION_ENV,
     cursorEnvironment,
     cursorSessionLabel,
-    parseProcessRows,
+    type ProcessRow,
 } from "./cursor-context";
+
+/** A `ps -Ao pid=,ppid=,comm=` table as rows, for fixtures. */
+function parseProcessRows(stdout: string): ProcessRow[] {
+    return stdout.split("\n").flatMap((line) => {
+        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+        return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] ?? "" }] : [];
+    });
+}
 
 let testHome = "";
 type MoveOptions = Omit<MoveSoftwareCursorOptions, "dependencies">;

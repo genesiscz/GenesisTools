@@ -52,6 +52,7 @@ import {
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { readProcessBasics } from "../lib/process-basics";
 import { EDIT_TOOLS, filePathsOf, type HookInput, normalize, writeFailed } from "./edit-payload";
 import type { Harness } from "./harness";
 
@@ -339,95 +340,39 @@ export function parseLockReason(reason: string): LockHolder {
 
 type ProcessCheck = { state: "gone" } | { state: "unknown" } | { state: "live"; agent: boolean; startMs: number };
 
-/** One process snapshot for all requested owners; an unreadable snapshot never declares an owner dead. */
-function checkProcesses(pids: number[], now: number): Map<number, ProcessCheck> {
-    const wanted = [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 1))];
-    const checks = new Map<number, ProcessCheck>(pids.map((pid) => [pid, { state: "gone" }]));
-
-    if (wanted.length === 0) {
-        return checks;
-    }
-
-    const [onlyPid] = wanted;
-
-    if (wanted.length === 1 && onlyPid !== undefined) {
-        checks.set(onlyPid, checkProcess(onlyPid, now));
-        return checks;
-    }
-
-    for (const pid of wanted) {
-        checks.set(pid, { state: "unknown" });
-    }
-
-    // A single invalid PID makes macOS reject an entire -p list, even if its other owners are live.
-    const result = Bun.spawnSync(["ps", "-A", "-o", "pid=,etime=,command="], {
-        stdout: "pipe",
-        stderr: "ignore",
-        timeout: SPAWN_TIMEOUT_MS,
-    });
-    const output = result.stdout.toString().trim();
-
-    if (result.exitCode !== 0 || output === "") {
-        return checks;
-    }
-
-    const found = new Map<number, ProcessCheck>();
-    const wantedSet = new Set(wanted);
-
-    for (const line of output.split("\n")) {
-        const row = /^\s*(\d+)\s+/.exec(line);
-        const pid = Number(row?.[1]);
-
-        if (!wantedSet.has(pid)) {
-            continue;
-        }
-
-        found.set(pid, parseProcessCheck(line.slice(row?.[0].length ?? 0), now));
-    }
-
-    for (const pid of wanted) {
-        checks.set(pid, found.get(pid) ?? { state: "gone" });
-    }
-
-    return checks;
-}
-
-/** The hook's single-owner path never pays for a full process table. */
-function checkProcess(pid: number, now: number): ProcessCheck {
+/**
+ * What `pid` is now, from the kernel (`readProcessBasics`, no spawn): "gone" when no process has it,
+ * "unknown" when its command line or start time cannot be read (another user's process, a zombie),
+ * else whether the process is claude, codex or grok and when it started. A bare kill(pid, 0) cannot
+ * tell the lock's agent from a recycled pid that another program now holds.
+ */
+function checkProcess(pid: number): ProcessCheck {
+    // pid 0 and below are process groups, and pid 1 is launchd: none names a session.
     if (!Number.isInteger(pid) || pid <= 1) {
         return { state: "gone" };
     }
 
-    const result = Bun.spawnSync(["ps", "-o", "etime=,command=", "-p", String(pid)], {
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: SPAWN_TIMEOUT_MS,
-    });
-    const output = result.stdout.toString().trim();
-    const error = result.stderr.toString().trim();
+    const basics = readProcessBasics(pid);
 
-    if (result.exitCode === 1 && output === "" && (error === "" || /^ps: process id too large: \d+$/.test(error))) {
+    if (!basics) {
         return { state: "gone" };
     }
 
-    return result.exitCode === 0 ? parseProcessCheck(output, now) : { state: "unknown" };
-}
-
-function parseProcessCheck(output: string, now: number): ProcessCheck {
-    const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s+(.*)$/s.exec(output.trim());
-
-    if (!match) {
+    if (basics.command === null || basics.startMs === null) {
         return { state: "unknown" };
     }
 
-    const [, days = "0", hours = "0", minutes = "0", seconds = "0", command = ""] = match;
-    const elapsed = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
-    return { state: "live", agent: agentNamed(command) !== null, startMs: now - elapsed * 1000 };
+    return { state: "live", agent: agentNamed(basics.command) !== null, startMs: basics.startMs };
 }
 
-/** Whether `pid` is still a running agent. When ps cannot answer, it counts as alive: a wrong "dead" frees a worktree in use. */
-function agentAlive(pid: number, now = Date.now()): boolean {
-    const check = checkProcess(pid, now);
+/** Read each distinct owner once through the kernel; share those results across the ownership scan. */
+function checkProcesses(pids: number[]): Map<number, ProcessCheck> {
+    return new Map([...new Set(pids)].map((pid) => [pid, checkProcess(pid)]));
+}
+
+/** Whether `pid` is still a running agent. When the kernel cannot answer, it counts as alive: a wrong "dead" frees a worktree in use. */
+function agentAlive(pid: number): boolean {
+    const check = checkProcess(pid);
 
     return check.state === "unknown" || (check.state === "live" && check.agent);
 }
@@ -436,13 +381,10 @@ function agentAlive(pid: number, now = Date.now()): boolean {
  * Whether a lock's owner is gone. A hand lock never is. A session lock is stale when its pid is dead,
  * when another program now holds the pid, or when the pid started after the lock was taken (a reused
  * pid). Claude Code's own lock carries no time we can compare, so only its pid and program count. When
- * `ps` cannot answer, the lock is kept: a wrong "stale" lets a worktree in use be removed.
+ * the kernel cannot answer, the lock is kept: a wrong "stale" lets a worktree in use be removed.
  */
-export function isLockStale(holder: LockHolder, options: { now?: number } = {}): boolean {
-    return staleFromCheck(
-        holder,
-        holder.kind === "other" ? { state: "unknown" } : checkProcess(holder.pid, options.now ?? Date.now())
-    );
+export function isLockStale(holder: LockHolder): boolean {
+    return staleFromCheck(holder, holder.kind === "other" ? { state: "unknown" } : checkProcess(holder.pid));
 }
 
 function staleFromCheck(holder: LockHolder, check: ProcessCheck): boolean {
@@ -663,17 +605,14 @@ function registeredWorktrees(commonDir: string): Array<LinkedWorktree & { reason
 /**
  * The check cleanup tools call before they force anything: the session locks in the repository that
  * holds `repoPath` (a main checkout or any of its worktrees) whose owner is gone. It reads files and
- * runs `ps`; it never changes a lock. `clearStaleWorktreeLocks` is the step that acts on it.
+ * reads the kernel; it never changes a lock. `clearStaleWorktreeLocks` is the step that acts on it.
  */
-export function findStaleWorktreeLocks(repoPath: string, now = Date.now()): StaleLock[] {
-    const { locks, checks } = scanStaleWorktreeLocks(repoPath, now);
-    return locks.filter((lock) => liveUsers(lock, now, checks).length === 0);
+export function findStaleWorktreeLocks(repoPath: string): StaleLock[] {
+    const { locks, checks } = scanStaleWorktreeLocks(repoPath);
+    return locks.filter((lock) => liveUsers(lock, checks).length === 0);
 }
 
-function scanStaleWorktreeLocks(
-    repoPath: string,
-    now: number
-): { locks: StaleLock[]; checks: Map<number, ProcessCheck> } {
+function scanStaleWorktreeLocks(repoPath: string): { locks: StaleLock[]; checks: Map<number, ProcessCheck> } {
     const commonDir = commonDirOf(repoPath);
     const worktrees = commonDir ? registeredWorktrees(commonDir) : [];
     const holders = worktrees.map((worktree) => (worktree.reason === null ? null : parseLockReason(worktree.reason)));
@@ -683,7 +622,7 @@ function scanStaleWorktreeLocks(
         pids.push(...readUsers(worktree).map((user) => user.pid));
     }
 
-    const checks = checkProcesses(pids, now);
+    const checks = checkProcesses(pids);
     const locks = worktrees.flatMap((worktree, index) => {
         const holder = holders[index];
         return worktree.reason !== null &&
@@ -697,8 +636,8 @@ function scanStaleWorktreeLocks(
 }
 
 /** Recheck the reason under the guard, retaining any surviving registered user from the same process snapshot. */
-export function clearStaleWorktreeLocks(repoPath: string, now = Date.now()): StaleLock[] {
-    const { locks, checks } = scanStaleWorktreeLocks(repoPath, now);
+export function clearStaleWorktreeLocks(repoPath: string): StaleLock[] {
+    const { locks, checks } = scanStaleWorktreeLocks(repoPath);
     const cleared: StaleLock[] = [];
 
     for (const lock of locks) {
@@ -707,7 +646,7 @@ export function clearStaleWorktreeLocks(repoPath: string, now = Date.now()): Sta
                 lock,
                 () =>
                     readLockReason(lock.adminDir) === lock.reason &&
-                    handoffOrUnlock({ worktree: lock, reason: lock.reason, checks, now }) === "unlocked"
+                    handoffOrUnlock({ worktree: lock, reason: lock.reason, checks }) === "unlocked"
             )
         ) {
             cleared.push(lock);
@@ -863,14 +802,9 @@ function readUsers(worktree: LinkedWorktree): SessionUser[] {
     });
 }
 
-function liveUsers(worktree: LinkedWorktree, now: number, snapshot?: Map<number, ProcessCheck>): SessionUser[] {
+function liveUsers(worktree: LinkedWorktree, snapshot?: Map<number, ProcessCheck>): SessionUser[] {
     const users = readUsers(worktree);
-    const checks =
-        snapshot ??
-        checkProcesses(
-            users.map((user) => user.pid),
-            now
-        );
+    const checks = snapshot ?? checkProcesses(users.map((user) => user.pid));
     return users.filter(
         (user) => !staleFromCheck({ kind: "session", ...user }, checks.get(user.pid) ?? { state: "unknown" })
     );
@@ -907,14 +841,12 @@ function handoffOrUnlock({
     worktree,
     reason,
     checks,
-    now = Date.now(),
 }: {
     worktree: LinkedWorktree;
     reason: string;
     checks?: Map<number, ProcessCheck>;
-    now?: number;
 }): "unlocked" | "handed-off" | "failed" {
-    const successor = liveUsers(worktree, now, checks)[0];
+    const successor = liveUsers(worktree, checks)[0];
 
     if (!successor) {
         return unlockWorktree(worktree, reason) ? "unlocked" : "failed";
@@ -957,32 +889,27 @@ function agentNamed(command: string): Harness | null {
 
 /**
  * The agent process this hook belongs to: the nearest ancestor whose program is claude, codex or grok.
- * A hook runs under a shell, so its parent is rarely the agent itself. One `ps -p` per level, about
- * 6 ms each; `ps -A` costs 90 ms. The nearest one is right also for a Codex worker started from a
+ * A hook runs under a shell, so its parent is rarely the agent itself. One kernel read per level, no
+ * spawn. The nearest one is right also for a Codex worker started from a
  * Claude session, whose chain holds both.
  */
 export function findAgentProcess(startPid = process.ppid): AgentProcess | null {
     let pid = startPid;
 
     for (let depth = 0; depth < MAX_ANCESTORS && pid > 1; depth++) {
-        const result = Bun.spawnSync(["ps", "-o", "ppid=,command=", "-p", String(pid)], {
-            stdout: "pipe",
-            stderr: "ignore",
-            timeout: SPAWN_TIMEOUT_MS,
-        });
-        const match = result.exitCode === 0 ? /^\s*(\d+)\s+(.*)$/s.exec(result.stdout.toString().trim()) : null;
+        const basics = readProcessBasics(pid);
 
-        if (!match) {
+        if (!basics || basics.command === null) {
             return null;
         }
 
-        const harness = agentNamed(match[2] ?? "");
+        const harness = agentNamed(basics.command);
 
         if (harness) {
             return { harness, pid };
         }
 
-        pid = Number(match[1]);
+        pid = basics.ppid;
     }
 
     return null;
@@ -1041,13 +968,12 @@ export function lockWorktreesForPaths(options: {
 
                 const owner = agent?.pid ?? record?.pid;
 
-                if (holder.pid === owner && (!fresh || agentAlive(holder.pid, now))) {
+                if (holder.pid === owner && (!fresh || agentAlive(holder.pid))) {
                     const ours = agent ?? (record ? { harness: record.harness, pid: record.pid } : null);
 
                     if (ours) {
                         rememberUser(worktree, { ...ours, sessionId, since: holder.since });
                     }
-
                     return "ours";
                 }
             }
@@ -1059,7 +985,7 @@ export function lockWorktreesForPaths(options: {
             if (!agent) {
                 record ??= readRecord(sessionId);
                 agent =
-                    record && agentAlive(record.pid, now)
+                    record && agentAlive(record.pid)
                         ? { harness: record.harness, pid: record.pid }
                         : (options.findAgent ?? findAgentProcess)();
             }
@@ -1075,12 +1001,12 @@ export function lockWorktreesForPaths(options: {
 
             const user = { ...agent, sessionId, since: new Date(now).toISOString() };
 
-            if (holder && !isLockStale(holder, { now })) {
+            if (holder && !isLockStale(holder)) {
                 rememberUser(worktree, user);
                 return "held";
             }
 
-            if (current !== null && handoffOrUnlock({ worktree, reason: current, now }) !== "unlocked") {
+            if (current !== null && handoffOrUnlock({ worktree, reason: current }) !== "unlocked") {
                 rememberUser(worktree, user);
                 return "held";
             }
@@ -1254,7 +1180,7 @@ export function releaseSessionWorktree(options: { worktree: string; sessionId: s
                 return { removed: false, detail: `locked by someone else: ${reason}` };
             }
 
-            const others = liveUsers(worktree, Date.now()).filter((user) => user.sessionId !== options.sessionId);
+            const others = liveUsers(worktree).filter((user) => user.sessionId !== options.sessionId);
 
             if (others.length > 0) {
                 return {
@@ -1381,7 +1307,7 @@ export function lockWorktreeAtSessionStart(
         return new Map();
     }
 
-    clearStaleWorktreeLocks(cwd, options.now);
+    clearStaleWorktreeLocks(cwd);
 
     return lockWorktreesForPaths({ sessionId: input.session_id, paths: [cwd], fresh: true, ...options });
 }
