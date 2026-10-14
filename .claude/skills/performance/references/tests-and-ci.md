@@ -37,6 +37,10 @@ an argv, a spawn count, a `/proc` read) is cheaper to reproduce in a container f
   store checks out, with no branch needed. Only committed work is visible, so commit (a temporary commit is fine).
 - Dependencies: `bun install --frozen-lockfile` inside the container, with a named cache volume so it takes about a
   minute. Give parallel containers different volumes.
+- **The container is not CI.** The full suite at master cc39e1171 failed 52 tests there (the personal-data probe tests,
+  CDP browser launches, tmux sessions and more) that CI's run of the same commit does not fail. So a full-suite run in
+  the container proves nothing alone: run the base SHA in the same container and compare the sorted `(fail)` lists.
+  The daemon fix c977a1b00 had 51: the base's 52 minus "run log meta", and nothing new (2026-10-14 22:52).
 - Run the old SHA and the fixed SHA with the same test file: the old one must fail and the fixed one pass.
   Measured 2026-10-14: `src/utils/process-identity.test.ts` 1 fail at 9d0d0f824, 0 at fd0486ee0;
   `src/daemon/lib/runner.test.ts` 1 fail at cc39e1171 (ENOENT on `/usr/sbin/taskpolicy`), 0 at 21670ffff.
