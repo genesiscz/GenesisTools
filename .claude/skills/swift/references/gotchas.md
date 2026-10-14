@@ -312,6 +312,11 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   stopped restarting it, a permission check never answered, and the WindowServer watchdog froze the Mac (2026-10-14
   20:06). Build a test program once and keep it (`src/utils/test/persistent-fixture.ts`), and check that `syspolicyd`
   keeps its pid (`pgrep -x syspolicyd`) across the first run of such a test.
+- **A new command-line flag needs a test through the parser that runs live.** `act --allow-outside` passed 13
+  event-factory tests and failed at its first live call: ax-tool keeps a list of flags per command
+  (`WorkflowArguments.swift`), and the new flag was not on it, so it was refused as unknown before anything ran
+  (85d5d6967, fixed in 586f5b391). Add one parse test per new flag, and prove the path with a call that cannot
+  dispatch (an invalid snapshot token must be the refusal, not the flag).
 - **`UserDefaults(suiteName:)` in a test writes a real plist** in `~/Library/Preferences`. `removePersistentDomain`
   empties it but leaves a 42-byte file. Give test suites one prefix (`genesiskit-tests-…`) and remove them in a
   teardown block (9a11d77bd).
