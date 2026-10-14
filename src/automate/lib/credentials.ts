@@ -25,6 +25,35 @@ function ensureDir(): void {
     }
 }
 
+const CREDENTIAL_TYPES = new Set(["bearer", "basic", "apikey", "custom"]);
+const OPTIONAL_TEXT_FIELDS = ["token", "username", "password", "headerName", "key"] as const;
+
+/**
+ * A saved credential as StoredCredential declares it: an optional field may be absent, never another type. A file
+ * that fails this is kept as a corrupt copy instead of being overwritten (a token object would otherwise be lost).
+ */
+function isStoredCredential(value: unknown): value is StoredCredential {
+    // `String(["bearer"])` is "bearer": check the type is a string before the set lookup.
+    if (
+        !isJsonObject(value) ||
+        typeof value.name !== "string" ||
+        typeof value.type !== "string" ||
+        !CREDENTIAL_TYPES.has(value.type)
+    ) {
+        return false;
+    }
+
+    if (OPTIONAL_TEXT_FIELDS.some((field) => value[field] !== undefined && typeof value[field] !== "string")) {
+        return false;
+    }
+
+    const { headers } = value;
+    return (
+        headers === undefined ||
+        (isJsonObject(headers) && Object.values(headers).every((header) => typeof header === "string"))
+    );
+}
+
 /**
  * Save a credential to disk.
  * File permissions are set to 0600 (owner read/write only).
@@ -32,7 +61,7 @@ function ensureDir(): void {
 export async function saveCredential(credential: StoredCredential): Promise<void> {
     ensureDir();
     const filePath = join(CREDENTIALS_DIR, `${safeName(credential.name)}.json`);
-    readJsonFileForUpdateSync(filePath, { accepts: isJsonObject });
+    readJsonFileForUpdateSync(filePath, { accepts: isStoredCredential });
     atomicWriteFileSync(filePath, SafeJSON.stringify(credential, null, 2), { mode: 0o600 });
     logger.debug(`Credential saved: ${credential.name}`);
 }

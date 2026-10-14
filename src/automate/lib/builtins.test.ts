@@ -10,7 +10,20 @@ import type { ExecutionContext } from "./types";
 const ctx: ExecutionContext = { vars: {}, steps: {}, env: {} };
 
 describe("credential persistence", () => {
-    test.each(['{"token":', "null", "[]"])("preserves damaged credential bytes before saving: %s", async (damaged) => {
+    test.each([
+        '{"token":',
+        "null",
+        "[]",
+        "{}",
+        '{"name":"fixture","type":"unknown"}',
+        '{"name":42,"type":"bearer"}',
+        '{"type":"basic"}',
+        '{"name":"fixture"}',
+        '{"name":"fixture","type":"bearer","token":{"recoverable":"fixture-value"}}',
+        '{"name":"fixture","type":"custom","headers":"not-an-object"}',
+        '{"name":"fixture","type":"custom","headers":{"x-fixture":1}}',
+        '{"name":"fixture","type":["bearer"],"token":"fixture-value"}',
+    ])("preserves damaged credential bytes before saving: %s", async (damaged) => {
         const name = `fixture-${crypto.randomUUID()}`;
         const credential = { name, type: "bearer" as const, token: "fixture-token" };
         const dir = join(env.tools.getHome(), ".genesis-tools", "automate", "credentials");
@@ -31,20 +44,23 @@ describe("credential persistence", () => {
         }
     });
 
-    test("a valid credential can be updated without making a corrupt copy", async () => {
-        const name = `fixture-${crypto.randomUUID()}`;
-        const dir = join(env.tools.getHome(), ".genesis-tools", "automate", "credentials");
-        const path = join(dir, `${name}.json`);
-        try {
-            await saveCredential({ name, type: "bearer", token: "first-token" });
-            await saveCredential({ name, type: "bearer", token: "second-token" });
-            expect(SafeJSON.parse(readFileSync(path, "utf8")).token).toBe("second-token");
-            expect(readdirSync(dir).filter((file) => file.startsWith(`${name}.json.corrupt-`))).toEqual([]);
-            expect(statSync(path).mode & 0o777).toBe(0o600);
-        } finally {
-            rmSync(path, { force: true });
+    test.each(["bearer", "basic", "apikey", "custom"] as const)(
+        "a valid %s credential without optional fields can be updated without making a corrupt copy",
+        async (type) => {
+            const name = `fixture-${crypto.randomUUID()}`;
+            const dir = join(env.tools.getHome(), ".genesis-tools", "automate", "credentials");
+            const path = join(dir, `${name}.json`);
+            try {
+                await saveCredential({ name, type });
+                await saveCredential({ name, type, token: "second-token" });
+                expect(SafeJSON.parse(readFileSync(path, "utf8")).token).toBe("second-token");
+                expect(readdirSync(dir).filter((file) => file.startsWith(`${name}.json.corrupt-`))).toEqual([]);
+                expect(statSync(path).mode & 0o777).toBe(0o600);
+            } finally {
+                rmSync(path, { force: true });
+            }
         }
-    });
+    );
 });
 
 describe("handleShell timeout cleanup", () => {
