@@ -3,7 +3,7 @@ import { setCcRunAliases } from "@app/cmux/lib/command-capture";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { filterReplayByAgents, isMissingEnumFlag, parseAgentList, parseRestoreSource } from "./restore-after-restart";
-import { idleShellTtys, planInPlaceRestore } from "./restore-in-place";
+import { agentsOnTtys, idleShellTtys, type LiveTab, planInPlaceRestore } from "./restore-in-place";
 
 describe("parseRestoreSource", () => {
     test("accepts previous, live, profile", () => {
@@ -203,10 +203,13 @@ describe("planInPlaceRestore", () => {
         };
     }
 
+    const GROK_STALE = "b4d9d27d-1597-48fd-b6a6-f5ed76feb360";
+    const GROK_RIGHT = "01a05cc5-0ecf-7d40-945e-977e45b3f935";
+    const TRUST = "Do you trust the contents of this directory?\n  Yes, proceed   y\n  No, quit       n\n";
     const surfaces: Surface[] = [
         tab(1, "alias", `ffff work -- --resume ${CLAUDE_ID}`),
         tab(2, "canonical", `tools claude start work -- --resume ${CLAUDE_ID}`),
-        tab(3, "busy", `grok -r 01a05cc5-0ecf-7d40-945e-977e45b3f935`),
+        tab(3, "busy", `grok -r ${GROK_RIGHT}`),
         tab(4, "me", `ffff work -- --resume ${CLAUDE_ID}`),
         tab(5, "new session", "ffff work"),
         tab(6, "ssh", "ssh deploy@example.com"),
@@ -214,72 +217,129 @@ describe("planInPlaceRestore", () => {
         tab(7, "typed", `ffff work -- --resume ${CLAUDE_ID}`),
         tab(8, "weak", `ffff work -- --resume ${CLAUDE_ID}`, { resume_evidence: "weak" }),
         tab(9, "gone", `ffff work -- --resume ${CLAUDE_ID}`),
+        tab(10, "stale grok", `tools claude start work -- --resume ${CLAUDE_ID}`),
+        tab(11, "already", `grok -r ${GROK_RIGHT}`),
     ];
-    // Live refs renumber after a relaunch; the UUIDs stay, so the pairing must use them.
+    // The live refs are renumbered after a relaunch; only the UUIDs match the capture.
     const tabs = new Map(
-        [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [
+        [1, 2, 3, 4, 5, 6, 7, 8, 10, 11].map((n) => [
             uuid(n),
             {
-                ref: `surface:${100 + n}`,
                 id: uuid(n).toUpperCase(),
-                workspace: "workspace:70",
-                workspaceId: null,
-                window: "window:9",
+                workspaceId: "AAAAAAAA-0000-4000-8000-000000000070",
                 tty: `ttys0${n}`,
                 title: null,
+                ref: `surface:${100 + n}`,
+                workspaceRef: "workspace:70",
+                windowRef: "window:9",
             },
         ])
     );
     const state = {
         tabs,
         idleTtys: new Set(["ttys01", "ttys02", "ttys04", "ttys05", "ttys06", "ttys07", "ttys08"]),
-        screens: new Map([
-            ["surface:101", PROMPT],
-            ["surface:102", PROMPT],
-            ["surface:105", PROMPT],
-            ["surface:106", PROMPT],
-            ["surface:107", `${PROMPT}half a sente`],
-            ["surface:108", PROMPT],
+        ttyAgents: new Map([
+            ["ttys03", { kind: "claude" as const, sessionId: "99999999-9999-4999-8999-999999999999" }],
+            ["ttys010", { kind: "grok" as const, sessionId: GROK_STALE }],
+            ["ttys011", { kind: "grok" as const, sessionId: GROK_RIGHT }],
         ]),
-        callerSurfaceRef: "surface:104",
+        screens: new Map([
+            [uuid(1), PROMPT],
+            [uuid(2), PROMPT],
+            [uuid(5), PROMPT],
+            [uuid(6), PROMPT],
+            [uuid(7), `${PROMPT}half a sente`],
+            [uuid(8), PROMPT],
+            [uuid(10), TRUST],
+            [uuid(11), "grok ready"],
+        ]),
+        callerId: uuid(4),
     };
 
-    test("pairs by surface UUID and types only into an idle shell with an empty prompt", () => {
+    test("pairs by surface UUID and prepares or skips each tab with its reason", () => {
         const steps = planInPlaceRestore(liveProfile(surfaces), state);
         const byTitle = new Map(steps.map((step) => [step.title, step]));
 
-        expect(steps.map((step) => step.title)).toEqual([
-            "alias",
-            "canonical",
-            "busy",
-            "me",
-            "new session",
-            "ssh",
-            "typed",
-            "weak",
-            "gone",
-        ]);
-        expect(byTitle.get("alias")).toMatchObject({
-            surfaceRef: "surface:101",
-            workspaceRef: "workspace:70",
-            kind: "agent",
-            skip: undefined,
-        });
-        expect(byTitle.get("canonical")).toMatchObject({ kind: "agent", skip: undefined });
+        const planned = (title: string) => [
+            byTitle.get(title)?.kind,
+            byTitle.get(title)?.skip,
+            byTitle.get(title)?.prepare,
+        ];
+
+        expect(planned("alias")).toEqual(["agent", undefined, undefined]);
+        expect(byTitle.get("alias")?.live?.ref).toBe("surface:101");
+        expect(planned("canonical")).toEqual(["agent", undefined, undefined]);
         expect(byTitle.get("busy")?.skip).toBe(
-            "a program already runs here; the recorded session for this tab is: grok -r 01a05cc5-0ecf-7d40-945e-977e45b3f935"
+            `a program already runs here (claude 99999999-9999-4999-8999-999999999999); the recorded session for this tab is: grok -r ${GROK_RIGHT}`
         );
         expect(byTitle.get("me")?.skip).toBe("this tab runs the restore");
         expect(byTitle.get("new session")?.skip).toBe(
             "no session id resolved, so the command would open a new session or a picker"
         );
-        expect(byTitle.get("ssh")).toMatchObject({ kind: "command", skip: undefined });
-        expect(byTitle.get("typed")?.skip).toBe("the prompt is not empty (text is typed at it), so nothing is typed");
+        expect(planned("ssh")).toEqual(["command", undefined, undefined]);
+        expect(planned("typed")).toEqual(["agent", undefined, "clear-prompt"]);
+        expect(byTitle.get("typed")?.prepareNote).toContain("half a sente");
         expect(byTitle.get("weak")?.skip).toContain("only weak evidence ties this tab to the session");
-        expect(byTitle.get("gone")).toMatchObject({
-            surfaceRef: undefined,
-            skip: "the tab is no longer in the live layout",
-        });
+        expect(byTitle.get("gone")).toMatchObject({ live: undefined, skip: "the tab is no longer in the live layout" });
+        expect(planned("stale grok")).toEqual(["agent", undefined, "quit-stale-agent"]);
+        expect(byTitle.get("already")?.skip).toBe("already runs the recorded session");
+    });
+
+    test("a stale agent that already opened its session is never quit", () => {
+        const opened = { ...state, screens: new Map([...state.screens, [uuid(10), "grok ready ❯"]]) };
+        const step = planInPlaceRestore(liveProfile(surfaces), opened).find((s) => s.title === "stale grok");
+
+        expect(step?.prepare).toBeUndefined();
+        expect(step?.skip).toContain(`a program already runs here (grok ${GROK_STALE})`);
+    });
+
+    // Measured 2026-10-14: a tab opened in the background has `tty: null` in `cmux tree` until it is drawn,
+    // which took over 20 s for a fresh split. Without the tty nothing proves the tab is an idle shell.
+    test("a tab cmux reports no tty for is skipped, never typed into", () => {
+        const alias = tabs.get(uuid(1));
+
+        if (!alias) {
+            throw new Error("fixture tab 1 is missing");
+        }
+
+        const noTty = { ...state, tabs: new Map<string, LiveTab>([...tabs, [uuid(1), { ...alias, tty: null }]]) };
+        const step = planInPlaceRestore(liveProfile(surfaces), noTty).find((s) => s.title === "alias");
+
+        expect(step?.prepare).toBeUndefined();
+        expect(step?.skip).toContain("cmux reports no tty for this tab yet");
+    });
+});
+
+describe("agentsOnTtys", () => {
+    test("reads the agent and its session off each tty's command line, path and all", () => {
+        const proc = (tty: string, command: string) =>
+            ({
+                pid: 1,
+                ppid: 0,
+                pgid: 1,
+                uid: 501,
+                name: "x",
+                command,
+                tty,
+                startMs: null,
+                zombie: false,
+                state: "S",
+            }) as const;
+        const agents = agentsOnTtys(
+            [
+                proc("ttys003", "/Users/me/.local/bin/grok -r b4d9d27d-1597-48fd-b6a6-f5ed76feb360"),
+                proc(
+                    "ttys005",
+                    "/Users/me/.bun/bin/claude --dangerously-skip-permissions --resume 6bdfb457-cee9-4202-8105-21be8a801757"
+                ),
+                proc("ttys006", "/bin/zsh -l"),
+            ],
+            501
+        );
+
+        expect(agents.get("ttys003")).toEqual({ kind: "grok", sessionId: "b4d9d27d-1597-48fd-b6a6-f5ed76feb360" });
+        expect(agents.get("ttys005")).toEqual({ kind: "claude", sessionId: "6bdfb457-cee9-4202-8105-21be8a801757" });
+        expect(agents.has("ttys006")).toBe(false);
     });
 });
 
@@ -298,12 +358,14 @@ describe("idleShellTtys", () => {
             state: "S",
         }) as const;
 
-    test("a tty with only this user's shells is idle; any other program makes it busy", () => {
+    test("a tty whose only process of this user is one shell is idle; anything more makes it busy", () => {
         const idle = idleShellTtys(
             [
                 proc("ttys001", "login", 0),
                 proc("ttys001", "-zsh"),
-                proc("ttys001", "zsh"),
+                // A script under bash waiting for input: by name a second shell, in fact a running program.
+                proc("ttys002", "-zsh"),
+                proc("ttys002", "bash"),
                 proc("ttys003", "zsh"),
                 proc("ttys003", "grok-1.0.52-maco"),
                 proc("ttys005", "zsh"),

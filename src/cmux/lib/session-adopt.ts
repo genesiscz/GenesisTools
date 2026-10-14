@@ -21,8 +21,10 @@ export interface LiveSurface {
 }
 
 export interface CmuxTreeView {
-    /** The surface this command runs in; never adopted. */
+    /** The surface this command runs in, as a ref; never adopted. */
     caller: string | null;
+    /** The same surface's UUID, which survives a cmux relaunch (`--id-format both`). */
+    callerId: string | null;
     surfaces: Map<string, LiveSurface>;
 }
 
@@ -44,10 +46,11 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
     const surfaces = new Map<string, LiveSurface>();
 
     if (!isRecord(parsed)) {
-        return { caller: null, surfaces };
+        return { caller: null, callerId: null, surfaces };
     }
 
     const caller = isRecord(parsed.caller) ? text(parsed.caller.surface_ref) : null;
+    const callerId = isRecord(parsed.caller) ? text(parsed.caller.surface_id) : null;
 
     for (const window of list(parsed.windows)) {
         if (!isRecord(window) || !text(window.ref)) {
@@ -84,7 +87,7 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
         }
     }
 
-    return { caller, surfaces };
+    return { caller, callerId, surfaces };
 }
 
 /**

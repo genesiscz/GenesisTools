@@ -55,15 +55,16 @@ interface RestartFlags {
 const SOURCES: RestoreRestartSource[] = ["previous", "live", "profile"];
 
 function renderInPlaceStep(step: InPlaceStep): string {
-    const where = `${pc.cyan(step.workspaceTitle)} › ${step.title || pc.dim("(untitled)")} ${pc.dim(step.surfaceRef ?? "(gone)")}`;
+    const where = `${pc.cyan(step.workspaceTitle)} › ${step.title || pc.dim("(untitled)")} ${pc.dim(step.live?.ref ?? "(gone)")}`;
 
     if (step.skip) {
         return `  ${pc.dim("·")} ${where}\n      ${pc.dim(`skip: ${step.skip}`)}`;
     }
 
     const label = step.kind === "agent" ? "resume" : "type (shell command)";
+    const prepare = step.prepareNote ? `\n      ${pc.yellow(`first: ${step.prepareNote}`)}` : "";
 
-    return `  ${pc.green("▶")} ${where}\n      ${pc.dim(`${label}:`)} ${step.surface.command}`;
+    return `  ${pc.green("▶")} ${where}${prepare}\n      ${pc.dim(`${label}:`)} ${step.surface.command}`;
 }
 
 async function captureLiveProfile(): Promise<Profile> {
@@ -447,7 +448,10 @@ async function runInPlace(inferred: Profile, flags: RestartFlags & { enter: bool
     }
 
     if (flags.enter) {
-        await reportWaitingPrompts([...new Set(planned.map((step) => step.workspaceRef))], "Restore");
+        const workspaces = planned.flatMap((step) =>
+            step.live ? [step.live.workspaceId ?? step.live.workspaceRef] : []
+        );
+        await reportWaitingPrompts([...new Set(workspaces)], "Restore");
     }
 
     p.outro(failures.length > 0 ? pc.yellow("Partial restore — see the tabs above.") : pc.green("Done."));
