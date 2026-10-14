@@ -831,7 +831,8 @@ function textLength(text: string): number {
 }
 
 /**
- * The right edge of a `block` fill: the widest kept row of the file plus two columns. A hook message
+ * The right edge of a `block` fill: the widest kept CHANGED row of the file plus two columns (a context
+ * row carries no band, and one long wrapped comment made the block as wide as the pane). A hook message
  * is fixed text, so a band padded to the terminal's width wrapped into an empty band row under every
  * row once the pane got narrower (2026-10-15 01:17: rows of 163 columns, padded for a 170-column pane
  * that was 167 columns by then). A block-wide band wraps only where the text itself would.
@@ -840,7 +841,11 @@ function blockWidth(body: PatchLine[], held: Set<number> | undefined): number {
     let widest = 0;
 
     for (const at of held ?? []) {
-        widest = Math.max(widest, Bun.stringWidth(body[at]?.content ?? ""));
+        const line = body[at];
+
+        if (line?.changed) {
+            widest = Math.max(widest, Bun.stringWidth(line.content ?? ""));
+        }
     }
 
     return widest + 2;
