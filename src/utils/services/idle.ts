@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { canReadSockets, listEstablishedTcp } from "@genesiscz/utils/process/sockets";
+import { scanSockets } from "@genesiscz/utils/process/sockets";
 import { Storage } from "@genesiscz/utils/storage";
 import type { ServiceRow } from "./inventory";
 
@@ -50,7 +50,8 @@ export function idleDecisions({
 }
 
 export function readClientPorts(): Set<number> | null {
-    return canReadSockets() ? new Set(listEstablishedTcp().map((socket) => socket.port)) : null;
+    const sockets = scanSockets({ protocol: "TCP", state: "ESTABLISHED" });
+    return sockets === null ? null : new Set(sockets.map((socket) => socket.port));
 }
 
 const storage = new Storage("services");

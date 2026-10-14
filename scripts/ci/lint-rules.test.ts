@@ -250,6 +250,11 @@ describe("no-process-tool-spawn", () => {
             'probeRun("processes", "env", ["LC_ALL=C", "ps", "-axo", COLUMNS]);',
             'deps.run("ps", ["-Ao", "pid=,rss="]);',
             'const lsof = Bun.which("lsof");',
+            'Bun.spawn(["sh", "-c", "ps -ax"]);',
+            'Bun.spawn(["sh", "-c", " /bin/ps -ax"]);',
+            'spawnSync("sh", ["-c", "lsof -nP"]);',
+            'childProcess.spawn("/bin/bash", ["-lc", "pgrep -f server"]);',
+            'Bun.spawn({ cmd: ["env", "LC_ALL=C", "zsh", "-c", "ps -ax"] });',
         ]) {
             expect({ source, rules: rules(source) }).toEqual({ source, rules: ["no-process-tool-spawn"] });
         }
@@ -270,6 +275,8 @@ describe("no-process-tool-spawn", () => {
         expect(rules('program.command("ps").description("list running artifacts");')).toEqual([]);
         expect(rules('Bun.spawnSync(["env", "LC_ALL=C", "git", "status"]);')).toEqual([]);
         expect(rules('const docs = "/usr/share/man/man1/ps.1";')).toEqual([]);
+        expect(rules('Bun.spawn(["sh", "-c", "echo ps"]);')).toEqual([]);
+        expect(rules('spawnSync("sh", ["ps", "-c", "echo ok"]);')).toEqual([]);
     });
 
     test("the process layer and the benchmarks may spawn them, and a suppression names the reason", () => {

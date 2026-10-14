@@ -1,6 +1,15 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { userInfo } from "node:os";
-import { getListeningPorts, isLikelyDevProcess, STATE_PRIORITY, summarizeCommand } from "../lib/scanner";
+import * as os from "@genesiscz/utils/process/os";
+import * as ps from "@genesiscz/utils/process/ps";
+import {
+    getAllProcesses,
+    getListeningPorts,
+    getPortDetails,
+    isLikelyDevProcess,
+    STATE_PRIORITY,
+    summarizeCommand,
+} from "../lib/scanner";
 import type { PortProcess } from "../lib/types";
 
 /** The rows `lsof -nP -iTCP -sTCP:LISTEN` prints, one per pid, as the live listing is compared against. */
@@ -54,6 +63,38 @@ function parseLsofOutput(output: string, ownPid = process.pid): PortProcess[] {
 
     return Array.from(byPid.values());
 }
+
+describe("Windows port scan batching", () => {
+    it("queries CIM once per scan even with multiple sockets for each owner", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
+        const capture = spyOn(ps, "captureSync").mockImplementation((command) => ({
+            status: 0,
+            stderr: "",
+            stdout:
+                command === "powershell"
+                    ? '[{"ProcessId":42420,"ParentProcessId":4,"Name":"node.exe","CommandLine":"node.exe server.js","WorkingSetSize":10485760},{"ProcessId":42421,"ParentProcessId":4,"Name":"bun.exe","CommandLine":"bun.exe app.ts","WorkingSetSize":20971520}]'
+                    : command === "netstat"
+                      ? "TCP 0.0.0.0:3000 0.0.0.0:0 LISTENING 42420\nTCP [::]:3000 [::]:0 LISTENING 42420\nTCP 127.0.0.1:3000 127.0.0.1:50000 ESTABLISHED 42421\nTCP 0.0.0.0:4000 0.0.0.0:0 LISTENING 42421\n"
+                      : "",
+        }));
+        try {
+            for (const scan of [() => getPortDetails(3000), getListeningPorts, getAllProcesses]) {
+                capture.mockClear();
+                const rows = scan();
+                expect(rows.map((row) => row.pid)).toEqual([42420, 42421]);
+                expect(rows[0].command).toBe("node.exe server.js");
+                expect(rows[0].memory).toBe("10.0 MB");
+                expect(capture.mock.calls.filter(([command]) => command === "powershell")).toHaveLength(1);
+                expect(capture.mock.calls.filter(([command]) => command === "netstat")).toHaveLength(1);
+            }
+        } finally {
+            platform.mockRestore();
+            cwd.mockRestore();
+            capture.mockRestore();
+        }
+    });
+});
 
 describe("summarizeCommand", () => {
     it("prefers meaningful script fragments over the executable name", () => {

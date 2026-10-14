@@ -635,7 +635,21 @@ export function listProcessesWithUsage(
     options: Pick<ListProcessesOptions, "otherUsers" | "commands"> = {}
 ): ProcessWithUsage[] {
     const commands = options.commands !== false;
-    const fillFromPs = options.otherUsers === true && processPlatform() !== "linux" && processPlatform() !== "win32";
+
+    if (processPlatform() === "win32") {
+        return listCimProcesses().map((process) => ({
+            ...fromCim(process, commands),
+            usage: {
+                pid: process.pid,
+                rssBytes: process.rssBytes ?? 0,
+                cpuTimeMs: process.cpuTimeMs ?? 0,
+                threads: process.threads,
+                running: null,
+            },
+        }));
+    }
+
+    const fillFromPs = options.otherUsers === true && processPlatform() !== "linux";
     // The `ps` that fills other users' rows prints every command line anyway, so reading them from the kernel first
     // would read each one twice (about 10 ms of sysctls on 1,300 processes).
     const entries = listProcesses({ commands: commands && !fillFromPs });

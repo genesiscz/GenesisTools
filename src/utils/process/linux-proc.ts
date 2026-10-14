@@ -90,9 +90,9 @@ export function parseProcRssBytes(status: string): number | null {
     return match ? Number(match[1]) * 1024 : null;
 }
 
-/** The real uid from `Uid:\t<real>\t<effective>\t…` of a `/proc/<pid>/status` body. */
+/** The effective uid from `Uid:\t<real>\t<effective>\t…` of a `/proc/<pid>/status` body. */
 export function parseProcUid(status: string): number | null {
-    const match = status.match(/^Uid:\s+(\d+)/m);
+    const match = status.match(/^Uid:\s+\d+\s+(\d+)/m);
     return match ? Number(match[1]) : null;
 }
 
@@ -326,6 +326,27 @@ export function parseProcNetTcp(body: string): ProcTcpRow[] {
     return rows;
 }
 
+/** A complete protocol snapshot; a missing IPv6 table is normal when IPv6 is disabled. */
+export function scanProcNet(protocol: "tcp" | "udp", root = PROC_ROOT): ProcTcpRow[] | null {
+    const ipv4 = readText(join(root, "net", protocol));
+
+    if (ipv4 === null) {
+        return null;
+    }
+
+    let ipv6 = "";
+
+    try {
+        ipv6 = readFileSync(join(root, "net", `${protocol}6`), "utf8");
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            return null;
+        }
+    }
+
+    return [...parseProcNetTcp(ipv4), ...parseProcNetTcp(ipv6)];
+}
+
 /** Both TCP tables. */
 export function readProcTcp(root = PROC_ROOT): ProcTcpRow[] {
     return [
@@ -397,9 +418,9 @@ export function readProcCwd(pid: number, root = PROC_ROOT): string | null {
     return readLink(join(root, String(pid), "cwd"));
 }
 
-/** Socket inode to owning pid, from each readable process's `fd` links (`socket:[<inode>]`). */
-export function socketInodeOwners(root = PROC_ROOT, pids = listProcPids(root)): Map<number, number> {
-    const owners = new Map<number, number>();
+/** Socket inode to all owning pids, from each readable process's `fd` links (`socket:[<inode>]`). */
+export function socketInodeOwners(root = PROC_ROOT, pids = listProcPids(root)): Map<number, Set<number>> {
+    const owners = new Map<number, Set<number>>();
 
     for (const pid of pids) {
         let fds: string[];
@@ -413,8 +434,11 @@ export function socketInodeOwners(root = PROC_ROOT, pids = listProcPids(root)): 
         for (const fd of fds) {
             const match = readLink(join(root, String(pid), "fd", fd))?.match(/^socket:\[(\d+)\]$/);
 
-            if (match && !owners.has(Number(match[1]))) {
-                owners.set(Number(match[1]), pid);
+            if (match) {
+                const inode = Number(match[1]);
+                const pids = owners.get(inode) ?? new Set<number>();
+                pids.add(pid);
+                owners.set(inode, pids);
             }
         }
     }

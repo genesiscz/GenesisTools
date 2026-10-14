@@ -255,7 +255,10 @@ const COMMAND_STRING_CALLEES = new Set(["exec", "execSync", "$"]);
 const PROCESS_TOOL_CALL_MATCHER = {
     rule: {
         any: [
-            { kind: "call_expression", has: { field: "arguments", regex: "[\"'`](?:ps|lsof|pgrep)[\"'`\\s]" } },
+            {
+                kind: "call_expression",
+                has: { field: "arguments", regex: "[\"'`]\\s*(?:(?:/usr)?/s?bin/)?(?:ps|lsof|pgrep)[\"'`\\s]" },
+            },
             { kind: "string", regex: "^[\"'](?:/usr)?/s?bin/(?:ps|lsof|pgrep)[\"']$" },
         ],
     },
@@ -267,6 +270,25 @@ function unquote(node: SgNode): string {
 
 function isToolString(node: SgNode | null | undefined): boolean {
     return node?.kind() === "string" && PROCESS_TOOLS.has(unquote(node));
+}
+
+/** An explicit shell `-c` invocation whose command starts with a process tool. */
+function shellRunsProcessTool(program: string, args: SgNode[]): boolean {
+    if (!/^(?:.*\/)?(?:sh|bash|zsh|dash|ksh)$/.test(program)) {
+        return false;
+    }
+
+    for (let index = 0; index + 1 < args.length; index++) {
+        const flag = args[index];
+        const command = args[index + 1];
+
+        if (flag.kind() === "string" && /^-[a-z]*c[a-z]*$/.test(unquote(flag)) && command.kind() === "string") {
+            const executable = unquote(command).trim().split(/\s+/)[0].split("/").pop() ?? "";
+            return PROCESS_TOOLS.has(executable);
+        }
+    }
+
+    return false;
 }
 
 /** An argv array that runs a process tool: `["ps", …]`, or behind `env`: `["env", "LC_ALL=C", "ps", …]`. */
@@ -283,7 +305,11 @@ function argvRunsProcessTool(array: SgNode, viaEnv = false): boolean {
         index++;
     }
 
-    return isToolString(items[index]);
+    const program = items[index];
+    return (
+        isToolString(program) ||
+        (program?.kind() === "string" && shellRunsProcessTool(unquote(program), items.slice(index + 1)))
+    );
 }
 
 function spawnsProcessTool(node: SgNode): boolean {
@@ -339,7 +365,11 @@ function spawnsProcessTool(node: SgNode): boolean {
             continue;
         }
 
-        if (PROCESS_TOOLS.has(unquote(program)) || (unquote(program) === "env" && argvRunsProcessTool(argv, true))) {
+        if (
+            PROCESS_TOOLS.has(unquote(program)) ||
+            (unquote(program) === "env" && argvRunsProcessTool(argv, true)) ||
+            shellRunsProcessTool(unquote(program), argv.namedChildren())
+        ) {
             return true;
         }
     }

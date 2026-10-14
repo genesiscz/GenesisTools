@@ -2,7 +2,18 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as sockets from "@genesiscz/utils/process/sockets";
 import { listListeningPorts } from "./scanner";
+
+test("a failed socket scan is unavailable, not an empty successful listing", async () => {
+    const scan = spyOn(sockets, "scanSockets").mockReturnValue(null);
+    try {
+        expect(await listListeningPorts()).toMatchObject({ lsofAvailable: false, ports: [] });
+        expect(scan).toHaveBeenCalledTimes(1);
+    } finally {
+        scan.mockRestore();
+    }
+});
 
 describe.skipIf(process.platform !== "darwin")("listListeningPorts on a live listener", () => {
     test("lists our IPv4 and IPv6 sockets on one port with the command, argv and cwd of the process", async () => {

@@ -146,8 +146,8 @@ export function parseNetstatTcp(stdout: string): NetstatTcpRow[] {
             protocol: udp ? "UDP" : "TCP",
             localAddress: local.address,
             localPort: local.port,
-            remoteAddress: remote.address,
-            remotePort: remote.port,
+            remoteAddress: udp ? "" : remote.address,
+            remotePort: udp ? 0 : remote.port,
             state: udp ? "" : parts[3],
             pid,
         });
@@ -158,5 +158,11 @@ export function parseNetstatTcp(stdout: string): NetstatTcpRow[] {
 
 /** Every TCP and UDP socket with its owning pid, from one `netstat -ano`. */
 export function listNetstatTcp(): NetstatTcpRow[] {
-    return parseNetstatTcp(captureSync("netstat", ["-ano"], { timeoutMs: POWERSHELL_TIMEOUT_MS }).stdout);
+    return scanNetstatTcp() ?? [];
+}
+
+/** Null when the actual netstat scan failed or timed out, distinct from an empty successful scan. */
+export function scanNetstatTcp(): NetstatTcpRow[] | null {
+    const result = captureSync("netstat", ["-ano"], { timeoutMs: POWERSHELL_TIMEOUT_MS });
+    return result.status === 0 && !result.timedOut ? parseNetstatTcp(result.stdout) : null;
 }

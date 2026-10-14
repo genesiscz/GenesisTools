@@ -1,11 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
 import type { PsRow } from "@genesiscz/utils/process/ps";
+import * as sockets from "@genesiscz/utils/process/sockets";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { getDashboard, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
 import { type FleetOutcome, OUTSIDE_THE_FLEET, portMove, selectFleet, startFleet, stopFleet } from "./fleet";
-import { idleDecisions, stateKey } from "./idle";
+import { idleDecisions, readClientPorts, stateKey } from "./idle";
 import {
     type LaunchdJob,
     listServices,
@@ -17,6 +18,19 @@ import {
 } from "./inventory";
 import { stopService, verifiedServicePids } from "./lifecycle";
 import { sourceRoots, staleFiles } from "./stale";
+
+test("client activity uses one scan and preserves unknown instead of an idle empty set", () => {
+    const scan = spyOn(sockets, "scanSockets").mockReturnValue(null);
+    try {
+        expect(readClientPorts()).toBeNull();
+        expect(scan).toHaveBeenCalledTimes(1);
+        expect(scan).toHaveBeenLastCalledWith({ protocol: "TCP", state: "ESTABLISHED" });
+        scan.mockReturnValue([]);
+        expect(readClientPorts()).toEqual(new Set());
+    } finally {
+        scan.mockRestore();
+    }
+});
 
 const APP = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
 const REPO = "/Users/example/Projects/GenesisTools";

@@ -2,7 +2,7 @@ import { classifyPortBatch, enrichPortsMeta } from "@app/dev-dashboard/lib/ports
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcess } from "@genesiscz/utils/process/processes";
-import { canReadSockets, listListeningTcp } from "@genesiscz/utils/process/sockets";
+import { scanSockets } from "@genesiscz/utils/process/sockets";
 
 /**
  * Fast list: lsof + batch process meta (argv/cwd/start/title/visibility). No HTTP probe.
@@ -10,12 +10,13 @@ import { canReadSockets, listListeningTcp } from "@genesiscz/utils/process/socke
  */
 export async function listListeningPorts(): Promise<PortsResult> {
     try {
-        if (!canReadSockets()) {
+        const sockets = scanSockets({ protocol: "TCP", state: "LISTEN" });
+        if (sockets === null) {
             return { lsofAvailable: false, ports: [], scannedAt: Date.now() };
         }
         const seen = new Set<string>();
         const ports: PortInfo[] = [];
-        for (const socket of listListeningTcp()) {
+        for (const socket of sockets) {
             const proto = socket.family === "IPv6" ? "tcp6" : "tcp4";
             const key = `${socket.pid}:${socket.port}:${proto}`;
             if (seen.has(key)) {

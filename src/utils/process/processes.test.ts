@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import * as linux from "./linux-proc";
 import {
     listProcProcesses,
     parseNulList,
@@ -24,6 +25,7 @@ import {
     TCP_LISTEN,
     ttyName,
 } from "./linux-proc";
+import * as os from "./os";
 import { countOpenFiles, executableInode, listOpenFiles } from "./process-files";
 import {
     ancestry,
@@ -42,6 +44,7 @@ import {
     readProcessUsages,
     userName,
 } from "./processes";
+import * as ps from "./ps";
 import {
     canReadSockets,
     listEstablishedTcp,
@@ -49,6 +52,7 @@ import {
     listListeningTcp,
     listSockets,
     parseLsofSockets,
+    scanSockets,
 } from "./sockets";
 import { parseCimDate, parseCimProcessJson, parseNetstatTcp } from "./windows-cim";
 
@@ -117,6 +121,8 @@ describe("linux /proc parsers", () => {
 
     test("status uid and NUL lists", () => {
         expect(parseProcUid("Name:\tbash\nUid:\t1000\t1000\t1000\t1000\n")).toBe(1000);
+        expect(parseProcUid("Uid:\t1000\t2000\t3000\t4000\n")).toBe(2000);
+        expect(parseProcUid("Uid:\t1000\n")).toBeNull();
         expect(parseNulList("bun\0run\0x.ts\0")).toEqual(["bun", "run", "x.ts"]);
         expect(parseNulList("")).toEqual([]);
     });
@@ -136,6 +142,9 @@ describe("linux /proc parsers", () => {
             symlinkSync("/usr/bin/node", join(pid, "exe"));
             symlinkSync("socket:[777]", join(pid, "fd", "3"));
             symlinkSync("/dev/null", join(pid, "fd", "0"));
+            symlinkSync("socket:[777]", join(pid, "fd", "4"));
+            mkdirSync(join(root, "43", "fd"), { recursive: true });
+            symlinkSync("socket:[777]", join(root, "43", "fd", "3"));
         });
 
         test("reads a process, its environment, executable and socket inodes", () => {
@@ -157,8 +166,44 @@ describe("linux /proc parsers", () => {
             ]);
             expect(readProcEnviron(42, root)).toEqual(["HOME=/home/alice", "LANG=C"]);
             expect(readProcExe(42, root)).toBe("/usr/bin/node");
-            expect(socketInodeOwners(root)).toEqual(new Map([[777, 42]]));
+            expect(socketInodeOwners(root)).toEqual(new Map([[777, new Set([42, 43])]]));
             expect(readProcEnviron(43, root)).toBeNull();
+        });
+
+        test("every holder of a shared socket is emitted once", () => {
+            const owners = socketInodeOwners(root);
+            const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+            const ownerRead = spyOn(linux, "socketInodeOwners").mockReturnValue(owners);
+            const rows = spyOn(linux, "scanProcNet").mockReturnValue([
+                {
+                    inode: 777,
+                    localAddress: "127.0.0.1",
+                    localPort: 3000,
+                    remoteAddress: "0.0.0.0",
+                    remotePort: 0,
+                    state: TCP_LISTEN,
+                },
+            ]);
+            try {
+                expect(listListeningTcp().map((row) => [row.pid, row.port])).toEqual([
+                    [42, 3000],
+                    [43, 3000],
+                ]);
+                expect(listeningPidsOnPort(3000)).toEqual([42, 43]);
+            } finally {
+                platform.mockRestore();
+                ownerRead.mockRestore();
+                rows.mockRestore();
+            }
+        });
+
+        test("a failed proc read is unknown; absent IPv6 is allowed, unreadable IPv6 is not", () => {
+            expect(linux.scanProcNet("tcp", root)).toBeNull();
+            mkdirSync(join(root, "net"));
+            writeFileSync(join(root, "net", "tcp"), "header\n");
+            expect(linux.scanProcNet("tcp", root)).toEqual([]);
+            mkdirSync(join(root, "net", "tcp6"));
+            expect(linux.scanProcNet("tcp", root)).toBeNull();
         });
     });
 });
@@ -201,12 +246,72 @@ describe("windows CIM and netstat parsers", () => {
                 "  TCP    127.0.0.1:5000 127.0.0.1:62000 ESTABLISHED 4242\n" +
                 "  UDP    0.0.0.0:53     *:*                         2000\n"
         );
+        expect(rows[3]).toEqual({
+            protocol: "UDP",
+            localAddress: "0.0.0.0",
+            localPort: 53,
+            remoteAddress: "",
+            remotePort: 0,
+            state: "",
+            pid: 2000,
+        });
         expect(rows.map((r) => [r.protocol, r.localAddress, r.localPort, r.state, r.pid])).toEqual([
             ["TCP", "0.0.0.0", 135, "LISTENING", 1012],
             ["TCP", "::", 445, "LISTENING", 4],
             ["TCP", "127.0.0.1", 5000, "ESTABLISHED", 4242],
             ["UDP", "0.0.0.0", 53, "", 2000],
         ]);
+    });
+});
+
+describe("socket scan availability", () => {
+    test("Windows failures and timeouts stay unknown, while a successful empty scan is empty", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const capture = spyOn(ps, "captureSync");
+        try {
+            for (const result of [
+                { stdout: "", stderr: "failed", status: 1 },
+                { stdout: "", stderr: "", status: null, timedOut: true as const },
+            ]) {
+                capture.mockReturnValue(result);
+                expect(scanSockets()).toBeNull();
+            }
+            capture.mockReturnValue({ stdout: "", stderr: "", status: 0 });
+            expect(scanSockets()).toEqual([]);
+            expect(capture).toHaveBeenCalledTimes(3);
+        } finally {
+            platform.mockRestore();
+            capture.mockRestore();
+        }
+    });
+
+    test("a failed Linux table read stays unknown", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+        const read = spyOn(linux, "scanProcNet").mockReturnValue(null);
+        try {
+            expect(scanSockets({ protocol: "TCP" })).toBeNull();
+            expect(read).toHaveBeenCalledTimes(1);
+        } finally {
+            platform.mockRestore();
+            read.mockRestore();
+        }
+    });
+
+    test("lsof is bounded and distinguishes failure from no matches", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("other");
+        const capture = spyOn(ps, "captureSync");
+        try {
+            capture.mockReturnValue({ stdout: "", stderr: "", status: null, timedOut: true });
+            expect(scanSockets()).toBeNull();
+            expect(capture).toHaveBeenLastCalledWith("lsof", ["-nP", "-i"], { timeoutMs: 10_000 });
+            capture.mockReturnValue({ stdout: "", stderr: "permission denied", status: 1 });
+            expect(scanSockets()).toBeNull();
+            capture.mockReturnValue({ stdout: "", stderr: "", status: 1 });
+            expect(scanSockets()).toEqual([]);
+        } finally {
+            platform.mockRestore();
+            capture.mockRestore();
+        }
     });
 });
 

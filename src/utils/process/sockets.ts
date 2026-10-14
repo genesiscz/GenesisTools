@@ -4,12 +4,11 @@
  * Windows, one `lsof` where none of those works. macOS and Linux read only this user's processes, which is what a
  * non-root `lsof` reads as well.
  */
-import { existsSync } from "node:fs";
-import { listProcPids, readProcTcp, readProcUdp, socketInodeOwners, TCP_STATE_NAMES } from "./linux-proc";
+import { listProcPids, scanProcNet, socketInodeOwners, TCP_STATE_NAMES } from "./linux-proc";
 import { darwinKernel, processPlatform } from "./os";
 import { captureSync } from "./ps";
 import { listInetSockets } from "./socket-owner";
-import { listNetstatTcp } from "./windows-cim";
+import { scanNetstatTcp } from "./windows-cim";
 
 export interface SocketEntry {
     pid: number;
@@ -43,50 +42,58 @@ function lsofAddress(address: string): string {
     return address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 }
 
-function linuxSockets(): SocketEntry[] {
+function linuxSockets(protocol?: SocketQuery["protocol"]): SocketEntry[] | null {
+    const tcp = protocol === "UDP" ? [] : scanProcNet("tcp");
+    const udp = protocol === "TCP" ? [] : scanProcNet("udp");
+
+    if (tcp === null || udp === null) {
+        return null;
+    }
+
     const owners = socketInodeOwners(undefined, listProcPids());
     const rows = [
-        ...readProcTcp().map((row) => ({ row, protocol: "TCP" as const })),
-        ...readProcUdp().map((row) => ({ row, protocol: "UDP" as const })),
+        ...tcp.map((row) => ({ row, protocol: "TCP" as const })),
+        ...udp.map((row) => ({ row, protocol: "UDP" as const })),
     ];
 
     return rows.flatMap(({ row, protocol }) => {
-        const pid = owners.get(row.inode);
+        const pids = owners.get(row.inode);
 
-        if (pid === undefined) {
+        if (pids === undefined) {
             return [];
         }
 
         const connected = row.remotePort !== 0;
-        return [
-            {
-                pid,
-                protocol,
-                family: row.localAddress.includes(":") ? ("IPv6" as const) : ("IPv4" as const),
-                address: lsofAddress(row.localAddress),
-                port: row.localPort,
-                remoteAddress: connected ? lsofAddress(row.remoteAddress) : "",
-                remotePort: connected ? row.remotePort : 0,
-                state: protocol === "TCP" ? (TCP_STATE_NAMES[row.state] ?? "UNKNOWN") : null,
-            },
-        ];
-    });
-}
-
-function windowsSockets(): SocketEntry[] {
-    return listNetstatTcp().map((row) => {
-        const connected = row.remotePort !== 0;
-        return {
-            pid: row.pid,
-            protocol: row.protocol,
+        return [...pids].map((pid) => ({
+            pid,
+            protocol,
             family: row.localAddress.includes(":") ? ("IPv6" as const) : ("IPv4" as const),
             address: lsofAddress(row.localAddress),
             port: row.localPort,
             remoteAddress: connected ? lsofAddress(row.remoteAddress) : "",
             remotePort: connected ? row.remotePort : 0,
-            state: row.protocol === "TCP" ? (row.state === "LISTENING" ? "LISTEN" : row.state) : null,
-        };
+            state: protocol === "TCP" ? (TCP_STATE_NAMES[row.state] ?? "UNKNOWN") : null,
+        }));
     });
+}
+
+function windowsSockets(): SocketEntry[] | null {
+    const rows = scanNetstatTcp();
+    return rows === null
+        ? null
+        : rows.map((row) => {
+              const connected = row.remotePort !== 0;
+              return {
+                  pid: row.pid,
+                  protocol: row.protocol,
+                  family: row.localAddress.includes(":") ? ("IPv6" as const) : ("IPv4" as const),
+                  address: lsofAddress(row.localAddress),
+                  port: row.localPort,
+                  remoteAddress: connected ? lsofAddress(row.remoteAddress) : "",
+                  remotePort: connected ? row.remotePort : 0,
+                  state: row.protocol === "TCP" ? (row.state === "LISTENING" ? "LISTEN" : row.state) : null,
+              };
+          });
 }
 
 /** The socket rows of `lsof -nP -i` (header skipped): NODE is the protocol, NAME the ends, then `(STATE)` for TCP. */
@@ -124,10 +131,10 @@ export function parseLsofSockets(stdout: string): SocketEntry[] {
     return sockets;
 }
 
-function allSockets(): SocketEntry[] {
+function allSockets(query: SocketQuery): SocketEntry[] | null {
     switch (processPlatform()) {
         case "linux":
-            return linuxSockets();
+            return linuxSockets(query.protocol);
         case "win32":
             return windowsSockets();
         default:
@@ -137,7 +144,12 @@ function allSockets(): SocketEntry[] {
     const sockets = darwinKernel() ? listInetSockets() : null;
 
     if (sockets === null) {
-        return parseLsofSockets(captureSync("lsof", ["-nP", "-i"]).stdout);
+        const result = captureSync("lsof", ["-nP", "-i"], { timeoutMs: 10_000 });
+        // lsof exits 1 without output when no sockets match; an error has a diagnostic on stderr.
+        if (result.timedOut || result.stderr.trim() || (result.status !== 0 && result.status !== 1)) {
+            return null;
+        }
+        return parseLsofSockets(result.stdout);
     }
 
     return sockets.map((socket) => ({
@@ -154,14 +166,22 @@ function allSockets(): SocketEntry[] {
 
 /** Every socket matching the query, ascending by pid: `lsof -nP -i[TCP|UDP][:port] [-sTCP:<state>]`. */
 export function listSockets(query: SocketQuery = {}): SocketEntry[] {
-    return allSockets()
-        .filter(
-            (socket) =>
-                (query.port === undefined || socket.port === query.port || socket.remotePort === query.port) &&
-                (query.protocol === undefined || socket.protocol === query.protocol) &&
-                (query.state === undefined || socket.state === query.state)
-        )
-        .sort((a, b) => a.pid - b.pid);
+    return scanSockets(query) ?? [];
+}
+
+/** A single socket scan; null means it failed, so callers must not infer that nobody is connected. */
+export function scanSockets(query: SocketQuery = {}): SocketEntry[] | null {
+    const sockets = allSockets(query);
+    return sockets === null
+        ? null
+        : sockets
+              .filter(
+                  (socket) =>
+                      (query.port === undefined || socket.port === query.port || socket.remotePort === query.port) &&
+                      (query.protocol === undefined || socket.protocol === query.protocol) &&
+                      (query.state === undefined || socket.state === query.state)
+              )
+              .sort((a, b) => a.pid - b.pid);
 }
 
 /** Every listening TCP socket this user may read (`lsof -nP -iTCP -sTCP:LISTEN`). */
@@ -185,18 +205,7 @@ export function listeningPidsOnPort(port: number): number[] {
     ];
 }
 
-/**
- * True when the socket readers here can answer at all: libproc on macOS, `/proc/net/tcp` on Linux, `netstat` on
- * Windows. Where it is false a list comes from `lsof` and may be empty because `lsof` failed, so a caller that would
- * act on "nobody is connected" (stop an idle server) must treat the answer as unknown.
- */
+/** Whether an actual scan succeeds. Use scanSockets to consume availability and rows from the same read. */
 export function canReadSockets(): boolean {
-    switch (processPlatform()) {
-        case "linux":
-            return existsSync("/proc/net/tcp");
-        case "win32":
-            return true;
-        default:
-            return darwinKernel();
-    }
+    return scanSockets() !== null;
 }

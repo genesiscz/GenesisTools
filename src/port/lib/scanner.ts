@@ -4,13 +4,7 @@ import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/asy
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { listOpenFiles } from "@genesiscz/utils/process/process-files";
-import {
-    listProcessesWithUsage,
-    type ProcessWithUsage,
-    readProcess,
-    readProcessUsages,
-    userName,
-} from "@genesiscz/utils/process/processes";
+import { listProcessesWithUsage, type ProcessWithUsage, userName } from "@genesiscz/utils/process/processes";
 import { batchCwd, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
 import { listSockets, type SocketEntry } from "@genesiscz/utils/process/sockets";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -342,19 +336,13 @@ function extractPort(name: string): number | null {
     return Number.parseInt(match[1], 10);
 }
 
-function enrichPortProcesses(processes: PortProcess[]): PortSnapshot[] {
+function enrichPortProcesses(processes: PortProcess[], table: Map<number, ProcessWithUsage>): PortSnapshot[] {
     if (processes.length === 0) {
         return [];
     }
 
     const pids = [...new Set(processes.map((processInfo) => processInfo.pid))];
-    const usages = readProcessUsages(pids);
-    const psMap = new Map(
-        pids.flatMap((pid) => {
-            const entry = readProcess(pid);
-            return entry ? [[pid, processRow({ ...entry, usage: usages.get(pid) ?? null })] as const] : [];
-        })
-    );
+    const psMap = new Map([...table].map(([pid, entry]) => [pid, processRow(entry)]));
     const cwdMap = batchCwd(pids);
 
     return processes
@@ -408,14 +396,17 @@ function processRow(entry: ProcessWithUsage): PsRow {
     };
 }
 
-function socketProcesses(sockets: SocketEntry[], ownPid: number): PortProcess[] {
+function socketProcesses(
+    sockets: SocketEntry[],
+    options: { ownPid: number; table: Map<number, ProcessWithUsage> }
+): PortProcess[] {
     const byPid = new Map<number, PortProcess>();
     const files = new Map<number, ReturnType<typeof listOpenFiles>>();
     for (const socket of sockets) {
-        if (socket.pid === ownPid) {
+        if (socket.pid === options.ownPid) {
             continue;
         }
-        const entry = readProcess(socket.pid);
+        const entry = options.table.get(socket.pid);
         const local = `${socket.address}:${socket.port}`;
         const remote = socket.remotePort ? `->${socket.remoteAddress}:${socket.remotePort}` : "";
         const name = local + remote + (socket.state ? ` (${socket.state})` : "");
@@ -447,28 +438,34 @@ function socketProcesses(sockets: SocketEntry[], ownPid: number): PortProcess[] 
 }
 
 export function getPortDetails(port: number): PortSnapshot[] {
-    return enrichPortProcesses(socketProcesses(listSockets({ port }), process.pid));
+    const table = new Map(listProcessesWithUsage().map((entry) => [entry.pid, entry]));
+    return enrichPortProcesses(socketProcesses(listSockets({ port }), { ownPid: process.pid, table }), table);
 }
 
 export function getListeningPorts(): PortSnapshot[] {
+    const table = new Map(listProcessesWithUsage().map((entry) => [entry.pid, entry]));
     const seen = new Set<number>();
-    const unique = socketProcesses(listSockets({ protocol: "TCP", state: "LISTEN" }), -1).filter((entry) => {
-        const port = extractPort(entry.name);
-        if (!port || seen.has(port)) {
-            return false;
+    const unique = socketProcesses(listSockets({ protocol: "TCP", state: "LISTEN" }), { ownPid: -1, table }).filter(
+        (entry) => {
+            const port = extractPort(entry.name);
+            if (!port || seen.has(port)) {
+                return false;
+            }
+            seen.add(port);
+            return true;
         }
-        seen.add(port);
-        return true;
-    });
-    return enrichPortProcesses(unique);
+    );
+    return enrichPortProcesses(unique, table);
 }
 
 function getListeningPortMap(): Map<number, number[]> {
     const values = new Map<number, number[]>();
 
-    for (const portInfo of getListeningPorts()) {
+    for (const portInfo of listSockets({ protocol: "TCP", state: "LISTEN" })) {
         const existing = values.get(portInfo.pid) ?? [];
-        existing.push(portInfo.port);
+        if (!existing.includes(portInfo.port)) {
+            existing.push(portInfo.port);
+        }
         values.set(portInfo.pid, existing);
     }
 
