@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { SecureRef } from "@genesiscz/utils/security";
+import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { LockTimeoutError } from "@genesiscz/utils/storage/file-lock";
 import { getActiveAuthEntry, readAuthFileAsync } from "./auth";
 import { writeGrokAuthEntry } from "./auth-write";
@@ -224,6 +225,53 @@ test("a signal deletes the materialised file, syncs the rotated token and re-rai
     // the vault would keep whatever the first pass wrote.
     expect(await grant.release()).toBe("missing");
     expect(writes).toHaveLength(2);
+});
+
+for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"] as const) {
+    test(`${signal} preserves a torn grant before deleting it and re-raises`, async () => {
+        const dir = mkdtempSync(join(tmpdir(), "grok-grant-torn-signal-"));
+        const writes: string[] = [];
+        const grant = await materialiseGrokGrant(
+            ACCOUNT,
+            deps(dir, (field) => writes.push(field))
+        );
+        const torn = '{"entry":{"refresh_token":"rotated-but-torn';
+        await Bun.write(grant.authPath, torn);
+
+        expect(await deliverSignal(signal)).toBe(2);
+        expect(existsSync(grant.authPath)).toBe(false);
+        const copies = readdirSync(dir).filter((name) => name.startsWith(`${basename(grant.authPath)}.corrupt-`));
+        expect(copies).toHaveLength(1);
+        expect(readFileSync(join(dir, copies[0]), "utf8")).toBe(torn);
+        expect(statSync(join(dir, copies[0])).mode & 0o777).toBe(0o600);
+        expect(writes).toEqual([]);
+        expect(await grant.release()).toBe("missing");
+    });
+}
+
+test("a failed signal-path archive keeps the original torn grant and still re-raises", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "grok-grant-archive-failure-"));
+    const writes: string[] = [];
+    const grant = await materialiseGrokGrant(
+        ACCOUNT,
+        deps(dir, (field) => writes.push(field))
+    );
+    const torn = '{"entry":{"refresh_token":"only-copy';
+    await Bun.write(grant.authPath, torn);
+    const archive = spyOn(atomicFile, "preserveUnreadableFile").mockImplementation(() => {
+        throw new Error("ENOSPC: cannot archive grant");
+    });
+
+    try {
+        expect(await deliverSignal("SIGTERM")).toBe(2);
+        expect(archive).toHaveBeenCalledTimes(1);
+        expect(readFileSync(grant.authPath, "utf8")).toBe(torn);
+        expect(writes).toEqual([]);
+        expect(await grant.release()).toBe("missing");
+        expect(readFileSync(grant.authPath, "utf8")).toBe(torn);
+    } finally {
+        archive.mockRestore();
+    }
 });
 
 /** `deps` whose config lock refuses while `refuse` is true, the way a contended lock does. */

@@ -694,6 +694,23 @@ func runDefaultBrowser(_ args: [String]) -> Never {
     }
 }
 
+/// Preserve the recovery record until its replacement is published, and let the caller refuse activation on failure.
+func recordPreviousBrowser(
+    at recorded: URL,
+    appPath: String,
+    preserveUnreadable: Bool,
+    publish: (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
+) throws {
+    let directory = recorded.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let data = try JSONSerialization.data(withJSONObject: ["appPath": appPath])
+    if preserveUnreadable {
+        let aside = directory.appendingPathComponent("previous.json.corrupt-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: recorded, to: aside)
+    }
+    try publish(data, recorded)
+}
+
 /// Records the browser that had http(s) (unless a router had it, then Brave), then asks macOS to
 /// hand both schemes to this bundle. macOS shows its own "change your default web browser?" prompt.
 private func setDefaultBrowser() -> Never {
@@ -709,14 +726,20 @@ private func setDefaultBrowser() -> Never {
     let currentBundle = current.flatMap { Bundle(url: $0)?.bundleIdentifier }
     let chosen = linkRouterBundleIDs.contains(currentBundle ?? "") ? workspace.urlForApplication(withBundleIdentifier: "com.brave.Browser") : current
 
-    if !keepRecorded, let chosen, let data = try? JSONSerialization.data(withJSONObject: ["appPath": chosen.path]) {
-        try? FileManager.default.createDirectory(at: configDirectory(), withIntermediateDirectories: true)
-        // A record that exists but does not read may still name the browser to restore: it moves aside, and if it
-        // cannot, it is not replaced.
-        let unreadable = recordedPath == nil && FileManager.default.fileExists(atPath: recorded.path)
-        let aside = configDirectory().appendingPathComponent("previous.json.corrupt-\(Int(Date().timeIntervalSince1970))")
-        if !unreadable || (try? FileManager.default.moveItem(at: recorded, to: aside)) != nil {
-            try? data.write(to: recorded, options: .atomic)
+    if !keepRecorded {
+        guard let chosen else {
+            FileHandle.standardError.write(Data("cannot record the previous browser: no browser found\n".utf8))
+            exit(1)
+        }
+        do {
+            try recordPreviousBrowser(
+                at: recorded,
+                appPath: chosen.path,
+                preserveUnreadable: recordedPath == nil && FileManager.default.fileExists(atPath: recorded.path)
+            )
+        } catch {
+            FileHandle.standardError.write(Data("cannot record the previous browser: \(error.localizedDescription)\n".utf8))
+            exit(1)
         }
     }
     let errors = setHandler(ours)

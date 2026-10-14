@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { fstatSync, mkdtempSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GATEWAY_HEADER } from "@app/mcp-manager/lib/auth/constants.ts";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { GrokProvider } from "./grok.ts";
 
 /** The two protected fields a test has to reach to drive a write without a TTY. */
@@ -85,6 +86,40 @@ describe("GrokProvider.syncServers", () => {
         // The servers themselves are still fully replaced by the sync.
         expect(written).toContain("rohlik");
         expect(written).not.toContain("stale");
+    });
+
+    test.each([true, false])("config credentials are private before publication, existing=%s", async (existing) => {
+        const dir = mkdtempSync(join(tmpdir(), "grok-mode-at-write-"));
+        const configPath = join(dir, "config.toml");
+
+        if (existing) {
+            await writeFile(configPath, '[mcp_servers.old]\ncommand = "old"\n', { mode: 0o644 });
+        }
+
+        const modes: number[] = [];
+        const write = atomicWriteIo.writeSync;
+        const probe = spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            modes.push(fstatSync(fd).mode & 0o777);
+            return write(fd, bytes, offset, length);
+        });
+
+        try {
+            await providerWritingTo(configPath).syncServers({
+                shop: {
+                    type: "http",
+                    url: "http://127.0.0.1:8318/mcp/shop",
+                    headers: { [GATEWAY_HEADER]: "fixture-token" },
+                    _meta: { enabled: { grok: true } },
+                },
+            });
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(modes.length).toBeGreaterThan(0);
+        expect(modes.every((mode) => mode === 0o600)).toBe(true);
+        expect((await stat(configPath)).mode & 0o777).toBe(0o600);
+        expect(await readFile(configPath, "utf8")).toContain("fixture-token");
     });
 
     test("writes the config 0600, because it now carries a gateway token", async () => {

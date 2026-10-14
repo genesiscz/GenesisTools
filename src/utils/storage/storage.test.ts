@@ -1,5 +1,6 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import {
     chmodSync,
     lstatSync,
@@ -16,7 +17,9 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { atomicWriteIo, readFileIfExistsSync, readJsonFileForUpdateSync } from "./atomic-file";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteIo, preserveUnreadableFile, readFileIfExistsSync, readJsonFileForUpdateSync } from "./atomic-file";
 import { genesisToolsDir, toolDataDir } from "./root";
 import { atomicWriteFileSync, Storage } from "./storage";
 
@@ -398,6 +401,65 @@ describe("a failed write never costs the user the stored file", () => {
         expect(readdirSync(dir).sort()).toEqual(["other-app.json", "other-app.json.bak"]);
     });
 
+    it("a failed second backup copy preserves both the current target and the previous backup", () => {
+        const target = join(dir, "rolling.json");
+        writeFileSync(target, USER_CONFIG, { mode: 0o600 });
+        atomicWriteFileSync(target, '{"v":2}', { backup: true });
+        const copy = fs.copyFileSync;
+        const spy = spyOn(fs, "copyFileSync").mockImplementation((from, to, flags) => {
+            if (String(to).includes(".bak")) {
+                writeFileSync(to, "partial backup");
+                throw enospc();
+            }
+
+            copy(from, to, flags);
+        });
+
+        try {
+            expect(() => atomicWriteFileSync(target, '{"v":3}', { backup: true })).toThrow(/ENOSPC/);
+            expect(spy).toHaveBeenCalledTimes(1);
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(readFileSync(target, "utf8")).toBe('{"v":2}');
+        expect(readFileSync(`${target}.bak`, "utf8")).toBe(USER_CONFIG);
+        expect(readdirSync(dir).sort()).toEqual(["rolling.json", "rolling.json.bak"]);
+    });
+
+    it("a failed second backup fsync preserves both copies, and a successful retry advances the backup", () => {
+        const target = join(dir, "rolling.json");
+        writeFileSync(target, USER_CONFIG, { mode: 0o600 });
+        atomicWriteFileSync(target, '{"v":2}', { backup: true });
+        const sync = atomicWriteIo.fsyncSync;
+        let calls = 0;
+        const spy = spyOn(atomicWriteIo, "fsyncSync").mockImplementation((fd) => {
+            if (++calls === 2) {
+                // The target temp file was synced first; fail while syncing the staged backup.
+                throw Object.assign(new Error("EIO: backup fsync failed"), { code: "EIO" });
+            }
+
+            sync(fd);
+        });
+
+        try {
+            expect(() => atomicWriteFileSync(target, '{"v":3}', { backup: true })).toThrow(/backup fsync failed/);
+            expect(calls).toBe(2);
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(readFileSync(target, "utf8")).toBe('{"v":2}');
+        expect(readFileSync(`${target}.bak`, "utf8")).toBe(USER_CONFIG);
+        expect(statSync(`${target}.bak`).mode & 0o777).toBe(0o600);
+        expect(readdirSync(dir).sort()).toEqual(["rolling.json", "rolling.json.bak"]);
+
+        atomicWriteFileSync(target, '{"v":3}', { backup: true });
+        expect(readFileSync(target, "utf8")).toBe('{"v":3}');
+        expect(readFileSync(`${target}.bak`, "utf8")).toBe('{"v":2}');
+        expect(statSync(`${target}.bak`).mode & 0o777).toBe(0o600);
+    });
+
     it("refuses to replace a file the user made read-only, as an in-place write did", () => {
         const target = join(dir, "pinned.json");
         writeFileSync(target, USER_CONFIG);
@@ -442,6 +504,58 @@ describe("a failed write never costs the user the stored file", () => {
         expect(readFileSync(read.preservedAt, "utf8")).toBe(truncated);
         expect(readFileSync(target, "utf8")).toBe(truncated);
         expect(read.preservedAt).toMatch(/state\.json\.corrupt-\d{8}-\d{6}-\d{3}$/);
+    });
+
+    it("preserves a malformed credential document without logging the parser's embedded contents", () => {
+        const target = join(dir, "credentials.json");
+        const access = "fixture-access-secret";
+        const refresh = "fixture-refresh-secret";
+        const malformed = `{"access_token":"${access}","refresh_token":"${refresh}", broken}`;
+        writeFileSync(target, malformed);
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+        try {
+            const result = readJsonFileForUpdateSync(target);
+            expect(result.state).toBe("corrupt");
+
+            if (result.state !== "corrupt") {
+                throw new Error("expected a corrupt document");
+            }
+
+            expect(result.error).toBeInstanceOf(SyntaxError);
+            expect(String(result.error)).toContain(access);
+            expect(readFileSync(result.preservedAt, "utf8")).toBe(malformed);
+            expect(warn).toHaveBeenCalledTimes(1);
+            const logged = SafeJSON.stringify(warn.mock.calls, { strict: true });
+            expect(logged).toContain(target);
+            expect(logged).toContain(result.preservedAt);
+            expect(logged).toContain("invalid JSON");
+            expect(logged).not.toContain(access);
+            expect(logged).not.toContain(refresh);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it.each([
+        "fixture-secret-in-reason",
+        Object.assign(new Error("fixture-secret-in-reason"), { name: "fixture-secret-in-reason" }),
+        { toString: () => "fixture-secret-in-reason" },
+    ])("does not log arbitrary preservation reasons", (reason) => {
+        const target = join(dir, "unreadable.json");
+        writeFileSync(target, "kept");
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+        try {
+            const aside = preserveUnreadableFile(target, reason);
+            expect(readFileSync(aside, "utf8")).toBe("kept");
+            expect(warn).toHaveBeenCalledTimes(1);
+            const logged = SafeJSON.stringify(warn.mock.calls, { strict: true });
+            expect(logged).toContain("invalid data");
+            expect(logged).not.toContain("fixture-secret-in-reason");
+        } finally {
+            warn.mockRestore();
+        }
     });
 
     // NEGATIVE CONTROL: a missing file and a valid file read normally, and nothing is copied.

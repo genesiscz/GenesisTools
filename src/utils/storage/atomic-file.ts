@@ -91,6 +91,27 @@ function cloneFileSync(from: string, to: string, exclusive: boolean): void {
     copyFileSync(from, to, constants.COPYFILE_FICLONE | (exclusive ? constants.COPYFILE_EXCL : 0));
 }
 
+/** A failed refresh of the rolling backup must leave its previous recovery copy intact. */
+function publishBackup(from: string, backupPath: string): void {
+    const tmp = `${backupPath}.${process.pid}.${Date.now()}.${tempCounter++}.tmp`;
+
+    try {
+        cloneFileSync(from, tmp, true);
+        const fd = openSync(tmp, "r+");
+
+        try {
+            atomicWriteIo.fsyncSync(fd);
+        } finally {
+            closeSync(fd);
+        }
+
+        renameSync(tmp, backupPath);
+    } catch (error) {
+        removeTempFile(tmp);
+        throw error;
+    }
+}
+
 /**
  * Write data to a file atomically: a temp file in the same directory, written in full and fsync'd, then
  * renamed over the target. A failure at any step (ENOSPC halfway through, EACCES, a crash) leaves the
@@ -150,7 +171,7 @@ export function atomicWriteFileSync(path: string, data: string | Uint8Array, opt
         }
 
         if (options?.backup && existsSync(filePath)) {
-            cloneFileSync(filePath, `${filePath}.bak`, false);
+            publishBackup(filePath, `${filePath}.bak`);
         }
     } catch (err) {
         removeTempFile(tmp);
@@ -178,8 +199,9 @@ export function preserveUnreadableFile(filePath: string, reason: unknown): strin
 
     const aside = `${filePath}.corrupt-${fileStamp()}`;
     cloneFileSync(filePath, aside, true);
-    const message = reason instanceof Error ? reason.message : String(reason);
-    logger.warn(`[storage] ${filePath} could not be used (${message}); kept a copy at ${aside} before replacing it`);
+    // Parser messages can contain the complete credential document. Never interpolate the reason itself.
+    const category = reason instanceof SyntaxError ? "invalid JSON" : "invalid data";
+    logger.warn(`[storage] ${filePath} could not be used (${category}); kept a copy at ${aside} before replacing it`);
     return aside;
 }
 

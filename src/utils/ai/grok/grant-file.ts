@@ -268,6 +268,17 @@ export async function materialiseGrokGrant(
 
         finished = true;
         const active = getActiveAuthEntry(readAuthFile(authPath));
+
+        try {
+            if (!active && existsSync(authPath)) {
+                preserveUnreadableFile(authPath, new Error("no active auth entry at signal cleanup"));
+            }
+        } catch (error) {
+            logger.error({ error, authPath, signal }, "grok: keeping unreadable grant after preservation failed");
+            reRaise();
+            return;
+        }
+
         removeAuthFileSync();
 
         // 🛑 A SHORT wait on the signal path, never the 60 s `release()` budget. Ctrl-C has to

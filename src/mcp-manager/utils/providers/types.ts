@@ -1,6 +1,4 @@
-import { chmod, stat } from "node:fs/promises";
 import type { EnabledMcpServers, HarnessSyncMap, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
-import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
@@ -143,38 +141,7 @@ export abstract class MCPProvider {
         await this.backupManager.createBackup(this.configPath, this.providerName);
         // Atomic: these are other apps' configs (~/.claude.json, Codex, Grok, Cursor, Gemini). A full disk or
         // a crash mid-write must leave the user's file as it was, never truncated.
-        atomicWriteFileSync(this.configPath, content);
-        await this.tightenConfigMode();
-    }
-
-    /**
-     * Every harness config written through this base class can now carry the gateway
-     * bearer token in `headers`, so a 0644 file hands it to every local process.
-     *
-     * stat-then-chmod, not `writeFile(..., { mode })`: mode applies only when the file
-     * is CREATED, and these files already exist at whatever the umask gave them. The
-     * same shape is already used by repairCacheMode in src/scripts/lib/registry.ts.
-     *
-     * A failure here is logged, never thrown: the config write itself succeeded, and
-     * turning a permissions warning into a failed sync would be worse than the leak.
-     */
-    private async tightenConfigMode(): Promise<void> {
-        try {
-            const info = await stat(this.configPath);
-
-            if ((info.mode & 0o077) !== 0) {
-                await chmod(this.configPath, 0o600);
-                logger.info(
-                    { path: this.configPath, provider: this.providerName },
-                    "tightened harness config permissions to 0600"
-                );
-            }
-        } catch (error) {
-            logger.warn(
-                { error, path: this.configPath, provider: this.providerName },
-                "could not tighten harness config permissions; it may be world-readable while holding a gateway token"
-            );
-        }
+        atomicWriteFileSync(this.configPath, content, { mode: 0o600 });
     }
 
     /**

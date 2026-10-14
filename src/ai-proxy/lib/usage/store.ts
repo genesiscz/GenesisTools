@@ -110,9 +110,16 @@ function writeJsonFile(path: string, value: unknown): void {
 }
 
 let dailyStoreCache: DailyUsageStore | null = null;
+let dailyStoreDirty = false;
+let dailyStoreTimer: ReturnType<typeof setTimeout> | undefined;
+let dailyStoreExitHookInstalled = false;
+const DAILY_STORE_WRITE_DELAY_MS = 250;
 
 /** Test hook: point the usage store at a temp dir and drop the in-memory stores. Pass null to restore. */
 export function setUsageStoreDirForTests(dir: string | null): void {
+    clearTimeout(dailyStoreTimer);
+    dailyStoreTimer = undefined;
+    dailyStoreDirty = false;
     usageDirOverride = dir;
     billingStoreCache = null;
     dailyStoreCache = null;
@@ -126,11 +133,35 @@ function getDailyStore(): DailyUsageStore {
     return dailyStoreCache;
 }
 
-/** Rewritten on every request, and launchd can stop the proxy at any moment: replaced whole or not at all. */
+/** Burst completions share a flush; the timer does not keep a short-lived caller alive. */
 function saveDailyStore(): void {
+    dailyStoreDirty = true;
+
+    if (!dailyStoreExitHookInstalled) {
+        process.on("exit", flushDailyStore);
+        dailyStoreExitHookInstalled = true;
+    }
+
+    if (!dailyStoreTimer) {
+        dailyStoreTimer = setTimeout(flushDailyStore, DAILY_STORE_WRITE_DELAY_MS);
+        dailyStoreTimer.unref();
+    }
+}
+
+/** Forced termination can lose the last interval, but atomic replacement never publishes a torn store. */
+function flushDailyStore(): void {
+    clearTimeout(dailyStoreTimer);
+    dailyStoreTimer = undefined;
+
+    if (!dailyStoreDirty) {
+        return;
+    }
+
     try {
         writeJsonFile(dailyPath(), dailyStoreCache);
+        dailyStoreDirty = false;
     } catch (err) {
+        // Keep it dirty: the next request or normal process exit retries the latest aggregate.
         logger.warn({ err }, "ai-proxy usage: failed to write daily store");
     }
 }
