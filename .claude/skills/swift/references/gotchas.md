@@ -290,3 +290,28 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   each entry is quadratic in path length and slower still on accented names (grapheme breaking). Compare
   `utf8.count`, cut at a `/` found in the UTF-8 view, and compute fixed lengths once (2026-10-14, git tree marks:
   117 → 31 ms per call).
+
+## Window moves, plants that pass, and tests that touch the system — 2026-10-14 22:41
+
+- **A programmatic `setFrame(_:display:)` posts no move notification inside the call.** A flag set around the call
+  (`placing = true; setFrame…; placing = false`) to tell your own moves from the user's drag guards nothing: the
+  `didMoveNotification` of your own move can come later, when the flag is already off. Remember the frame you placed
+  and treat a move as the user's only when the window is more than a point away from it (AppKit rounds the origin to
+  whole pixels, and a centred default can sit on a half point). The draggable posture message, ba3f99f4c.
+- **A plant that passes is a finding, not a formality.** Removing that flag broke no test, and the probe behind it
+  showed the flag never worked. When a planted regression passes, find out whether the test is weak or the code is
+  dead before you move on.
+- **A test that calls a helper directly cannot catch the removal of its call site.** `trustedJoints` was tested as a
+  static function, so deleting the one line in `process` that applies it passed every test (#514, afbf2ebd6). Test
+  through the path that runs it, or say in the review that the call site is covered by reading only.
+- **SwiftUI `onChange` can miss a change the body already saw.** A tab click changed the value and re-ran the body,
+  and no `onChange` followed, so the old tab's page stayed on screen (ca64b32e0). Let the body start the work for a
+  value that is neither current nor pending instead of driving it from `onChange` alone.
+- **Never start an executable a test just made and then rename or delete it.** macOS scans every new executable in
+  `syspolicyd` after it starts; a scan that finds the file gone crashed `syspolicyd` five times in ten minutes, launchd
+  stopped restarting it, a permission check never answered, and the WindowServer watchdog froze the Mac (2026-10-14
+  20:06). Build a test program once and keep it (`src/utils/test/persistent-fixture.ts`), and check that `syspolicyd`
+  keeps its pid (`pgrep -x syspolicyd`) across the first run of such a test.
+- **`UserDefaults(suiteName:)` in a test writes a real plist** in `~/Library/Preferences`. `removePersistentDomain`
+  empties it but leaves a 42-byte file. Give test suites one prefix (`genesiskit-tests-…`) and remove them in a
+  teardown block (9a11d77bd).
