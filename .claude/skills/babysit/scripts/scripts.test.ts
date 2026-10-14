@@ -6,6 +6,7 @@ import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
+import { conflictedFiles, higherVersionSide, prepGit, resolveVersionConflicts } from "./versions";
 import { pump } from "./watch-workers";
 
 const entry: RunEntry = {
@@ -253,4 +254,57 @@ test("babysit control scripts use checkout-local executors", () => {
     expect(watch).not.toContain('["tools"');
     expect(watch).toContain("toolsEntrypoint()");
     expect(toolsEntrypoint()).toBe(join(import.meta.dir, "../../../../tools"));
+});
+
+describe("merge-prep version conflicts", () => {
+    const manifest = (version: string) => `{\n    "name": "genesis-tools",\n    "version": "${version}"\n}\n`;
+
+    test("the higher version wins on either side, numerically", () => {
+        expect(higherVersionSide(manifest("1.0.96"), manifest("1.0.82"))).toBe("--ours");
+        expect(higherVersionSide(manifest("1.0.82"), manifest("1.0.96"))).toBe("--theirs");
+        expect(higherVersionSide(manifest("1.0.100"), manifest("1.0.99"))).toBe("--ours");
+    });
+
+    test("a version-only conflict resolves to the higher version; a code conflict is left alone", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-versions-"));
+        const git = prepGit(dir);
+        const file = "plugins/genesis-tools/.claude-plugin/plugin.json";
+        const write = (path: string, text: string) => {
+            fs.mkdirSync(join(dir, path, ".."), { recursive: true });
+            fs.writeFileSync(join(dir, path), text);
+        };
+        const commit = (message: string) => {
+            git(["add", "-A"]);
+            git(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", message]);
+        };
+
+        git(["init", "-q", "-b", "main"]);
+        write(file, manifest("1.0.80"));
+        write("src/a.ts", "export const a = 1;\n");
+        commit("base");
+        git(["checkout", "-qb", "child"]);
+        write(file, manifest("1.0.81"));
+        commit("child bump");
+        git(["checkout", "-q", "main"]);
+        write(file, manifest("1.0.96"));
+        commit("main bump");
+
+        expect(git(["cherry-pick", "child"]).code).not.toBe(0);
+        expect(resolveVersionConflicts(git, conflictedFiles(git))).toBe(true);
+        expect(fs.readFileSync(join(dir, file), "utf8")).toContain('"1.0.96"');
+        git(["cherry-pick", "--skip"]);
+
+        git(["checkout", "-qb", "code", "child"]);
+        write("src/a.ts", "export const a = 2;\n");
+        commit("code change");
+        git(["checkout", "-q", "main"]);
+        write("src/a.ts", "export const a = 3;\n");
+        commit("main code change");
+
+        expect(git(["cherry-pick", "code"]).code).not.toBe(0);
+        const conflicted = conflictedFiles(git);
+        expect(conflicted).toContain("src/a.ts");
+        expect(resolveVersionConflicts(git, conflicted)).toBe(false);
+        expect(fs.readFileSync(join(dir, "src/a.ts"), "utf8")).toContain("<<<<<<<");
+    });
 });

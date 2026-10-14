@@ -32,9 +32,12 @@ the main checkout's `node_modules/.bin/biome` on the worktree files, authorize t
 `git -c core.hooksPath=/dev/null commit`, and push with `integrate.ts … --no-push-hooks` (the gates already ran the
 hook's probe, typecheck and repo rules). Swift checks wait: record them as NOT RUN and run them when it recovers.
 
-Then in the main checkout (unified branch): `git cherry-pick <worker sha> <correction sha>`, exact paths only if a
-conflict needs hand-editing. A version-only conflict in `.claude-plugin/marketplace.json` or
-`plugins/genesis-tools/.claude-plugin/plugin.json` keeps the higher version.
+Then in the main checkout (unified branch):
+`bun .claude/skills/babysit/scripts/pick-unified.ts --branch <unified> <worker sha> <correction sha>`. It skips a
+commit already there, resolves a version-only conflict in `.claude-plugin/marketplace.json` or
+`plugins/genesis-tools/.claude-plugin/plugin.json` to the higher version, and aborts and lists any other conflict.
+Give the listed ones to a free worker in a scratch worktree detached at the unified head (resolve keeping both sides,
+`cherry-pick -x` each), check its tests and Biome, then fast-forward unified to it if unified has not moved.
 
 ## Unified mode
 
