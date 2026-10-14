@@ -53,7 +53,9 @@ const text = readFileSync(join(import.meta.dir, "../references/brief-self-fetch.
     .replaceAll("{{ROUND}}", String(round))
     .replaceAll("{{PR}}", pr)
     .replaceAll("{{REPO}}", run.repo)
-    .replaceAll("{{CWD}}", worktreeFor(run, pr))
+    // --wt for a worktree not named after its PR (2026-10-14: #517 lived in bs-hooks, the brief said bs-517, and
+    // the worker rightly stopped to ask).
+    .replaceAll("{{CWD}}", flag("--wt") ?? worktreeFor(run, pr))
     .replaceAll("{{BRANCH}}", meta.headRefName)
     .replaceAll("{{BASE}}", meta.baseRefName)
     .replaceAll("{{TITLE}}", meta.title)
