@@ -133,15 +133,23 @@ or `· skip: <reason>`. A tab is typed into only when all of these hold:
   When it runs a different agent (cmux's own restore can pick a stale session), the skip line
   names the recorded session.
 - It is not the tab running the restore.
-- For an agent: a concrete session id is resolved, and the evidence is the surface journal or
-  the tab title (see below). A weaker match is printed with its command, never typed.
+- For an agent: a concrete session id is resolved, and the evidence is the surface journal, the
+  session id the typed command names, or the tab title (see below). A weaker match, or a path
+  that recorded no evidence at all, is printed with its command and never typed.
+- cmux could read the tab's screen. An unreadable screen proves nothing about the prompt, so the
+  tab is skipped with that reason.
+- The last line is a shell prompt the restore knows: `➜ dir git:(branch)`, `[user@host dir]$`,
+  `user@host:dir$`, macOS's `user@host dir %`, or a bare `name%`, `$`, `❯`. Only the last line
+  counts: after a relaunch cmux repaints the old scrollback (Claude Code's banner included) above
+  the new prompt. A bare glyph counts only while no agent UI is on screen, because Claude Code's
+  input box draws `❯` too. Any other last line is skipped and quoted in the plan.
 
 Two preparations run before the command is typed. The plan prints each as `first: …`:
 
-- **Text at the prompt** (`first: clears the prompt line …`): `tools cmux` sends Ctrl-E and
-  Ctrl-U to that tab (`cmux send-key --surface <UUID>`), then waits for an empty prompt. If the
-  prompt is still not empty, nothing is typed. zsh keeps the cleared text: Ctrl-Y brings it
-  back.
+- **Text at the prompt** (`first: clears the prompt line …`): only when the last line is a known
+  prompt with text after it. `tools cmux` sends Ctrl-E and Ctrl-U to that tab
+  (`cmux send-key --surface <UUID>`), then waits for an empty prompt. If the prompt is still not
+  empty, nothing is typed. zsh keeps the cleared text: Ctrl-Y brings it back.
 - **A stale grok at its trust prompt** (`first: quits grok …`): cmux's relaunch restore can
   start an old grok session in the tab. While it still asks "Do you trust the contents of this
   directory?" it has opened nothing, so the restore reads the screen again, answers `n`, waits
@@ -149,7 +157,8 @@ Two preparations run before the command is typed. The plan prints each as `first
   touched.
 
 Both use the tab's UUID and run in the background: your focused workspace and tab do not
-change.
+change. The in-place restore never focuses a tab, not even one cmux cannot read yet; only the
+new-workspace restore (without `--in-place`) may raise one.
 
 After a resume runs (`--enter`), the restore writes that tab's record to the surface journal,
 so the next relaunch finds it even if the agent's own hook did not run. A command that is only
@@ -169,10 +178,18 @@ Claude through any alias, function or wrapper (`cr work`, `ffff`, a shell functi
    window UUIDs that `cmux identify` reports at that moment, so a tab you moved to another
    workspace is recorded where it is now, not where the agent started. The newest record for the
    tab's UUID wins, with these rules for the tab's last shell command:
+   - A worker started inside the tab (a babysit `grok -p`, a Codex app-server) inherits the
+     tab and can write the newest line, so the journal keeps the newest session of **each
+     agent** per tab. A launcher that names its agent (`grok`, `codex`, `tools codex run`,
+     `cr`) takes that agent's session; any other command (an alias such as `ffff`) takes the
+     session the command started first, because workers start later, from inside it.
    - The journal saw the session **after** that command started: the session was the tab's
      last occupant, so it is resumed, whatever the command was. A launcher the code does not
      know becomes `tools claude start <account> -- --resume <id>` (account from the pin
      journal).
+   - A known launcher whose agent the journal saw only **before** the command started gets no
+     journal session: that session belongs to an earlier run in the tab. The drift says so, and
+     the tab title (rule 3) or the session id in the command decides.
    - The command started **after** the session's last record (you quit Claude and ran
      `ssh host`): the command was the last thing the tab did, so it is restored instead.
    - `cmux restore <agent> <id>`, which cmux types itself at a relaunch, does not count as
@@ -188,6 +205,15 @@ Claude through any alias, function or wrapper (`cr work`, `ffff`, a shell functi
 
 When the typed launcher is a known one, its flags are kept and only the session id is
 attached: `cr work --cross-messages` becomes `cr work --cross-messages -- --resume <uuid>`.
+The wrappers `tools codex run <account>` and `tools grok run <account>` are known launchers too:
+the id lands after `--` (`-- resume <id>` for Codex, `-- -r <id>` for Grok). A typed command
+that already names a session id keeps it when the journal has nothing newer.
+
+The account follows the session, not the tab: Claude, Codex and Grok keep a session in its
+account's home, so the account it was started with (the pin journal) replaces a different typed
+account, and the drift line names both. The typed account stays when the pin agrees or there is
+none. A `tools cmux agents new` tab resumes through `tools <agent> run <account>` for all three
+agents.
 Model flags (`-m`, `--model`, `--model=…`) are the exception: every restore drops them and the
 drift line says so. You can switch models inside a session (`/model`), so the model a tab was
 started with is not the model the session uses now; without the flag the agent picks its own. Any executable
@@ -231,13 +257,15 @@ still answers pings is the livelock signature.
 3. `SIGTERM` the app, escalating to `SIGKILL` only after a 5 s grace window;
 4. relaunch with a deliberately minimal environment, so agent markers like `CLAUDECODE`
    do not leak into every pane's login shell;
-5. wait for the app to reopen its own workspaces, then type each captured command into the
-   matching surface.
+5. wait for the app to reopen its own workspaces, then run the `--in-place` restore into the
+   reopened tabs.
 
-Replay is **title-checked per surface**: equal surface counts do not prove the panes still
-correspond, so a surface whose reopened title differs from the captured one is skipped and
-reported rather than typed into. Whatever a pane shows afterwards (an account gate, a resume
-dialog) is reported, never answered — `rescue` types commands, it does not answer prompts.
+The capture is prepared like any restore (title inference, one tab per session, no model
+pins), and the replay is the in-place plan above: each tab is paired by its surface UUID, which
+cmux keeps across the relaunch, and is typed into only when it is an idle shell with a known
+prompt and the session has recorded evidence. Unlike `restore-after-restart`, `rescue` presses
+Enter on shell commands too (an `ssh` logs back in), as it always did. Whatever a pane shows
+afterwards (an account gate, a resume dialog) is reported, never answered.
 
 ## `send-self`
 
