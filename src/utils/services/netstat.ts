@@ -12,7 +12,6 @@ export const NETSTAT_ARGS = ["-anv", "-p", "tcp"] as const;
 /** The columns after the state: `rxbytes txbytes rhiwat shiwat <name>:<pid> <5-hex state>`. The name may hold spaces. */
 const LISTEN_ROW = /^tcp\S*\s+\d+\s+\d+\s+\S+\s+\S+\s+LISTEN\s+\d+\s+\d+\s+\d+\s+\d+\s+.+:(\d+)\s+[0-9a-f]{5}\s/;
 const LISTEN_ADDRESS = /^tcp\S*\s+\d+\s+\d+\s+(\S+)\s/;
-const ESTABLISHED_ROW = /^tcp\S*\s+\d+\s+\d+\s+(\S+)\s+\S+\s+ESTABLISHED\s/;
 
 /** macOS writes `127.0.0.1.4242`, `*.4242` and `::1.4242`: the port follows the last dot. */
 function portOf(address: string): number {
@@ -37,22 +36,6 @@ export function parseNetstatListeners(stdout: string): Map<number, number[]> {
 
         if (Number.isInteger(pid) && pid > 0 && Number.isInteger(port)) {
             ports.set(pid, [...new Set([...(ports.get(pid) ?? []), port])]);
-        }
-    }
-
-    return ports;
-}
-
-/** The local port of every established connection, both ends of a loopback pair included. */
-export function parseNetstatClientPorts(stdout: string): Set<number> {
-    const ports = new Set<number>();
-
-    for (const line of stdout.split("\n")) {
-        const address = ESTABLISHED_ROW.exec(line)?.[1];
-        const port = address === undefined ? Number.NaN : portOf(address);
-
-        if (Number.isInteger(port)) {
-            ports.add(port);
         }
     }
 

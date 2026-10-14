@@ -112,55 +112,6 @@ export interface ProcessEntry {
     command: string;
 }
 
-/** Parse `ps -axo pid=,ppid=,command=` output (darwin and linux procps agree on this shape). */
-export function parsePsProcesses(stdout: string): ProcessEntry[] {
-    const entries: ProcessEntry[] = [];
-    for (const line of stdout.split("\n")) {
-        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
-        if (m) {
-            entries.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] });
-        }
-    }
-
-    return entries;
-}
-
-interface CimProcess {
-    ProcessId?: number;
-    ParentProcessId?: number;
-    CommandLine?: string | null;
-    Name?: string;
-}
-
-/** Parse the ConvertTo-Json output of Get-CimInstance Win32_Process (object OR array). */
-export function parseCimProcesses(stdout: string): ProcessEntry[] {
-    let parsed: unknown;
-    try {
-        parsed = SafeJSON.parse(stdout, { strict: true });
-    } catch (err) {
-        log.debug({ err }, "CIM JSON parse failed");
-
-        return [];
-    }
-
-    const list = Array.isArray(parsed) ? parsed : [parsed];
-    const entries: ProcessEntry[] = [];
-    for (const raw of list) {
-        const p = raw as CimProcess;
-        if (typeof p?.ProcessId !== "number") {
-            continue;
-        }
-
-        entries.push({
-            pid: p.ProcessId,
-            ppid: typeof p.ParentProcessId === "number" ? p.ParentProcessId : null,
-            command: p.CommandLine ?? p.Name ?? "",
-        });
-    }
-
-    return entries;
-}
-
 /** Every process with its full command line and parent pid. ONE exec call on every platform. */
 export function listProcesses(exec: ExecFn = defaultExec, platform: Platform = currentPlatform()): ProcessEntry[] {
     return processReaderFor(exec, platform).processes();
@@ -309,66 +260,6 @@ export interface ProcessSample {
     elapsed: string;
     state: string;
     command: string;
-}
-
-/** Parse one `ps -p <pid> -o pcpu=,rss=,time=,etime=,stat=,command=` line. */
-export function parsePsSample(pid: number, line: string): ProcessSample | null {
-    const m = line.match(/^\s*([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/);
-    if (!m) {
-        return null;
-    }
-
-    return {
-        pid,
-        cpuPercent: Number(m[1]),
-        rssKb: Number(m[2]),
-        cpuTime: m[3],
-        elapsed: m[4],
-        state: m[5],
-        command: m[6],
-    };
-}
-
-interface CimSample {
-    WorkingSetSize?: number;
-    KernelModeTime?: number;
-    UserModeTime?: number;
-    CommandLine?: string | null;
-    Name?: string;
-    CreationDate?: string;
-}
-
-/** Parse the CIM JSON for one process into a sample (cpu time from 100ns kernel+user ticks). */
-export function parseCimSample(pid: number, stdout: string): ProcessSample | null {
-    let parsed: unknown;
-    try {
-        parsed = SafeJSON.parse(stdout, { strict: true });
-    } catch (err) {
-        log.debug({ err, pid, stdout: stdout.slice(0, 200) }, "CIM sample JSON parse failed");
-
-        return null;
-    }
-
-    const p = (Array.isArray(parsed) ? parsed[0] : parsed) as CimSample | undefined;
-    if (!p) {
-        return null;
-    }
-
-    const cpuSeconds = ((p.KernelModeTime ?? 0) + (p.UserModeTime ?? 0)) / 10_000_000;
-    const hh = Math.floor(cpuSeconds / 3600);
-    const mm = Math.floor((cpuSeconds % 3600) / 60);
-    const ss = (cpuSeconds % 60).toFixed(2).padStart(5, "0");
-    const cpuTime = hh > 0 ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
-
-    return {
-        pid,
-        cpuPercent: null,
-        rssKb: Math.round((p.WorkingSetSize ?? 0) / 1024),
-        cpuTime,
-        elapsed: "—",
-        state: "—",
-        command: p.CommandLine ?? p.Name ?? "",
-    };
 }
 
 export function sampleProcess(

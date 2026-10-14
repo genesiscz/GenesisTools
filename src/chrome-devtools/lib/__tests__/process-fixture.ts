@@ -1,15 +1,131 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type ExecFn,
     type Platform,
+    type ProcessEntry,
     type ProcessReader,
-    parseCimProcesses,
-    parseCimSample,
+    type ProcessSample,
     parseLsofListeners,
     parseNetstatListeners,
-    parsePsProcesses,
-    parsePsSample,
 } from "../platform";
-import { parseTasklistImages } from "../resolve-attach";
+
+/** Parse `ps -axo pid=,ppid=,command=` output (darwin and linux procps agree on this shape). */
+function parsePsProcesses(stdout: string): ProcessEntry[] {
+    const entries: ProcessEntry[] = [];
+    for (const line of stdout.split("\n")) {
+        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+        if (m) {
+            entries.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] });
+        }
+    }
+
+    return entries;
+}
+
+interface CimProcess {
+    ProcessId?: number;
+    ParentProcessId?: number;
+    CommandLine?: string | null;
+    Name?: string;
+}
+
+/** Parse the ConvertTo-Json output of Get-CimInstance Win32_Process (object OR array). */
+function parseCimProcesses(stdout: string): ProcessEntry[] {
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(stdout, { strict: true });
+    } catch {
+        return [];
+    }
+
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    const entries: ProcessEntry[] = [];
+    for (const raw of list) {
+        const p = raw as CimProcess;
+        if (typeof p?.ProcessId !== "number") {
+            continue;
+        }
+
+        entries.push({
+            pid: p.ProcessId,
+            ppid: typeof p.ParentProcessId === "number" ? p.ParentProcessId : null,
+            command: p.CommandLine ?? p.Name ?? "",
+        });
+    }
+
+    return entries;
+}
+
+/** Parse one `ps -p <pid> -o pcpu=,rss=,time=,etime=,stat=,command=` line. */
+function parsePsSample(pid: number, line: string): ProcessSample | null {
+    const m = line.match(/^\s*([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/);
+    if (!m) {
+        return null;
+    }
+
+    return {
+        pid,
+        cpuPercent: Number(m[1]),
+        rssKb: Number(m[2]),
+        cpuTime: m[3],
+        elapsed: m[4],
+        state: m[5],
+        command: m[6],
+    };
+}
+
+interface CimSample {
+    WorkingSetSize?: number;
+    KernelModeTime?: number;
+    UserModeTime?: number;
+    CommandLine?: string | null;
+    Name?: string;
+    CreationDate?: string;
+}
+
+/** Parse the CIM JSON for one process into a sample (cpu time from 100ns kernel+user ticks). */
+function parseCimSample(pid: number, stdout: string): ProcessSample | null {
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(stdout, { strict: true });
+    } catch {
+        return null;
+    }
+
+    const p = (Array.isArray(parsed) ? parsed[0] : parsed) as CimSample | undefined;
+    if (!p) {
+        return null;
+    }
+
+    const cpuSeconds = ((p.KernelModeTime ?? 0) + (p.UserModeTime ?? 0)) / 10_000_000;
+    const hh = Math.floor(cpuSeconds / 3600);
+    const mm = Math.floor((cpuSeconds % 3600) / 60);
+    const ss = (cpuSeconds % 60).toFixed(2).padStart(5, "0");
+    const cpuTime = hh > 0 ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
+
+    return {
+        pid,
+        cpuPercent: null,
+        rssKb: Math.round((p.WorkingSetSize ?? 0) / 1024),
+        cpuTime,
+        elapsed: "—",
+        state: "—",
+        command: p.CommandLine ?? p.Name ?? "",
+    };
+}
+
+/** Parse `tasklist /FO CSV /NH` image names. */
+function parseTasklistImages(stdout: string): Set<string> {
+    const names = new Set<string>();
+    for (const line of stdout.split("\n")) {
+        const m = line.match(/^"([^"]+)"/);
+        if (m) {
+            names.add(m[1].toLowerCase());
+        }
+    }
+
+    return names;
+}
 
 /** Adapt existing command fixtures to the injectable layer reader without starting real processes. */
 export function processFixture<T extends ExecFn>(exec: T): T {

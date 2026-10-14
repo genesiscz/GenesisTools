@@ -19,7 +19,7 @@ import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessSta
 
 const IS_WINDOWS = process.platform === "win32";
 
-const STATE_PRIORITY: Record<string, number> = {
+export const STATE_PRIORITY: Record<string, number> = {
     LISTEN: 1,
     ESTABLISHED: 2,
     CLOSE_WAIT: 3,
@@ -340,57 +340,6 @@ function extractPort(name: string): number | null {
     }
 
     return Number.parseInt(match[1], 10);
-}
-
-export function parseLsofOutput(output: string, ownPid = process.pid): PortProcess[] {
-    const lines = output.trim().split("\n");
-
-    if (lines.length <= 1) {
-        return [];
-    }
-
-    const byPid = new Map<number, PortProcess>();
-
-    for (let i = 1; i < lines.length; i += 1) {
-        const parts = lines[i].trim().split(/\s+/);
-
-        if (parts.length < 9) {
-            continue;
-        }
-
-        const pid = Number.parseInt(parts[1], 10);
-
-        if (Number.isNaN(pid) || pid === ownPid) {
-            continue;
-        }
-
-        const name = parts.slice(8).join(" ");
-        const stateMatch = name.match(/\((\w+)\)$/);
-        const state = stateMatch?.[1] ?? "UNKNOWN";
-        const entry: PortProcess = {
-            pid,
-            command: parts[0],
-            user: parts[2],
-            state,
-            name,
-            fd: parts[3],
-        };
-        const existing = byPid.get(pid);
-
-        if (!existing) {
-            byPid.set(pid, entry);
-            continue;
-        }
-
-        const currentPriority = STATE_PRIORITY[existing.state] ?? 99;
-        const newPriority = STATE_PRIORITY[entry.state] ?? 99;
-
-        if (newPriority < currentPriority) {
-            byPid.set(pid, entry);
-        }
-    }
-
-    return Array.from(byPid.values());
 }
 
 function enrichPortProcesses(processes: PortProcess[]): PortSnapshot[] {

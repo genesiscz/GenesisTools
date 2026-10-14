@@ -338,38 +338,6 @@ export async function runRefreshCycle(state: RefreshState): Promise<RefreshResul
     };
 }
 
-/** Parse the column output of a plain `lsof -p <pid>`. */
-export function parseOpenFiles(stdout: string): OpenFile[] {
-    const lines = stdout
-        .trim()
-        .split("\n")
-        .filter((line) => line !== "");
-
-    if (lines.length <= 1) {
-        return [];
-    }
-
-    const files: OpenFile[] = [];
-
-    for (const line of lines.slice(1)) {
-        const parts = line.trim().split(/\s+/);
-
-        if (parts.length < 9) {
-            continue;
-        }
-
-        files.push({ fd: parts[3], type: parts[4], name: parts.slice(8).join(" ") });
-    }
-
-    return files.sort((a, b) => {
-        if (a.type !== b.type) {
-            return a.type.localeCompare(b.type);
-        }
-
-        return a.name.localeCompare(b.name);
-    });
-}
-
 /**
  * The full open-file listing for one pid, for the `f` view. One child process.
  *

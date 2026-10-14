@@ -1,37 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { friendlyProcessName, killProcess, parseProcessRows, sortProcesses } from "./processes";
+import { friendlyProcessName, killProcess, sortProcesses } from "./processes";
 import type { ProcessInfo } from "./types";
-
-// Columns: pid rss(KB) etime %cpu comm
-const PS_OUT = `  4821 1887436    01:30:00 12.4 /Applications/Visual Studio Code.app/Contents/Frameworks/node
-  1390 1258291 1-00:00:00  4.1 /Applications/Visual Studio Code.app/Contents/MacOS/Code Helper
-  9920  901120       10:00 61.5 /Users/Martin/.bun/bin/bun
-   277  655360 20-00:00:00  2.0 /System/Library/.../WindowServer
-garbage line with too few
-  abc 1234       00:01:00  0.0 /usr/bin/notapid`;
-
-describe("parseProcessRows", () => {
-    const rows = parseProcessRows(PS_OUT);
-
-    test("parses pid/rssBytes/uptimeMs/cpuPct/name for valid rows", () => {
-        expect(rows).toEqual([
-            { pid: 4821, rssBytes: 1887436 * 1024, uptimeMs: 5_400_000, cpuPct: 12.4, name: "Visual Studio Code" },
-            { pid: 1390, rssBytes: 1258291 * 1024, uptimeMs: 86_400_000, cpuPct: 4.1, name: "Visual Studio Code" },
-            { pid: 9920, rssBytes: 901120 * 1024, uptimeMs: 600_000, cpuPct: 61.5, name: "bun" },
-            { pid: 277, rssBytes: 655360 * 1024, uptimeMs: 1_728_000_000, cpuPct: 2.0, name: "WindowServer" },
-        ]);
-    });
-
-    test("skips malformed lines (< 5 parts and NaN pid)", () => {
-        expect(rows.length).toBe(4);
-        expect(rows.some((r) => Number.isNaN(r.pid))).toBe(false);
-    });
-
-    test("cpuPct of an unparseable column becomes 0", () => {
-        const out = "100 2048    00:00:30 notacpu /usr/bin/foo";
-        expect(parseProcessRows(out)[0].cpuPct).toBe(0);
-    });
-});
 
 const LIST: ProcessInfo[] = [
     { pid: 30, name: "bun", rssBytes: 100, uptimeMs: 0, cpuPct: 0 },

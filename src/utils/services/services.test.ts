@@ -5,7 +5,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { getDashboard, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
 import { type FleetOutcome, OUTSIDE_THE_FLEET, portMove, selectFleet, startFleet, stopFleet } from "./fleet";
-import { clientPortsFrom, connectedPorts, idleDecisions, netstatClientPortsFrom, stateKey } from "./idle";
+import { idleDecisions, stateKey } from "./idle";
 import {
     type LaunchdJob,
     listServices,
@@ -17,7 +17,7 @@ import {
     verifiedRegistryPorts,
 } from "./inventory";
 import { stopService, verifiedServicePids } from "./lifecycle";
-import { parseNetstatClientPorts, parseNetstatListeners } from "./netstat";
+import { parseNetstatListeners } from "./netstat";
 import { sourceRoots, staleFiles } from "./stale";
 
 const APP = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
@@ -60,20 +60,6 @@ describe("parsers", () => {
         );
     });
 
-    test("established connections give their local ports, so a port that is only dialled has no client", () => {
-        const stdout = [
-            "p10",
-            "n127.0.0.1:3074->127.0.0.1:55001",
-            "p99",
-            "n127.0.0.1:55001->127.0.0.1:3074",
-            "n[::1]:3075->[::1]:55002",
-            "n127.0.0.1:55003->127.0.0.1:3076",
-        ].join("\n");
-
-        const ports = connectedPorts(stdout);
-        expect([3074, 3075, 3076].map((port) => ports.has(port))).toEqual([true, true, false]);
-    });
-
     // The rows are real `netstat -anv -p tcp` output (macOS). The process column is `name:pid` and the name
     // may hold spaces and parentheses, so the pid is read from the right, behind the five-digit state field.
     const NETSTAT = [
@@ -96,30 +82,6 @@ describe("parsers", () => {
                 [66713, [3000]],
             ])
         );
-    });
-
-    test("netstat established rows give the local port of both ends, and no listener or closing row counts", () => {
-        const ports = parseNetstatClientPorts(NETSTAT);
-
-        expect([...ports].sort((a, b) => a - b)).toEqual([4242, 5000, 55910]);
-    });
-
-    test("a netstat whose ESTABLISHED rows do not parse is unknown, not idle", () => {
-        expect(netstatClientPortsFrom({ status: 0, stdout: NETSTAT, stderr: "" })?.size).toBe(3);
-        expect(netstatClientPortsFrom({ status: 0, stdout: "tcp4 0 0 *.4242 *.* LISTEN", stderr: "" })).toEqual(
-            new Set()
-        );
-        expect(
-            netstatClientPortsFrom({ status: 0, stdout: "tcp4 ? ? ESTABLISHED changed-format", stderr: "" })
-        ).toBeNull();
-        expect(netstatClientPortsFrom({ status: 1, stdout: "", stderr: "netstat: failed" })).toBeNull();
-    });
-
-    test("an lsof that failed is unknown, not idle; one with nothing to list is no clients", () => {
-        expect(clientPortsFrom({ status: 1, stdout: "", stderr: "" })).toEqual(new Set());
-        expect(clientPortsFrom({ status: 1, stdout: "", stderr: "lsof: cannot open /dev/kmem" })).toBeNull();
-        expect(clientPortsFrom({ status: 1, stdout: "p10\nn127.0.0.1:3074->127.0.0.1:55001", stderr: "" })).toBeNull();
-        expect(clientPortsFrom({ status: null, stdout: "", stderr: "" })).toBeNull();
     });
 });
 

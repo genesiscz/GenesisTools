@@ -200,19 +200,6 @@ export function classifyProcessName(comm: string): BrowserId | null {
     return best?.id ?? null;
 }
 
-/** Parse `tasklist /FO CSV /NH` image names. Exported for tests. */
-export function parseTasklistImages(stdout: string): Set<string> {
-    const names = new Set<string>();
-    for (const line of stdout.split("\n")) {
-        const m = line.match(/^"([^"]+)"/);
-        if (m) {
-            names.add(m[1].toLowerCase());
-        }
-    }
-
-    return names;
-}
-
 export function listRunningBrowsers(exec: ExecFn = defaultExec, platform: Platform = currentPlatform()): BrowserId[] {
     const namesFor = (browser: BrowserKind) =>
         platform === "win32"

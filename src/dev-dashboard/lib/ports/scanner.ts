@@ -5,64 +5,6 @@ import { readProcess } from "@genesiscz/utils/process/processes";
 import { canReadSockets, listListeningTcp } from "@genesiscz/utils/process/sockets";
 
 /**
- * Parse `lsof -nP -iTCP -sTCP:LISTEN` output into PortInfo[]. PURE + the unit-tested boundary.
- *
- * lsof columns are whitespace-separated and POSITIONAL except COMMAND (which lsof truncates to ~9
- * chars and may itself contain no spaces). We parse from the RIGHT: the NAME column always ends with
- * "(LISTEN)" preceded by "<addr>:<port>", and the TYPE column is "IPv4"/"IPv6". COMMAND is field[0],
- * PID is field[1].
- */
-export function parseLsofListen(stdout: string): PortInfo[] {
-    const out: PortInfo[] = [];
-    const seen = new Set<string>();
-
-    for (const raw of stdout.split("\n")) {
-        const line = raw.trim();
-        if (!line || line.startsWith("COMMAND")) {
-            continue;
-        }
-
-        if (!line.includes("(LISTEN)")) {
-            continue;
-        }
-
-        const fields = line.split(/\s+/);
-        if (fields.length < 9) {
-            logger.debug({ line }, "lsof: skipping short row");
-            continue;
-        }
-
-        const command = fields[0];
-        const pid = Number.parseInt(fields[1], 10);
-        const typeField = fields.find((f) => f === "IPv4" || f === "IPv6");
-        const nameField = fields[fields.length - 2]; // "<addr>:<port>" (last is "(LISTEN)")
-
-        const colon = nameField.lastIndexOf(":");
-        if (colon < 0 || Number.isNaN(pid) || !typeField) {
-            logger.debug({ line }, "lsof: unparseable row");
-            continue;
-        }
-
-        const address = nameField.slice(0, colon);
-        const port = Number.parseInt(nameField.slice(colon + 1), 10);
-        if (Number.isNaN(port)) {
-            continue;
-        }
-
-        const proto: PortInfo["proto"] = typeField === "IPv6" ? "tcp6" : "tcp4";
-        const key = `${pid}:${port}:${proto}`;
-        if (seen.has(key)) {
-            continue;
-        }
-
-        seen.add(key);
-        out.push({ port, pid, command, address, proto });
-    }
-
-    return out.sort((a, b) => a.port - b.port || a.proto.localeCompare(b.proto));
-}
-
-/**
  * Fast list: lsof + batch process meta (argv/cwd/start/title/visibility). No HTTP probe.
  * Pair with `classifyListeningPorts` / SSE for progressive kind labels.
  */

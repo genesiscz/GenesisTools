@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parseEtime } from "@app/macos/lib/swap/scanner";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
@@ -46,13 +45,6 @@ export function cleanLaunchCommand(command: string): string {
         .replace(GROK_LOCAL_BIN_RE, "grok")
         .replace(/^\S*\/grok\b/, "grok")
         .trim();
-}
-
-/** `[[dd-]hh:]mm:ss` → seconds. Returns 0 for unparseable values. */
-export function etimeToSeconds(etime: string): number {
-    // parseEtime owns this format (same `ps -o etime=` output, same regex); it
-    // answers in milliseconds, and the tty scan compares ages in seconds.
-    return parseEtime(etime) / 1000;
 }
 
 interface TtyProcess {

@@ -17,7 +17,6 @@ import {
     listRunningBrowsers,
     ownerOfPort,
     parseRemoteDebuggingPort,
-    parseTasklistImages,
     planAttach,
     quitBrowser,
     readDevToolsActivePortEntries,
@@ -106,7 +105,6 @@ describe("listRunningBrowsers", () => {
         });
 
         expect(listRunningBrowsers(exec, "win32")).toEqual(["chrome", "edge"]);
-        expect(parseTasklistImages('"brave.exe","9"\n')).toEqual(new Set(["brave.exe"]));
     });
 });
 

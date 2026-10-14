@@ -66,18 +66,6 @@ export function ancestorPids(pid: number = process.pid, table?: Map<number, numb
     return seen;
 }
 
-export function parseParentTable(stdout: string): Map<number, number> {
-    const table = new Map<number, number>();
-    for (const line of stdout.split("\n")) {
-        const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-        if (match) {
-            table.set(Number(match[1]), Number(match[2]));
-        }
-    }
-
-    return table;
-}
-
 /**
  * The first on-screen window, front to back, whose owner is neither in `excludePids` (our own
  * process chain) nor a system owner. That is "the app the user is looking at" as seen from a

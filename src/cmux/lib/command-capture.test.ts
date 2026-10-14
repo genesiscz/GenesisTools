@@ -306,16 +306,6 @@ describe("agent launchers do not match a hyphenated neighbour", () => {
     });
 });
 
-describe("etimeToSeconds", () => {
-    test("parses mm:ss, hh:mm:ss and dd-hh:mm:ss", async () => {
-        const { etimeToSeconds } = await import("@app/cmux/lib/command-capture");
-        expect(etimeToSeconds("00:05")).toBe(5);
-        expect(etimeToSeconds("01:02:03")).toBe(3723);
-        expect(etimeToSeconds("2-01:00:00")).toBe(176400);
-        expect(etimeToSeconds("garbage")).toBe(0);
-    });
-});
-
 test("compound agent commands remain verbatim when a session is known", () => {
     for (const original of [
         "claude --model custom; printf done",

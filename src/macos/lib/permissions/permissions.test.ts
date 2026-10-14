@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     describeSource,
@@ -16,7 +16,7 @@ import {
 } from "./app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
 import {
-    genesisAppProcesses,
+    type AppProcess,
     groupOldBuilds,
     localNetworkAnswer,
     parseLocalNetworkRules,
@@ -529,15 +529,27 @@ describe("old builds still running", () => {
         `  505 Mon Oct 12 20:55:00 2026     ${launcher}-helper --hub`,
     ].join("\n");
 
-    it("lists the app's processes by their program argument, with what each runs", () => {
-        const processes = genesisAppProcesses(ps, launcher);
-        expect(processes.map((p) => [p.pid, p.command])).toEqual([
-            [101, "--link-relay"],
-            [202, "gt-claude --preload x.ts run work"],
-            [303, "(window)"],
-        ]);
-        expect(processes[0].started.getDate()).toBe(5);
-    });
+    const PS_LINE = /^\s*(\d+)\s+(\w{3} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/;
+
+    /** The GenesisTools processes in `ps -Ao pid=,lstart=,args=`, as the live listing yields them. */
+    function genesisAppProcesses(psStdout: string, launcherPath: string): AppProcess[] {
+        return psStdout.split("\n").flatMap((line): AppProcess[] => {
+            const match = PS_LINE.exec(line);
+
+            if (!match || (match[3] !== launcherPath && !match[3].startsWith(`${launcherPath} `))) {
+                return [];
+            }
+
+            const rest = match[3].slice(launcherPath.length).trim();
+            const [program, ...args] = rest.split(" ");
+            const command = !program
+                ? "(window)"
+                : program.startsWith("-")
+                  ? rest
+                  : [basename(program), ...args].join(" ");
+            return [{ pid: Number(match[1]), started: new Date(match[2]), command }];
+        });
+    }
 
     it("reads each process's mapped files from lsof", () => {
         const byPid = txtInodesByPid("p101\nfdtxt\ni11\ni99\np202\ni22\np303\n");

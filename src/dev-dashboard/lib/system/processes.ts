@@ -1,5 +1,4 @@
 import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
-import { parseEtime } from "@app/macos/lib/swap/scanner";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
@@ -19,46 +18,6 @@ export function friendlyProcessName(comm: string): string {
 
     const base = trimmed.split("/").pop();
     return base && base.length > 0 ? base : trimmed;
-}
-
-/** Parse `ps -axo pid=,rss=,etime=,%cpu=,comm=` into ProcessInfo[] (5-column, cpu added).
- * Kept separate from the swap scanner's 4-column `parsePsOutput` — adding the cpu
- * column there would shift the arity and break `tools macos swap`. */
-export function parseProcessRows(output: string): ProcessInfo[] {
-    const rows: ProcessInfo[] = [];
-
-    for (const raw of output.split("\n")) {
-        const line = raw.trim();
-
-        if (line === "") {
-            continue;
-        }
-
-        const parts = line.split(/\s+/);
-
-        if (parts.length < 5) {
-            continue;
-        }
-
-        const pid = Number.parseInt(parts[0], 10);
-        const rssKb = Number.parseInt(parts[1], 10);
-
-        if (Number.isNaN(pid) || Number.isNaN(rssKb)) {
-            continue;
-        }
-
-        const cpuPct = Number.parseFloat(parts[3]);
-
-        rows.push({
-            pid,
-            rssBytes: rssKb * 1024,
-            uptimeMs: parseEtime(parts[2]),
-            cpuPct: Number.isNaN(cpuPct) ? 0 : cpuPct,
-            name: friendlyProcessName(parts.slice(4).join(" ")),
-        });
-    }
-
-    return rows;
 }
 
 /** Pure: rss desc (ties → pid asc) or name asc (case-insensitive, ties → pid asc). */

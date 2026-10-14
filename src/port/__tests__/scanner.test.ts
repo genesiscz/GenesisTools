@@ -1,23 +1,59 @@
 import { describe, expect, it } from "bun:test";
 import { userInfo } from "node:os";
-import { getListeningPorts, isLikelyDevProcess, parseLsofOutput, summarizeCommand } from "../lib/scanner";
+import { getListeningPorts, isLikelyDevProcess, STATE_PRIORITY, summarizeCommand } from "../lib/scanner";
+import type { PortProcess } from "../lib/types";
 
-describe("parseLsofOutput", () => {
-    it("deduplicates by pid and keeps the highest-priority state", () => {
-        const output = [
-            "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME",
-            "node 123 alice 21u IPv4 0t0 TCP *:3000 (ESTABLISHED)",
-            "node 123 alice 22u IPv4 0t0 TCP *:3000 (LISTEN)",
-            "bun 456 bob 12u IPv4 0t0 TCP *:3001 (LISTEN)",
-        ].join("\n");
+/** The rows `lsof -nP -iTCP -sTCP:LISTEN` prints, one per pid, as the live listing is compared against. */
+function parseLsofOutput(output: string, ownPid = process.pid): PortProcess[] {
+    const lines = output.trim().split("\n");
 
-        const processes = parseLsofOutput(output, -1);
+    if (lines.length <= 1) {
+        return [];
+    }
 
-        expect(processes).toHaveLength(2);
-        expect(processes[0]).toMatchObject({ pid: 123, state: "LISTEN" });
-        expect(processes[1]).toMatchObject({ pid: 456, state: "LISTEN" });
-    });
-});
+    const byPid = new Map<number, PortProcess>();
+
+    for (let i = 1; i < lines.length; i += 1) {
+        const parts = lines[i].trim().split(/\s+/);
+
+        if (parts.length < 9) {
+            continue;
+        }
+
+        const pid = Number.parseInt(parts[1], 10);
+
+        if (Number.isNaN(pid) || pid === ownPid) {
+            continue;
+        }
+
+        const name = parts.slice(8).join(" ");
+        const stateMatch = name.match(/\((\w+)\)$/);
+        const state = stateMatch?.[1] ?? "UNKNOWN";
+        const entry: PortProcess = {
+            pid,
+            command: parts[0],
+            user: parts[2],
+            state,
+            name,
+            fd: parts[3],
+        };
+        const existing = byPid.get(pid);
+
+        if (!existing) {
+            byPid.set(pid, entry);
+            continue;
+        }
+
+        const currentPriority = STATE_PRIORITY[existing.state] ?? 99;
+        const newPriority = STATE_PRIORITY[entry.state] ?? 99;
+
+        if (newPriority < currentPriority) {
+            byPid.set(pid, entry);
+        }
+    }
+
+    return Array.from(byPid.values());
+}
 
 describe("summarizeCommand", () => {
     it("prefers meaningful script fragments over the executable name", () => {

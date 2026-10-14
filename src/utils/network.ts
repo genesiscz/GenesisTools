@@ -25,17 +25,6 @@ function hasErrnoCode(e: unknown): e is { code: string } {
 }
 
 /**
- * Parse newline-separated PID output (e.g. `lsof -t`, `pgrep`) into positive
- * integer PIDs, dropping blank or non-numeric lines.
- */
-export function parsePidLines(stdout: string): number[] {
-    return stdout
-        .split("\n")
-        .map((line) => Number(line.trim()))
-        .filter((pid) => Number.isFinite(pid) && pid > 0);
-}
-
-/**
  * Returns true if the given port is already bound on the given host.
  * Resolves false when the port is free (and closes the probe server).
  * Never throws for the normal EADDRINUSE case.

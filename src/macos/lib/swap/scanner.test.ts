@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { ProcessWithUsage } from "@genesiscz/utils/process/processes";
-import { parseEtime, parsePsOutput, parseSwapUsage, parseVmmapSwap, readSwapProcessRows } from "./scanner";
+import { parseSwapUsage, parseVmmapSwap, readSwapProcessRows } from "./scanner";
 
 describe("parseSwapUsage", () => {
     it("parses standard sysctl output in MB", () => {
@@ -16,50 +16,6 @@ describe("parseSwapUsage", () => {
         expect(result.totalBytes).toBe(0);
         expect(result.usedBytes).toBe(0);
         expect(result.freeBytes).toBe(0);
-    });
-});
-
-describe("parseEtime", () => {
-    it("parses MM:SS", () => {
-        expect(parseEtime("01:30")).toBe(90 * 1000);
-    });
-
-    it("parses HH:MM:SS", () => {
-        expect(parseEtime("01:00:00")).toBe(3600 * 1000);
-    });
-
-    it("parses D-HH:MM:SS", () => {
-        expect(parseEtime("2-03:04:05")).toBe((2 * 86400 + 3 * 3600 + 4 * 60 + 5) * 1000);
-    });
-
-    it("returns 0 on garbage", () => {
-        expect(parseEtime("xyz")).toBe(0);
-    });
-});
-
-describe("parsePsOutput", () => {
-    it("parses three rows with RSS in KB and full command names", () => {
-        const out = [
-            "70285 2076800 2-04:32:01 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-            "  411  413072 9-14:02:00 /System/Library/WindowServer",
-            "14483    640      01:05 tsgo",
-        ].join("\n");
-
-        const rows = parsePsOutput(out);
-        expect(rows).toHaveLength(3);
-        expect(rows[0].pid).toBe(70285);
-        expect(rows[0].rssBytes).toBe(2076800 * 1024);
-        expect(rows[0].name).toContain("Brave Browser");
-        expect(rows[2].pid).toBe(14483);
-        expect(rows[2].name).toBe("tsgo");
-        expect(rows[2].uptimeMs).toBe(65 * 1000);
-    });
-
-    it("skips blank lines and malformed rows", () => {
-        const out = "\n  \nfoobar\n123 456 00:01 ok\n";
-        const rows = parsePsOutput(out);
-        expect(rows).toHaveLength(1);
-        expect(rows[0].pid).toBe(123);
     });
 });
 
@@ -112,9 +68,14 @@ describe("readSwapProcessRows", () => {
         expect(processes).toHaveBeenCalledTimes(1);
         expect(processes).toHaveBeenCalledWith({ otherUsers: true });
         expect(executablePath).toHaveBeenCalledWith(123);
-        expect(rows).toEqual(
-            parsePsOutput("123 2048 00:20 /Applications/Example Browser.app/Contents/MacOS/Example Browser")
-        );
+        expect(rows).toEqual([
+            {
+                pid: 123,
+                rssBytes: 2048 * 1024,
+                uptimeMs: 20_000,
+                name: "/Applications/Example Browser.app/Contents/MacOS/Example Browser",
+            },
+        ]);
 
         const later = readSwapProcessRows({ processes, executablePath, now: () => 121_100 });
         expect(later[0].uptimeMs).toBe(21_000);

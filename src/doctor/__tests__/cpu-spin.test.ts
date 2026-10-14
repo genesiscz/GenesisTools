@@ -1,14 +1,35 @@
 import { describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
-import {
-    CpuSpinAnalyzer,
-    parseCpuTime,
-    parseCpuTimeSamples,
-    processOwner,
-    spinningProcesses,
-} from "@app/doctor/analyzers/cpu-spin";
+import { CpuSpinAnalyzer, type CpuTimeSample, processOwner, spinningProcesses } from "@app/doctor/analyzers/cpu-spin";
 import { analysisDirFor } from "@app/doctor/lib/paths";
 import type { AnalyzerContext } from "@app/doctor/lib/types";
+import { parseCpuTime } from "@genesiscz/utils/process/ps";
+
+const PS_LINE = /^\s*(\d+)\s+(\S+)\s+(.*)$/;
+
+/** Output of `ps -axo pid=,cputime=,command=`, keyed by pid. Lines that do not parse are skipped. */
+function parseCpuTimeSamples(raw: string): Map<number, CpuTimeSample> {
+    const samples = new Map<number, CpuTimeSample>();
+
+    for (const line of raw.split(/\r?\n/)) {
+        const match = line.match(PS_LINE);
+
+        if (!match) {
+            continue;
+        }
+
+        const cpuMs = parseCpuTime(match[2]);
+
+        if (cpuMs === null) {
+            continue;
+        }
+
+        const pid = Number.parseInt(match[1], 10);
+        samples.set(pid, { pid, cpuMs, command: match[3].trim() });
+    }
+
+    return samples;
+}
 
 const PS_BEFORE = [
     "    1  54:21.10 /sbin/launchd",
@@ -34,15 +55,6 @@ describe("cpu-spin parsing", () => {
         expect(parseCpuTime("1:02:03.50")).toBe(3_723_500);
         expect(parseCpuTime("1-02:03:04.50")).toBe(93_784_500);
         expect(parseCpuTime("garbage")).toBeNull();
-    });
-
-    it("keys samples by pid and keeps the whole command line", () => {
-        const samples = parseCpuTimeSamples(PS_BEFORE);
-        expect(samples.size).toBe(5);
-        expect(samples.get(29897)?.command).toBe(
-            "/Users/dev/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --rpc"
-        );
-        expect(samples.get(40000)?.cpuMs).toBe(93_784_500);
     });
 });
 
