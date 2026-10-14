@@ -65,6 +65,48 @@ afterEach(async () => {
     await rm(home, { recursive: true, force: true });
 });
 
+// The journal took a line per prompt per agent (19,203 lines in seven days) and every prompt paid a cmux identify.
+describe("record-session-cmux heartbeat", () => {
+    const prompt = (sessionId: string) =>
+        SafeJSON.stringify({ session_id: sessionId, cwd: "/tmp", hook_event_name: "UserPromptSubmit" });
+    const start = SafeJSON.stringify({
+        session_id: "11111111-aaaa-bbbb-cccc-000000000001",
+        cwd: "/tmp",
+        hook_event_name: "SessionStart",
+    });
+
+    test("a prompt in the same tab within the heartbeat writes nothing; a start, a new tab or another session does", async () => {
+        await runHook(start);
+        await runHook(prompt("11111111-aaaa-bbbb-cccc-000000000001"));
+        expect(await readJournal()).toHaveLength(1);
+
+        await runHook(prompt("11111111-aaaa-bbbb-cccc-000000000001"), { CMUX_SURFACE_ID: "MOVED-SURFACE" });
+        await runHook(prompt("22222222-aaaa-bbbb-cccc-000000000002"));
+        await runHook(start);
+        const lines = await readJournal();
+        expect(lines.map((line) => line.surfaceId)).toEqual([
+            "TEST-SURFACE",
+            "MOVED-SURFACE",
+            "TEST-SURFACE",
+            "TEST-SURFACE",
+        ]);
+    });
+
+    test("a prompt after the heartbeat writes again", async () => {
+        await runHook(prompt("11111111-aaaa-bbbb-cccc-000000000001"));
+        const statePath = join(home, ".genesis-tools", "claude-code", "cmux-refs-last.json");
+        const state = SafeJSON.parse(await readFile(statePath, "utf8"), { strict: true }) as Record<
+            string,
+            { at: number }
+        >;
+        state["11111111-aaaa-bbbb-cccc-000000000001"].at -= 31 * 60_000;
+        await Bun.write(statePath, SafeJSON.stringify(state));
+
+        await runHook(prompt("11111111-aaaa-bbbb-cccc-000000000001"));
+        expect(await readJournal()).toHaveLength(2);
+    });
+});
+
 describe("record-session-cmux tty gate", () => {
     test("a headless claude (tty '??') is not recorded", async () => {
         // A detached sleep (its own session) has no controlling tty, same as `claude -p`.

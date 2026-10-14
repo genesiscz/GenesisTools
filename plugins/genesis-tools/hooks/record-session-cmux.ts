@@ -59,6 +59,14 @@ const REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs.jsonl")
 const BINDINGS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-bindings.json");
 /** A binding is set again after this long, in case cmux replaced it with a record of its own since. */
 const BINDING_REFRESH_MS = 30 * 60_000;
+/** Where each session last wrote its journal line: a prompt in the same tab within the heartbeat writes nothing. */
+const LAST_WRITE_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs-last.json");
+/**
+ * A prompt rewrites an unchanged line at most this often. The journal grew by a line per prompt per agent (19,203 lines,
+ * 6.8 MB in seven days on 2026-10-14) and every reader parses all of it; every prompt also paid a `cmux identify`. The
+ * live tree knows where a tab is now (the surface UUID survives a move), so a moved tab only waits for the next line.
+ */
+const HEARTBEAT_MS = 30 * 60_000;
 /** SessionEnd reasons that mean the user ended the session on purpose, so it must not come back. */
 const DELIBERATE_END = new Set(["prompt_input_exit", "logout"]);
 
@@ -153,6 +161,39 @@ function writeBindings(state: Record<string, BindingState>): void {
     const temporary = `${BINDINGS_PATH}.${process.pid}.tmp`;
     writeFileSync(temporary, SafeJSON.stringify(state), "utf8");
     renameSync(temporary, BINDINGS_PATH);
+}
+
+interface LastWrite {
+    place: string;
+    at: number;
+}
+
+function readLastWrites(): Record<string, LastWrite> {
+    try {
+        return existsSync(LAST_WRITE_PATH)
+            ? (SafeJSON.parse(readFileSync(LAST_WRITE_PATH, "utf8")) as Record<string, LastWrite>)
+            : {};
+    } catch {
+        return {};
+    }
+}
+
+/**
+ * True when this session wrote a line for the same tab (surface and tmux pane) within the heartbeat, so a prompt
+ * has nothing new to say. A session start or a deliberate end always writes.
+ */
+export function recordedRecently(input: { sessionId: string; place: string; now?: number }): boolean {
+    const last = readLastWrites()[input.sessionId];
+    return last !== undefined && last.place === input.place && (input.now ?? Date.now()) - last.at < HEARTBEAT_MS;
+}
+
+function rememberWrite(input: { sessionId: string; place: string; now: number }): void {
+    const state = readLastWrites();
+    const kept = Object.fromEntries(Object.entries(state).filter(([, last]) => input.now - last.at < 24 * 60 * 60_000));
+    kept[input.sessionId] = { place: input.place, at: input.now };
+    const tmp = `${LAST_WRITE_PATH}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(kept));
+    renameSync(tmp, LAST_WRITE_PATH);
 }
 
 function runCmux(args: string[]): boolean {
@@ -276,7 +317,13 @@ function main(raw: string): void {
         return;
     }
 
-    const ending = (input.hook_event_name ?? input.hookEventName) === "SessionEnd";
+    const event = input.hook_event_name ?? input.hookEventName;
+    const ending = event === "SessionEnd";
+    const place = `${surfaceId ?? ""}\n${tmuxPane ?? ""}`;
+
+    if (event === "UserPromptSubmit" && recordedRecently({ sessionId, place })) {
+        return;
+    }
 
     // Only a deliberate end is recorded: after a crash or a cmux quit the session should come back.
     if (ending && !DELIBERATE_END.has(input.reason ?? "")) {
@@ -313,6 +360,7 @@ function main(raw: string): void {
     // Append-only: an O_APPEND write of one short line is atomic, so concurrent
     // sessions never corrupt the journal. Later lines win on read.
     appendFileSync(REFS_PATH, `${SafeJSON.stringify(entry)}\n`, "utf8");
+    rememberWrite({ sessionId, place, now: entry.at });
 
     if (!surfaceId) {
         return;
