@@ -26,6 +26,19 @@ import {
     withNativeBudget,
 } from "./runner";
 
+test("legacy AXShowMenu checks takeover after feedback and before dispatch", () => {
+    // This wiring check runs without starting ax-tool or touching the user's pointer.
+    const source = readFileSync(join(import.meta.dir, "../../../native/ax-tool/Sources/commands/Input.swift"), "utf8");
+    const branch = source.slice(source.indexOf('if !double, axActionNames(el).contains("AXShowMenu")'));
+    const dispatch = branch.indexOf('performActionWithTimeout(el, action: "AXShowMenu"');
+    const feedback = branch.indexOf('ActionCursor.emit("showmenu"');
+    const guard = branch.indexOf("gatedOrExit { try inputGate.check() }");
+
+    expect(feedback).toBeGreaterThanOrEqual(0);
+    expect(guard).toBeGreaterThan(feedback);
+    expect(dispatch).toBeGreaterThan(guard);
+});
+
 test("a build failure never reaches the native spawn boundary", () => {
     let spawnCalls = 0;
     const boundary: AxRunBoundary = {

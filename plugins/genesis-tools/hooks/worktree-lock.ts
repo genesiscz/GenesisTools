@@ -2,7 +2,8 @@
 /**
  * A running agent session locks every linked git worktree it works in, so `git worktree remove`
  * from another session refuses it (git needs `-f -f` for a locked worktree). The session unlocks
- * its worktrees when it ends. Asked for on 2026-10-13, after cleanup sessions removed worktrees that
+ * its worktrees when the last registered live user ends, handing the lock to a survivor otherwise.
+ * Asked for on 2026-10-13, after cleanup sessions removed worktrees that
  * another running session was still working in.
  *
  * When it locks:
@@ -31,13 +32,21 @@
  *
  * Silent and never fatal: no stdout, exit 0 always, problems go to the GenesisTools day log.
  */
+import { dlopen, FFIType } from "bun:ffi";
+import { createHash } from "node:crypto";
 import {
     appendFileSync,
+    closeSync,
+    existsSync,
+    fstatSync,
     lstatSync,
     mkdirSync,
+    openSync,
     readdirSync,
     readFileSync,
     renameSync,
+    rmdirSync,
+    statSync,
     unlinkSync,
     writeFileSync,
 } from "node:fs";
@@ -330,40 +339,90 @@ export function parseLockReason(reason: string): LockHolder {
 
 type ProcessCheck = { state: "gone" } | { state: "unknown" } | { state: "live"; agent: boolean; startMs: number };
 
-/**
- * What `pid` is now, from one `ps -o etime=,command=` call (about 6 ms): "gone" when no process has it,
- * "unknown" when ps itself failed, else whether the process is claude, codex or grok and when it started.
- * A bare kill(pid, 0) cannot tell the lock's agent from a recycled pid that another program now holds.
- */
+/** One process snapshot for all requested owners; an unreadable snapshot never declares an owner dead. */
+function checkProcesses(pids: number[], now: number): Map<number, ProcessCheck> {
+    const wanted = [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 1))];
+    const checks = new Map<number, ProcessCheck>(pids.map((pid) => [pid, { state: "gone" }]));
+
+    if (wanted.length === 0) {
+        return checks;
+    }
+
+    const [onlyPid] = wanted;
+
+    if (wanted.length === 1 && onlyPid !== undefined) {
+        checks.set(onlyPid, checkProcess(onlyPid, now));
+        return checks;
+    }
+
+    for (const pid of wanted) {
+        checks.set(pid, { state: "unknown" });
+    }
+
+    // A single invalid PID makes macOS reject an entire -p list, even if its other owners are live.
+    const result = Bun.spawnSync(["ps", "-A", "-o", "pid=,etime=,command="], {
+        stdout: "pipe",
+        stderr: "ignore",
+        timeout: SPAWN_TIMEOUT_MS,
+    });
+    const output = result.stdout.toString().trim();
+
+    if (result.exitCode !== 0 || output === "") {
+        return checks;
+    }
+
+    const found = new Map<number, ProcessCheck>();
+    const wantedSet = new Set(wanted);
+
+    for (const line of output.split("\n")) {
+        const row = /^\s*(\d+)\s+/.exec(line);
+        const pid = Number(row?.[1]);
+
+        if (!wantedSet.has(pid)) {
+            continue;
+        }
+
+        found.set(pid, parseProcessCheck(line.slice(row?.[0].length ?? 0), now));
+    }
+
+    for (const pid of wanted) {
+        checks.set(pid, found.get(pid) ?? { state: "gone" });
+    }
+
+    return checks;
+}
+
+/** The hook's single-owner path never pays for a full process table. */
 function checkProcess(pid: number, now: number): ProcessCheck {
-    // pid 0 and below are process groups, and pid 1 is launchd: none names a session.
     if (!Number.isInteger(pid) || pid <= 1) {
         return { state: "gone" };
     }
 
     const result = Bun.spawnSync(["ps", "-o", "etime=,command=", "-p", String(pid)], {
         stdout: "pipe",
-        stderr: "ignore",
+        stderr: "pipe",
         timeout: SPAWN_TIMEOUT_MS,
     });
-    const out = result.stdout.toString().trim();
+    const output = result.stdout.toString().trim();
+    const error = result.stderr.toString().trim();
 
-    // `ps -p` of a pid no process has prints nothing and exits 1.
-    if (result.exitCode === 1 && out === "") {
+    if (result.exitCode === 1 && output === "" && (error === "" || /^ps: process id too large: \d+$/.test(error))) {
         return { state: "gone" };
     }
 
-    // etime is `[[dd-]hh:]mm:ss`.
-    const match = result.exitCode === 0 ? /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s+(.*)$/s.exec(out) : null;
+    return result.exitCode === 0 ? parseProcessCheck(output, now) : { state: "unknown" };
+}
+
+function parseProcessCheck(output: string, now: number): ProcessCheck {
+    const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s+(.*)$/s.exec(output.trim());
 
     if (!match) {
         return { state: "unknown" };
     }
 
     const [, days = "0", hours = "0", minutes = "0", seconds = "0", command = ""] = match;
-    const elapsedSeconds = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
-
-    return { state: "live", agent: agentNamed(command) !== null, startMs: now - elapsedSeconds * 1000 };
+    const elapsed = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+    return { state: "live", agent: agentNamed(command) !== null, startMs: now - elapsed * 1000 };
 }
 
 /** Whether `pid` is still a running agent. When ps cannot answer, it counts as alive: a wrong "dead" frees a worktree in use. */
@@ -380,13 +439,16 @@ function agentAlive(pid: number, now = Date.now()): boolean {
  * `ps` cannot answer, the lock is kept: a wrong "stale" lets a worktree in use be removed.
  */
 export function isLockStale(holder: LockHolder, options: { now?: number } = {}): boolean {
-    const { now = Date.now() } = options;
+    return staleFromCheck(
+        holder,
+        holder.kind === "other" ? { state: "unknown" } : checkProcess(holder.pid, options.now ?? Date.now())
+    );
+}
 
+function staleFromCheck(holder: LockHolder, check: ProcessCheck): boolean {
     if (holder.kind === "other") {
         return false;
     }
-
-    const check = checkProcess(holder.pid, now);
 
     if (check.state !== "live") {
         return check.state === "gone";
@@ -430,10 +492,76 @@ function git(commonDir: string, args: string[], timeoutMs = SPAWN_TIMEOUT_MS): {
     return { ok: result.exitCode === 0, stderr };
 }
 
+type WorktreeFlock = (fd: number, operation: number) => number;
+let worktreeFlock: WorktreeFlock | null | undefined;
+const GUARD_WAIT_MS = 1000;
+const GUARD_RETRY_MS = 10;
+const guardWaitWord = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+
+/** Kernel ownership dies with the hook; the guard file stays so contenders always lock the same inode. */
+function withWorktreeLock<T>(worktree: LinkedWorktree, action: () => T): T | undefined {
+    if (worktreeFlock === undefined) {
+        worktreeFlock = null;
+        const library =
+            process.platform === "darwin" ? "libSystem.B.dylib" : process.platform === "linux" ? "libc.so.6" : null;
+
+        if (library) {
+            try {
+                const { symbols } = dlopen(library, {
+                    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+                });
+                worktreeFlock = (fd, operation) => symbols.flock(fd, operation);
+            } catch (error) {
+                dayLog("error", "cannot load worktree guard; locks will be left alone", { error: messageOf(error) });
+            }
+        }
+    }
+
+    if (!worktreeFlock) {
+        return undefined;
+    }
+
+    const path = join(worktree.adminDir, "session-lock.flock");
+    let fd: number;
+
+    try {
+        fd = openSync(path, "a", 0o600);
+    } catch (error) {
+        dayLog("warn", "cannot open worktree guard", { worktree: worktree.root, error: messageOf(error) });
+        return undefined;
+    }
+
+    try {
+        // LOCK_EX | LOCK_NB: let a short ownership transition finish before skipping a new user's registration.
+        const deadline = performance.now() + GUARD_WAIT_MS;
+        while (worktreeFlock(fd, 2 | 4) !== 0) {
+            const remaining = deadline - performance.now();
+            if (remaining <= 0) {
+                return undefined;
+            }
+
+            // This hook is synchronous. Sleep in the kernel, without spinning or starting another process.
+            Atomics.wait(guardWaitWord, 0, 0, Math.min(GUARD_RETRY_MS, remaining));
+        }
+
+        const held = fstatSync(fd);
+        const named = statSync(path);
+
+        if (held.dev !== named.dev || held.ino !== named.ino) {
+            return undefined;
+        }
+
+        return action();
+    } finally {
+        closeSync(fd);
+    }
+}
+
 /**
  * Unlock a worktree whose lock still reads `expectedReason`. git finds the worktree by its folder,
  * so a folder moved with plain `mv` makes `git worktree unlock` fail. Then the `locked` file is
- * removed directly, which is all git itself does, and only while it still holds the reason we checked.
+ * removed directly, which is all git itself does. Every caller holds withWorktreeLock across its
+ * ownership check and this unlock, plus any replacement lock or worktree removal.
  */
 function unlockWorktree(worktree: LinkedWorktree, expectedReason: string): boolean {
     if (readLockReason(worktree.adminDir) !== expectedReason) {
@@ -510,29 +638,49 @@ function registeredWorktrees(commonDir: string): Array<LinkedWorktree & { reason
  * runs `ps`; it never changes a lock. `clearStaleWorktreeLocks` is the step that acts on it.
  */
 export function findStaleWorktreeLocks(repoPath: string, now = Date.now()): StaleLock[] {
-    const commonDir = commonDirOf(repoPath);
-
-    if (!commonDir) {
-        return [];
-    }
-
-    const stale: StaleLock[] = [];
-
-    for (const { reason, ...worktree } of registeredWorktrees(commonDir)) {
-        if (reason !== null && isLockStale(parseLockReason(reason), { now })) {
-            stale.push({ ...worktree, reason });
-        }
-    }
-
-    return stale;
+    return scanStaleWorktreeLocks(repoPath, now).locks;
 }
 
-/** Unlock what `findStaleWorktreeLocks` reports, each only while its reason is still the one it read. */
+function scanStaleWorktreeLocks(
+    repoPath: string,
+    now: number
+): { locks: StaleLock[]; checks: Map<number, ProcessCheck> } {
+    const commonDir = commonDirOf(repoPath);
+    const worktrees = commonDir ? registeredWorktrees(commonDir) : [];
+    const holders = worktrees.map((worktree) => (worktree.reason === null ? null : parseLockReason(worktree.reason)));
+    const pids = holders.flatMap((holder) => (holder && holder.kind !== "other" ? [holder.pid] : []));
+
+    for (const worktree of worktrees) {
+        pids.push(...readUsers(worktree).map((user) => user.pid));
+    }
+
+    const checks = checkProcesses(pids, now);
+    const locks = worktrees.flatMap((worktree, index) => {
+        const holder = holders[index];
+        return worktree.reason !== null &&
+            holder &&
+            holder.kind !== "other" &&
+            staleFromCheck(holder, checks.get(holder.pid) ?? { state: "unknown" })
+            ? [{ ...worktree, reason: worktree.reason }]
+            : [];
+    });
+    return { locks, checks };
+}
+
+/** Recheck the reason under the guard, retaining any surviving registered user from the same process snapshot. */
 export function clearStaleWorktreeLocks(repoPath: string, now = Date.now()): StaleLock[] {
+    const { locks, checks } = scanStaleWorktreeLocks(repoPath, now);
     const cleared: StaleLock[] = [];
 
-    for (const lock of findStaleWorktreeLocks(repoPath, now)) {
-        if (unlockWorktree(lock, lock.reason)) {
+    for (const lock of locks) {
+        if (
+            withWorktreeLock(
+                lock,
+                () =>
+                    readLockReason(lock.adminDir) === lock.reason &&
+                    handoffOrUnlock({ worktree: lock, reason: lock.reason, checks, now })
+            )
+        ) {
             cleared.push(lock);
             dayLog("info", "cleared a stale worktree lock", { worktree: lock.root, reason: lock.reason });
         }
@@ -545,56 +693,222 @@ function recordPath(sessionId: string): string {
     return join(genesisHome(), ".genesis-tools", "claude-code", "worktree-locks", `${sessionId}.json`);
 }
 
-function readRecord(sessionId: string): LockRecord | null {
-    let parsed: unknown;
+function recordFiles(sessionId: string): string[] {
+    const legacy = recordPath(sessionId);
+    let shards: string[] = [];
 
     try {
-        parsed = SafeJSON.parse(readFileSync(recordPath(sessionId), "utf8"));
+        shards = readdirSync(`${legacy}.d`)
+            .filter((name) => name.endsWith(".json"))
+            .map((name) => join(`${legacy}.d`, name));
     } catch (error) {
         if (errorCode(error) !== "ENOENT") {
-            dayLog("warn", "unreadable worktree-lock record, starting a new one", {
-                session: sessionId,
-                error: messageOf(error),
-            });
+            dayLog("warn", "cannot list worktree-lock records", { path: `${legacy}.d`, error: messageOf(error) });
+        }
+    }
+
+    return existsSync(legacy) ? [legacy, ...shards] : shards;
+}
+
+function readRecord(sessionId: string): LockRecord | null {
+    const merged = new Map<string, RecordedLock>();
+    let latest: LockRecord | null = null;
+    let latestAt = "";
+
+    for (const path of recordFiles(sessionId)) {
+        try {
+            const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+            const harness = isRecord(parsed) ? harnessNamed(parsed.harness) : null;
+
+            if (!isRecord(parsed) || !harness || typeof parsed.pid !== "number" || !Array.isArray(parsed.locks)) {
+                throw new Error("invalid worktree-lock record");
+            }
+
+            const locks = parsed.locks.filter(
+                (lock): lock is RecordedLock =>
+                    isRecord(lock) &&
+                    typeof lock.root === "string" &&
+                    typeof lock.adminDir === "string" &&
+                    typeof lock.commonDir === "string" &&
+                    typeof lock.pid === "number" &&
+                    typeof lock.at === "string"
+            );
+
+            if (locks.length !== parsed.locks.length) {
+                dayLog("warn", "invalid worktree-lock record entry; skipping entry", { path });
+            }
+
+            for (const lock of locks) {
+                const previous = merged.get(lock.adminDir);
+
+                if (!previous || previous.at <= lock.at) {
+                    merged.set(lock.adminDir, lock);
+                }
+
+                if (lock.at >= latestAt) {
+                    latestAt = lock.at;
+                    latest = { session_id: sessionId, harness, pid: lock.pid, locks: [] };
+                }
+            }
+        } catch (error) {
+            dayLog("warn", "cannot read worktree-lock record; skipping file", { path, error: messageOf(error) });
+        }
+    }
+
+    return latest ? { ...latest, locks: [...merged.values()] } : null;
+}
+
+function recordShard(sessionId: string, adminDir: string): string {
+    return join(`${recordPath(sessionId)}.d`, `${createHash("sha256").update(adminDir).digest("hex")}.json`);
+}
+
+/** Each guarded worktree publishes its own shard; writers in other repositories never overwrite it. */
+function writeRecord(record: LockRecord): void {
+    for (const lock of record.locks) {
+        const path = recordShard(record.session_id, lock.adminDir);
+        mkdirSync(dirname(path), { recursive: true });
+        const temp = `${path}.tmp.${process.pid}`;
+        writeFileSync(temp, SafeJSON.stringify({ ...record, locks: [lock] }, null, 2));
+        renameSync(temp, path);
+    }
+}
+
+interface SessionUser {
+    sessionId: string;
+    harness: Harness;
+    pid: number;
+    since: string;
+}
+
+function userPath(worktree: LinkedWorktree, sessionId: string): string {
+    return join(worktree.adminDir, "session-users", `${sessionId}.json`);
+}
+
+function readUser(path: string): SessionUser | null {
+    try {
+        const value: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+        const harness = isRecord(value) ? harnessNamed(value.harness) : null;
+
+        if (
+            !isRecord(value) ||
+            typeof value.sessionId !== "string" ||
+            !SAFE_SESSION_ID.test(value.sessionId) ||
+            !harness ||
+            typeof value.pid !== "number" ||
+            typeof value.since !== "string" ||
+            !Number.isFinite(Date.parse(value.since))
+        ) {
+            throw new Error("invalid worktree user");
+        }
+
+        return { sessionId: value.sessionId, harness, pid: value.pid, since: value.since };
+    } catch (error) {
+        if (errorCode(error) !== "ENOENT") {
+            dayLog("warn", "cannot read worktree user; skipping file", { path, error: messageOf(error) });
         }
 
         return null;
     }
-
-    const harness = isRecord(parsed) ? harnessNamed(parsed.harness) : null;
-
-    if (!isRecord(parsed) || !harness || typeof parsed.pid !== "number" || !Array.isArray(parsed.locks)) {
-        return null;
-    }
-
-    const locks = parsed.locks.filter(
-        (lock): lock is RecordedLock =>
-            isRecord(lock) &&
-            typeof lock.root === "string" &&
-            typeof lock.adminDir === "string" &&
-            typeof lock.commonDir === "string"
-    );
-
-    return { session_id: sessionId, harness, pid: parsed.pid, locks };
 }
 
-/**
- * Temp-then-rename, and the locks of a record another hook of this session wrote meanwhile are kept.
- * Two hooks writing in the same millisecond can still lose an entry; SessionEnd also scans the
- * recorded repositories for this session's id, so the lock is released anyway.
- */
-function writeRecord(record: LockRecord): void {
-    const path = recordPath(record.session_id);
-    const merged = new Map((readRecord(record.session_id)?.locks ?? []).map((lock) => [lock.adminDir, lock]));
+function readUsers(worktree: LinkedWorktree): SessionUser[] {
+    const directory = join(worktree.adminDir, "session-users");
+    let names: string[];
 
-    for (const lock of record.locks) {
-        merged.set(lock.adminDir, lock);
+    try {
+        names = readdirSync(directory).filter((name) => name.endsWith(".json"));
+    } catch (error) {
+        if (errorCode(error) !== "ENOENT") {
+            dayLog("warn", "cannot list worktree users; skipping directory", {
+                path: directory,
+                error: messageOf(error),
+            });
+        }
+
+        return [];
+    }
+
+    return names.flatMap((name) => {
+        const user = readUser(join(directory, name));
+        return user ? [user] : [];
+    });
+}
+
+function liveUsers(worktree: LinkedWorktree, now: number, snapshot?: Map<number, ProcessCheck>): SessionUser[] {
+    const users = readUsers(worktree);
+    const checks =
+        snapshot ??
+        checkProcesses(
+            users.map((user) => user.pid),
+            now
+        );
+    return users.filter(
+        (user) => !staleFromCheck({ kind: "session", ...user }, checks.get(user.pid) ?? { state: "unknown" })
+    );
+}
+
+/** Called under the worktree guard, including when another live session owns git's primary lock. */
+function rememberUser(worktree: LinkedWorktree, user: SessionUser): void {
+    const path = userPath(worktree, user.sessionId);
+    const previous = readUser(path);
+
+    if (
+        previous?.sessionId === user.sessionId &&
+        previous.pid === user.pid &&
+        previous.harness === user.harness &&
+        existsSync(recordShard(user.sessionId, worktree.adminDir))
+    ) {
+        return;
     }
 
     mkdirSync(dirname(path), { recursive: true });
     const temp = `${path}.tmp.${process.pid}`;
-    writeFileSync(temp, SafeJSON.stringify({ ...record, locks: [...merged.values()] }, null, 2));
+    writeFileSync(temp, SafeJSON.stringify(user));
     renameSync(temp, path);
+    writeRecord({
+        session_id: user.sessionId,
+        harness: user.harness,
+        pid: user.pid,
+        locks: [{ ...worktree, pid: user.pid, at: user.since }],
+    });
+}
+
+/** Change only git's reason, never dropping the lock while a surviving session is using the worktree. */
+function handoffOrUnlock({
+    worktree,
+    reason,
+    checks,
+    now = Date.now(),
+}: {
+    worktree: LinkedWorktree;
+    reason: string;
+    checks?: Map<number, ProcessCheck>;
+    now?: number;
+}): boolean {
+    const successor = liveUsers(worktree, now, checks)[0];
+
+    if (!successor) {
+        return unlockWorktree(worktree, reason);
+    }
+
+    const path = join(worktree.adminDir, "locked");
+    const temp = `${path}.tmp.${process.pid}`;
+    writeFileSync(
+        temp,
+        `${formatLockReason({ agent: successor, sessionId: successor.sessionId, since: new Date(successor.since) })}\n`
+    );
+    renameSync(temp, path);
+    return false;
+}
+
+function removeIfPresent(path: string): void {
+    try {
+        unlinkSync(path);
+    } catch (error) {
+        if (errorCode(error) !== "ENOENT") {
+            throw error;
+        }
+    }
 }
 
 function agentNamed(command: string): Harness | null {
@@ -658,6 +972,7 @@ export function lockWorktreesForPaths(options: {
     sessionId: string;
     paths: string[];
     agent?: AgentProcess;
+    findAgent?: () => AgentProcess | null;
     now?: number;
     fresh?: boolean;
 }): Map<string, LockOutcome> {
@@ -681,83 +996,101 @@ export function lockWorktreesForPaths(options: {
 
     let record: LockRecord | null | undefined;
     let agent = options.agent ?? null;
-    const added: RecordedLock[] = [];
+    let missingAgent = false;
 
     for (const worktree of worktrees.values()) {
-        const current = readLockReason(worktree.adminDir);
-        const holder = current === null ? null : parseLockReason(current);
+        const outcome = withWorktreeLock(worktree, (): LockOutcome | undefined => {
+            const current = readLockReason(worktree.adminDir);
+            const holder = current === null ? null : parseLockReason(current);
 
-        if (holder?.kind === "session" && holder.sessionId === sessionId) {
-            // This session's lock under the pid it recorded: a hook only runs in a live session, so a
-            // repeat call trusts that and spawns nothing.
-            if (!agent && record === undefined) {
-                record = readRecord(sessionId);
+            if (holder?.kind === "session" && holder.sessionId === sessionId) {
+                // This session's lock under the pid it recorded: a hook only runs in a live session, so a
+                // repeat call trusts that and spawns nothing.
+                if (!agent && record === undefined) {
+                    record = readRecord(sessionId);
+                }
+
+                const owner = agent?.pid ?? record?.pid;
+
+                if (holder.pid === owner && (!fresh || agentAlive(holder.pid, now))) {
+                    const ours = agent ?? (record ? { harness: record.harness, pid: record.pid } : null);
+
+                    if (ours) {
+                        rememberUser(worktree, { ...ours, sessionId, since: holder.since });
+                    }
+
+                    return "ours";
+                }
             }
 
-            const owner = agent?.pid ?? record?.pid;
-
-            if (holder.pid === owner && (!fresh || agentAlive(holder.pid, now))) {
-                outcomes.set(worktree.root, "ours");
-                continue;
+            if (holder?.kind === "other") {
+                return "held";
             }
-        }
 
-        if (holder && !isLockStale(holder, { now })) {
-            outcomes.set(worktree.root, "held");
-            continue;
-        }
+            if (!agent) {
+                record ??= readRecord(sessionId);
+                agent =
+                    record && agentAlive(record.pid, now)
+                        ? { harness: record.harness, pid: record.pid }
+                        : (options.findAgent ?? findAgentProcess)();
+            }
 
-        if (!agent) {
-            record ??= readRecord(sessionId);
-            agent =
-                record && agentAlive(record.pid, now)
-                    ? { harness: record.harness, pid: record.pid }
-                    : findAgentProcess();
-        }
+            if (!agent) {
+                dayLog("warn", "no claude, codex or grok process above this hook; the worktree stays unlocked", {
+                    session: sessionId,
+                    worktree: worktree.root,
+                });
+                missingAgent = true;
+                return undefined;
+            }
 
-        if (!agent) {
-            dayLog("warn", "no claude, codex or grok process above this hook; the worktree stays unlocked", {
-                session: sessionId,
-                worktree: worktree.root,
-            });
+            const user = { ...agent, sessionId, since: new Date(now).toISOString() };
+
+            if (holder && !isLockStale(holder, { now })) {
+                rememberUser(worktree, user);
+                return "held";
+            }
+
+            if (current !== null && !handoffOrUnlock({ worktree, reason: current, now })) {
+                rememberUser(worktree, user);
+                return "held";
+            }
+
+            if (current !== null && readLockReason(worktree.adminDir) !== null) {
+                return "held";
+            }
+
+            if (current !== null) {
+                dayLog("info", "took over a stale worktree lock", { worktree: worktree.root, previous: current });
+            }
+
+            const since = new Date(now);
+            const reason = formatLockReason({ agent, sessionId, since });
+            const result = git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
+
+            if (!result.ok) {
+                // Usually a lost race: another session locked it between our read and git's own check.
+                dayLog("warn", "git worktree lock failed", { worktree: worktree.root, stderr: result.stderr });
+                return "held";
+            }
+
+            dayLog("info", "locked a worktree for this session", { worktree: worktree.root, reason });
+            rememberUser(worktree, { ...user, since: since.toISOString() });
+            return "locked";
+        });
+        if (missingAgent) {
             break;
         }
 
-        if (current !== null && !unlockWorktree(worktree, current)) {
-            outcomes.set(worktree.root, "held");
-            continue;
-        }
-
-        if (current !== null) {
-            dayLog("info", "took over a stale worktree lock", { worktree: worktree.root, previous: current });
-        }
-
-        const since = new Date(now);
-        const reason = formatLockReason({ agent, sessionId, since });
-        const result = git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
-
-        if (!result.ok) {
-            // Usually a lost race: another session locked it between our read and git's own check.
-            dayLog("warn", "git worktree lock failed", { worktree: worktree.root, stderr: result.stderr });
-            outcomes.set(worktree.root, "held");
-            continue;
-        }
-
-        dayLog("info", "locked a worktree for this session", { worktree: worktree.root, reason });
-        outcomes.set(worktree.root, "locked");
-        added.push({ ...worktree, pid: agent.pid, at: since.toISOString() });
-    }
-
-    if (agent && added.length > 0) {
-        writeRecord({ session_id: sessionId, harness: agent.harness, pid: agent.pid, locks: added });
+        outcomes.set(worktree.root, outcome ?? "held");
     }
 
     return outcomes;
 }
 
 /**
- * SessionEnd: unlock every worktree whose lock names this session, from the record plus a scan of the
- * repositories it names. A lock of this session that another live process of the same session holds
+ * SessionEnd: drop this user's registration, handing its primary lock to a surviving live user or
+ * unlocking when nobody remains. A lock that another live process of the same session holds
  * (two processes resumed one session) stays.
  */
 export function unlockSessionWorktrees(sessionId: string): string[] {
@@ -784,19 +1117,37 @@ export function unlockSessionWorktrees(sessionId: string): string[] {
     }
 
     const unlocked: string[] = [];
+    let busy = false;
 
     for (const worktree of candidates.values()) {
-        const reason = readLockReason(worktree.adminDir);
-        const holder = reason === null ? null : parseLockReason(reason);
+        if (!existsSync(worktree.adminDir)) {
+            continue;
+        }
 
-        if (
-            reason !== null &&
-            holder?.kind === "session" &&
-            holder.sessionId === sessionId &&
-            (holder.pid === record.pid || !agentAlive(holder.pid)) &&
-            unlockWorktree(worktree, reason)
-        ) {
+        const released = withWorktreeLock(worktree, () => {
+            const reason = readLockReason(worktree.adminDir);
+            const holder = reason === null ? null : parseLockReason(reason);
+
+            if (
+                holder?.kind === "session" &&
+                holder.sessionId === sessionId &&
+                holder.pid !== record.pid &&
+                agentAlive(holder.pid)
+            ) {
+                return false;
+            }
+
+            removeIfPresent(userPath(worktree, sessionId));
+            removeIfPresent(recordShard(sessionId, worktree.adminDir));
+            return reason !== null && holder?.kind === "session" && holder.sessionId === sessionId
+                ? handoffOrUnlock({ worktree, reason })
+                : false;
+        });
+
+        if (released) {
             unlocked.push(worktree.root);
+        } else if (released === undefined) {
+            busy = true;
         }
     }
 
@@ -804,11 +1155,20 @@ export function unlockSessionWorktrees(sessionId: string): string[] {
         dayLog("info", "session ended; unlocked its worktrees", { session: sessionId, worktrees: unlocked });
     }
 
+    if (busy) {
+        return unlocked;
+    }
+
+    removeIfPresent(recordPath(sessionId));
+
     try {
-        unlinkSync(recordPath(sessionId));
+        rmdirSync(`${recordPath(sessionId)}.d`);
     } catch (error) {
-        if (errorCode(error) !== "ENOENT") {
-            dayLog("warn", "cannot remove the worktree-lock record", { session: sessionId, error: messageOf(error) });
+        if (errorCode(error) !== "ENOENT" && errorCode(error) !== "ENOTEMPTY") {
+            dayLog("warn", "cannot remove worktree-lock record directory", {
+                session: sessionId,
+                error: messageOf(error),
+            });
         }
     }
 
@@ -837,33 +1197,46 @@ export function releaseSessionWorktree(options: { worktree: string; sessionId: s
         return { removed: false, detail: `${options.worktree} is not the root of a linked worktree` };
     }
 
-    const reason = readLockReason(worktree.adminDir);
-    const holder = reason === null ? null : parseLockReason(reason);
+    return (
+        withWorktreeLock(worktree, () => {
+            const reason = readLockReason(worktree.adminDir);
+            const holder = reason === null ? null : parseLockReason(reason);
 
-    if (reason !== null && !(holder?.kind === "session" && holder.sessionId === options.sessionId)) {
-        return { removed: false, detail: `locked by someone else: ${reason}` };
-    }
+            if (reason !== null && !(holder?.kind === "session" && holder.sessionId === options.sessionId)) {
+                return { removed: false, detail: `locked by someone else: ${reason}` };
+            }
 
-    if (reason !== null && !unlockWorktree(worktree, reason)) {
-        return { removed: false, detail: `cannot unlock: ${reason}` };
-    }
+            const others = liveUsers(worktree, Date.now()).filter((user) => user.sessionId !== options.sessionId);
 
-    const removal = git(worktree.commonDir, ["worktree", "remove", worktree.root], REMOVE_TIMEOUT_MS);
+            if (others.length > 0) {
+                return {
+                    removed: false,
+                    detail: `worktree is used by another live session: ${others.map((user) => user.sessionId).join(", ")}`,
+                };
+            }
 
-    if (!removal.ok) {
-        if (reason !== null) {
-            git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
-        }
+            if (reason !== null && !unlockWorktree(worktree, reason)) {
+                return { removed: false, detail: `cannot unlock: ${reason}` };
+            }
 
-        return { removed: false, detail: `git refused, lock kept: ${removal.stderr}` };
-    }
+            const removal = git(worktree.commonDir, ["worktree", "remove", worktree.root], REMOVE_TIMEOUT_MS);
 
-    dayLog("info", "released and removed a session worktree", {
-        session: options.sessionId,
-        worktree: worktree.root,
-    });
+            if (!removal.ok) {
+                if (reason !== null) {
+                    git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
+                }
 
-    return { removed: true, detail: `removed ${worktree.root}` };
+                return { removed: false, detail: `git refused, lock kept: ${removal.stderr}` };
+            }
+
+            dayLog("info", "released and removed a session worktree", {
+                session: options.sessionId,
+                worktree: worktree.root,
+            });
+
+            return { removed: true, detail: `removed ${worktree.root}` };
+        }) ?? { removed: false, detail: "worktree ownership guard is busy or unavailable; nothing removed" }
+    );
 }
 
 /**
@@ -1017,8 +1390,12 @@ if (import.meta.main) {
         await main();
     } catch (error) {
         dayLog("error", "worktree lock hook failed", { error: messageOf(error) });
+
+        if (process.argv[2] === "release" || process.argv[2] === "stale") {
+            process.exitCode = 1;
+        }
     }
 
-    // A hook always exits 0; only the `release` verb sets a code (1 when nothing was removed).
-    process.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
+    const cli = process.argv[2] === "release" || process.argv[2] === "stale";
+    process.exit(cli && typeof process.exitCode === "number" ? process.exitCode : 0);
 }

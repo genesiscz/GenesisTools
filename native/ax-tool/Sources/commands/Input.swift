@@ -255,6 +255,7 @@ func backgroundRightClick(appName: String, pid: pid_t, double: Bool) {
             // The semantic form: the element opens its own context menu, no event and no pointer.
             ActionCursor.emit("showmenu", point: center, background: true, button: "right")
             // A context menu holds the AX call until it closes; a timeout means the menu is open.
+            gatedOrExit { try inputGate.check() }
             let error = performActionWithTimeout(el, action: "AXShowMenu", timeoutMs: 600)
             guard error == .success else {
                 // The target may have activated itself before the AX error came back, so the front goes

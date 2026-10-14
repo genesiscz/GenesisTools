@@ -1,7 +1,21 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { dlopen, FFIType } from "bun:ffi";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    openSync,
+    realpathSync,
+    rmSync,
+    symlinkSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { withSpawnCounter } from "@app/benchmark/lib";
 import { env } from "@genesiscz/utils/env";
 import {
@@ -20,12 +34,14 @@ import {
     unlockSessionWorktrees,
 } from "./worktree-lock";
 
-// One repository with one linked worktree for the whole file: three git spawns. Each test sets the
-// lock state by writing git's own `locked` file, which costs no spawn.
+// Two repositories let record tests exercise independent writers without rebuilding fixtures per test.
 const base = realpathSync(mkdtempSync(join(tmpdir(), "worktree-lock-")));
 const main = join(base, "main");
 const wt = join(base, "wt");
 const admin = join(main, ".git", "worktrees", "wt");
+const otherMain = join(base, "other-main");
+const otherWt = join(base, "other-wt");
+const otherAdmin = join(otherMain, ".git", "worktrees", "other-wt");
 /** A stand-in agent: `sleep` started through a link named `claude`, so `ps` shows an agent program at its pid. */
 const agentLink = join(base, "claude");
 symlinkSync("/bin/sleep", agentLink);
@@ -80,11 +96,18 @@ beforeAll(() => {
     git(["init", "-q", "-b", "main", "main"]);
     git(["-C", "main", "commit", "-q", "--allow-empty", "-m", "init"]);
     git(["-C", "main", "worktree", "add", "-q", "--detach", "../wt"]);
+    git(["init", "-q", "-b", "main", "other-main"]);
+    git(["-C", "other-main", "commit", "-q", "--allow-empty", "-m", "init"]);
+    git(["-C", "other-main", "worktree", "add", "-q", "--detach", "../other-wt"]);
 });
 
 beforeEach(() => {
-    if (existsSync(join(admin, "locked"))) {
-        unlinkSync(join(admin, "locked"));
+    for (const directory of [admin, otherAdmin]) {
+        if (existsSync(join(directory, "locked"))) {
+            unlinkSync(join(directory, "locked"));
+        }
+
+        rmSync(join(directory, "session-users"), { recursive: true, force: true });
     }
 });
 
@@ -122,6 +145,31 @@ describe("releaseSessionWorktree", () => {
         expect(existsSync(admin2)).toBe(false);
     });
 
+    it("unexpected CLI exceptions fail, while the hook stays fail-open", () => {
+        mkdirSync(join(admin, "locked"));
+        const script = join(import.meta.dir, "worktree-lock.ts");
+
+        try {
+            const cli = Bun.spawnSync(["bun", script, "release", wt, "--session", "cli-error"], {
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            expect(cli.exitCode).toBe(1);
+            const hook = Bun.spawnSync(["bun", script], {
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+                stdin: new TextEncoder().encode(
+                    JSON.stringify({ session_id: "hook-error", hook_event_name: "SessionStart", cwd: wt })
+                ),
+            });
+            expect(hook.exitCode).toBe(0);
+        } finally {
+            rmSync(join(admin, "locked"), { recursive: true });
+        }
+    });
+
     it("the release verb exits 1 when it removed nothing, so a script cannot read a refusal as success", () => {
         const run = Bun.spawnSync(
             [
@@ -151,10 +199,17 @@ describe("worktree-lock", () => {
             pid: me.pid,
         });
 
-        const again = await withSpawnCounter(async () =>
-            lockWorktreesForToolUse(edit("s-edit", join(wt, "b.ts")), { agent: me })
-        );
-        expect(again.count).toBe(0);
+        const writes = spyOn(fs, "writeFileSync");
+
+        try {
+            const again = await withSpawnCounter(async () =>
+                lockWorktreesForToolUse(edit("s-edit", join(wt, "b.ts")), { agent: me })
+            );
+            expect(again.count).toBe(0);
+            expect(writes).not.toHaveBeenCalled();
+        } finally {
+            writes.mockRestore();
+        }
     });
 
     it("never locks the main checkout, and finding that out spawns nothing", async () => {
@@ -198,6 +253,322 @@ describe("worktree-lock", () => {
         expect(parseLockReason(lockReason() ?? "")).toMatchObject({ kind: "session", sessionId: "s-heir" });
     });
 
+    it("serializes two owners taking over a stale lock and stale clearing", () => {
+        plantLock(DEAD_LOCK);
+        const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+            flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        });
+        const fd = openSync(join(admin, "session-lock.flock"), "a", 0o600);
+
+        try {
+            expect(libc.symbols.flock(fd, 2 | 4)).toBe(0);
+            expect(lockWorktreesForPaths({ sessionId: "owner-b", paths: [wt], agent: me }).get(wt)).toBe("held");
+            expect(clearStaleWorktreeLocks(main)).toEqual([]);
+            expect(lockReason()).toBe(DEAD_LOCK);
+        } finally {
+            closeSync(fd);
+            libc.close();
+        }
+
+        expect(lockWorktreesForPaths({ sessionId: "owner-a", paths: [wt], agent: me }).get(wt)).toBe("locked");
+        const liveReason = lockReason();
+        expect(lockWorktreesForPaths({ sessionId: "owner-b", paths: [wt], agent: me }).get(wt)).toBe("held");
+        expect(clearStaleWorktreeLocks(main)).toEqual([]);
+        expect(lockReason()).toBe(liveReason);
+    });
+
+    it("keeps a session lock while another ownership transition holds the guard", () => {
+        lockWorktreesForPaths({ sessionId: "owner-end", paths: [wt], agent: me });
+        const liveReason = lockReason();
+        const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+            flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        });
+        const fd = openSync(join(admin, "session-lock.flock"), "a", 0o600);
+        const dirty = join(wt, "keep-fixture.txt");
+        writeFileSync(dirty, "A planted regression must not remove the shared fixture.");
+
+        try {
+            expect(libc.symbols.flock(fd, 2 | 4)).toBe(0);
+            const released = releaseSessionWorktree({ worktree: wt, sessionId: "owner-end" });
+            expect(released.removed).toBe(false);
+            expect(released.detail).toContain("guard is busy");
+            expect(unlockSessionWorktrees("owner-end")).toEqual([]);
+            expect(lockReason()).toBe(liveReason);
+            expect(existsSync(wt)).toBe(true);
+        } finally {
+            closeSync(fd);
+            libc.close();
+        }
+
+        unlinkSync(dirty);
+        expect(unlockSessionWorktrees("owner-end")).toEqual([wt]);
+        expect(lockReason()).toBeNull();
+    });
+
+    it("registers a second session when a busy guard is released within the retry bound", async () => {
+        lockWorktreesForPaths({ sessionId: "retry-first", paths: [wt], agent: me });
+        const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+            flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        });
+        const fd = openSync(join(admin, "session-lock.flock"), "a", 0o600);
+        let worker: Worker | undefined;
+        let released = false;
+
+        try {
+            expect(libc.symbols.flock(fd, 2 | 4)).toBe(0);
+            worker = new Worker(
+                `
+                const { parentPort, workerData } = require("node:worker_threads");
+                import(workerData.module).then(({ lockWorktreesForPaths }) => {
+                    const wait = Atomics.wait;
+                    Atomics.wait = (...args) => {
+                        parentPort.postMessage({ waiting: true });
+                        return wait(...args);
+                    };
+                    const outcome = lockWorktreesForPaths(workerData.options).get(workerData.root);
+                    parentPort.postMessage({ outcome });
+                    parentPort.close();
+                }).catch((error) => { throw error; });
+            `,
+                {
+                    eval: true,
+                    env: process.env,
+                    workerData: {
+                        module: join(import.meta.dir, "worktree-lock.ts"),
+                        root: wt,
+                        options: { sessionId: "retry-second", paths: [wt], agent: me },
+                    },
+                }
+            );
+            const registration = worker;
+            const outcome = await new Promise<string>((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error("registration worker timed out")), 3000);
+                registration.on("error", (error) => {
+                    clearTimeout(timer);
+                    reject(error);
+                });
+                registration.on("message", (message: { waiting?: boolean; outcome?: string }) => {
+                    if (message.waiting && !released) {
+                        if (libc.symbols.flock(fd, 8) !== 0) {
+                            clearTimeout(timer);
+                            reject(new Error("test could not release its guard"));
+                            return;
+                        }
+
+                        released = true;
+                    }
+
+                    if (message.outcome) {
+                        clearTimeout(timer);
+                        resolve(message.outcome);
+                    }
+                });
+            });
+            expect(outcome).toBe("held");
+            expect(released).toBe(true);
+            expect(existsSync(join(admin, "session-users", "retry-second.json"))).toBe(true);
+            expect(unlockSessionWorktrees("retry-first")).toEqual([]);
+            expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "retry-second", pid: me.pid });
+            expect(unlockSessionWorktrees("retry-second")).toEqual([wt]);
+        } finally {
+            await worker?.terminate();
+            closeSync(fd);
+            libc.close();
+        }
+    });
+
+    it("reports held after the bounded retry when the guard stays busy, without spawning", () => {
+        lockWorktreesForPaths({ sessionId: "timeout-first", paths: [wt], agent: me });
+        const reason = lockReason();
+        const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+            flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        });
+        const fd = openSync(join(admin, "session-lock.flock"), "a", 0o600);
+        const spawn = spyOn(Bun, "spawnSync");
+        const wait = spyOn(Atomics, "wait");
+
+        try {
+            expect(libc.symbols.flock(fd, 2 | 4)).toBe(0);
+            const started = performance.now();
+            const result = lockWorktreesForPaths({ sessionId: "timeout-second", paths: [wt], agent: me });
+            const elapsed = performance.now() - started;
+            expect(result.get(wt)).toBe("held");
+            expect(elapsed).toBeGreaterThanOrEqual(900);
+            expect(elapsed).toBeLessThan(3000);
+            expect(wait).toHaveBeenCalled();
+            expect(spawn).not.toHaveBeenCalled();
+            expect(lockReason()).toBe(reason);
+            expect(existsSync(join(admin, "session-users", "timeout-second.json"))).toBe(false);
+        } finally {
+            wait.mockRestore();
+            spawn.mockRestore();
+            closeSync(fd);
+            libc.close();
+        }
+    });
+
+    it("checks one owner with one targeted ps instead of reading the process table", async () => {
+        const reason = `claude session single pid ${me.pid} since ${new Date().toISOString()}`;
+        const check = await withSpawnCounter(async () => isLockStale(parseLockReason(reason)));
+        expect(check.result).toBe(false);
+        expect(check.count).toBe(1);
+        expect(check.spawns[0]?.cmd).toEqual(["ps", "-o", "etime=,command=", "-p", String(me.pid)]);
+    });
+
+    it("a stale scan uses one ps and agrees with single-owner checks for live, dead, reused and repeated PIDs", async () => {
+        const now = Date.now();
+        const reasons = [
+            DEAD_LOCK,
+            `claude session live pid ${me.pid} since ${new Date(now).toISOString()}`,
+            `claude session reused pid ${me.pid} since 2000-01-01T00:00:00.000Z`,
+            `claude session live-again pid ${me.pid} since ${new Date(now).toISOString()}`,
+        ];
+        const directories = [
+            admin,
+            ...["scan-live", "scan-reused", "scan-live-again"].map((name) => join(main, ".git", "worktrees", name)),
+        ];
+
+        for (const [index, directory] of directories.entries()) {
+            if (index > 0) {
+                mkdirSync(directory);
+                writeFileSync(join(directory, "gitdir"), join(base, `scan-${index}`, ".git"));
+            }
+
+            writeFileSync(join(directory, "locked"), reasons[index]!);
+        }
+
+        try {
+            const individual = reasons.map((reason) => isLockStale(parseLockReason(reason), { now }));
+            expect(individual).toEqual([true, false, true, false]);
+            const scan = await withSpawnCounter(async () => findStaleWorktreeLocks(main, now));
+            expect(scan.count).toBe(1);
+            const stale = new Set(scan.result.map((lock) => lock.adminDir));
+            expect(directories.map((directory) => stale.has(directory))).toEqual(individual);
+        } finally {
+            for (const directory of directories.slice(1)) {
+                rmSync(directory, { recursive: true });
+            }
+        }
+    });
+
+    it("protects both live sessions until the last user ends, and refuses release while another user remains", () => {
+        lockWorktreesForPaths({ sessionId: "shared-a", paths: [wt], agent: me });
+        lockWorktreesForPaths({ sessionId: "shared-b", paths: [wt], agent: me });
+        writeFileSync(join(wt, "keep-shared.txt"), "protect the fixture on a planted regression");
+
+        try {
+            const release = releaseSessionWorktree({ worktree: wt, sessionId: "shared-a" });
+            expect(release.removed).toBe(false);
+            expect(release.detail).toContain("live session");
+            expect(unlockSessionWorktrees("shared-a")).toEqual([]);
+            expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "shared-b", pid: me.pid });
+            expect(unlockSessionWorktrees("shared-b")).toEqual([wt]);
+            expect(lockReason()).toBeNull();
+        } finally {
+            unlinkSync(join(wt, "keep-shared.txt"));
+        }
+    });
+
+    it("skips corrupt user and record files while preserving valid users and finishing other worktrees", () => {
+        const session = "corrupt-record-owner";
+        lockWorktreesForPaths({ sessionId: session, paths: [wt, otherWt], agent: me });
+        lockWorktreesForPaths({ sessionId: "valid-survivor", paths: [wt], agent: me });
+        const records = join(
+            env.getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
+            ".genesis-tools",
+            "claude-code",
+            "worktree-locks",
+            `${session}.json.d`
+        );
+        const users = join(admin, "session-users");
+
+        for (const directory of [records, users]) {
+            writeFileSync(join(directory, "corrupt.json"), "{");
+            writeFileSync(join(directory, "invalid.json"), JSON.stringify({ harness: "unknown" }));
+            mkdirSync(join(directory, "unreadable.json"));
+        }
+
+        const badDate = join(users, "000-invalid-date.json");
+        writeFileSync(badDate, JSON.stringify({ sessionId: "bad-date", ...me, since: "invalid" }));
+        const warnings = spyOn(fs, "appendFileSync");
+
+        try {
+            const release = releaseSessionWorktree({ worktree: wt, sessionId: session });
+            expect(release.removed).toBe(false);
+            expect(release.detail).toContain("live session");
+            expect(unlockSessionWorktrees(session)).toEqual([otherWt]);
+            expect(readLockReason(otherAdmin)).toBeNull();
+            expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "valid-survivor" });
+            expect(unlockSessionWorktrees("valid-survivor")).toEqual([wt]);
+            expect(lockReason()).toBeNull();
+            expect(warnings.mock.calls.some(([, data]) => String(data).includes(badDate))).toBe(true);
+
+            for (const directory of [records, users]) {
+                for (const name of ["corrupt.json", "invalid.json", "unreadable.json"]) {
+                    expect(warnings.mock.calls.some(([, data]) => String(data).includes(join(directory, name)))).toBe(
+                        true
+                    );
+                }
+            }
+        } finally {
+            warnings.mockRestore();
+        }
+    });
+
+    it("keeps both repositories when two record publications overlap", () => {
+        const session = "two-repositories";
+        const prefix = join(
+            env.getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
+            ".genesis-tools",
+            "claude-code",
+            "worktree-locks",
+            `${session}.json`
+        );
+        const publish = fs.renameSync;
+        const pending: Array<{ target: string; bytes: Buffer }> = [];
+        const rename = spyOn(fs, "renameSync").mockImplementation((source, target) => {
+            if (typeof target === "string" && target.startsWith(prefix)) {
+                pending.push({ target, bytes: fs.readFileSync(source) });
+                return;
+            }
+
+            publish(source, target);
+        });
+
+        try {
+            lockWorktreesForPaths({ sessionId: session, paths: [wt], agent: me });
+            lockWorktreesForPaths({ sessionId: session, paths: [otherWt], agent: me });
+        } finally {
+            rename.mockRestore();
+        }
+
+        expect(pending).toHaveLength(2);
+
+        for (const item of pending) {
+            writeFileSync(item.target, item.bytes);
+        }
+
+        expect(unlockSessionWorktrees(session).sort()).toEqual([wt, otherWt].sort());
+        expect(lockReason()).toBeNull();
+        expect(readLockReason(otherAdmin)).toBeNull();
+    });
+
+    it("stops after one failed agent lookup without claiming any worktree is held", () => {
+        let calls = 0;
+        const attempt = lockWorktreesForPaths({
+            sessionId: "no-agent",
+            paths: [wt, otherWt],
+            findAgent: () => {
+                calls++;
+                return null;
+            },
+        });
+        expect(calls).toBe(1);
+        expect(attempt.size).toBe(0);
+        expect(lockReason()).toBeNull();
+        expect(readLockReason(otherAdmin)).toBeNull();
+    });
+
     it("a live pid that started after the lock was taken is a reused pid, so its lock is stale", () => {
         expect(isLockStale(parseLockReason(`claude session old pid ${me.pid} since 2000-01-01T00:00:00.000Z`))).toBe(
             true
@@ -229,7 +600,7 @@ describe("worktree-lock", () => {
             ".genesis-tools",
             "claude-code",
             "worktree-locks",
-            "s-end.json"
+            "s-end.json.d"
         );
 
         expect(existsSync(record)).toBe(true);
