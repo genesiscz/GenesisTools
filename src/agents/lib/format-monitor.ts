@@ -25,7 +25,7 @@ export function formatEventMonitor(event: MonitorEvent, names: AgentNames, posit
     // Lines written together arrive as one Monitor event whose row shows only the first headline, so a batch says
     // how many events it carries.
     const prefix = position && position.total > 1 ? `[${position.index}/${position.total}] ` : "";
-    return `${prefix}${monitorHeadline(event, names)}\n${SafeJSON.stringify(event, { strict: true })}`;
+    return `${prefix}${oneLine(monitorHeadline(event, names))}\n${SafeJSON.stringify(event, { strict: true })}`;
 }
 
 export function learnAgentNames(names: AgentNames, event: FeedEvent): void {

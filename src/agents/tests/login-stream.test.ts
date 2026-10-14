@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { MessageEvent } from "../lib/types";
 
 // The agents entry itself, not the `tools` wrapper: a SIGTERM to the wrapper never reached the `agents login`
 // stream behind it, so every run left three logins alive in its bun test worker (worker log, 2026-10-09).
@@ -26,6 +27,7 @@ function spawnAgents(home: string, args: string[]): Bun.Subprocess<"ignore", "pi
 }
 
 class JsonlTap {
+    readonly output: string[] = [];
     private buf = "";
     private readonly lines: JsonLine[] = [];
     private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -65,6 +67,7 @@ class JsonlTap {
             while (nl >= 0) {
                 const raw = this.buf.slice(0, nl).trim();
                 this.buf = this.buf.slice(nl + 1);
+                this.output.push(raw);
 
                 if (raw.startsWith("{")) {
                     const parsed = SafeJSON.parse(raw, { strict: true });
@@ -191,7 +194,7 @@ describe("agents login --once --timeout", () => {
         const { code, text } = await readOnce(home, ["--format", "json", ...args]);
         const lines = text
             .split("\n")
-            .filter((line) => line.startsWith("{"))
+            .filter((line) => line.trim() !== "")
             .map((line) => SafeJSON.parse(line, { strict: true }) as JsonLine);
 
         return { code, lines };
@@ -269,4 +272,68 @@ describe("agents login --once --timeout", () => {
 
         expect(await proc.exited).not.toBe(0);
     }, 15_000);
+});
+
+describe("agents listen batch framing", () => {
+    test.each(["monitor", "json"] as const)(
+        "%s frames initial replay, appended batches and single events",
+        async (format) => {
+            const home = mkdtempSync(join(tmpdir(), "gt-agents-listen-batch-"));
+            const session = "listen-batch";
+            const dir = join(home, ".genesis-tools", "agents", session);
+            mkdirSync(dir, { recursive: true });
+            const feedPath = join(dir, "feed.jsonl");
+            const events: MessageEvent[] = Array.from({ length: 5 }, (_, index) => ({
+                seq: index + 1,
+                ts: "2026-01-01T00:00:00.000Z",
+                type: "message",
+                message_id: `m_${index + 1}`,
+                from_agent_id: "agt_sender",
+                from_agent_name: "sender",
+                to_agent_ids: [],
+                body: `event ${index + 1}`,
+                meta: {},
+                private: false,
+            }));
+            const encode = (batch: MessageEvent[]) =>
+                `${batch.map((event) => SafeJSON.stringify(event, { strict: true })).join("\n")}\n`;
+            writeFileSync(feedPath, encode(events.slice(0, 2)));
+            // Omit --format for monitor: the documented pipe default must work too.
+            const proc = spawnAgents(home, [
+                "listen",
+                "--session",
+                session,
+                ...(format === "json" ? ["--format", "json"] : []),
+            ]);
+            const tap = new JsonlTap(proc.stdout);
+
+            try {
+                await tap.waitUntil((line) => line.seq === 2, 8_000);
+                appendFileSync(feedPath, encode(events.slice(2, 4)));
+                await tap.waitUntil((line) => line.seq === 4, 8_000);
+                appendFileSync(feedPath, encode(events.slice(4)));
+                await tap.waitUntil((line) => line.seq === 5, 8_000);
+
+                if (format === "monitor") {
+                    expect(tap.output).toEqual(
+                        events.flatMap((event, index) => [
+                            `${index < 4 ? `[${(index % 2) + 1}/2] ` : ""}message: sender → (broadcast): ${event.body}`,
+                            SafeJSON.stringify(event, { strict: true }),
+                        ])
+                    );
+                } else {
+                    expect(tap.output.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual(events);
+                }
+            } finally {
+                proc.kill("SIGTERM");
+                const stopped = await Promise.race([proc.exited.then(() => true), Bun.sleep(3_000).then(() => false)]);
+
+                if (!stopped) {
+                    proc.kill("SIGKILL");
+                    await proc.exited;
+                }
+            }
+        },
+        30_000
+    );
 });

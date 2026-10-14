@@ -139,9 +139,9 @@ Starting the receiver again is a new `agent_joined`; it needs no message.
 
 ## Mental model in one sentence
 
-There's a shared **feed.jsonl** per session under `~/.genesis-tools/agents/<session>/`. Anyone with filesystem access can append events through the CLI. Login auto-registers, filters events, and emits JSONL on stdout. A capable harness monitors that stream; other hosts receive through blocking `--once` calls.
+There's a shared **feed.jsonl** per session under `~/.genesis-tools/agents/<session>/`. Anyone with filesystem access can append events through the CLI. Login auto-registers and filters events. When stdout is piped, the default `monitor` format emits a headline followed by a JSON line for each event. Use `--format json` for JSONL-only stdout; do not parse every default-output line as JSON. A capable harness monitors that stream; other hosts receive through blocking `--once` calls.
 
-**In a bus workflow, login stdout is the inbox.** Do not `cat`, `Read`, or poll `feed.jsonl`, a tee'd file, or a cursor file. Mail arrives as JSONL lines from `tools agents login`. Send with `tools agents message`; inspect the roster with `tools agents discover`.
+**In a bus workflow, login stdout is the inbox.** Do not `cat`, `Read`, or poll `feed.jsonl`, a tee'd file, or a cursor file. Piped `tools agents login` delivers mail as headline/JSON pairs by default, or JSONL with explicit `--format json`. Send with `tools agents message`; inspect the roster with `tools agents discover`.
 
 ## Topology (the only one you need)
 

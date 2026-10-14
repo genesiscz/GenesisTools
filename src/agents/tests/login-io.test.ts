@@ -154,6 +154,60 @@ describe("formatEventMonitor", () => {
         expect(SafeJSON.parse(json ?? "", { strict: true })).toEqual({ ...message, body });
     });
 
+    const metadataCases: Array<[MonitorEvent, string]> = [
+        [
+            {
+                ...message,
+                from_agent_name: "beta\nworker",
+                to_agent_ids: ["main_demo", "unknown\rid"],
+                in_reply_to: "m_\t0",
+            },
+            "reply: beta ⏎ worker → lead [31m, unknown ⏎ id, re m_ 0: Acknowledged. Reading the files now.",
+        ],
+        [
+            {
+                type: "ready",
+                agent_id: "main_demo",
+                agent_name: "lead\u001b[0m",
+                session: "demo\r\nsession\u2028next\u2029last",
+                mode: "stream",
+                is_main: true,
+            },
+            "ready: lead [0m is listening (stream, main) · session demo ⏎ session ⏎ next ⏎ last",
+        ],
+        [
+            {
+                seq: 1,
+                ts,
+                type: "registered",
+                agent_name: "alpha\nworker",
+                agent_id: "agt_\u009b31m",
+                awaiting_login: true,
+                is_main: false,
+                role: "reviewer\u0000\trole",
+                meta: {},
+            },
+            "registered: alpha ⏎ worker as agt_ 31m (role reviewer  role, awaiting login)",
+        ],
+    ];
+
+    test.each(metadataCases)("%# sanitizes all headline metadata without changing the JSON", (event, headline) => {
+        const unsafeNames: AgentNames = new Map([["main_demo", "lead\u001b[31m"]]);
+
+        for (const position of [undefined, { index: 2, total: 3 }]) {
+            const lines = formatEventMonitor(event, unsafeNames, position).split("\n");
+
+            expect(lines).toEqual([
+                `${position ? "[2/3] " : ""}${headline}`,
+                SafeJSON.stringify(event, { strict: true }),
+            ]);
+            expect(lines[0]).not.toMatch(/[\p{Cc}\p{Zl}\p{Zp}]/u);
+            expect(SafeJSON.parse(lines[1] ?? "", { strict: true })).toEqual(event);
+        }
+
+        expect(unsafeNames.get("main_demo")).toBe("lead\u001b[31m");
+    });
+
     test("events written together number themselves, a single one does not", () => {
         expect(formatEventMonitor(message, names, { index: 2, total: 3 })).toStartWith("[2/3] message: beta → lead:");
         expect(formatEventMonitor(message, names, { index: 1, total: 1 })).toStartWith("message: beta → lead:");

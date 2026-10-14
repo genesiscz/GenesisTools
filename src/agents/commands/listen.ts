@@ -9,7 +9,7 @@ import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { runWithFriendlyErrors } from "../lib/errors";
 import { FeedLogCursor, readFeed } from "../lib/feed";
-import { type AgentNames, formatEventMonitor, learnAgentNames } from "../lib/format-monitor";
+import { type AgentNames, type BatchPosition, formatEventMonitor, learnAgentNames } from "../lib/format-monitor";
 import { formatEventPretty } from "../lib/format-pretty";
 import { onShutdown } from "../lib/lifecycle";
 import { type FeedFormat, resolveFeedFormat } from "../lib/login-io";
@@ -148,7 +148,17 @@ function nextListenerId(): string {
     return `obs_${randomBytes(3).toString("hex")}`;
 }
 
-function emitEvent(event: FeedEvent, format: FeedFormat, names: AgentNames): void {
+function emitEvent({
+    event,
+    format,
+    names,
+    position,
+}: {
+    event: FeedEvent;
+    format: FeedFormat;
+    names: AgentNames;
+    position: BatchPosition;
+}): void {
     learnAgentNames(names, event);
 
     if (format === "json") {
@@ -157,7 +167,7 @@ function emitEvent(event: FeedEvent, format: FeedFormat, names: AgentNames): voi
     }
 
     if (format === "monitor") {
-        out.println(formatEventMonitor(event, names));
+        out.println(formatEventMonitor(event, names, position));
         return;
     }
 
@@ -195,8 +205,8 @@ export async function runListen(opts: ListenOpts): Promise<void> {
 
     const initial = await readFeed(paths);
 
-    for (const event of initial) {
-        emitEvent(event, format, names);
+    for (const [index, event] of initial.entries()) {
+        emitEvent({ event, format, names, position: { index: index + 1, total: initial.length } });
 
         if (event.seq > lastSeq) {
             lastSeq = event.seq;
@@ -217,8 +227,8 @@ export async function runListen(opts: ListenOpts): Promise<void> {
         onChange: async () => {
             const next = await feedCursor.readAppended();
 
-            for (const event of next) {
-                emitEvent(event, format, names);
+            for (const [index, event] of next.entries()) {
+                emitEvent({ event, format, names, position: { index: index + 1, total: next.length } });
 
                 if (event.seq > lastSeq) {
                     lastSeq = event.seq;
