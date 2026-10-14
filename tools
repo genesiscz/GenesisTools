@@ -291,6 +291,18 @@ async function runWithReinstallGuard(args: string[], workspaceRoot: string, exec
         return exitCode;
     }
 
+    // A linked worktree (its .git is a file) never installs by itself: a fresh install writes new native binaries
+    // (tsgo, biome, node-gyp builds), and on 2026-10-14 each one waited minutes for syspolicyd's first-run check
+    // while several review workers shared the machine. Print the repair instead; TOOLS_AUTOINSTALL=1 opts in.
+    const gitMarker = join(workspaceRoot, ".git");
+    if (existsSync(gitMarker) && statSync(gitMarker).isFile() && process.env.TOOLS_AUTOINSTALL !== "1") {
+        process.stderr.write(
+            "\n\x1b[33m[tools]\x1b[0m Likely node_modules mismatch in this worktree. Not installing automatically here;\n" +
+                `\x1b[33m[tools]\x1b[0m repair it with: cd ${workspaceRoot} && bun install   (or rerun with TOOLS_AUTOINSTALL=1)\n`
+        );
+        return exitCode;
+    }
+
     process.stderr.write(
         "\n\x1b[33m[tools]\x1b[0m Detected a likely node_modules mismatch (duplicate React / missing module).\n"
     );
