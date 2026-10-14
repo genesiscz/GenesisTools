@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { run } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
+import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 interface SecurityCheck {
     cmd: string;
@@ -53,7 +54,7 @@ export class SecurityAnalyzer extends Analyzer {
  * 22 ms under Terminal.app (listed).
  */
 async function developerToolsFinding(analyzerId: string): Promise<Finding | null> {
-    const host = hostAppBundle(await ancestorExecutables(process.pid));
+    const host = hostAppBundle(ancestorExecutables(process.pid));
     if (!host) {
         return null;
     }
@@ -139,21 +140,11 @@ function readDeveloperToolClients(): Array<{ client: string; auth_value: number 
     return rows;
 }
 
-async function ancestorExecutables(pid: number): Promise<string[]> {
-    const paths: string[] = [];
-    let current = pid;
-    for (let depth = 0; depth < 12 && current > 1; depth++) {
-        const res = await run("ps", ["-o", "ppid=", "-o", "comm=", "-p", String(current)]);
-        const match = res.stdout.trim().match(/^(\d+)\s+(.+)$/);
-        if (res.status !== 0 || !match) {
-            break;
-        }
-
-        paths.push(match[2]);
-        current = Number(match[1]);
-    }
-
-    return paths;
+/** `pid` and its ancestors below launchd, nearest first, each as its executable path (its kernel name when unreadable). */
+function ancestorExecutables(pid: number): string[] {
+    return ancestry(pid, 12)
+        .filter((entry) => entry.pid > 1)
+        .map((entry) => readExecutablePath(entry.pid) ?? entry.name);
 }
 
 export function isFileVaultEnabled(out: string): boolean {
