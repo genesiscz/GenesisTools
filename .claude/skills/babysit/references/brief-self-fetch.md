@@ -86,6 +86,10 @@ Post NOTHING to GitHub: no `gh pr comment`, no `gh api` writes, no `tools github
   write the reply file (that finding's verdict `no-change`, with "needs <file>: out of the PR's scope" in its reply),
   and name it under OPEN in your report. The lead decides and may allow the file in a follow-up.
 - Do NOT spawn subagents or delegate.
+- Do NOT build, install, launch, relaunch or quit the user's apps. Never run `tools macos permissions build`,
+  `src/macos/index.ts`, `scripts/native/*` or anything else that writes `~/Applications/*.app` or restarts a running
+  app: it replaces the user's installed app with this PR's code and relaunches its windows (on 2026-10-14 a worker
+  did exactly that). Swift is checked with `swift build` and `swift test` inside the package folder only.
 - Final report, in order: the thread count you found per reviewer, one line per finding (ref, verdict, where), your
   commit SHA with `git show --stat <sha>`, every verify command with its real exit code and the last lines of its
   output, then the RESULT / AT / CHANGED / VERIFY / OPEN lines.
