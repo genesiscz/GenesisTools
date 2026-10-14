@@ -6,9 +6,11 @@
  * `tools github merge --rebase`. Every git call is an argument array: a hand-typed `--force-with-lease=$B:c1a…`
  * in zsh read `:c` as a modifier and pushed without the lease (2026-10-14, #502).
  *
- *   bun land.ts --run <dir> --pr <N> [--wt <dir>] [--merge] [--no-push-hooks]
+ *   bun land.ts --run <dir> --pr <N> [--wt <dir>] [--merge] [--no-push-hooks] [--max-commits <n>]
  *
- * Without --merge it only prepares and prints the squash in the worktree (detached, nothing pushed).
+ * Without --merge it only prepares and prints the squash in the worktree (detached, nothing pushed). Either way it
+ * moves the worktree's HEAD, so never run it on a worktree a worker is still using (2026-10-14: a dry run landed a
+ * squash commit under a worker that was restoring its head).
  */
 import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -112,16 +114,19 @@ if (review.length >= 2) {
 
 must(spawnIn(wt, ["bun", "scripts/git/check-commits.ts", `origin/${base}..HEAD`]), "check-commits");
 
-// Martin's rule (2026-10-14 06:48): at most 10 commits per PR when it lands. Regroup a longer history into thematic
-// commits with the same final tree first; this script never invents groups.
-const count = Number(must(git(["rev-list", "--count", `origin/${base}..HEAD`]), "count"));
+// Optional, only when a commit limit was asked for this PR (--max-commits <n>): there is no default limit. Regroup a
+// longer history into thematic commits with the same final tree first; this script never invents groups.
+const maxCommits = flag("--max-commits");
 
-if (count > 10) {
-    console.error(
-        `✖ #${pr} has ${count} commits after the review squash; the limit is 10. Regroup it first (same tree).`
-    );
-    process.exit(1);
+if (maxCommits !== undefined) {
+    const count = Number(must(git(["rev-list", "--count", `origin/${base}..HEAD`]), "count"));
+
+    if (count > Number(maxCommits)) {
+        console.error(`✖ #${pr} has ${count} commits after the review squash; --max-commits is ${maxCommits}.`);
+        process.exit(1);
+    }
 }
+
 const newHead = must(git(["rev-parse", "HEAD"]), "rev-parse");
 
 if (!has("--merge")) {
