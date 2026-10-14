@@ -36,6 +36,7 @@ interface OpenRouterRateFields {
     cache_read?: string | number;
     input_cache_read?: string | number;
     input_cache_write?: string | number;
+    input_cache_write_1h?: string | number;
 }
 
 /**
@@ -53,7 +54,10 @@ export interface OpenRouterPricingShape extends OpenRouterRateFields {
     overrides?: OpenRouterPricingOverride[];
 }
 
-type RateFields = Pick<PricingRule, "inputPer1M" | "outputPer1M" | "cachedReadPer1M" | "cachedCreatePer1M">;
+type RateFields = Pick<
+    PricingRule,
+    "inputPer1M" | "outputPer1M" | "cachedReadPer1M" | "cachedCreatePer1M" | "cachedCreate1hPer1M"
+>;
 
 function per1M(value: string | number | undefined): number | undefined {
     return value === undefined ? undefined : perTokenToPer1M(value);
@@ -65,12 +69,14 @@ function toRateFields(rates: OpenRouterRateFields): RateFields {
     const output = per1M(rates.completion);
     const cachedRead = per1M(rates.cache_read) ?? per1M(rates.input_cache_read);
     const cachedCreate = per1M(rates.input_cache_write);
+    const cachedCreate1h = per1M(rates.input_cache_write_1h);
 
     return {
         ...(input === undefined ? {} : { inputPer1M: input }),
         ...(output === undefined ? {} : { outputPer1M: output }),
         ...(cachedRead === undefined ? {} : { cachedReadPer1M: cachedRead }),
         ...(cachedCreate === undefined ? {} : { cachedCreatePer1M: cachedCreate }),
+        ...(cachedCreate1h === undefined ? {} : { cachedCreate1hPer1M: cachedCreate1h }),
     };
 }
 
@@ -334,7 +340,13 @@ export function effectivePricing(pricing: ModelPricing, context: PricingContext 
             continue;
         }
 
-        for (const field of ["inputPer1M", "outputPer1M", "cachedReadPer1M", "cachedCreatePer1M"] as const) {
+        for (const field of [
+            "inputPer1M",
+            "outputPer1M",
+            "cachedReadPer1M",
+            "cachedCreatePer1M",
+            "cachedCreate1hPer1M",
+        ] as const) {
             const override = rule[field];
 
             if (override !== undefined) {

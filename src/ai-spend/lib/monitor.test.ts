@@ -237,7 +237,7 @@ describe("monitor report", () => {
         // file is dropped rather than reported under a guessed account.
         buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
-        expect(written.version).toBe(8);
+        expect(written.version).toBe(9);
 
         writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 5 }, { strict: true }));
         const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
@@ -432,7 +432,7 @@ describe("multi-agent monitor report", () => {
 
         const grokDir = join(home, ".grok", "sessions", "%2Ftmp%2Fproj", "sess-grok-1");
         mkdirSync(grokDir, { recursive: true });
-        // 500_000_000 ticks / 1e10 = $0.05, recorded by grok itself.
+        // 500_000_000 ticks / 1e10 = $0.05, recorded by grok itself: its plan metering, not the list price.
         writeFileSync(
             join(grokDir, "updates.jsonl"),
             `${SafeJSON.stringify({
@@ -479,10 +479,11 @@ describe("multi-agent monitor report", () => {
         expect(report.agents.claude.today.tokens).toBe(1_000_000);
         expect(report.agents.codex.today.cost).toBeCloseTo(2.375, 6);
         expect(report.agents.codex.today.tokens).toBe(2_100_000);
-        expect(report.agents.grok.today.cost).toBeCloseTo(0.05, 8);
+        // grok-4.6 list rate: 40K input x $2 + 60K cached x $0.50 + 2K output x $6.
+        expect(report.agents.grok.today.cost).toBeCloseTo(0.122, 8);
         expect(report.agents.grok.today.tokens).toBe(102_000);
 
-        expect(report.today.cost).toBeCloseTo(0.8 + 2.375 + 0.05, 6);
+        expect(report.today.cost).toBeCloseTo(0.8 + 2.375 + 0.122, 6);
         expect(report.today.tokens).toBe(1_000_000 + 2_100_000 + 102_000);
         expect(report.week).toEqual(report.today);
 

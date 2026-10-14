@@ -83,6 +83,16 @@ describe("claudeTurnUsage", () => {
         });
     });
 
+    test("the turn's one-hour cache writes go to the parts that wrote, never more than a part wrote", () => {
+        const resultWithHour = `{"type":"result","subtype":"success","is_error":false,"session_id":"${SESSION}","total_cost_usd":1.861528,"usage":{"input_tokens":24,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":106816}},"modelUsage":{"claude-opus-5":{"inputTokens":24,"outputTokens":11471,"cacheReadInputTokens":1012946,"cacheCreationInputTokens":106816},"claude-haiku-5-5":{"inputTokens":5,"outputTokens":2,"cacheReadInputTokens":0,"cacheCreationInputTokens":100}}}`;
+        const parts = claudeTurnUsage(resultWithHour).parts ?? [];
+
+        expect(parts.map((part) => [part.model, part.tokens.cacheWrite1h])).toEqual([
+            ["claude-opus-5", 106816],
+            ["claude-haiku-5-5", undefined],
+        ]);
+    });
+
     test("without modelUsage the usage line is one part of an unnamed model; no result line is no usage", () => {
         expect(claudeTurnUsage(result).parts).toEqual([
             { model: null, tokens: { input: 10, cacheRead: 0, cacheWrite: 0, output: 121, reasoning: 0 } },

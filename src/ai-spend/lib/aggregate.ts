@@ -1,4 +1,4 @@
-import { priceFor, resolvePrice } from "./pricing";
+import { costOf, priceFor, resolvePrice } from "./pricing";
 import type {
     DayBreakdown,
     Filters,
@@ -71,12 +71,15 @@ function eventCost(ev: UsageEvent, pricing: PricingTable): number {
         contextTokens: ev.inputTokens + ev.cacheReadTokens + ev.cacheCreationTokens,
     });
 
-    return (
-        (ev.inputTokens * price.input +
-            ev.outputTokens * price.output +
-            ev.cacheCreationTokens * price.cacheWrite +
-            ev.cacheReadTokens * price.cacheRead) /
-        1_000_000
+    return costOf(
+        {
+            input: ev.inputTokens,
+            output: ev.outputTokens,
+            cacheWrite: ev.cacheCreationTokens,
+            cacheRead: ev.cacheReadTokens,
+            cacheWrite1h: ev.cacheCreation1hTokens,
+        },
+        price
     );
 }
 

@@ -56,7 +56,11 @@ export interface SpendEvent {
     inputTokens: number;
     outputTokens: number;
     cacheCreationTokens: number;
+    /** The one-hour share of `cacheCreationTokens` (Claude): Anthropic bills it at 2x input. */
+    cacheCreation1hTokens?: number;
     cacheReadTokens: number;
+    /** The event sums several model requests (a grok turn): no per-request length, so no context band. */
+    aggregate?: boolean;
     reasoningOutputTokens?: number;
     recordedCostUsd?: number;
     serviceTier?: string;

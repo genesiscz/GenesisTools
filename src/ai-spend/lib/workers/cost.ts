@@ -2,7 +2,7 @@ import { formatCost } from "@genesiscz/utils/format";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
 import type { WorkerAuthMode, WorkerUsagePart } from "@genesiscz/utils/worker/cost";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "../pricing";
-import { type CostEstimate, eventCostEstimate } from "../reports/cost";
+import { eventCostEstimate } from "../reports/cost";
 import { candidatesFor } from "../reports/load";
 import type { SpendEvent } from "../reports/types";
 import type { PricingTable } from "../types";
@@ -12,7 +12,9 @@ import type { PricingTable } from "../types";
  *
  * - `apiEquivalentUsd`: the worker model's LIST price for the tokens it used, request by
  *   request (a context band applies per request, never to a sum), exactly as the ai-spend
- *   reports price the same session. Grok's own recorded cost wins for grok, as it does there.
+ *   reports price the same session. A figure the worker reported itself (grok's plan metering,
+ *   Claude Code's total) is shown beside it, and stands in only when the catalog has no price,
+ *   labelled `reported`.
  * - `billedUsd`: what the login charged. A subscription bills nothing per turn (it spends
  *   quota instead); an API key bills the list price.
  * - `claudeEquivalent`: the same token profile priced at Claude Opus 5.5 and Sonnet 5.5. An
@@ -23,11 +25,15 @@ import type { PricingTable } from "../types";
 export interface WorkerCostCard {
     /** null when the usage or a price is unknown; never a guessed 0. */
     apiEquivalentUsd: number | null;
-    /** `recorded`: the worker's own figure (grok); `catalog`: list rates per request. */
-    basis: "recorded" | "catalog" | "unpriced";
+    /**
+     * `catalog`: list rates per request. `recorded`: a cost the source recorded that IS the list
+     * price. `reported`: the worker's own figure, standing in because the catalog has no price;
+     * not a list price.
+     */
+    basis: "recorded" | "catalog" | "reported" | "unpriced";
     /** The catalog ids the requests priced as. */
     pricedAs: string[];
-    /** Why `apiEquivalentUsd` is null. */
+    /** Why the list price is unknown (also set when a `reported` figure stands in for it). */
     unpriced?: string;
     /** Requests that crossed a long-context band. */
     longContextRequests: number;
@@ -50,58 +56,36 @@ export interface WorkerCostCard {
 export const CLAUDE_COUNTERFACTUAL = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5" } as const;
 
 /**
- * An ai-spend usage event. `aggregate` marks one that stands for several requests (a per-model
- * total): it prices at the base band, because a context band applies per request and the
- * per-request lengths are gone. Transcript events are single requests and never carry it.
- */
-export type WorkerSpendEvent = SpendEvent & { aggregate?: boolean };
-
-/**
- * A turn's usage parts as ai-spend events. Grok's recorded cost covers the whole turn, so it
- * rides on ONE event that carries all the turn's tokens, the shape ai-spend's grok driver reads
- * from `updates.jsonl`; the per-call split is kept for every other backend.
+ * A turn's usage parts as ai-spend events: one per model call when the stream reported calls
+ * (codex, grok), one per model total otherwise (claude), which `aggregate` marks so no context
+ * band is applied to a sum.
  */
 export function turnSpendEvents(options: {
     backend: WorkerBackend;
     sessionId: string;
     parts: readonly WorkerUsagePart[];
     at: Date;
-    reportedUsd?: number | null;
-}): WorkerSpendEvent[] {
-    const { backend, sessionId, parts, at, reportedUsd } = options;
+}): SpendEvent[] {
+    const { backend, sessionId, parts, at } = options;
     const timestamp = at.toISOString();
-    const event = (part: WorkerUsagePart, index: number): WorkerSpendEvent => ({
-        source: backend,
-        id: `${sessionId}|${timestamp}|${index}`,
-        model: part.model ?? "",
-        timestamp,
-        sessionId,
-        project: "",
-        inputTokens: part.tokens.input,
-        outputTokens: part.tokens.output,
-        cacheCreationTokens: part.tokens.cacheWrite,
-        cacheReadTokens: part.tokens.cacheRead,
-        reasoningOutputTokens: part.tokens.reasoning,
-        ...(part.singleRequest ? {} : { aggregate: true }),
-    });
 
-    if (backend === "grok" && typeof reportedUsd === "number") {
-        const model = parts.find((part) => part.model)?.model ?? null;
-        const total = parts.reduce(
-            (sum, part) => ({
-                input: sum.input + part.tokens.input,
-                cacheRead: sum.cacheRead + part.tokens.cacheRead,
-                cacheWrite: sum.cacheWrite + part.tokens.cacheWrite,
-                output: sum.output + part.tokens.output,
-                reasoning: sum.reasoning + part.tokens.reasoning,
-            }),
-            { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 }
-        );
-
-        return [{ ...event({ model, tokens: total }, 0), recordedCostUsd: reportedUsd, aggregate: true }];
-    }
-
-    return parts.map(event);
+    return parts.map(
+        (part, index): SpendEvent => ({
+            source: backend,
+            id: `${sessionId}|${timestamp}|${index}`,
+            model: part.model ?? "",
+            timestamp,
+            sessionId,
+            project: "",
+            inputTokens: part.tokens.input,
+            outputTokens: part.tokens.output,
+            cacheCreationTokens: part.tokens.cacheWrite,
+            ...(part.tokens.cacheWrite1h ? { cacheCreation1hTokens: part.tokens.cacheWrite1h } : {}),
+            cacheReadTokens: part.tokens.cacheRead,
+            reasoningOutputTokens: part.tokens.reasoning,
+            ...(part.singleRequest ? {} : { aggregate: true }),
+        })
+    );
 }
 
 function isEmpty(event: SpendEvent): boolean {
@@ -116,52 +100,19 @@ export interface PricedEvents {
     longContextRequests: number;
 }
 
-function eventTokens(event: SpendEvent) {
-    return {
-        input: event.inputTokens,
-        output: event.outputTokens,
-        cacheWrite: event.cacheCreationTokens,
-        cacheRead: event.cacheReadTokens,
-    };
-}
-
-function eventAt(event: SpendEvent): Date | undefined {
-    const at = new Date(event.timestamp);
-    return Number.isNaN(at.getTime()) ? undefined : at;
-}
-
-/** ai-spend's catalog estimate for one event, at the base band when it is an aggregate. */
-function estimateEvent(event: WorkerSpendEvent, pricing: PricingTable): CostEstimate {
-    if (!event.aggregate || event.recordedCostUsd !== undefined) {
-        return eventCostEstimate(event, pricing, "auto", candidatesFor(event));
-    }
-
-    for (const model of candidatesFor(event)) {
-        const entry = priceFor(model, pricing);
-
-        if (entry) {
-            const price = resolvePrice(entry, { at: eventAt(event), serviceTier: event.serviceTier, contextTokens: 0 });
-            return {
-                costUSD: costOf(eventTokens(event), price),
-                pricingModel: model,
-                longContext: false,
-                basis: "catalog",
-            };
-        }
-    }
-
-    return { costUSD: null, longContext: false, basis: "unpriced" };
-}
-
 /** The ai-spend price of a set of events: one unpriced event makes the sum unknown, never free. */
-export function priceSpendEvents(
-    events: readonly WorkerSpendEvent[],
-    pricing: PricingTable = DEFAULT_PRICING
-): PricedEvents {
+export function priceSpendEvents(events: readonly SpendEvent[], pricing: PricingTable = DEFAULT_PRICING): PricedEvents {
     let usd = 0;
-    let recorded = false;
     let longContextRequests = 0;
+    const bases = new Set<WorkerCostCard["basis"]>();
     const pricedAs = new Set<string>();
+    const unknown = (unpriced: string): PricedEvents => ({
+        usd: null,
+        basis: "unpriced",
+        pricedAs: [...pricedAs],
+        unpriced,
+        longContextRequests,
+    });
 
     for (const event of events) {
         if (isEmpty(event) && event.recordedCostUsd === undefined) {
@@ -169,39 +120,29 @@ export function priceSpendEvents(
         }
 
         if (!event.model && event.recordedCostUsd === undefined) {
-            return {
-                usd: null,
-                basis: "unpriced",
-                pricedAs: [...pricedAs],
-                unpriced: "the model is unknown",
-                longContextRequests,
-            };
+            return unknown("the model is unknown");
         }
 
-        const estimate = estimateEvent(event, pricing);
+        const estimate = eventCostEstimate(event, pricing, "auto", candidatesFor(event));
 
         if (estimate.costUSD === null) {
-            return {
-                usd: null,
-                basis: "unpriced",
-                pricedAs: [...pricedAs],
-                unpriced: `no list price for ${event.model}`,
-                longContextRequests,
-            };
+            return unknown(`no list price for ${event.model}`);
         }
 
         usd += estimate.costUSD;
-        recorded ||= estimate.basis === "recorded";
+        bases.add(estimate.basis);
         longContextRequests += estimate.longContext ? 1 : 0;
         pricedAs.add(estimate.pricingModel ?? event.model);
     }
 
-    return { usd, basis: recorded ? "recorded" : "catalog", pricedAs: [...pricedAs], longContextRequests };
+    // The weakest basis names the sum: one agent-reported figure makes the total not a list price.
+    const basis = bases.has("reported") ? "reported" : bases.has("recorded") ? "recorded" : "catalog";
+    return { usd, basis, pricedAs: [...pricedAs], longContextRequests };
 }
 
 /** The same events at one Claude model's list price, request by request. */
 export function priceAsClaude(
-    events: readonly WorkerSpendEvent[],
+    events: readonly SpendEvent[],
     model: string,
     pricing: PricingTable = DEFAULT_PRICING
 ): number | null {
@@ -214,11 +155,23 @@ export function priceAsClaude(
     let usd = 0;
 
     for (const event of events) {
+        const at = new Date(event.timestamp);
         const price = resolvePrice(entry, {
-            at: eventAt(event),
-            contextTokens: event.aggregate ? 0 : event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
+            at: Number.isNaN(at.getTime()) ? undefined : at,
+            contextTokens: event.aggregate
+                ? undefined
+                : event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
         });
-        usd += costOf(eventTokens(event), price);
+        usd += costOf(
+            {
+                input: event.inputTokens,
+                output: event.outputTokens,
+                cacheWrite: event.cacheCreationTokens,
+                cacheRead: event.cacheReadTokens,
+                cacheWrite1h: event.cacheCreation1hTokens,
+            },
+            price
+        );
     }
 
     return usd;
@@ -236,13 +189,13 @@ export interface WorkerCostInput {
 }
 
 export function cardFromEvents(options: {
-    events: readonly WorkerSpendEvent[] | null;
+    events: readonly SpendEvent[] | null;
     auth: WorkerAuthMode;
     reportedUsd?: number | null;
     pricing?: PricingTable;
 }): WorkerCostCard {
     const { events, auth, reportedUsd, pricing = DEFAULT_PRICING } = options;
-    const own: PricedEvents =
+    const listed: PricedEvents =
         events === null
             ? {
                   usd: null,
@@ -252,6 +205,11 @@ export function cardFromEvents(options: {
                   longContextRequests: 0,
               }
             : priceSpendEvents(events, pricing);
+    // No list price: the worker's own figure stands in, and says what it is.
+    const own: PricedEvents =
+        listed.usd === null && typeof reportedUsd === "number"
+            ? { ...listed, usd: reportedUsd, basis: "reported" }
+            : listed;
     const asClaude = (model: string) => (events === null ? null : priceAsClaude(events, model, pricing));
 
     return {
@@ -278,13 +236,7 @@ export function workerCostCard(input: WorkerCostInput, pricing: PricingTable = D
     const events =
         input.parts === null
             ? null
-            : turnSpendEvents({
-                  backend: input.backend,
-                  sessionId: input.sessionId,
-                  parts: input.parts,
-                  at: input.at,
-                  reportedUsd: input.reportedUsd,
-              });
+            : turnSpendEvents({ backend: input.backend, sessionId: input.sessionId, parts: input.parts, at: input.at });
 
     return cardFromEvents({ events, auth: input.auth, reportedUsd: input.reportedUsd, pricing });
 }
@@ -303,25 +255,26 @@ function usdOrUnknown(value: number | null): string {
 }
 
 /**
- * `cost: $0.69 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $1.38 / Sonnet $0.69 (estimate)`
- * `cost: $2.44 API-equivalent (grok's recorded cost; subscription, billed $0) · as Claude ≈ Opus $3.40 / Sonnet $1.70 (estimate)`
+ * `cost: $7.18 API-equivalent (subscription, billed $0; grok reported $2.44) · as Claude ≈ Opus $3.40 / Sonnet $1.70 (estimate)`
+ * `cost: $0.13 reported by grok (no list price for grok-0-x; subscription, billed $0) · as Claude ≈ …`
  */
 export function formatCostLine(card: WorkerCostCard, backend: WorkerBackend): string {
-    const api =
+    const head =
         card.apiEquivalentUsd === null
             ? "API-equivalent unknown"
-            : `${formatUsd(card.apiEquivalentUsd)} API-equivalent`;
+            : card.basis === "reported"
+              ? `${formatUsd(card.apiEquivalentUsd)} reported by ${backend}`
+              : `${formatUsd(card.apiEquivalentUsd)} API-equivalent`;
     const notes = [
-        card.apiEquivalentUsd === null ? (card.unpriced ?? "no usage reported") : "",
-        card.basis === "recorded" ? `${backend}'s recorded cost` : "",
+        card.apiEquivalentUsd === null || card.basis === "reported" ? (card.unpriced ?? "no usage reported") : "",
         card.auth === "unknown"
             ? "login unknown"
             : `${card.auth}, billed ${card.billedUsd === null ? "?" : formatUsd(card.billedUsd)}`,
-        card.reportedUsd === undefined || card.basis === "recorded"
+        card.reportedUsd === undefined || card.basis === "reported"
             ? ""
             : `${backend} reported ${formatUsd(card.reportedUsd)}`,
     ].filter(Boolean);
     const claude = card.claudeEquivalent;
 
-    return `cost: ${api} (${notes.join("; ")}) · as Claude ≈ Opus ${usdOrUnknown(claude.opusUsd)} / Sonnet ${usdOrUnknown(claude.sonnetUsd)} (estimate)`;
+    return `cost: ${head} (${notes.join("; ")}) · as Claude ≈ Opus ${usdOrUnknown(claude.opusUsd)} / Sonnet ${usdOrUnknown(claude.sonnetUsd)} (estimate)`;
 }

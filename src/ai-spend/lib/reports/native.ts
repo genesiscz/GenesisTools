@@ -96,6 +96,7 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
     const inputTokens = num(usage.input_tokens as number | undefined);
     const outputTokens = num(usage.output_tokens as number | undefined);
     const cacheCreation = cacheCreationTokens(usage as ClaudeUsage);
+    const cacheCreation1h = num((usage as ClaudeUsage).cache_creation?.ephemeral_1h_input_tokens);
     const cacheRead = num(usage.cache_read_input_tokens as number | undefined);
 
     if (inputTokens || outputTokens || cacheCreation || cacheRead) {
@@ -109,6 +110,7 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
             inputTokens,
             outputTokens,
             cacheCreationTokens: cacheCreation,
+            ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: Math.min(cacheCreation1h, cacheCreation) } : {}),
             cacheReadTokens: cacheRead,
             recordedCostUsd: recorded,
             isSidechain,
@@ -226,7 +228,9 @@ export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult
                 inputTokens: event.inputTokens,
                 outputTokens: event.outputTokens,
                 cacheCreationTokens: event.cacheCreationTokens,
+                ...(event.cacheCreation1hTokens ? { cacheCreation1hTokens: event.cacheCreation1hTokens } : {}),
                 cacheReadTokens: event.cacheReadTokens,
+                ...(event.aggregate ? { aggregate: true } : {}),
                 recordedCostUsd: event.recordedCostUsd,
                 reasoningOutputTokens: event.reasoningOutputTokens,
                 serviceTier: event.serviceTier,

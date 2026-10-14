@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { DEFAULT_PRICING } from "../pricing";
 import { billedCost, collectEvents } from "./driver-test-helpers";
 import { grokDriver } from "./grok";
 import { isolateAgentHomeEnv, toolsHomeFixture } from "./test-env";
@@ -24,7 +23,7 @@ const turnCompleted = (eventId: string, usage: Record<string, unknown>): string 
     });
 
 describe("grok driver", () => {
-    test("splits inputTokens into uncached/read/write and trusts costUsdTicks", () => {
+    test("splits inputTokens into uncached/read/write, keeps costUsdTicks as grok's own figure, bills the list rate", () => {
         const events = collectEvents(grokDriver, [
             turnCompleted("evt-1", {
                 inputTokens: 89_502,
@@ -56,11 +55,12 @@ describe("grok driver", () => {
             cacheCreationTokens: 0,
             cacheReadTokens: 59_008,
         });
-        // One tick is 1e-10 USD: 163383600 / 1e10 = $0.01633836.
+        // One tick is 1e-10 USD: 163383600 / 1e10 = $0.01633836. Grok's own figure is kept...
         expect(events[0].recordedCostUsd).toBeCloseTo(0.01633836, 12);
-        expect(billedCost(grokDriver, events[0])).toBeCloseTo(0.01633836, 12);
-        // The agent's own figure survives even though xai carries no catalog rate.
-        expect(DEFAULT_PRICING["grok-4.6"]).toBeUndefined();
+        // ...but it is the CLI's metering, not the list price: grok-4.6 bills $2 / $0.50 cached / $6.
+        expect(billedCost(grokDriver, events[0])).toBeCloseTo(30_494 * 2e-6 + 59_008 * 0.5e-6 + 936 * 6e-6, 12);
+        // A turn row sums its calls, so it carries no request length for a context band.
+        expect(events[0].aggregate).toBe(true);
     });
 
     test("the envelope timestamp is Unix SECONDS, `_meta.agentTimestampMs` is millis", () => {
@@ -97,9 +97,9 @@ describe("grok driver", () => {
         expect(events[0]).toMatchObject({ inputTokens: 35, cacheReadTokens: 40, cacheCreationTokens: 25 });
         // The three parts sum back to inputTokens.
         expect(events[0].inputTokens + events[0].cacheReadTokens + events[0].cacheCreationTokens).toBe(100);
-        // No ticks recorded and xai is unpriced → $0.
+        // No ticks recorded: the list rate of grok-4.5 ($2 / $0.30 cached / $6), a cache write as input.
         expect(events[0].recordedCostUsd).toBeUndefined();
-        expect(billedCost(grokDriver, events[0])).toBe(0);
+        expect(billedCost(grokDriver, events[0])).toBeCloseTo((35 * 2 + 40 * 0.3 + 25 * 2 + 20 * 6) * 1e-6, 12);
     });
 
     test("one turn billing two models yields two events, sorted by model id", () => {

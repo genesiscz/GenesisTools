@@ -16,8 +16,8 @@ import {
     MONITOR_DRIVERS,
     type MonitorDriver,
 } from "./drivers";
-import { costOf, resolvePrice } from "./pricing";
-import type { ModelPriceEntry, PricingTable } from "./types";
+import { eventCostEstimate } from "./reports/cost";
+import type { PricingTable } from "./types";
 
 /**
  * `ai-spend monitor` — today, yesterday, the current week (local timezone,
@@ -238,13 +238,15 @@ interface AgentCache {
  * than a wrong number.
  * Bumped to 8 when Codex stopped counting a call twice (record and token_count), which the cached
  * event rows still held.
+ * Bumped to 9 when grok's recorded cost stopped being its list price and Claude's one-hour cache
+ * writes got their own rate: a cached row holds a cost computed under the old rules.
  * Bumped to 5 for Astra context/fast pricing and Codex cache-write tokens.
  * Previously bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
  * and reporting it under "(unbound)" would be a guess. Discarding the file
  * costs one full re-parse and gets every row tagged from the live root map.
  */
 interface MonitorCache {
-    version: 8;
+    version: 9;
     agents: Record<AgentId, AgentCache>;
 }
 
@@ -268,7 +270,7 @@ function freshAgentCache(): AgentCache {
 
 function freshCache(): MonitorCache {
     return {
-        version: 8,
+        version: 9,
         agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
     };
 }
@@ -317,7 +319,7 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 8 && raw.agents) {
+        if (raw?.version === 9 && raw.agents) {
             const cache = freshCache();
 
             for (const id of AGENT_IDS) {
@@ -467,27 +469,6 @@ export function readTail(path: string, offset: number, size: number): string {
     }
 }
 
-/**
- * Returns the catalog ENTRY, not a flat price. The caller resolves it against
- * the event's own timestamp and size — a dated promotion or a long-context band
- * only means something per event.
- *
- * This used to return `ModelPrice`, and because `ModelPriceEntry extends
- * ModelPrice` the rules were dropped with no type error: the monitor billed
- * every event at the list rate while aggregate.ts honoured the rules.
- */
-function priceForDriver(driver: MonitorDriver, model: string, pricing: PricingTable): ModelPriceEntry | null {
-    for (const candidate of driver.priceCandidates(model)) {
-        const price = pricing[candidate];
-
-        if (price) {
-            return price;
-        }
-    }
-
-    return null;
-}
-
 interface ParseChunkOptions {
     driver: MonitorDriver;
     file: string;
@@ -521,26 +502,10 @@ function parseChunk(options: ParseChunkOptions): void {
 
         const day = localDayString(when);
         const tokens = event.inputTokens + event.outputTokens + event.cacheCreationTokens + event.cacheReadTokens;
-        let cost = event.recordedCostUsd;
-
-        if (cost === undefined) {
-            const entry = priceForDriver(driver, event.model, pricing);
-            cost = entry
-                ? costOf(
-                      {
-                          input: event.inputTokens,
-                          output: event.outputTokens,
-                          cacheWrite: event.cacheCreationTokens,
-                          cacheRead: event.cacheReadTokens,
-                      },
-                      resolvePrice(entry, {
-                          at: Number.isNaN(when.getTime()) ? undefined : when,
-                          contextTokens: event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
-                          serviceTier: event.serviceTier,
-                      })
-                  )
-                : 0;
-        }
+        // The reports' own policy: a recorded cost wins only where it is the list price.
+        const cost =
+            eventCostEstimate({ ...event, source: driver.id }, pricing, "auto", driver.priceCandidates(event.model))
+                .costUSD ?? 0;
 
         entry.events.push({ id: event.id, day, cost, tokens, sidechain: event.isSidechain });
     };

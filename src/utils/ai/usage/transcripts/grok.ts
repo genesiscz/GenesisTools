@@ -12,6 +12,8 @@ interface GrokModelUsage {
     cachedReadTokens?: number;
     cacheCreationTokens?: number;
     reasoningTokens?: number;
+    /** How many model requests the row sums. */
+    modelCalls?: number;
     costUsdTicks?: number;
 }
 interface GrokUsage extends GrokModelUsage {
@@ -131,6 +133,8 @@ export function createGrokUsageParser(options: CreateGrokParserOptions): DriverL
                     outputTokens,
                     cacheCreationTokens,
                     cacheReadTokens,
+                    // A turn row sums its model calls: one call is still a single request.
+                    ...(num(modelUsage.modelCalls) === 1 ? {} : { aggregate: true }),
                 };
                 if (ticks > 0) {
                     event.recordedCostUsd = ticks / COST_USD_TICKS_PER_USD;

@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { costOf, DEFAULT_PRICING } from "../pricing";
+import { DEFAULT_PRICING } from "../pricing";
+import { eventCostEstimate } from "../reports/cost";
 import type { DriverUsageEvent, MonitorDriver } from "./types";
 
 /**
@@ -25,26 +26,10 @@ export function collectEvents(driver: MonitorDriver, lines: string[], file = FIX
 }
 
 /** What `monitor` would bill for one event: the recorded cost, else catalog rates, else $0. */
+/** What the monitor bills for one event: the same policy (`eventCostEstimate`) the reports use. */
 export function billedCost(driver: MonitorDriver, event: DriverUsageEvent): number {
-    if (event.recordedCostUsd !== undefined) {
-        return event.recordedCostUsd;
-    }
-
-    for (const candidate of driver.priceCandidates(event.model)) {
-        const price = DEFAULT_PRICING[candidate];
-
-        if (price) {
-            return costOf(
-                {
-                    input: event.inputTokens,
-                    output: event.outputTokens,
-                    cacheWrite: event.cacheCreationTokens,
-                    cacheRead: event.cacheReadTokens,
-                },
-                price
-            );
-        }
-    }
-
-    return 0;
+    return (
+        eventCostEstimate({ ...event, source: driver.id }, DEFAULT_PRICING, "auto", driver.priceCandidates(event.model))
+            .costUSD ?? 0
+    );
 }

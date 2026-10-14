@@ -64,6 +64,32 @@ describe("parseTranscriptLine", () => {
         expect(ev?.cacheReadTokens).toBe(4000);
     });
 
+    it("keeps the one-hour share of the cache writes, which bills at 2x input", () => {
+        const line = SafeJSON.stringify({
+            type: "assistant",
+            message: {
+                id: "msg_1h",
+                model: "claude-opus-5",
+                usage: {
+                    input_tokens: 24,
+                    output_tokens: 11_471,
+                    cache_creation_input_tokens: 106_816,
+                    cache_read_input_tokens: 1_012_946,
+                    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 106_816 },
+                },
+            },
+        });
+        const ev = parseTranscriptLine(line);
+
+        expect(ev?.cacheCreationTokens).toBe(106_816);
+        expect(ev?.cacheCreation1hTokens).toBe(106_816);
+        // claude-opus-5 at $5 / $25 / $0.50 read / $10 one-hour write: Claude Code's own $1.861528.
+        expect(ev && aggregate({ events: [ev], pricing: DEFAULT_PRICING, now: new Date() }).total.cost).toBeCloseTo(
+            1.861528,
+            6
+        );
+    });
+
     it("returns null for non-assistant lines", () => {
         expect(parseTranscriptLine(SafeJSON.stringify({ type: "user", message: {} }))).toBeNull();
     });
@@ -898,7 +924,8 @@ describe("worker cost card", () => {
         expect(two.longContextRequests).toBe(0);
     });
 
-    it("grok's recorded cost is the API-equivalent, as in ai-spend's grok reports", () => {
+    it("grok bills its list price; the figure grok reported is shown, and stands in only without a price", () => {
+        // grok-4.7: $2 input, $0.50 cached, $6 output. Grok's own figure is its plan metering, not a list price.
         const card = workerCostCard({
             backend: "grok",
             sessionId: "s-1",
@@ -908,10 +935,58 @@ describe("worker cost card", () => {
             at,
         });
 
-        expect(card).toMatchObject({ apiEquivalentUsd: 2.44, basis: "recorded", billedUsd: 0, reportedUsd: 2.44 });
+        expect(card).toMatchObject({ apiEquivalentUsd: 8.5, basis: "catalog", billedUsd: 0, reportedUsd: 2.44 });
         expect(formatCostLine(card, "grok")).toBe(
-            "cost: $2.44 API-equivalent (grok's recorded cost; subscription, billed $0) · as Claude ≈ Opus $24.20 / Sonnet $12.10 (estimate)"
+            "cost: $8.50 API-equivalent (subscription, billed $0; grok reported $2.44) · as Claude ≈ Opus $24.20 / Sonnet $12.10 (estimate)"
         );
+
+        const unpriced = workerCostCard({
+            backend: "grok",
+            sessionId: "s-1",
+            parts: [{ model: "grok-0-unpriced", tokens: million }],
+            auth: "subscription",
+            reportedUsd: 2.44,
+            at,
+        });
+
+        expect(unpriced).toMatchObject({
+            apiEquivalentUsd: 2.44,
+            basis: "reported",
+            unpriced: "no list price for grok-0-unpriced",
+        });
+        expect(formatCostLine(unpriced, "grok")).toMatch(
+            /^cost: \$2\.44 reported by grok \(no list price for grok-0-unpriced; subscription, billed \$0\)/
+        );
+    });
+
+    it("a one-hour cache write bills at 2x input, a five-minute one at 1.25x", () => {
+        // claude-opus-5: $5 input, $25 output, $0.50 cache read, $6.25 five-minute write, $10 one-hour write.
+        const tokens = {
+            input: 24,
+            cacheRead: 1_012_946,
+            cacheWrite: 106_816,
+            cacheWrite1h: 106_816,
+            output: 11_471,
+            reasoning: 0,
+        };
+        const card = workerCostCard({
+            backend: "claude",
+            sessionId: "s-2",
+            parts: [{ model: "claude-opus-5", tokens }],
+            auth: "subscription",
+            at,
+        });
+
+        // The figure Claude Code itself reported for this token profile on 2026-09-16: $1.861528.
+        expect(card.apiEquivalentUsd).toBeCloseTo(1.861528, 6);
+        const fiveMinute = workerCostCard({
+            backend: "claude",
+            sessionId: "s-2",
+            parts: [{ model: "claude-opus-5", tokens: { ...tokens, cacheWrite1h: 0 } }],
+            auth: "subscription",
+            at,
+        });
+        expect(fiveMinute.apiEquivalentUsd).toBeCloseTo(1.861528 - 106_816 * (10 - 6.25) * 1e-6, 6);
     });
 });
 

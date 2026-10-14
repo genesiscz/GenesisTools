@@ -105,15 +105,25 @@ describe("static catalog", () => {
             inputPer1M: 5,
             outputPer1M: 25,
             cachedCreatePer1M: 6.25,
+            cachedCreate1hPer1M: 10,
             cachedReadPer1M: 0.5,
         });
+        // A one-hour cache write is 2x input in every tier, so Fast mode's write follows its doubled input.
         expect(staticPricingFor("claude-opus-5-5")).toEqual({
             inputPer1M: 4,
             outputPer1M: 20,
             cachedCreatePer1M: 5,
+            cachedCreate1hPer1M: 8,
             cachedReadPer1M: 0.2,
             rules: [
-                { serviceTier: "fast", inputPer1M: 8, outputPer1M: 40, cachedCreatePer1M: 10, cachedReadPer1M: 0.4 },
+                {
+                    serviceTier: "fast",
+                    inputPer1M: 8,
+                    outputPer1M: 40,
+                    cachedCreatePer1M: 10,
+                    cachedCreate1hPer1M: 16,
+                    cachedReadPer1M: 0.4,
+                },
             ],
         });
         const opus55 = staticPricingFor("claude-opus-5-5");
@@ -121,6 +131,7 @@ describe("static catalog", () => {
             inputPer1M: 8,
             outputPer1M: 40,
             cachedCreatePer1M: 10,
+            cachedCreate1hPer1M: 16,
             cachedReadPer1M: 0.4,
         });
         expect(staticPricingFor("gpt-5.6-sol")).toBeUndefined();

@@ -22,6 +22,8 @@ export interface TokenPricing {
 export interface CallPricing extends TokenPricing {
     cachedReadPer1M?: number;
     cachedCreatePer1M?: number;
+    /** A one-hour cache write (Anthropic: 2x input); absent bills those writes at `cachedCreatePer1M`. */
+    cachedCreate1hPer1M?: number;
     inputPer1MAbove200k?: number;
     outputPer1MAbove200k?: number;
     cachedReadPer1MAbove200k?: number;
@@ -59,7 +61,13 @@ export function estimateLlmCallCostUsd({ pricing, inputTokens, outputTokens }: L
  */
 export function calculateCallCostUsd(
     pricing: CallPricing | undefined,
-    usage: LanguageModelUsage | LegacyFlatUsage | undefined
+    usage: LanguageModelUsage | LegacyFlatUsage | undefined,
+    /**
+     * The share of the usage's cache writes that were one-hour writes. A SUBSET of the cache-write
+     * tokens, never on top of them: ai-sdk usage has one cache-write count, and Anthropic bills the
+     * one-hour part at its own rate.
+     */
+    split: { cacheWrite1hTokens?: number } = {}
 ): number | null {
     if (!pricing) {
         return null;
@@ -95,8 +103,13 @@ export function calculateCallCostUsd(
     const cachedReadCost = pricing.cachedReadPer1M
         ? flat(cachedReadTokens, rate(pricing.cachedReadPer1M, pricing.cachedReadPer1MAbove200k))
         : 0;
+    const hourWrites = Math.min(Math.max(0, split.cacheWrite1hTokens ?? 0), cachedCreateTokens);
     const cachedCreateCost = pricing.cachedCreatePer1M
-        ? flat(cachedCreateTokens, rate(pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k))
+        ? flat(cachedCreateTokens - hourWrites, rate(pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k)) +
+          flat(
+              hourWrites,
+              pricing.cachedCreate1hPer1M ?? rate(pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k)
+          )
         : 0;
 
     return inputCost + outputCost + cachedReadCost + cachedCreateCost;

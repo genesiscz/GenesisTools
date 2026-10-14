@@ -173,6 +173,7 @@ function addEvent(group: WorkerStatsTotals, event: SpendEvent, auth: WorkerAuthM
         input: event.inputTokens,
         cacheRead: event.cacheReadTokens,
         cacheWrite: event.cacheCreationTokens,
+        ...(event.cacheCreation1hTokens ? { cacheWrite1h: event.cacheCreation1hTokens } : {}),
         output: event.outputTokens,
         reasoning: event.reasoningOutputTokens ?? 0,
     });

@@ -164,15 +164,16 @@ Each agent contributes a driver under `lib/drivers/`. A driver declares only thr
 |---|---|---|---|
 | `claude` | `~/.claude/projects/**/*.jsonl`, `~/.config/claude/projects/**`, `$CLAUDE_CONFIG_DIR/projects/**` | `type: "assistant"` with `message.usage` | catalog rates for `anthropic` |
 | `codex` | `~/.codex/{sessions,archived_sessions}/**/*.jsonl`, or every `$CODEX_HOME` in the comma-separated list | `type: "event_msg"` with `payload.type: "token_count"`; the model comes from the preceding `turn_context` line | catalog rates for `openai` |
-| `grok` | `~/.grok/sessions/**/updates.jsonl`, or under `$GROK_HOME` | `params.update.sessionUpdate: "turn_completed"`, one event per entry in `usage.modelUsage` | the `costUsdTicks` Grok recorded (1 tick = 1e-10 USD) |
+| `grok` | `~/.grok/sessions/**/updates.jsonl`, or under `$GROK_HOME` | `params.update.sessionUpdate: "turn_completed"`, one event per entry in `usage.modelUsage` | catalog rates for `xai` (xAI's list prices); the `costUsdTicks` Grok recorded only when the model has no rate |
 
 Line shapes and token arithmetic mirror ccusage's Rust adapters, so the numbers line up with what ccusage reports for the same files:
 
 - **Codex.** `last_token_usage` is the per-turn figure, but it is only counted when `total_token_usage` ADVANCED since the previous line — Codex re-emits an unchanged total on some events, and counting `last` again would double-bill the turn. With no `last_token_usage` at all, the difference of the cumulative totals is used instead. `cached_input_tokens` is a subset of `input_tokens`, so billable input is `input − cached`. `reasoning_output_tokens` sits inside `output_tokens` and is never billed on top.
-- **Grok.** `cachedReadTokens` and `cacheCreationTokens` are subsets of `inputTokens`, so the three parts sum back to `inputTokens`. `reasoningTokens` sits inside `outputTokens`. The recorded `costUsdTicks` is authoritative: Grok prices each API request separately and a `turn_completed` row carries only the per-turn sum, so recomputing from those totals cannot reproduce the figure Grok actually billed.
+- **Grok.** `cachedReadTokens` and `cacheCreationTokens` are subsets of `inputTokens`, so the three parts sum back to `inputTokens`. `reasoningTokens` sits inside `outputTokens`. A row sums the turn's `modelCalls`, so it is priced at the base band: the per-request prompt lengths a long-context band needs are gone. The recorded `costUsdTicks` (1 tick = 1e-10 USD) is NOT the list price. It is the Grok CLI's own plan metering: recorded / list was about 1.0 until 2026-09-04 and 0.34 on every turn since 2026-09-16, so treating it as the cost understated grok about three times. It is kept on the event and used only for a model the catalog cannot price.
+- **Claude.** A one-hour cache write (`usage.cache_creation.ephemeral_1h_input_tokens`) bills at 2x input, a five-minute one at 1.25x; the event carries the one-hour share separately. Claude Code writes its prompt cache with the one-hour lifetime, so pricing every write at 1.25x understated its cache writes by 37.5%.
 - **Claude.** Anthropic reports `input_tokens` already net of cache, so its four token fields are disjoint and nothing is subtracted.
 
-**Unpriced models cost $0.** The catalog carries rates for `anthropic` and `openai` only. Codex's TASK variants are peeled down to a catalog id one suffix at a time (`gpt-5.3-codex-spark` → `gpt-5.3-codex` → `gpt-5.3`), and `grok-4.6-build` peels to `grok-4.6`. The plan variants `-sol`, `-terra` and `-luna` are **not** peeled: each carries its own rates in the catalog, and folding them onto `gpt-5.6` ($5/$30) would bill Luna ($0.20/$1.20) at twenty-five times its price. An id that still matches nothing — `codex-auto-review`, every `xai` id — contributes $0 rather than a guessed family rate. Grok is unaffected in practice because it reports its own cost.
+**Unpriced models cost $0.** The catalog carries rates for `anthropic`, `openai` and the `xai` ids xAI lists (docs.x.ai/developers/pricing). Codex's TASK variants are peeled down to a catalog id one suffix at a time (`gpt-5.3-codex-spark` → `gpt-5.3-codex` → `gpt-5.3`), and `grok-4.6-build` peels to `grok-4.6`. The plan variants `-sol`, `-terra` and `-luna` are **not** peeled: each carries its own rates in the catalog, and folding them onto `gpt-5.6` ($5/$30) would bill Luna ($0.20/$1.20) at twenty-five times its price. An id that still matches nothing (`codex-auto-review`, a Grok Build model xAI does not list) contributes $0 rather than a guessed family rate, unless the agent recorded its own figure for it.
 
 `--json` gains an `agents` object and keeps the existing top level, which is the sum across agents:
 
@@ -209,8 +210,9 @@ calls, and the turn's price. The turn report and each backend's `status --json` 
 `cost: $0.69 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $1.38 / Sonnet $0.69 (estimate)`.
 
 - **API-EQ** is this tool's own price: each request at the worker model's list rate with its long-context
-  band (`priceFor` → `resolvePrice` → `costOf`), and grok's recorded cost for grok, exactly as the reports
-  above price the same session. The stats read the tokens and costs from the workers' transcripts
+  band (`priceFor` → `resolvePrice` → `costOf`), exactly as the reports above price the same session. The
+  figure a worker reported itself (grok's plan metering, Claude Code's total) is shown beside it, and stands in
+  only for a model without a list price, labelled `reported by <backend>`. The stats read the tokens and costs from the workers' transcripts
   through the same loaders, and take only the name, label, login, turns, duration and tool calls from
   the ledger. A session whose transcript is gone falls back to the price its turns booked.
 - **BILLED** is $0 on a subscription login and the API-equivalent on an API key. `+?` means some amounts

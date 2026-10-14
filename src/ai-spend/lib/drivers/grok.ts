@@ -30,10 +30,13 @@ import type { DriverRoot, MonitorDriver } from "./types";
  *     so billable input is `input - cachedRead - cacheCreation`
  *     (`split_input_tokens`, parser.rs:170).
  *   - `reasoningTokens` is a subset of `outputTokens` and is never billed twice.
- *   - `costUsdTicks` is fixed-point USD at 1e-10 per tick and is AUTHORITATIVE
- *     (parser.rs:140-153): Grok prices each API request separately and a
- *     `turn_completed` row only carries the per-turn sum, so recomputing from
- *     those totals cannot reproduce the figure Grok actually billed.
+ *   - `costUsdTicks` is fixed-point USD at 1e-10 per tick (parser.rs:140-153).
+ *     ccusage treats it as authoritative; here it is NOT the list price but the
+ *     Grok CLI's plan metering (0.34x list since 2026-09-16), so it rides on the
+ *     event as `recordedCostUsd` and prices only a model without a catalog rate
+ *     (`recordedCostIsListPrice` in `reports/cost.ts`).
+ *   - a row sums the turn's `modelCalls`, so it is `aggregate` and prices at the
+ *     base band: no single request's prompt length survives.
  *   - dedup is `eventId|model`, falling back to the token fingerprint.
  */
 

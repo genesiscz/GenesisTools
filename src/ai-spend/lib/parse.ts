@@ -7,6 +7,7 @@ interface RawUsage {
     output_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
 }
 
 interface RawMessage {
@@ -70,6 +71,9 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
         inputTokens: num(message.usage.input_tokens),
         outputTokens: num(message.usage.output_tokens),
         cacheCreationTokens: num(message.usage.cache_creation_input_tokens),
+        ...(num(message.usage.cache_creation?.ephemeral_1h_input_tokens) > 0
+            ? { cacheCreation1hTokens: num(message.usage.cache_creation?.ephemeral_1h_input_tokens) }
+            : {}),
         cacheReadTokens: num(message.usage.cache_read_input_tokens),
     };
 }

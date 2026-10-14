@@ -230,6 +230,8 @@ export function claudeTurnUsage(text: string): ClaudeTurnUsage {
     }
 
     const usage = isRecord(result.usage) ? result.usage : null;
+    const creation = isRecord(usage?.cache_creation) ? usage.cache_creation : null;
+    let hourWrites = num(creation?.ephemeral_1h_input_tokens) ?? 0;
 
     if (parts.length === 0 && usage) {
         parts.push({
@@ -242,6 +244,17 @@ export function claudeTurnUsage(text: string): ClaudeTurnUsage {
                 reasoning: 0,
             },
         });
+    }
+
+    // `modelUsage` does not split cache writes by lifetime; the turn's `usage` does. One-hour writes
+    // go to the parts that wrote the most, never more than a part wrote.
+    for (const part of [...parts].sort((a, b) => b.tokens.cacheWrite - a.tokens.cacheWrite)) {
+        const share = Math.min(hourWrites, part.tokens.cacheWrite);
+
+        if (share > 0) {
+            part.tokens.cacheWrite1h = share;
+            hourWrites -= share;
+        }
     }
 
     const main = [...parts].sort((a, b) => b.tokens.output - a.tokens.output)[0]?.model ?? undefined;

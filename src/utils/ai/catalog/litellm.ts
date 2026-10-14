@@ -43,6 +43,8 @@ export const liteLLMModelPricingSchema = z.object({
     input_cost_per_token: z.number().optional(),
     output_cost_per_token: z.number().optional(),
     cache_creation_input_token_cost: z.number().optional(),
+    // Anthropic's one-hour cache write (2x input), next to the five-minute one above.
+    cache_creation_input_token_cost_above_1hr: z.number().optional(),
     cache_read_input_token_cost: z.number().optional(),
     max_tokens: z.number().optional(),
     max_input_tokens: z.number().optional(),
@@ -407,6 +409,9 @@ export class LiteLLMPricingFetcher {
         const cachedCreatePer1M = pricing.cache_creation_input_token_cost
             ? pricing.cache_creation_input_token_cost * 1_000_000
             : undefined;
+        const cachedCreate1hPer1M = pricing.cache_creation_input_token_cost_above_1hr
+            ? pricing.cache_creation_input_token_cost_above_1hr * 1_000_000
+            : undefined;
         const inputPer1MAbove200k = pricing.input_cost_per_token_above_200k_tokens
             ? pricing.input_cost_per_token_above_200k_tokens * 1_000_000
             : undefined;
@@ -425,6 +430,7 @@ export class LiteLLMPricingFetcher {
             outputPer1M,
             cachedReadPer1M,
             cachedCreatePer1M,
+            ...(cachedCreate1hPer1M === undefined ? {} : { cachedCreate1hPer1M }),
             inputPer1MAbove200k,
             outputPer1MAbove200k,
             cachedReadPer1MAbove200k,

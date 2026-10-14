@@ -12,6 +12,8 @@ export interface WorkerTokens {
     input: number;
     cacheRead: number;
     cacheWrite: number;
+    /** The one-hour share of `cacheWrite` (Claude): Anthropic bills it at 2x input, not 1.25x. */
+    cacheWrite1h?: number;
     /** Output, reasoning included: every vendor bills reasoning as output. */
     output: number;
     /** The reasoning share of `output`, for the reader only; never billed a second time. */
@@ -34,10 +36,13 @@ export type WorkerAuthMode = "subscription" | "api-key" | "unknown";
 export const EMPTY_TOKENS: WorkerTokens = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 };
 
 export function addTokens(a: WorkerTokens, b: WorkerTokens): WorkerTokens {
+    const hour = (a.cacheWrite1h ?? 0) + (b.cacheWrite1h ?? 0);
+
     return {
         input: a.input + b.input,
         cacheRead: a.cacheRead + b.cacheRead,
         cacheWrite: a.cacheWrite + b.cacheWrite,
+        ...(hour > 0 ? { cacheWrite1h: hour } : {}),
         output: a.output + b.output,
         reasoning: a.reasoning + b.reasoning,
     };

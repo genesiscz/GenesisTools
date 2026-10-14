@@ -18,12 +18,11 @@ import type { ModelPrice, ModelPriceEntry, PricingTable, TokenTotals } from "./t
 /**
  * Providers whose catalog rates the monitor can bill against.
  *
- * `openai-sub` and `xai` carry NO rates in the catalog (they are subscription
- * and CLI-plan models, not metered API ids), so they contribute nothing today
- * and every id they own is unpriced. They are listed anyway so that the day a
- * rate lands in the catalog it flows straight through. Grok does not need them:
- * it records its own `costUsdTicks` per turn, which the driver reports as the
- * authoritative cost.
+ * `openai-sub` carries NO rates in the catalog (subscription slugs, not metered
+ * API ids); it is listed so that the day a rate lands it flows straight through.
+ * `xai` carries xAI's list prices (`XAI_PRICING` in the catalog). Grok's own
+ * `costUsdTicks` is its plan metering, not a list price, so it is only a
+ * fallback for an id these rates do not cover (`recordedCostIsListPrice`).
  */
 const PRICED_PROVIDERS = ["anthropic", "openai", "openai-sub", "xai"] as const;
 
@@ -45,6 +44,9 @@ function fromRegistry(): PricingTable {
                 output: model.pricing.outputPer1M,
                 cacheWrite: model.pricing.cachedCreatePer1M ?? model.pricing.inputPer1M * 1.25,
                 cacheRead: model.pricing.cachedReadPer1M ?? model.pricing.inputPer1M * 0.1,
+                ...(model.pricing.cachedCreate1hPer1M === undefined
+                    ? {}
+                    : { cacheWrite1h: model.pricing.cachedCreate1hPer1M }),
                 rules: model.pricing.rules,
             };
 
@@ -93,6 +95,7 @@ export function resolvePrice(
             outputPer1M: entry.output,
             cachedCreatePer1M: entry.cacheWrite,
             cachedReadPer1M: entry.cacheRead,
+            ...(entry.cacheWrite1h === undefined ? {} : { cachedCreate1hPer1M: entry.cacheWrite1h }),
             rules: entry.rules,
         },
         context
@@ -103,6 +106,7 @@ export function resolvePrice(
         output: resolved.outputPer1M,
         cacheWrite: resolved.cachedCreatePer1M ?? resolved.inputPer1M * 1.25,
         cacheRead: resolved.cachedReadPer1M ?? resolved.inputPer1M * 0.1,
+        ...(resolved.cachedCreate1hPer1M === undefined ? {} : { cacheWrite1h: resolved.cachedCreate1hPer1M }),
     };
 }
 
@@ -114,13 +118,15 @@ export function costOf(tokens: TokenTotals, price: ModelPrice): number {
                 outputPer1M: price.output,
                 cachedCreatePer1M: price.cacheWrite,
                 cachedReadPer1M: price.cacheRead,
+                ...(price.cacheWrite1h === undefined ? {} : { cachedCreate1hPer1M: price.cacheWrite1h }),
             },
             toLanguageModelUsage({
                 inputTokens: tokens.input,
                 outputTokens: tokens.output,
                 cacheWriteTokens: tokens.cacheWrite,
                 cachedInputTokens: tokens.cacheRead,
-            })
+            }),
+            { cacheWrite1hTokens: tokens.cacheWrite1h }
         ) ?? 0
     );
 }

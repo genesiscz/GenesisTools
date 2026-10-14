@@ -27,6 +27,12 @@ export interface ModelPricing {
     outputPer1M: number;
     cachedReadPer1M?: number;
     cachedCreatePer1M?: number;
+    /**
+     * A cache write that lives one hour. Anthropic bills it at 2x input against 1.25x for the
+     * default five-minute write; absent means the provider has no such write, so it bills at
+     * `cachedCreatePer1M`.
+     */
+    cachedCreate1hPer1M?: number;
     inputPer1MAbove200k?: number;
     outputPer1MAbove200k?: number;
     cachedReadPer1MAbove200k?: number;
@@ -66,6 +72,7 @@ export interface PricingRule {
     outputPer1M?: number;
     cachedReadPer1M?: number;
     cachedCreatePer1M?: number;
+    cachedCreate1hPer1M?: number;
 }
 
 export interface CatalogEntry {

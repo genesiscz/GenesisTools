@@ -11,6 +11,8 @@ export interface UsageEvent {
     inputTokens: number;
     outputTokens: number;
     cacheCreationTokens: number;
+    /** The one-hour share of `cacheCreationTokens` (Anthropic bills it at 2x input, not 1.25x). */
+    cacheCreation1hTokens?: number;
     cacheReadTokens: number;
     /**
      * Cost the loader's source already resolved for this event: a recorded charge, or its own price
@@ -25,6 +27,8 @@ export interface ModelPrice {
     output: number;
     cacheWrite: number;
     cacheRead: number;
+    /** A one-hour cache write; absent bills those writes at `cacheWrite`. */
+    cacheWrite1h?: number;
 }
 
 /**
@@ -44,6 +48,8 @@ export interface TokenTotals {
     output: number;
     cacheWrite: number;
     cacheRead: number;
+    /** The one-hour share of `cacheWrite`, never on top of it. */
+    cacheWrite1h?: number;
 }
 
 export interface ModelBreakdown {

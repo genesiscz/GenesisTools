@@ -1,7 +1,7 @@
 import { GROK_STATIC_CATALOG } from "../grok/models";
 import { OPENAI_SUB_STATIC_CATALOG } from "../openai/sub-models";
 import type { Capability } from "../providers/plugin-types";
-import type { CatalogEntry, ModelFamily, ModelPricing } from "./types";
+import type { CatalogEntry, ModelFamily, ModelPricing, PricingRule } from "./types";
 
 /**
  * The hand-curated model list, for every provider.
@@ -87,6 +87,30 @@ const SONNET_4_5_PRICING: ModelPricing = {
     ],
 };
 
+/**
+ * Anthropic bills a one-hour cache write at 2x the input rate (a five-minute write is 1.25x), in
+ * every context band and service tier. The static entries carry only the five-minute rate, so the
+ * one-hour rate is derived here for provider anthropic alone, from the input rate of the same
+ * base or rule. Cross-checked 2026-10-14 against LiteLLM's `cache_creation_input_token_cost_above_1hr`
+ * (claude-opus-5 $10, claude-sonnet-4-5 $6, claude-haiku-4-5 $2) and OpenRouter's
+ * `input_cache_write_1h` (claude-opus-latest $8, claude-haiku-latest $0.20 and $1 above 100K).
+ */
+function withAnthropicHourWrites(pricing: ModelPricing): ModelPricing {
+    return {
+        ...pricing,
+        cachedCreate1hPer1M: pricing.cachedCreate1hPer1M ?? pricing.inputPer1M * 2,
+        ...(pricing.rules
+            ? {
+                  rules: pricing.rules.map((rule) =>
+                      rule.inputPer1M === undefined || rule.cachedCreate1hPer1M !== undefined
+                          ? rule
+                          : { ...rule, cachedCreate1hPer1M: rule.inputPer1M * 2 }
+                  ),
+              }
+            : {}),
+    };
+}
+
 function anthropic(entry: {
     id: string;
     family: ModelFamily;
@@ -100,6 +124,7 @@ function anthropic(entry: {
 }): CatalogEntry {
     return {
         ...entry,
+        ...(entry.pricing ? { pricing: withAnthropicHourWrites(entry.pricing) } : {}),
         provider: "anthropic",
         capabilities: CHAT,
         // Every Claude model in this list takes client-side tools; the Messages
@@ -375,18 +400,78 @@ const XAI_THINKING: Record<string, CatalogEntry["thinking"]> = {
 const XAI_IDS = GROK_STATIC_CATALOG.map((model) => model.id);
 
 /**
- * Static prices for xAI ids that LiteLLM and OpenRouter cannot price. Grok 4.7 Fast runs only in
- * Grok Build and Cursor and is billed through the plan, so this is the API-equivalent rate: 2x
- * grok-4.7 ($4 / $1 cached / $12, Cursor's listed Fast price) and 1.5x grok-4.7's $4 / $1 / $12
- * band above 200K (docs.x.ai/developers/grok-4-7, 2026-09-28).
+ * One xAI list price: the short-context rates, the long-context rates that bill the WHOLE request
+ * once its prompt reaches `longFrom`, and priority processing at 2x either band (billed only when
+ * the response says `service_tier: priority`; the page offers it on the API models, not on the
+ * plan-only Fast). The US regional endpoint's 1.1x is not modelled: nothing records which endpoint
+ * served a call.
+ */
+function xaiPricing(options: {
+    input: number;
+    cached: number;
+    output: number;
+    long: { input: number; cached: number; output: number };
+    longFrom?: number;
+    priority?: boolean;
+}): ModelPricing {
+    const { input, cached, output, long, longFrom = 200_000, priority = true } = options;
+    // xAI lists no cache-write price: a token written to the cache bills as plain input.
+    const rates = (scale: number, band: { input: number; cached: number; output: number }) => ({
+        inputPer1M: band.input * scale,
+        outputPer1M: band.output * scale,
+        cachedReadPer1M: band.cached * scale,
+        cachedCreatePer1M: band.input * scale,
+    });
+    const short = { input, cached, output };
+    const longRule: PricingRule = { ctxFrom: longFrom, ...rates(1, long) };
+
+    return {
+        ...rates(1, short),
+        rules: priority
+            ? [
+                  longRule,
+                  { serviceTier: "priority", ...rates(2, short) },
+                  { serviceTier: "priority", ctxFrom: longFrom, ...rates(2, long) },
+              ]
+            : [longRule],
+    };
+}
+
+const GROK_4_6_PRICING = xaiPricing({ input: 2, cached: 0.5, output: 6, long: { input: 4, cached: 1, output: 12 } });
+const GROK_4_3_PRICING = xaiPricing({
+    input: 1.25,
+    cached: 0.2,
+    output: 2.5,
+    long: { input: 2.5, cached: 0.4, output: 5 },
+});
+
+/**
+ * xAI list prices, from docs.x.ai/developers/pricing (read 2026-10-14). The standard models bill
+ * their long-context rates "once its prompt reaches the model's long context threshold" of 200k,
+ * so the band starts AT 200_000.
+ *
+ * Grok 4.7 Fast runs only in Grok Build and Cursor and is billed through the plan, so its entry is
+ * the API-equivalent rate the same page lists for it: $4 / $1 cached / $12, and $6 / $1.50 / $18
+ * once "a request's prompt exceeds 200k tokens". That section says EXCEEDS, unlike the
+ * standard table, so its band starts at 200_001.
  */
 const XAI_PRICING: Record<string, ModelPricing> = {
-    "grok-4.7-build-fast": {
-        inputPer1M: 4,
-        outputPer1M: 12,
-        cachedReadPer1M: 1,
-        rules: [{ ctxFrom: 200_001, inputPer1M: 6, outputPer1M: 18, cachedReadPer1M: 1.5 }],
-    },
+    "grok-4.7": GROK_4_6_PRICING,
+    "grok-4.6": GROK_4_6_PRICING,
+    "grok-4.5": xaiPricing({ input: 2, cached: 0.3, output: 6, long: { input: 4, cached: 0.6, output: 12 } }),
+    "grok-build-0.1": xaiPricing({ input: 1, cached: 0.2, output: 2, long: { input: 2, cached: 0.4, output: 4 } }),
+    "grok-4.3": GROK_4_3_PRICING,
+    "grok-4.20-0309-reasoning": GROK_4_3_PRICING,
+    "grok-4.20-0309-non-reasoning": GROK_4_3_PRICING,
+    "grok-4.20-multi-agent-0309": GROK_4_3_PRICING,
+    "grok-4.7-build-fast": xaiPricing({
+        input: 4,
+        cached: 1,
+        output: 12,
+        long: { input: 6, cached: 1.5, output: 18 },
+        longFrom: 200_001,
+        priority: false,
+    }),
 };
 
 const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({

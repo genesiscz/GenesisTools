@@ -38,6 +38,7 @@ describe("pricing ladder", () => {
             inputPer1M: 5,
             outputPer1M: 25,
             cachedCreatePer1M: 6.25,
+            cachedCreate1hPer1M: 10,
             cachedReadPer1M: 0.5,
         });
     });
@@ -189,6 +190,12 @@ describe("pricing ladder", () => {
     test("a -1 sentinel price is unknown, not a negative rate", () => {
         expect(convertOpenRouterPricing({ prompt: "-1", completion: "-1" })).toBeUndefined();
         expect(convertOpenRouterPricing({ prompt: "0.000001", completion: "-1" })).toBeUndefined();
+    });
+
+    test("the one-hour cache-write quote becomes cachedCreate1hPer1M", () => {
+        expect(
+            convertOpenRouterPricing({ prompt: "0.000004", completion: "0.00002", input_cache_write_1h: "0.000008" })
+        ).toMatchObject({ cachedCreate1hPer1M: 8 });
     });
 
     test("the cache-write quote becomes cachedCreatePer1M", () => {
@@ -371,6 +378,7 @@ describe("catalog entries carrying rules", () => {
                 inputPer1M: 2,
                 outputPer1M: 10,
                 cachedCreatePer1M: 2.5,
+                cachedCreate1hPer1M: 4,
                 cachedReadPer1M: 0.2,
             });
         }
@@ -487,5 +495,17 @@ describe("LiteLLMPricingFetcher.getModelPricing", () => {
 
         expect(undated?.input_cost_per_token).toBe(2.5 / 1e6);
         expect(dated?.input_cost_per_token).toBe(3 / 1e6);
+    });
+
+    test("LiteLLM's one-hour cache-write rate becomes cachedCreate1hPer1M", () => {
+        const pricing = fetcher({}).convertToModelPricing({
+            ...litellmPrice(5, 25),
+            cache_creation_input_token_cost: 6.25 / 1e6,
+            cache_creation_input_token_cost_above_1hr: 10 / 1e6,
+        });
+
+        expect(pricing.cachedCreatePer1M).toBeCloseTo(6.25, 10);
+        expect(pricing.cachedCreate1hPer1M).toBeCloseTo(10, 10);
+        expect(fetcher({}).convertToModelPricing(litellmPrice(5, 25)).cachedCreate1hPer1M).toBeUndefined();
     });
 });

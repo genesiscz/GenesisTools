@@ -14,14 +14,20 @@ export interface DriverUsageEvent {
     inputTokens: number;
     outputTokens: number;
     cacheCreationTokens: number;
+    /** The one-hour share of `cacheCreationTokens` (Claude); Anthropic bills it at 2x input. */
+    cacheCreation1hTokens?: number;
     cacheReadTokens: number;
+    /**
+     * The event sums several model requests (a grok `turn_completed` row), so no single request's
+     * prompt length is known and no long-context band can be applied to it.
+     */
+    aggregate?: boolean;
     /** Subset of outputTokens. Codex/Grok report it; never added on top of output. */
     reasoningOutputTokens?: number;
     /**
-     * Cost in USD that the agent itself recorded for this event. Authoritative
-     * when present: Grok prices each API request separately and only reports
-     * the per-turn sum, so recomputing from the summed tokens cannot land on
-     * the same figure. Absent means "derive it from the catalog rates".
+     * Cost in USD that the agent itself recorded for this event. Whether it is the list price
+     * depends on the agent: `recordedCostIsListPrice` in ai-spend's `reports/cost.ts` decides.
+     * Absent means "derive it from the catalog rates".
      */
     recordedCostUsd?: number;
     isSidechain?: boolean;
