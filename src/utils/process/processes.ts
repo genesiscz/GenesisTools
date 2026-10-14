@@ -43,6 +43,9 @@ const PS_DEADLINE_MS = 5_000;
 /** What `/proc/<pid>/exe` appends once the file was replaced (an upgrade) or removed; `ps` never shows it. */
 const DELETED_EXE = / \(deleted\)$/;
 
+/** Linux keeps a process's name (`comm`) to 15 bytes; a shorter one was never cut. */
+const LINUX_COMM_BYTES = 15;
+
 export interface ProcessEntry {
     pid: number;
     ppid: number;
@@ -566,16 +569,21 @@ export function readExecutablePath(pid: number): string | null {
  * The name `ps -o comm=` prints for a listed process, without its cut. macOS prints argv[0]: the kernel gives it for this
  * user's processes (measured 2026-10-15: 934 of 934 equal to `ps`), and another user's falls back to the executable's
  * path (294 of 320 equal; only the setuid `ps` reads their argv, and its `comm=` column cost 30 ms more per call on
- * 1,250 processes, measured 2026-10-15, for those 26 rows). Linux prints the kernel name cut at 15 bytes, so this
- * is the executable's file name when that name starts with it (else the name the process gave itself). Windows: the
+ * 1,250 processes, measured 2026-10-15, for those 26 rows). Linux prints the kernel name cut at 15 bytes, so a name
+ * the kernel cut becomes the executable's file name that starts with it; an uncut one stays as it is, since
+ * `python3` started through a symlink to `python3.13` is `python3` to `ps` and in its command line. Windows: the
  * image name. Not the resolved executable path: a hard-linked launcher such as `gt-hub` resolves to `bun`, and a
  * listed name the command line does not contain fails the dev dashboard's kill check.
  */
 export function readListedName(entry: Pick<ProcessEntry, "pid" | "name">): string {
     switch (processPlatform()) {
         case "linux": {
+            if (entry.name.length < LINUX_COMM_BYTES) {
+                return entry.name;
+            }
+
             const file = basename(readProcExe(entry.pid)?.replace(DELETED_EXE, "") ?? "");
-            return file.length > 0 && file.startsWith(entry.name) ? file : entry.name;
+            return file.startsWith(entry.name) ? file : entry.name;
         }
         case "win32":
             return entry.name;

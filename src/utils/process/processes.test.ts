@@ -817,6 +817,27 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         15_000
     );
 
+    test.skipIf(process.platform !== "linux")(
+        "a name the kernel did not cut stays as ps prints it, even started through a symlink",
+        async () => {
+            const dir = mkdtempSync(join(tmpdir(), "gt-symlinked-exe-"));
+            // A prefix of the target's name, as `python3` is of `python3.13`.
+            const link = join(dir, "sle");
+            symlinkSync("/bin/sleep", link);
+            const child = Bun.spawn([link, "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
+
+            try {
+                const listed = listProcesses({ commands: false }).find((entry) => entry.pid === child.pid);
+                // The kernel names it after the link, `ps` prints that, and the command line holds it.
+                expect(listed?.name).toBe("sle");
+                expect(listed && readListedName(listed)).toBe("sle");
+            } finally {
+                child.kill();
+                await child.exited;
+            }
+        }
+    );
+
     // Linux only: on macOS a running executable whose file is replaced is what crashed syspolicyd on 2026-10-14.
     test.skipIf(process.platform !== "linux")(
         "an executable replaced while it runs is named without the (deleted) that /proc adds",
