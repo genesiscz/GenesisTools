@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
+import { probeAddedLines } from "./probe";
 import { flag, has, loadRun, worktreeFor } from "./run";
 import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
 
@@ -96,6 +97,12 @@ if (!has("--skip-gates") && oldHead !== newHead) {
         console.log(`✖ check-commits:\n${commits}`);
         process.exit(1);
     }
+}
+
+// --skip-gates (another repository's PR) skips the repository rules above, but never the personal-data probe: it runs
+// on the target worktree and blocks only a hit in a line this push adds (probe.ts).
+if (has("--skip-gates") && oldHead !== newHead && !probeAddedLines({ wt, from: oldHead, to: newHead })) {
+    process.exit(1);
 }
 
 if (oldHead !== newHead && !dry) {

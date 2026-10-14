@@ -6,6 +6,7 @@ import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
+import { hitsInAddedLines } from "./probe";
 import { conflictedFiles, higherVersionSide, prepGit, resolveVersionConflicts } from "./versions";
 import { pump } from "./watch-workers";
 
@@ -337,4 +338,25 @@ describe("merge-prep version conflicts", () => {
         expect(resolveVersionConflicts(git, conflicted)).toBe(false);
         expect(fs.readFileSync(join(dir, "src/a.ts"), "utf8")).toContain("<<<<<<<");
     });
+});
+
+test("the probe for another repository's push fails only on a hit in a line the push adds", () => {
+    // The probe's hit list: two files, one hit each (the matched text is fixture filler).
+    const probe = ["✗ placeholder-check: 2 line(s)", "    docs/OLD.md:4:filler", "    src/a.swift:12:filler"].join(
+        "\n"
+    );
+    // A diff that adds lines 10-13 of src/a.swift and line 9 of docs/OLD.md.
+    const diff = [
+        "diff --git a/src/a.swift b/src/a.swift",
+        "+++ b/src/a.swift",
+        "@@ -9,0 +10,4 @@ func f() {",
+        "+line",
+        "diff --git a/docs/OLD.md b/docs/OLD.md",
+        "+++ b/docs/OLD.md",
+        "@@ -9 +9 @@",
+        "+line",
+    ].join("\n");
+    expect(hitsInAddedLines(probe, diff)).toEqual(["src/a.swift:12"]);
+    // The same hits with a diff that adds nothing near them: an older hit does not block the push.
+    expect(hitsInAddedLines(probe, "+++ b/src/a.swift\n@@ -1,0 +2,3 @@\n+x")).toEqual([]);
 });
