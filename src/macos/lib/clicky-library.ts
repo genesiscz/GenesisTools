@@ -64,6 +64,9 @@ export interface ClickyLibraryPin {
     samples: number;
 }
 
+/** The only failure a first app build may tolerate by omitting the library. */
+export class ClickyLibraryUnavailableError extends Error {}
+
 const RELEASE_BASE = "https://github.com/genesiscz/GenesisTools/releases/download";
 
 /** A canonical 44-byte header for mono 48 kHz PCM16, the layout the library's WAVs use. */
@@ -233,12 +236,34 @@ export async function archiveClickyLibrary(packed: string, out: string, release:
 /**
  * The packed library `pin` names, as a folder: downloaded once into `~/.genesis-tools/app/clicky-library/` and checked
  * against the pin's size and SHA-256 before it is unpacked; a later build reuses it. Throws when the download fails
- * or does not match, so the caller can build without the library.
+ * or does not match. Only ClickyLibraryUnavailableError permits building without the library.
  */
 export async function ensureClickyLibrary(
     pin: ClickyLibraryPin,
     options: { cacheRoot?: string; fetchImpl?: (url: string) => Promise<Response> } = {}
 ): Promise<string> {
+    if (
+        !pin ||
+        typeof pin.release !== "string" ||
+        !pin.release ||
+        typeof pin.url !== "string" ||
+        typeof pin.sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(pin.sha256) ||
+        !Number.isSafeInteger(pin.bytes) ||
+        pin.bytes <= 0 ||
+        !Number.isSafeInteger(pin.sets) ||
+        pin.sets < 0 ||
+        !Number.isSafeInteger(pin.samples) ||
+        pin.samples < 0
+    ) {
+        throw new Error("Invalid Clicky library pin");
+    }
+
+    const url = new URL(pin.url);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+        throw new Error("Invalid Clicky library pin URL");
+    }
+
     const cacheRoot = options.cacheRoot ?? genesisToolsDir("app", "clicky-library");
     const target = join(cacheRoot, pin.sha256.slice(0, 16));
     const library = join(target, "ClickyLibrary");
@@ -246,12 +271,18 @@ export async function ensureClickyLibrary(
         return library;
     }
 
-    const response = await (options.fetchImpl ?? fetch)(pin.url);
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${pin.url}`);
+    let bytes: Buffer;
+    try {
+        const response = await (options.fetchImpl ?? fetch)(pin.url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status} for ${pin.url}`);
+        }
+
+        bytes = Buffer.from(await response.arrayBuffer());
+    } catch (cause) {
+        throw new ClickyLibraryUnavailableError(`Clicky library download unavailable: ${pin.url}`, { cause });
     }
 
-    const bytes = Buffer.from(await response.arrayBuffer());
     const digest = sha256(bytes);
     if (bytes.length !== pin.bytes || digest !== pin.sha256) {
         throw new Error(

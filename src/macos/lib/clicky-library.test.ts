@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import {
     archiveClickyLibrary,
     CLICKY_PACKED_SAMPLES,
+    ClickyLibraryUnavailableError,
     ensureClickyLibrary,
     packClickyLibrary,
     unpackClickyLibrary,
@@ -101,6 +102,67 @@ describe("Clicky library packing", () => {
         const fetchImpl = async () => new Response(Buffer.from("abc"));
         await expect(ensureClickyLibrary(pin, { cacheRoot, fetchImpl })).rejects.toThrow("the pin says");
         expect(existsSync(join(cacheRoot, "0".repeat(16)))).toBe(false);
+    });
+
+    it("classifies only transport, HTTP and response-stream failures as unavailable", async () => {
+        const cacheRoot = mkdtempSync(join(tmpdir(), "gt-clicky-offline-"));
+        dirs.push(cacheRoot);
+        const pin = {
+            release: "fixture",
+            url: "https://example.invalid/library",
+            sha256: "0".repeat(64),
+            bytes: 3,
+            sets: 0,
+            samples: 0,
+        };
+        const downloads = [
+            async (): Promise<Response> => {
+                throw new Error("offline");
+            },
+            async () => new Response("unavailable", { status: 503 }),
+            async () =>
+                new Response(
+                    new ReadableStream({
+                        start(controller) {
+                            controller.error(new Error("disconnected"));
+                        },
+                    })
+                ),
+        ];
+        for (const fetchImpl of downloads) {
+            await expect(ensureClickyLibrary(pin, { cacheRoot, fetchImpl })).rejects.toBeInstanceOf(
+                ClickyLibraryUnavailableError
+            );
+        }
+        await expect(
+            ensureClickyLibrary(pin, { cacheRoot, fetchImpl: async () => new Response("abc") })
+        ).rejects.not.toBeInstanceOf(ClickyLibraryUnavailableError);
+    });
+
+    it("rejects an invalid pin before attempting a download", async () => {
+        const pin = {
+            release: "fixture",
+            url: "https://example.invalid/library",
+            sha256: "0".repeat(64),
+            bytes: 3,
+            sets: 0,
+            samples: 0,
+        };
+        let calls = 0;
+        const fetchImpl = async (): Promise<Response> => {
+            calls++;
+            throw new Error("offline");
+        };
+        for (const invalid of [
+            { ...pin, sha256: "bad" },
+            { ...pin, url: "not a URL" },
+            { ...pin, bytes: -1 },
+        ]) {
+            await expect(ensureClickyLibrary(invalid, { fetchImpl })).rejects.not.toBeInstanceOf(
+                ClickyLibraryUnavailableError
+            );
+        }
+        expect(calls).toBe(0);
     });
 
     it("reads the PCM past extra chunks", () => {

@@ -31,7 +31,12 @@ import { executableInode } from "@genesiscz/utils/process/process-files";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
-import { type ClickyLibraryPin, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
+import {
+    type ClickyLibraryPin,
+    ClickyLibraryUnavailableError,
+    ensureClickyLibrary,
+    unpackClickyLibrary,
+} from "../clicky-library";
 import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
@@ -572,19 +577,37 @@ export async function buildDiffViewer(contents: string, step: (message: string) 
  * cached), unpacked to verified WAVs. Without the network on a first build the app is built without it, as before,
  * and says so; Clicky's own switches still work.
  */
-async function bundleClickyLibrary(contents: string, step: (message: string) => void): Promise<void> {
+export async function bundleClickyLibrary({
+    contents,
+    step,
+    pinPath = join(APP_SOURCE_DIR, CLICKY_LIBRARY_PIN),
+    ensure = ensureClickyLibrary,
+    unpack = unpackClickyLibrary,
+}: {
+    contents: string;
+    step: (message: string) => void;
+    pinPath?: string;
+    ensure?: typeof ensureClickyLibrary;
+    unpack?: typeof unpackClickyLibrary;
+}): Promise<void> {
     step("bundle Clicky sound library");
     const out = join(contents, "Resources", "ClickyLibrary");
+    const pin = SafeJSON.parse(readFileSync(pinPath, "utf8"), { strict: true }) as ClickyLibraryPin;
+    let source: string;
     try {
-        const pin = SafeJSON.parse(readFileSync(join(APP_SOURCE_DIR, CLICKY_LIBRARY_PIN), "utf8"), {
-            strict: true,
-        }) as ClickyLibraryPin;
-        await unpackClickyLibrary(await ensureClickyLibrary(pin), out);
+        source = await ensure(pin);
     } catch (error) {
+        if (!(error instanceof ClickyLibraryUnavailableError)) {
+            throw error;
+        }
+
         rmSync(out, { recursive: true, force: true });
         logger.warn({ error }, "permissions app: Clicky sound library skipped");
-        step(`Clicky sound library skipped: ${error instanceof Error ? error.message : String(error)}`);
+        step(`Clicky sound library skipped: ${error.message}`);
+        return;
     }
+
+    await unpack(source, out);
 }
 
 interface StageAndInstallOptions {
@@ -616,7 +639,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     await buildDiffViewer(contents, step);
     step("copy markdown webview");
     cpSync(MARKDOWN_WEBVIEW_SOURCE, join(contents, "Resources", "webview"), { recursive: true });
-    await bundleClickyLibrary(contents, step);
+    await bundleClickyLibrary({ contents, step });
 
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
     const identity = pickCodesignIdentity(

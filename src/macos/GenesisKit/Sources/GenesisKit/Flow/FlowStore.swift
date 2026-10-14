@@ -196,6 +196,14 @@ public final class FlowStore {
     }
 
     private func finishHistoryMutation(_ pending: HistoryMutation) throws {
+        // A pending journal bypasses normal projection reads. Recheck a fenced projection so
+        // repairing it (or successfully preserving it) lets the same owner finish the journal.
+        if keptInPlace.contains(historyURL.lastPathComponent) {
+            let _: [FlowEntry]? = load(historyURL)
+        }
+        if keptInPlace.contains(statsURL.lastPathComponent) {
+            let _: FlowStats? = load(statsURL)
+        }
         let previousIDs = Set(pending.previousHistory.map(\.id))
         let retainedIDs = Set(pending.history.map(\.id))
         if pending.history.isEmpty || !previousIDs.isSubset(of: retainedIDs) {
@@ -215,7 +223,12 @@ public final class FlowStore {
     }
 
     public func loadScratchpad() -> String {
-        (try? String(contentsOf: scratchpadURL, encoding: .utf8)) ?? ""
+        read(scratchpadURL) { data in
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
+            return text
+        } ?? ""
     }
 
     public func saveScratchpad(_ text: String) {
@@ -270,10 +283,15 @@ public final class FlowStore {
     }
 
     private func load<T: Decodable>(_ url: URL) -> T? {
+        read(url) { try decoder.decode(T.self, from: $0) }
+    }
+
+    private func read<T>(_ url: URL, decode: (Data) throws -> T) -> T? {
         let data: Data
         do {
             data = try Data(contentsOf: url)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            keptInPlace.remove(url.lastPathComponent)
             return nil
         } catch {
             // Unreadable is not missing (EACCES, EIO): the next save would write defaults over bytes that may
@@ -283,7 +301,9 @@ public final class FlowStore {
             return nil
         }
         do {
-            return try decoder.decode(T.self, from: data)
+            let value = try decode(data)
+            keptInPlace.remove(url.lastPathComponent)
+            return value
         } catch {
             // A corrupt file is moved aside, never overwritten in place. The
             // user keeps a chance of recovering it by hand, and the next save
@@ -366,6 +386,7 @@ public final class FlowStore {
             .appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)")
         do {
             try FileManager.default.moveItem(at: url, to: target)
+            keptInPlace.remove(url.lastPathComponent)
         } catch {
             // Still in place, so no save may replace it: that would destroy the only copy.
             keptInPlace.insert(url.lastPathComponent)
