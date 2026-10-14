@@ -1,3 +1,4 @@
+import ApplicationServices
 import XCTest
 @testable import SnapshotSupport
 
@@ -419,18 +420,37 @@ final class CursorFeedbackTests: XCTestCase {
         XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: false, focused: nil))
         XCTAssertTrue(CursorFeedbackText.writesToSecureField(targetSecure: true, sentToWindow: false, focused: nil))
     }
-    func testFailedRecipientAttributeReadsMaskTheInput() {
-        let cases: [[String?]] = [[nil, nil], ["AXTextField", nil], [nil, "AXUnknown"]]
-        for attributes in cases {
+    func testRecipientAttributeClassificationControlsInputMasking() {
+        typealias Read = (status: AXError, value: Any?)
+        let plainRole: Read = (.success, "AXTextField")
+        let absentSubrole: Read = (.attributeUnsupported, nil)
+        let cases: [(name: String, role: Read, subrole: Read, hidden: Bool)] = [
+            ("plain strings", plainRole, (.success, "AXSearchField"), false),
+            ("unsupported subrole", plainRole, absentSubrole, false),
+            ("no-value subrole", plainRole, (.noValue, nil), false),
+            ("secure subrole", plainRole, (.success, "AXSecureTextField"), true),
+            ("secure role", (.success, "AXSecureTextField"), absentSubrole, true),
+            ("unsupported role", (.attributeUnsupported, nil), absentSubrole, true),
+            ("no-value role", (.noValue, nil), absentSubrole, true),
+            ("non-string role", (.success, NSNumber(value: 7)), absentSubrole, true),
+            ("non-string subrole", plainRole, (.success, NSNumber(value: 7)), true),
+            ("missing successful role", (.success, nil), absentSubrole, true),
+            ("missing successful subrole", plainRole, (.success, nil), true),
+            ("unresponsive subrole", plainRole, (.cannotComplete, nil), true),
+            ("unresponsive role", (.cannotComplete, nil), absentSubrole, true),
+            ("invalid element", plainRole, (.invalidUIElement, nil), true),
+        ]
+        for item in cases {
+            let role = CursorFeedbackText.classifyRecipientAttribute(status: item.role.status,
+                value: item.role.value, absentAllowed: false)
+            let subrole = CursorFeedbackText.classifyRecipientAttribute(status: item.subrole.status,
+                value: item.subrole.value, absentAllowed: true)
             let secure = CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true,
-                                                                 focused: attributes, focusedReadFailed: true)
-            XCTAssertTrue(secure)
+                focused: [role.value, subrole.value], focusedReadFailed: role.failed || subrole.failed)
+            XCTAssertEqual(secure, item.hidden, item.name)
             XCTAssertEqual(CursorFeedbackText.detail(action: "type", text: "private-value", secure: secure),
-                           "•••••••• (13 characters, hidden)")
+                item.hidden ? "•••••••• (13 characters, hidden)" : "“private-value”", item.name)
         }
-        XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true,
-                                                              focused: ["AXTextField", nil], focusedReadFailed: false),
-                       "a genuinely absent subrole on a plain field is allowed")
     }
 
     func testPreparationChangesTheRecipientBeforeTheCursorDetailIsFormatted() throws {

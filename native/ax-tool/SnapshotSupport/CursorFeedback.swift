@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import QuartzCore
 import CoreText
 
@@ -199,6 +200,19 @@ public enum CursorFeedbackText {
         }
 
         return String(flat.prefix(max(1, limit - 1))).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// Classify a role/subrole AX read before deciding whether a cursor label may expose input.
+    /// Only an unsupported/no-value optional attribute is absent; all other failed or non-string reads are unknown.
+    public static func classifyRecipientAttribute(status: AXError, value: Any?,
+                                                   absentAllowed: Bool) -> (value: String?, failed: Bool) {
+        if status == .success, let text = value as? String {
+            return (text, false)
+        }
+        if absentAllowed, status == .attributeUnsupported || status == .noValue {
+            return (nil, false)
+        }
+        return (nil, true)
     }
 
     /// Whether an act writes into a password field, so the detail line must hide what it sends. A key

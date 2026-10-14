@@ -82,13 +82,8 @@ enum ActionCursor {
                                             absentAllowed: Bool) -> (value: String?, failed: Bool) {
         var raw: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
-        if status == .success, let value = raw as? String {
-            return (value, false)
-        }
-        if absentAllowed, status == .attributeUnsupported || status == .noValue {
-            return (nil, false)
-        }
-        return (nil, true)
+        return CursorFeedbackText.classifyRecipientAttribute(status: status, value: raw,
+                                                              absentAllowed: absentAllowed)
     }
 
     /// Names the app a pointer-only act goes to, when no element is known.
