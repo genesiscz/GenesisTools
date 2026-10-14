@@ -12,6 +12,13 @@
 # A file checkout is not a new worktree.
 [ "$3" = "1" ] || exit 0
 
+# Only a new worktree has no previous HEAD: `git worktree add` passes the all-zero ref, while
+# `git checkout`, `switch` and `rebase` in an existing worktree pass the commit they leave.
+# Without this test every rebase in a linked worktree started a whole `bun tools` run, and
+# every process it started waits for macOS's exec check in syspolicyd; on 2026-10-14, while
+# syspolicyd was crashing and restarting, one such check never came back and the rebase hung.
+[ "$1" = "0000000000000000000000000000000000000000" ] || exit 0
+
 # In the main checkout `.git` is a directory; in a linked worktree it is a FILE. That single
 # test is what keeps this from re-running on every `git checkout` in the main repo.
 [ -f ".git" ] || exit 0
