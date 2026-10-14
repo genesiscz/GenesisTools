@@ -70,6 +70,11 @@ const PROCESS_TOOLS = /(^|\/)(ps|lsof|pgrep)$/;
  * `mock.calls`, so reading them afterwards always finds none.
  */
 function spawnedPrograms(run: () => void): string[] {
+    return spawnedCommands(run).map((argv) => argv[0] ?? "undefined");
+}
+
+/** Like {@link spawnedPrograms}, with each program's arguments. */
+function spawnedCommands(run: () => void): string[][] {
     const spawn = spyOn(Bun, "spawn");
     const spawnSync = spyOn(Bun, "spawnSync");
     let calls: unknown[][] = [];
@@ -83,7 +88,7 @@ function spawnedPrograms(run: () => void): string[] {
     }
 
     return calls.map(([first]) =>
-        Array.isArray(first) ? String(first[0]) : String((first as { cmd?: string[] }).cmd?.[0])
+        (Array.isArray(first) ? first : ((first as { cmd?: string[] }).cmd ?? [])).map(String)
     );
 }
 
@@ -741,6 +746,98 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
                 : []
         ).toEqual([]);
     });
+
+    test.skipIf(process.platform !== "darwin")(
+        "names: another user's process is named as ps -o comm= named it, by the batched ps that reads its usage",
+        () => {
+            const fromPs = new Map<number, string>();
+
+            for (const line of Bun.spawnSync(["ps", "-axo", "pid=,comm="], { env: process.env })
+                .stdout.toString()
+                .split("\n")) {
+                const match = line.match(/^\s*(\d+)\s(.*)$/);
+
+                if (match) {
+                    fromPs.set(Number(match[1]), match[2].trim());
+                }
+            }
+
+            const own = process.geteuid?.() ?? -1;
+            const rows = listProcessesWithUsage({ otherUsers: true, commands: false, names: true }).filter(
+                (row) => row.uid !== own && !row.zombie && fromPs.has(row.pid)
+            );
+            // Only the setuid `ps` reads their argv[0]; the executable's path differs for about one row in twelve
+            // (`login` is /usr/bin/login, a Core Audio driver host is its helper's file).
+            const differ = rows.filter((row) => row.listedName !== fromPs.get(row.pid));
+
+            expect(rows.length).toBeGreaterThan(0);
+            const allowed = Math.max(2, Math.floor(rows.length * 0.02));
+            expect(
+                differ.length > allowed
+                    ? differ.map((row) => `${row.pid}: ${row.listedName} / ps ${fromPs.get(row.pid)}`)
+                    : []
+            ).toEqual([]);
+        }
+    );
+
+    test.skipIf(process.platform !== "darwin")(
+        "cost: other users' rows come from one ps over their owners, and a pid list never goes to ps -p",
+        () => {
+            const own = process.geteuid?.() ?? -1;
+            const others = listProcesses({ commands: false })
+                .filter((entry) => entry.uid !== own && !entry.zombie)
+                .slice(0, 3)
+                .map((entry) => entry.pid);
+            let calls: string[][] = [];
+            const lists = (argv: string[]) => argv.some((arg, at) => argv[at - 1] === "-p" && arg.includes(","));
+
+            // `ps -p a,b` cost 75 ms of CPU for 2 to 60 pids on macOS 26, the whole table 24 ms, one pid 1 ms.
+            calls = spawnedCommands(() => {
+                readProcessUsages(others, { otherUsers: true });
+                readCpuPercents(others, { otherUsers: true });
+            });
+            expect(others.length).toBe(3);
+            expect(calls.filter((argv) => argv[0] === "ps").length).toBe(2);
+            expect(calls.filter((argv) => argv[0] === "ps" && lists(argv))).toEqual([]);
+
+            // `-u` over the owners lists 323 processes for 11 ms (16 with `comm=`), `-A` all 1,250 for 24 ms.
+            calls = spawnedCommands(() =>
+                listProcessesWithUsage({ otherUsers: true, commands: false, names: true, cpuPercent: true })
+            );
+            const ps = calls.filter((argv) => argv[0] === "ps");
+            expect(ps.length).toBe(1);
+            expect(ps[0]).toContain("-u");
+            expect(ps[0]?.join(" ")).toContain("comm=");
+        }
+    );
+
+    test.skipIf(process.platform !== "darwin")(
+        "cost: a ps -u that refuses a user falls back to the whole table, so other users keep their usage and names",
+        () => {
+            const real = ps.captureSync;
+            const asked: string[][] = [];
+            const capture = spyOn(ps, "captureSync").mockImplementation((command, args, options) => {
+                asked.push([command, ...args]);
+                return args.includes("-u")
+                    ? { stdout: "", stderr: "ps: No user named 'someone'\n", status: 1 }
+                    : real(command, args, options);
+            });
+            let rows: ReturnType<typeof listProcessesWithUsage> = [];
+
+            try {
+                rows = listProcessesWithUsage({ otherUsers: true, commands: false, names: true });
+            } finally {
+                capture.mockRestore();
+            }
+
+            const own = process.geteuid?.() ?? -1;
+            const others = rows.filter((row) => row.uid !== own && !row.zombie);
+            expect(asked.map((argv) => argv.find((arg) => arg === "-u" || arg === "-A"))).toEqual(["-u", "-A"]);
+            expect(others.length).toBeGreaterThan(0);
+            expect(others.filter((row) => row.usage === null).length).toBeLessThanOrEqual(2);
+            expect(others.find((row) => row.pid === 1)?.listedName).toBe("/sbin/launchd");
+        }
+    );
 
     test("cpu: %cpu is what ps prints, recent usage on macOS and CPU time over the life on Linux", () => {
         const fromPs = new Map<number, number>();

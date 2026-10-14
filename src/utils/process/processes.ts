@@ -34,7 +34,7 @@ import {
 } from "./libproc-table";
 import { type LinuxProcess, listProcProcesses, readProcEnviron, readProcExe, readProcProcess } from "./linux-proc";
 import { darwinKernel, processPlatform } from "./os";
-import { captureSync, PS_BATCH_SIZE, parseCpuTime } from "./ps";
+import { captureSync, parseCpuTime } from "./ps";
 import { type CimProcess, listCimProcesses } from "./windows-cim";
 
 /** Every `ps` fallback gets a deadline: a blocked `ps` would otherwise stall the caller's thread for good. */
@@ -158,11 +158,13 @@ function fromCim(process: CimProcess, commands: boolean): ProcessEntry {
 }
 
 /**
- * ONE `ps` for the rows of `pids`, however many: `-p` for up to {@link PS_BATCH_SIZE} pids, the whole table filtered
- * for more (macOS has about 400 other-user processes, and one `ps -A` costs about what one `ps -p` does). `columns`
- * starts with `pid=`; each kept line is the text after the pid.
+ * ONE `ps` for the rows of `pids`, however many. One pid is `-p` (about 1 ms of CPU); a list never is, because
+ * `ps -p a,b` costs about 75 ms for 2 to 60 pids on macOS 26, three times the whole table (`-A`, about 24 ms for
+ * 1,250 processes). With `owners`, the effective uids of `pids`, `-u` lists only their processes: about 11 ms for the
+ * 323 processes of 41 other users, measured 2026-10-15. `columns` starts with `pid=`; each kept line is the text after
+ * the pid.
  */
-function psLinesFor(pids: number[], columns: string): Map<number, string> {
+function psLinesFor(pids: number[], columns: string, owners: number[] = []): Map<number, string> {
     const lines = new Map<number, string>();
 
     if (pids.length === 0) {
@@ -170,9 +172,21 @@ function psLinesFor(pids: number[], columns: string): Map<number, string> {
     }
 
     const wanted = new Set(pids);
-    const args = pids.length <= PS_BATCH_SIZE ? ["-o", columns, "-p", pids.join(",")] : ["-A", "-o", columns];
+    // `ps -u` takes login names; a uid with none (or the -2 that `nobody` is to `ps`) fails the whole call.
+    const users = owners.map((uid) => userName(uid));
+    const select =
+        pids.length === 1
+            ? ["-p", String(pids[0])]
+            : owners.length > 0 && users.every((name) => name !== null)
+              ? ["-u", users.join(",")]
+              : ["-A"];
+    let result = captureSync("ps", ["-o", columns, ...select], { timeoutMs: PS_DEADLINE_MS });
 
-    for (const line of captureSync("ps", args, { timeoutMs: PS_DEADLINE_MS }).stdout.split("\n")) {
+    if (select[0] === "-u" && result.status !== 0) {
+        result = captureSync("ps", ["-o", columns, "-A"], { timeoutMs: PS_DEADLINE_MS });
+    }
+
+    for (const line of result.stdout.split("\n")) {
         const match = line.match(/^\s*(\d+)\s+(.*)$/);
 
         if (match && wanted.has(Number(match[1]))) {
@@ -568,8 +582,9 @@ export function readExecutablePath(pid: number): string | null {
 /**
  * The name `ps -o comm=` prints for a listed process, without its cut. macOS prints argv[0]: the kernel gives it for this
  * user's processes (measured 2026-10-15: 934 of 934 equal to `ps`), and another user's falls back to the executable's
- * path (294 of 320 equal; only the setuid `ps` reads their argv, and its `comm=` column cost 30 ms more per call on
- * 1,250 processes, measured 2026-10-15, for those 26 rows). Linux prints the kernel name cut at 15 bytes, so a name
+ * path (294 of 320 equal). Only the setuid `ps` reads another user's argv, so {@link listProcessesWithUsage} with
+ * `otherUsers` and no command lines takes their names from the `ps` that reads their usage. Linux prints the kernel
+ * name cut at 15 bytes, so a name
  * the kernel cut becomes the executable's file name that starts with it; an uncut one stays as it is, since
  * `python3` started through a symlink to `python3.13` is `python3` to `ps` and in its command line. Windows: the
  * image name. Not the resolved executable path: a hard-linked launcher such as `gt-hub` resolves to `bun`, and a
@@ -821,8 +836,9 @@ export function readProcessesWithUsage(
  * spawn. On macOS, `otherUsers` fills in what the kernel withholds from this user (another user's command line,
  * memory and CPU time) with ONE batched `ps`, never one per question. `commands: false` leaves every command line
  * null, for a caller that names a process by its executable: the `ps` then skips its most expensive column (about
- * 25 ms instead of 55 on 1,300 processes). `names` and `cpuPercent` add what `ps -o comm=,%cpu=` printed (see
- * {@link readListedName} for other users' names); other users' %cpu comes from the same batched `ps`.
+ * 25 ms instead of 55 on 1,300 processes). `names` and `cpuPercent` add what `ps -o comm=,%cpu=` printed; other users'
+ * %cpu, and with `commands: false` their names, come from the same batched `ps` (with command lines, their names are
+ * the executable's path, see {@link readListedName}).
  */
 export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}): ProcessWithUsage[] {
     const commands = options.commands !== false;
@@ -870,15 +886,23 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
         ? readCpuPercents(entries.map((entry) => entry.pid))
         : new Map<number, number>();
 
+    // Another user's argv[0], the name `ps -o comm=` prints, only the setuid `ps` reads. It rides on the `ps` that
+    // fills their usage, as the last column, when no command line holds that place: 16 ms with it, 11 without.
+    const psNames = new Map<number, string>();
+
     if (fillFromPs) {
         const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
         const missing = entries.filter((entry) => !entry.zombie && (commands || !usages.has(entry.pid)));
-        const tail = commands ? ",command=" : "";
+        const uids = missing.flatMap((entry) => (entry.uid === null ? [] : [entry.uid]));
+        const owners = uids.length === missing.length ? [...new Set(uids)] : [];
+        const names = options.names === true && !commands;
+        const tail = commands ? ",command=" : names ? ",comm=" : "";
         const columns = `pid=,rss=,time=${options.cpuPercent ? ",pcpu=" : ""}${tail}`;
 
         for (const [pid, rest] of psLinesFor(
             missing.map((entry) => entry.pid),
-            columns
+            columns,
+            owners
         )) {
             const words = rest.trimStart().split(/\s+/);
             const fixed = options.cpuPercent ? 3 : 2;
@@ -900,6 +924,10 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
                 entry.command ??= last;
             }
 
+            if (names && last) {
+                psNames.set(pid, last);
+            }
+
             if (options.cpuPercent && !percents.has(pid) && Number.isFinite(Number.parseFloat(pcpu))) {
                 percents.set(pid, Number.parseFloat(pcpu));
             }
@@ -917,7 +945,7 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
         return {
             ...entry,
             usage: usages.get(entry.pid) ?? null,
-            ...(options.names ? { listedName: readListedName(entry) } : {}),
+            ...(options.names ? { listedName: psNames.get(entry.pid) ?? readListedName(entry) } : {}),
             ...(percent !== undefined ? { cpuPercent: percent } : {}),
         };
     });
