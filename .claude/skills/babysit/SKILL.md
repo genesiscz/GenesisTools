@@ -196,6 +196,12 @@ fix against the module's documented contracts and its callers (the #511 defect h
 commit, nothing staged that is not the worker's; check the ready-to-post replies against the final code. Verdict per
 PR: VERIFIED, VERIFIED WITH CAVEATS, or REFUTED, with evidence.
 
+Every deferral is judged too, by severity. A critical or high finding the worker left OPEN because its fix needs a
+file outside the PR is the lead's decision in the same round, not a reply: when the finding is about the PR's own
+subject (on 2026-10-14 #516's one-scan rule needed `enrich.ts`), allow the file in a steer and send it back before
+the push; defer it only with the reason in the reply. A Swift change the worker could not run is not judged until the
+lead ran its tests: `swift-typecheck.ts` proves it compiles, and #501 round 2 typechecked clean yet broke a test.
+
 ## 7. Correct, integrate, push
 
 At most **one correction commit** per PR per round, for what is wrong or below the bar (a defect, a test in the wrong
