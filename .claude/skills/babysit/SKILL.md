@@ -228,7 +228,10 @@ running review rounds while the question is open: a missing answer never blocks 
 
 A PR lands when all hold: at least 3 review rounds done; no open critical or high finding; the reviewer bot reviewed
 the CURRENT head; CI green on that head; its base is master or a parent the run merges first (a PR stacked on another
-session's branch waits for that branch). Then the review-loop landing recipe:
+session's branch waits for that branch). Then the review-loop landing recipe, which
+`bun .claude/skills/babysit/scripts/land.ts --run <dir> --pr <N> --merge` runs as one command (without `--merge` it
+only prepares and prints the squash; every git call is an argument array, because a hand-typed
+`--force-with-lease=$B:c1a…` in zsh read `:c` as a modifier and pushed without the lease):
 
 1. Squash the review commits (the `#<N> followup` ones on top of the feature commits) into one
    `fix(<scopes>): #<N> followup - address PR review (<k> commits)` whose body lists each squashed subject; prove the
