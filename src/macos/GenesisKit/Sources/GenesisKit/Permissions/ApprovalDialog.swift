@@ -139,10 +139,14 @@ public struct ApprovalDialogView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 66)
 
+            remember
             buttons
         }
         .padding(20)
         .frame(width: 480)
+        // The hosting controller insets its content by the hidden title bar; the strip stays draggable through
+        // `.titlebarZone()`, so the dialog uses the full height (Martin's screenshot showed an empty band on top).
+        .ignoresSafeArea()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(model.identifier)
     }
@@ -176,6 +180,8 @@ public struct ApprovalDialogView: View {
                         .font(fact.monospaced ? .system(size: 11, design: .monospaced) : .system(size: 12))
                         .lineLimit(3)
                         .truncationMode(.middle)
+                        // Without it the grid measured one line and cut a path in the middle while the window had room.
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .help(fact.help ?? fact.value)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -184,18 +190,14 @@ public struct ApprovalDialogView: View {
         }
     }
 
-    private var buttons: some View {
-        HStack(spacing: 8) {
-            Button("Deny", action: model.deny)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityIdentifier("\(model.identifier)-deny")
-            if let deadline = model.deadline {
-                (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 8)
-            if model.rememberChoices.count > 1 {
+    /// Its own row, so the buttons keep their full titles (the first layout cut "Allow with Touch ID" short).
+    @ViewBuilder
+    private var remember: some View {
+        if model.rememberChoices.count > 1 {
+            HStack(spacing: 8) {
+                Text("Remember")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                 Picker("Remember", selection: $model.rememberIndex) {
                     ForEach(model.rememberChoices.indices, id: \.self) { index in
                         Text(model.rememberChoices[index].title).tag(index)
@@ -205,17 +207,35 @@ public struct ApprovalDialogView: View {
                 .pickerStyle(.menu)
                 .fixedSize()
                 .accessibilityIdentifier("\(model.identifier)-remember")
-            } else if let note = model.rememberNote {
-                Text(note)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: 170, alignment: .trailing)
-                    .multilineTextAlignment(.trailing)
             }
+            .padding(.leading, 66)
+            .disabled(model.answered)
+            .environment(\.controlActiveState, .key)
+        } else if let note = model.rememberNote {
+            Label(note, systemImage: "clock.badge.xmark")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 66)
+        }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 8) {
+            if let deadline = model.deadline {
+                (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            Spacer(minLength: 8)
+            Button("Deny", action: model.deny)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("\(model.identifier)-deny")
             Button(model.allowTitle, action: model.allow)
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
+                .fixedSize()
                 .accessibilityIdentifier("\(model.identifier)-allow")
         }
         .controlSize(.regular)

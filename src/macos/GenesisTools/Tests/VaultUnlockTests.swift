@@ -1,4 +1,5 @@
 import GenesisKit
+import SwiftUI
 import XCTest
 @testable import GenesisTools
 
@@ -106,7 +107,8 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(content.purpose, "Match this Claude session's token to a configured account, for the statusline.")
         XCTAssertEqual(content.facts.map(\.label), ["Session", "Program", "Folder", "Reading"])
         XCTAssertEqual(facts["Session"], "review-loop (Claude Code)")
-        XCTAssertEqual(facts["Program"], "claude · ~/repo/src/claude/index.ts")
+        XCTAssertEqual(facts["Program"], "claude · repo/src/claude/index.ts")
+        XCTAssertEqual(VaultWindowContent.programPath("/Users/alice/tools/run.ts", home: "/Users/alice"), "~/tools/run.ts")
         XCTAssertEqual(facts["Folder"], "~/project")
         XCTAssertEqual(facts["Reading"], "acc_work › longLivedToken")
         XCTAssertEqual(details["Started by"], "GenesisTools gt-claude (100) ← zsh (90) ← claude (80)")
@@ -141,6 +143,12 @@ final class VaultUnlockTests: XCTestCase {
         let who = caller(arguments: ["gt-say", "/repo/src/say/index.ts"], ancestors: [(90, "zsh"), (80, "codex exec")])
 
         XCTAssertEqual(VaultSession.info(who, claudeHome: "/nonexistent").summary, "codex exec (pid 80)")
+
+        let daemon = caller("/Users/alice/.bun/bin/bun", arguments: ["/Users/alice/.bun/bin/bun", "run", "/repo/src/ai/commands/usage/poll-daemon.ts"],
+                            ancestors: [(4904, "bun usage-supervisor.ts")])
+        let content = VaultWindowContent.build(VaultUnlockParams(tool: "ai", purpose: "refresh", secret: nil, command: nil), caller: daemon,
+                                               session: VaultSessionInfo(), home: "/Users/alice")
+        XCTAssertEqual(content.facts.first?.value, "None: started by bun usage-supervisor.ts")
     }
 
     func testTheAppCopyOfTheKeyAnswersOnlyForTheSourceItWasTakenFrom() {
@@ -166,6 +174,45 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(content.facts.first?.value, "work (alice@example.com) · xai")
         XCTAssertEqual(content.rememberChoices.map(\.title), ["Just this once", "For 8 hours", "For 7 days"])
         XCTAssertEqual(content.warning, "Unverified: its binary or script could not be established. It will not be remembered.")
+    }
+
+    /// Draws the real window into a window that is never shown, for review: `APPROVAL_SNAPSHOT_DIR=<dir>` writes
+    /// `vault-window.png` and `vault-window-details.png`. Skipped otherwise.
+    @MainActor
+    func testRenderTheVaultWindowWhenAsked() throws {
+        guard let dir = ProcessInfo.processInfo.environment["APPROVAL_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set APPROVAL_SNAPSHOT_DIR to render the window")
+        }
+
+        let daemon = caller("/Users/alice/.bun/bin/bun",
+                            arguments: ["/Users/alice/.bun/bin/bun", "run", "/Users/alice/Projects/GenesisTools/src/ai/commands/usage/poll-daemon.ts"],
+                            environment: ["CLAUDE_CODE_SESSION_ID=0f3a9c1e-5b7d-4e2a-9f10-2c4b6d8e0a13", "CMUX_SURFACE_ID=D5A60715-1C64-4556-ADB6-2D0B14E12FEB"],
+                            ancestors: [(4904, "bun usage-supervisor.ts"), (812, "zsh"), (640, "claude")])
+        let params = VaultUnlockParams(tool: "ai", purpose: "refresh the usage of every AI account (the usage daemon, once a minute in the background)",
+                                       secret: "ai/acc_work/accessToken", command: nil)
+        let session = VaultSessionInfo(sessionId: "0f3a9c1e-5b7d-4e2a-9f10-2c4b6d8e0a13", title: "review-loop", agent: nil,
+                                       cmuxTab: "D5A60715-1C64-4556-ADB6-2D0B14E12FEB")
+        let content = VaultWindowContent.build(params, caller: daemon, session: session, home: "/Users/alice")
+
+        for (name, open) in [("vault-window", false), ("vault-window-details", true)] {
+            let model = ApprovalDialogModel(
+                title: content.title, purpose: content.purpose, symbol: "key.fill", facts: content.facts, details: content.details,
+                warning: content.warning, footnote: VaultWindowContent.footnote, rememberChoices: VaultWindowContent.rememberChoices,
+                rememberNote: nil, allowTitle: "Allow with Touch ID", deadline: Date().addingTimeInterval(170), identifier: "vault-unlock")
+            model.showsDetails = open
+            let host = NSHostingView(rootView: ApprovalDialogView(model: model)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, .dark))
+            host.frame = CGRect(origin: .zero, size: host.fittingSize)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: rep)
+            let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: (dir as NSString).appendingPathComponent("\(name).png")))
+        }
     }
 
     func testASecondRequestFromTheSameProgramGetsNoSecondWindow() throws {

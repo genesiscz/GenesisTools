@@ -144,7 +144,7 @@ struct GateWindowContent {
         let program = client.script ?? client.executable
 
         var facts = [ApprovalFact("Account", "\(accountLabel) · \(params.provider)")]
-        facts.append(ApprovalFact("Program", program.map { "\(client.name) · \(VaultWindowContent.shortPath($0, home: home))" } ?? client.name,
+        facts.append(ApprovalFact("Program", program.map { "\(client.name) · \(VaultWindowContent.programPath($0, home: home))" } ?? client.name,
                                   help: [client.executable, client.script].compactMap { $0 }.joined(separator: " ")))
         if let cwd = client.cwd, !cwd.isEmpty {
             facts.append(ApprovalFact("Folder", VaultWindowContent.shortPath(cwd, home: home), help: cwd))

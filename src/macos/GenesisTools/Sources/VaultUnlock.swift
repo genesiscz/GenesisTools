@@ -396,6 +396,14 @@ struct VaultWindowContent {
         path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 
+    /// A script inside a project reads from the project's folder: `GenesisTools/src/ai/commands/usage/poll-daemon.ts`,
+    /// not a home path cut in the middle (Martin's screenshot, 2026-10-15 00:46).
+    static func programPath(_ path: String, home: String = NSHomeDirectory()) -> String {
+        guard let range = path.range(of: "/src/") else { return shortPath(path, home: home) }
+        let project = (String(path[..<range.lowerBound]) as NSString).lastPathComponent
+        return project.isEmpty ? shortPath(path, home: home) : project + path[range.lowerBound...]
+    }
+
     /// `ai/acc_work/apiKey` reads as `acc_work › apiKey`.
     static func secretLabel(_ secret: String) -> String {
         let parts = secret.split(separator: "/").map(String.init)
@@ -413,10 +421,11 @@ struct VaultWindowContent {
     static func build(_ params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
                       home: String = NSHomeDirectory()) -> VaultWindowContent {
         let tool = caller.toolName ?? params.tool
-        var facts = [ApprovalFact("Session", session.summary ?? "None found (not started from an agent session)")]
+        let starter = caller.ancestors.last.map { "None: started by \($0.command)" } ?? "None: started by launchd"
+        var facts = [ApprovalFact("Session", session.summary ?? starter)]
 
         if let script = caller.script {
-            facts.append(ApprovalFact("Program", "\(tool) · \(shortPath(script, home: home))",
+            facts.append(ApprovalFact("Program", "\(tool) · \(programPath(script, home: home))",
                                       help: "\(caller.executable ?? "unknown") \(script)"))
         } else {
             facts.append(ApprovalFact("Program", "\(tool) · \(shortPath(caller.executable ?? "unknown", home: home))",
