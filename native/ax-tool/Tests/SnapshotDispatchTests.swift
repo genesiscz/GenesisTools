@@ -419,6 +419,44 @@ final class CursorFeedbackTests: XCTestCase {
         XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: false, focused: nil))
         XCTAssertTrue(CursorFeedbackText.writesToSecureField(targetSecure: true, sentToWindow: false, focused: nil))
     }
+    func testFailedRecipientAttributeReadsMaskTheInput() {
+        let cases: [[String?]] = [[nil, nil], ["AXTextField", nil], [nil, "AXUnknown"]]
+        for attributes in cases {
+            let secure = CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true,
+                                                                 focused: attributes, focusedReadFailed: true)
+            XCTAssertTrue(secure)
+            XCTAssertEqual(CursorFeedbackText.detail(action: "type", text: "private-value", secure: secure),
+                           "•••••••• (13 characters, hidden)")
+        }
+        XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true,
+                                                              focused: ["AXTextField", nil], focusedReadFailed: false),
+                       "a genuinely absent subrole on a plain field is allowed")
+    }
+
+    func testPreparationChangesTheRecipientBeforeTheCursorDetailIsFormatted() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/SnapshotWorkflow.swift"),
+                                encoding: .utf8)
+        let preparation = try XCTUnwrap(source.range(of: "if workflowFlag(\"--prepare\") {"))
+        let focusedRead = try XCTUnwrap(source.range(of: "let focusedInput = axAttribute(app, \"AXFocusedUIElement\")"))
+        let recipient = try XCTUnwrap(source.range(of: "ActionCursor.describeRecipient("))
+        let detail = try XCTUnwrap(source.range(of: "ActionCursor.describeInput(action:"))
+        let dispatch = try XCTUnwrap(source.range(of: "try dispatchSnapshotAction(context: context)"))
+        XCTAssertLessThan(preparation.lowerBound, focusedRead.lowerBound)
+        XCTAssertLessThan(focusedRead.lowerBound, recipient.lowerBound)
+        XCTAssertLessThan(recipient.lowerBound, detail.lowerBound)
+        XCTAssertLessThan(detail.lowerBound, dispatch.lowerBound)
+
+        var focused: [String?] = ["AXTextField", nil]
+        XCTAssertFalse(CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true, focused: focused))
+        // Activation of the selected window restores its password field instead of the old plain one.
+        focused = ["AXTextField", "AXSecureTextField"]
+        let secure = CursorFeedbackText.writesToSecureField(targetSecure: false, sentToWindow: true, focused: focused)
+        XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: secure), "keys •")
+        XCTAssertEqual(CursorFeedbackText.detail(action: "paste", text: "private-value", secure: secure),
+                       "•••••••• (13 characters, hidden)")
+    }
+
     func testTheDetailLineHidesAKeyThatTypesIntoASecureField() {
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "q", secure: true), "keys •")
         XCTAssertEqual(CursorFeedbackText.detail(action: "key", text: "shift, 7", secure: true), "keys shift+•")

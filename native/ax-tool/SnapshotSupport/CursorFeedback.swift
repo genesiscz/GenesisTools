@@ -205,7 +205,8 @@ public enum CursorFeedbackText {
     /// or text sent to the window lands in the app's focused input, so that input decides; `focused` is
     /// its role and subrole, or nil when it cannot be read, which counts as a password field: the label
     /// must not show a password because its recipient was unknown.
-    public static func writesToSecureField(targetSecure: Bool, sentToWindow: Bool, focused: [String?]?) -> Bool {
+    public static func writesToSecureField(targetSecure: Bool, sentToWindow: Bool, focused: [String?]?,
+                                          focusedReadFailed: Bool = false) -> Bool {
         if targetSecure {
             return true
         }
@@ -214,7 +215,7 @@ public enum CursorFeedbackText {
             return false
         }
 
-        return focused?.contains("AXSecureTextField") ?? true
+        return focusedReadFailed || (focused?.contains("AXSecureTextField") ?? true)
     }
 
     /// The line under the label for an act that writes text or sends keys, or nil for any other act.

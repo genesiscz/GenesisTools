@@ -66,9 +66,29 @@ enum ActionCursor {
     /// For an act sent to the window: the app's focused input receives it, so that input decides whether
     /// the label hides the text. Call after `describe(_:)` and before `describeInput`.
     static func describeRecipient(sentToWindow: Bool, focused: AXUIElement?) {
-        let parts = focused.map { [axStringAttribute($0, "AXRole"), axStringAttribute($0, "AXSubrole")] }
+        let parts = focused.map { element in
+            let role = recipientAttribute(element, "AXRole", absentAllowed: false)
+            let subrole = recipientAttribute(element, "AXSubrole", absentAllowed: true)
+            return (values: [role.value, subrole.value], failed: role.failed || subrole.failed)
+        }
         targetSecure = CursorFeedbackText.writesToSecureField(targetSecure: targetSecure, sentToWindow: sentToWindow,
-                                                              focused: parts)
+                                                              focused: parts?.values,
+                                                              focusedReadFailed: parts?.failed ?? false)
+    }
+
+    /// An unsupported/no-value subrole is genuinely absent. Other AX errors, a missing role,
+    /// or a successful read of a non-string leave the security classification unknown.
+    private static func recipientAttribute(_ element: AXUIElement, _ name: String,
+                                            absentAllowed: Bool) -> (value: String?, failed: Bool) {
+        var raw: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
+        if status == .success, let value = raw as? String {
+            return (value, false)
+        }
+        if absentAllowed, status == .attributeUnsupported || status == .noValue {
+            return (nil, false)
+        }
+        return (nil, true)
     }
 
     /// Names the app a pointer-only act goes to, when no element is known.

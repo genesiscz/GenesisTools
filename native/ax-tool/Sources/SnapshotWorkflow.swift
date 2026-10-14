@@ -1039,15 +1039,6 @@ func cmdAct(appName _: String) {
     }
     let element = tree.elements[elementIndex]
     ActionCursor.describe(element)
-    if ["key", "type", "paste"].contains(action) {
-        // Sent to the window, the keys or text land in the app's focused input, which may be a password
-        // field the window itself does not show as one.
-        let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement")
-            .flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
-        ActionCursor.describeRecipient(sentToWindow: CFEqual(element, window.ax), focused: focused)
-    }
-    ActionCursor.describeInput(action: action, text: workflowArgument(
-        action == "set" ? "--value" : action == "key" ? "--keys" : "--text"))
     if action != "get", !(action == "focus" && elementIndex == 0) {
         let coordinates = rawCoords?.split(separator: ",").compactMap { Double($0) }
         let point = coordinates?.count == 2 ? CGPoint(x: coordinates![0], y: coordinates![1]) : nil
@@ -1126,6 +1117,15 @@ func cmdAct(appName _: String) {
     let app = AXUIElementCreateApplication(pid)
     let focusedWindow = axAttribute(app, "AXFocusedWindow")
     let focusedInput = axAttribute(app, "AXFocusedUIElement")
+    // Preparation can restore a different focused field in the selected window. Classify the
+    // recipient only now, before the dispatch can present feedback or send input.
+    if ["key", "type", "paste"].contains(action) {
+        let recipient = focusedInput
+            .flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        ActionCursor.describeRecipient(sentToWindow: CFEqual(element, window.ax), focused: recipient)
+    }
+    ActionCursor.describeInput(action: action, text: workflowArgument(
+        action == "set" ? "--value" : action == "key" ? "--keys" : "--text"))
     let windowFocused = frontmostPid() == pid
         && focusedWindow.map { workflowOwnsFocusedWindow(window, focused: $0) } == true
     let inputFocused = (action == "key" && CFEqual(element, window.ax))
