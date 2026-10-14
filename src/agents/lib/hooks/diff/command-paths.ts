@@ -289,7 +289,10 @@ function add({
     bases: string[];
     known?: Map<string, string>;
 }): void {
-    const plain = plainArgument(raw) ?? expandVariable(raw, known);
+    // The statement's `;` comes with its last token (`perl -pi … a.ts; echo ok`), and `a.ts;` is a
+    // file that never exists, so the edit went unwatched (2026-10-15, a background `perl -pi`).
+    const token = raw?.replace(/;+$/, "") ?? null;
+    const plain = plainArgument(token) ?? expandVariable(token, known);
 
     if (plain === null) {
         return;

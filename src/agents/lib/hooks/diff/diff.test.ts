@@ -1019,6 +1019,13 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`bun /x/cli.ts log "${note}"`, [vault])).toContain(note);
     });
 
+    it("finds a path that ends its statement, without the semicolon", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`sleep 1; perl -pi -e s/a/b/ ${note}; echo ok`, [vault])).toContain(note);
+        expect(namedArguments(`cat "${note}";`, [vault])).toContain(note);
+    });
+
     it.each([
         ["a URL", "curl https://example.com/a/b"],
         ["a variable", 'bun x "$HOME/note.md"'],
