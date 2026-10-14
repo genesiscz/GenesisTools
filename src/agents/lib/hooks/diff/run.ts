@@ -86,8 +86,12 @@ function patchFor(file: ChangedFile, before: string | null, config: DiffConfig, 
  * The rendered block for one changed file, or `null` when the diff turned out empty. A
  * DELETED file always renders: its block is the header alone when git has no patch for it.
  */
-/** Columns left between a band and the terminal's right edge, for the indent the harness adds. */
-const BAND_MARGIN = 2;
+/**
+ * Columns a band leaves free: Claude Code draws a hook message 6 columns in (under its `⎿`), so a
+ * row filled to the full terminal width wraps and leaves an empty band row under every changed row
+ * (seen in cmux on 2026-10-14 23:30 with a margin of 2). One more column keeps it clear of the edge.
+ */
+const BAND_MARGIN = 7;
 
 /** How a themed block names its file: relative inside the session folder, `~/` under home, else whole. */
 function displayPath(path: string, cwd: string): string {
