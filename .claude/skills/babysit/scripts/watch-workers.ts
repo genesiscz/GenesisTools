@@ -7,11 +7,17 @@
  * path ignores `--tail` and stops at the end of a turn, so a restart replayed the whole history (2026-10-14).
  * Grok has one stream per turn: the script polls `tools grok status` and tails each running turn.
  *
- * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180]
+ * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180] [--run <dir>]
+ *
+ * With --run, each line also names the PR and round the worker was last steered to (from the run's ledger): a worker
+ * keeps its first PR's name across later PRs, so "bs-compress turn 13" read as the compress PR taking 13 turns when
+ * it was #516 round 3 (2026-10-14).
  */
 import { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readEvents } from "./ledger";
+import { flag } from "./run";
 
 const args = process.argv.slice(2);
 const stallIndex = args.indexOf("--stall-s");
@@ -24,7 +30,22 @@ const workers = args
     });
 type Worker = (typeof workers)[number];
 
-const say = (w: Worker, text: string) => console.log(`[${w.label}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
+const runDir = flag("--run");
+
+/** ` #516 r3` for the worker's latest steer or spawn in the ledger; empty without --run or a match. */
+function currentTask(name: string): string {
+    if (!runDir) {
+        return "";
+    }
+
+    const last = readEvents(runDir).findLast(
+        (event) => event.worker === name && (event.kind === "steer" || event.kind === "spawn")
+    );
+    return last?.pr ? ` #${last.pr}${last.round ? ` r${last.round}` : ""}` : "";
+}
+
+const say = (w: Worker, text: string) =>
+    console.log(`[${w.label}${currentTask(w.name)}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
 const MARKERS = /^(▶|✔|✖|⏸|■|⚠|🛑|❓)/u;
 
 export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Promise<number> {
