@@ -241,6 +241,16 @@ session's branch waits for that branch). Then the review-loop landing recipe:
    retargets dependents.
 4. Log a `note` event with the merge SHA, and list every PR that did not land with its reason in the report.
 
+A PR that conflicts with master, or whose parent was just squash-merged, is restacked first:
+`bun .claude/skills/babysit/scripts/restack.ts --wt <worktree> --onto origin/master [--upstream <fork point>]`. It runs
+with hooks and rerere off (a hook froze on a stuck syspolicyd; rerere hid a conflict behind an old resolution),
+resolves only the plugin version files (the higher version wins), and aborts on any code conflict: that one goes to
+the worker who knows the PR, as a merge-prep steer that authorizes the rebase. `--upstream` is the commit the branch
+forked from on its parent (a child stacked on a parent that kept growing forked before the parent's later commits;
+find it with `git merge-base <child> <old parent head>`). Check with `git range-diff`, run the area tests, give a
+child that changes plugin files a version above its new base, then push with `--force-with-lease`. A restack is new
+code: wait for CI and the reviewer bot before the merge.
+
 ## 7c. Disk: watch it, reclaim /tmp safely
 
 A night of worktrees, Swift builds and test runs fills a disk. Start `bun .claude/skills/babysit/scripts/df-watch.ts
