@@ -23,11 +23,18 @@ import type { SpendEvent } from "./lib/reports/types";
 import { walkFiles } from "./lib/reports/walk";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
+import { planWorkerReprice } from "./lib/workers/backfill";
 import { formatCostLine, workerCostCard } from "./lib/workers/cost";
 import {
     appendWorkerCostRows,
+    bookedCostLine,
     buildWorkerCostRow,
+    isStalePrice,
+    readWorkerCostLedger,
     readWorkerCostRows,
+    rewriteWorkerCostRows,
+    WORKER_PRICING_VERSION,
+    type WorkerCostRow,
     workerCostLedgerPath,
 } from "./lib/workers/ledger";
 import type { WorkerSessionInfo } from "./lib/workers/sessions";
@@ -1022,6 +1029,83 @@ describe("worker cost ledger", () => {
         expect(rows.map((entry) => entry.turn)).toEqual([1, 2]);
         expect(rows[0]).toMatchObject({ durationMs: 90_000, label: "review-loop pr1", account: "work" });
         expect(workerCostLedgerPath()).not.toContain(`${homedir()}/.genesis-tools`);
+    });
+
+    const grokTurn = (options: { name: string; model: string; auth?: "subscription" | "api-key" }) =>
+        buildWorkerCostRow({
+            backend: "grok",
+            name: options.name,
+            sessionId: `00000000-0000-4000-8000-${options.name.padStart(12, "0").slice(-12)}`,
+            turn: 1,
+            auth: options.auth ?? "subscription",
+            account: "work",
+            startedAt: new Date("2026-10-13T10:00:00.000Z"),
+            endedAt: new Date("2026-10-13T10:02:00.000Z"),
+            toolCalls: 9,
+            parts: [
+                {
+                    model: options.model,
+                    tokens: { input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, output: 1_000_000, reasoning: 0 },
+                    singleRequest: false,
+                },
+            ],
+            reportedUsd: 2.44,
+            cwd: "/w",
+            label: "babysit pr512",
+        });
+
+    it("a re-price moves only the price, and keeps a row whose turn files are gone", () => {
+        // A row booked under the old rules: grok's own metering stood in as the list price.
+        const booked: WorkerCostRow = {
+            ...grokTurn({ name: "reprice-a", model: "grok-4.7" }),
+            priced: undefined,
+            cost: { ...grokTurn({ name: "reprice-a", model: "grok-0-unpriced" }).cost },
+            backfilled: true,
+        };
+        const orphan: WorkerCostRow = { ...grokTurn({ name: "reprice-gone", model: "grok-4.7" }), priced: undefined };
+        const plan = planWorkerReprice([booked, orphan], [grokTurn({ name: "reprice-a", model: "grok-4.7" })]);
+
+        expect(booked.cost.apiEquivalentUsd).toBe(2.44);
+        expect(isStalePrice(booked)).toBe(true);
+        expect(plan.kept).toBe(1);
+        expect(plan.rows[1]).toBe(orphan);
+        expect(plan.rows[0]).toMatchObject({
+            name: "reprice-a",
+            label: "babysit pr512",
+            backfilled: true,
+            durationMs: 120_000,
+            priced: WORKER_PRICING_VERSION,
+            cost: { apiEquivalentUsd: 8.5, basis: "catalog", reportedUsd: 2.44, billedUsd: 0 },
+        });
+        expect(isStalePrice(plan.rows[0])).toBe(false);
+        expect(bookedCostLine(orphan)).toEndWith("priced under older rules, see: tools ai-spend workers --reprice");
+        expect(bookedCostLine(plan.rows[0])).not.toContain("older rules");
+    });
+
+    it("an API-key row's billed amount follows its new price; the booked login is never re-derived", () => {
+        const booked = { ...grokTurn({ name: "reprice-key", model: "grok-4.7", auth: "api-key" }), priced: 1 };
+        const source = grokTurn({ name: "reprice-key", model: "grok-4.7", auth: "subscription" });
+        const [after] = planWorkerReprice([booked], [source]).rows;
+
+        expect(after.auth).toBe("api-key");
+        expect(after.cost).toMatchObject({ auth: "api-key", apiEquivalentUsd: 8.5, billedUsd: 8.5 });
+    });
+
+    it("a rewrite keeps the old ledger as .bak and carries a row appended while it ran", () => {
+        appendWorkerCostRows([grokTurn({ name: "rewrite-a", model: "grok-4.7" })]);
+        const ledger = readWorkerCostLedger();
+        appendWorkerCostRows([grokTurn({ name: "rewrite-late", model: "grok-4.7" })]);
+
+        rewriteWorkerCostRows(
+            ledger.rows.map((row) => (row.name === "rewrite-a" ? { ...row, label: "rewritten" } : row)),
+            ledger.bytes
+        );
+        const after = readWorkerCostRows();
+
+        expect(after.find((row) => row.name === "rewrite-a")?.label).toBe("rewritten");
+        expect(after.filter((row) => row.name === "rewrite-late")).toHaveLength(1);
+        expect(after).toHaveLength(ledger.rows.length + 1);
+        expect(fs.readFileSync(`${workerCostLedgerPath()}.bak`, "utf8")).toContain('"rewrite-late"');
     });
 });
 

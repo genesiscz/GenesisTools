@@ -256,12 +256,64 @@ function claudeRows(): WorkerCostRow[] {
     return rows;
 }
 
+function sourceRows(): { rows: WorkerCostRow[]; notes: string[] } {
+    const codex = codexRows();
+    return { rows: [...codex.rows, ...grokRows(), ...claudeRows()], notes: codex.notes };
+}
+
 /** Every past turn not yet in the ledger, oldest first. Writes nothing. */
 export function planWorkerBackfill(existing: readonly WorkerCostRow[]): WorkerBackfillPlan {
     const have = new Set(existing.map(workerCostRowKey));
-    const codex = codexRows();
-    const all = [...codex.rows, ...grokRows(), ...claudeRows()];
-    const rows = all.filter((row) => !have.has(workerCostRowKey(row))).sort((a, b) => a.ts.localeCompare(b.ts));
+    const all = sourceRows();
+    const rows = all.rows.filter((row) => !have.has(workerCostRowKey(row))).sort((a, b) => a.ts.localeCompare(b.ts));
 
-    return { rows, skipped: all.length - rows.length, notes: codex.notes };
+    return { rows, skipped: all.rows.length - rows.length, notes: all.notes };
+}
+
+export interface WorkerRepricePlan {
+    /** The whole ledger after re-pricing, in its original order. */
+    rows: WorkerCostRow[];
+    /** Rows whose turn files still exist, priced again under today's rules. */
+    repriced: Array<{ before: WorkerCostRow; after: WorkerCostRow }>;
+    /** Rows whose turn files are gone: they keep the price they were booked at. */
+    kept: number;
+}
+
+/**
+ * Every ledger row priced again from its turn's own files, through the same extraction and
+ * pricing as a live turn. Only the price moves (card, tokens, pricing version): the name, label,
+ * login, duration and the `backfilled` mark stay as they were booked. Writes nothing.
+ */
+export function planWorkerReprice(
+    existing: readonly WorkerCostRow[],
+    sources: readonly WorkerCostRow[] = sourceRows().rows
+): WorkerRepricePlan {
+    const fresh = new Map(sources.map((row) => [workerCostRowKey(row), row]));
+    const repriced: WorkerRepricePlan["repriced"] = [];
+    let kept = 0;
+    const rows = existing.map((row) => {
+        const now = fresh.get(workerCostRowKey(row));
+
+        if (!now) {
+            kept += 1;
+            return row;
+        }
+
+        const after: WorkerCostRow = {
+            ...row,
+            priced: now.priced,
+            model: row.model ?? now.model,
+            tokens: now.tokens,
+            cost: { ...now.cost, auth: row.cost.auth, billedUsd: billedFor(row.auth, now.cost.apiEquivalentUsd) },
+        };
+        repriced.push({ before: row, after });
+        return after;
+    });
+
+    return { rows, repriced, kept };
+}
+
+/** What a login billed for a list price: the login is the booked row's, never re-derived. */
+function billedFor(auth: WorkerCostRow["auth"], apiEquivalentUsd: number | null): number | null {
+    return auth === "subscription" ? 0 : auth === "api-key" ? apiEquivalentUsd : null;
 }

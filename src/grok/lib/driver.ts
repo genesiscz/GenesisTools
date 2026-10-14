@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
-import { bookedTurnCost } from "@app/ai-spend/lib/workers/ledger";
+import { bookedCostLine, bookedTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { logger } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
@@ -193,7 +192,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
             errPath,
             // A replay has no before/after snapshot, so it cannot honestly claim one.
             worktree: null,
-            ...(booked ? { costLine: formatCostLine(booked.cost, "grok") } : {}),
+            ...(booked ? { costLine: bookedCostLine(booked) } : {}),
         });
 
         return Promise.resolve();

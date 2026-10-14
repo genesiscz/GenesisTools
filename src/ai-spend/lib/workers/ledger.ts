@@ -1,9 +1,11 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
 import {
     addTokens,
@@ -31,8 +33,18 @@ const log = logger.child({ component: "ai-spend:worker-ledger" });
  * interleave each other.
  */
 
+/**
+ * The pricing rules a row's card was computed under. 2 (2026-10-14): grok bills its list price
+ * instead of the CLI's own metering, xAI list rates are in the catalog, and Claude's one-hour
+ * cache writes bill at 2x input. A row under an older number shows as stale until
+ * `tools ai-spend workers --reprice` recomputes it from its turn's files.
+ */
+export const WORKER_PRICING_VERSION = 2;
+
 export interface WorkerCostRow {
     v: 1;
+    /** `WORKER_PRICING_VERSION` the card was computed under; absent on the first rows (version 1). */
+    priced?: number;
     /** When the turn ended. */
     ts: string;
     backend: WorkerBackend;
@@ -112,6 +124,7 @@ export function buildWorkerCostRow(input: WorkerTurnCostInput, pricing: PricingT
 
     return {
         v: 1,
+        priced: WORKER_PRICING_VERSION,
         ts: input.endedAt.toISOString(),
         backend: input.backend,
         name: input.name,
@@ -145,6 +158,32 @@ export function appendWorkerCostRows(rows: readonly WorkerCostRow[]): void {
     appendFileSync(path, text, { mode: 0o600, flag: "a" });
 }
 
+export function isStalePrice(row: WorkerCostRow): boolean {
+    return (row.priced ?? 1) < WORKER_PRICING_VERSION;
+}
+
+/** A booked row's cost line, saying so when its price predates today's rules. */
+export function bookedCostLine(row: WorkerCostRow): string {
+    const line = formatCostLine(row.cost, row.backend);
+    return isStalePrice(row)
+        ? `${line} · priced under older rules, see: ${toolCommand("ai-spend workers")} --reprice`
+        : line;
+}
+
+/**
+ * Replace the whole ledger with `rows`, through an atomic rename that keeps the old copy as
+ * `.bak`. A row a live worker appended while the new copy was being built is carried over: the
+ * bytes past the length this rewrite started from are appended to the new copy before the rename.
+ */
+export function rewriteWorkerCostRows(rows: readonly WorkerCostRow[], startedFromBytes: number): void {
+    const path = workerCostLedgerPath();
+    const text = rows.map((row) => `${SafeJSON.stringify(row, { strict: true })}\n`).join("");
+    const current = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
+    const lateAppends = current.subarray(startedFromBytes).toString("utf8");
+
+    atomicWriteFileSync(path, text + lateAppends, { mode: 0o600, backup: true });
+}
+
 /**
  * Price a finished turn and book it. NEVER throws: the price is an in-process catalog read,
  * and a failure is logged while the turn report simply goes without its cost line.
@@ -175,16 +214,22 @@ function isRow(value: unknown): value is WorkerCostRow {
 
 /** Every row, in the order written. Malformed lines are skipped and counted in the log. */
 export function readWorkerCostRows(): WorkerCostRow[] {
+    return readWorkerCostLedger().rows;
+}
+
+/** The rows and the byte length they were read at, for a rewrite that must not lose a late append. */
+export function readWorkerCostLedger(): { rows: WorkerCostRow[]; bytes: number } {
     const path = workerCostLedgerPath();
 
     if (!existsSync(path)) {
-        return [];
+        return { rows: [], bytes: 0 };
     }
 
     const rows: WorkerCostRow[] = [];
     let malformed = 0;
+    const buffer = readFileSync(path);
 
-    for (const line of readFileSync(path, "utf8").split("\n")) {
+    for (const line of buffer.toString("utf8").split("\n")) {
         if (!line.trim()) {
             continue;
         }
@@ -207,7 +252,7 @@ export function readWorkerCostRows(): WorkerCostRow[] {
         log.warn({ path, malformed }, "worker cost ledger: skipped malformed lines");
     }
 
-    return rows;
+    return { rows, bytes: buffer.length };
 }
 
 /** The identity a row books under; backfill skips a key the ledger already holds. */
@@ -280,9 +325,9 @@ export function sessionCostSummary(options: {
     }
 
     return {
-        lastTurn: { ...last, line: formatCostLine(last.cost, last.backend) },
+        lastTurn: { ...last, line: bookedCostLine(last) },
         session: ledgerTotals(rows),
-        note: "Priced by ai-spend: API-equivalent is the worker model's list price per request (grok: its own recorded cost); the Claude figures are estimates, since tokenizers and agent behaviour differ.",
+        note: "Priced by ai-spend: API-equivalent is the worker model's list price per request; a figure the worker reported itself stands in only for a model without a list price. The Claude figures are estimates, since tokenizers and agent behaviour differ.",
     };
 }
 
