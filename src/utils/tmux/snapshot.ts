@@ -2,6 +2,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses } from "@genesiscz/utils/process/processes";
 import { capture } from "@genesiscz/utils/process/ps";
+import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
@@ -251,8 +252,6 @@ function resolveLaunchCommand(shellPid: number, processTable: string): string | 
         }
     }
 
-    const SHELLS = new Set(["zsh", "bash", "fish", "sh", "login"]);
-
     let current = shellPid;
     for (let depth = 0; depth < 10; depth += 1) {
         const kids = children.get(current);
@@ -261,8 +260,7 @@ function resolveLaunchCommand(shellPid: number, processTable: string): string | 
         }
 
         const child = kids[0]!;
-        const bin = child.args.split("/").pop()?.split(" ")[0] ?? "";
-        if (!SHELLS.has(bin)) {
+        if (!isShellProgram(child.args, { orLogin: true })) {
             return shortenCommand(child.args);
         }
 

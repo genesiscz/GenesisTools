@@ -45,6 +45,14 @@ export function isSelfIdentifyingSurface(surface: string): boolean {
  * Whether two cmux ids name the same object. cmux prints UUIDs in upper case, while an env
  * var or a hand-typed UUID may be lower case, and cmux accepts either.
  */
+/**
+ * The one key a cmux UUID is stored under in a map: trimmed and lower case. A map that held upper-case keys from
+ * the journal beside lower-case keys from an env var found an entry only by luck of the source (Sonnet F6).
+ */
+export function cmuxIdKey(id: string): string {
+    return id.trim().toLowerCase();
+}
+
 export function sameCmuxId(a: string | undefined, b: string | undefined): boolean {
     return a !== undefined && b !== undefined && a.toLowerCase() === b.toLowerCase();
 }

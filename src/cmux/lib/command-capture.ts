@@ -6,10 +6,12 @@ import { agentRunLauncher } from "@app/cmux/lib/session-agents";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
+import { isShellProgram } from "@genesiscz/utils/shell/programs";
 
 /**
  * Foreground-command capture and replay-command derivation for profile save.
@@ -24,18 +26,6 @@ import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
  * opens a fuzzy picker whose top match can be a different session). Every
  * change is recorded as a drift note that restore must display.
  */
-
-const SHELL_NAMES = new Set(["zsh", "-zsh", "bash", "-bash", "sh", "-sh", "fish", "-fish"]);
-
-function isShellOrLogin(command: string): boolean {
-    const first = command.split(/\s+/, 1)[0] ?? "";
-    const base = first.split("/").pop() ?? first;
-    if (SHELL_NAMES.has(base)) {
-        return true;
-    }
-
-    return first === "/usr/bin/login" || base === "login";
-}
 
 // Interpolating homedir() into a fresh RegExp on every call recompiled it 10-60
 // times per capture. The home directory does not change while the process runs.
@@ -117,7 +107,7 @@ export async function collectTtyCapture(): Promise<TtyCapture> {
             claudeSessions.set(entry.tty, sessionId);
         }
 
-        if (isShellOrLogin(entry.command)) {
+        if (isShellProgram(entry.command, { orLogin: true })) {
             continue;
         }
 
@@ -246,7 +236,8 @@ export async function loadSurfaceSessions(
                 continue;
             }
 
-            const byProvider = out.get(entry.surfaceId) ?? new Map<AccountProviderAlias, Candidate>();
+            const key = cmuxIdKey(entry.surfaceId);
+            const byProvider = out.get(key) ?? new Map<AccountProviderAlias, Candidate>();
             const existing = byProvider.get(provider);
 
             if (existing && existing.at >= (entry.at ?? 0)) {
@@ -263,7 +254,7 @@ export async function loadSurfaceSessions(
                 firstAt: entry.firstAt,
                 ended: entry.ended,
             });
-            out.set(entry.surfaceId, byProvider);
+            out.set(key, byProvider);
         }
     } catch (error) {
         logger.warn({ error }, "[command-capture] session refs/pins unavailable");

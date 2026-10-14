@@ -13,6 +13,7 @@ import { argvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
 import { childPids, listProcesses, processesOnTty } from "@genesiscz/utils/process/processes";
 import { capture } from "@genesiscz/utils/process/ps";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { killTmuxSessionExact, listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import {
@@ -110,11 +111,9 @@ function readPid(record: SessionCreatedRecord): number | null {
     return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-const SHELL_COMMAND = /(^|\/|-)(zsh|bash|sh|fish|login)(\s|$)/;
-
 /** The pid file holds the workspace shell (`printf '%s' $$`); a recycled pid running something else is gone. */
 function isAlive(pid: number): boolean {
-    const identity = classifyPid(pid, (command) => SHELL_COMMAND.test(command));
+    const identity = classifyPid(pid, (command) => isShellProgram(command, { orLogin: true }));
 
     if (identity.status === "dead" || identity.status === "foreign") {
         log.debug({ pid, status: identity.status, command: identity.command }, "session shell is gone");

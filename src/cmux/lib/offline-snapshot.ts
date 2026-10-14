@@ -29,8 +29,10 @@ import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 
 /**
  * Offline profile capture: builds a restorable profile WITHOUT the cmux socket,
@@ -221,11 +223,7 @@ export function buildOfflinePanes(
             const screen =
                 deps.captureScreen !== false && !isCaller && text ? { text, rows: text.split("\n").length } : undefined;
             // The tab's own agent among the journal's candidates, by what the tab last ran.
-            const session = pickSurfaceSession(
-                deps.surfaceSessions.get(panel.id) ??
-                    (panel.stableSurfaceId ? deps.surfaceSessions.get(panel.stableSurfaceId) : undefined),
-                captured
-            );
+            const session = pickSurfaceSession(deps.surfaceSessions.get(cmuxIdKey(panel.id)), captured);
             const capturedReplay = captured ? journalReplayCommand(captured, session) : undefined;
             const capturedCommand = capturedReplay?.command;
             const recorded =
@@ -278,9 +276,7 @@ export function buildOfflinePanes(
                 !headless &&
                 (!capturedCommand || agentKindFromLauncher(capturedCommand) === nativeKind)
             ) {
-                const quote = (arg: string) =>
-                    /^[a-zA-Z0-9_./:=@+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
-                const original = capturedCommand ?? [nativeKind, ...launchArgs.slice(1)].map(quote).join(" ");
+                const original = capturedCommand ?? [nativeKind, ...launchArgs.slice(1)].map(shellWord).join(" ");
                 const derived = deriveReplayCommand({
                     original,
                     sessionId: nativeSessionId,

@@ -1,14 +1,14 @@
 import { resolve } from "node:path";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 
 export function renderCaptureShell(
     options: { bunPath?: string; recorderPath?: string; directory?: string; preferPathBun?: boolean } = {}
 ): string {
-    const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
-    const bunPath = quote(options.bunPath ?? process.execPath);
+    const bunPath = shellQuote(options.bunPath ?? process.execPath);
     const selectedBun = options.preferPathBun ? `\${commands[bun]:-${bunPath}}` : bunPath;
-    const recorderPath = quote(options.recorderPath ?? resolve(import.meta.dir, "../capture-record.ts"));
+    const recorderPath = shellQuote(options.recorderPath ?? resolve(import.meta.dir, "../capture-record.ts"));
     const directory = options.directory
-        ? quote(options.directory)
+        ? shellQuote(options.directory)
         : '"${GENESIS_TOOLS_HOME:-$HOME}/.genesis-tools/cmux/command-journal"';
     return `# Lightweight cmux command capture. Source this from ~/.zshrc.
 [[ -o interactive && -n "$CMUX_SURFACE_ID" ]] || return 0

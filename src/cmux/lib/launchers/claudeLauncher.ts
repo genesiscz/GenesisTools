@@ -1,3 +1,4 @@
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 export interface ClaudeLaunch {
     account: string;
     prompt: string;
@@ -26,10 +27,6 @@ export interface ClaudeLaunch {
 const PROMPT_CAP = 8_192;
 /** exec() fails with E2BIG once argv and the environment pass ARG_MAX (1 MB on macOS); half leaves room for the environment. */
 const ARG_CAP = 512 * 1024;
-
-export function shellQuote(value: string): string {
-    return `'${value.replaceAll("'", `'\\''`)}'`;
-}
 
 /** Every element, `""` included: dropping an empty flag value would shift the next argument into its place. */
 function pushArgs(into: string[], extra: string[] | undefined): void {

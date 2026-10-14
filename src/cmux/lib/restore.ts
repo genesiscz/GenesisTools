@@ -12,6 +12,7 @@ import { paneList, type SurfaceSplitResult, windowList, workspaceCreate } from "
 import { sameCmuxId, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import pc from "picocolors";
 
 export type { SplitTree };
@@ -415,10 +416,6 @@ async function populatePane(savedPane: Pane, paneId: string, workspaceId: string
 
 /** What `new-surface` answers; the UUIDs are what later calls use, the refs only label. */
 type CreatedSurface = Pick<SurfaceSplitResult, "surface_id" | "surface_ref" | "pane_id" | "pane_ref">;
-
-function shellQuote(path: string): string {
-    return `'${path.replace(/'/g, "'\\''")}'`;
-}
 
 /**
  * Interactive prompts a replayed command can stop at. Restore NEVER answers these

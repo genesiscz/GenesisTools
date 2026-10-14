@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { cmuxLaunchUrl, presetById, presets } from "@genesiscz/utils/browser-router/presets";
 import { defaultRouterConfig, parseConfig, route } from "@genesiscz/utils/browser-router/route";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { assertLauncherExists, registerLaunchCommand } from "../../commands/launch";
-import { buildClaudeArgv, buildCmuxCommand, shellQuote } from "./claudeLauncher";
+import { buildClaudeArgv, buildCmuxCommand } from "./claudeLauncher";
 
 const LINK_HOST = "links.example.test";
 

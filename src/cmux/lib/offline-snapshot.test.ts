@@ -48,7 +48,8 @@ describe("flattenLayout", () => {
 });
 
 describe("buildOfflinePanes", () => {
-    test("uses stable surface journal IDs and terminal cwd even when the title is not a path", () => {
+    // The hook records the runtime surface id only (0 of 547 records used the stable id, 2026-10-14).
+    test("finds the surface journal session by the runtime surface id, and the terminal cwd, whatever the title", () => {
         const ws = workspaceFixture();
         ws.panels[0] = {
             id: "a",
@@ -61,7 +62,7 @@ describe("buildOfflinePanes", () => {
             ttyCommands: new Map(),
             surfaceSessions: new Map([
                 [
-                    "stable-a",
+                    "a",
                     { sessionId: "11111111-aaaa-bbbb-cccc-222222222222", account: "work", provider: "claude" as const },
                 ],
             ]),
@@ -444,7 +445,7 @@ describe("a surface running a non-claude agent replays with that agent's launche
         return buildOfflinePanes(ws, FRAME, {
             ttyCommands: new Map([["ttys001", "codex"]]),
             surfaceSessions: new Map([
-                ["stable-a", { sessionId: "01a0862a-1cc3-7643-b2b9-2a06424f5276", account: "cdx-work", provider }],
+                ["a", { sessionId: "01a0862a-1cc3-7643-b2b9-2a06424f5276", account: "cdx-work", provider }],
             ]),
         })[0].surfaces[0];
     }

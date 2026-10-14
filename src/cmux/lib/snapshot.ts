@@ -35,7 +35,7 @@ import {
     windowList,
     workspaceList,
 } from "@genesiscz/utils/cmux/lib/socket";
-import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
+import { cmuxIdKey, sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { logger } from "@genesiscz/utils/logger";
 
 interface SurfaceListEntry {
@@ -133,13 +133,8 @@ export async function buildCommandCaptureContext(options: { commands?: boolean }
                 if (panel.browser?.urlString) {
                     panelBrowserUrls.set(id.toLowerCase(), panel.browser.urlString);
                 }
-                const surfaceSession =
-                    (panel.stableSurfaceId ? surfaceSessions.get(panel.stableSurfaceId) : undefined) ??
-                    surfaceSessions.get(panel.id);
-
-                if (surfaceSession) {
-                    surfaceSessions.set(id.toLowerCase(), surfaceSession);
-                }
+                // The surface journal records the runtime id only, keyed by cmuxIdKey.
+                const surfaceSession = surfaceSessions.get(cmuxIdKey(id));
 
                 const cwd = panelWorkingDirectory(panel);
                 if (cwd) {
@@ -513,9 +508,7 @@ export function buildTerminalSurfaceSnapshot(input: {
 
     // The tab's own agent among the journal's candidates, by what the tab last ran.
     const session = pickSurfaceSession(
-        capture && entry.id
-            ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
-            : undefined,
+        capture && entry.id ? capture.surfaceSessions.get(cmuxIdKey(entry.id)) : undefined,
         journal
     );
     const journalReplay = journal ? journalReplayCommand(journal, session) : undefined;

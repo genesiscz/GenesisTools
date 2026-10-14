@@ -8,6 +8,7 @@ import { runCmux, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/c
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
+import { isShellProgram } from "@genesiscz/utils/shell/programs";
 
 /**
  * A terminal tab of the live layout, from `cmux --id-format both tree --all`. Every identity is a UUID: cmux
@@ -73,8 +74,6 @@ export interface InPlaceLiveState {
     callerId?: string;
 }
 
-const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu"]);
-
 /** Grok's first-run dialog. Until it is answered, grok has not opened the session it was asked to resume. */
 const GROK_TRUST_PROMPT = /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/;
 
@@ -97,7 +96,7 @@ export function idleShellTtys(processes: ProcessEntry[], uid: number): Set<strin
     const idle = new Set<string>();
 
     for (const [tty, entries] of byTty) {
-        if (entries.length === 1 && SHELLS.has(entries[0].name.replace(/^-/, ""))) {
+        if (entries.length === 1 && isShellProgram(entries[0].name)) {
             idle.add(tty);
         }
     }
