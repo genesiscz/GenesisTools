@@ -171,12 +171,21 @@ for (const [from, to] of Object.entries(shaMap)) {
     text = text.replaceAll(from, to);
 }
 
-const data = SafeJSON.parse(text, { strict: true }) as { judge?: string; items?: Array<{ model?: unknown }> };
+const data = SafeJSON.parse(text, { strict: true }) as {
+    judge?: string;
+    items?: Array<{ model?: unknown; ref?: unknown; threadId?: unknown; reviewer?: unknown }>;
+};
 data.judge = run.judge;
 
 for (const item of data.items ?? []) {
     if (typeof item.model === "string" && item.model.startsWith(run.judge)) {
         delete item.model;
+    }
+
+    // A finding from the lead's own or an independent review has no GitHub thread. A `ref` on it made post-replies
+    // answer `t1` of a review session that has no such thread (2026-10-14, #519 round 2); the summary still names it.
+    if (item.reviewer === "lead" && !item.threadId && item.ref !== undefined) {
+        delete item.ref;
     }
 }
 
