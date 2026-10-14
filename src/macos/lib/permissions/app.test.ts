@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
-import { ClickyLibraryUnavailableError } from "../clicky-library";
+import { ClickyLibraryUnavailableError, ensureClickyLibrary } from "../clicky-library";
 import {
     assertFullXcodeToolchain,
     bundleClickyLibrary,
@@ -56,13 +56,51 @@ describe("readAppFaceProcesses", () => {
 });
 
 describe("bundleClickyLibrary", () => {
+    it.each([
+        { sets: 1, samples: 0 },
+        { sets: 0, samples: 1 },
+    ])("rejects an incomplete cached catalogue against pin %j", async (counts) => {
+        const contents = mkdtempSync(join(tmpdir(), "gt-clicky-counts-"));
+        try {
+            const pin = {
+                release: "fixture",
+                url: "https://example.invalid/library",
+                sha256: "0".repeat(64),
+                bytes: 3,
+                ...counts,
+            };
+            const pinPath = join(contents, "pin.json");
+            writeFileSync(pinPath, SafeJSON.stringify(pin));
+            const cacheRoot = join(contents, "cache");
+            const source = join(cacheRoot, pin.sha256.slice(0, 16), "ClickyLibrary");
+            mkdirSync(source, { recursive: true });
+            writeFileSync(join(source, "registry.json"), SafeJSON.stringify({ sets: [] }));
+            const steps: string[] = [];
+            await expect(
+                bundleClickyLibrary({
+                    contents,
+                    pinPath,
+                    step: (message) => steps.push(message),
+                    ensure: (value) => ensureClickyLibrary(value, { cacheRoot }),
+                })
+            ).rejects.toThrow(`Remove the cached library at ${source} and rebuild`);
+            expect(existsSync(join(contents, "Resources", "ClickyLibrary"))).toBe(false);
+            expect(steps.some((message) => message.includes("skipped"))).toBe(false);
+        } finally {
+            rmSync(contents, { recursive: true, force: true });
+        }
+    });
+
     it.each(["offline", "archive", "sample", "pin", "success"])(
         "handles %s without masking integrity failures",
         async (mode) => {
             const contents = mkdtempSync(join(tmpdir(), "gt-clicky-bundle-"));
             try {
                 const pinPath = join(contents, "pin.json");
-                writeFileSync(pinPath, mode === "pin" ? "{broken" : SafeJSON.stringify({ release: "fixture" }));
+                writeFileSync(
+                    pinPath,
+                    mode === "pin" ? "{broken" : SafeJSON.stringify({ release: "fixture", sets: 1, samples: 1 })
+                );
                 const out = join(contents, "Resources", "ClickyLibrary");
                 mkdirSync(out, { recursive: true });
                 const failure = mode === "offline" ? new ClickyLibraryUnavailableError("offline") : new Error(mode);

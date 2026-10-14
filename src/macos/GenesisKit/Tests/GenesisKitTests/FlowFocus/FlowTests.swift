@@ -167,6 +167,55 @@ final class FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testClientScratchpadWritePreservesBytesWithoutAnOwnerRead() throws {
+        let fm = FileManager.default
+        for unreadable in [false, true] {
+            for backupBlocked in [false, true] {
+                let root = fm.temporaryDirectory.appendingPathComponent("flow-client-scratchpad-\(UUID())")
+                try fm.createDirectory(at: root, withIntermediateDirectories: true)
+                defer {
+                    try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+                    try? fm.removeItem(at: root)
+                }
+                let file = root.appendingPathComponent("scratchpad.md")
+                let original = unreadable ? Data("private draft".utf8) : Data([0xff, 0xfe, 0xff])
+                try original.write(to: file)
+                if unreadable { try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path) }
+                let owner = FlowStore(directory: root)
+                let client = FlowStore(directory: root, writesEnabled: false)
+                var failure: Error?
+                client.forwardWrite = { name, data in
+                    do { try owner.writeFromClient(name: name, data: data) }
+                    catch { failure = error }
+                }
+                let text = client.loadScratchpad()
+                XCTAssertEqual(text, "")
+                XCTAssertTrue(fm.fileExists(atPath: file.path))
+                if backupBlocked { try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path) }
+                client.saveScratchpad(text)
+                if backupBlocked {
+                    XCTAssertNotNil(failure)
+                    try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                    XCTAssertEqual(try Data(contentsOf: file), original)
+                    if unreadable { try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path) }
+                    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+                    failure = nil
+                    client.saveScratchpad(text)
+                }
+                XCTAssertNil(failure)
+                XCTAssertEqual(try Data(contentsOf: file), Data())
+                let backup = try XCTUnwrap(fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                    .first { $0.lastPathComponent.hasPrefix("scratchpad.md.corrupt-") })
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+                XCTAssertEqual(try Data(contentsOf: backup), original)
+                client.saveScratchpad("new draft")
+                XCTAssertNil(failure)
+                XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new draft")
+            }
+        }
+    }
+
+    @MainActor
     func testFailedEventRetentionKeepsHistoryRetryableAfterRepair() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-retention-retry-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

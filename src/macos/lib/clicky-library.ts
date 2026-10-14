@@ -13,7 +13,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { concurrentMap } from "@genesiscz/utils/async";
+import { concurrentMap, withTimeout } from "@genesiscz/utils/async";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -139,7 +140,7 @@ async function run(cmd: string[], environment?: Record<string, string>): Promise
     const proc = Bun.spawn(cmd, {
         stdout: "ignore",
         stderr: "pipe",
-        env: environment ? { ...process.env, ...environment } : undefined,
+        env: environment ? { ...env.getProcessEnv(), ...environment } : undefined,
     });
     const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
     if (code !== 0) {
@@ -240,7 +241,11 @@ export async function archiveClickyLibrary(packed: string, out: string, release:
  */
 export async function ensureClickyLibrary(
     pin: ClickyLibraryPin,
-    options: { cacheRoot?: string; fetchImpl?: (url: string) => Promise<Response> } = {}
+    options: {
+        cacheRoot?: string;
+        fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+        downloadTimeoutMs?: number;
+    } = {}
 ): Promise<string> {
     if (
         !pin ||
@@ -271,16 +276,25 @@ export async function ensureClickyLibrary(
         return library;
     }
 
+    const controller = new AbortController();
     let bytes: Buffer;
     try {
-        const response = await (options.fetchImpl ?? fetch)(pin.url);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status} for ${pin.url}`);
-        }
+        // One deadline covers headers and the whole body; expiry also cancels the transport.
+        bytes = await withTimeout(
+            (async () => {
+                const response = await (options.fetchImpl ?? fetch)(pin.url, { signal: controller.signal });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} for ${pin.url}`);
+                }
 
-        bytes = Buffer.from(await response.arrayBuffer());
+                return Buffer.from(await response.arrayBuffer());
+            })(),
+            options.downloadTimeoutMs ?? 120_000
+        );
     } catch (cause) {
         throw new ClickyLibraryUnavailableError(`Clicky library download unavailable: ${pin.url}`, { cause });
+    } finally {
+        controller.abort();
     }
 
     const digest = sha256(bytes);

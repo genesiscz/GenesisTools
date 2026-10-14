@@ -607,7 +607,15 @@ export async function bundleClickyLibrary({
         return;
     }
 
-    await unpack(source, out);
+    const actual = await unpack(source, out);
+    if (actual.sets !== pin.sets || actual.samples !== pin.samples) {
+        rmSync(out, { recursive: true, force: true });
+        throw new Error(
+            `Clicky library count mismatch: unpacked ${actual.sets} sets and ${actual.samples} samples; ` +
+                `the pin says ${pin.sets} sets and ${pin.samples} samples. ` +
+                `Remove the cached library at ${source} and rebuild to download it again.`
+        );
+    }
 }
 
 interface StageAndInstallOptions {

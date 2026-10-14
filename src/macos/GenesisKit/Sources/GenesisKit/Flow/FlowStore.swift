@@ -377,7 +377,10 @@ public final class FlowStore {
         guard ["scratchpad.md"].contains(name), writesEnabled else {
             throw FlowFocusMailbox.Failure.unavailable("That Flow file is not writable through the client channel.")
         }
-        try writeOwned(data, to: directory.appendingPathComponent(name))
+        // A passive client cannot preserve unreadable bytes, and the owner may never have read this file.
+        // Recheck here so the original is backed up or fenced before a forwarded replacement reaches disk.
+        _ = loadScratchpad()
+        try writeOwned(data, to: scratchpadURL)
     }
 
     private func backupCorrupt(_ url: URL) {

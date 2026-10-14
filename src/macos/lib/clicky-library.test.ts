@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     archiveClickyLibrary,
@@ -72,7 +73,16 @@ describe("Clicky library packing", () => {
             SafeJSON.stringify({ formatVersion: 1, sets: [] })
         );
         const archive = join(parent, "clicky-library-test.tar.gz");
-        const pin = await archiveClickyLibrary(join(parent, "ClickyLibrary"), archive, "clicky-library-test");
+        const inheritedEnv = spyOn(env, "getProcessEnv");
+        const pin = await (async () => {
+            try {
+                const pin = await archiveClickyLibrary(join(parent, "ClickyLibrary"), archive, "clicky-library-test");
+                expect(inheritedEnv).toHaveBeenCalledTimes(1);
+                return pin;
+            } finally {
+                inheritedEnv.mockRestore();
+            }
+        })();
         expect(pin.url).toBe(
             "https://github.com/genesiscz/GenesisTools/releases/download/clicky-library-test/clicky-library-test.tar.gz"
         );
@@ -137,6 +147,48 @@ describe("Clicky library packing", () => {
         await expect(
             ensureClickyLibrary(pin, { cacheRoot, fetchImpl: async () => new Response("abc") })
         ).rejects.not.toBeInstanceOf(ClickyLibraryUnavailableError);
+    });
+
+    it.each(["headers", "body"])("bounds stalled %s and aborts the download", async (phase) => {
+        const cacheRoot = mkdtempSync(join(tmpdir(), "gt-clicky-deadline-"));
+        dirs.push(cacheRoot);
+        const pin = {
+            release: "fixture",
+            url: "https://example.invalid/library",
+            sha256: "0".repeat(64),
+            bytes: 3,
+            sets: 0,
+            samples: 0,
+        };
+        let aborted = false;
+        const fetchImpl = (_url: string, init?: RequestInit): Promise<Response> => {
+            const signal = init?.signal;
+            expect(signal).toBeInstanceOf(AbortSignal);
+            signal?.addEventListener(
+                "abort",
+                () => {
+                    aborted = true;
+                },
+                { once: true }
+            );
+            if (phase === "headers") {
+                return new Promise(() => {});
+            }
+            return Promise.resolve(
+                new Response(
+                    new ReadableStream({
+                        start(controller) {
+                            signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+                        },
+                    })
+                )
+            );
+        };
+        await expect(ensureClickyLibrary(pin, { cacheRoot, fetchImpl, downloadTimeoutMs: 20 })).rejects.toBeInstanceOf(
+            ClickyLibraryUnavailableError
+        );
+        expect(aborted).toBe(true);
+        expect(existsSync(join(cacheRoot, pin.sha256.slice(0, 16)))).toBe(false);
     });
 
     it("rejects an invalid pin before attempting a download", async () => {
