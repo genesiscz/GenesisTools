@@ -8,8 +8,11 @@
  *
  *   bun audit-reviews.ts --run <dir> 498 502 503 … [--bodies]
  *
- * --bodies prints the text (first 1200 characters) under each flagged item, and lists every thread that was resolved
- * without a reply: CodeRabbit resolves its own threads when it believes a later commit fixed them, fixed or not.
+ * --bodies prints the text (first 1200 characters) under each flagged item, and lists every thread that the reviewer
+ * resolved itself without a reply: CodeRabbit resolves its own threads when it believes a later commit fixed them,
+ * fixed or not. A thread WE resolved without a reply is the review loop's design, not a gap: post-replies resolves a
+ * fixed CodeRabbit thread silently because a reply spends CodeRabbit's hourly chat budget, and the round summary
+ * comment carries the answer (2026-10-14: five such threads on #515 were answered by hand for nothing).
  *
  * Exit 1 when any PR has an open thread, an unanswered thread, or something that arrived after its merge.
  */
@@ -25,6 +28,7 @@ interface Comment {
 interface Thread {
     id: string;
     isResolved: boolean;
+    resolvedBy?: { login: string } | null;
     path: string;
     line?: number;
     comments: { nodes: Comment[] };
@@ -52,7 +56,7 @@ const page = "pageInfo{hasNextPage}";
 const query = `query($n:Int!){viewer{login} repository(owner:"${owner}",name:"${name}"){pullRequest(number:$n){
  title state mergedAt headRefOid
  reviews(first:100){${page} nodes{author{login} state createdAt:submittedAt body commit{oid}}}
- reviewThreads(first:100){${page} nodes{id isResolved path line comments(first:50){nodes{author{login} createdAt body}}}}
+ reviewThreads(first:100){${page} nodes{id isResolved resolvedBy{login} path line comments(first:50){nodes{author{login} createdAt body}}}}
  comments(first:100){${page} nodes{author{login} createdAt body}}}}}`;
 
 const local = (iso: string) =>
@@ -154,6 +158,7 @@ for (const n of prs) {
     let open = 0;
     let unanswered = 0;
     let resolvedSilently = 0;
+    let resolvedByUs = 0;
 
     for (const thread of pr.reviewThreads.nodes) {
         const [first, ...rest] = thread.comments.nodes;
@@ -166,7 +171,9 @@ for (const n of prs) {
         }
 
         if (!answered) {
-            if (thread.isResolved) {
+            if (thread.isResolved && thread.resolvedBy?.login === me) {
+                resolvedByUs++;
+            } else if (thread.isResolved) {
                 resolvedSilently++;
 
                 if (bodies) {
@@ -196,7 +203,7 @@ for (const n of prs) {
     }
 
     console.log(
-        `  threads: ${pr.reviewThreads.nodes.length} (open ${open}, unanswered ${unanswered}, resolved without a reply ${resolvedSilently})`
+        `  threads: ${pr.reviewThreads.nodes.length} (open ${open}, unanswered ${unanswered}, resolved by the reviewer without a reply ${resolvedSilently}, resolved by us with the answer in the round summary ${resolvedByUs})`
     );
 
     const others = pr.comments.nodes.filter((c) => c.author?.login !== me);
