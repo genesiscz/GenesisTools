@@ -16,6 +16,18 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - Items that can be acted on can be acted on in place: tick a task, expand an answer, create a new one.
   Opening another window is the exception, not the default.
 
+## Windows and overlays (Martin, 2026-10-14)
+- No `isMovableByWindowBackground` on a window with SwiftUI content: the hosting view counts as background
+  everywhere, so a held press on any control turns into a window drag and can leave SwiftUI waiting for a mouse-up.
+  Drag regions are explicit: `.titlebarZone()` or a dedicated AppKit drag view.
+- A custom AppKit view that can become first responder (a divider, a splitter) does so only with keyboard navigation
+  on, and never draws the default focus ring over content.
+- Anything that appears over the user's work by itself (a nag, a HUD, a pill) has a setting to turn it off and can be
+  dragged away; it keeps its place per display and comes back fully on screen.
+- A movable overlay tracks the drag in its own `mouseDragged` from each event's location and saves on mouse-up;
+  `performDrag(with:)` moved a panel only on the first drag of a show.
+- ⌘W closes the current tab; on a window with no tabs left it closes the window.
+
 ## Layout
 - Equal, intentional insets on all four sides; controls aligned in one column; descriptions under titles.
 - Panels size to their content up to a maximum; no large empty band above a composer. When something opens inside

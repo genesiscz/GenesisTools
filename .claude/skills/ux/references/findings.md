@@ -3,6 +3,37 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-14 22:43 — **Markdown viewer dead clicks, PostureWatcher's message, and the agent's own live-test mistakes.**
+  - *Holding a tab moved the window a little; from then on no click in the viewer did anything (tabs, toolbar)
+    until a restart, while accessibility presses still worked.* The window had `isMovableByWindowBackground = true`.
+    An `NSHostingView` answers `mouseDownCanMoveWindow` for its whole area, so AppKit cannot tell a tab from
+    background: the held press became a window drag, the drag took the mouse-up, and SwiftUI kept waiting for it.
+    Reproduced only with a real press-and-drag (the window moved 16 x 8 pt, then a toolbar click and a tab click did
+    nothing). A diagnostic click log (f7eaab043, category `markdown.input`) showed every press reaching the hosting
+    view, key and active, no modal, no sheet. Fix: background dragging off; the title strip still drags through
+    `TitlebarZoneView` (a1e436652).
+  - *A blue, full-height 6 pt bar at the file sidebar's edge.* The divider became first responder while keyboard
+    navigation (`AppleKeyboardUIMode`) was off and drew its focus ring. It takes focus only with keyboard navigation
+    on (c9c23b851).
+  - *⌘W did nothing while File › Close Tab worked.* `performKeyEquivalent` now handles ⌘W by key code (208c968c5);
+    closing the last tab keeps the window for a new note, a second ⌘W closes it (6341a5e62).
+  - *A tab click showed the previous tab's page.* `GenRenderSwap`'s `.onChange` sometimes did not fire on a real
+    click; the body catches a missed switch (ca64b32e0, 0bfba27ca).
+  - *PostureWatcher's "Sit up straight" sat in front of the work with no way to move it* ("maybe it can be movable
+    like the camera window"). It is draggable with Transparent, one place per display (e3d832ff6). The first version
+    handed the press to the window server (`performDrag(with:)`): live, only the first drag of each show moved it.
+    A standalone non-activating panel with three scripted drags to x = 500, 200, 500 ended at 381, 81, 381 with
+    `performDrag` and exactly on target with the view's own `mouseDragged` tracking (5a700ebd1). The drag reads each
+    event's location, not `NSEvent.mouseLocation`, so a drag delivered in the background moves it too (941db1c37).
+  - *Every screenshot of that message came out empty.* The effect panels use `sharingType = .none`, so
+    `screencapture -R` showed the windows behind and a window capture came out white. Proof of placement is the
+    window's bounds (`CGWindowListCopyWindowInfo`) and the saved value, not a picture.
+  - *The agent's live tests disturbed the user* (rules now in live-testing.md): an own CGEvent poster took Martin's
+    pointer for about a second per drag, and one drag that started on empty screen landed in the windows behind the
+    target (ChatGPT, Brave); `lldb` attached to the running viewer plus a polling loop without a sleep froze the Mac
+    (18:33); a ⌘W sent through System Events may have reached another front app; the viewer instance that later went
+    dead held 11 extra off-screen 30-39 px windows, probably menus left open by System Events menu reads (unproven).
+
 - 2026-10-13 18:18 — **Second pass on Martin's 15-item review, the transcript, the PRs view.**
   - *"X new" scrolled down but not to the bottom.* The pill's own click counted as the reader's, so rows that
     measured during the glide were not followed. The pill now chases the end for 2 s (eae978b26).
