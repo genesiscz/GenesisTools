@@ -44,9 +44,11 @@ struct RecordOptions {
     let videoOut: String?
     let outDir: String
     let maxFrames: Int
+    /// Warnings raised before the recorder existed; they open its warning list.
+    let startWarnings: [String]
 }
 
-private func recordOptions() -> RecordOptions {
+private func recordOptions(startWarnings: [String]) -> RecordOptions {
     let mode = argValue("--mode") ?? "window"
     guard ["screen", "window", "region", "isolated"].contains(mode) else {
         errorExit("--mode must be screen, window, region or isolated")
@@ -92,8 +94,49 @@ private func recordOptions() -> RecordOptions {
         threshold: number("--threshold", default: 2.5, min: 0, max: 100),
         videoOut: argValue("--video-out"),
         outDir: outDir,
-        maxFrames: Int(number("--max-frames", default: 800, min: 1, max: 5000))
+        maxFrames: Int(number("--max-frames", default: 800, min: 1, max: 5000)),
+        startWarnings: startWarnings
     )
+}
+
+private var privateRecorderCopy: URL?
+
+private var privateRecorderRoot: URL {
+    FileManager.default.temporaryDirectory.appendingPathComponent("ax-tool-recorders", isDirectory: true)
+}
+
+/// Re-executes this recorder from its own clone of the binary, before any ScreenCaptureKit call:
+/// replayd ends the streams of every process started from one path when any of them exits
+/// (`RecorderExecutable` has the measurements). In the clone it returns no warning and removes the
+/// clone at exit. When no clone can be made the recording runs from the shared path, and the
+/// returned warning says that another recorder stopping can now end it.
+private func runFromPrivateRecorderCopy() -> [String] {
+    if let copy = ProcessInfo.processInfo.environment[RecorderExecutable.environmentKey] {
+        unsetenv(RecorderExecutable.environmentKey)
+        privateRecorderCopy = URL(fileURLWithPath: copy)
+        atexit {
+            guard let copy = privateRecorderCopy else { return }
+            RecorderExecutable.removeCopy(copy, root: privateRecorderRoot, pid: getpid())
+        }
+        return []
+    }
+    let exposed = "another recording that stops can end this one (ScreenCaptureKit error -3805)"
+    guard let source = Bundle.main.executableURL?.resolvingSymlinksInPath() else {
+        return ["the recorder runs from the shared ax-tool path, because its executable path is unknown; \(exposed)"]
+    }
+    let copy: URL
+    do {
+        copy = try RecorderExecutable.makePrivateCopy(of: source, root: privateRecorderRoot, pid: getpid())
+    } catch {
+        return ["the recorder runs from the shared ax-tool path, because no private copy could be made (\(error.localizedDescription)); \(exposed)"]
+    }
+    setenv(RecorderExecutable.environmentKey, copy.path, 1)
+    var argv = CommandLine.arguments.map { strdup($0) } + [nil]
+    execv(copy.path, &argv)
+    let reason = String(cString: strerror(errno))
+    unsetenv(RecorderExecutable.environmentKey)
+    RecorderExecutable.removeCopy(copy, root: privateRecorderRoot, pid: getpid())
+    return ["the recorder runs from the shared ax-tool path, because it could not start from its private copy (\(reason)); \(exposed)"]
 }
 
 private struct DisplayGeometry {
@@ -217,6 +260,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.configuration = configuration
         self.policy = KeepPolicy(thresholdPercent: options.threshold, maxFrames: options.maxFrames)
         self.rate = FrameRatePolicy(activeFps: options.activeFps, idleFps: options.idleFps)
+        self.warnings = options.startWarnings
     }
 
     /// Asks the live stream for a new delivery rate. Frames arrive on `queue`, so this is called
@@ -455,8 +499,9 @@ func cmdCaptureScreen() {
     guard #available(macOS 13.0, *) else {
         errorExit("capture needs macOS 13 or newer")
     }
+    let startWarnings = runFromPrivateRecorderCopy()
     requireScreenRecording()
-    let options = recordOptions()
+    let options = recordOptions(startWarnings: startWarnings)
     do {
         try FileManager.default.createDirectory(atPath: options.outDir, withIntermediateDirectories: true)
     } catch {
