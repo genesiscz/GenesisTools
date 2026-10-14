@@ -34,7 +34,9 @@ test("a startup Obsidian override survives fixture cleanup between tests", () =>
     const output = result.stdout.toString() + result.stderr.toString();
 
     expect(result.exitCode, output).toBe(0);
-    expect(output).toContain("12 pass");
+    // Some tests ran and none failed; an exact count would break whenever a sibling test is added.
+    expect(output).toMatch(/\b[1-9]\d* pass\b/);
+    expect(output).toMatch(/\b0 fail\b/);
     expect(output).toContain("[test] suite complete (exit 0)");
 }, 40_000);
 
