@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { byId } from "@genesiscz/utils/ai/catalog";
-import { DEFAULT_PRICING, priceFor, resolvePrice } from "./pricing";
+import claudeCodeBills from "./fixtures/claude-code-bills.json";
+import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "./pricing";
 import { eventCostEstimate } from "./reports/cost";
 import type { SpendEvent } from "./reports/types";
 
@@ -76,6 +77,23 @@ describe("pricing table", () => {
         // A prefix match would resolve this to gpt-5. It must not.
         expect(priceFor("gpt-5-something-invented", DEFAULT_PRICING)).toBeNull();
     });
+});
+
+describe("Claude Code's own bills", () => {
+    // Real per-model token sums from 12 local Claude Code sessions (2026-09-08 to 10-12), each next to the costUSD
+    // Claude Code itself recorded in that session's `cost-state` line. Only rows whose requests all sit in one price
+    // band and one dated rate were kept, so the sum prices like the requests did. Every row's cache writes are
+    // one-hour writes, which is what proves the 2x-input rate. Numbers only: no session id, path or content.
+    test.each(claudeCodeBills.map((bill) => [bill.model, bill.at, bill] as const))(
+        "%s on %s costs what Claude Code billed",
+        (model, at, bill) => {
+            const entry = priceFor(model, DEFAULT_PRICING);
+            expect(entry).not.toBeNull();
+
+            const ours = costOf(bill.tokens, resolvePrice(entry!, { at: new Date(at), contextTokens: 0 }));
+            expect(Math.abs(ours - bill.claudeCodeCostUsd) / bill.claudeCodeCostUsd).toBeLessThan(1e-6);
+        }
+    );
 });
 
 describe("what a recorded cost means", () => {

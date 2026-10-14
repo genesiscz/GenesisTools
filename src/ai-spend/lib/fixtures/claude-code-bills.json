@@ -1,0 +1,146 @@
+[
+    {
+        "model": "claude-opus-5-5",
+        "at": "2026-10-11",
+        "tokens": {
+            "input": 238,
+            "output": 67818,
+            "cacheRead": 21249331,
+            "cacheWrite": 232053,
+            "cacheWrite1h": 232053
+        },
+        "claudeCodeCostUsd": 7.4636022
+    },
+    {
+        "model": "claude-opus-5-5",
+        "at": "2026-10-11",
+        "tokens": {
+            "input": 118,
+            "output": 92109,
+            "cacheRead": 14891726,
+            "cacheWrite": 296648,
+            "cacheWrite1h": 296648
+        },
+        "claudeCodeCostUsd": 7.194181199999998
+    },
+    {
+        "model": "claude-opus-5-5",
+        "at": "2026-10-12",
+        "tokens": {
+            "input": 16,
+            "output": 9398,
+            "cacheRead": 428029,
+            "cacheWrite": 76394,
+            "cacheWrite1h": 76394
+        },
+        "claudeCodeCostUsd": 0.8847818
+    },
+    {
+        "model": "claude-sonnet-5-5",
+        "at": "2026-10-06",
+        "tokens": {
+            "input": 180,
+            "output": 110981,
+            "cacheRead": 21509927,
+            "cacheWrite": 346133,
+            "cacheWrite1h": 346133
+        },
+        "claudeCodeCostUsd": 6.796687400000002
+    },
+    {
+        "model": "claude-sonnet-5-5",
+        "at": "2026-10-11",
+        "tokens": {
+            "input": 67,
+            "output": 17888,
+            "cacheRead": 7655905,
+            "cacheWrite": 753726,
+            "cacheWrite1h": 753726
+        },
+        "claudeCodeCostUsd": 3.9595085
+    },
+    {
+        "model": "claude-sonnet-5-5",
+        "at": "2026-10-06",
+        "tokens": {
+            "input": 37,
+            "output": 20214,
+            "cacheRead": 2353059,
+            "cacheWrite": 156605,
+            "cacheWrite1h": 156605
+        },
+        "claudeCodeCostUsd": 1.2992458000000002
+    },
+    {
+        "model": "claude-fable-5-1",
+        "at": "2026-09-15",
+        "tokens": {
+            "input": 548,
+            "output": 35668,
+            "cacheRead": 3873257,
+            "cacheWrite": 475608,
+            "cacheWrite1h": 475608
+        },
+        "claudeCodeCostUsd": 12.269354250000003
+    },
+    {
+        "model": "claude-fable-5-1",
+        "at": "2026-09-08",
+        "tokens": {
+            "input": 454,
+            "output": 7325,
+            "cacheRead": 1770609,
+            "cacheWrite": 128526,
+            "cacheWrite1h": 128526
+        },
+        "claudeCodeCostUsd": 3.38396225
+    },
+    {
+        "model": "claude-fable-5-1",
+        "at": "2026-09-15",
+        "tokens": {
+            "input": 428,
+            "output": 6877,
+            "cacheRead": 1614573,
+            "cacheWrite": 93271,
+            "cacheWrite1h": 93271
+        },
+        "claudeCodeCostUsd": 2.617193250000001
+    },
+    {
+        "model": "claude-sonnet-5",
+        "at": "2026-09-16",
+        "tokens": {
+            "input": 36,
+            "output": 8337,
+            "cacheRead": 3383028,
+            "cacheWrite": 214393,
+            "cacheWrite1h": 214393
+        },
+        "claudeCodeCostUsd": 1.6176196000000003
+    },
+    {
+        "model": "claude-sonnet-5",
+        "at": "2026-10-01",
+        "tokens": {
+            "input": 4,
+            "output": 1890,
+            "cacheRead": 203321,
+            "cacheWrite": 206473,
+            "cacheWrite1h": 206473
+        },
+        "claudeCodeCostUsd": 0.8854642
+    },
+    {
+        "model": "claude-sonnet-5",
+        "at": "2026-09-29",
+        "tokens": {
+            "input": 10,
+            "output": 1165,
+            "cacheRead": 574176,
+            "cacheWrite": 147605,
+            "cacheWrite1h": 147605
+        },
+        "claudeCodeCostUsd": 0.7169251999999999
+    }
+]
