@@ -27,6 +27,11 @@ This exists because inside a **git worktree** any `bunx` call creates a partial 
 
 ## Test traps
 
+- **Never start an executable the test just made and then rename or delete it.** macOS checks every new executable in
+  `syspolicyd` after it starts; a check that found the file gone crashed `syspolicyd` five times in ten minutes on
+  2026-10-14 and froze the whole Mac (WindowServer watchdog). Make a test program once with `persistentFixture` from
+  `src/utils/test/persistent-fixture.ts` (kept, never renamed or deleted), and after the first run of such a test check
+  that `pgrep -x syspolicyd` still prints the same pid.
 - **Rewriting untested code: a characterization test first.** Pin the current behaviour, prove the test passes on the old code, then rewrite. When the test fails after the rewrite, assume the rewrite is wrong. Change a test only for an intended behaviour change, and say in the commit what changed and why.
 - **Red today, green yesterday, no relevant commit: check the calendar.** A dated fixture crosses a window when one input still resolves against the real clock: `--since=N days ago` for git, `find -mtime`, `date -v-7d`. Derive every cutoff from the injected `now`.
 - **`bun test --timeout` bounds a test body only.** A hang at module scope (an import that never settles) blocks forever. The signal is the wrapper's `[test] suite complete` line missing. Do not grep bun's own "Ran N tests across M files": it prints once per process, and `bun run test` runs two.
