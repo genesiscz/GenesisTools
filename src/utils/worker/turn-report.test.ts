@@ -87,6 +87,16 @@ describe("formatWorkerTurn", () => {
         expect(some.status[1]).toEqual({ level: "info", text: "turn 1 changed 2 path(s); 3 dirty in total" });
     });
 
+    test("a turn that committed all its work is not reported as changing nothing", () => {
+        const committed = formatWorkerTurn(
+            report({ worktree: { cwd: "/w", changedThisTurn: 0, dirtyTotal: 0, commitsThisTurn: 1 } })
+        );
+        expect(committed.status[1]).toEqual({
+            level: "info",
+            text: "turn 1 made 1 commit(s) and left 0 more changed path(s); 0 dirty in total",
+        });
+    });
+
     test("the booked cost line sits before the transcript hint, and is absent when nothing was booked", () => {
         const line =
             "cost: $0.17 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $0.30 / Sonnet $0.17 (estimate)";

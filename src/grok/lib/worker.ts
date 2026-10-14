@@ -24,7 +24,7 @@ import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/
 import { sessionMetaPath, turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, grokTurnUsage, parseTurnLog } from "./stream";
-import { type WorktreeDelta, worktreeDelta, worktreeState } from "./worktree";
+import { commitsSince, type WorktreeDelta, worktreeDelta, worktreeHead, worktreeState } from "./worktree";
 
 const log = logger.child({ component: "grok:worker" });
 
@@ -376,6 +376,7 @@ async function runTurn({
 
         // Snapshot before the spawn so the report can say whether the turn did anything.
         const worktreeBefore = worktreeState(meta.cwd);
+        const headBefore = worktreeHead(meta.cwd);
         const startedAt = new Date();
 
         let exitCode: number | null = null;
@@ -418,7 +419,11 @@ async function runTurn({
             closeSync(errFd);
         }
 
-        const worktree = worktreeDelta(worktreeBefore, worktreeState(meta.cwd));
+        const worktree = worktreeDelta(
+            worktreeBefore,
+            worktreeState(meta.cwd),
+            headBefore === null ? 0 : (commitsSince(meta.cwd, headBefore) ?? 0)
+        );
         const transcript = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";
         const summary = parseTurnLog(transcript);
         const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
@@ -435,6 +440,7 @@ async function runTurn({
                 ended: summary.ended,
                 toolCalls: summary.toolCalls.length,
                 changedThisTurn: worktree?.changedThisTurn ?? null,
+                commitsThisTurn: worktree?.commitsThisTurn ?? null,
             },
             "grok turn finished"
         );

@@ -18,7 +18,7 @@ export interface WorkerTurnReport {
     errPath?: string;
     toolCalls: ReadonlyArray<{ tool: string }>;
     /** Absent when the turn was read-only, replayed, or the cwd is not a git repo. */
-    worktree?: { cwd: string; changedThisTurn: number; dirtyTotal: number } | null;
+    worktree?: { cwd: string; changedThisTurn: number; dirtyTotal: number; commitsThisTurn?: number } | null;
     logPath: string;
     /** The command that renders the transcript, e.g. `tools grok read --name x --format compact`. */
     transcriptHint: string;
@@ -89,10 +89,17 @@ export function formatWorkerTurn(report: WorkerTurnReport): FormattedWorkerTurn 
     // "The turn ended" is not "the task got done": a worker that stops cleanly
     // having written nothing prints the same success line as one that finished.
     if (report.worktree) {
-        if (report.worktree.changedThisTurn === 0) {
+        const commits = report.worktree.commitsThisTurn ?? 0;
+
+        if (report.worktree.changedThisTurn === 0 && commits === 0) {
             status.push({
                 level: "warn",
                 text: `turn ${report.turn} changed NOTHING in ${report.worktree.cwd} — the turn ended, but the task may be unfinished. Check, then steer to continue.`,
+            });
+        } else if (commits > 0) {
+            status.push({
+                level: "info",
+                text: `turn ${report.turn} made ${commits} commit(s) and left ${report.worktree.changedThisTurn} more changed path(s); ${report.worktree.dirtyTotal} dirty in total`,
             });
         } else {
             status.push({
