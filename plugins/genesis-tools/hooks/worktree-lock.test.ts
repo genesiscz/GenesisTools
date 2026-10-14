@@ -29,7 +29,7 @@ const admin = join(main, ".git", "worktrees", "wt");
 /** A stand-in agent: `sleep` started through a link named `claude`, so `ps` shows an agent program at its pid. */
 const agentLink = join(base, "claude");
 symlinkSync("/bin/sleep", agentLink);
-const fakeAgent = Bun.spawn([agentLink, "600"], { stdout: "ignore", stderr: "ignore" });
+const fakeAgent = Bun.spawn([agentLink, "600"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 const me: AgentProcess = { harness: "claude", pid: fakeAgent.pid };
 /** Above the macOS pid ceiling (99998), so no process ever has it. */
 const DEAD_PID = 999999;
