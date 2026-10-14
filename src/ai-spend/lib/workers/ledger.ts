@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -171,9 +171,11 @@ export function bookedCostLine(row: WorkerCostRow): string {
 }
 
 /**
- * Replace the whole ledger with `rows`, through an atomic rename that keeps the old copy as
+ * Replace the whole ledger with `rows`, through an atomic rename, after copying the old ledger to
  * `.bak`. A row a live worker appended while the new copy was being built is carried over: the
  * bytes past the length this rewrite started from are appended to the new copy before the rename.
+ * The copy is made here rather than through the atomic writer's own backup option, so this file
+ * works on every branch the writer is on.
  */
 export function rewriteWorkerCostRows(rows: readonly WorkerCostRow[], startedFromBytes: number): void {
     const path = workerCostLedgerPath();
@@ -181,7 +183,11 @@ export function rewriteWorkerCostRows(rows: readonly WorkerCostRow[], startedFro
     const current = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
     const lateAppends = current.subarray(startedFromBytes).toString("utf8");
 
-    atomicWriteFileSync(path, text + lateAppends, { mode: 0o600, backup: true });
+    if (existsSync(path)) {
+        copyFileSync(path, `${path}.bak`);
+    }
+
+    atomicWriteFileSync(path, text + lateAppends, { mode: 0o600 });
 }
 
 /**

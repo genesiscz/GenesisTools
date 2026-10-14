@@ -24,7 +24,7 @@ import { walkFiles } from "./lib/reports/walk";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
 import { planWorkerReprice } from "./lib/workers/backfill";
-import { formatCostLine, workerCostCard } from "./lib/workers/cost";
+import { formatCostLine, formatUsd, workerCostCard } from "./lib/workers/cost";
 import {
     appendWorkerCostRows,
     bookedCostLine,
@@ -851,9 +851,22 @@ describe("loadEventsParallel", () => {
 describe("worker cost card", () => {
     const at = new Date("2026-10-13T22:00:00.000Z");
     const million = { input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, output: 1_000_000, reasoning: 0 };
+    // The Claude estimate comes from the catalog, whose Claude rates change on their own schedule (Sonnet 5.5 cache
+    // reads were halved on 2026-10-07). Derive it, so these tests pin the worker's own price and the wiring.
+    const asClaude = (model: string): number => {
+        const entry = priceFor(model, DEFAULT_PRICING);
+
+        if (!entry) {
+            throw new Error(`no catalog price for ${model}`);
+        }
+
+        return costOf(million, resolvePrice(entry, { at }));
+    };
+    const claudeTail = () =>
+        `as Claude ≈ Opus ${formatUsd(asClaude("claude-opus-5-5"))} / Sonnet ${formatUsd(asClaude("claude-sonnet-5-5"))} (estimate)`;
 
     it("prices cache reads at the cache rate and the Claude counterfactual from the same table", () => {
-        // gpt-6.1-sol: $2 input, $0.10 cache read, $10 output. Opus 5.5: $4 / $0.20 / $20. Sonnet 5.5: $2 / $0.10 / $10.
+        // gpt-6.1-sol: $2 input, $0.10 cache read, $10 output. The Claude figures are the catalog's own prices.
         const card = workerCostCard({
             backend: "codex",
             sessionId: "thread-1",
@@ -865,8 +878,8 @@ describe("worker cost card", () => {
         expect(card.apiEquivalentUsd).toBeCloseTo(12.1, 10);
         expect(card.billedUsd).toBeCloseTo(12.1, 10);
         expect(card.claudeEquivalent).toMatchObject({ estimate: true, opusModel: "claude-opus-5-5" });
-        expect(card.claudeEquivalent.opusUsd).toBeCloseTo(24.2, 10);
-        expect(card.claudeEquivalent.sonnetUsd).toBeCloseTo(12.1, 10);
+        expect(card.claudeEquivalent.opusUsd).toBeCloseTo(asClaude("claude-opus-5-5"), 10);
+        expect(card.claudeEquivalent.sonnetUsd).toBeCloseTo(asClaude("claude-sonnet-5-5"), 10);
     });
 
     it("a subscription login bills 0 while the API-equivalent stays the list price", () => {
@@ -881,7 +894,7 @@ describe("worker cost card", () => {
         expect(card.billedUsd).toBe(0);
         expect(card.apiEquivalentUsd).toBeCloseTo(12.1, 10);
         expect(formatCostLine(card, "codex")).toBe(
-            "cost: $12.10 API-equivalent (subscription, billed $0) · as Claude ≈ Opus $24.20 / Sonnet $12.10 (estimate)"
+            `cost: $12.10 API-equivalent (subscription, billed $0) · ${claudeTail()}`
         );
     });
 
@@ -900,7 +913,7 @@ describe("worker cost card", () => {
         expect(formatCostLine(card, "grok")).toMatch(
             /^cost: API-equivalent unknown \(no list price for grok-0-unpriced; api-key, billed \?\) · as Claude/
         );
-        expect(card.claudeEquivalent.opusUsd).toBeCloseTo(24.2, 10);
+        expect(card.claudeEquivalent.opusUsd).toBeCloseTo(asClaude("claude-opus-5-5"), 10);
     });
 
     it("bands one request by its own prompt length, never a sum of requests", () => {
@@ -944,7 +957,7 @@ describe("worker cost card", () => {
 
         expect(card).toMatchObject({ apiEquivalentUsd: 8.5, basis: "catalog", billedUsd: 0, reportedUsd: 2.44 });
         expect(formatCostLine(card, "grok")).toBe(
-            "cost: $8.50 API-equivalent (subscription, billed $0; grok reported $2.44) · as Claude ≈ Opus $24.20 / Sonnet $12.10 (estimate)"
+            `cost: $8.50 API-equivalent (subscription, billed $0; grok reported $2.44) · ${claudeTail()}`
         );
 
         const unpriced = workerCostCard({
