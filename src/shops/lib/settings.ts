@@ -155,6 +155,10 @@ export class SettingsRepository {
             shops: patch.shops ? { ...current.shops, ...patch.shops } : current.shops,
         };
         const filePath = this.path(userId);
+        if (!validNestedSettings(next)) {
+            throw new Error(`settings: patch has invalid nested fields; ${filePath} left untouched`);
+        }
+
         atomicWriteFileSync(filePath, SafeJSON.stringify(next, null, 2));
         log.info(
             {
@@ -197,7 +201,11 @@ function mergeWithDefaults(parsed: Partial<SettingsPayload>): SettingsPayload {
 }
 
 /** Absent nested settings inherit defaults; present values must retain their persisted field types. */
-function validNestedSettings(parsed: Record<string, unknown>): boolean {
+function validNestedSettings(parsed: unknown): boolean {
+    if (!isJsonObject(parsed)) {
+        return false;
+    }
+
     if (Object.hasOwn(parsed, "notification_channels")) {
         const channels = parsed.notification_channels;
         if (!isJsonObject(channels)) {

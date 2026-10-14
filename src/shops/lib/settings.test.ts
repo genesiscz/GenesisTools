@@ -161,6 +161,45 @@ describe("SettingsRepository (per-user)", () => {
         expect(readdirSync(baseDir)).toEqual(["2.json"]);
     });
 
+    it.each([
+        { notification_channels: { telegram: "yes" } },
+        { notification_channels: { macos: 1 } },
+        { notification_channels: { web_sse: null } },
+        { notification_channels: { telegram_bot_token: { token: "fixture-token" } } },
+        { notification_channels: { telegram_chat_id: 123 } },
+        { shops: { "shop.example": { enabled: "yes", rate_limit_per_second: 2 } } },
+        { shops: { "shop.example": { rate_limit_per_second: null } } },
+    ])("rejects an invalid nested patch without poisoning subsequent reads: %j", async (invalid) => {
+        const baseDir = join(dir, "settings");
+        const repo = new SettingsRepository(baseDir);
+        const saved = await repo.patch(2, {
+            theme: "wow",
+            notification_channels: { telegram_bot_token: "fixture-token", telegram_chat_id: "123" },
+            shops: { "shop.example": { enabled: false, rate_limit_per_second: null } },
+        });
+        const path = join(baseDir, "2.json");
+        const bytes = readFileSync(path, "utf8");
+
+        await expect(repo.patch(2, invalid as unknown as Parameters<typeof repo.patch>[1])).rejects.toThrow(
+            /invalid nested fields/
+        );
+        expect(readFileSync(path, "utf8")).toBe(bytes);
+        expect(readdirSync(baseDir)).toEqual(["2.json"]);
+        expect(await repo.read(2)).toEqual(saved);
+
+        const updated = await repo.patch(2, {
+            notification_channels: { telegram: false, telegram_bot_token: null },
+            shops: { "shop.example": { enabled: true, rate_limit_per_second: 3 } },
+        });
+        expect(await repo.read(2)).toEqual(updated);
+        expect(updated.notification_channels).toEqual({
+            ...saved.notification_channels,
+            telegram: false,
+            telegram_bot_token: null,
+        });
+        expect(updated.shops).toEqual({ "shop.example": { enabled: true, rate_limit_per_second: 3 } });
+    });
+
     it("fills absent nested fields while retaining valid saved channels and shop settings", async () => {
         const baseDir = join(dir, "settings");
         mkdirSync(baseDir, { recursive: true });
