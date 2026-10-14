@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 /**
- * A Monitor source for the reviewer bots: every `--every` seconds it runs round-ready.ts and prints a PR's line only
- * when its head, a bot's review of that head, or its open threads changed, so each event is one PR worth looking at.
+ * A Monitor source for every reviewer: every `--every` seconds it runs round-ready.ts and prints a PR's line only
+ * when its head, any reviewer's review of that head, its open threads or the PR comments by others changed, so each
+ * event is one PR worth looking at. No reviewer is filtered out: on 2026-10-14 this dropped CodeRabbit from the key,
+ * and only eve's state could wake the lead.
  * Ends after `--for` minutes (a Claude Code Monitor dies at 30 minutes anyway; re-arm it with the same command).
  *
  *   bun watch-reviews.ts --run <dir> [--every 120] [--for 30] <N> [<N> ...]
@@ -33,11 +35,9 @@ while (Date.now() < deadline) {
 
     for (const line of p.stdout.toString().split("\n").filter(Boolean)) {
         const pr = line.split(" ")[0];
-        // CodeRabbit's review of the head is noise for the round decision; the bot that gates rounds is eve.
-        const key = line.replace(/ coderabbitai@head \S+( \S+)?/, "");
 
-        if (seen.get(pr) !== key) {
-            seen.set(pr, key);
+        if (seen.get(pr) !== line) {
+            seen.set(pr, line);
             console.log(line);
         }
     }
