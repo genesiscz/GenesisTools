@@ -27,6 +27,7 @@ import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Work
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { resolveWindowId } from "@app/cmux/lib/window-ref";
 import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import {
     browserUrl,
     type PaneListPane,
@@ -327,15 +328,11 @@ interface IdentifyContext {
 /** Read focused-workspace and caller-surface UUIDs; return no context when cmux identification is unavailable. */
 export async function getIdentifyContext(): Promise<IdentifyContext> {
     try {
-        const identify = await runCmuxJSON<{
-            focused?: { workspace_id?: string };
-            caller?: { surface_id?: string };
-        }>(["--id-format", "both", "identify"]);
-        return {
-            focusedWorkspaceId: identify.focused?.workspace_id,
-            callerSurfaceId: identify.caller?.surface_id,
-        };
-    } catch {
+        const { focused, caller } = await identifyCmux();
+        return { focusedWorkspaceId: focused.workspaceId, callerSurfaceId: caller.surfaceId };
+    } catch (error) {
+        // Unscoped and caller-blind is still a capture; it is logged so a missing caller skip is explainable.
+        logger.debug({ error }, "[snapshot] cmux identify failed; capturing without the focused workspace and caller");
         return {};
     }
 }

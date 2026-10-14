@@ -1,4 +1,5 @@
-import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { type CmuxPlace, identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import {
     createWorkspaceWithName,
@@ -107,51 +108,40 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
     return placed;
 }
 
-/** `identify`'s `focused` block. The `*_id` UUIDs are what a launch targets; the refs are for display. */
-interface FocusedPlace {
-    window_id?: string;
-    workspace_id?: string;
-    pane_id?: string;
-    window_ref?: string;
-    workspace_ref?: string;
-    pane_ref?: string;
-}
-
 /**
  * Where a `--surface new|split|workspace` launch goes: a new tab in the focused pane, a split in
  * the focused workspace, or a new workspace in the focused window.
  */
 export function launchTarget(
     surface: "new" | "split" | "workspace" | undefined,
-    focused: FocusedPlace
+    focused: CmuxPlace
 ): OpenSessionTarget {
     if (surface === "workspace") {
-        if (!focused.window_id) {
+        if (!focused.windowId) {
             throw new Error("cmux reported no focused window to open a workspace in");
         }
 
-        return { kind: "window", windowId: focused.window_id };
+        return { kind: "window", windowId: focused.windowId };
     }
 
-    if (!focused.workspace_id) {
+    if (!focused.workspaceId) {
         throw new Error("cmux reported no focused workspace; is cmux running?");
     }
 
     if (surface === "split") {
-        return { kind: "workspace", workspaceId: focused.workspace_id };
+        return { kind: "workspace", workspaceId: focused.workspaceId };
     }
 
-    if (!focused.pane_id) {
+    if (!focused.paneId) {
         throw new Error("cmux reported no focused pane to open a tab in");
     }
 
-    return { kind: "pane", workspaceId: focused.workspace_id, paneId: focused.pane_id };
+    return { kind: "pane", workspaceId: focused.workspaceId, paneId: focused.paneId };
 }
 
-/** The focused window, workspace and pane, from `cmux identify`, which reports UUIDs only when asked. */
-export async function focusedPlace(): Promise<FocusedPlace> {
-    const identify = await runCmuxJSON<{ focused?: FocusedPlace }>(["--id-format", "both", "identify"]);
-    return identify.focused ?? {};
+/** The focused window, workspace and pane, every id and ref at once. */
+export async function focusedPlace(): Promise<CmuxPlace> {
+    return (await identifyCmux()).focused;
 }
 
 /**
@@ -169,11 +159,6 @@ async function showThenPickAnchor(workspaceId: string): Promise<{ paneId: string
     await runCmuxOk(["select-workspace", "--workspace", workspaceId]);
     await new Promise((resolve) => setTimeout(resolve, PLACEMENT_SETTLE_MS));
     return pickAnchorSurface(workspaceId);
-}
-
-interface IdentifyResponse {
-    bundle_identifier?: string;
-    caller?: { window_id?: string };
 }
 
 /** cmux needs this pause after select-workspace before the new PTY accepts keys. */
@@ -234,14 +219,7 @@ export function livePlacementIO(): PlacementIO {
         },
         identifyWindow: async (workspaceId) => {
             try {
-                const identify = await runCmuxJSON<IdentifyResponse>([
-                    "--id-format",
-                    "both",
-                    "identify",
-                    "--workspace",
-                    workspaceId,
-                ]);
-                return identify.caller?.window_id;
+                return (await identifyCmux({ workspace: workspaceId })).caller.windowId;
             } catch (err) {
                 log.debug({ err, workspaceId }, "could not resolve window after open");
                 return undefined;
@@ -252,8 +230,7 @@ export function livePlacementIO(): PlacementIO {
                 return;
             }
             try {
-                const identify = await runCmuxJSON<IdentifyResponse>(["identify"]);
-                const bundleId = identify.bundle_identifier;
+                const { bundleId } = await identifyCmux();
                 if (!bundleId) {
                     return;
                 }

@@ -19,7 +19,7 @@ let originalWrite: typeof process.stdout.write;
 mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxJSON: async (args: string[]) => {
         events.push(args.join(" "));
-        return { bundle_identifier: "com.cmuxterm.app", caller: { pane_ref: CALLER_PANE } };
+        return { bundle_identifier: "com.cmuxterm.app", caller: { pane_id: CALLER_PANE, pane_ref: CALLER_PANE } };
     },
     runCmuxOk: async (args: string[]) => {
         events.push(args.join(" "));

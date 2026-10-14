@@ -1,21 +1,12 @@
-import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { logger } from "@genesiscz/utils/logger";
 
-interface IdentifyFocused {
-    workspace_id?: string;
-}
-
-interface IdentifyResponse {
-    focused?: IdentifyFocused;
-}
-
 const FOCUS_SETTLE_MS = 400;
 
-/** `identify` reports refs only unless asked for both forms. */
 async function getFocusedWorkspaceId(): Promise<string | undefined> {
-    const identify = await runCmuxJSON<IdentifyResponse>(["--id-format", "both", "identify"]);
-    return identify.focused?.workspace_id;
+    return (await identifyCmux()).focused.workspaceId;
 }
 
 async function selectWorkspace(workspaceId: string): Promise<void> {

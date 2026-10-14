@@ -1,12 +1,9 @@
 import { connect } from "node:net";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { isCmuxUuid, sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-
-interface IdentifyResponse {
-    socket_path: string;
-}
 
 interface JsonRpcResponse<T> {
     id: string;
@@ -21,12 +18,12 @@ export async function getSocketPath(): Promise<string> {
     if (cachedSocketPath) {
         return cachedSocketPath;
     }
-    const identify = await runCmuxJSON<IdentifyResponse>(["identify"]);
-    if (!identify.socket_path) {
+    const identify = await identifyCmux();
+    if (!identify.socketPath) {
         logger.error({ identify }, "[socket] cmux identify returned no socket_path");
         throw new Error("cmux identify did not return a socket_path. Is cmux running?");
     }
-    cachedSocketPath = identify.socket_path;
+    cachedSocketPath = identify.socketPath;
     logger.debug({ path: cachedSocketPath }, "[socket] resolved cmux socket path");
     return cachedSocketPath;
 }

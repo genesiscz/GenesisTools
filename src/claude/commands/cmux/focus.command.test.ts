@@ -34,7 +34,7 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
             return { caller: { window_id: WINDOW_1, window_ref: "window:1" } };
         }
 
-        return { bundle_identifier: "com.cmuxterm.app", caller: { pane_ref: CALLER_PANE } };
+        return { bundle_identifier: "com.cmuxterm.app", caller: { pane_id: CALLER_PANE, pane_ref: CALLER_PANE } };
     },
     runCmuxOk: async (args: string[]) => {
         events.push(args.join(" "));
@@ -180,7 +180,7 @@ describe("focusCommand", () => {
 
         expect(exitCode).toBe(1);
         expect(result).toContain(`"focused": null`);
-        expect(events).toEqual(["identify"]);
+        expect(events).toEqual(["--id-format both identify"]);
     });
 
     test("--json with a match still exits 0", async () => {
@@ -199,7 +199,7 @@ describe("focusCommand", () => {
 
         expect(exitCode).toBe(1);
         expect(result).toContain(`"ambiguous": true`);
-        expect(events).toEqual(["identify"]);
+        expect(events).toEqual(["--id-format both identify"]);
     });
 
     test("--dry-run resolves a target but performs no cmux mutation", async () => {
@@ -209,7 +209,7 @@ describe("focusCommand", () => {
 
         expect(exitCode).toBe(0);
         expect(result).toContain(`"wouldFocus"`);
-        expect(events).toEqual(["identify"]);
+        expect(events).toEqual(["--id-format both identify"]);
     });
 
     test("raises the window, then the pane, then the tab the match came from", async () => {
@@ -227,7 +227,7 @@ describe("focusCommand", () => {
         await runFocus(SESSION_A);
 
         expect(events).toEqual([
-            "identify",
+            "--id-format both identify",
             "--id-format both identify --workspace workspace:11",
             `focus-window --window ${WINDOW_1}`,
             "focus-pane workspace:11 pane:33",
@@ -248,7 +248,7 @@ describe("focusCommand", () => {
         await runFocus(SESSION_A);
 
         expect(events).toEqual([
-            "identify",
+            "--id-format both identify",
             "focus-window --window 0B49D0CA-0000-4000-8000-000000000007",
             "focus-pane workspace:11 pane:33",
         ]);
@@ -359,7 +359,7 @@ describe("focusCommand", () => {
         expect(process.exitCode).toBe(1);
         expect(result).toContain(`"gone": true`);
         expect(result).toContain(`"focused": null`);
-        expect(events.filter((event) => event !== "identify")).toEqual([`focus-surface ${DEAD_SURFACE}`]);
+        expect(events.filter((event) => !event.includes("identify"))).toEqual([`focus-surface ${DEAD_SURFACE}`]);
     });
 
     test("a cmux timeout on a recorded ref is an error, never a gone pane", async () => {
@@ -410,7 +410,7 @@ describe("focusCommand", () => {
         );
 
         expect(process.exitCode ?? 0).toBe(0);
-        expect(events.filter((event) => !event.startsWith("identify"))).toEqual([
+        expect(events.filter((event) => !event.includes("identify"))).toEqual([
             "focus-surface live-surf",
             `focus-window --window ${WINDOW_1}`,
             `focus-pane ws-uuid ${RECORDED_PANE_ID}`,

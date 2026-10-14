@@ -81,12 +81,12 @@ describe("raiseThenSend", () => {
 
 describe("launchTarget", () => {
     const focused = {
-        window_id: WINDOW,
-        workspace_id: WORKSPACE,
-        pane_id: PANE,
-        window_ref: "window:1",
-        workspace_ref: "workspace:2",
-        pane_ref: "pane:3",
+        windowId: WINDOW,
+        workspaceId: WORKSPACE,
+        paneId: PANE,
+        windowRef: "window:1",
+        workspaceRef: "workspace:2",
+        paneRef: "pane:3",
     };
 
     test("new is a tab in the focused pane, split a pane in the focused workspace, workspace a new one in the window", () => {
@@ -102,7 +102,7 @@ describe("launchTarget", () => {
 
     /** Refs alone (identify without `--id-format both`) are not enough: a launch never targets a ref. */
     test("an identify answer with refs only is refused, not launched by ref", () => {
-        const refsOnly = { window_ref: "window:1", workspace_ref: "workspace:2", pane_ref: "pane:3" };
+        const refsOnly = { windowRef: "window:1", workspaceRef: "workspace:2", paneRef: "pane:3" };
 
         expect(() => launchTarget("new", refsOnly)).toThrow("no focused workspace");
         expect(() => launchTarget("workspace", refsOnly)).toThrow("no focused window");

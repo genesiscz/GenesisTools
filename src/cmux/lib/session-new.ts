@@ -474,7 +474,7 @@ export function liveRepoFs(): RepoFs {
 /** Bind session creation to live cmux controls, tmux operations, repository checks and terminal-readiness guards. */
 export function liveSessionIO(): SessionNewIO {
     return {
-        focusedWindow: async () => (await focusedPlace()).window_id,
+        focusedWindow: async () => (await focusedPlace()).windowId,
         listWindows: async () => {
             const windows = await windowList();
             return windows.map((window) => ({ ref: window.ref, id: window.id, visible: window.visible }));

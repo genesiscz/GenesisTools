@@ -27,7 +27,7 @@ function emptySnapshot(): CmuxLiveSnapshot {
 
 function deps(overrides: ResolveDeps = {}): ResolveDeps {
     return {
-        identify: async () => ({ caller: { pane_ref: "pane:2" } }),
+        identify: async () => ({ caller: { paneId: "pane:2", paneRef: "pane:2" }, focused: {} }),
         lookupRefs: () => refs(),
         lookupSession: async () => ({ aliases: [], sessionId: null, cwd: null }),
         fetchSnapshot: async () => emptySnapshot(),

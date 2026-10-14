@@ -1,4 +1,4 @@
-import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { env } from "@genesiscz/utils/env";
 
 /** What `cmux identify` says about the process asking, plus what its own environment claims. */
@@ -51,10 +51,6 @@ export function classifySelfSend(facts: SelfSendFacts): SelfSendVerdict {
     return { ok: true, detail: `ok (cmux surface ${facts.callerSurfaceId ?? facts.envSurfaceId})` };
 }
 
-interface IdentifyCaller {
-    caller?: { surface_id?: string; surface_type?: string };
-}
-
 /** Gather the facts. Never throws: an unreachable app is reported, not raised. */
 export async function probeSelfSend(): Promise<SelfSendVerdict> {
     const environment = env.getProcessEnv();
@@ -68,9 +64,9 @@ export async function probeSelfSend(): Promise<SelfSendVerdict> {
     }
 
     try {
-        const identify = await runCmuxJSON<IdentifyCaller>(["identify"], { timeoutMs: 5000 });
-        facts.callerSurfaceId = identify.caller?.surface_id;
-        facts.callerSurfaceType = identify.caller?.surface_type;
+        const { caller } = await identifyCmux({ timeoutMs: 5000 });
+        facts.callerSurfaceId = caller.surfaceId;
+        facts.callerSurfaceType = caller.surfaceType;
     } catch {
         return { ok: false, detail: "unknown (identify did not answer)", fix: "see the ping/identify lines above" };
     }

@@ -5,12 +5,12 @@ import {
     findFocusTargets,
     matchingSession,
 } from "@app/claude/lib/cmux/focus";
-import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import {
     type CmuxLiveSnapshot,
     fetchCmuxLiveSnapshot,
     type SnapshotPreviewMode,
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { type CmuxIdentity, identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { lookupSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { findTmuxHosts, type TmuxHost, tmuxAttachCommand, ttyName } from "@genesiscz/utils/cmux/tmux-host";
 import { logger } from "@genesiscz/utils/logger";
@@ -18,10 +18,7 @@ import { isTestProcess } from "@genesiscz/utils/test-process";
 
 const { log } = logger.scoped("claude-cmux-resolve");
 
-export interface CmuxIdentity {
-    bundle_identifier?: string;
-    caller?: { window_ref?: string; pane_ref?: string; surface_ref?: string };
-}
+export type { CmuxIdentity };
 
 /** Where a resolution came from, cheapest first. */
 export type SessionTargetSource = "recorded" | "tmux" | "titles" | "deep" | "deep-all" | "cwd" | "screen" | "none";
@@ -227,7 +224,7 @@ export async function findSessionTargets(
         deps.identify ??
         (async (): Promise<CmuxIdentity | undefined> => {
             try {
-                return await runCmuxJSON<CmuxIdentity>(["identify"]);
+                return await identifyCmux();
             } catch (err) {
                 log.debug({ err }, "could not identify the calling pane; searching every pane");
                 return undefined;
@@ -287,10 +284,11 @@ export async function findSessionTargets(
     let tmuxHosts: TmuxHost[] | undefined;
     // Exclude the caller's own TAB, not its whole pane: sibling tabs in the
     // same pane are legitimate targets, and the query is only echoed on this
-    // one surface. Falls back to the pane when cmux reports no surface ref.
-    const callerSurface = identity?.caller?.surface_ref;
+    // one surface. Falls back to the pane when cmux reports no surface. The snapshot's ids are UUIDs, so the
+    // caller is compared by its UUIDs: a ref from a plain `identify` never matched one.
+    const callerSurface = identity?.caller.surfaceId;
     const excludeSurfaceId = opts.includeSelf ? undefined : callerSurface;
-    const excludePaneId = opts.includeSelf || callerSurface ? undefined : identity?.caller?.pane_ref;
+    const excludePaneId = opts.includeSelf || callerSurface ? undefined : identity?.caller.paneId;
     const stages: { previews: SnapshotPreviewMode; source: SessionTargetSource }[] = sessionQuery
         ? [
               { previews: "none", source: "titles" },

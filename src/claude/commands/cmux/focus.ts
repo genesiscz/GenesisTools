@@ -2,8 +2,9 @@ import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/
 import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, tmuxMissHint } from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/controls";
+import { type CmuxIdentity, identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { isCmuxNotFound } from "@genesiscz/utils/cmux/lib/socket";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -22,11 +23,6 @@ export interface FocusOptions {
 
 export type FocusCommandDeps = ResolveDeps;
 
-interface IdentifyResponse {
-    bundle_identifier?: string;
-    caller?: { window_id?: string; window_ref?: string; pane_ref?: string };
-}
-
 /**
  * The UUID of the cmux window that owns `workspaceId`.
  *
@@ -36,14 +32,7 @@ interface IdentifyResponse {
  */
 async function windowIdFor(workspaceId: string): Promise<string | undefined> {
     try {
-        const identify = await runCmuxJSON<IdentifyResponse>([
-            "--id-format",
-            "both",
-            "identify",
-            "--workspace",
-            workspaceId,
-        ]);
-        return identify.caller?.window_id;
+        return (await identifyCmux({ workspace: workspaceId })).caller.windowId;
     } catch (err) {
         log.debug({ err, workspaceId }, "could not resolve the owning window; focusing without it");
         return undefined;
@@ -51,15 +40,14 @@ async function windowIdFor(workspaceId: string): Promise<string | undefined> {
 }
 
 /** Raise the cmux app itself, so a focused pane is actually on screen. */
-async function activateApp(identity?: IdentifyResponse): Promise<boolean> {
+async function activateApp(identity?: CmuxIdentity): Promise<boolean> {
     if (process.platform !== "darwin") {
         log.debug({ platform: process.platform }, "app activation is macOS-only; skipped");
         return false;
     }
 
     try {
-        const identify = identity ?? (await runCmuxJSON<IdentifyResponse>(["identify"]));
-        const bundleId = identify.bundle_identifier;
+        const { bundleId } = identity ?? (await identifyCmux());
 
         if (!bundleId) {
             log.debug("identify returned no bundle_identifier; cannot raise the app");
