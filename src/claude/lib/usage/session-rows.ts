@@ -61,9 +61,10 @@ export interface SessionRow {
      */
     compacted: boolean;
     /**
-     * The session this transcript continues in. Claude Code writes a final `continued-in` line when `/compact` moves
-     * the conversation to a new session id; the old id then keeps a cache clock nobody uses (2026-10-14: a banner
-     * counted 4578e02a down to "1 min left" half an hour after `/compact` had moved it to f2899264).
+     * The session this transcript continues in. Claude Code (2.1.296) writes a final `continued-in` line when it hands
+     * the conversation to a background session with a new id: the ← key on the prompt (it opens the agents view) or
+     * `/background`. The old id then keeps a cache clock nobody uses (2026-10-14: a banner counted 4578e02a down to
+     * "1 min left" half an hour after ← had moved it to f2899264, where `/compact` then ran).
      */
     continuedIn: string | null;
     /** Timestamp of the last real typed user message (not tool results, not compact summaries). */
