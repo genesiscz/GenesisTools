@@ -155,7 +155,7 @@ export function registerAgentMessageCommand(program: Command, alias: TurnProvide
         .option("--stream", "With --wait: print the reply as it is written")
         .option("--last <n>", "With --wait: print the last N assistant messages, not only the final one")
         .option("--tools", "With --wait: also list the tool calls of the answering turn")
-        .option("--quiet", "With --wait: status line and exit code only")
+        .option("--quiet", "With --wait: suppress live progress, retaining messages and final status")
         .addHelpText(
             "after",
             `

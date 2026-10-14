@@ -251,15 +251,11 @@ export function streamsLive(options: Pick<WaitOptions, "stream" | "quiet">): boo
 }
 
 /**
- * Does the final text still need printing? Not with --quiet, and not when the streamer already showed the turn
- * live. A reply that ended before the watch began never went through the streamer (it was primed past it).
+ * Does the final text still need printing? Quiet suppresses progress, not the reply. A reply that ended before
+ * the watch began never went through the streamer (it was primed past it).
  */
 export function printsFinalText(input: { quiet: boolean; streaming: boolean; answeredBeforeWatch: boolean }): boolean {
-    if (input.quiet) {
-        return false;
-    }
-
-    return !input.streaming || input.answeredBeforeWatch;
+    return input.quiet || !input.streaming || input.answeredBeforeWatch;
 }
 
 /** One read's pages of a transcript. */
@@ -608,12 +604,12 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
                 answeredBeforeWatch: alreadyAnswered,
             });
 
-            if (report.outcome === "done" && printFinal) {
+            if (last !== undefined || (report.outcome === "done" && printFinal)) {
                 const texts = extras.lastMessages ?? (report.lastText ? [report.lastText] : []);
                 out.println(texts.join("\n\n---\n\n"));
             }
 
-            if (extras.tools && !options.quiet) {
+            if (extras.tools) {
                 out.println(
                     pc.dim(`tools: ${extras.tools.map((tool) => `${tool.name} ×${tool.count}`).join(", ") || "none"}`)
                 );
@@ -658,7 +654,7 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
         .option("--tools", "Also list the tool calls of the turn that ended (name ×count)")
         .option(
             "--quiet",
-            "Print only the status line (stderr) and set the exit code; no message text, and no --stream output. --json still prints its document"
+            "Suppress live progress, retaining requested messages, tools and the final status"
         )
         .addHelpText(
             "after",
