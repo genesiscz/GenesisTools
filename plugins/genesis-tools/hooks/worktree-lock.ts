@@ -51,18 +51,19 @@ import {
     writeFileSync,
 } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { type AgentProcess, agentNamed, findAgentProcess, harnessNamed } from "../lib/agent-process";
 import { isProcessAlive } from "../lib/process-alive";
 import { readProcessBasics } from "../lib/process-basics";
 import { EDIT_TOOLS, filePathsOf, type HookInput, normalize, writeFailed } from "./edit-payload";
 import type { Harness } from "./harness";
 
+export { type AgentProcess, findAgentProcess } from "../lib/agent-process";
+
 const SafeJSON = JSON;
 
-const HARNESSES: readonly Harness[] = ["claude", "codex", "grok"];
 /** A real tree is never this deep; a symlink loop would be. */
 const MAX_DEPTH = 64;
-const MAX_ANCESTORS = 12;
 const MAX_COMMAND_CHARS = 20_000;
 const MAX_COMMAND_PATHS = 32;
 const SPAWN_TIMEOUT_MS = 3000;
@@ -88,12 +89,6 @@ export interface LinkedWorktree {
     adminDir: string;
     /** The repository's shared git folder. */
     commonDir: string;
-}
-
-/** The agent process a lock names. */
-export interface AgentProcess {
-    harness: Harness;
-    pid: number;
 }
 
 export type LockHolder =
@@ -131,10 +126,6 @@ function errorCode(error: unknown): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function harnessNamed(value: unknown): Harness | null {
-    return HARNESSES.find((harness) => harness === value) ?? null;
 }
 
 const LOG_LEVELS = { info: 30, warn: 40, error: 50 } as const;
@@ -873,49 +864,6 @@ function removeIfPresent(path: string): void {
             throw error;
         }
     }
-}
-
-function agentNamed(command: string): Harness | null {
-    const [program = "", script = ""] = command.trim().split(/\s+/, 2);
-
-    for (const arg of [program, script]) {
-        const harness = harnessNamed(/^(claude|codex|grok)(?:$|[-.])/.exec(basename(arg))?.[1]);
-
-        if (harness) {
-            return harness;
-        }
-    }
-
-    // An npm install of Claude Code runs as `node …/@anthropic-ai/claude-code/cli.js`.
-    return command.includes("/@anthropic-ai/claude-code/") ? "claude" : null;
-}
-
-/**
- * The agent process this hook belongs to: the nearest ancestor whose program is claude, codex or grok.
- * A hook runs under a shell, so its parent is rarely the agent itself. One kernel read per level, no
- * spawn. The nearest one is right also for a Codex worker started from a
- * Claude session, whose chain holds both.
- */
-export function findAgentProcess(startPid = process.ppid): AgentProcess | null {
-    let pid = startPid;
-
-    for (let depth = 0; depth < MAX_ANCESTORS && pid > 1; depth++) {
-        const basics = readProcessBasics(pid);
-
-        if (!basics || basics.command === null) {
-            return null;
-        }
-
-        const harness = agentNamed(basics.command);
-
-        if (harness) {
-            return { harness, pid };
-        }
-
-        pid = basics.ppid;
-    }
-
-    return null;
 }
 
 /**

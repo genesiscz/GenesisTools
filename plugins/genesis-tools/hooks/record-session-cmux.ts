@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { findAgentProcess, isHeadlessAgent } from "../lib/agent-process";
 import { readProcessBasics } from "../lib/process-basics";
-import { type Harness, harnessFor } from "./harness";
+import { resumeArgv } from "../lib/resume-argv";
+import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
 
 const SafeJSON = JSON;
 
@@ -44,11 +46,21 @@ interface HookInput {
     transcriptPath?: string;
     /** Grok's own event name. Absent on the Claude and Codex payloads. */
     hookEventName?: string;
+    /** Claude's event name (`SessionStart`, `UserPromptSubmit`, `SessionEnd`). */
+    hook_event_name?: string;
+    /** Why a Claude session ended, on SessionEnd: `prompt_input_exit` (/exit, Ctrl-D), `logout`, `clear`, `other`. */
+    reason?: string;
 }
 
 // Standalone hook script: no access to @genesiscz/utils/env, so process.env directly.
 const HOME = process.env.GENESIS_TOOLS_HOME || homedir();
 const REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs.jsonl");
+/** surface UUID → the resume binding this hook last gave cmux for that tab. */
+const BINDINGS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-bindings.json");
+/** A binding is set again after this long, in case cmux replaced it with a record of its own since. */
+const BINDING_REFRESH_MS = 30 * 60_000;
+/** SessionEnd reasons that mean the user ended the session on purpose, so it must not come back. */
+const DELIBERATE_END = new Set(["prompt_input_exit", "logout"]);
 
 /**
  * Where cmux says this process sits NOW. The UUIDs are the identity: cmux renumbers every `*_ref` at a
@@ -85,32 +97,147 @@ function identifyRefs(): IdentifyCaller {
 }
 
 /**
- * True when the Claude process this hook belongs to has a controlling tty.
+ * True when the agent this hook runs under is the interactive occupant of its tab.
  *
- * A headless child (`claude -p` run from another session's Bash tool, a probe
- * battery, a subagent script) inherits the parent's CMUX_SURFACE_ID, so
- * recording it RELABELS the parent's tab with the child's session id — the
- * newest journal line wins, and `cmux tree`/monitor presence then report the
- * long-lived session in that pane as "not in cmux" (observed 2026-09-01:
- * two `claude -p` children stole surface:108 from session 7af3dcba).
+ * A headless agent inherits the tab's CMUX_SURFACE_ID from whoever started it, so recording it RELABELS
+ * the tab with the child's session id: the newest journal line wins, and `cmux tree`, monitor presence
+ * and the restore then name the wrong session (2026-09-01: two `claude -p` children stole surface:108
+ * from session 7af3dcba; 2026-10-14: a babysit grok worker and a Codex app-server wrote records onto the
+ * Claude tab that started them). Env comparison cannot catch it: a nested agent overwrites the session
+ * variables for its own children.
  *
- * Env comparison cannot catch this: a nested claude overwrites
- * CLAUDE_CODE_SESSION_ID for its own children. The tty can — the interactive
- * claude that actually OWNS the pane has one (`ttys…`), a headless run shows
- * `??`. CLAUDE_PID names the claude process in hook env; without it, fail
- * open and record, matching the old behavior.
- *
- * ⚠️ Codex and Grok export no equivalent, so this fails open there. That is safe only
- * because the record is tagged with its harness and the claude reader filters it out — a
- * non-claude record can no longer claim a claude pane's tty.
+ * - Claude names its process in CLAUDE_PID. Use it only for a Claude payload: a Codex or Grok worker started
+ *   from a Claude session inherits the PARENT's CLAUDE_PID, which is how those worker records got through.
+ * - Otherwise the nearest claude/codex/grok ancestor of this hook is the agent (`findAgentProcess`).
+ * - The occupant has a controlling terminal and runs its terminal UI: no `-p`, no `codex exec`, no app-server.
+ * - Nothing to read (no such process, no agent ancestor, another harness's agent above a test run): fail open
+ *   and record, because losing the journal is worse than one stray line.
  */
-export function agentHasTty(pid = process.env.CLAUDE_PID): boolean {
-    if (!pid || !/^\d+$/.test(pid)) {
+export function ownsTab(harness: Harness, claudePid = process.env.CLAUDE_PID, startPid = process.ppid): boolean {
+    if (harness === "claude" && claudePid && /^\d+$/.test(claudePid)) {
+        const basics = readProcessBasics(Number(claudePid));
+
+        if (basics === null) {
+            return true;
+        }
+
+        return basics.tty !== null && !(basics.command && isHeadlessAgent({ harness, command: basics.command }));
+    }
+
+    const agent = findAgentProcess(startPid);
+
+    if (!agent || agent.harness !== harness) {
         return true;
     }
 
-    const entry = readProcessBasics(Number(pid));
-    return entry === null || entry.tty !== null;
+    return agent.tty !== null && !isHeadlessAgent(agent);
+}
+
+interface BindingState {
+    sessionId: string;
+    command: string;
+    at: number;
+}
+
+function readBindings(): Record<string, BindingState> {
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(BINDINGS_PATH, "utf8"));
+        return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, BindingState>) : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeBindings(state: Record<string, BindingState>): void {
+    mkdirSync(join(HOME, ".genesis-tools", "claude-code"), { recursive: true });
+    const temporary = `${BINDINGS_PATH}.${process.pid}.tmp`;
+    writeFileSync(temporary, SafeJSON.stringify(state), "utf8");
+    renameSync(temporary, BINDINGS_PATH);
+}
+
+function runCmux(args: string[]): boolean {
+    return spawnSync("cmux", args, { encoding: "utf8", timeout: 1500 }).status === 0;
+}
+
+/**
+ * Give cmux the command that resumes this session in this tab (`cmux surface resume set`). cmux keeps the
+ * binding with the tab's own state, so it follows the tab across a move and a relaunch, and it replaces the
+ * restore record cmux derived from processes it saw in the tab, which can name a stale session (2026-10-14:
+ * a day-old grok worker's session, typed into the tab where Claude 1b4001ba ran). The command carries the
+ * account from `TOOLS_<AGENT>_ACCOUNT`, never a model. Set only when it changed or is half an hour old, so a
+ * prompt costs no cmux call. Runs only where `cmux identify` answered for this tab.
+ */
+export function syncResumeBinding(input: {
+    surfaceId: string;
+    harness: Harness;
+    sessionId: string;
+    cwd: string;
+    account?: string;
+    now?: number;
+    run?: (args: string[]) => boolean;
+}): boolean {
+    const now = input.now ?? Date.now();
+    const argv = resumeArgv(input.harness, input.sessionId, input.account);
+    const command = argv.join(" ");
+    const state = readBindings();
+    const known = state[input.surfaceId];
+
+    if (
+        known &&
+        known.sessionId === input.sessionId &&
+        known.command === command &&
+        now - known.at < BINDING_REFRESH_MS
+    ) {
+        return false;
+    }
+
+    const set = (input.run ?? runCmux)([
+        "surface",
+        "resume",
+        "set",
+        "--surface",
+        input.surfaceId,
+        "--kind",
+        "agent",
+        "--checkpoint",
+        input.sessionId,
+        "--source",
+        "genesis-tools",
+        "--name",
+        `${input.harness} ${input.sessionId.slice(0, 8)}`,
+        "--cwd",
+        input.cwd,
+        "--",
+        ...argv,
+    ]);
+
+    if (!set) {
+        return false;
+    }
+
+    writeBindings({ ...state, [input.surfaceId]: { sessionId: input.sessionId, command, at: now } });
+    return true;
+}
+
+/** The session ended on purpose: cmux forgets this tab's binding, if it still names this session. */
+export function clearResumeBinding(input: {
+    surfaceId: string;
+    sessionId: string;
+    run?: (args: string[]) => boolean;
+}): boolean {
+    const state = readBindings();
+
+    if (state[input.surfaceId]?.sessionId !== input.sessionId) {
+        return false;
+    }
+
+    if (!(input.run ?? runCmux)(["surface", "resume", "clear", "--surface", input.surfaceId])) {
+        return false;
+    }
+
+    const { [input.surfaceId]: _cleared, ...rest } = state;
+    writeBindings(rest);
+    return true;
 }
 
 function main(raw: string): void {
@@ -141,14 +268,22 @@ function main(raw: string): void {
         return;
     }
 
-    // Headless claude (`-p` child, probe, subagent): the surface in its env is
-    // its PARENT's pane, and recording it would steal that pane's label.
-    if (!agentHasTty()) {
+    const harness: Harness = harnessFor(input);
+
+    // A headless agent (`-p` child, worker, app-server): the surface in its env is the tab of whoever
+    // started it, and recording it would steal that tab's label.
+    if (!ownsTab(harness)) {
         return;
     }
 
-    const harness: Harness = harnessFor(input);
-    const caller = surfaceId ? identifyRefs() : {};
+    const ending = (input.hook_event_name ?? input.hookEventName) === "SessionEnd";
+
+    // Only a deliberate end is recorded: after a crash or a cmux quit the session should come back.
+    if (ending && !DELIBERATE_END.has(input.reason ?? "")) {
+        return;
+    }
+
+    const caller = surfaceId && !ending ? identifyRefs() : {};
     const entry = {
         sessionId,
         // Absent means claude, so every record written before this field keeps its meaning.
@@ -165,6 +300,8 @@ function main(raw: string): void {
         tmuxPane,
         cwd: input.cwd || process.cwd(),
         at: Date.now(),
+        // The user ended this session (`/exit`): readers must not resume it in this tab.
+        ...(ending ? { ended: true } : {}),
     };
 
     const dir = join(HOME, ".genesis-tools", "claude-code");
@@ -176,6 +313,26 @@ function main(raw: string): void {
     // Append-only: an O_APPEND write of one short line is atomic, so concurrent
     // sessions never corrupt the journal. Later lines win on read.
     appendFileSync(REFS_PATH, `${SafeJSON.stringify(entry)}\n`, "utf8");
+
+    if (!surfaceId) {
+        return;
+    }
+
+    if (ending) {
+        clearResumeBinding({ surfaceId, sessionId });
+        return;
+    }
+
+    // identify answered: this process talks to the cmux that shows the tab.
+    if (caller.surface_id) {
+        syncResumeBinding({
+            surfaceId: caller.surface_id,
+            harness,
+            sessionId,
+            cwd: entry.cwd,
+            account: process.env[accountEnvVarFor(harness)] || undefined,
+        });
+    }
 }
 
 if (import.meta.main) {

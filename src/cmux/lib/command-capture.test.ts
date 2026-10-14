@@ -529,6 +529,31 @@ describe("loadSurfaceSessions", () => {
         expect(sessions.has("surface-v7")).toBe(false);
     });
 
+    // A session the user ended with /exit must not come back at the next relaunch, and neither may an older
+    // session of the same tab. A crash writes no such record, so a crashed session still resumes.
+    test("a tab whose newest record is a deliberate end has no session to resume", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "cmux-refs-"));
+        const refsPath = join(dir, "cmux-refs.jsonl");
+        const pinsPath = join(dir, "session-pins.jsonl");
+        const older = SafeJSON.parse(line("aaaaaaaa-1111-4111-8111-111111111111", "surface-exited"));
+        const exited = SafeJSON.parse(line("bbbbbbbb-2222-4222-8222-222222222222", "surface-exited"));
+        writeFileSync(
+            refsPath,
+            [
+                SafeJSON.stringify({ ...older, at: Date.now() - 60_000 }),
+                SafeJSON.stringify({ ...exited, at: Date.now() - 30_000 }),
+                SafeJSON.stringify({ ...exited, ended: true }),
+                line("cccccccc-3333-4333-8333-333333333333", "surface-crashed"),
+            ].join("\n")
+        );
+        writeFileSync(pinsPath, "");
+
+        const sessions = await loadSurfaceSessions({ refsPath, pinsPath });
+
+        expect(sessions.has("surface-exited")).toBe(false);
+        expect(sessions.get("surface-crashed")?.sessionId).toBe("cccccccc-3333-4333-8333-333333333333");
+    });
+
     // The v4 shape is Claude's habit, not a law. The shared index holds 4 Codex
     // and 6 Grok sessions with v4-shaped ids, and the id alone cannot tell them
     // apart. The pin journal can: it is written per session by the same hook and

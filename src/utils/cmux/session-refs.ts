@@ -42,6 +42,8 @@ export interface SessionCmuxRefs {
     tmuxPane: string | null;
     cwd: string | null;
     at: number;
+    /** The user ended the session on purpose (`/exit`) at `at`; it must not be resumed in this tab. */
+    ended?: boolean;
 }
 
 export const CMUX_REFS_PATH = genesisToolsDir("claude-code", "cmux-refs.jsonl");

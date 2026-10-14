@@ -152,7 +152,8 @@ export const CALL_SITES: CallSite[] = [
         spawn: "ps -o tty= -p <agent pid>",
         frequency: "per-tool-call",
         run: async () =>
-            (await import("../../../plugins/genesis-tools/hooks/record-session-cmux")).agentHasTty(
+            (await import("../../../plugins/genesis-tools/hooks/record-session-cmux")).ownsTab(
+                "claude",
                 String(process.ppid)
             ),
     },

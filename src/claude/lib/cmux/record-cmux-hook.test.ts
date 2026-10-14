@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resumeArgv } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { clearResumeBinding, syncResumeBinding } from "../../../../plugins/genesis-tools/hooks/record-session-cmux";
+import { isHeadlessAgent } from "../../../../plugins/genesis-tools/lib/agent-process";
+import { resumeArgv as pluginResumeArgv } from "../../../../plugins/genesis-tools/lib/resume-argv";
 
 /**
  * Like record-hook.test.ts: the cmux-refs hook is a standalone plugin script
@@ -133,5 +137,126 @@ describe("record-session-cmux tty gate", () => {
         );
 
         expect((await readJournal())[0]?.provider).toBe("grok");
+    });
+});
+
+describe("record-session-cmux: which agent owns the tab", () => {
+    test("headless runs of each agent are told apart from their terminal UIs", () => {
+        expect(isHeadlessAgent({ harness: "claude", command: "/Users/me/.bun/bin/claude -p hello" })).toBe(true);
+        expect(isHeadlessAgent({ harness: "claude", command: "claude --input-format stream-json" })).toBe(true);
+        expect(isHeadlessAgent({ harness: "claude", command: "claude --resume 6bdfb457" })).toBe(false);
+        expect(isHeadlessAgent({ harness: "grok", command: "/Users/me/.local/bin/grok -r abc -p fix it" })).toBe(true);
+        expect(isHeadlessAgent({ harness: "grok", command: "/Users/me/.local/bin/grok -r abc" })).toBe(false);
+        expect(isHeadlessAgent({ harness: "codex", command: "node /opt/codex/bin/codex.js exec --json" })).toBe(true);
+        expect(isHeadlessAgent({ harness: "codex", command: "/usr/local/bin/codex app-server" })).toBe(true);
+        expect(isHeadlessAgent({ harness: "codex", command: "/usr/local/bin/codex resume 019a" })).toBe(false);
+    });
+
+    // 2026-10-14: a Codex app-server and a grok worker started from a Claude tab inherited its CLAUDE_PID and
+    // CMUX_SURFACE_ID, passed the old claude-only tty check, and wrote their sessions onto the Claude tab.
+    test("a headless Codex started from a Claude tab is not recorded, whatever CLAUDE_PID says", async () => {
+        const agentDir = await mkdtemp(join(tmpdir(), "record-cmux-agent-"));
+        const fakeCodex = join(agentDir, "codex.ts");
+        await Bun.write(
+            fakeCodex,
+            `const hook = Bun.spawn(["bun", ${SafeJSON.stringify(HOOK)}], { stdin: new TextEncoder().encode(await Bun.stdin.text()), stdout: "ignore", stderr: "ignore" });\nprocess.exit(await hook.exited);\n`
+        );
+
+        try {
+            const proc = Bun.spawn(["bun", fakeCodex, "exec", "--json"], {
+                stdin: new TextEncoder().encode(
+                    SafeJSON.stringify({
+                        session_id: "019a0000-0000-7000-8000-000000000001",
+                        transcript_path: "/tmp/fake/.codex/sessions/rollout-1.jsonl",
+                        cwd: "/tmp",
+                    })
+                ),
+                env: {
+                    ...process.env,
+                    GENESIS_TOOLS_HOME: home,
+                    CMUX_WORKSPACE_ID: "TEST-WS",
+                    CMUX_SURFACE_ID: "TEST-SURFACE",
+                    TMUX_PANE: "",
+                    CLAUDE_PID: String(process.pid),
+                },
+            });
+            await proc.exited;
+
+            expect(await readJournal()).toEqual([]);
+        } finally {
+            await rm(agentDir, { recursive: true, force: true });
+        }
+    });
+
+    test("the hook's resume command equals the one restore-after-restart builds", () => {
+        for (const harness of ["claude", "codex", "grok"] as const) {
+            for (const account of [undefined, "work"]) {
+                expect(pluginResumeArgv(harness, "6bdfb457-cee9-4202-8105-21be8a801757", account)).toEqual(
+                    resumeArgv(harness, "6bdfb457-cee9-4202-8105-21be8a801757", account)
+                );
+            }
+        }
+    });
+});
+
+describe("record-session-cmux: the cmux resume binding", () => {
+    const SURFACE = "6A7AC7A4-E510-4A41-85DE-080C21078EA7";
+
+    test("is set once per session and command, set again for a new session, and cleared only by its session", () => {
+        const calls: string[][] = [];
+        const run = (args: string[]) => {
+            calls.push(args);
+            return true;
+        };
+        const base = { surfaceId: SURFACE, harness: "claude" as const, cwd: "/tmp/app", account: "work", run };
+
+        expect(syncResumeBinding({ ...base, sessionId: "aaaaaaaa-1111-4111-8111-111111111111", now: 1_000 })).toBe(
+            true
+        );
+        expect(calls[0]).toEqual([
+            "surface",
+            "resume",
+            "set",
+            "--surface",
+            SURFACE,
+            "--kind",
+            "agent",
+            "--checkpoint",
+            "aaaaaaaa-1111-4111-8111-111111111111",
+            "--source",
+            "genesis-tools",
+            "--name",
+            "claude aaaaaaaa",
+            "--cwd",
+            "/tmp/app",
+            "--",
+            "tools",
+            "claude",
+            "start",
+            "work",
+            "--",
+            "--resume",
+            "aaaaaaaa-1111-4111-8111-111111111111",
+        ]);
+
+        // The next prompt of the same session costs no cmux call; half an hour later it is set again.
+        expect(syncResumeBinding({ ...base, sessionId: "aaaaaaaa-1111-4111-8111-111111111111", now: 2_000 })).toBe(
+            false
+        );
+        expect(calls).toHaveLength(1);
+        expect(
+            syncResumeBinding({ ...base, sessionId: "aaaaaaaa-1111-4111-8111-111111111111", now: 1_000 + 31 * 60_000 })
+        ).toBe(true);
+
+        expect(syncResumeBinding({ ...base, sessionId: "bbbbbbbb-2222-4222-8222-222222222222", now: 3_000_000 })).toBe(
+            true
+        );
+        expect(clearResumeBinding({ surfaceId: SURFACE, sessionId: "aaaaaaaa-1111-4111-8111-111111111111", run })).toBe(
+            false
+        );
+        expect(clearResumeBinding({ surfaceId: SURFACE, sessionId: "bbbbbbbb-2222-4222-8222-222222222222", run })).toBe(
+            true
+        );
+        expect(calls.at(-1)).toEqual(["surface", "resume", "clear", "--surface", SURFACE]);
     });
 });

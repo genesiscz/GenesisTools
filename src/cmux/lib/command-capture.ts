@@ -172,7 +172,10 @@ export interface SurfaceSessionInfo {
 export async function loadSurfaceSessions(
     options: { beforeMs?: number; refsPath?: string; pinsPath?: string } = {}
 ): Promise<Map<string, SurfaceSessionInfo>> {
-    const out = new Map<string, { sessionId: string; account?: string; provider: AccountProviderAlias; at: number }>();
+    const out = new Map<
+        string,
+        { sessionId: string; account?: string; provider: AccountProviderAlias; at: number; ended?: boolean }
+    >();
     try {
         const refs = loadAllSessionCmuxRefs(options.refsPath, options);
         const pins = await loadPins({ readOnly: true, path: options.pinsPath });
@@ -207,14 +210,25 @@ export async function loadSurfaceSessions(
                 account: (pin?.provider ?? "claude") === provider ? (pin?.account ?? undefined) : undefined,
                 provider,
                 at: entry.at ?? 0,
+                ended: entry.ended,
             });
         }
     } catch (error) {
         logger.warn({ error }, "[command-capture] session refs/pins unavailable");
     }
 
+    // A tab whose last session was ended on purpose (`/exit`) has nothing to resume: the newest record
+    // decides, so an older session of the same tab does not come back either.
+    const ended = [...out].filter(([, v]) => v.ended);
+
+    if (ended.length > 0) {
+        logger.debug({ surfaces: ended.map(([k]) => k) }, "[command-capture] tabs whose session was ended on purpose");
+    }
+
     return new Map(
-        [...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider, at: v.at }])
+        [...out]
+            .filter(([, v]) => !v.ended)
+            .map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider, at: v.at }])
     );
 }
 
