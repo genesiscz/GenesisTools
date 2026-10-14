@@ -23,6 +23,7 @@ interface Comment {
 }
 
 interface Thread {
+    id: string;
     isResolved: boolean;
     path: string;
     line?: number;
@@ -51,7 +52,7 @@ const page = "pageInfo{hasNextPage}";
 const query = `query($n:Int!){viewer{login} repository(owner:"${owner}",name:"${name}"){pullRequest(number:$n){
  title state mergedAt headRefOid
  reviews(first:100){${page} nodes{author{login} state createdAt:submittedAt body commit{oid}}}
- reviewThreads(first:100){${page} nodes{isResolved path line comments(first:50){nodes{author{login} createdAt body}}}}
+ reviewThreads(first:100){${page} nodes{id isResolved path line comments(first:50){nodes{author{login} createdAt body}}}}
  comments(first:100){${page} nodes{author{login} createdAt body}}}}}`;
 
 const local = (iso: string) =>
@@ -158,7 +159,7 @@ for (const n of prs) {
         const [first, ...rest] = thread.comments.nodes;
         const who = first?.author?.login ?? "?";
         const answered = rest.some((c) => c.author?.login !== who);
-        const where = `${thread.path}:${thread.line ?? "?"}`;
+        const where = `${thread.path}:${thread.line ?? "?"}${bodies ? ` [${thread.id}]` : ""}`;
 
         if (!thread.isResolved) {
             open++;
