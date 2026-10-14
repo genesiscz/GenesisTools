@@ -56,6 +56,7 @@ describe("worktreeState", () => {
         gitInit(dir);
         const commit = (message: string) =>
             Bun.spawnSync({
+                env: process.env,
                 cmd: [
                     "git",
                     "-c",
