@@ -248,11 +248,16 @@ const PROCESS_TOOL_EXEMPT = /^(?:src\/utils\/process\/|scripts\/benchmarks\/)/;
 const PROGRAM_FIRST_CALLEES = new Set(["spawn", "spawnSync", "execFile", "execFileSync", "capture", "captureSync"]);
 /** Callees that take one command string, and Bun's shell tag. */
 const COMMAND_STRING_CALLEES = new Set(["exec", "execSync", "$"]);
-/** Rust-side prefilter: the arguments open with a quoted ps, lsof or pgrep, bare or as an array's first element. */
+/**
+ * Rust-side prefilter: a call whose arguments quote ps, lsof or pgrep anywhere, or a string that is the absolute path
+ * of one (`"/bin/ps"`, `"/usr/sbin/lsof"`), which no prose comment can be. `spawnsProcessTool` decides.
+ */
 const PROCESS_TOOL_CALL_MATCHER = {
     rule: {
-        kind: "call_expression",
-        has: { field: "arguments", regex: "^\\(?\\s*\\[?\\s*[\"'`](?:ps|lsof|pgrep)[\"'`\\s]" },
+        any: [
+            { kind: "call_expression", has: { field: "arguments", regex: "[\"'`](?:ps|lsof|pgrep)[\"'`\\s]" } },
+            { kind: "string", regex: "^[\"'](?:/usr)?/s?bin/(?:ps|lsof|pgrep)[\"']$" },
+        ],
     },
 };
 
@@ -260,7 +265,33 @@ function unquote(node: SgNode): string {
     return node.text().slice(1, -1);
 }
 
+function isToolString(node: SgNode | null | undefined): boolean {
+    return node?.kind() === "string" && PROCESS_TOOLS.has(unquote(node));
+}
+
+/** An argv array that runs a process tool: `["ps", …]`, or behind `env`: `["env", "LC_ALL=C", "ps", …]`. */
+function argvRunsProcessTool(array: SgNode, viaEnv = false): boolean {
+    const items = array.namedChildren();
+    let index = 0;
+
+    if (!viaEnv && items[0]?.kind() === "string" && unquote(items[0]) === "env") {
+        viaEnv = true;
+        index = 1;
+    }
+
+    while (viaEnv && items[index]?.kind() === "string" && unquote(items[index]).includes("=")) {
+        index++;
+    }
+
+    return isToolString(items[index]);
+}
+
 function spawnsProcessTool(node: SgNode): boolean {
+    // An absolute path to a process tool is only ever there to run it, whatever the call around it.
+    if (node.kind() === "string") {
+        return true;
+    }
+
     const args = node.field("arguments");
 
     if (!args) {
@@ -275,12 +306,42 @@ function spawnsProcessTool(node: SgNode): boolean {
         return false;
     }
 
+    // `Bun.which("lsof")` resolves the program a later spawn runs through a variable.
+    if (callee === "which") {
+        return isToolString(first);
+    }
+
     if (first.kind() === "array") {
-        const program = first.namedChildren()[0];
         // A method's argv is its own program's (`this.run(["ps", …])` is `docker ps`); Bun.spawn's is the process.
         const spawnsArgv = !calleeText.includes(".") || calleeText.startsWith("Bun.");
 
-        return spawnsArgv && program?.kind() === "string" && PROCESS_TOOLS.has(unquote(program));
+        return spawnsArgv && argvRunsProcessTool(first);
+    }
+
+    // `Bun.spawn({ cmd: ["ps", …] })`.
+    if (first.kind() === "object" && calleeText.startsWith("Bun.")) {
+        const cmd = first
+            .namedChildren()
+            .find((pair) => pair.field("key")?.text() === "cmd")
+            ?.field("value");
+        return cmd?.kind() === "array" && argvRunsProcessTool(cmd);
+    }
+
+    const named = args.kind() === "template_string" ? [] : args.namedChildren();
+
+    // A program name followed by its argv anywhere in the call: `probeRun("listeners", "lsof", [...])`, and through
+    // env: `probeRun("processes", "env", ["LC_ALL=C", "ps", …])`.
+    for (let index = 0; index + 1 < named.length; index++) {
+        const program = named[index];
+        const argv = named[index + 1];
+
+        if (program.kind() !== "string" || argv.kind() !== "array") {
+            continue;
+        }
+
+        if (PROCESS_TOOLS.has(unquote(program)) || (unquote(program) === "env" && argvRunsProcessTool(argv, true))) {
+            return true;
+        }
     }
 
     if (first.kind() !== "string" && first.kind() !== "template_string") {
@@ -325,8 +386,15 @@ export function applyProcessToolBaseline(
 }
 
 function recordProcessToolSpawns(nodes: SgNode[], fileOf: (node: SgNode) => string, record: RecordFinding): void {
+    // One finding per line: `Bun.which("lsof") ?? "/usr/sbin/lsof"` is one call site, not two.
+    const seen = new Set<string>();
+
     for (const node of nodes) {
-        if (!PROCESS_TOOL_EXEMPT.test(fileOf(node).replace(/\\/g, "/")) && spawnsProcessTool(node)) {
+        const file = fileOf(node).replace(/\\/g, "/");
+        const key = `${file}:${node.range().start.line}`;
+
+        if (!PROCESS_TOOL_EXEMPT.test(file) && !seen.has(key) && spawnsProcessTool(node)) {
+            seen.add(key);
             record(node, PROCESS_TOOL_SPAWN_RULE);
         }
     }
@@ -804,8 +872,9 @@ function render(finding: Finding): string {
  */
 const PROCESS_TOOL_BASELINE_FILE = "scripts/ci/process-tool-spawn-baseline.ts";
 const PROCESS_TOOL_BASELINE_HEADER = `/**
- * The \`no-process-tool-spawn\` findings that existed when the rule landed (2026-10-14 01:20), counted per file. A file
- * may keep at most this many; one more spawn in a listed file, or any spawn in an unlisted file, fails lint-rules.
+ * The \`no-process-tool-spawn\` findings that existed when the rule landed (2026-10-14 01:20; absolute paths, the
+ * \`{ cmd }\` form, \`env\` and \`Bun.which\` from 02:20), counted per file. A file may keep at most this many; one
+ * more spawn in a listed file, or any spawn in an unlisted file, fails lint-rules.
  * When you move a call site to \`@genesiscz/utils/process\`, run \`bun scripts/ci/lint-rules.ts --update-process-baseline\`,
  * which lowers the counts and refuses to raise one.
  */`;

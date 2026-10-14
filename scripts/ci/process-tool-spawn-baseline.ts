@@ -1,6 +1,7 @@
 /**
- * The `no-process-tool-spawn` findings that existed when the rule landed (2026-10-14 01:20), counted per file. A file
- * may keep at most this many; one more spawn in a listed file, or any spawn in an unlisted file, fails lint-rules.
+ * The `no-process-tool-spawn` findings that existed when the rule landed (2026-10-14 01:20; absolute paths, the
+ * `{ cmd }` form, `env` and `Bun.which` from 02:20), counted per file. A file may keep at most this many; one
+ * more spawn in a listed file, or any spawn in an unlisted file, fails lint-rules.
  * When you move a call site to `@genesiscz/utils/process`, run `bun scripts/ci/lint-rules.ts --update-process-baseline`,
  * which lowers the counts and refuses to raise one.
  */
@@ -8,24 +9,32 @@ export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
     "plugins/genesis-tools/hooks/native-inbox-hint.ts": 1,
     "plugins/genesis-tools/hooks/record-session-account.ts": 1,
     "plugins/genesis-tools/hooks/record-session-cmux.ts": 1,
+    "scripts/history/retire-native-cache.ts": 1,
     "scripts/native/widget-drive.ts": 1,
     "scripts/test-reap.ts": 2,
+    "src/ai-proxy/lib/tunnel/cloudflared.ts": 1,
     "src/benchmark/lib/process-sample.ts": 1,
     "src/chrome-devtools/lib/platform.ts": 4,
     "src/chrome-devtools/lib/resolve-attach.ts": 5,
     "src/claude/commands/doctor-impl.ts": 2,
     "src/claude/lib/teams/status.ts": 2,
+    "src/cmux/lib/capture-collector-lifecycle.ts": 1,
     "src/cmux/lib/command-capture.ts": 1,
     "src/cmux/lib/session-close-live.ts": 2,
     "src/codex/lib/active-writer.ts": 1,
     "src/codex/lib/desktop/app-bundle.ts": 1,
     "src/control/lib/decision/frontmost.ts": 1,
     "src/control/lib/peekaboo.ts": 1,
-    "src/dev-dashboard/lib/ports/resolve.ts": 1,
-    "src/dev-dashboard/lib/ports/scanner.ts": 1,
+    "src/dev-dashboard/lib/ports/resolve.ts": 2,
+    "src/dev-dashboard/lib/ports/scanner.ts": 2,
+    "src/dev-dashboard/lib/restart-diag.ts": 1,
     "src/dev-dashboard/lib/system/collector.ts": 1,
     "src/dev-dashboard/lib/system/processes.ts": 1,
+    "src/dev-dashboard/lib/ttyd/manager.ts": 2,
     "src/doctor/analyzers/cpu-spin.ts": 1,
+    "src/doctor/analyzers/memory.ts": 1,
+    "src/doctor/analyzers/processes.ts": 1,
+    "src/git/lib/fsmonitor.ts": 2,
     "src/macos-resources/lib/process-data.ts": 1,
     "src/macos/lib/permissions/app.ts": 3,
     "src/macos/lib/permissions/local-network.ts": 2,
@@ -38,8 +47,10 @@ export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
     "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts": 2,
     "src/utils/bun/orphan-worker-guard.ts": 1,
     "src/utils/cmux/lib/health.ts": 1,
-    "src/utils/network.ts": 1,
+    "src/utils/network.ts": 2,
     "src/utils/process-identity.ts": 2,
     "src/utils/services/idle.ts": 1,
+    "src/utils/services/inventory.ts": 2,
     "src/utils/tmux/snapshot.ts": 1,
+    "src/utils/worker/ps.ts": 1,
 };

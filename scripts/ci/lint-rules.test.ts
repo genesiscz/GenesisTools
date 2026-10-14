@@ -242,9 +242,23 @@ describe("no-process-tool-spawn", () => {
             'childProcess.execFileSync("lsof", ["-p", "1"]);',
             'execSync("pgrep -f claude");',
             "await $`ps -axo pid=`;",
+            'Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "command="]);',
+            'const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";',
+            'Bun.spawnSync({ cmd: ["pgrep", "-fl", "cloudflared"], stdout: "pipe" });',
+            'Bun.spawnSync(["env", "LC_ALL=C", "ps", "-axo", "pid="]);',
+            'probeRun("listeners", "lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);',
+            'probeRun("processes", "env", ["LC_ALL=C", "ps", "-axo", COLUMNS]);',
+            'deps.run("ps", ["-Ao", "pid=,rss="]);',
+            'const lsof = Bun.which("lsof");',
         ]) {
-            expect(rules(source)).toEqual(["no-process-tool-spawn"]);
+            expect({ source, rules: rules(source) }).toEqual({ source, rules: ["no-process-tool-spawn"] });
         }
+    });
+
+    test("one line is one finding, however many shapes it holds", () => {
+        expect(
+            rules('const lsof = Bun.which("lsof") ?? (existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : null);')
+        ).toEqual(["no-process-tool-spawn"]);
     });
 
     test("leaves other programs, log text and a bare string alone", () => {
@@ -253,6 +267,9 @@ describe("no-process-tool-spawn", () => {
         expect(rules('spawnSync("psql", ["-c", "select 1"]);')).toEqual([]);
         expect(rules('const program = "ps";')).toEqual([]);
         expect(rules('this.run(["ps", "--filter", "name=db"]);')).toEqual([]);
+        expect(rules('program.command("ps").description("list running artifacts");')).toEqual([]);
+        expect(rules('Bun.spawnSync(["env", "LC_ALL=C", "git", "status"]);')).toEqual([]);
+        expect(rules('const docs = "/usr/share/man/man1/ps.1";')).toEqual([]);
     });
 
     test("the process layer and the benchmarks may spawn them, and a suppression names the reason", () => {
