@@ -13,6 +13,9 @@
  *   bun scripts/git/install-hooks.ts --print   print the git commands instead of running them
  *
  * A git that does not list the configured hooks (one without config hooks) keeps `core.hooksPath = .githooks`.
+ *
+ * A config hook runs only while `core.hooksPath` is unset, so a set one still decides: `-c core.hooksPath=/dev/null`
+ * turns every hook off, and a branch whose older `prepare` sets `.githooks` again runs each hook once, not twice.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,7 +55,8 @@ const hooks = readdirSync(join(root, HOOKS_DIR)).flatMap((name) => {
 for (const { name, interpreter } of hooks) {
     // A branch from before a hook existed has no file for it: the commit or checkout goes on.
     const path = `${HOOKS_DIR}/${name}`;
-    change(["config", `hook.${PREFIX}${name}.command`, `test ! -f ${path} || exec ${interpreter} ${path}`]);
+    const command = `test -n "$(git config --get core.hooksPath)" || test ! -f ${path} || exec ${interpreter} ${path}`;
+    change(["config", `hook.${PREFIX}${name}.command`, command]);
     change(["config", "--replace-all", `hook.${PREFIX}${name}.event`, name]);
 }
 
