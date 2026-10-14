@@ -5,7 +5,12 @@
  * from a person is a reason to look as much as eve's (Martin, 2026-10-14). `--bots` narrows the list.
  * A PR is ready for its next round when the reviewer bot has reviewed the current head.
  *
- *   bun round-ready.ts --run <dir> 499 504 …   [--bots eve-bot-lovinka,coderabbitai]
+ *   bun round-ready.ts --run <dir> 499 504 …   [--bots eve-bot-lovinka,coderabbitai] [--wait <minutes>]
+ *
+ * `--wait` blocks, one read every 2 minutes, until each PR's head is reviewed by eve (or by every bot `--bots` names),
+ * then prints the lines and exits 0; at the deadline it prints the last lines and exits 3. Use it instead of a one-off
+ * waiter that greps this output: one such waiter matched "eve@head yes", a form this script never prints, and sat out
+ * its whole 90 minutes while eve had reviewed the head after 6 (2026-10-14, GenesisPlayground #94).
  */
 import { SafeJSON } from "@genesiscz/utils/json";
 import { flag, loadRun } from "./run";
@@ -21,21 +26,23 @@ const run = loadRun();
 const [owner, name] = run.repo.split("/");
 const only = flag("--bots")?.split(",");
 const prs = process.argv.slice(2).filter((a, i, all) => /^\d+$/.test(a) && !all[i - 1]?.startsWith("--"));
+const waitMinutes = Number(flag("--wait") ?? 0);
+const required = only ?? ["eve-bot-lovinka"];
 const query = `query($n:Int!){viewer{login} repository(owner:"${owner}",name:"${name}"){pullRequest(number:$n){headRefOid
  reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}
  comments(last:100){nodes{author{login}}}
  reviews(last:40){nodes{author{login} commit{oid} submittedAt state}}
  timelineItems(last:1,itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]){nodes{... on HeadRefForcePushedEvent{createdAt}}}}}}`;
 
-for (const n of prs) {
+/** One line per PR, and whether every required reviewer has reviewed its head. */
+function readPr(n: string): { line: string; ready: boolean } {
     const p = Bun.spawnSync(["gh", "api", "graphql", "-f", `query=${query}`, "-F", `n=${n}`], {
         stdout: "pipe",
         stderr: "pipe",
     });
 
     if (p.exitCode !== 0) {
-        console.log(`#${n} ERR ${p.stderr.toString().slice(0, 120)}`);
-        continue;
+        return { line: `#${n} ERR ${p.stderr.toString().slice(0, 120)}`, ready: false };
     }
 
     const data = (
@@ -84,6 +91,7 @@ for (const n of prs) {
         }
     }
 
+    const reviewedHead = new Set<string>();
     const atHead = reviewers.map((bot) => {
         // The LATEST review of the head: eve can approve a head and later withhold the approval on it (#503,
         // 2026-10-14: APPROVED 04:48Z, then COMMENTED "approval withheld" 04:53Z), and the first match hid that.
@@ -94,9 +102,30 @@ for (const n of prs) {
         const review = pr.reviews.nodes.findLast(
             (r) => r.author?.login === bot && r.commit?.oid === pr.headRefOid && r.submittedAt > forcedAt
         );
+        if (review) {
+            reviewedHead.add(bot);
+        }
+
         return `${bot.split("-")[0]}@head ${review ? `${review.state}@${review.submittedAt.slice(11, 16)}Z` : "no"}`;
     });
-    console.log(
-        `#${n} head ${pr.headRefOid.slice(0, 9)} ${atHead.join(" ")} open ${SafeJSON.stringify(open, { strict: true })} comments ${SafeJSON.stringify(comments, { strict: true })}`
-    );
+    return {
+        line: `#${n} head ${pr.headRefOid.slice(0, 9)} ${atHead.join(" ")} open ${SafeJSON.stringify(open, { strict: true })} comments ${SafeJSON.stringify(comments, { strict: true })}`,
+        ready: required.every((bot) => reviewedHead.has(bot)),
+    };
+}
+
+const deadline = Date.now() + waitMinutes * 60_000;
+let results = prs.map(readPr);
+while (waitMinutes > 0 && !results.every((r) => r.ready) && Date.now() < deadline) {
+    await Bun.sleep(Math.min(120_000, Math.max(0, deadline - Date.now())));
+    results = prs.map(readPr);
+}
+
+for (const result of results) {
+    console.log(result.line);
+}
+
+if (waitMinutes > 0 && !results.every((r) => r.ready)) {
+    console.log(`not every head reviewed by ${required.join(", ")} after ${waitMinutes} min`);
+    process.exit(3);
 }
