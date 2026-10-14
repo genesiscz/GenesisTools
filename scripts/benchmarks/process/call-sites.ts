@@ -1,6 +1,6 @@
 /**
  * The registry of every ps / lsof / pgrep call site outside `src/utils/process/` (the lint rule
- * `no-process-tool-spawn` finds them; `scripts/ci/process-tool-spawn-baseline.ts` counts them). Each entry runs
+ * `no-process-tool-spawn` finds a new one). Each entry runs
  * the site through the function that reaches it, with read-only arguments, so the benchmark
  * (`call-sites-bench.ts`) and the test (`call-sites.test.ts`) exercise the real call path before and after the
  * migration to `@genesiscz/utils/process`.

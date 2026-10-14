@@ -8,8 +8,7 @@ import { CALL_SITES, checkValue, isProcessToolSpawn, runsHere } from "./call-sit
 /*
  * The contract of the ps / lsof / pgrep migration, one test per call site. Each site must reach its answer without
  * starting ps, lsof or pgrep: the platform decision (kernel read, /proc, CIM, or one batched fallback) belongs to
- * `@genesiscz/utils/process`, never to the caller. A site still listed in `scripts/ci/process-tool-spawn-baseline.ts`
- * is expected to fail here; the migration makes it pass and lowers the baseline in the same commit.
+ * `@genesiscz/utils/process`, never to the caller.
  */
 
 const trackedSources = Bun.spawnSync(["git", "ls-files", "*.ts", "*.tsx"], { stdout: "pipe", env: process.env })

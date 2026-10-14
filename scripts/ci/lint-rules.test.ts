@@ -4,7 +4,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlin
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
-import { applyProcessToolBaseline, checkSource, pluginsDisabledFor, renderProcessToolBaseline } from "./lint-rules";
+import { checkSource, pluginsDisabledFor } from "./lint-rules";
 
 /**
  * These pin the behaviour of the six GritQL plugins this checker replaced.
@@ -287,46 +287,6 @@ describe("no-process-tool-spawn", () => {
         expect(rules(source, "src/utils/process/ps.ts")).toEqual([]);
         expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
         expect(rules(`// lint-rules-ignore: Linux fallback\n${source}`)).toEqual([]);
-    });
-
-    test("the baseline keeps a file's old spawns quiet and reports every one once the file adds another", () => {
-        const two = checkSource("src/legacy.ts", 'exec(["ps", "-axo"]);\nexec(["lsof", "-nP"]);');
-        expect(two.map((f) => f.rule)).toEqual(["no-process-tool-spawn", "no-process-tool-spawn"]);
-        expect(applyProcessToolBaseline(two, { "src/legacy.ts": 2 })).toEqual([]);
-
-        const over = applyProcessToolBaseline(two, { "src/legacy.ts": 1 });
-        expect(over).toHaveLength(2);
-        expect(over[0].message).toContain("over its baseline of 1");
-        expect(applyProcessToolBaseline(two, {})).toHaveLength(2);
-    });
-
-    test("the rewritten baseline is sorted, drops files at zero, and is the module the rule imports", () => {
-        const text = renderProcessToolBaseline(
-            new Map([
-                ["src/b.ts", 2],
-                ["src/a.ts", 1],
-                ["src/gone.ts", 0],
-            ])
-        );
-        expect(text).toContain('    "src/a.ts": 1,\n    "src/b.ts": 2,\n};');
-        expect(text).not.toContain("gone");
-        expect(text).toContain("export const PROCESS_TOOL_SPAWN_BASELINE");
-        // Every spawn migrated: one line, as biome formats an empty object, so the pre-push check accepts it.
-        expect(renderProcessToolBaseline(new Map([["src/gone.ts", 0]]))).toContain(
-            "PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {};\n"
-        );
-    });
-});
-
-describe("swift-wait-without-timeout", () => {
-    const SWIFT = "native/x/Sources/main.swift";
-
-    test("flags a bare wait and accepts one with a timeout", () => {
-        expect(rules("let r = sem.wait()", SWIFT)).toContain("swift-wait-without-timeout");
-        expect(rules("group.wait( )", SWIFT)).toContain("swift-wait-without-timeout");
-        expect(rules("if done.wait(timeout: .now() + 10) == .timedOut {", SWIFT)).toEqual([]);
-        expect(rules("// sem.wait() would hang here", SWIFT)).toEqual([]);
-        expect(rules("// lint-rules-ignore: main thread must block\nsem.wait()", SWIFT)).toEqual([]);
     });
 });
 

@@ -33,7 +33,6 @@
 
 import { findInFiles, Lang, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { PROCESS_TOOL_SPAWN_BASELINE } from "./process-tool-spawn-baseline";
 
 export type Severity = "error" | "warn";
 
@@ -385,34 +384,6 @@ function spawnsProcessTool(node: SgNode): boolean {
     }
 
     return COMMAND_STRING_CALLEES.has(callee) && PROCESS_TOOLS.has(text.trim().split(/\s+/)[0].split("/").pop() ?? "");
-}
-
-/**
- * Drops a file's process-tool findings while it holds no more than its baseline count. Over it, every one of them is
- * reported, since a count cannot tell the new call from the old ones.
- */
-export function applyProcessToolBaseline(
-    findings: Finding[],
-    baseline: Readonly<Record<string, number>> = PROCESS_TOOL_SPAWN_BASELINE
-): Finding[] {
-    const counts = new Map<string, number>();
-
-    for (const finding of findings) {
-        if (finding.rule === PROCESS_TOOL_SPAWN_RULE.name) {
-            counts.set(finding.file, (counts.get(finding.file) ?? 0) + 1);
-        }
-    }
-
-    return findings
-        .filter((f) => f.rule !== PROCESS_TOOL_SPAWN_RULE.name || (counts.get(f.file) ?? 0) > (baseline[f.file] ?? 0))
-        .map((f) =>
-            f.rule === PROCESS_TOOL_SPAWN_RULE.name && baseline[f.file] !== undefined
-                ? {
-                      ...f,
-                      message: `${f.message} This file is over its baseline of ${baseline[f.file]} in scripts/ci/process-tool-spawn-baseline.ts.`,
-                  }
-                : f
-        );
 }
 
 function recordProcessToolSpawns(nodes: SgNode[], fileOf: (node: SgNode) => string, record: RecordFinding): void {
@@ -798,7 +769,7 @@ export function checkSource(file: string, source: string): Finding[] {
         }
     }
 
-    return applyProcessToolBaseline(findings);
+    return findings;
 }
 
 /**
@@ -900,62 +871,12 @@ function render(finding: Finding): string {
  * that actually matched get read back here, and only to check for a suppression
  * comment.
  */
-const PROCESS_TOOL_BASELINE_FILE = "scripts/ci/process-tool-spawn-baseline.ts";
-const PROCESS_TOOL_BASELINE_HEADER = `/**
- * The \`no-process-tool-spawn\` findings that existed when the rule landed (2026-10-14 01:20; absolute paths, the
- * \`{ cmd }\` form, \`env\` and \`Bun.which\` from 02:20), counted per file. A file may keep at most this many; one
- * more spawn in a listed file, or any spawn in an unlisted file, fails lint-rules.
- * When you move a call site to \`@genesiscz/utils/process\`, run \`bun scripts/ci/lint-rules.ts --update-process-baseline\`,
- * which lowers the counts and refuses to raise one.
- */`;
-
-/** Every \`no-process-tool-spawn\` finding in `files`, with no baseline applied: the live list of call sites. */
+/** Every `no-process-tool-spawn` finding in `files`: the live list of call sites. */
 export async function scanProcessToolSpawns(files: string[]): Promise<Finding[]> {
-    return (await scanAll(files, {})).filter((finding) => finding.rule === PROCESS_TOOL_SPAWN_RULE.name);
+    return (await scanAll(files)).filter((finding) => finding.rule === PROCESS_TOOL_SPAWN_RULE.name);
 }
 
-export function renderProcessToolBaseline(counts: ReadonlyMap<string, number>): string {
-    const lines = [...counts]
-        .filter(([, count]) => count > 0)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([file, count]) => `    "${file}": ${count},`);
-
-    // An empty object on one line, as biome formats it: the baseline is empty once every spawn is migrated.
-    const body = lines.length === 0 ? "{}" : `{\n${lines.join("\n")}\n}`;
-    return `${PROCESS_TOOL_BASELINE_HEADER}\nexport const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = ${body};\n`;
-}
-
-/** Rewrites the baseline from the live findings. Returns the exit code: 1 when a count would rise. */
-async function updateProcessToolBaseline(files: string[]): Promise<number> {
-    const counts = new Map<string, number>();
-
-    for (const finding of await scanProcessToolSpawns(files)) {
-        counts.set(finding.file, (counts.get(finding.file) ?? 0) + 1);
-    }
-
-    const raised = [...counts].filter(([file, count]) => count > (PROCESS_TOOL_SPAWN_BASELINE[file] ?? 0));
-
-    if (raised.length > 0) {
-        for (const [file, count] of raised) {
-            console.log(`✖ ${file}: ${count} spawns, baseline ${PROCESS_TOOL_SPAWN_BASELINE[file] ?? 0}`);
-        }
-
-        console.log("\nlint-rules: the baseline only goes down. Move the new spawns to @genesiscz/utils/process.");
-        return 1;
-    }
-
-    const before = Object.values(PROCESS_TOOL_SPAWN_BASELINE).reduce((sum, n) => sum + n, 0);
-    const after = [...counts.values()].reduce((sum, n) => sum + n, 0);
-    await Bun.write(PROCESS_TOOL_BASELINE_FILE, renderProcessToolBaseline(counts));
-    console.log(`lint-rules: ${PROCESS_TOOL_BASELINE_FILE} ${before} → ${after} spawns in ${counts.size} files`);
-
-    return 0;
-}
-
-async function scanAll(
-    files: string[],
-    baseline: Readonly<Record<string, number>> = PROCESS_TOOL_SPAWN_BASELINE
-): Promise<Finding[]> {
+async function scanAll(files: string[]): Promise<Finding[]> {
     const byLang = new Map<Lang, string[]>();
     const testsByLang = new Map<Lang, string[]>();
 
@@ -1121,18 +1042,15 @@ async function scanAll(
         sources.set(file, (await Bun.file(file).text()).split("\n"));
     }
 
-    return applyProcessToolBaseline(
-        unfiltered.filter((finding) => {
-            const lines = sources.get(finding.file) ?? [];
+    return unfiltered.filter((finding) => {
+        const lines = sources.get(finding.file) ?? [];
 
-            if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
-                return false;
-            }
+        if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
+            return false;
+        }
 
-            return !isSuppressed(lines, finding.line);
-        }),
-        baseline
-    );
+        return !isSuppressed(lines, finding.line);
+    });
 }
 
 if (import.meta.main) {
@@ -1145,10 +1063,6 @@ if (import.meta.main) {
     const started = Date.now();
     const files = await targetFiles();
     const listed = Date.now();
-
-    if (process.argv.includes("--update-process-baseline")) {
-        process.exit(await updateProcessToolBaseline(files));
-    }
 
     const findings = await scanAll(files);
     const scanned = Date.now();
