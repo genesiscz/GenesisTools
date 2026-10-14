@@ -81,14 +81,20 @@ function parseWorkspaces(stdout: string): ListedWorkspace[] {
 export async function adoptedAgentRunning(
     record: Pick<CloseSubject, "agent"> & { tty: string | null }
 ): Promise<boolean> {
-    if (!record.tty || listProcesses({ commands: false }).length === 0) {
+    if (!record.tty) {
         return true;
     }
-    return ttyProcessesShowAgent(processesOnTty(record.tty), record.agent, process.getuid?.() ?? -1);
+    const entries = processesOnTty(record.tty);
+    // An empty terminal only means "quit" when the process table can be read at all; the whole table is read only then.
+    if (entries.length === 0 && listProcesses({ commands: false }).length === 0) {
+        return true;
+    }
+    return ttyProcessesShowAgent(entries, record.agent, process.getuid?.() ?? -1);
 }
 
 export function shellHasChildren(pid: number): boolean {
-    return listProcesses({ commands: false }).length === 0 || childPids(pid).length > 0;
+    // No children only means "no agent" when the process table can be read at all; checked only in that case.
+    return childPids(pid).length > 0 || listProcesses({ commands: false }).length === 0;
 }
 
 function readPid(record: SessionCreatedRecord): number | null {
