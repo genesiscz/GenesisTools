@@ -77,6 +77,13 @@ busy. Bun's own frames have no symbols (they show as `???` in the Bun binary); `
 those per library. On 2026-10-12 this showed 44% of a fresh session list's busy samples in `__openat_nocancel` on
 "Bun Pool" threads: async file opens, invisible to the JS profile.
 
+The same tool reads a native app's stall. A stack that sits in someone else's request is a cost the app pays for a
+caller it does not control: on 2026-10-15 the Genesis Markdown viewer, with 100 tabs open (about 880 accessibility
+elements), held its main thread 785 ms inside `NSHostingView.accessibilityHitTest`, answering an outside
+accessibility client's `CopyElementAtPosition` (HangWatch stack, `~/.genesis/logs/hangs/stack-md-2026-10-15-000841.txt`).
+Every window manager, screen reader and `tools control see` pays that per query, so the number of views on screen is a
+performance budget, not only a layout one. Count a window's elements before blaming a click handler.
+
 ## 5. The repository profiler (production phases)
 
 `import { profiler } from "@genesiscz/utils/profile"`, one `const prof = profiler.scope("<scope>")` per module,
