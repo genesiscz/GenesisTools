@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonProblem } from "./check-json";
+import { findLostComments, parseZeroContextDiff } from "./check-lost-comments";
 
 /**
  * Runs the real `.githooks/pre-commit` in a scratch repository. The hook formats each staged blob by piping it
@@ -236,6 +237,10 @@ beforeAll(() => {
     chmodSync(join(repo, ".githooks", "pre-commit"), 0o755);
     mkdirSync(join(repo, "scripts", "ci"), { recursive: true });
     copyFileSync(join(ROOT, "scripts", "ci", "check-json.ts"), join(repo, "scripts", "ci", "check-json.ts"));
+    copyFileSync(
+        join(ROOT, "scripts", "ci", "check-lost-comments.ts"),
+        join(repo, "scripts", "ci", "check-lost-comments.ts")
+    );
     git("config", "core.hooksPath", ".githooks");
     write("tsconfig.json", '{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true},"files":["ok.ts"]}\n');
     write("ok.ts", "export const ok = 1;\n");
@@ -248,7 +253,8 @@ beforeAll(() => {
         "tsconfig.json",
         "ok.ts",
         ".githooks/pre-commit",
-        "scripts/ci/check-json.ts"
+        "scripts/ci/check-json.ts",
+        "scripts/ci/check-lost-comments.ts"
     );
     const init = git("commit", "-qm", "init");
     expect(init.code, init.out).toBe(0);
@@ -330,5 +336,92 @@ describe("pre-commit hook: staged JSON must parse", () => {
         expect(commit.code, commit.out).not.toBe(0);
         expect(commit.out).toContain("✖ .claude-plugin/plugin.json:");
         expect(git("log", "-1", "--format=%s").out.trim()).not.toBe("broken manifest");
+    }, 60_000);
+});
+
+// Biome's unsafe noUnusedImports fix deleted a 27-line header with the import under it (2026-10-14).
+describe("pre-commit hook: no comment deleted with an import", () => {
+    const HEADER = [
+        "#!/usr/bin/env bun",
+        "/**",
+        " * What the poll daemon costs, read back out of the day logs.",
+        " *",
+        " * Every tick is its own short-lived process, so there is nothing resident to sample.",
+        " */",
+        "",
+    ];
+    // Sorted as Biome sorts them, so the removed import is the one under the header.
+    const IMPORTS = ['import { readFileSync } from "node:fs";', 'import { join } from "node:path";', ""];
+    const BODY = ['export const text = readFileSync(join("a", "b"), "utf8");', ""];
+    // What a removed `readFileSync` import leaves: the body no longer calls it.
+    const AFTER_BODY = ['export const text = join("a", "b");', ""];
+    const before = [...HEADER, ...IMPORTS, ...BODY].join("\n");
+
+    function lost(after: string): string[] {
+        // The -U0 diff the hook reads, from two scratch files.
+        write("lost/before.ts", before);
+        write("lost/after.ts", after);
+        const diff = Bun.spawnSync(["git", "diff", "--no-index", "-U0", "lost/before.ts", "lost/after.ts"], {
+            cwd: repo,
+            env,
+        }).stdout.toString();
+        const [fileDiff] = parseZeroContextDiff(diff);
+
+        return fileDiff
+            ? findLostComments({ diff: fileDiff, oldContent: before, newContent: after }).flatMap(
+                  (loss) => loss.missing
+              )
+            : [];
+    }
+
+    test("a header deleted with the import below it is reported, with or without the blank line between", () => {
+        const withoutBlank = ["#!/usr/bin/env bun", ...IMPORTS.slice(1), ...AFTER_BODY].join("\n");
+        const blankKept = ["#!/usr/bin/env bun", "", ...IMPORTS.slice(1), ...AFTER_BODY].join("\n");
+
+        expect(lost(withoutBlank)).toContain("What the poll daemon costs, read back out of the day logs.");
+        expect(lost(blankKept)).toContain("What the poll daemon costs, read back out of the day logs.");
+    });
+
+    test("a rewritten header, a moved comment and a short comment that goes with its import pass", () => {
+        const rewritten = ["#!/usr/bin/env bun", "/** The poll daemon's cost. */", ...IMPORTS.slice(1), ...AFTER_BODY];
+        const moved = ["#!/usr/bin/env bun", ...IMPORTS.slice(1), ...HEADER.slice(1), ...AFTER_BODY];
+        const short = ["// fs for the reader", 'import { readFileSync } from "node:fs";', ...BODY].join("\n");
+        const shortBefore = [
+            "// fs for the reader",
+            'import { readFileSync } from "node:fs";',
+            "// one",
+            'import "a";',
+            ...BODY,
+        ];
+
+        expect(lost(rewritten.join("\n"))).toEqual([]);
+        expect(lost(moved.join("\n"))).toEqual([]);
+        expect(
+            findLostComments({
+                diff: { file: "x.ts", hunks: [{ oldStart: 3, removed: ["// one", 'import "a";'] }] },
+                oldContent: shortBefore.join("\n"),
+                newContent: short,
+            })
+        ).toEqual([]);
+    });
+
+    test("the hook blocks the commit and names the file; GT_ALLOW_LOST_COMMENTS=1 lets it through", () => {
+        write("src/poll.ts", before);
+        git("add", "src/poll.ts");
+        expect(git("commit", "-qm", "poll").code).toBe(0);
+
+        write("src/poll.ts", ["#!/usr/bin/env bun", ...IMPORTS.slice(1), ...AFTER_BODY].join("\n"));
+        git("add", "src/poll.ts");
+        const blocked = git("commit", "-qm", "lost header");
+        expect(blocked.code, blocked.out).not.toBe(0);
+        expect(blocked.out).toContain("✖ src/poll.ts:2: the file header was deleted with");
+
+        const allowed = Bun.spawnSync(["git", "commit", "-qm", "header goes on purpose"], {
+            cwd: repo,
+            env: { ...env, GT_ALLOW_LOST_COMMENTS: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        expect(allowed.exitCode, allowed.stderr.toString()).toBe(0);
     }, 60_000);
 });

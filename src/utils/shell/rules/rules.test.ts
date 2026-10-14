@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { scanShell } from "../scan";
+import { biomeRules } from "./biome";
 import { detectShellViolations, renderViolation, renderViolations, ruleById, SHELL_RULES } from "./index";
 import { swiftpmRules, swiftpmStalePlan } from "./swiftpm";
 
@@ -53,10 +54,11 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the fourteen general rules; personal ones load from guard.customRules", () => {
+    it("holds the fifteen general rules; personal ones load from guard.customRules", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
+                "biome-unsafe-deletes-comments",
                 "docker-volume-destroy",
                 "exit-code-after-grep",
                 "exit-code-after-pipeline",
@@ -371,5 +373,32 @@ describe("swiftpm-stale-plan", () => {
         expect(fires("swift package describe --type json", app)).toBe(false);
         expect(fires('cd "$PACKAGE" && swift test')).toBe(false);
         expect(fires(`swift test --package-path ${join(root, "missing")}`)).toBe(false);
+    });
+});
+
+describe("biome-unsafe-deletes-comments", () => {
+    const fired = (command: string) =>
+        detectShellViolations(command, biomeRules).map((violation) => violation.suggestion ?? violation.ruleId);
+
+    it("blocks the unsafe fix through every runner and drops only the flag", () => {
+        expect(fired("bunx biome lint --only=correctness/noUnusedImports --write --unsafe src")).toEqual([
+            "bunx biome lint --only=correctness/noUnusedImports --write src",
+        ]);
+        expect(fired("cd app && npx @biomejs/biome check --fix --unsafe .")).toEqual([
+            "cd app && npx @biomejs/biome check --fix .",
+        ]);
+        expect(fired("bun x biome check --write --unsafe a.ts | tail -3")).toEqual([
+            "bun x biome check --write a.ts | tail -3",
+        ]);
+        expect(fired("./node_modules/.bin/biome check --apply-unsafe src")).toEqual([
+            "./node_modules/.bin/biome check --apply src",
+        ]);
+    });
+
+    it("leaves the safe fixes and other tools alone", () => {
+        expect(fired("bunx biome check --write src")).toEqual([]);
+        expect(fired("bunx biome lint --only=correctness/noUnusedImports src")).toEqual([]);
+        expect(fired("bunx eslint --fix --unsafe src")).toEqual([]);
+        expect(fired('rg -n "biome --unsafe" docs')).toEqual([]);
     });
 });
