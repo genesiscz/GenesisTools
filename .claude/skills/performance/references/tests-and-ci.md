@@ -19,7 +19,9 @@ Written 2026-10-14 22:43, from the #516 work (process layer) and the master fixe
 - A fake tool inside a run folder is a symlink to the persistent script; removing the folder removes only the link.
 - A test whose whole point is a move ("a moved executable keeps its inode") runs on macOS only with `RUN_LIVE=1`.
   Linux has no syspolicyd and runs it every time.
-- macOS clears the real temp folder at reboot, so each fixture is made once per boot, never once per run.
+- On macOS the real temp folder is the per-user `/var/folders/.../T`, not `/tmp`. When macOS cleans it, the next run
+  makes each fixture once again; a run never makes one per run. Check `find "$TMPDIR/gt-test-fixtures" -type f` to
+  see which fixtures exist (2026-10-14 22:49: three files, all from one run at 21:27, reused since).
 - Proof that it reuses: both changed test files run twice in the Linux container (section 2), 70 pass in each round,
   and round 2 listed the same three fixture inodes as round 1.
 
