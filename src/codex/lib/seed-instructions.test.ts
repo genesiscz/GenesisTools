@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentInstructions } from "./seed-instructions";
+import { buildAgentInstructions, contractSandbox } from "./seed-instructions";
 
 describe("buildAgentInstructions", () => {
     test("pins every agents command to the parent rendezvous session", () => {
@@ -35,5 +35,16 @@ describe("buildAgentInstructions", () => {
 
         expect(readOnly).toContain("Stop and report");
         expect(readOnly).not.toContain("tools agents message");
+    });
+
+    test("names the sandbox for the contract: --write full has none, so no sandbox workaround is injected", () => {
+        expect(contractSandbox("read-only")).toBe("read-only");
+        expect(contractSandbox("workspace-write")).toBe("workspace-write");
+        expect(contractSandbox(undefined)).toBe("workspace-write");
+        expect(contractSandbox("danger-full-access")).toBe("none");
+
+        const base = { agentName: "codex_full", rendezvousSession: "parent-123", leadName: "lead" };
+        expect(buildAgentInstructions({ ...base, sandbox: "workspace-write" })).toContain("--watchman=false");
+        expect(buildAgentInstructions({ ...base, sandbox: "danger-full-access" })).not.toContain("--watchman=false");
     });
 });

@@ -269,7 +269,16 @@ spelling, hidden from help.
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.
 
 Sessions are read-only by default. For implementation work, use `--write ask` for supervised approvals or
-`--write allow` for a trusted bounded worker. `--write deny` is explicitly read-only.
+`--write allow` for a trusted bounded worker that does not commit. `--write deny` is explicitly read-only.
+`--write full` runs with no sandbox (`danger-full-access`, approval policy `never`) and is refused when the cwd is in a
+main checkout (a `.git` folder at or above it): use it only in a throwaway linked worktree or a non-git scratch folder.
+
+In the workspace-write sandbox of `ask` and `allow` a worker cannot write any path inside a `.git` folder, so it cannot
+commit (under `ask` an approved commit runs outside the sandbox). It cannot exec setuid binaries such as `/bin/ps`, so
+the `@genesiscz/utils/process/ps` readers that spawn `ps` return nothing. It has no network, so a `bun install` that
+downloads fails. `spawn` prints the limits of the chosen policy as warnings and returns them as `warnings` in its
+JSON result. The measurements and the way around each: `plugins/genesis-tools/skills/handoff-to/references/codex.md`,
+section "What a sandboxed worker cannot do".
 
 With `--write ask`, Codex uses its `untrusted` approval policy: commands outside Codex's built-in trusted read-only
 set, sandbox escalations, and file-change approval requests pause and are forwarded to `lead` as `approval_request`

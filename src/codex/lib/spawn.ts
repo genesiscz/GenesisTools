@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
+import { type CheckoutKind, checkoutKindSync } from "@genesiscz/utils/git/worktree";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
@@ -49,11 +50,11 @@ export interface LaunchConfig {
 }
 
 export function parseWritePolicy(value: string | undefined): CodexWritePolicy | undefined {
-    if (value === undefined || value === "ask" || value === "allow" || value === "deny") {
+    if (value === undefined || value === "ask" || value === "allow" || value === "deny" || value === "full") {
         return value;
     }
 
-    throw new Error("--write must be ask, allow, or deny");
+    throw new Error("--write must be ask, allow, deny, or full");
 }
 
 export function resolveWritePolicy(
@@ -67,7 +68,59 @@ export function resolveWritePolicy(
         return { writePolicy: "allow", sandbox: "workspace-write", approvalPolicy: "never" };
     }
 
+    if (write === "full") {
+        return { writePolicy: "full", sandbox: "danger-full-access", approvalPolicy: "never" };
+    }
+
     return { writePolicy: "deny", sandbox: "read-only", approvalPolicy: "never" };
+}
+
+/**
+ * `--write full` has no sandbox, so the cwd is the only thing that bounds it: a main checkout holds the repository's
+ * only copy of its history and every branch, a linked worktree or a plain folder holds nothing that a `git worktree
+ * remove` cannot throw away. Checked before any account binding, claim or spawn, so a refusal leaves nothing behind.
+ */
+export function assertWritePolicyAllowed(options: { write?: CodexWritePolicy; checkout: CheckoutKind }): void {
+    if (options.write !== "full" || options.checkout.kind !== "main") {
+        return;
+    }
+
+    const root = options.checkout.root;
+    throw new Error(
+        `--write full refuses ${root}: it is a main checkout (its .git is a folder), and a worker with no sandbox could rewrite its history and branches. Make a throwaway worktree and spawn the worker there: git -C ${root} worktree add -b <branch> <path>, then --cwd <path>.`
+    );
+}
+
+/**
+ * What the chosen write policy will stop the worker from doing, said at spawn so it is not found out from a worker
+ * that stops with no change. Each limit was measured on 2026-10-14 with `codex sandbox` 0.162.1 in workspace-write:
+ * every path inside a `.git` folder stays read-only, even inside a writable root and even when the `.git` folder is
+ * itself a writable root, so `git add` and `git commit` fail on `index.lock`; setuid binaries (`/bin/ps`, `top`) fail
+ * at exec; and there is no network, so a `bun install` that must download fails. A linked worktree's git data lives in
+ * its main checkout's `.git/worktrees/<name>`, outside every root.
+ */
+export function spawnWarnings(options: { write?: CodexWritePolicy; checkout: CheckoutKind }): string[] {
+    const warnings: string[] = [];
+
+    if (options.write === "full") {
+        warnings.push(
+            "--write full: no sandbox. The worker runs any command as you, with your files, network and credentials."
+        );
+    }
+
+    if (options.write === "allow") {
+        warnings.push(
+            "--write allow: the worker cannot commit (the sandbox keeps every .git path read-only) or run setuid tools such as ps. Use --write ask and approve the commit, or commit yourself after you verify."
+        );
+    }
+
+    if ((options.write === "allow" || options.write === "ask") && options.checkout.kind === "linked-worktree") {
+        warnings.push(
+            `cwd is a linked worktree: its git data (${options.checkout.gitDir}) is outside the sandbox, so git add and git commit fail inside it, and the sandbox has no network. Run bun install in the worktree before the spawn.`
+        );
+    }
+
+    return warnings;
 }
 
 export function resolveWritableRoots(options: {
@@ -210,7 +263,17 @@ export function claimSessionName(store: CodexSessionStore, meta: CodexSessionMet
     return claimed;
 }
 
-export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSessionMeta> {
+/** The started session, plus what its write policy will stop the worker from doing ({@link spawnWarnings}). */
+export interface CodexSpawnResult extends CodexSessionMeta {
+    warnings: string[];
+}
+
+export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpawnResult> {
+    const cwd = resolve(options.cwd ?? process.cwd());
+    const checkout = checkoutKindSync(cwd);
+    assertWritePolicyAllowed({ write: options.write, checkout });
+    const warnings = spawnWarnings({ write: options.write, checkout });
+
     const account = options.account
         ? await CodexAccountBinding.create(options.account, { allowRefresh: true })
         : undefined;
@@ -239,7 +302,6 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
 
     const codexVersion = await detectCodexVersion();
     const now = new Date().toISOString();
-    const cwd = resolve(options.cwd ?? process.cwd());
     const policy = resolveWritePolicy(options.write);
     const writableRoots = resolveWritableRoots({
         requested: options.writableRoots,
@@ -324,7 +386,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     while (Date.now() < deadline) {
         const current = await store.readMeta(options.name);
         if (current?.status === "ready" || current?.status === "running") {
-            return current;
+            return { ...current, warnings };
         }
 
         if (current?.status === "failed" || current?.status === "closed") {

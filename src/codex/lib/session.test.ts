@@ -552,6 +552,28 @@ describe("CodexSessionRuntime", () => {
                     params: { command: "touch x" },
                 })
             ).resolves.toEqual({ decision: "decline" });
+
+            const fullMeta = {
+                ...makeMeta(home),
+                name: "full",
+                writePolicy: "full" as const,
+                sandbox: "danger-full-access" as const,
+            };
+            store.writeMeta(fullMeta);
+            const fullRuntime = new CodexSessionRuntime({ client: new FakeRpcClient(), store, meta: fullMeta });
+            // Raced against a deadline: a request that fell through to the ask path waits for an approve control
+            // that never comes, and that must fail here instead of hanging the file.
+            const fullAnswer = await Promise.race([
+                fullRuntime.handleServerRequest({
+                    id: "full-1",
+                    method: "item/commandExecution/requestApproval",
+                    params: { command: "git commit -m x" },
+                }),
+                Bun.sleep(1_000).then(() => "still pending after 1 s"),
+            ]);
+            expect(fullAnswer).toEqual({ decision: "accept" });
+            expect(store.readMeta("full")?.pendingApprovals).toEqual({});
+            await fullRuntime.close();
         });
     });
 

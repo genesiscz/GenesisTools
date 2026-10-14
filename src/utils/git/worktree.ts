@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { Executor } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
@@ -167,6 +167,48 @@ export function getMainRepoRootSync(dir?: string): string {
     }
 
     return cwd;
+}
+
+export type CheckoutKind =
+    | { kind: "main"; root: string }
+    | { kind: "linked-worktree"; root: string; gitDir: string }
+    | { kind: "none" };
+
+/**
+ * What the nearest `.git` at or above `dir` says, read from the file system alone (no git spawn). A `.git`
+ * folder is a main checkout. A `.git` file whose `gitdir:` points into `<common dir>/worktrees/<name>` is a
+ * linked worktree. Any other `.git` file (a submodule, a `--separate-git-dir` checkout) counts as main,
+ * because the git data it points at is that repository's only copy.
+ */
+export function checkoutKindSync(dir: string): CheckoutKind {
+    let current = resolve(dir);
+
+    while (true) {
+        const marker = join(current, ".git");
+
+        if (existsSync(marker)) {
+            if (statSync(marker).isDirectory()) {
+                return { kind: "main", root: current };
+            }
+
+            const pointer = readFileSync(marker, "utf8").match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+            const gitDir = pointer ? resolve(current, pointer) : null;
+
+            if (gitDir && /[/\\]worktrees[/\\][^/\\]+[/\\]?$/.test(gitDir)) {
+                return { kind: "linked-worktree", root: current, gitDir };
+            }
+
+            return { kind: "main", root: current };
+        }
+
+        const parent = dirname(current);
+
+        if (parent === current) {
+            return { kind: "none" };
+        }
+
+        current = parent;
+    }
 }
 
 /**

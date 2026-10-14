@@ -53,7 +53,10 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             .option("--computer-use", "Configure installed official Mac Computer Use for this worker")
             .option("--home <path>", "CODEX_HOME override")
             .option("--effort <effort>", "Reasoning effort")
-            .option("--write <policy>", "ask | allow | deny")
+            .option(
+                "--write <policy>",
+                "ask | allow | deny | full (full = no sandbox, refused in a main checkout: use a throwaway worktree)"
+            )
             .option("--mode <mode>", "review | task", "task")
             .option("--no-agents", `Disable ${toolCommand("agents")} integration`)
             .option("--session <id>", `Parent ${toolCommand("agents")} session id`)
@@ -130,14 +133,16 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             ...(extras.project === undefined ? {} : { project: extras.project }),
             ...(input.label === undefined ? {} : { label: input.label }),
         });
-        const warning = schemaDriftWarning(meta.codexVersion);
+        const drift = schemaDriftWarning(meta.codexVersion);
+        const warnings = drift ? [...meta.warnings, drift] : meta.warnings;
 
-        if (warning) {
-            log.warn({ installed: meta.codexVersion }, warning);
+        // The file record at debug, the console line once through out: logger.warn echoed each one a second time.
+        for (const warning of warnings) {
+            log.debug({ name: meta.name, writePolicy: meta.writePolicy, installed: meta.codexVersion }, warning);
             out.log.warn(warning);
         }
 
-        return { kind: "ack", result: meta };
+        return { kind: "ack", result: { ...meta, warnings } };
     },
 
     steer(meta, input) {

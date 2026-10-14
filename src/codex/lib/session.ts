@@ -26,7 +26,7 @@ import type { RpcNotification, RpcServerRequest } from "./app-server-client";
 import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
-import { buildAgentInstructions } from "./seed-instructions";
+import { buildAgentInstructions, contractSandbox } from "./seed-instructions";
 import type { CodexSessionMeta, CodexSessionStore } from "./store";
 
 const log = logger.child({ component: "codex:session" });
@@ -175,7 +175,7 @@ export class CodexSessionRuntime {
                   })
                 : buildWorkerContract({
                       backend: "codex",
-                      sandbox: this.meta.sandbox === "read-only" ? "read-only" : "workspace-write",
+                      sandbox: contractSandbox(this.meta.sandbox),
                   }),
         };
         const thread = await this.client.request<ThreadStartResult>("thread/start", threadParams);
@@ -296,7 +296,8 @@ export class CodexSessionRuntime {
             throw new Error(`Unsupported Codex server request: ${request.method}`);
         }
 
-        if (this.meta.writePolicy === "allow") {
+        // `full` runs with approvalPolicy never like `allow`, so a request reaching here is one Codex sends anyway.
+        if (this.meta.writePolicy === "allow" || this.meta.writePolicy === "full") {
             return approvalResponse(request.method, true);
         }
 

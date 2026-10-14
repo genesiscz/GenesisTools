@@ -10,8 +10,8 @@ import { sessionEventsPath, sessionMetaPath, sessionsDir } from "./paths";
 
 const log = logger.child({ component: "codex:store" });
 
-export type CodexWritePolicy = "ask" | "allow" | "deny";
-export type CodexSandbox = "read-only" | "workspace-write";
+export type CodexWritePolicy = "ask" | "allow" | "deny" | "full";
+export type CodexSandbox = "read-only" | "workspace-write" | "danger-full-access";
 export type CodexApprovalPolicy = "never" | "untrusted";
 export type PersistedCodexStatus = "starting" | "ready" | "running" | "closed" | "failed";
 export type CodexStatus = PersistedCodexStatus | "stalled";
