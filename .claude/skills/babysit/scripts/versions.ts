@@ -4,6 +4,10 @@
  * replayed side" can be a downgrade). Every other conflict belongs to a worker or the lead.
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 export const VERSION_FILES = new Set([
     ".claude-plugin/marketplace.json",
     "plugins/genesis-tools/.claude-plugin/plugin.json",
@@ -37,7 +41,31 @@ export const HOOKS_OFF = [
     ]),
 ];
 
-/** Hooks off (HOOKS_OFF; a post-checkout hook froze for minutes on a stuck syspolicyd) and rerere off (a remembered resolution
+/**
+ * The hooks run the gates (Biome, tsgo, the commit subject rules, the personal-data probe), so turning them off for a
+ * commit or a push is allowed only while this returns true: a brand-new two-line script does not start within the
+ * timeout. That is the signature of a stuck syspolicyd, which froze the first exec of every new file from 04:57 to
+ * 06:05 on 2026-10-14 (hook copies, a worktree's biome, fresh test bundles). Once it recovers, the hooks run again.
+ */
+export async function newExecutablesStall(timeoutMs = 5_000): Promise<boolean> {
+    const dir = mkdtempSync(join(tmpdir(), "babysit-exec-probe-"));
+    const file = join(dir, "probe");
+    writeFileSync(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const proc = Bun.spawn([file], { stdout: "ignore", stderr: "ignore" });
+    const started = await Promise.race([proc.exited.then(() => true), Bun.sleep(timeoutMs).then(() => false)]);
+
+    if (!started) {
+        // A process frozen in exec still takes a signal; never wait for it.
+        proc.kill();
+    }
+
+    rmSync(dir, { recursive: true, force: true });
+    return !started;
+}
+
+/** Hooks off for the mechanical replays (rebase, cherry-pick, worktree add), which run no gate hook anyway: only
+ * post-checkout and post-rewrite fire there, and a post-checkout hook froze for minutes on a stuck syspolicyd. Rerere
+ * off too (a remembered resolution
  * staged itself, hiding the conflict and an old version number). */
 export function prepGit(cwd: string): GitRun {
     return (args) => {
