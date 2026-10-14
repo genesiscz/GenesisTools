@@ -28,7 +28,16 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { covers, mentionsFrom, textPaths } from "./mentions";
-import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
+import {
+    assembleMessage,
+    type DiffBlock,
+    hasContext,
+    highlightRange,
+    hunkRange,
+    renderPatch,
+    themedDress,
+    wordSpans,
+} from "./render";
 import {
     blobBatches,
     type CapturedEdit,
@@ -40,6 +49,7 @@ import {
     runDiffPost,
     silentReason,
 } from "./run";
+import { resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
 
 let repo: string;
@@ -2654,8 +2664,12 @@ describe("characterization: what one call shows, logs and attributes", () => {
     // Pinned on f8cb4f9f1, before the hooks' `git status` changed how it reads the tree. Every
     // field a user or a log sees is here: the pre phase's result, the decision, its reason, the
     // message, the files and the others, and each change-log row with its before-state bytes.
-    // A change to HOW the status is read must leave every snapshot below as it is.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    // A change to HOW the status is read must leave every snapshot below as it is. They pin the
+    // `classic` look, which must stay byte for byte; the Claude themes have their own cases.
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, theme: "classic" as const },
+    };
     const session = "gt-diff-char";
     let main: string;
     let second: string;
@@ -3283,5 +3297,85 @@ describe("characterization: what one call shows, logs and attributes", () => {
             "reason": "no change since this command began",
           }
         `);
+    });
+});
+
+describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () => {
+    const palette = resolvePalette("claude-dark");
+    const quiet = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 };
+
+    if (!palette) {
+        throw new Error("claude-dark has a palette");
+    }
+
+    it("follows Claude Code's theme setting, reads an unknown one as dark, and classic has none", () => {
+        expect(resolvePalette("claude", () => "light")?.added).toBe("\u001b[48;2;105;219;124m");
+        expect(resolvePalette("claude", () => "a-theme-from-the-future")).toEqual(palette);
+        expect(resolvePalette("claude", () => undefined)).toEqual(palette);
+        expect(resolvePalette("classic")).toBeNull();
+    });
+
+    it("numbers a removed row with its OLD line, bands both rows and marks the changed word", () => {
+        const patch = ["@@ -10,3 +10,3 @@", " keep", "-const total = 1;", "+const total = 2;", " keep"].join("\n");
+        const rendered = renderPatch(patch, palette);
+
+        expect(rendered.body.map((line) => stripAnsi(line.text))).toEqual([
+            "    10  keep",
+            "    11 -const total = 1;",
+            "    11 +const total = 2;",
+            "    12  keep",
+        ]);
+        expect(rendered.body[1]?.text.startsWith(palette.removed)).toBe(true);
+        expect(rendered.body[2]?.text).toContain(`${palette.addedWord}2${palette.added}`);
+    });
+
+    it("highlights whole words, and nothing when the rows share too little", () => {
+        expect(wordSpans("value = fooBar(x)", "value = fooBaz(x)")).toEqual({ before: [8, 14], after: [8, 14] });
+        expect(wordSpans("alpha", "omega zeta")).toBeNull();
+    });
+
+    it("fills a changed row to the terminal width only once every changed line fits", () => {
+        const patch = ["@@ -1,2 +1,2 @@", "-old line", "+new line", " same"].join("\n");
+        const themed = (width: number): DiffBlock => {
+            const rendered = renderPatch(patch, palette);
+            const dress = themedDress(rendered.body, palette, "x.ts", quiet);
+
+            dress.width = width;
+            return { head: "head", body: rendered.body, dress };
+        };
+        const budget = (bytes: number) => ({ ...quiet, maxMessageBytes: bytes });
+        const rows = (message: string) =>
+            message.split("\n").filter((line) => /[+-](old|new) line/.test(stripAnsi(line)));
+
+        const roomy = rows(assembleMessage([themed(60)], budget(100_000)));
+        expect(roomy.map((line) => Bun.stringWidth(stripAnsi(line)))).toEqual([60, 60]);
+
+        // Room for the content and the reserved elision footer (about 40 bytes), not for a fill
+        // (about 43 bytes a row): both rows print, neither is filled.
+        const plainBytes = Buffer.byteLength(assembleMessage([themed(0)], budget(100_000)));
+        const tight = rows(assembleMessage([themed(60)], budget(plainBytes + 50)));
+        expect(tight).toHaveLength(2);
+        expect(tight.every((line) => Bun.stringWidth(stripAnsi(line)) < 60)).toBe(true);
+    });
+
+    it("renders a file once when the command names it through another path to the same folder", () => {
+        // `/tmp` is a symlink to `/private/tmp` on macOS: git names the root by its real path and
+        // the command by the typed one, and both used to render, 84 times in one day.
+        const alias = join(realpathSync(tmpdir()), `gt-alias-${process.pid}`);
+        symlinkSync(repo, alias);
+
+        try {
+            const current = begin({ command: `perl -pi -e 's/charlie/CHARLIE/' ${alias}/kept.ts` }, quiet);
+            writeFileSync(join(repo, "kept.ts"), "alpha\nbravo\nCHARLIE\ndelta\necho\n");
+            const decision = runDiffPost(current, { ...DEFAULT_HOOKS_CONFIG, diff: quiet });
+
+            expect(decision.files).toEqual([join(repo, "kept.ts")]);
+            expect(stripAnsi(decision.message ?? "").match(/^Updated /gm)).toEqual(["Updated "]);
+            // Labelled like Claude Code labels it: relative to the session folder.
+            expect(stripAnsi(decision.message ?? "")).toStartWith("Updated kept.ts (+1 -1)");
+        } finally {
+            rmSync(alias);
+            git(["checkout", "--", "kept.ts"]);
+        }
     });
 });

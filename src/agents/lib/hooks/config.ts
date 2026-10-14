@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
+import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
 export type HarnessName = "claude" | "codex" | "grok";
@@ -42,6 +43,18 @@ export interface DiffConfig {
      */
     maxCaptureFileMB: number;
     highlight: "bat" | "none";
+    /**
+     * How a block looks; see `diff/theme.ts`. `claude` copies Claude Code's own Bash diff in the
+     * theme Claude Code is set to, so the hook can replace that diff (`bashEditDiffEnabled: false`)
+     * without a change of look. `classic` is the original look.
+     */
+    theme: DiffThemeName;
+    /**
+     * How wide a changed row's band is, in columns. `auto` reads the terminal the harness draws
+     * in, less `BAND_MARGIN`; `0` ends the band at the text. Padding costs message bytes, so it is
+     * bought only after every changed line fits.
+     */
+    columns: number | "auto";
     standDownWhenNative: boolean;
     /**
      * Also watch files the command NAMES as a path, not only those inside a git root it
@@ -292,6 +305,8 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxCaptureMB: 8,
         maxCaptureFileMB: 0.256,
         highlight: "bat",
+        theme: "claude",
+        columns: "auto",
         standDownWhenNative: true,
         watchNamedPaths: true,
         maxNamedPaths: 8,
@@ -495,6 +510,8 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             fallback: base.maxCaptureFileMB,
         }),
         highlight: stored?.highlight === "bat" || stored?.highlight === "none" ? stored.highlight : base.highlight,
+        theme: themeOr(stored?.theme, base.theme),
+        columns: columnsOr(stored?.columns, base.columns),
         standDownWhenNative: boolOr(stored?.standDownWhenNative, base.standDownWhenNative),
         watchNamedPaths: boolOr(stored?.watchNamedPaths, base.watchNamedPaths),
         maxNamedPaths: countOr({
@@ -528,6 +545,15 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         // delete the shipped Grok one, which is what turns the diff off there.
         harnesses: mergedHarnesses(stored?.harnesses),
     };
+}
+
+export function themeOr(value: unknown, fallback: DiffThemeName): DiffThemeName {
+    return DIFF_THEMES.find((theme) => theme === value) ?? fallback;
+}
+
+/** `auto`, or a whole number of columns (0 = no fill); anything else falls back. */
+export function columnsOr(value: unknown, fallback: DiffConfig["columns"]): DiffConfig["columns"] {
+    return value === "auto" || isCount(value, 0) ? value : fallback;
 }
 
 export const OTHERS_SUMMARIES: readonly DiffConfig["othersSummary"][] = ["line", "hidden"];
@@ -656,6 +682,14 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
 
     if (stored.othersSummary === "line" || stored.othersSummary === "hidden") {
         checked.othersSummary = stored.othersSummary;
+    }
+
+    if (DIFF_THEMES.some((theme) => theme === stored.theme)) {
+        checked.theme = stored.theme;
+    }
+
+    if (stored.columns === "auto" || isCount(stored.columns, 0)) {
+        checked.columns = stored.columns;
     }
 
     const categories: Partial<Record<DiffCategory, boolean>> = {};

@@ -10,6 +10,7 @@ import {
     loadHooksConfigForWrite,
     OTHERS_SUMMARIES,
 } from "./config";
+import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 import { writeHooksFile } from "./hooks-file";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
@@ -35,6 +36,8 @@ export const SETTABLE_KEYS = [
     "diff.maxCaptureFileMB",
     "diff.maxNamedPathMB",
     "diff.othersSummary",
+    "diff.theme",
+    "diff.columns",
     "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
     "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
     "maxLogMB",
@@ -175,7 +178,43 @@ function withHarnessDiff(next: HooksConfig, key: string, value: string, harness:
         return next;
     }
 
-    throw new Error(`cannot set ${field} per harness. Settable: enabled, ${NUMERIC_DIFF.join(", ")}`);
+    if (field === "theme") {
+        next.diff.harnesses[harness as HarnessName] = { ...held, theme: asTheme(key, value) };
+        return next;
+    }
+
+    if (field === "columns") {
+        next.diff.harnesses[harness as HarnessName] = { ...held, columns: asColumns(key, value) };
+        return next;
+    }
+
+    throw new Error(`cannot set ${field} per harness. Settable: enabled, theme, columns, ${NUMERIC_DIFF.join(", ")}`);
+}
+
+function asTheme(key: string, value: string): DiffThemeName {
+    const theme = DIFF_THEMES.find((candidate) => candidate === value);
+
+    if (!theme) {
+        throw new Error(`${key} takes ${DIFF_THEMES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+    }
+
+    return theme;
+}
+
+function asColumns(key: string, value: string): number | "auto" {
+    if (value === "auto") {
+        return value;
+    }
+
+    const columns = Number(value);
+
+    if (!isCount(columns, 0)) {
+        throw new Error(
+            `${key} takes auto or a whole number of columns (0 = no fill), not ${SafeJSON.stringify(value)}`
+        );
+    }
+
+    return columns;
 }
 
 /** The ids a rule key may name: the built-in rules, plus the custom ones when the caller loaded them. */
@@ -253,6 +292,16 @@ export function applySetting(
         throw new Error(
             `unknown key: ${key}. Settable: unpushed.enabled, maxCommits, maxAgeMinutes, remindEveryMinutes`
         );
+    }
+
+    if (key === "diff.theme") {
+        next.diff.theme = asTheme(key, value);
+        return next;
+    }
+
+    if (key === "diff.columns") {
+        next.diff.columns = asColumns(key, value);
+        return next;
     }
 
     if (key === "diff.othersSummary") {

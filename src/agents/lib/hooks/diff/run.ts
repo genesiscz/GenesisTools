@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
@@ -33,9 +34,19 @@ import { alreadyGone, beforeCopy, leftOutOfCapture } from "./before";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
-import { appendMentions, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
+import { appendMentions, canonical, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
-import { assembleMessage, type DiffBlock, highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
+import {
+    assembleMessage,
+    type DiffBlock,
+    highlightRange,
+    hunkRange,
+    renderBlock,
+    renderPatch,
+    themedDress,
+} from "./render";
+import { terminalColumns } from "./terminal";
+import { type Palette, resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
 
 export interface DiffDecision {
@@ -75,12 +86,35 @@ function patchFor(file: ChangedFile, before: string | null, config: DiffConfig, 
  * The rendered block for one changed file, or `null` when the diff turned out empty. A
  * DELETED file always renders: its block is the header alone when git has no patch for it.
  */
+/** Columns left between a band and the terminal's right edge, for the indent the harness adds. */
+const BAND_MARGIN = 2;
+
+/** How a themed block names its file: relative inside the session folder, `~/` under home, else whole. */
+function displayPath(path: string, cwd: string): string {
+    for (const base of new Set([cwd, canonical(cwd)])) {
+        if (path.startsWith(`${base}/`)) {
+            return path.slice(base.length + 1);
+        }
+    }
+
+    const home = homedir();
+
+    return path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
+}
+
+/** A Claude theme in force for this call: its palette and the session folder labels are relative to. */
+interface Look {
+    palette: Palette;
+    cwd: string;
+}
+
 function blockFrom(
     file: ChangedFile,
     patch: string,
     hadBefore: boolean,
     config: DiffConfig,
-    suppressed: Map<DiffCategory, number>
+    suppressed: Map<DiffCategory, number>,
+    look: Look | null
 ): DiffBlock | null {
     // The KIND is decided before any rendering work, so a category that is switched off
     // costs one classification rather than a `bat` spawn and a full render.
@@ -91,13 +125,19 @@ function blockFrom(
         return null;
     }
 
-    const rendered = renderPatch(patch);
+    const rendered = renderPatch(patch, look?.palette ?? null);
 
     if (rendered.body.length === 0 && !file.deleted) {
         return null;
     }
 
-    const block = renderBlock(file, rendered, hadBefore, category);
+    const label = look ? displayPath(file.path, look.cwd) : file.path;
+    const block = renderBlock(file, rendered, hadBefore, category, label);
+
+    if (look) {
+        block.dress = themedDress(rendered.body, look.palette, file.path, config);
+        return block;
+    }
 
     // Highlight only the lines the hunks touch, never the whole file, and only once the
     // budget has decided a context line will really be printed. A deleted file has nothing
@@ -455,6 +495,16 @@ export function runDiffPost(
     let stale = 0;
     const suppressed = new Map<DiffCategory, number>();
     const attribution = attributionContext(payload, since);
+    // Resolved once and only for a call that renders: `claude` reads Claude Code's settings file.
+    let look: Look | null | undefined;
+    const lookOf = (): Look | null => {
+        if (look === undefined) {
+            const palette = resolvePalette(diff.theme);
+            look = palette ? { palette, cwd: payload.cwd } : null;
+        }
+
+        return look;
+    };
     const touches: Touch[] = [];
     const historyNotes: string[] = [];
     const unattributed: Array<{ path: string; root: string }> = [];
@@ -551,7 +601,14 @@ export function runDiffPost(
                 continue;
             }
 
-            const block = blockFrom(file, patchFor(file, before, diff, base), before !== null, diff, suppressed);
+            const block = blockFrom(
+                file,
+                patchFor(file, before, diff, base),
+                before !== null,
+                diff,
+                suppressed,
+                lookOf()
+            );
 
             if (block === null) {
                 continue;
@@ -573,7 +630,10 @@ export function runDiffPost(
     // the command looked like: the paths of a sweep sit in a heredoc spec or behind variables.
     // A path both sources hold keeps the named copy: it was taken at command start, so it also
     // carries an edit the command made before the writer ran.
-    const named = namedChanges(dir);
+    // Canonical, like every root path, which comes from `git rev-parse` and is therefore real. A
+    // command that names `/tmp/x` and works in the repository git calls `/private/tmp/x` printed
+    // the same file twice in one message: 84 messages in the 24 hours to 2026-10-14 22:59.
+    const named = namedChanges(dir).map((change) => ({ ...change, path: canonical(change.path) }));
     const namedPaths = new Set(named.map((change) => change.path));
     const startedPath = join(dir, "started-ms");
     const started = existsSync(startedPath) ? Number(readFileSync(startedPath, "utf8").trim()) : Number.NaN;
@@ -581,7 +641,7 @@ export function runDiffPost(
         since: Number.isFinite(started) ? started : since,
         now: attribution.now,
         sessionId: payload.sessionId,
-    });
+    }).map((change) => ({ ...change, path: canonical(change.path) }));
     const reportedPaths = new Set(reported.map((change) => change.path));
 
     for (const change of [...named, ...reported.filter((item) => !namedPaths.has(item.path))]) {
@@ -650,7 +710,7 @@ export function runDiffPost(
             change.before ?? "/dev/null",
             change.deleted ? "/dev/null" : change.path,
         ]);
-        const block = blockFrom(file, patch, change.before !== null, diff, suppressed);
+        const block = blockFrom(file, patch, change.before !== null, diff, suppressed, lookOf());
 
         if (block === null) {
             continue;
@@ -693,6 +753,17 @@ export function runDiffPost(
         }
 
         return { decision: "noted", reason, message: notes.join("\n"), files: [], others };
+    }
+
+    if (blocks.some((block) => block.dress)) {
+        const columns = diff.columns === "auto" ? terminalColumns() : diff.columns;
+        const width = columns === null || columns === 0 ? 0 : Math.max(0, columns - BAND_MARGIN);
+
+        for (const block of blocks) {
+            if (block.dress) {
+                block.dress.width = width;
+            }
+        }
     }
 
     const noteBytes = notes.reduce((total, line) => total + Buffer.byteLength(line) + 2, 0);
