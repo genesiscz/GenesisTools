@@ -71,6 +71,15 @@ public final class WindowEventFactory {
 
     public func drag(start: CGPoint, points: [CGPoint], stepDelay: Double,
                      verify: (CGPoint) throws -> Void, post: (CGEvent) -> Void) throws {
+        try drag(start: start, points: points, stepDelay: stepDelay, liveBounds: nil, verify: verify, post: post)
+    }
+
+    /// `liveBounds` is the `--allow-outside` drag: the path may leave the snapshot window, and the window may move with
+    /// it (a panel dragged by its body). Each step reads where the window is now and computes the window-local location
+    /// against that, so an app that converts `locationInWindow` to screen gets the global point; against the snapshot
+    /// bounds a moving window saw every step off by the distance it had already moved. Only the start must lie inside.
+    public func drag(start: CGPoint, points: [CGPoint], stepDelay: Double, liveBounds: (() -> CGRect?)?,
+                     verify: (CGPoint) throws -> Void, post: (CGEvent) -> Void) throws {
         let down = try mouse(type: .leftMouseDown, point: start, clickCount: 1)
         var release = try mouse(type: .leftMouseUp, point: start, clickCount: 1)
         try verify(start)
@@ -79,8 +88,9 @@ public final class WindowEventFactory {
             for point in points {
                 Thread.sleep(forTimeInterval: stepDelay)
                 try verify(point)
-                let move = try mouse(type: .leftMouseDragged, point: point, clickCount: 1)
-                let nextRelease = try mouse(type: .leftMouseUp, point: point, clickCount: 1)
+                let frame = liveBounds.map { $0() ?? bounds }
+                let move = try mouse(type: .leftMouseDragged, point: point, clickCount: 1, frame: frame)
+                let nextRelease = try mouse(type: .leftMouseUp, point: point, clickCount: 1, frame: frame)
                 post(move)
                 release = nextRelease
             }
@@ -129,21 +139,24 @@ public final class WindowEventFactory {
         return event
     }
 
-    public func mouse(type: NSEvent.EventType, point: CGPoint, clickCount: Int) throws -> CGEvent {
+    /// `frame` nil: the point must lie in the snapshot window and is located against it. A frame: the window's bounds
+    /// right now, for a step of an `--allow-outside` drag; the point may lie anywhere.
+    public func mouse(type: NSEvent.EventType, point: CGPoint, clickCount: Int, frame: CGRect? = nil) throws -> CGEvent {
         // Split from the bounds check on purpose: Int(Double.nan) traps, so a non-finite point must
         // never reach the formatter that describes the rectangle.
         guard point.x.isFinite, point.y.isFinite else {
             throw WindowEventError.unavailable("mouse point \(point.x),\(point.y) is not a finite coordinate")
         }
 
-        guard bounds.contains(point) else {
+        let window = frame ?? bounds
+        guard frame != nil || bounds.contains(point) else {
             let received = "\(Int(point.x.rounded())),\(Int(point.y.rounded()))"
             let rectangle = "\(Int(bounds.origin.x.rounded())),\(Int(bounds.origin.y.rounded())) "
                 + "\(Int(bounds.width.rounded()))x\(Int(bounds.height.rounded()))"
             throw WindowEventError.unavailable(
                 "mouse point \(received) is outside snapshot window \(windowID), whose bounds are \(rectangle)")
         }
-        let local = NSPoint(x: point.x - bounds.minX, y: bounds.maxY - point.y)
+        let local = NSPoint(x: point.x - window.minX, y: window.maxY - point.y)
         guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: windowID, context: nil,
             eventNumber: 0, clickCount: clickCount, pressure: 0)?.cgEvent else {
@@ -151,7 +164,7 @@ public final class WindowEventFactory {
         }
         // Setting the global position clears the private window-local field.
         event.location = point
-        setLocation(event, snapshotWindowPoint(point, in: bounds))
+        setLocation(event, snapshotWindowPoint(point, in: window))
         event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
         event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowID))
         event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowID))

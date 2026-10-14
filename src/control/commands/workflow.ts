@@ -64,6 +64,7 @@ interface WorkflowOptions {
     coords?: string;
     frame?: string;
     background?: boolean;
+    allowOutside?: boolean;
     prepare?: boolean;
     replace?: boolean;
     targetKey?: string;
@@ -512,6 +513,10 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--replace", "paste with --prepare: select all, paste once and verify exact field readback")
         .option("--button [name]", "click: left, right or middle")
         .option("--to <x,y>", "drag: global destination point")
+        .option(
+            "--allow-outside",
+            "drag: the path and --to may leave the snapshot window, and the window may move with the drag (a panel dragged by its body). Only the start is checked against the snapshot; each later step checks that the window is still on screen and that you have not taken the pointer. The result reports windowBoundsAfter."
+        )
         .option("--duration <seconds>", "drag: duration from 0.1 to 5 seconds")
         .option("--pages <n>", "scroll: 1–20 receiving AX scroll-area viewport pages; if unavailable use --pixels")
         .option("--pixels <n>", "scroll: exact synthetic wheel pixels from 1 to 10000; mutually exclusive with --pages")
@@ -677,6 +682,10 @@ export function registerWorkflowCommands(program: Command): void {
 
             if (opts.background) {
                 args.push("--background");
+            }
+
+            if (opts.allowOutside) {
+                args.push("--allow-outside");
             }
 
             if (opts.refresh) {

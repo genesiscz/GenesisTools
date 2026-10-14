@@ -96,6 +96,20 @@ private func describeOutsideWindow(point: CGPoint, window: ObservedWindow) -> St
         + "both are global logical points, and a window that moved since see needs a fresh see"
 }
 
+/// Where a window is right now, while it is on screen and still owned by `pid`; nil once it closed, hid or changed owner.
+/// An `--allow-outside` drag reads it at every step: the window may move with the drag, but it must stay this window.
+private func onscreenWindowBounds(_ id: CGWindowID, pid: pid_t) -> CGRect? {
+    let listed = CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[CFString: Any]] ?? []
+    for info in listed {
+        guard (info[kCGWindowNumber] as? CGWindowID) == id, (info[kCGWindowOwnerPID] as? pid_t) == pid,
+              (info[kCGWindowIsOnscreen] as? Bool) == true,
+              let raw = info[kCGWindowBounds] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: raw) else { continue }
+        return bounds
+    }
+    return nil
+}
+
 private var workflowInput: WorkflowArguments?
 
 /// The caller's deadline (`--budget-ms`), less a margin for printing the result and exiting.
@@ -1275,6 +1289,9 @@ func cmdAct(appName _: String) {
     do {
     try dispatchSnapshotAction(context: context) {
     workflowDispatchState = "not_started"
+    if workflowFlag("--allow-outside") && action != "drag" {
+        throw WindowEventError.unavailable("--allow-outside applies to --action drag only")
+    }
     if !["get", "click", "move", "drag", "scroll"].contains(action) {
         let frame = tree.frames[elementIndex]
         let center = CGPoint(x: frame.midX, y: frame.midY)
@@ -1431,7 +1448,7 @@ func cmdAct(appName _: String) {
         // error — just a click in the wrong place. A caller who wants a point that survives the
         // window moving opts in with --frame window, and that is the one this documents.
         let coordinateFrame = workflowArgument("--frame") ?? "screen"
-        func parsePoint(_ raw: String) throws -> CGPoint {
+        func parsePoint(_ raw: String, requireInside: Bool = true) throws -> CGPoint {
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
             let numbers = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             guard parts.count == 2, numbers.count == 2, numbers.allSatisfy({ $0.isFinite }) else {
@@ -1444,7 +1461,7 @@ func cmdAct(appName _: String) {
             let point = coordinateFrame == "window"
                 ? CGPoint(x: window.bounds.origin.x + given.x, y: window.bounds.origin.y + given.y)
                 : given
-            guard window.bounds.contains(point) else {
+            guard !requireInside || window.bounds.contains(point) else {
                 throw WindowEventError.unavailable(describeOutsideWindow(point: point, window: window))
             }
 
@@ -1616,7 +1633,7 @@ func cmdAct(appName _: String) {
             guard rawCoords != nil || row["visible"] as? Bool == true || visiblePart != nil else {
                 throw WindowEventError.unavailable("element is outside its window/scroll clip")
             }
-            let point = try rawCoords.map(parsePoint) ?? visiblePart ?? CGPoint(x: frame.midX, y: frame.midY)
+            let point = try rawCoords.map { try parsePoint($0) } ?? visiblePart ?? CGPoint(x: frame.midX, y: frame.midY)
             // A caller that passed a window-relative point cannot otherwise tell WHERE it landed,
             // and that is the number to compare against a screenshot or a later observation.
             if let raw = rawCoords {
@@ -1725,10 +1742,16 @@ func cmdAct(appName _: String) {
                 Thread.sleep(forTimeInterval: 0.1)
             } else if action == "drag" {
                 guard let destination = workflowArgument("--to") else {
-                    throw WindowEventError.unavailable("drag requires --to x,y in the snapshot window")
+                    throw WindowEventError.unavailable("drag requires --to x,y in the snapshot window, or anywhere with --allow-outside")
                 }
-                let end = try parsePoint(destination)
-                _ = try verifyPoint(end, pin: .window)
+                // --allow-outside: the destination and the path may leave the window, and the window may move with
+                // the drag (a panel dragged by its body). The start keeps every check below; each later step checks
+                // that the user has not taken the pointer and that the window is still this window, on screen.
+                let allowOutside = workflowFlag("--allow-outside")
+                let end = try parsePoint(destination, requireInside: !allowOutside)
+                if !allowOutside {
+                    _ = try verifyPoint(end, pin: .window)
+                }
                 let duration = Double(workflowArgument("--duration") ?? "0.3") ?? 0
                 guard duration.isFinite, (0.1...5).contains(duration) else {
                     throw WindowEventError.unavailable("--duration must be 0.1–5 seconds")
@@ -1742,16 +1765,29 @@ func cmdAct(appName _: String) {
                 try validateAfterFeedback()
                 // The takeover check runs in verify, which precedes every post but the closing
                 // release; the factory posts that release itself when verify throws.
-                try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
+                let liveBounds: (() -> CGRect?)? = allowOutside ? { onscreenWindowBounds(window.id, pid: pid) } : nil
+                try factory.drag(start: point, points: points, stepDelay: duration / Double(steps), liveBounds: liveBounds,
                                  verify: {
                                      try inputGate.check()
-                                     _ = try verifyPoint($0, pin: WindowEventFactory.dragVerifyTarget(point: $0, start: point))
+                                     if allowOutside && $0 != point {
+                                         guard onscreenWindowBounds(window.id, pid: pid) != nil else {
+                                             throw WindowEventError.unavailable("window \(window.id) closed or left the screen during the drag")
+                                         }
+                                     } else {
+                                         _ = try verifyPoint($0, pin: WindowEventFactory.dragVerifyTarget(point: $0, start: point))
+                                     }
                                      try admitVisualAction()
                                  }, post: { event in
                                      ActionCursor.emit("drag", point: event.location, background: background, target: rawCoords == nil ? "ax" : "pixel", waitForPresentation: false)
                                      inputGate.deliver { event.postToPid(pid) }
                                  })
                 Thread.sleep(forTimeInterval: 0.05)
+                if allowOutside {
+                    // Nothing checked what lay under the path, so say where the window ended: a drag that moved it
+                    // shows here, and a caller compares it with the bounds it saw in see.
+                    let after = onscreenWindowBounds(window.id, pid: pid)
+                    actionExtras["windowBoundsAfter"] = after.map { ["x": $0.minX, "y": $0.minY, "width": $0.width, "height": $0.height] } ?? NSNull()
+                }
             } else if secondaryClick {
                 // 🛑 A right-click is delivered in the background three ways, in this order, and each later way
                 // runs only while the app shows no menu at all: the NSEvent-built window event, a plain CGEvent

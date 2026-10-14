@@ -1325,6 +1325,7 @@ export class ComputerUse {
                     "--duration",
                     String(options.duration),
                     ...(options.background ? ["--background"] : []),
+                    ...(options.allow_outside ? ["--allow-outside"] : []),
                 ];
             },
             signal,

@@ -39,7 +39,7 @@ const descriptions: Record<ComputerMethod, string> = {
     quit_app:
         "Request a normal quit of the currently observed app instance. No force kill; unsaved-document prompts may keep it running.",
     click: "prepare:true explicitly focuses/reveals an observed element and clicks it in one native invocation. Click a currently observed element/ref or screenshot point. A normal accessible single click uses its observed AXPress; physical/right/double clicks use native events. Pixel evidence is checked and consumed once. No retry or AI call.",
-    drag: "Drag between points in the current screenshot (or explicit screen coordinates), with native geometry/pixel checks and bounded duration.",
+    drag: "Drag between points in the current screenshot (or explicit screen coordinates), with native geometry/pixel checks and bounded duration. allow_outside: true lets the destination leave the observed window and the window move with the drag (moving a panel by its body); only the start is checked.",
     scroll: "Scroll a current element or screenshot point by receiving-viewport pages or exact wheel pixels.",
     set_value:
         "Set an observed editable AX value with exact native readback. The supplied value is not sent to an AI model.",

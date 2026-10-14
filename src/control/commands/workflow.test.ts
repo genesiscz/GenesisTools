@@ -107,6 +107,7 @@ test("action help exposes native drag selection and paste options", async () => 
     expect(result.stdout).toContain("--format");
     expect(result.stdout).toContain("256 UTF-16 units");
     expect(result.stdout).toContain("--button [name]");
+    expect(result.stdout).toContain("--allow-outside");
 });
 
 const actOn = ["act", "--app", "nonexistent-control-fixture"];

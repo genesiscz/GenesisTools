@@ -163,4 +163,46 @@ final class WindowEventTests: XCTestCase {
         XCTAssertEqual(event.type, .leftMouseDown)
         XCTAssertEqual(event.location, CGPoint(x: -100, y: -500))
     }
+
+    private func windowLocation(_ event: CGEvent) throws -> CGPoint {
+        typealias GetLocation = @convention(c) (CGEvent) -> CGPoint
+        let handle = try XCTUnwrap(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_LAZY))
+        defer { dlclose(handle) }
+        let symbol = try XCTUnwrap(dlsym(handle, "CGEventGetWindowLocation"))
+        return unsafeBitCast(symbol, to: GetLocation.self)(event)
+    }
+
+    func testDragOutsideTheWindowLocatesEachStepAgainstWhereTheWindowIsNow() throws {
+        // A panel dragged by its body moves with the drag. Each step's window-local location must be
+        // measured from where the window is at that step, or an app that converts it to screen
+        // coordinates sees the pointer off by the distance the window already moved.
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 100, y: 100, width: 500, height: 452))
+        var moved = CGRect(x: 100, y: 100, width: 500, height: 452)
+        var posted: [CGEvent] = []
+        try factory.drag(start: CGPoint(x: 150, y: 150), points: [CGPoint(x: 400, y: 150), CGPoint(x: 900, y: 150)],
+                         stepDelay: 0, liveBounds: { moved },
+                         verify: { point in moved.origin.x = 100 + (point.x - 150) },
+                         post: { posted.append($0) })
+
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, .leftMouseDragged, .leftMouseDragged, .leftMouseUp])
+        XCTAssertEqual(posted.map(\.location), [CGPoint(x: 150, y: 150), CGPoint(x: 400, y: 150),
+                                                CGPoint(x: 900, y: 150), CGPoint(x: 900, y: 150)])
+        // The grab point stays 50,50 inside the window all the way, as it does under a real hand.
+        XCTAssertEqual(try posted.map(windowLocation), Array(repeating: CGPoint(x: 50, y: 50), count: 4))
+        XCTAssertEqual(try XCTUnwrap(NSEvent(cgEvent: posted[2])).windowNumber, 456)
+    }
+
+    func testDragWithoutLiveBoundsStillStopsAtTheWindowEdge() throws {
+        // The default drag keeps its old contract: a step outside the snapshot window is refused and
+        // the button is released where the drag last was.
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+        var posted: [CGEvent] = []
+        XCTAssertThrowsError(try factory.drag(start: CGPoint(x: 10, y: 10),
+            points: [CGPoint(x: 400, y: 10), CGPoint(x: 700, y: 10)], stepDelay: 0,
+            verify: { _ in }, post: { posted.append($0) })) { error in
+            XCTAssertTrue(error.localizedDescription.contains("outside snapshot window"), error.localizedDescription)
+        }
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
+        XCTAssertEqual(posted.last?.location, CGPoint(x: 400, y: 10))
+    }
 }

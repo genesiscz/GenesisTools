@@ -192,6 +192,8 @@ export const computerSchemas = {
             coordinate_space: z.enum(["image", "screen"]).default("image"),
             duration: z.number().min(0.1).max(5).default(0.3),
             background: z.boolean().default(true),
+            /** The destination may lie outside the observed window, and the window may move with the drag. */
+            allow_outside: z.boolean().default(false),
         })
         .strict(),
     scroll: z
