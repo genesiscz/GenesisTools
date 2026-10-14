@@ -21,9 +21,9 @@ import {
     type ProcessQuery,
     parseCmuxTree,
     pickAdoptable,
-    psShowsAgentRunning,
     type TmuxPaneSurface,
     tmuxPaneStillShown,
+    ttyProcessesShowAgent,
 } from "./session-adopt";
 import {
     type AdoptedSession,
@@ -84,14 +84,7 @@ export async function adoptedAgentRunning(
     if (!record.tty || listProcesses({ commands: false }).length === 0) {
         return true;
     }
-    const entries = processesOnTty(record.tty);
-    if (entries.some((entry) => entry.command === null)) {
-        return true;
-    }
-    return psShowsAgentRunning(
-        { code: 0, stdout: entries.map((entry) => entry.command).join("\n"), stderr: "", timedOut: false },
-        record.agent
-    );
+    return ttyProcessesShowAgent(processesOnTty(record.tty), record.agent, process.getuid?.() ?? -1);
 }
 
 export function shellHasChildren(pid: number): boolean {

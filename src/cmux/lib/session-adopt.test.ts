@@ -6,10 +6,9 @@ import {
     liveAgentSurfaces,
     matchLiveAgentSurfaces,
     parseCmuxTree,
-    pgrepShowsChild,
     pickAdoptable,
-    psShowsAgentRunning,
     tmuxPaneStillShown,
+    ttyProcessesShowAgent,
     ttyRunsAgent,
 } from "./session-adopt";
 
@@ -260,28 +259,15 @@ test("a tmux-joined surface counts as showing the agent only while its client sh
     expect(shown([], [client])).toBe(false);
 });
 
-test("only a process listing that worked can show the agent quit; a failed one counts as running", () => {
-    const ran = (code: number | null, stdout = "", stderr = "", timedOut = false) => ({
-        code,
-        stdout,
-        stderr,
-        timedOut,
-    });
+test("only this user's processes on the tty decide; root's withheld login does not keep the agent alive", () => {
+    const login = { uid: 0, command: null, zombie: false };
+    const shell = { uid: 501, command: "-zsh", zombie: false };
 
-    // ps: the agent on the tty, nothing on the tty, the tty gone.
-    expect(psShowsAgentRunning(ran(0, "-zsh\ngrok --resume x\n"), "grok")).toBe(true);
-    expect(psShowsAgentRunning(ran(0, "-zsh\n"), "grok")).toBe(false);
-    expect(psShowsAgentRunning(ran(1), "grok")).toBe(false);
-    expect(psShowsAgentRunning(ran(1, "", "ps: /dev/ttys041: No such file or directory"), "grok")).toBe(false);
-    // ps failed in another way, or did not answer: unknown, so running.
-    expect(psShowsAgentRunning(ran(1, "", "ps: Operation not permitted"), "grok")).toBe(true);
-    expect(psShowsAgentRunning(ran(137, "", ""), "grok")).toBe(true);
-    expect(psShowsAgentRunning(ran(null, "", "", true), "grok")).toBe(true);
-
-    // pgrep: 0 with children, 1 with none; 2 and 3 are errors.
-    expect(pgrepShowsChild(ran(0, "4242\n"))).toBe(true);
-    expect(pgrepShowsChild(ran(1))).toBe(false);
-    expect(pgrepShowsChild(ran(2, "", "usage: pgrep"))).toBe(true);
-    expect(pgrepShowsChild(ran(3))).toBe(true);
-    expect(pgrepShowsChild(ran(null, "", "", true))).toBe(true);
+    expect(ttyProcessesShowAgent([login, shell], "codex", 501)).toBe(false);
+    expect(
+        ttyProcessesShowAgent([login, shell, { uid: 501, command: "codex --resume x", zombie: false }], "codex", 501)
+    ).toBe(true);
+    expect(ttyProcessesShowAgent([login, shell, { uid: 501, command: null, zombie: true }], "codex", 501)).toBe(false);
+    // One of this user's processes unreadable: unknown, so running.
+    expect(ttyProcessesShowAgent([shell, { uid: 501, command: null, zombie: false }], "codex", 501)).toBe(true);
 });
