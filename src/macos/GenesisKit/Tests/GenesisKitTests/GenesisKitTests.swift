@@ -44,6 +44,13 @@ final class CmuxTreeTests: XCTestCase {
         XCTAssertEqual(tree.error, "cmux is not running")
     }
 
+    /// cmux renumbers `window:N` at a relaunch, so a picker held open across one would name another window.
+    func testAWindowIsOpenedByItsUUIDNotItsRef() {
+        let window = CmuxTree.Window(id: "0B000000-0000-4000-8000-000000000001", ref: "window:1")
+        XCTAssertEqual(window.target, "0B000000-0000-4000-8000-000000000001")
+        XCTAssertEqual(window.label, "window:1")
+    }
+
     func testTargetsNameTheirOpenSessionFlags() {
         XCTAssertNil(CmuxTarget.newWorkspace(window: nil).openSessionArgs)
         XCTAssertEqual(CmuxTarget.newWorkspace(window: "window:1").openSessionArgs, ["--window", "window:1"])

@@ -151,8 +151,9 @@ public struct CmuxTree: Codable, Equatable, Sendable {
     }
 
     public struct Window: Codable, Equatable, Sendable, Identifiable {
+        /// The window UUID, which survives a cmux relaunch.
         public var id: String
-        /// "window:1"; the name cmux's CLI takes.
+        /// "window:1", for display: cmux renumbers it at every relaunch.
         public var ref: String?
         public var index: Int
         /// The front window.
@@ -177,8 +178,9 @@ public struct CmuxTree: Codable, Equatable, Sendable {
         }
 
         public var label: String { ref ?? "window \(index + 1)" }
-        /// What a new workspace in this window is opened with.
-        public var target: String { ref ?? id }
+        /// What a new workspace in this window is opened with: the UUID, never the ref, because a
+        /// picker held open across a cmux relaunch would otherwise name another window.
+        public var target: String { id }
     }
 
     public var fetchedAt: String
