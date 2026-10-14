@@ -426,7 +426,7 @@ final class ClickyTests: XCTestCase {
     func testUnreadablePreferencesDoNotEraseValidTypingHistory() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         var saved = ClickyStatistics()
         saved.record(keyCode: 0, release: false, at: date(12))
         defaults.set(Data("{invalid preferences".utf8), forKey: "clicky.preferences.v1")
@@ -450,7 +450,7 @@ final class ClickyTests: XCTestCase {
     func testUndecodablePreferencesAreKeptBeforeTheFirstSaveReplacesThem() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let stored = Data("{\"releaseSounds\": false, \"notifications\": tru".utf8)
         defaults.set(stored, forKey: "clicky.preferences.v1")
         let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
@@ -468,7 +468,7 @@ final class ClickyTests: XCTestCase {
     func testUndecodableLibraryListIsKeptBeforeAnAddedFolderReplacesIt() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let stored = Data("[{\"id\": \"work\", \"displayName\": \"Work sou".utf8)
         defaults.set(stored, forKey: "clicky.libraries.v1")
         let library = ClickySoundLibrary(defaults: defaults, bundled: nil)
@@ -478,7 +478,7 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(recovery.count, 1)
         XCTAssertEqual(defaults.data(forKey: try XCTUnwrap(recovery.first)), stored)
 
-        defaults.removePersistentDomain(forName: suite)
+        disposeIntegrationDefaults(defaults, suite: suite)
         let reopened = ClickySoundLibrary(defaults: defaults, bundled: nil)
         defer { reopened.stop() }
         XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
@@ -488,7 +488,7 @@ final class ClickyTests: XCTestCase {
     func testDecodablePreferencesLeaveNoRecoveryCopy() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         var saved = ClickyPreferences()
         saved.releaseSounds = false
         defaults.set(try JSONEncoder().encode(saved), forKey: "clicky.preferences.v1")
@@ -503,7 +503,7 @@ final class ClickyTests: XCTestCase {
     func testUnreadableHistoryIsNeverOverwrittenByActivationOrShutdown() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let original = Data("{\"presses\":12000,\"minutes\":\"unreadable\"}".utf8)
         defaults.set(original, forKey: "clicky.statistics.v1")
         let monitor = InputMonitorStub()
@@ -535,7 +535,7 @@ final class ClickyTests: XCTestCase {
     func testRepeatedResetsKeepOnlyTheNewestRecoveryCopies() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let prefix = "clicky.statistics.recovery."
         defaults.set(Data("from an older build".utf8), forKey: prefix + UUID().uuidString)
         for round in 1...5 {
@@ -554,7 +554,7 @@ final class ClickyTests: XCTestCase {
     func testHistoryRetryReopensRestoredDataWithoutResettingOrWritingIt() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let original = Data("unreadable".utf8)
         defaults.set(original, forKey: "clicky.statistics.v1")
         let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
@@ -583,7 +583,7 @@ final class ClickyTests: XCTestCase {
         let (model, defaults, suite) = monitorFixture(monitor)
         defer {
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
         XCTAssertFalse(model.enabled)
         model.activate()
@@ -607,7 +607,7 @@ final class ClickyTests: XCTestCase {
         let (model, defaults, suite) = monitorFixture(monitor)
         defer {
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
         model.activate()
         XCTAssertFalse(model.enabled)
@@ -632,7 +632,7 @@ final class ClickyTests: XCTestCase {
         let (model, defaults, suite) = monitorFixture(monitor)
         defer {
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
         // "Allow Input Monitoring…" in the privacy note, with Clicky off.
         model.openInputSettings()
@@ -661,7 +661,7 @@ final class ClickyTests: XCTestCase {
             XCTAssertEqual(monitor.permissionDialogs, result == .permissionRequired ? 1 : 0)
             XCTAssertEqual(monitor.starts, 1)
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
     }
 
@@ -672,7 +672,7 @@ final class ClickyTests: XCTestCase {
         let (model, defaults, suite) = monitorFixture(monitor, snapshot: true)
         defer {
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
         model.activate()
         XCTAssertFalse(model.enabled)
@@ -688,7 +688,7 @@ final class ClickyTests: XCTestCase {
         let (model, defaults, suite) = monitorFixture(monitor)
         defer {
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
         model.activate()
         let event = try XCTUnwrap(CGEvent(source: nil))
@@ -706,7 +706,7 @@ final class ClickyTests: XCTestCase {
         let (model, defaults, suite) = monitorFixture(monitor)
         defer {
             model.shutdown()
-            defaults.removePersistentDomain(forName: suite)
+            disposeIntegrationDefaults(defaults, suite: suite)
         }
         model.activate()
         let event = try XCTUnwrap(CGEvent(source: nil))
@@ -730,7 +730,7 @@ final class ClickyTests: XCTestCase {
     func testSettingsRegistrationPreservesPendingRequestsAndPersistsSelection() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let appearance = NativeSettingsAppearance(
             defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
         let initial = settingsSection("general", pages: ["general"], order: 0)
@@ -751,7 +751,7 @@ final class ClickyTests: XCTestCase {
     func testSettingsRejectDuplicatePageIDsWithoutChangingTheCatalog() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let appearance = NativeSettingsAppearance(
             defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
         let store = NativeSettingsStore(
@@ -775,7 +775,7 @@ final class ClickyTests: XCTestCase {
     func testSettingsOrderPlacesLateRegisteredFeaturesBeforeAbout() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let appearance = NativeSettingsAppearance(
             defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
         let store = NativeSettingsStore(
@@ -793,7 +793,7 @@ final class ClickyTests: XCTestCase {
     func testSharedAppearanceIsDurableIndependentAndMigrationDoesNotOverwrite() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let first = NativeSettingsAppearance(
             defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
         first.migrateIfNeeded(reduceMotion: true, reduceTransparency: false)
@@ -819,7 +819,7 @@ final class ClickyTests: XCTestCase {
     func testThemeChoiceSurvivesIndependentTransparencyOverrides() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let appearance = NativeSettingsAppearance(
             defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
         appearance.theme = .gradient
@@ -843,7 +843,7 @@ final class ClickyTests: XCTestCase {
     func testIndependentAppearanceWritesDoNotOverwriteAnotherInstancesChanges() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let first = NativeSettingsAppearance(
             defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
         let stale = NativeSettingsAppearance(
@@ -863,7 +863,7 @@ final class ClickyTests: XCTestCase {
     func testSharedAppearanceReceivesDistributedChanges() async {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let writer = NativeSettingsAppearance(defaults: defaults, notificationNamespace: suite)
         let reader = NativeSettingsAppearance(defaults: UserDefaults(suiteName: suite)!, notificationNamespace: suite)
         let changed = expectation(description: "Distributed appearance notification")
@@ -880,7 +880,7 @@ final class ClickyTests: XCTestCase {
     func testClickyLegacyAppearanceAndSharedStoreRemainConnected() async throws {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         var legacy = ClickyPreferences()
         legacy.reduceMotion = true
         defaults.set(try JSONEncoder().encode(legacy), forKey: "clicky.preferences.v1")
@@ -905,7 +905,7 @@ final class ClickyTests: XCTestCase {
     func testSettingsTaxonomyRetainsOneClickyModelWithoutEnablingInput() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let model = ClickyModel(defaults: defaults, previewOnly: true)
         let sections = ClickySettingsPages.sections(model: model)
         XCTAssertEqual(sections.map(\.id), ["general", "clicky", "about"])
@@ -924,7 +924,7 @@ final class ClickyTests: XCTestCase {
     func testNotificationPermissionRoutesDeniedToSettingsAndRetainsActivationPreference() async {
         let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         var authorization: UNAuthorizationStatus = .denied
         var requests = 0
         var settingsOpens = 0
@@ -961,7 +961,7 @@ final class ClickyTests: XCTestCase {
     func testStaleNotificationReadCannotOverwriteCompletedPermissionRequest() async {
         let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let started = AsyncStream<Void>.makeStream()
         var pending: CheckedContinuation<UNAuthorizationStatus, Never>?
         var first = true
@@ -992,7 +992,7 @@ final class ClickyTests: XCTestCase {
     func testNotificationSettingsFailureIsActionable() async {
         let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let model = ClickyModel(defaults: defaults, observeSystemEvents: false,
             notificationClient: NativeNotificationClient(status: { .denied }, request: {
                 XCTFail("Denied authorization must not be requested again")
@@ -1038,7 +1038,7 @@ final class ClickyTests: XCTestCase {
     func testPreviewCannotActivateInputAndStartsOff() {
         let suite = "dev.genesis.clicky.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let model = ClickyModel(defaults: defaults, previewOnly: true)
         XCTAssertFalse(model.enabled)
         model.activate()
@@ -1544,6 +1544,7 @@ extension ClickyPackTests {
         return (UserDefaults(suiteName: suite)!, suite)
     }
 
+
     @MainActor
     private func seedLibrary(_ defaults: UserDefaults, root: URL, count: Int = 1) throws -> [ClickyLibraryRecord] {
         let bookmark = try root.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -1560,7 +1561,7 @@ extension ClickyPackTests {
         let fixture = try Fixture()
         defer { fixture.dispose() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let library = ClickySoundLibrary(defaults: defaults, bundled: fixture.root)
         defer { library.stop() }
         XCTAssertEqual(library.records.map(\.id), [ClickySoundLibrary.bundledID])
@@ -1597,7 +1598,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [a, b], prepareStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1635,7 +1636,7 @@ extension ClickyPackTests {
             let loader = GatedIntegrationLoader(packs: [base], prepareStarted: { _ in started.fulfill() })
             addTeardownBlock { await loader.cancelPending() }
             let (defaults, suite) = integrationDefaults()
-            defer { defaults.removePersistentDomain(forName: suite) }
+            defer { disposeIntegrationDefaults(defaults, suite: suite) }
             let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
             let library = ClickySoundLibrary(defaults: defaults, loader: loader)
             defer { library.stop() }
@@ -1664,7 +1665,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [a, b], prepareStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1718,7 +1719,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [a, b], prepareStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1751,7 +1752,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { _ in started.fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1779,7 +1780,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [older, newer], catalogueStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         _ = try seedLibrary(defaults, root: fixture.root)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1807,7 +1808,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         _ = try seedLibrary(defaults, root: firstFixture.root)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1834,7 +1835,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { _ in started.fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         await loader.holdCatalogues()
         let importing = Task { @MainActor in await library.register(fixture.root) }
@@ -1856,7 +1857,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
         await loader.holdCatalogues()
@@ -1885,7 +1886,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { starts[$0 - 1].fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         _ = try seedLibrary(defaults, root: firstFixture.root, count: 31)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -1957,7 +1958,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], prepareStarted: { _ in started.fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -2018,7 +2019,7 @@ extension ClickyTests {
         let monitor = InputMonitorStub()
         monitor.granted = true
         let (model, defaults, suite) = monitorFixture(monitor)
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         model.activate()
         XCTAssertTrue(model.enabled)
         model.shutdown()
@@ -2070,7 +2071,7 @@ extension ClickyTests {
         let (model, defaults, suite) = monitorFixture(monitor, snapshot: true)
         model.shutdown()
         defaults.set(data, forKey: "clicky.preferences.v1")
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let restored = ClickyModel(defaults: defaults, previewOnly: true, inputMonitor: monitor, observeSystemEvents: false)
         defer { restored.shutdown() }
         XCTAssertEqual(restored.preferences, original)
@@ -2098,7 +2099,7 @@ extension ClickyTests {
         let monitor = InputMonitorStub()
         let suite = "dev.genesis.clicky.missing-library.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         var saved = ClickyPreferences()
         saved.selectedSwitch = .honey
         saved.selectedPack = ClickyPackReference(libraryID: "missing-library", packID: "fixture")
@@ -2134,7 +2135,7 @@ extension ClickyPackTests {
         let loader = GatedIntegrationLoader(packs: [pack], prepareStarted: { _ in started.fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -2163,7 +2164,7 @@ extension ClickyPackTests {
                                             prepareStarted: { _ in forbidden.fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -2191,7 +2192,7 @@ extension ClickyPackTests {
                                             prepareStarted: { _ in forbidden.fulfill() })
         addTeardownBlock { await loader.cancelPending() }
         let (defaults, suite) = integrationDefaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
         _ = try seedLibrary(defaults, root: fixture.root)
         let library = ClickySoundLibrary(defaults: defaults, loader: loader)
         defer { library.stop() }
@@ -2384,4 +2385,14 @@ extension ClickyTests {
         XCTAssertEqual(stats.performanceMinutes.count, 1)
         XCTAssertEqual(stats.presses, 12002)
     }
+}
+
+/// `removePersistentDomain` empties a suite but leaves its plist in ~/Library/Preferences, so every run of these
+/// tests used to leave one file per test behind (1,541 by 2026-10-14). Remove the file too.
+@MainActor
+func disposeIntegrationDefaults(_ defaults: UserDefaults, suite: String) {
+    defaults.removePersistentDomain(forName: suite)
+    let plist = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Preferences/\(suite).plist")
+    try? FileManager.default.removeItem(at: plist)
 }
