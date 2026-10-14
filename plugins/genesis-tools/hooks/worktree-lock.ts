@@ -55,6 +55,11 @@ const MAX_ANCESTORS = 12;
 const MAX_COMMAND_CHARS = 20_000;
 const MAX_COMMAND_PATHS = 32;
 const SPAWN_TIMEOUT_MS = 3000;
+/**
+ * `git worktree remove` deletes the whole folder, `node_modules` included (about 100,000 files in this repo), so
+ * the hook's 3 s limit killed it halfway through on 2026-10-14 and left a half-deleted worktree.
+ */
+const REMOVE_TIMEOUT_MS = 300_000;
 /** `ps -o etime` counts whole seconds. */
 const START_SLACK_MS = 2000;
 /** The session id becomes a file name and part of the lock reason. */
@@ -406,15 +411,23 @@ function gitEnv(): Record<string, string | undefined> {
     return env;
 }
 
-function git(commonDir: string, args: string[]): { ok: boolean; stderr: string } {
+function git(commonDir: string, args: string[], timeoutMs = SPAWN_TIMEOUT_MS): { ok: boolean; stderr: string } {
     const result = Bun.spawnSync(["git", `--git-dir=${commonDir}`, ...args], {
         stdout: "ignore",
         stderr: "pipe",
         env: gitEnv(),
-        timeout: SPAWN_TIMEOUT_MS,
+        timeout: timeoutMs,
     });
+    const stderr = result.stderr.toString().trim();
 
-    return { ok: result.exitCode === 0, stderr: result.stderr.toString().trim() };
+    if (result.exitCode === null) {
+        return {
+            ok: false,
+            stderr: `git ${args[0]} was stopped after ${timeoutMs} ms (${result.signalCode ?? "no signal"})`,
+        };
+    }
+
+    return { ok: result.exitCode === 0, stderr };
 }
 
 /**
@@ -835,7 +848,7 @@ export function releaseSessionWorktree(options: { worktree: string; sessionId: s
         return { removed: false, detail: `cannot unlock: ${reason}` };
     }
 
-    const removal = git(worktree.commonDir, ["worktree", "remove", worktree.root]);
+    const removal = git(worktree.commonDir, ["worktree", "remove", worktree.root], REMOVE_TIMEOUT_MS);
 
     if (!removal.ok) {
         if (reason !== null) {
@@ -1006,5 +1019,6 @@ if (import.meta.main) {
         dayLog("error", "worktree lock hook failed", { error: messageOf(error) });
     }
 
-    process.exit(0);
+    // A hook always exits 0; only the `release` verb sets a code (1 when nothing was removed).
+    process.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
 }

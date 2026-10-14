@@ -121,6 +121,23 @@ describe("releaseSessionWorktree", () => {
         expect(existsSync(wt2)).toBe(false);
         expect(existsSync(admin2)).toBe(false);
     });
+
+    it("the release verb exits 1 when it removed nothing, so a script cannot read a refusal as success", () => {
+        const run = Bun.spawnSync(
+            [
+                "bun",
+                join(import.meta.dir, "worktree-lock.ts"),
+                "release",
+                join(base, "not-a-worktree"),
+                "--session",
+                "s-rel",
+            ],
+            { env: process.env, stdout: "pipe", stderr: "pipe" }
+        );
+
+        expect(run.exitCode).toBe(1);
+        expect(run.stdout.toString()).toContain('"removed":false');
+    });
 });
 
 describe("worktree-lock", () => {
