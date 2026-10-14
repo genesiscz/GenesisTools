@@ -69,6 +69,11 @@ if git diff --cached --name-only --diff-filter=d | grep -q '^src/claude-history-
     cd ../..
 fi
 
+# Biome reads only the root's JSON files, so a nested manifest that does not parse passed this hook with "Checked 0
+# files": d9687720a (2026-10-14) wrote the word `ours` into both plugin manifests and the plugin did not load for 12 h.
+echo "▶ staged JSON files parse..."
+bun scripts/ci/check-json.ts --staged
+
 echo "▶ tsgo --noEmit (failing on staged files only)..."
 # tsgo has no per-file mode (types cross files), so the whole project is checked
 # but only errors in STAGED files block the commit. Unstaged breakage — e.g. a
