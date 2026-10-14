@@ -2183,10 +2183,15 @@ private struct PRCommitScrollTarget: ViewModifier {
         ScrollViewReader { proxy in
             content.task(id: prs.commitScroll) {
                 guard let scroll = prs.commitScroll, scroll.prID == prID else { return }
-                // The commits section unfolds in the same update; its rows are laid out a pass later.
-                try? await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled else { return }
-                proxy.scrollTo(scroll.sha, anchor: .center)
+                // The commits section unfolds in the same update, so the first pass waits for its rows. A lazy
+                // stack places rows it has not laid out by an estimate: one pass below a long description
+                // stopped short of the row (snapshot 2026-10-14), so each later pass lands on the rows the
+                // one before laid out, as find's reveal does in steps (Hub/HubPanelFind.swift).
+                for delay in [150, 120, 120] {
+                    try? await Task.sleep(for: .milliseconds(delay))
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(scroll.sha, anchor: .center)
+                }
                 prs.commitScrolled(scroll)
             }
         }
