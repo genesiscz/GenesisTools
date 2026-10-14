@@ -17,7 +17,11 @@ const guardPath = join(import.meta.dir, "orphan-worker-guard.ts");
  */
 function startedAtForTest(pid: number): string | null {
     try {
-        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", env: process.env })
+        // The watchdog's own `ps` environment: the C locale and UTC.
+        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+            encoding: "utf8",
+            env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+        })
             .replace(/\s+/g, " ")
             .trim();
 
@@ -224,13 +228,32 @@ describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
     test("kernel start time equals the shell watchdog's real ps identity", () => {
         const expected = execFileSync("ps", ["-p", String(process.pid), "-o", "lstart="], {
             encoding: "utf8",
-            env: process.env,
+            env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
         })
             .replace(/\s+/g, " ")
             .trim();
 
         expect(expected.length).toBeGreaterThan(0);
         expect(startedAt(process.pid)).toBe(expected);
+    });
+
+    test("the watchdog's own ps line reads the same identity under a Czech locale and a POSIX TZ", () => {
+        const script = buildWatchdogScript({
+            parentPid: process.pid,
+            selfPid: process.pid,
+            selfStart: "unused",
+            parentStart: "unused",
+        });
+        const pnow = script.split("\n").find((line) => line.trimStart().startsWith("pnow="));
+        expect(pnow).toBeDefined();
+
+        const read = execFileSync("/bin/sh", ["-c", `parent=${process.pid}\n${pnow}\nprintf '%s' "$pnow"`], {
+            encoding: "utf8",
+            env: { ...process.env, LC_ALL: "cs_CZ.UTF-8", LANG: "cs_CZ.UTF-8", TZ: "CET-1CEST,M3.5.0,M10.5.0/3" },
+        });
+
+        expect(read.length).toBeGreaterThan(0);
+        expect(startedAt(process.pid)).toBe(read);
     });
 
     test("a busy-loop child survives SIGKILL of its parent (the 2026-09-08 class)", async () => {

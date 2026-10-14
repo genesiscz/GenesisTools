@@ -77,6 +77,12 @@ describe.skipIf(process.platform === "win32")("readProcessBasics", () => {
         expect(formatLstart(readProcessBasics(process.ppid)?.startMs ?? 0)).toBe(fromPs);
     });
 
+    test("a POSIX TZ, which ps accepts and Intl does not, still formats instead of throwing", () => {
+        const text = formatLstart(0, "CET-1CEST,M3.5.0,M10.5.0/3");
+        expect(text).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \d{4}$/);
+        expect(formatLstart(0, "UTC")).toBe("Thu Jan  1 00:00:00 1970");
+    });
+
     test("a pid that does not exist, and nonsense input", () => {
         expect(readProcessBasics(2 ** 22 + 17)).toBeNull();
         expect(readProcessBasics(0)).toBeNull();

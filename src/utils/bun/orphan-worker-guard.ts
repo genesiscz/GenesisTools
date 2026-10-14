@@ -129,9 +129,16 @@ function shQuote(value: string): string {
  */
 export function startedAt(pid: number): string | null {
     const startMs = readProcessBasics(pid)?.startMs;
-    // Match the shell watchdog's whitespace-normalised `ps -o lstart=` identity exactly.
-    return startMs == null ? null : formatLstart(startMs).replace(/\s+/g, " ").trim();
+    // Match the shell watchdog's whitespace-normalised `ps -o lstart=` identity exactly. The watchdog runs that `ps`
+    // in the C locale and UTC (WATCHDOG_PS), so neither a Czech locale nor a POSIX TZ can make the two disagree.
+    return startMs == null ? null : formatLstart(startMs, "UTC").replace(/\s+/g, " ").trim();
 }
+
+/**
+ * The watchdog's `ps`, pinned to English day and month names and to UTC: `ps -o lstart=` follows the locale and `TZ`,
+ * and {@link startedAt} formats the kernel's start time in exactly that form.
+ */
+const WATCHDOG_PS = "LC_ALL=C TZ=UTC ps";
 
 /**
  * The poll interval is interpolated straight into `/bin/sh`, so it is a boundary.
@@ -189,11 +196,11 @@ export function buildWatchdogScript(args: {
         // precise failure this guard exists to prevent. An empty reading means the pid is gone
         // and subsumes `kill -0`; a different reading means it belongs to someone else. Both are
         // parent loss.
-        `  pnow=$(ps -o lstart= -p "$parent" 2>/dev/null | awk '{$1=$1;print}')`,
+        `  pnow=$(${WATCHDOG_PS} -o lstart= -p "$parent" 2>/dev/null | awk '{$1=$1;print}')`,
         '  if [ -z "$pnow" ] || [ "$pnow" != "$parentstart" ]; then',
         // pid-verified: `ps -o lstart=` is re-read here and compared against the value
         // captured at install time, so a recycled pid fails the check and is spared.
-        `    now=$(ps -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
+        `    now=$(${WATCHDOG_PS} -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
         '    if [ -n "$now" ] && [ "$now" = "$selfstart" ]; then',
         '      kill -KILL "$self"',
         "    fi",

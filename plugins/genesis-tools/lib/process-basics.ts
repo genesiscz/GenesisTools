@@ -470,6 +470,29 @@ export function systemTimeZone(): string | undefined {
 const lstartFormats = new Map<string, Intl.DateTimeFormat>();
 
 /**
+ * `Intl` takes only IANA zone names. A POSIX `TZ` such as `CET-1CEST,M3.5.0,M10.5.0/3`, which `ps` accepts, made it
+ * throw a RangeError; such a zone falls back to the runtime's own.
+ */
+function lstartFormat(timeZone: string | undefined): Intl.DateTimeFormat {
+    const options: Intl.DateTimeFormatOptions = {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        year: "numeric",
+        hourCycle: "h23",
+    };
+
+    try {
+        return new Intl.DateTimeFormat("en-US", { ...options, timeZone });
+    } catch {
+        return new Intl.DateTimeFormat("en-US", options);
+    }
+}
+
+/**
  * A start time as `ps -o lstart=` prints it, `Tue Oct  7 01:40:00 2026` (the day padded to two characters), in the
  * zone `ps` uses ({@link systemTimeZone}). Byte-equal to `ps`, so a stored `ps` start string still compares.
  */
@@ -478,17 +501,7 @@ export function formatLstart(ms: number, timeZone = systemTimeZone()): string {
     let format = lstartFormats.get(key);
 
     if (!format) {
-        format = new Intl.DateTimeFormat("en-US", {
-            timeZone,
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            year: "numeric",
-            hourCycle: "h23",
-        });
+        format = lstartFormat(timeZone);
         lstartFormats.set(key, format);
     }
 
