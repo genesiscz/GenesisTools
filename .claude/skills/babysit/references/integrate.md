@@ -26,15 +26,18 @@ bash scripts/ci/placeholder-check.sh
 git push origin HEAD:refs/heads/<pr-branch>        # a rejected push: fetch, rebase onto origin/<pr-branch>, re-gate
 ```
 
-When syspolicyd is stuck (one core at 100%), the first launch of a binary that macOS has not assessed yet hangs: a
-worktree's own `biome`, a pre-push or pre-commit hook that starts one, a fresh Swift test bundle. Then run Biome from
-the main checkout's `node_modules/.bin/biome` on the worktree files, authorize the worker's commit with
-`git -c core.hooksPath=/dev/null commit`, and push with `integrate.ts … --no-push-hooks` (the gates already ran the
-hook's probe, typecheck and repo rules). Swift tests wait: record them as NOT RUN and run them when it recovers, but
+The hooks are the gates (Biome, tsgo, the subject rules, the personal-data probe): workers commit and the lead pushes
+WITH them. The one exception is a stuck syspolicyd (one core at 100%), when the first launch of any new executable
+hangs: a hook copy, a worktree's own `biome`, a fresh Swift test bundle. Prove it first with a brand-new two-line
+`#!/bin/sh` script that does not return (`newExecutablesStall()` in `versions.ts` does exactly that). Only then: run
+Biome from the main checkout's `node_modules/.bin/biome` on the worktree files, authorize the worker's commit with
+`git -c hook.pre-commit.enabled=false -c hook.commit-msg.enabled=false commit`, check its subject with
+`check-commits.ts`, and push with `integrate.ts … --no-push-hooks`. The scripts honour that flag only while the probe
+still stalls, so the switch ends by itself when syspolicyd recovers. Swift tests wait: record them as NOT RUN, but
 `bun .claude/skills/babysit/scripts/swift-typecheck.ts --package <dir>` still proves the Swift code compiles (every
 target through `swiftc` alone, no binary launched; GenesisKit takes about two minutes). Use it also when another
-session holds the one Swift build slot. Hooks set in config ignore `core.hooksPath`: the scripts pass `HOOKS_OFF`
-from `versions.ts`; type it by hand as `-c hook.<event>.enabled=false` for each event you need off.
+session holds the one Swift build slot. Hooks set in config ignore `core.hooksPath`: a by-hand replay (rebase,
+cherry-pick, worktree add, which run no gate hook) uses `-c hook.<event>.enabled=false` per event, as `HOOKS_OFF` does.
 
 Then in the main checkout (unified branch):
 `bun .claude/skills/babysit/scripts/pick-unified.ts --branch <unified> <worker sha> <correction sha>`. It skips a

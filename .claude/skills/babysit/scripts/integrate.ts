@@ -12,7 +12,7 @@ import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { flag, has, loadRun, worktreeFor } from "./run";
-import { HOOKS_OFF } from "./versions";
+import { HOOKS_OFF, newExecutablesStall } from "./versions";
 
 const run = loadRun();
 const pr = flag("--pr") ?? "";
@@ -87,9 +87,15 @@ if (!has("--skip-gates") && oldHead !== newHead) {
 if (oldHead !== newHead && !dry) {
     // Push the SHA that was judged and gated, never HEAD at push time: a worker steered into its next round in the
     // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
-    // --no-push-hooks: for a machine whose pre-push hook hangs at a binary launch (a stuck syspolicyd). The gates above
-    // already ran the hook's probe, typecheck and repo rules; run Biome on the changed files yourself first.
-    const hooks = has("--no-push-hooks") && !has("--skip-gates") ? HOOKS_OFF : [];
+    // --no-push-hooks counts only while new executables really stall (versions.ts): the gates above ran the hook's
+    // probe, typecheck and repo rules, but its Biome check is then the lead's job.
+    const stalled = has("--no-push-hooks") && !has("--skip-gates") && (await newExecutablesStall());
+
+    if (has("--no-push-hooks") && !stalled) {
+        console.log("= --no-push-hooks ignored: new executables start normally, so the push hooks run");
+    }
+
+    const hooks = stalled ? HOOKS_OFF : [];
     must(["git", ...hooks, "push", "origin", `${newHead}:refs/heads/${branch}`], "push");
     console.log(`✔ pushed ${branch} ${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}`);
     appendEvent(run.dir, {
