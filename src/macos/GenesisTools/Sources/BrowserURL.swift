@@ -287,6 +287,16 @@ func quitBrowserLink() -> Never {
 
 func handleBrowserLink(_ raw: String) {
     browserLinkReceived = true
+    // A hub link reaches a router only when Launch Services started a bare instance for it (no GenesisTools ran,
+    // so no relay took it): the hub gets it in a fresh instance with the link as argv (main.swift), as through
+    // the relay, instead of the routes sending it on to the browser.
+    if HubRequest.arguments(fromLink: raw) != nil {
+        BrowserURLForwarder.shared.forward(raw)
+        if !NSApp.windows.contains(where: \.isVisible) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { quitBrowserLink() }
+        }
+        return
+    }
     let previous = NSWorkspace.shared.frontmostApplication
     NSApp.setActivationPolicy(.accessory)
     NSApp.deactivate()

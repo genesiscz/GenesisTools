@@ -97,7 +97,8 @@ enum WorktreeDiscovery {
         all.filter { cwd == $0.path || cwd.hasPrefix($0.path + "/") }
     }
 
-    private static func git(_ cwd: String, _ args: [String]) -> String? {
+    /// `git -C cwd args`'s stdout, nil when it fails. Blocks, so off the main thread.
+    static func git(_ cwd: String, _ args: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", cwd] + args

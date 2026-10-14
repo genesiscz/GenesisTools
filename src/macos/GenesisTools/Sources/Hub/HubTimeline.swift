@@ -698,12 +698,7 @@ extension HubModel {
             notice = "This repository is not on this Mac."
             return
         }
-        setMode(.worktrees)
-        selectedWorktree = repo
-        let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions.remembered())
-        next.embedded = true
-        next.setScope(.commit(sha: sha, title: title))
-        review = next
+        showCommit(repo: repo, sha: sha, title: title)
     }
 
     /// The row's session: the hub's row when it is in the list, else one built from the row (an

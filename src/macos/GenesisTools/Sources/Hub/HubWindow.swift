@@ -11,6 +11,8 @@ import SwiftUI
 //                    [--timeline-open <event id>] [--timeline-action <action id>] (Hub/HubTimeline.swift)
 //                    [--session-search [text]] [--digest] (Hub/HubDaily.swift) [--prompts] [--handoff]
 //                    [--decision <id>|--question <id>] (the Inbox at that card, Hub/HubInbox.swift)
+//                    [--commit <sha> with --pr <ref> (that commit in the PR) or --repo <path|owner/repo>]
+//                    (Hub/HubCommitLink.swift)
 // (`tools hub` builds the app when needed and runs this; a second launch goes to the running hub.)
 // `--snapshot` and `--bench` run off screen on a scratch copy of the hub's settings (HubDefaults).
 //
@@ -30,6 +32,12 @@ struct HubRequest {
     /// With `--pr`: this repo-relative file opens in that PR's review (`--reveal <path>`, the browser
     /// extension's "Open in GenesisTools" on a diff file).
     var reveal: String?
+    /// `--commit <sha>` (7 to 40 hex characters, a prefix of the full sha): with `--pr`, that commit is
+    /// selected in the PR's review; without it, with `--repo`, it opens in the Worktrees mode's diff.
+    var commit: String?
+    /// With `--commit` and no `--pr`: the commit's project, a checkout path or its forge path
+    /// (`owner/repo`, `group/sub/app`), `--repo`.
+    var repo: String?
     var tab: HubTab?
     var mode: HubMode?
     var panes: [HubTab]?
@@ -105,6 +113,8 @@ struct HubRequest {
             case "--agent": agent = value; index += 1
             case "--pr": pr = value.flatMap(HubPRRef.init); index += 1
             case "--reveal": reveal = value; index += 1
+            case "--commit": commit = value; index += 1
+            case "--repo": repo = value; index += 1
             case "--tab": tab = value.flatMap(HubTab.init(rawValue:)); index += 1
             case "--mode": mode = value.flatMap(HubMode.init(rawValue:)); index += 1
             case "--panes":
@@ -168,7 +178,9 @@ struct HubRequest {
 
     /// The flags a link may carry. Never `--snapshot`, `--bench`, `--set` or `--menu`: a link is a place to
     /// show, not a file to write or a command to run.
-    static let linkKeys: Set<String> = ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree", "decision", "question"]
+    static let linkKeys: Set<String> = [
+        "mode", "session", "agent", "pr", "reveal", "commit", "repo", "tab", "filter", "worktree", "decision", "question",
+    ]
 
     /// `genesis-tools://hub?session=<parent>&agent=<child>` (any of `linkKeys`) as `--hub` arguments, the
     /// same ones `tools hub open` passes; nil for any other URL.
@@ -193,7 +205,8 @@ func runHub(_ args: [String]) -> Never {
     let wantedPR = request.pr
     let tab = request.tab ?? .transcript
     // `--pr` alone means the PRs mode, as it does for a request handed to a running hub (`apply`).
-    let mode = request.mode ?? (request.agent != nil ? .agents : request.pr != nil ? .prs : request.inboxItem != nil ? .inbox : .sessions)
+    let mode = request.mode ?? (request.agent != nil ? .agents : request.pr != nil ? .prs
+        : request.commit != nil ? .worktrees : request.inboxItem != nil ? .inbox : .sessions)
     let activate = request.activate
     if !request.isScripted, !HubSingleInstance.claim() {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
@@ -238,7 +251,9 @@ func runHub(_ args: [String]) -> Never {
             model.agents.request(parent: session, child: AgentTree.mainChild)
         }
         if let wantedPR {
-            model.prs.request(wantedPR, reveal: request.prReveal)
+            model.prs.request(wantedPR, reveal: request.prReveal, commit: request.commit)
+        } else if let commit = request.commit {
+            model.openCommitLink(commit, repo: request.repo)
         }
         // The Inbox count in the mode switch; the Inbox mode itself loads when it opens.
         if !request.isScripted && mode != .inbox {
@@ -902,6 +917,10 @@ final class HubModel: ObservableObject {
                     if self.selectedWorktree == nil,
                        let busiest = found.max(by: { self.sessionCount(for: $0) < self.sessionCount(for: $1) }) {
                         self.selectWorktree(busiest)
+                    } else if let wanted = self.selectedWorktree, wanted != WorktreeCleanup.selectionID,
+                              !found.contains(where: { $0.path == wanted }) {
+                        // Selected while this walk ran (a commit link's checkout): it joins the list on its own.
+                        self.addWorktreesIfMissing(wanted)
                     }
                     self.onSettled?()
                     self.onSettled = nil
@@ -933,6 +952,23 @@ final class HubModel: ObservableObject {
             next.worktreeChosen = true
             review = next
         }
+    }
+
+    /// One commit of the checkout `repo` in the Worktrees mode's diff: Activity's commit rows and a
+    /// `--repo` + `--commit` link. The checkout is selected before the mode opens, so a first walk of
+    /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
+    @MainActor
+    func showCommit(repo: String, sha: String, title: String) {
+        selectedWorktree = repo
+        notice = nil
+        if didSettleLaunch || initialMode != .worktrees {
+            setMode(.worktrees)
+        }
+        let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions.remembered())
+        next.embedded = true
+        next.setScope(.commit(sha: sha, title: title))
+        review = next
+        addWorktreesIfMissing(repo)
     }
 
     /// A transcript tool row's "Open diff": the Changes tab, scrolled to that file.
@@ -1485,10 +1521,12 @@ final class HubModel: ObservableObject {
             MainActor.assumeIsolated { addWorktreesIfMissing(worktree) }
         }
         if let ref = request.pr {
-            MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal) }
+            MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal, commit: request.commit) }
             if request.mode == nil {
                 setMode(.prs)
             }
+        } else if let commit = request.commit {
+            MainActor.assumeIsolated { openCommitLink(commit, repo: request.repo) }
         }
     }
 

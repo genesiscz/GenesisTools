@@ -102,6 +102,74 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubRequest(["--reveal", "src/parse.ts"]).prReveal)
     }
 
+    // MARK: Commit links
+
+    func testACommitLinkCarriesThePRAndTheCommitWithAnEncodedHash() throws {
+        let args = try XCTUnwrap(HubRequest.arguments(fromLink: "genesis-tools://hub?pr=acme%2Fapp%237&commit=ABC1234"))
+        XCTAssertEqual(args, ["--pr", "acme/app#7", "--commit", "ABC1234"])
+        let request = HubRequest(args)
+        XCTAssertEqual(request.pr, HubPRRef(project: "acme/app", number: 7))
+        XCTAssertEqual(request.commit.flatMap(HubCommitSha.normalized), "abc1234")
+    }
+
+    func testACommitLinkWithoutAPRNamesItsProject() throws {
+        let args = try XCTUnwrap(HubRequest.arguments(fromLink: "genesis-tools://hub?repo=%2Ftmp%2Fmy%20app&commit=0123456789abcdef"))
+        XCTAssertEqual(args, ["--repo", "/tmp/my app", "--commit", "0123456789abcdef"])
+        XCTAssertNil(HubRequest(args).pr)
+        XCTAssertEqual(HubRequest(["--repo", "acme/app", "--commit", "abc1234"]).repo, "acme/app")
+    }
+
+    func testACommitIsSevenToFortyHexCharactersMatchedAsAPrefix() {
+        XCTAssertEqual(HubCommitSha.normalized(" ABCDEF0 "), "abcdef0")
+        XCTAssertNil(HubCommitSha.normalized("abcdef"), "six characters name no commit reliably")
+        XCTAssertNil(HubCommitSha.normalized("abcdefg"))
+        XCTAssertNil(HubCommitSha.normalized(String(repeating: "a", count: 41)))
+        let commits = [
+            HubPRDetail.Commit(sha: "1111111aaaa", title: "first", author: nil, authorLogin: nil, date: nil, body: nil),
+            HubPRDetail.Commit(sha: "ABCDEF0123", title: "second", author: nil, authorLogin: nil, date: nil, body: nil),
+        ]
+        XCTAssertEqual(HubCommitSha.find("abcdef0", in: commits)?.title, "second")
+        XCTAssertNil(HubCommitSha.find("abcdef9", in: commits))
+    }
+
+    func testAForgePathFindsItsCheckoutInAnyCaseAndForm() {
+        let projects = [
+            HubPRProject(project: "https://github.com/acme/App", repo: "App", root: "/fixture/app", kind: "github"),
+            HubPRProject(project: "https://gitlab.example.test/group/sub/tool", repo: "tool", root: "/fixture/tool", kind: "gitlab"),
+        ]
+        XCTAssertEqual(PRsModel.projectRoot("acme/app", in: projects), "/fixture/app")
+        XCTAssertEqual(PRsModel.projectRoot("https://github.com/acme/app.git", in: projects), "/fixture/app")
+        XCTAssertEqual(PRsModel.projectRoot("group/sub/tool/", in: projects), "/fixture/tool")
+        XCTAssertNil(PRsModel.projectRoot("acme/other", in: projects))
+        XCTAssertNil(PRsModel.projectRoot("", in: projects))
+    }
+
+    func testACommitLinkResolvesItsCheckoutAndSubjectFromGit() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-commit-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.resolvingSymlinksInPath().path
+        // No hooks and no signing from the machine's global git config.
+        let commit = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "core.hooksPath=/dev/null",
+                      "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "the subject line"]
+        for args in [["init", "-q"], commit] {
+            XCTAssertNotNil(WorktreeDiscovery.git(path, args), "git \(args.joined(separator: " "))")
+        }
+        let head = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD"])?.trimmed)
+        // git names the temporary folder by its real path (/private/var, not /var).
+        let root = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "--show-toplevel"])?.trimmed)
+        let short = String(head.prefix(9))
+        let found = HubCommitLookup.Outcome.found(.init(root: root, sha: head, title: "the subject line"))
+
+        XCTAssertEqual(HubCommitLookup.resolve(repo: path + "/", sha: short, known: []), found)
+        let projects = [HubPRProject(project: "https://example.test/acme/app", repo: "app", root: path, kind: "github")]
+        XCTAssertEqual(HubCommitLookup.resolve(repo: "acme/app", sha: short, known: projects), found)
+        guard case .failed(let message) = HubCommitLookup.resolve(repo: path, sha: "0000000", known: []) else {
+            return XCTFail("a commit the checkout lacks must be said")
+        }
+        XCTAssertTrue(message.contains("is not in"), message)
+    }
+
     func testALiveLaunchIsNotScripted() {
         let request = HubRequest(["--session", "abc", "--no-activate"])
         XCTAssertFalse(request.isScripted)

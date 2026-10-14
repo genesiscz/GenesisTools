@@ -277,6 +277,13 @@ final class PRsModel: ObservableObject {
     var wanted: HubPRRef?
     /// A file to open in one PR's review once that review exists (`request(_:reveal:)`).
     private(set) var pendingReveal: PRReveal?
+    /// A commit to select in one PR's review once the review and the PR's commits are in (`request(_:commit:)`).
+    private(set) var pendingCommit: PRCommitPick?
+    /// The commit row the overview scrolls to, set when a link selected it.
+    @Published private(set) var commitScroll: PRCommitScroll?
+    /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
+    /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
+    @Published var notice: PRNotice?
     /// Set by the command palette's "review" and cleared by the PR detail that opens "Review with
     /// agent". A flag, not a counter: the palette can switch modes, so the detail may mount after it.
     @Published var reviewRequested = false
@@ -475,9 +482,18 @@ final class PRsModel: ObservableObject {
 
     /// Selects the PR `ref` names, now when the list has it, else once it loads. `reveal` opens a file
     /// (and a thread on it) in that PR's review once the review exists: after the list, the head fetch
-    /// of a PR without a worktree, and the diff load, so one click is enough.
-    func request(_ ref: HubPRRef, reveal: PRReveal? = nil) {
+    /// of a PR without a worktree, and the diff load, so one click is enough. `commit` (a sha or a prefix
+    /// of 7 or more hex characters) selects that commit of the PR the same way (`pickPendingCommit`).
+    func request(_ ref: HubPRRef, reveal: PRReveal? = nil, commit: String? = nil) {
         pendingReveal = reveal
+        pendingCommit = nil
+        if let commit {
+            if let sha = HubCommitSha.normalized(commit) {
+                pendingCommit = PRCommitPick(ref: ref, sha: sha, asked: Date())
+            } else {
+                notice = PRNotice(ref: ref, text: HubCommitSha.invalid(commit))
+            }
+        }
         HubPerf.log("prs.request \(ref.label) loading=\(loading) rows=\(prs.count)")
         if loading || prs.isEmpty {
             wanted = ref
@@ -497,6 +513,7 @@ final class PRsModel: ObservableObject {
             }
         }
         revealPending()
+        pickPendingCommit()
     }
 
     /// The wanted PR before the list answers: its row on screen (the cache's) is selected now, else its
@@ -531,9 +548,8 @@ final class PRsModel: ObservableObject {
             return root
         }
         // A cloned project whose web path is the ref's, whatever the host: the path form needs no host.
-        let wanted = project.lowercased()
-        if let match = allProjects.first(where: { $0.project.lowercased().hasSuffix("/" + wanted) }) {
-            return match.root
+        if let root = Self.projectRoot(project, in: allProjects) {
+            return root
         }
         let name = (project.split(separator: "/").last.map(String.init) ?? project).lowercased()
         return paths.first { URL(fileURLWithPath: $0).lastPathComponent.lowercased() == name }
@@ -596,6 +612,7 @@ final class PRsModel: ObservableObject {
             if selectedID != row.id {
                 select(row)
             }
+            pickPendingCommit()
         }
     }
 
@@ -606,6 +623,41 @@ final class PRsModel: ObservableObject {
         pendingReveal = nil
         HubPerf.log("prs.reveal \(pending.ref.label) \(pending.path) thread=\(pending.threadID ?? "-")")
         review.reveal(path: pending.path, thread: pending.threadID)
+    }
+
+    /// The pending commit, once the review on screen is its PR's and the PR's commits are in. It stays
+    /// pending until a detail fetched after the request answers for the head the review shows: a review
+    /// rebuilt for a moved head or a new base starts on the whole PR again, and a cached detail can
+    /// predate the commit. Then it is selected for good, or the PR is said not to hold it.
+    private func pickPendingCommit() {
+        guard let pending = pendingCommit, let review, let id = reviewPRID, let shown = prs.first(where: { $0.id == id }),
+              pending.ref.matches(shown), let commits = details[id]?.commits else { return }
+        let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
+        guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
+            if settled {
+                pendingCommit = nil
+                HubPerf.log("prs.commit \(shown.label) \(pending.sha) not among \(commits.count) commits")
+                notice = PRNotice(ref: pending.ref, text: "\(pending.sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
+            }
+            return
+        }
+        if settled {
+            pendingCommit = nil
+        }
+        if case .commit(let sha, _) = review.scope, sha == commit.sha { return }
+        HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10)) settled=\(settled)")
+        review.setScope(.commit(sha: commit.sha, title: commit.title))
+        // What a click on the row does (`PRCommitsSection`): the diff beside it, the commits section open.
+        HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+        HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
+        commitScroll = PRCommitScroll(prID: id, sha: commit.sha)
+    }
+
+    /// The overview scrolled to `scroll`; a later appearance of the PR does not scroll again.
+    func commitScrolled(_ scroll: PRCommitScroll) {
+        if commitScroll == scroll {
+            commitScroll = nil
+        }
     }
 
     /// A merged or closed PR (a "merged" notification's click, a link) is only in the All list: the
@@ -637,16 +689,33 @@ final class PRsModel: ObservableObject {
         load(paths: current)
     }
 
+    /// Every forge project cloned under the repo roots (`tools hub pr projects`); blocks, so off the main thread.
+    nonisolated static func fetchProjects() throws -> [HubPRProject] {
+        struct Answer: Decodable { let projects: [HubPRProject] }
+        return try JSONDecoder().decode(Answer.self, from: ToolsCLIRunner.run(["hub", "pr", "projects"])).projects
+    }
+
+    /// The checkout of the project whose web path is `project` (`owner/repo`, `group/sub/app`, or its page URL),
+    /// whatever the host and the letter case.
+    nonisolated static func projectRoot(_ project: String, in projects: [HubPRProject]) -> String? {
+        var wanted = project.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).lowercased()
+        if wanted.hasSuffix(".git") {
+            wanted.removeLast(4)
+        }
+        guard !wanted.isEmpty else { return nil }
+        return projects.first { candidate in
+            let web = candidate.project.lowercased()
+            return web == wanted || web.hasSuffix("/" + wanted)
+        }?.root
+    }
+
     /// The project list for "More projects" and the stars, once per hub run.
     func loadProjectsIfNeeded() {
         guard !projectsRequested else { return }
         projectsRequested = true
         Task {
             let span = HubPerf.begin("prs.projects", awaits: true)
-            struct Answer: Decodable { let projects: [HubPRProject] }
-            let answer = await Task.detached(priority: .utility) { () -> Result<[HubPRProject], Error> in
-                Result { try JSONDecoder().decode(Answer.self, from: ToolsCLIRunner.run(["hub", "pr", "projects"])).projects }
-            }.value
+            let answer = await Task.detached(priority: .utility) { Result { try Self.fetchProjects() } }.value
             switch answer {
             case .success(let projects):
                 span.end("\(projects.count) projects")
@@ -856,6 +925,7 @@ final class PRsModel: ObservableObject {
         }
         review = next
         revealPending()
+        pickPendingCommit()
     }
 
     /// The review on screen in its own window (`GenesisTools --review`): the same folder, commit range,
@@ -891,6 +961,7 @@ final class PRsModel: ObservableObject {
     /// shown under its id, so the detail and the history agree instead of the last PR staying on screen.
     func showUnavailable(_ id: String) {
         pendingReveal = nil
+        pendingCommit = nil
         selectedID = id
         clearReview()
     }
@@ -957,9 +1028,15 @@ final class PRsModel: ObservableObject {
     /// sessions follow the fresh detail. `opened`: a click, a link or the extension asked for it, so the
     /// detail is asked again even within the 15 s a list refresh re-selecting it waits.
     func select(_ pr: HubPR, opened: Bool = false) {
+        if let notice, !notice.ref.matches(pr) {
+            self.notice = nil
+        }
         // Another PR picked meanwhile: a reveal still waiting for the first one no longer applies.
         if let pending = pendingReveal, !pending.ref.matches(pr) {
             pendingReveal = nil
+        }
+        if let pending = pendingCommit, !pending.ref.matches(pr) {
+            pendingCommit = nil
         }
         selectedID = pr.id
         let key = pr.id
@@ -971,6 +1048,7 @@ final class PRsModel: ObservableObject {
                 }.value
                 if let cached, details[key] == nil {
                     details[key] = cached
+                    pickPendingCommit()
                 }
             }
         }
@@ -1067,6 +1145,13 @@ final class PRsModel: ObservableObject {
                 if let detail = details[key] {
                     sessions.load(pr, detail: detail)
                 }
+                if let pending = pendingCommit, pending.ref.matches(pr) {
+                    // Said, not left waiting: a cached list may already have selected it, nothing else will.
+                    pendingCommit = nil
+                    if details[key]?.commits.flatMap({ HubCommitSha.find(pending.sha, in: $0) }) == nil {
+                        notice = PRNotice(ref: pending.ref, text: "Could not load the commits of \(pr.label) to select \(pending.sha)")
+                    }
+                }
                 return
             }
             let current = prs.first { $0.id == key } ?? pr
@@ -1100,6 +1185,7 @@ final class PRsModel: ObservableObject {
                 review?.setScope(Self.scope(current, detail: detail, fetch: fetchedHead(current)))
             }
             sessions.load(prs.first { $0.id == key } ?? current, detail: detail)
+            pickPendingCommit()
         }
     }
 
@@ -1115,12 +1201,15 @@ final class PRsModel: ObservableObject {
     @discardableResult
     func showCommit(_ commit: HubPRDetail.Commit) -> Bool {
         guard let review, !commit.sha.isEmpty else { return false }
+        // The reader picked one: a link's commit still waiting must not take the diff back.
+        pendingCommit = nil
         review.setScope(.commit(sha: commit.sha, title: commit.title))
         return true
     }
 
     /// Back from one commit to the whole PR.
     func showWholePR() {
+        pendingCommit = nil
         guard let pr = selected else { return }
         review?.setScope(Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
     }
@@ -1785,6 +1874,11 @@ struct PRDetailView: View {
             }
             .font(.system(size: 11.5))
             .foregroundColor(ReviewPalette.dim)
+            // A row of its own: in the title row beside the title it had no width and wrapped a word per line.
+            if let notice = prs.notice, notice.ref.matches(pr) {
+                NoticePill(text: notice.text, isError: true) { prs.notice = nil }
+                    .padding(.top, 6)
+            }
         }
     }
 
@@ -1946,6 +2040,7 @@ struct PRDetailView: View {
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .modifier(PRCommitScrollTarget(prs: prs, prID: pr.id))
     }
 
     // MARK: Find (⌘F in the overview)
@@ -2078,6 +2173,25 @@ struct PRSection<Content: View>: View {
 }
 
 // MARK: - Commits
+
+/// Scrolls the PR overview to the commit a link selected (`PRsModel.commitScroll`), once per link.
+private struct PRCommitScrollTarget: ViewModifier {
+    @ObservedObject var prs: PRsModel
+    let prID: String
+
+    func body(content: Content) -> some View {
+        ScrollViewReader { proxy in
+            content.task(id: prs.commitScroll) {
+                guard let scroll = prs.commitScroll, scroll.prID == prID else { return }
+                // The commits section unfolds in the same update; its rows are laid out a pass later.
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                proxy.scrollTo(scroll.sha, anchor: .center)
+                prs.commitScrolled(scroll)
+            }
+        }
+    }
+}
 
 /// The PR's commits, newest first. A click shows that commit in the diff beside it; "Whole PR"
 /// goes back to the PR's range.
