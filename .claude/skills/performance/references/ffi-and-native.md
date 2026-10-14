@@ -139,8 +139,14 @@ facts it measured:
   (`PROC_PIDLISTTHREADS` then `PROC_PIDTHREADINFO`), 931 of 931 equal, about 6 ms of CPU for all of this user's
   processes. CPU time over the process's life is a different number (a cmux at 1.8% read 6.2%); Linux `ps` does print
   the lifetime figure.
-- **Other users on macOS:** `comm=` makes `ps -A` read every process's arguments (57 ms against 27). `ps -p` with 321
-  pids costs about 90 ms, more than `-A`. The layer names another user's process by its path instead (294 of 320 equal).
+- **Other users on macOS:** only root reads another user's argv (`sysctl_procargsx` returns EINVAL), so only the setuid
+  `ps` prints their `comm=`. `comm=` makes `ps -A` read every process's arguments (48 ms against 24), but `ps` drops
+  unselected users before it reads any: `ps -u <other users> -o pid=,rss=,time=,comm=` costs 16.5 ms for their 322
+  processes, less than `-A` without names (85e6b257d). Select by `-u` (effective user, as the kernel table's `uid`);
+  `-U` (real user) misses setuid processes such as `login`. A uid with no login name fails the whole call: fall back
+  to `-A`. Never `ps -p a,b`: any list of 2 to 60 pids cost about 75 ms, one pid 1 ms. Without root, the executable
+  path matches `ps comm` for 92% of other users' processes; no path rule recovers a custom argv[0] (Core Audio
+  driver hosts) or tells `login` from `/usr/bin/login`.
 - **Linux:** `ps -o comm=` is the 15-byte kernel name. Use the executable's file name only when the name is at that
   limit: `python3` started through a `python3.13` symlink is `python3` to `ps`. `/proc/<pid>/exe` appends
   ` (deleted)` after an upgrade; `ps` never shows it. `os.userInfo().username` is `$USER` in Bun (`unknown` without it).
