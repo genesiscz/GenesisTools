@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { withPositionalBody } from "../commands/message";
 import { appendFeed, appendMessage, FeedLogCursor, readFeed } from "../lib/feed";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { sendRequest } from "../lib/request";
@@ -152,5 +153,14 @@ describe("agents request", () => {
                 })
             ).rejects.toThrow("timed out");
         });
+    });
+});
+
+describe("agents message body", () => {
+    test("positional words are the body, and a second source is refused", () => {
+        expect(withPositionalBody(["hello", "there"], { to: "worker" }).body).toBe("hello there");
+        expect(withPositionalBody([], { body: "kept" }).body).toBe("kept");
+        expect(() => withPositionalBody(["twice"], { body: "already" })).toThrow("given twice");
+        expect(() => withPositionalBody(["twice"], { bodyFile: "/tmp/x" })).toThrow("given twice");
     });
 });

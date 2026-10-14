@@ -15,7 +15,7 @@ import type { AgentRecord, MessageEvent } from "../lib/types";
 
 const log = logger.child({ component: "agents:message" });
 
-interface MessageOpts {
+export interface MessageOpts {
     from?: string;
     to?: string;
     body?: string;
@@ -24,6 +24,22 @@ interface MessageOpts {
     meta?: string;
     private?: boolean;
     session?: string;
+}
+
+/**
+ * The body may also come as positional words (`tools agents message --to x "text"`), the way agents and request
+ * files keep writing it; before, those words were rejected and only the help printed. Exactly one source counts.
+ */
+export function withPositionalBody(words: string[], opts: MessageOpts): MessageOpts {
+    if (words.length === 0) {
+        return opts;
+    }
+
+    if (opts.body !== undefined || opts.bodyFile !== undefined) {
+        throw new FriendlyError("the message text was given twice", "Pass it once: as words, --body or --body-file.");
+    }
+
+    return { ...opts, body: words.join(" ") };
 }
 
 function resolveBody(opts: MessageOpts): string | undefined {
@@ -180,6 +196,7 @@ export function registerMessageCommand(program: Command): void {
             "Send a bus message to agents logged into this bus session (direct, broadcast, reply, or pure ack). " +
                 "To reach a running Claude, Codex or Grok session that is not on the bus, use `tools <agent> message <session>`"
         )
+        .argument("[body...]", "Message body, the same as --body")
         .option("--from <token>", "Sender agent — name or id")
         .option("--to <csv>", "Recipient agents — comma-separated names or ids; empty = broadcast")
         .option("--body <text>", "Message body (omit + --reply for pure ack)")
@@ -191,7 +208,7 @@ export function registerMessageCommand(program: Command): void {
         .option("--meta <json>", "Optional JSON object")
         .option("--private", "Mark as private (v1: stored, not enforced)")
         .option("--session <id>", "Override session resolution")
-        .action(async (opts: MessageOpts) => {
-            await runMessage(opts);
+        .action(async (words: string[], opts: MessageOpts) => {
+            await runWithFriendlyErrors(async () => runMessageImpl(withPositionalBody(words, opts)));
         });
 }
