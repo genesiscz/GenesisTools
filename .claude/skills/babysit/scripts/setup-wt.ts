@@ -6,6 +6,9 @@
  * already-assessed copies (link-native.ts); nested app node_modules linked to the main checkout's.
  *
  *   bun setup-wt.ts --run <dir> --pr 499 [--branch <head branch>]
+ *
+ * An existing worktree (a PR force-pushed after a restack) moves to the new head when it holds no tracked change, then
+ * gets the same install steps; a dirty one stops the script.
  */
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -49,7 +52,18 @@ if (!pr || !branch) {
 
 step(["git", "fetch", "-q", "origin", branch], run.main, "fetch");
 // The repo's hooks would lock or index the throwaway worktree; it gets none.
-step(["git", ...HOOKS_OFF, "worktree", "add", "-q", "--detach", wt, `origin/${branch}`], run.main, "worktree add");
+if (existsSync(wt)) {
+    const dirty = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=no"], { cwd: wt, stdout: "pipe" });
+
+    if (dirty.exitCode !== 0 || dirty.stdout.toString().trim() !== "") {
+        console.error(`✖ ${wt} has tracked changes (or is no worktree): commit or move them, then run again`);
+        process.exit(1);
+    }
+
+    step(["git", ...HOOKS_OFF, "checkout", "-q", "--detach", `origin/${branch}`], wt, "checkout the new head");
+} else {
+    step(["git", ...HOOKS_OFF, "worktree", "add", "-q", "--detach", wt, `origin/${branch}`], run.main, "worktree add");
+}
 step(["bun", "install", "--ignore-scripts"], wt, "bun install");
 console.log(`hooks: ${ensureConfigHooks(run.main)}`);
 
