@@ -55,8 +55,17 @@ export interface SessionRow {
      * `compactMetadata.postTokens` from the compact_boundary record instead.
      */
     contextTokens: number;
-    /** True when a compact_boundary follows the last real model turn (contextTokens = postTokens). */
+    /**
+     * True when a compact_boundary follows the last real model turn (contextTokens = postTokens), and when the
+     * transcript ended by continuing in another session (`continuedIn`): its cache is then nothing to keep warm.
+     */
     compacted: boolean;
+    /**
+     * The session this transcript continues in. Claude Code writes a final `continued-in` line when `/compact` moves
+     * the conversation to a new session id; the old id then keeps a cache clock nobody uses (2026-10-14: a banner
+     * counted 4578e02a down to "1 min left" half an hour after `/compact` had moved it to f2899264).
+     */
+    continuedIn: string | null;
     /** Timestamp of the last real typed user message (not tool results, not compact summaries). */
     lastUserAt: number | null;
     /**
@@ -91,6 +100,8 @@ interface TailUsage {
     lastUserAt: number | null;
     /** `compactMetadata.postTokens` when compaction happened after the last real turn. */
     compactedPostTokens: number | null;
+    /** `continuedInSessionId` of a `continued-in` line after the last real turn. */
+    continuedIn: string | null;
 }
 
 export interface ListSessionRowsOptions {
@@ -143,6 +154,7 @@ function emptyTailUsage(): TailUsage {
         lastCacheAt: null,
         lastUserAt: null,
         compactedPostTokens: null,
+        continuedIn: null,
     };
 }
 
@@ -222,6 +234,16 @@ function parseTailLines(lines: string[], filePath: string): TailUsage {
                 usage.lastUserAt = userAtFromLine(obj);
             }
 
+            if (
+                !foundUsage &&
+                usage.continuedIn === null &&
+                obj.type === "continued-in" &&
+                typeof obj.continuedInSessionId === "string"
+            ) {
+                usage.continuedIn = obj.continuedInSessionId;
+                continue;
+            }
+
             // A compaction after the last real turn states the exact post-compact
             // context in compactMetadata.postTokens — no assistant usage carries it yet.
             if (!foundUsage && usage.compactedPostTokens === null && obj.type === "system") {
@@ -287,7 +309,9 @@ function isTailUsage(usage: unknown): usage is TailUsage {
         (usage.prevModel === null || typeof usage.prevModel === "string") &&
         isNullableNumber(usage.lastCacheAt) &&
         isNullableNumber(usage.lastUserAt) &&
-        isNullableNumber(usage.compactedPostTokens)
+        isNullableNumber(usage.compactedPostTokens) &&
+        // Required, not defaulted: a tail cached before this field existed may end in `continued-in`.
+        (usage.continuedIn === null || typeof usage.continuedIn === "string")
     );
 }
 
@@ -399,7 +423,8 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
         cacheReadTokens: usage.cacheReadTokens,
         cacheCreateTokens: usage.cacheCreateTokens,
         contextTokens: usage.compactedPostTokens ?? usage.inputTokens + usage.cacheReadTokens + usage.cacheCreateTokens,
-        compacted: usage.compactedPostTokens !== null,
+        compacted: usage.compactedPostTokens !== null || usage.continuedIn !== null,
+        continuedIn: usage.continuedIn,
         lastUserAt: usage.lastUserAt,
         account: joins.accounts.get(sessionId.toLowerCase()) ?? null,
         cmux: joins.cmux.get(sessionId.toLowerCase()) ?? null,

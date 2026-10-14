@@ -286,6 +286,7 @@ describe("listSessionRows", () => {
                 "cmux",
                 "compacted",
                 "contextTokens",
+                "continuedIn",
                 "cwd",
                 "cwdShort",
                 "filePath",
@@ -510,6 +511,19 @@ describe("listSessionRows", () => {
         expect(rows[0]?.compacted).toBe(true);
         expect(rows[0]?.contextTokens).toBe(27268);
         expect(rows[0]?.model).toBe("opus"); // pre-compact turn still names the model
+    });
+
+    test("a transcript that continued in another session is compacted and names its continuation", async () => {
+        const path = "/tmp/continued.jsonl";
+        const moved =
+            '{"type":"continued-in","timestamp":"2026-10-14T00:01:00.637Z","sessionId":"old","continuedInSessionId":"f2899264-7b99-443e-b4ab-37adbe7ad942"}';
+
+        listing.sessions = [record({ filePath: path, sessionId: "old", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE, '{"type":"cost-state","totalCostUSD":1}', moved]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.continuedIn).toBe("f2899264-7b99-443e-b4ab-37adbe7ad942");
+        expect(rows[0]?.compacted).toBe(true);
     });
 
     test("a compact_boundary older than the last turn changes nothing", async () => {
