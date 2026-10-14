@@ -279,3 +279,14 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   the 440x760 parent at 0.737). Painting it into the sheet's frame draws a second, smaller parent. When the parent is
   also recorded, its own stream already shows the sheet; when the sheet is recorded alone, cut it out of the parent at
   the sheet's frame (dd532721a).
+
+## A window's content sizes the whole tree on every update — 2026-10-14 16:35
+
+- `window.contentView = NSHostingView(rootView:)` keeps the default `sizingOptions`, so every SwiftUI update makes
+  AppKit ask the hosting view for its min, max and intrinsic size, and SwiftUI lays out every subview to answer. In the
+  markdown viewer that was 59% of the main thread's layout for one changed string, and 600 to 1200 ms stalls on a click
+  with 24 tabs. Set `sizingOptions = []` and the window's `minSize` (performance.md, third markdown pass).
+- **`String.count` walks every character.** A path loop that compares `folder.count > root.count` at each level of
+  each entry is quadratic in path length and slower still on accented names (grapheme breaking). Compare
+  `utf8.count`, cut at a `/` found in the UTF-8 view, and compute fixed lengths once (2026-10-14, git tree marks:
+  117 → 31 ms per call).
