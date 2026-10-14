@@ -19,8 +19,8 @@ export async function createDevDashboardTerminal(opts: { cwd?: string } = {}): P
 
     await withFocusedWorkspace(workspaceId, async () => {
         await sendNewSessionCommand({
-            workspaceRef: workspaceId,
-            surfaceRef: opened.surfaceId,
+            workspaceId,
+            surfaceId: opened.surfaceId,
             tmuxSessionName,
             cwd,
         });

@@ -19,12 +19,15 @@ const log = logger.child({ component: "claude:cmux-open" });
  * - workspace → new pane (split) in that workspace
  * - pane      → new surface (tab) in that pane
  * - surface   → type the command into that surface as-is
+ *
+ * Every id is the cmux UUID: cmux renumbers `window:N`, `workspace:N`, `pane:N` and `surface:N`
+ * at each relaunch. A ref a human typed on the command line still works, since cmux takes both.
  */
 export type OpenSessionTarget =
-    | { kind: "window"; windowRef: string }
-    | { kind: "workspace"; workspaceRef: string }
-    | { kind: "pane"; workspaceRef: string; paneRef: string }
-    | { kind: "surface"; workspaceRef: string; surfaceRef: string };
+    | { kind: "window"; windowId: string }
+    | { kind: "workspace"; workspaceId: string }
+    | { kind: "pane"; workspaceId: string; paneId: string }
+    | { kind: "surface"; workspaceId: string; surfaceId: string };
 
 export interface OpenCommandOptions {
     /** One shell line, typed into the terminal. */
@@ -39,37 +42,41 @@ export interface OpenCommandOptions {
     enter?: boolean;
 }
 
+/** Workspace and surface UUIDs of the terminal a command was opened in. */
+export interface OpenedPlace {
+    workspaceId: string;
+    surfaceId: string;
+}
+
 /**
  * Opens a terminal at `target` (a new workspace, split or tab, or an existing surface), names its
  * tab, types `command` and raises the window. Resuming a session and `tools cmux launch --open`
  * both go through here.
  */
-export async function openCommandAt(
-    options: OpenCommandOptions
-): Promise<{ workspaceRef: string; surfaceRef: string }> {
+export async function openCommandAt(options: OpenCommandOptions): Promise<OpenedPlace> {
     const prof = profiler.scope("claude-cmux-open");
     const { target } = options;
-    const placed = await prof.measureAsync("place", async (): Promise<{ workspaceRef: string; surfaceRef: string }> => {
+    const placed = await prof.measureAsync("place", async (): Promise<OpenedPlace> => {
         switch (target.kind) {
             case "window": {
                 const created = await createWorkspaceWithName({
                     name: options.workspaceName,
                     cwd: options.cwd,
-                    window: target.windowRef,
+                    window: target.windowId,
                 });
-                const anchor = await showThenPickAnchor(created.workspace_ref);
-                return { workspaceRef: created.workspace_ref, surfaceRef: anchor.surfaceRef };
+                const anchor = await showThenPickAnchor(created.workspace_id);
+                return { workspaceId: created.workspace_id, surfaceId: anchor.surfaceId };
             }
             case "workspace": {
-                const split = await openSplitInWorkspace(target.workspaceRef);
-                return { workspaceRef: target.workspaceRef, surfaceRef: split.surfaceId };
+                const split = await openSplitInWorkspace(target.workspaceId);
+                return { workspaceId: split.workspaceId, surfaceId: split.surfaceId };
             }
             case "pane": {
-                const created = await openSurfaceInPane(target.workspaceRef, target.paneRef);
-                return { workspaceRef: target.workspaceRef, surfaceRef: created.surfaceId };
+                const created = await openSurfaceInPane(target.workspaceId, target.paneId);
+                return { workspaceId: target.workspaceId, surfaceId: created.surfaceId };
             }
             case "surface":
-                return { workspaceRef: target.workspaceRef, surfaceRef: target.surfaceRef };
+                return { workspaceId: target.workspaceId, surfaceId: target.surfaceId };
         }
     });
 
@@ -79,8 +86,8 @@ export async function openCommandAt(
         // Best-effort: a terminal that opened fine must not fail because its tab kept the default
         // name. Swallowing it silently, though, is how "tab renaming stopped working" becomes
         // unexplainable (PR #332 review t8).
-        await renameSurfaceTab(placed.workspaceRef, placed.surfaceRef, options.title).catch((err: unknown) => {
-            log.debug({ err, surface: placed.surfaceRef }, "could not rename the surface tab");
+        await renameSurfaceTab(placed.workspaceId, placed.surfaceId, options.title).catch((err: unknown) => {
+            log.debug({ err, surface: placed.surfaceId }, "could not rename the surface tab");
         });
     }
 
@@ -88,10 +95,10 @@ export async function openCommandAt(
     await prof.measureAsync("raise-then-send", () =>
         raiseThenSend(
             {
-                workspaceRef: placed.workspaceRef,
-                surfaceRef: placed.surfaceRef,
+                workspaceId: placed.workspaceId,
+                surfaceId: placed.surfaceId,
                 payload,
-                windowRef: target.kind === "window" ? target.windowRef : undefined,
+                windowId: target.kind === "window" ? target.windowId : undefined,
             },
             livePlacementIO()
         )
@@ -100,7 +107,11 @@ export async function openCommandAt(
     return placed;
 }
 
+/** `identify`'s `focused` block. The `*_id` UUIDs are what a launch targets; the refs are for display. */
 interface FocusedPlace {
+    window_id?: string;
+    workspace_id?: string;
+    pane_id?: string;
     window_ref?: string;
     workspace_ref?: string;
     pane_ref?: string;
@@ -115,31 +126,31 @@ export function launchTarget(
     focused: FocusedPlace
 ): OpenSessionTarget {
     if (surface === "workspace") {
-        if (!focused.window_ref) {
+        if (!focused.window_id) {
             throw new Error("cmux reported no focused window to open a workspace in");
         }
 
-        return { kind: "window", windowRef: focused.window_ref };
+        return { kind: "window", windowId: focused.window_id };
     }
 
-    if (!focused.workspace_ref) {
+    if (!focused.workspace_id) {
         throw new Error("cmux reported no focused workspace; is cmux running?");
     }
 
     if (surface === "split") {
-        return { kind: "workspace", workspaceRef: focused.workspace_ref };
+        return { kind: "workspace", workspaceId: focused.workspace_id };
     }
 
-    if (!focused.pane_ref) {
+    if (!focused.pane_id) {
         throw new Error("cmux reported no focused pane to open a tab in");
     }
 
-    return { kind: "pane", workspaceRef: focused.workspace_ref, paneRef: focused.pane_ref };
+    return { kind: "pane", workspaceId: focused.workspace_id, paneId: focused.pane_id };
 }
 
-/** The focused window, workspace and pane, from `cmux identify`. */
+/** The focused window, workspace and pane, from `cmux identify`, which reports UUIDs only when asked. */
 export async function focusedPlace(): Promise<FocusedPlace> {
-    const identify = await runCmuxJSON<{ focused?: FocusedPlace }>(["identify"]);
+    const identify = await runCmuxJSON<{ focused?: FocusedPlace }>(["--id-format", "both", "identify"]);
     return identify.focused ?? {};
 }
 
@@ -154,25 +165,26 @@ export async function focusedPlace(): Promise<FocusedPlace> {
  * raiseThenSend selects the same workspace again a moment later, which is a
  * no-op, so the extra select costs one call and no flicker.
  */
-async function showThenPickAnchor(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
-    await runCmuxOk(["select-workspace", "--workspace", workspaceRef]);
+async function showThenPickAnchor(workspaceId: string): Promise<{ paneId: string; surfaceId: string }> {
+    await runCmuxOk(["select-workspace", "--workspace", workspaceId]);
     await new Promise((resolve) => setTimeout(resolve, PLACEMENT_SETTLE_MS));
-    return pickAnchorSurface(workspaceRef);
+    return pickAnchorSurface(workspaceId);
 }
 
 interface IdentifyResponse {
     bundle_identifier?: string;
-    caller?: { window_ref?: string };
+    caller?: { window_id?: string };
 }
 
 /** cmux needs this pause after select-workspace before the new PTY accepts keys. */
 export const PLACEMENT_SETTLE_MS = 400;
 
+/** Every id passed through here is a cmux UUID. */
 export interface PlacementIO {
-    selectWorkspace: (workspaceRef: string) => Promise<void>;
-    send: (workspaceRef: string, surfaceRef: string, payload: string) => Promise<void>;
-    focusWindow: (windowRef: string) => Promise<void>;
-    identifyWindow?: (workspaceRef: string) => Promise<string | undefined>;
+    selectWorkspace: (workspaceId: string) => Promise<void>;
+    send: (workspaceId: string, surfaceId: string, payload: string) => Promise<void>;
+    focusWindow: (windowId: string) => Promise<void>;
+    identifyWindow?: (workspaceId: string) => Promise<string | undefined>;
     activateApp?: () => Promise<void>;
     sleep: (ms: number) => Promise<void>;
 }
@@ -185,14 +197,14 @@ export interface PlacementIO {
  * (`in_window=false` until the first select — Cmux.md sending-input).
  */
 export async function raiseThenSend(
-    args: { workspaceRef: string; surfaceRef: string; payload: string; windowRef?: string },
+    args: { workspaceId: string; surfaceId: string; payload: string; windowId?: string },
     io: PlacementIO
 ): Promise<void> {
-    await io.selectWorkspace(args.workspaceRef);
+    await io.selectWorkspace(args.workspaceId);
     await io.sleep(PLACEMENT_SETTLE_MS);
-    await io.send(args.workspaceRef, args.surfaceRef, args.payload);
+    await io.send(args.workspaceId, args.surfaceId, args.payload);
 
-    const window = args.windowRef ?? (await io.identifyWindow?.(args.workspaceRef));
+    const window = args.windowId ?? (await io.identifyWindow?.(args.workspaceId));
     if (window) {
         await io.focusWindow(window);
     }
@@ -207,25 +219,31 @@ export async function raiseThenSend(
  */
 export function livePlacementIO(): PlacementIO {
     return {
-        selectWorkspace: async (workspaceRef) => {
-            await runCmuxOk(["select-workspace", "--workspace", workspaceRef]);
+        selectWorkspace: async (workspaceId) => {
+            await runCmuxOk(["select-workspace", "--workspace", workspaceId]);
         },
-        send: async (workspaceRef, surfaceRef, payload) => {
-            await runCmuxOk(["send", ...surfaceTargetArgs(surfaceRef, workspaceRef), payload]);
+        send: async (workspaceId, surfaceId, payload) => {
+            await runCmuxOk(["send", ...surfaceTargetArgs(surfaceId, workspaceId), payload]);
         },
-        focusWindow: async (windowRef) => {
+        focusWindow: async (windowId) => {
             try {
-                await runCmuxOk(["focus-window", "--window", windowRef]);
+                await runCmuxOk(["focus-window", "--window", windowId]);
             } catch (err) {
-                log.debug({ err, windowRef }, "could not focus window after open");
+                log.debug({ err, windowId }, "could not focus window after open");
             }
         },
-        identifyWindow: async (workspaceRef) => {
+        identifyWindow: async (workspaceId) => {
             try {
-                const identify = await runCmuxJSON<IdentifyResponse>(["identify", "--workspace", workspaceRef]);
-                return identify.caller?.window_ref;
+                const identify = await runCmuxJSON<IdentifyResponse>([
+                    "--id-format",
+                    "both",
+                    "identify",
+                    "--workspace",
+                    workspaceId,
+                ]);
+                return identify.caller?.window_id;
             } catch (err) {
-                log.debug({ err, workspaceRef }, "could not resolve window after open");
+                log.debug({ err, workspaceId }, "could not resolve window after open");
                 return undefined;
             }
         },

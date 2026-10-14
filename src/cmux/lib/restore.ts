@@ -8,8 +8,8 @@ import { resolveWindowRef } from "@app/cmux/lib/window-ref";
 import * as p from "@clack/prompts";
 import { runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
-import { paneList, windowList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
-import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
+import { paneList, type SurfaceSplitResult, windowList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
+import { sameCmuxId, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -42,24 +42,28 @@ export interface RestorePlan {
 
 export interface RestoreOutcome {
     workspaces: Array<{
+        /** Workspace UUID; what a later cmux command names it by. */
+        id: string;
+        /** `workspace:N`, for display. */
         ref: string;
         title: string;
         converged: boolean;
         /** Null when the source autosave had estimated rather than measured cell sizes. */
         maxCellDelta: number | null;
-        failures: Array<{ paneRef: string; message: string }>;
+        /** `pane` labels the pane for a human: its UUID, or `saved pane N` when it was never created. */
+        failures: Array<{ pane: string; message: string }>;
     }>;
 }
 
 export function restoreFailureMessages(outcome: RestoreOutcome): string[] {
     return outcome.workspaces.flatMap((workspace) =>
-        workspace.failures.map((failure) => `${workspace.title} / ${failure.paneRef}: ${failure.message}`)
+        workspace.failures.map((failure) => `${workspace.title} / ${failure.pane}: ${failure.message}`)
     );
 }
 
 export interface RestoreEvents {
     onWorkspaceStart?: (info: { title: string; index: number; total: number }) => void;
-    onWorkspaceDone?: (info: { ref: string; title: string }) => void;
+    onWorkspaceDone?: (info: { id: string; ref: string; title: string }) => void;
 }
 
 export function buildPlan(profile: Profile, opts: RestoreOptions): RestorePlan {
@@ -78,6 +82,13 @@ export function buildPlan(profile: Profile, opts: RestoreOptions): RestorePlan {
     return { workspaces };
 }
 
+/** The UUID of the window `--window` names (a ref, an index or a UUID); `workspace.create` takes the UUID. */
+async function windowIdFor(input: string): Promise<string> {
+    const windows = await windowList();
+    const ref = resolveWindowRef(input, windows);
+    return windows.find((window) => window.ref === ref)?.id ?? ref;
+}
+
 /**
  * Restore an ALREADY prepared profile (see `prepareProfileForRestore`).
  *
@@ -94,7 +105,7 @@ export async function restoreProfile(
 ): Promise<RestoreOutcome> {
     const outcome: RestoreOutcome = { workspaces: [] };
     const previousWorkspaceByWindow = new Map<string, string>();
-    const targetWindow = opts.window ? resolveWindowRef(opts.window, await windowList()) : undefined;
+    const targetWindow = opts.window ? await windowIdFor(opts.window) : undefined;
     const totalWorkspaces = playable.windows.reduce((acc, w) => acc + w.workspaces.length, 0);
     let visited = 0;
 
@@ -109,48 +120,50 @@ export async function restoreProfile(
                 window: targetWindow,
                 cwd: ws.current_directory,
             });
-            const previousWorkspace = previousWorkspaceByWindow.get(created.window_ref);
+            const workspaceId = created.workspace_id;
+            const previousWorkspace = previousWorkspaceByWindow.get(created.window_id);
             if (previousWorkspace) {
                 await runCmuxOk([
                     "reorder-workspace",
                     "--workspace",
-                    created.workspace_ref,
+                    workspaceId,
                     "--after",
                     previousWorkspace,
                     "--window",
-                    created.window_ref,
+                    created.window_id,
                 ]).catch((error) => {
                     logger.warn(
-                        { error, workspaceRef: created.workspace_ref },
+                        { error, workspaceId, workspaceRef: created.workspace_ref },
                         "[restore] workspace reorder failed; continuing restore"
                     );
                 });
             }
 
-            previousWorkspaceByWindow.set(created.window_ref, created.workspace_ref);
+            previousWorkspaceByWindow.set(created.window_id, workspaceId);
 
             // workspace.create's name param is best-effort; cmux often overrides it with an
             // auto-generated user@host:cwd title. Force the desired title explicitly.
             try {
-                await runCmuxOk(["rename-workspace", "--workspace", created.workspace_ref, targetTitle]);
+                await runCmuxOk(["rename-workspace", "--workspace", workspaceId, targetTitle]);
             } catch (error) {
                 logger.warn(
-                    { error, workspaceRef: created.workspace_ref, targetTitle },
+                    { error, workspaceId, workspaceRef: created.workspace_ref, targetTitle },
                     "[restore] rename-workspace failed; continuing with auto-generated title"
                 );
             }
-            const result = await withFocusedWorkspace(created.workspace_ref, async () => {
-                return await materializeWorkspace(ws, created.workspace_ref, opts);
+            const result = await withFocusedWorkspace(workspaceId, async () => {
+                return await materializeWorkspace(ws, workspaceId, opts);
             });
 
             outcome.workspaces.push({
+                id: workspaceId,
                 ref: created.workspace_ref,
                 title: targetTitle,
                 converged: !playable.cmux_version.startsWith("offline ") && result.converged,
                 maxCellDelta: playable.cmux_version.startsWith("offline ") ? null : result.maxCellDelta,
                 failures: result.failures,
             });
-            events.onWorkspaceDone?.({ ref: created.workspace_ref, title: targetTitle });
+            events.onWorkspaceDone?.({ id: workspaceId, ref: created.workspace_ref, title: targetTitle });
         }
     }
     return outcome;
@@ -158,45 +171,46 @@ export async function restoreProfile(
 
 interface MaterializeResult {
     converged: boolean;
-    failures: Array<{ paneRef: string; message: string }>;
+    failures: Array<{ pane: string; message: string }>;
     /** Largest |saved - actual| over all panes / dimensions, in terminal cells. */
     maxCellDelta: number;
 }
 
+/** Rebuild `ws` in the workspace with UUID `workspaceId`; every pane and surface is named by UUID. */
 export async function materializeWorkspace(
     ws: Workspace,
-    workspaceRef: string,
+    workspaceId: string,
     opts: RestoreOptions
 ): Promise<MaterializeResult> {
     if (ws.panes.length === 0) {
         return { converged: true, maxCellDelta: 0, failures: [] };
     }
 
-    const paneRefByIndex = await applySplitTree(buildSplitTree(ws.panes), workspaceRef);
+    const paneIdByIndex = await applySplitTree(buildSplitTree(ws.panes), workspaceId);
 
     // applySplitTree resizes the new border immediately after each split, so by the
     // time the topology is fully built every saved fraction is already in place.
     // Verify and report any panes that ended up off (most likely cmux clamped a
     // resize at a minimum-pane-size limit).
     const maxDelta = await measureCellDelta(
-        workspaceRef,
+        workspaceId,
         ws.panes.map((pane) => ({ paneIndex: pane.index, columns: pane.columns, rows: pane.rows })),
-        paneRefByIndex
+        paneIdByIndex
     );
 
     const failures: MaterializeResult["failures"] = [];
     for (const savedPane of ws.panes) {
-        const paneRef = paneRefByIndex.get(savedPane.index);
-        if (!paneRef) {
-            failures.push({ paneRef: `saved pane ${savedPane.index}`, message: "No restored pane mapping" });
+        const paneId = paneIdByIndex.get(savedPane.index);
+        if (!paneId) {
+            failures.push({ pane: `saved pane ${savedPane.index}`, message: "No restored pane mapping" });
             continue;
         }
         try {
-            await populatePane(savedPane, paneRef, workspaceRef, opts);
+            await populatePane(savedPane, paneId, workspaceId, opts);
         } catch (error) {
-            failures.push({ paneRef, message: error instanceof Error ? error.message : String(error) });
+            failures.push({ pane: paneId, message: error instanceof Error ? error.message : String(error) });
             logger.warn(
-                { error, paneRef, workspaceRef },
+                { error, paneId, workspaceId },
                 "[restore] pane population failed; continuing with remaining panes"
             );
         }
@@ -274,86 +288,88 @@ function divideRects(rects: RectPane[]): SplitTree {
     );
 }
 
-async function populatePane(
-    savedPane: Pane,
-    paneRef: string,
-    workspaceRef: string,
-    opts: RestoreOptions
-): Promise<void> {
+/** Fill the pane with UUID `paneId` with the saved tabs. Every cmux call names its target by UUID. */
+async function populatePane(savedPane: Pane, paneId: string, workspaceId: string, opts: RestoreOptions): Promise<void> {
     const expectedCount = savedPane.surfaces.length;
     if (expectedCount === 0) {
         return;
     }
 
-    const currentLayout = await paneList(workspaceRef);
-    const current = currentLayout.panes.find((p) => p.ref === paneRef);
+    const currentLayout = await paneList(workspaceId);
+    const current = currentLayout.panes.find((p) => sameCmuxId(p.id, paneId));
     if (!current) {
-        throw new Error(`Pane ${paneRef} disappeared mid-restore`);
+        throw new Error(`Pane ${paneId} disappeared mid-restore`);
     }
-    const surfaceRefs = [...current.surface_refs];
+    const surfaceIds = [...current.surface_ids];
     const firstSurface = savedPane.surfaces[0];
     if (firstSurface.type === "browser") {
-        if (surfaceRefs.length !== 1) {
-            throw new Error(`Expected one fresh restore anchor in ${paneRef}; refusing to replace existing tabs`);
+        if (surfaceIds.length !== 1) {
+            throw new Error(`Expected one fresh restore anchor in ${current.ref}; refusing to replace existing tabs`);
         }
 
-        const args = ["new-surface", "--workspace", workspaceRef, "--pane", paneRef, "--type", "browser"];
+        const args = ["new-surface", "--workspace", workspaceId, "--pane", paneId, "--type", "browser"];
         if (firstSurface.url) {
             args.push("--url", firstSurface.url);
         }
 
-        const browser = await runCmuxJSON<{ surface_ref: string; pane_ref: string }>(args);
-        if (browser.pane_ref !== paneRef) {
-            throw new Error(`Browser restore landed in ${browser.pane_ref}, expected ${paneRef}`);
+        const browser = await runCmuxJSON<CreatedSurface>(args);
+        if (!sameCmuxId(browser.pane_id, paneId)) {
+            throw new Error(`Browser restore landed in ${browser.pane_ref}, expected ${current.ref}`);
         }
 
-        await runCmuxOk(["close-surface", "--surface", surfaceRefs[0]]);
-        surfaceRefs[0] = browser.surface_ref;
+        await runCmuxOk(["close-surface", "--surface", surfaceIds[0]]);
+        surfaceIds[0] = browser.surface_id;
     }
 
-    while (surfaceRefs.length < expectedCount) {
-        const nextSavedSurface = savedPane.surfaces[surfaceRefs.length];
+    while (surfaceIds.length < expectedCount) {
+        const nextSavedSurface = savedPane.surfaces[surfaceIds.length];
         // Use CLI `cmux new-surface` instead of raw RPC `surface.create` — the V1 RPC
         // ignores its explicit `pane`/`workspace` params and creates the surface in the
         // currently focused pane (same routing-bug class as `surface.split`). The CLI
         // routes through V2 and honors the params, so additional tabs land in the
         // correct pane instead of all stacking into the anchor.
-        const args = ["new-surface", "--workspace", workspaceRef, "--pane", paneRef, "--type", nextSavedSurface.type];
+        const args = ["new-surface", "--workspace", workspaceId, "--pane", paneId, "--type", nextSavedSurface.type];
         if (nextSavedSurface.type === "browser" && nextSavedSurface.url) {
             args.push("--url", nextSavedSurface.url);
         }
-        const created = await runCmuxJSON<{ surface_ref: string; pane_ref: string }>(args);
-        if (created.pane_ref !== paneRef) {
+        const created = await runCmuxJSON<CreatedSurface>(args);
+        if (!sameCmuxId(created.pane_id, paneId)) {
             logger.warn(
-                { requested: paneRef, got: created.pane_ref, surfaceRef: created.surface_ref },
+                {
+                    requested: paneId,
+                    requestedRef: current.ref,
+                    got: created.pane_id,
+                    gotRef: created.pane_ref,
+                    surfaceId: created.surface_id,
+                },
                 "[restore] new-surface landed in unexpected pane"
             );
         }
-        surfaceRefs.push(created.surface_ref);
+        surfaceIds.push(created.surface_id);
     }
 
     // cmux inserts each new tab immediately after the anchor, which reverses the tail
     // order for multi-tab panes. Put every surface back at its saved index, then land
     // the pane's selection on the saved active tab.
-    const reorder = async (surfaceRef: string, index: number, focus: boolean): Promise<void> => {
+    const reorder = async (surfaceId: string, index: number, focus: boolean): Promise<void> => {
         await runCmuxOk([
             "reorder-surface",
             "--workspace",
-            workspaceRef,
+            workspaceId,
             "--surface",
-            surfaceRef,
+            surfaceId,
             "--index",
             String(index),
             "--focus",
             String(focus),
         ]).catch((error) => {
-            logger.debug({ error, surfaceRef, index, focus }, "[restore] reorder-surface failed");
+            logger.debug({ error, surfaceId, index, focus }, "[restore] reorder-surface failed");
         });
     };
 
     if (expectedCount > 1) {
-        for (let i = 0; i < surfaceRefs.length; i += 1) {
-            await reorder(surfaceRefs[i], i, false);
+        for (let i = 0; i < surfaceIds.length; i += 1) {
+            await reorder(surfaceIds[i], i, false);
         }
     }
 
@@ -365,29 +381,29 @@ async function populatePane(
     try {
         for (let i = 0; i < expectedCount; i += 1) {
             const savedSurface = savedPane.surfaces[i];
-            const surfaceRef = surfaceRefs[i];
+            const surfaceId = surfaceIds[i];
             if (savedSurface.title) {
                 await runCmuxOk([
                     "rename-tab",
                     "--workspace",
-                    workspaceRef,
+                    workspaceId,
                     "--surface",
-                    surfaceRef,
+                    surfaceId,
                     savedSurface.title,
                 ]).catch((error) => {
-                    logger.debug({ error, surfaceRef }, "[restore] rename-tab failed");
+                    logger.debug({ error, surfaceId }, "[restore] rename-tab failed");
                 });
             }
             if (savedSurface.type === "terminal") {
-                const skipped = await replayTerminal(savedSurface, workspaceRef, surfaceRef, opts);
+                const skipped = await replayTerminal(savedSurface, workspaceId, surfaceId, opts);
                 if (skipped) {
                     notReplayed.push(skipped);
                 }
             }
         }
     } finally {
-        if (selectedIndex >= 0 && selectedIndex < surfaceRefs.length) {
-            await reorder(surfaceRefs[selectedIndex], selectedIndex, true);
+        if (selectedIndex >= 0 && selectedIndex < surfaceIds.length) {
+            await reorder(surfaceIds[selectedIndex], selectedIndex, true);
         }
     }
 
@@ -398,6 +414,9 @@ async function populatePane(
         throw new Error(notReplayed.join("; "));
     }
 }
+
+/** What `new-surface` answers; the UUIDs are what later calls use, the refs only label. */
+type CreatedSurface = Pick<SurfaceSplitResult, "surface_id" | "surface_ref" | "pane_id" | "pane_ref">;
 
 function shellQuote(path: string): string {
     return `'${path.replace(/'/g, "'\\''")}'`;
@@ -433,40 +452,48 @@ export function detectInteractivePrompt(screenText: string): string | undefined 
     return undefined;
 }
 
+/** A terminal stopped at a prompt. The refs are display labels for the person who answers it. */
 export interface WaitingPane {
     workspaceRef: string;
     surfaceRef: string;
     prompt: string;
 }
 
-/** Scan the restored workspaces for panes stopped at an interactive prompt. Read-only. */
-export async function scanForInteractivePrompts(workspaceRefs: string[]): Promise<PromptScanResult> {
+/**
+ * Scan the restored workspaces for panes stopped at an interactive prompt. Read-only. Each
+ * workspace is listed by what the caller passed (a UUID); every later call uses the UUIDs cmux
+ * echoed, and the refs it echoed only label the report.
+ */
+export async function scanForInteractivePrompts(workspaces: string[]): Promise<PromptScanResult> {
     const waiting: WaitingPane[] = [];
     const failures: string[] = [];
 
-    for (const workspaceRef of workspaceRefs) {
-        const layout = await paneList(workspaceRef).catch((error) => {
-            logger.debug({ error, workspaceRef }, "[restore] prompt scan pane listing failed");
-            failures.push(workspaceRef);
+    for (const requested of workspaces) {
+        const layout = await paneList(requested).catch((error) => {
+            logger.debug({ error, workspace: requested }, "[restore] prompt scan pane listing failed");
+            failures.push(requested);
             return undefined;
         });
         if (!layout) {
             continue;
         }
 
+        const workspaceId = layout.workspace_id ?? requested;
+        const workspaceLabel = layout.workspace_ref ?? requested;
+
         for (const pane of layout.panes) {
-            const listing = await runCmuxJSON<{ surfaces: Array<{ ref: string; type: string }> }>([
+            const listing = await runCmuxJSON<{ surfaces: Array<{ id: string; ref: string; type: string }> }>([
                 "list-pane-surfaces",
                 "--workspace",
-                workspaceRef,
+                workspaceId,
                 "--pane",
-                pane.ref,
+                pane.id,
             ]).catch((error) => {
                 logger.debug(
-                    { error, workspaceRef, paneRef: pane.ref },
+                    { error, workspaceId, paneId: pane.id, paneRef: pane.ref },
                     "[restore] prompt scan surface listing failed"
                 );
-                failures.push(`${workspaceRef} ${pane.ref}`);
+                failures.push(`${workspaceLabel} ${pane.ref}`);
                 return undefined;
             });
             if (!listing) {
@@ -478,16 +505,18 @@ export async function scanForInteractivePrompts(workspaceRefs: string[]): Promis
                     continue;
                 }
 
-                const surfaceRef = surface.ref;
                 const result = await runCmuxOk([
                     "read-screen",
                     "--workspace",
-                    workspaceRef,
+                    workspaceId,
                     "--surface",
-                    surfaceRef,
+                    surface.id,
                 ]).catch((error) => {
-                    logger.debug({ error, workspaceRef, surfaceRef }, "[restore] prompt scan screen read failed");
-                    failures.push(`${workspaceRef} ${surfaceRef}`);
+                    logger.debug(
+                        { error, workspaceId, surfaceId: surface.id, surfaceRef: surface.ref },
+                        "[restore] prompt scan screen read failed"
+                    );
+                    failures.push(`${workspaceLabel} ${surface.ref}`);
                     return undefined;
                 });
                 if (!result) {
@@ -496,7 +525,7 @@ export async function scanForInteractivePrompts(workspaceRefs: string[]): Promis
 
                 const prompt = detectInteractivePrompt(result.stdout);
                 if (prompt) {
-                    waiting.push({ workspaceRef, surfaceRef, prompt });
+                    waiting.push({ workspaceRef: workspaceLabel, surfaceRef: surface.ref, prompt });
                 }
             }
         }
@@ -518,13 +547,13 @@ export interface PromptScanResult {
  * `actor` only names the caller in the advice line — the scan is identical, and
  * having two copies of it meant a fix to one never reached the other.
  */
-export async function reportWaitingPrompts(workspaceRefs: string[], actor: "Rescue" | "Restore"): Promise<void> {
+export async function reportWaitingPrompts(workspaces: string[], actor: "Rescue" | "Restore"): Promise<void> {
     // The replayed commands need a moment to draw whatever they are going to ask.
     await new Promise((resolve) => setTimeout(resolve, 4000));
 
     let result: PromptScanResult;
     try {
-        result = await scanForInteractivePrompts(workspaceRefs);
+        result = await scanForInteractivePrompts(workspaces);
     } catch (error) {
         // Reporting "nothing is waiting" here would be a lie: the scan never ran.
         logger.debug({ error, actor }, "[cmux] waiting-prompt scan failed");
@@ -575,20 +604,23 @@ export function internalRestoreCommand(parts: string[], always: string[] = []): 
 /** Resolves to a reason string when the surface was restored but its saved command was NOT replayed. */
 export async function replayTerminal(
     surface: Surface & { type: "terminal" },
-    workspaceRef: string,
-    surfaceRef: string,
+    workspaceId: string,
+    surfaceId: string,
     opts: RestoreOptions
 ): Promise<string | undefined> {
     await waitForTerminalText({
-        workspaceRef,
-        surfaceRef,
+        workspaceRef: workspaceId,
+        surfaceRef: surfaceId,
         matches: isShellPromptReady,
         description: "shell prompt",
         activateOnUnavailable: true,
     });
     if (!opts.replay) {
         if (surface.cwd) {
-            await sendSurfaceText({ surfaceRef, text: internalRestoreCommand([`cd -- ${shellQuote(surface.cwd)}`]) });
+            await sendSurfaceText({
+                surfaceRef: surfaceId,
+                text: internalRestoreCommand([`cd -- ${shellQuote(surface.cwd)}`]),
+            });
         }
         return;
     }
@@ -608,7 +640,7 @@ export async function replayTerminal(
     let screenDir: string | undefined;
     if (surface.screen?.text) {
         screenDir = await mkdtemp(join(tmpdir(), "cmux-restore-screen-"));
-        const screenFile = join(screenDir, `${surfaceRef.replace(/[^A-Za-z0-9]/g, "-")}.txt`);
+        const screenFile = join(screenDir, `${surfaceId.replace(/[^A-Za-z0-9]/g, "-")}.txt`);
         await Bun.write(screenFile, surface.screen.text);
         screenParts.push("printf '\\033[2J\\033[H'");
         screenParts.push(`cat -- ${shellQuote(screenFile)}`);
@@ -619,24 +651,24 @@ export async function replayTerminal(
             const marker = `cmux-ready-${crypto.randomUUID()}`;
             // Split the marker across printf arguments so input echo cannot acknowledge setup.
             const ready = `printf '\\n%s%s\\n' 'cmux-ready-' '${marker.slice("cmux-ready-".length)}'`;
-            await sendSurfaceText({ surfaceRef, text: internalRestoreCommand(parts, [ready]) });
+            await sendSurfaceText({ surfaceRef: surfaceId, text: internalRestoreCommand(parts, [ready]) });
             await waitForTerminalText({
-                workspaceRef,
-                surfaceRef,
+                workspaceRef: workspaceId,
+                surfaceRef: surfaceId,
                 matches: (text) => text.split("\n").some((line) => line.trim() === marker) && isShellPromptReady(text),
                 description: "working-directory and screen setup",
             });
         }
 
-        await runCmuxOk(["send-key", ...surfaceTargetArgs(surfaceRef, workspaceRef), "ctrl-l"]);
+        await runCmuxOk(["send-key", ...surfaceTargetArgs(surfaceId, workspaceId), "ctrl-l"]);
 
         if (screenParts.length > 0) {
-            await sendSurfaceText({ surfaceRef, text: internalRestoreCommand(screenParts) });
+            await sendSurfaceText({ surfaceRef: surfaceId, text: internalRestoreCommand(screenParts) });
         }
 
         if (surface.command && surface.command_source && surface.command_source !== "none") {
-            if (!(await queueReplayCommand({ surfaceRef, command: surface.command, enter: opts.enter }))) {
-                return `${surfaceRef}: saved command not replayed (multiline/control input needs --enter)`;
+            if (!(await queueReplayCommand({ surfaceRef: surfaceId, command: surface.command, enter: opts.enter }))) {
+                return `${surfaceId}: saved command not replayed (multiline/control input needs --enter)`;
             }
         }
     } catch (error) {

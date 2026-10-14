@@ -17,11 +17,11 @@ export function resolveTarget(opts: OpenSessionOptions): OpenSessionTarget | str
     const picked = [opts.window, opts.workspace, opts.pane, opts.surface].filter((v) => v !== undefined).length;
 
     if (opts.pane !== undefined && opts.workspace !== undefined && picked === 2) {
-        return { kind: "pane", workspaceRef: opts.workspace, paneRef: opts.pane };
+        return { kind: "pane", workspaceId: opts.workspace, paneId: opts.pane };
     }
 
     if (opts.surface !== undefined && opts.workspace !== undefined && picked === 2) {
-        return { kind: "surface", workspaceRef: opts.workspace, surfaceRef: opts.surface };
+        return { kind: "surface", workspaceId: opts.workspace, surfaceId: opts.surface };
     }
 
     if (picked !== 1) {
@@ -29,11 +29,11 @@ export function resolveTarget(opts: OpenSessionOptions): OpenSessionTarget | str
     }
 
     if (opts.window !== undefined) {
-        return { kind: "window", windowRef: opts.window };
+        return { kind: "window", windowId: opts.window };
     }
 
     if (opts.workspace !== undefined) {
-        return { kind: "workspace", workspaceRef: opts.workspace };
+        return { kind: "workspace", workspaceId: opts.workspace };
     }
 
     return "--pane and --surface need the owning --workspace";
@@ -57,7 +57,7 @@ export async function openSessionCommand(sessionId: string, opts: OpenSessionOpt
         }
 
         out.println(
-            `${pc.green("✔")} ${result.sessionId.slice(0, 8)} → ${result.workspaceRef} ${result.surfaceRef} ` +
+            `${pc.green("✔")} ${result.sessionId.slice(0, 8)} → ${result.workspaceId} ${result.surfaceId} ` +
                 pc.dim(`(${result.target})`)
         );
         out.println(pc.dim(result.command));

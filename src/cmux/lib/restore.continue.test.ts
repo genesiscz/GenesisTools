@@ -7,24 +7,34 @@ import * as split from "@genesiscz/utils/cmux/split-tree";
 
 afterEach(() => mock.restore());
 
+const WORKSPACE = "11111111-1111-4111-8111-111111111111";
+const PANE_1 = "22222222-2222-4222-8222-222222222201";
+const PANE_2 = "22222222-2222-4222-8222-222222222202";
+const SURFACE_1 = "33333333-3333-4333-8333-333333333301";
+const SURFACE_2 = "33333333-3333-4333-8333-333333333302";
+
 test("an invalid browser anchor marks non-convergence and attempts later panes", async () => {
     spyOn(split, "applySplitTree").mockResolvedValue(
         new Map([
-            [0, "pane:1"],
-            [1, "pane:2"],
+            [0, PANE_1],
+            [1, PANE_2],
         ])
     );
     spyOn(split, "measureCellDelta").mockResolvedValue(0);
     const inspect = spyOn(socket, "paneList").mockResolvedValue({
+        workspace_id: WORKSPACE,
         workspace_ref: "workspace:1",
         window_ref: "window:1",
         container_frame: { width: 800, height: 600 },
         panes: [
             {
+                id: PANE_1,
                 ref: "pane:1",
                 index: 0,
                 surface_count: 2,
+                surface_ids: [SURFACE_1, SURFACE_2],
                 surface_refs: ["surface:1", "surface:2"],
+                selected_surface_id: SURFACE_1,
                 selected_surface_ref: "surface:1",
                 focused: false,
                 pixel_frame: { x: 0, y: 0, width: 400, height: 600 },
@@ -45,7 +55,7 @@ test("an invalid browser anchor marks non-convergence and attempts later panes",
             surfaces: [{ type: "browser", title: "fixture", url: "https://example.com" }],
         })),
     };
-    const result = await materializeWorkspace(ws, "workspace:1", {
+    const result = await materializeWorkspace(ws, WORKSPACE, {
         prefix: "",
         replay: false,
         enter: false,
@@ -55,7 +65,7 @@ test("an invalid browser anchor marks non-convergence and attempts later panes",
     expect(result.converged).toBe(false);
     expect(result.failures).toHaveLength(2);
     expect(result.failures[0]).toMatchObject({
-        paneRef: "pane:1",
+        pane: PANE_1,
         message: expect.stringContaining("fresh restore anchor"),
     });
     expect(inspect).toHaveBeenCalledTimes(2);
@@ -81,18 +91,22 @@ function singleTerminalPane(surfaces: Pane["surfaces"]): Workspace {
 }
 
 function mockLiveSurface(): void {
-    spyOn(split, "applySplitTree").mockResolvedValue(new Map([[0, "pane:1"]]));
+    spyOn(split, "applySplitTree").mockResolvedValue(new Map([[0, PANE_1]]));
     spyOn(split, "measureCellDelta").mockResolvedValue(0);
     spyOn(socket, "paneList").mockResolvedValue({
+        workspace_id: WORKSPACE,
         workspace_ref: "workspace:1",
         window_ref: "window:1",
         container_frame: { width: 800, height: 600 },
         panes: [
             {
+                id: PANE_1,
                 ref: "pane:1",
                 index: 0,
                 surface_count: 1,
+                surface_ids: [SURFACE_1],
                 surface_refs: ["surface:1"],
+                selected_surface_id: SURFACE_1,
                 selected_surface_ref: "surface:1",
                 focused: true,
                 pixel_frame: { x: 0, y: 0, width: 800, height: 600 },
@@ -112,13 +126,13 @@ test("a refused pretype is reported as a restore failure, not a silent warning",
         singleTerminalPane([
             { type: "terminal", title: "logs", command: "echo one\necho two", command_source: "shell-journal" },
         ]),
-        "workspace:1",
+        WORKSPACE,
         { prefix: "", replay: true, enter: false, yes: true, dryRun: false }
     );
     expect(result.converged).toBe(false);
     expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]?.paneRef).toBe("pane:1");
-    expect(result.failures[0]?.message).toMatch(/surface:1.*--enter/);
+    expect(result.failures[0]?.pane).toBe(PANE_1);
+    expect(result.failures[0]?.message).toMatch(new RegExp(`${SURFACE_1}.*--enter`));
 });
 
 test("an ordinary single-line replay still converges", async () => {
@@ -128,10 +142,10 @@ test("an ordinary single-line replay still converges", async () => {
         singleTerminalPane([
             { type: "terminal", title: "logs", command: "tail -f app.log", command_source: "shell-journal" },
         ]),
-        "workspace:1",
+        WORKSPACE,
         { prefix: "", replay: true, enter: false, yes: true, dryRun: false }
     );
     expect(result.failures).toEqual([]);
     expect(result.converged).toBe(true);
-    expect(send).toHaveBeenCalledWith({ surfaceRef: "surface:1", text: "tail -f app.log" });
+    expect(send).toHaveBeenCalledWith({ surfaceRef: SURFACE_1, text: "tail -f app.log" });
 });

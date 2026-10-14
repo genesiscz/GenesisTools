@@ -2,17 +2,20 @@ import { findWorkspaceByName } from "@genesiscz/utils/cmux/layout";
 import { type CmuxRunResult, runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
+    assertLayoutIsFor,
     type PaneListResponse,
     paneList,
     type SurfaceSplitResult,
     type WorkspaceCreateResult,
     workspaceCreate,
 } from "@genesiscz/utils/cmux/lib/socket";
+import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { localeExportPrefix } from "@genesiscz/utils/terminal/locale";
 
+/** UUIDs of the new pane and surface, and of the workspace that holds them. */
 export interface OpenSplitResult {
     paneId: string;
     surfaceId: string;
@@ -63,7 +66,7 @@ export async function createWorkspaceWithName(opts: {
     const created = await workspaceCreate(opts);
 
     if (opts.name) {
-        await ensureWorkspaceTitle({ workspace: created.workspace_ref, window: opts.window, title: opts.name });
+        await ensureWorkspaceTitle({ workspace: created.workspace_id, window: opts.window, title: opts.name });
     }
 
     return created;
@@ -71,7 +74,7 @@ export async function createWorkspaceWithName(opts: {
 
 export type WorkspaceTitleOutcome = "already-set" | "renamed" | "failed";
 
-function listedTitle(listing: unknown, workspaceRef: string): string | undefined {
+function listedTitle(listing: unknown, workspaceId: string): string | undefined {
     if (typeof listing !== "object" || listing === null || !("workspaces" in listing)) {
         return undefined;
     }
@@ -83,7 +86,12 @@ function listedTitle(listing: unknown, workspaceRef: string): string | undefined
     }
 
     for (const workspace of workspaces) {
-        if (typeof workspace === "object" && workspace !== null && workspace.ref === workspaceRef) {
+        if (
+            typeof workspace === "object" &&
+            workspace !== null &&
+            typeof workspace.id === "string" &&
+            sameCmuxId(workspace.id, workspaceId)
+        ) {
             return typeof workspace.title === "string" ? workspace.title : undefined;
         }
     }
@@ -92,7 +100,7 @@ function listedTitle(listing: unknown, workspaceRef: string): string | undefined
 }
 
 /**
- * Make sure a workspace carries `title`, without noise.
+ * Make sure a workspace carries `title`, without noise. `input.workspace` is the workspace UUID.
  *
  * `workspace create --name` already sets the title, so the usual answer is "already-set" and no rename
  * runs. The legacy `rename-workspace --workspace <ref>` right after a create failed with "Workspace ref
@@ -139,142 +147,133 @@ export async function ensureWorkspaceByName(name: string, cwd?: string): Promise
     }
 
     const created = await createWorkspaceWithName({ name, cwd });
-    return created.workspace_ref;
+    return created.workspace_id;
 }
 
 /**
- * cmux answers `pane.list` for a workspace it cannot resolve with the ACTIVE
- * workspace's panes instead of an error. Verified 2026-08-31:
- * `list-panes --workspace workspace:999` returned workspace:3's layout, echoing
- * `"workspace_ref": "workspace:3"`. A workspace that was just created and never
- * shown takes the same path, so trusting that answer types the launch command
- * into whichever terminal the user happens to be sitting in. Compare the echoed
- * ref before believing the panes.
+ * The pane and surface UUIDs a command typed into `workspace` should land in: the focused pane's
+ * selected surface.
+ *
+ * cmux answers `pane.list` for a workspace it cannot resolve with the ACTIVE workspace's panes, so
+ * the echoed workspace is compared first (`assertLayoutIsFor`). A workspace that was just created
+ * and never shown takes that path, and trusting the answer typed the launch command into whichever
+ * terminal the user happened to be sitting in (2026-08-31).
  */
-export function anchorFromLayout(
-    workspaceRef: string,
-    layout: PaneListResponse
-): { paneRef: string; surfaceRef: string } {
-    // Only short refs are comparable; a UUID or index request echoes back as a ref.
-    if (workspaceRef.startsWith("workspace:") && layout.workspace_ref && layout.workspace_ref !== workspaceRef) {
-        throw new Error(
-            `cmux answered pane.list for ${layout.workspace_ref} when asked about ${workspaceRef} — ` +
-                `select the workspace before asking for its panes`
-        );
-    }
+export function anchorFromLayout(workspace: string, layout: PaneListResponse): { paneId: string; surfaceId: string } {
+    assertLayoutIsFor(workspace, layout);
 
     const panes = layout.panes;
 
     if (panes.length === 0) {
-        throw new Error(`Workspace ${workspaceRef} has no panes`);
+        throw new Error(`Workspace ${workspace} has no panes`);
     }
 
     const focused = panes.find((pane) => pane.focused) ?? panes[0];
-    const surfaceRef = focused.selected_surface_ref ?? focused.surface_refs?.[0];
+    const surfaceId = focused.selected_surface_id ?? focused.surface_ids?.[0];
 
-    if (!surfaceRef) {
+    if (!surfaceId) {
         throw new Error(`Pane ${focused.ref} has no surfaces`);
     }
 
-    return { paneRef: focused.ref, surfaceRef };
+    return { paneId: focused.id, surfaceId };
 }
 
-export async function pickAnchorSurface(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
-    return anchorFromLayout(workspaceRef, await paneList(workspaceRef));
+export async function pickAnchorSurface(workspaceId: string): Promise<{ paneId: string; surfaceId: string }> {
+    return anchorFromLayout(workspaceId, await paneList(workspaceId));
 }
 
-export async function openSplitInWorkspace(workspaceRef: string): Promise<OpenSplitResult> {
-    return withFocusedWorkspace(workspaceRef, async () => {
-        const { surfaceRef } = await pickAnchorSurface(workspaceRef);
+export async function openSplitInWorkspace(workspaceId: string): Promise<OpenSplitResult> {
+    return withFocusedWorkspace(workspaceId, async () => {
+        const { surfaceId } = await pickAnchorSurface(workspaceId);
         const split = await runCmuxJSON<SurfaceSplitResult>([
             "new-split",
             "right",
             "--workspace",
-            workspaceRef,
+            workspaceId,
             "--surface",
-            surfaceRef,
+            surfaceId,
         ]);
 
         return {
-            workspaceId: workspaceRef,
-            paneId: split.pane_ref,
-            surfaceId: split.surface_ref,
+            workspaceId: split.workspace_id,
+            paneId: split.pane_id,
+            surfaceId: split.surface_id,
         };
     });
 }
 
-export async function openSurfaceInPane(workspaceRef: string, paneRef: string): Promise<{ surfaceId: string }> {
-    return withFocusedWorkspace(workspaceRef, async () => {
-        const created = await runCmuxJSON<{ surface_ref: string }>([
+export async function openSurfaceInPane(workspaceId: string, paneId: string): Promise<{ surfaceId: string }> {
+    return withFocusedWorkspace(workspaceId, async () => {
+        const created = await runCmuxJSON<Pick<SurfaceSplitResult, "surface_id">>([
             "new-surface",
             "--workspace",
-            workspaceRef,
+            workspaceId,
             "--pane",
-            paneRef,
+            paneId,
             "--type",
             "terminal",
         ]);
 
-        return { surfaceId: created.surface_ref };
+        return { surfaceId: created.surface_id };
     });
 }
 
-async function sendShellCommand(workspaceRef: string, surfaceRef: string, command: string): Promise<void> {
+async function sendShellCommand(workspaceId: string, surfaceId: string, command: string): Promise<void> {
     const payload = `${localeExportPrefix()}${command}\n`;
-    await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
+    await runCmuxOk(["send", "--workspace", workspaceId, "--surface", surfaceId, payload]);
 }
 
 export async function sendAttachCommand({
-    workspaceRef,
-    surfaceRef,
+    workspaceId,
+    surfaceId,
     tmuxSessionName,
 }: {
-    workspaceRef: string;
-    surfaceRef: string;
+    workspaceId: string;
+    surfaceId: string;
     tmuxSessionName: string;
 }): Promise<void> {
-    await sendShellCommand(workspaceRef, surfaceRef, `exec tmux attach-session -t ${shellQuote(tmuxSessionName)}`);
+    await sendShellCommand(workspaceId, surfaceId, `exec tmux attach-session -t ${shellQuote(tmuxSessionName)}`);
 }
 
 export async function sendNewSessionCommand({
-    workspaceRef,
-    surfaceRef,
+    workspaceId,
+    surfaceId,
     tmuxSessionName,
     cwd,
 }: {
-    workspaceRef: string;
-    surfaceRef: string;
+    workspaceId: string;
+    surfaceId: string;
     tmuxSessionName: string;
     cwd: string;
 }): Promise<void> {
     await sendShellCommand(
-        workspaceRef,
-        surfaceRef,
+        workspaceId,
+        surfaceId,
         // `cd ~` first: if this client starts the tmux server, the server keeps its folder for
         // life, and a worktree that is removed later poisons every new pane (tmuxServerBootstrapCwd).
         `cd ~ && exec tmux new-session -A -s ${shellQuote(tmuxSessionName)} -c ${shellQuote(cwd)}`
     );
 }
 
-export async function renameSurfaceTab(workspaceRef: string, surfaceRef: string, title: string): Promise<void> {
-    await runCmuxOk(["rename-tab", "--workspace", workspaceRef, "--surface", surfaceRef, title]);
+export async function renameSurfaceTab(workspaceId: string, surfaceId: string, title: string): Promise<void> {
+    await runCmuxOk(["rename-tab", "--workspace", workspaceId, "--surface", surfaceId, title]);
 }
 
-export async function assertTerminalSurface(workspaceRef: string, paneRef: string, surfaceRef: string): Promise<void> {
-    const surfaces = await runCmuxJSON<{ surfaces?: Array<{ ref?: string; type?: string }> }>([
+export async function assertTerminalSurface(workspaceId: string, paneId: string, surfaceId: string): Promise<void> {
+    const surfaces = await runCmuxJSON<{ surfaces?: Array<{ id?: string; ref?: string; type?: string }> }>([
         "list-pane-surfaces",
         "--workspace",
-        workspaceRef,
+        workspaceId,
         "--pane",
-        paneRef,
+        paneId,
     ]);
-    const surface = (surfaces.surfaces ?? []).find((candidate) => (candidate.ref ?? "") === surfaceRef);
+    const surface = (surfaces.surfaces ?? []).find((candidate) => sameCmuxId(candidate.id, surfaceId));
 
     if (!surface) {
-        throw new Error(`Surface ${surfaceRef} not found in pane ${paneRef}`);
+        throw new Error(`Surface ${surfaceId} not found in pane ${paneId}`);
     }
 
     if (surface.type && surface.type !== "terminal") {
-        throw new Error(`Surface ${surfaceRef} is not a terminal (type=${surface.type})`);
+        throw new Error(`Surface ${surface.ref ?? surfaceId} is not a terminal (type=${surface.type})`);
     }
 }

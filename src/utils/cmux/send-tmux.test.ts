@@ -1,9 +1,16 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as cli from "@genesiscz/utils/cmux/lib/cli";
 import * as controls from "@genesiscz/utils/cmux/lib/controls";
 import { attachTmuxToCmux } from "@genesiscz/utils/cmux/send-tmux";
 import * as workspace from "@genesiscz/utils/cmux/workspace";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
 import { formatWithRecordSeparator, setTmuxSpawnSyncForTests } from "@genesiscz/utils/tmux/sessions";
+
+const WORKSPACE = "11111111-1111-4111-8111-111111111109";
+const PANE = "22222222-2222-4222-8222-222222222202";
+const OTHER_PANE = "22222222-2222-4222-8222-222222222205";
+const SURFACE = "33333333-3333-4333-8333-333333333303";
+const OTHER_SURFACE = "33333333-3333-4333-8333-333333333307";
 
 /**
  * One `list-sessions` record as tmux really emits it.
@@ -35,11 +42,11 @@ describe("attachTmuxToCmux", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        const ensureSpy = spyOn(workspace, "ensureWorkspaceByName").mockResolvedValue("workspace:9");
+        const ensureSpy = spyOn(workspace, "ensureWorkspaceByName").mockResolvedValue(WORKSPACE);
         const splitSpy = spyOn(workspace, "openSplitInWorkspace").mockResolvedValue({
-            workspaceId: "workspace:9",
-            paneId: "pane:2",
-            surfaceId: "surface:3",
+            workspaceId: WORKSPACE,
+            paneId: PANE,
+            surfaceId: SURFACE,
         });
         const sendSpy = spyOn(workspace, "sendAttachCommand").mockResolvedValue(undefined);
         const renameSpy = spyOn(workspace, "renameSurfaceTab").mockResolvedValue(undefined);
@@ -51,20 +58,20 @@ describe("attachTmuxToCmux", () => {
         });
 
         expect(result).toEqual({
-            workspaceId: "workspace:9",
-            paneId: "pane:2",
-            surfaceId: "surface:3",
+            workspaceId: WORKSPACE,
+            paneId: PANE,
+            surfaceId: SURFACE,
             tmuxSessionName: "my-session",
         });
         expect(ensureSpy).toHaveBeenCalledWith("DevDashboard", undefined);
-        expect(splitSpy).toHaveBeenCalledWith("workspace:9");
+        expect(splitSpy).toHaveBeenCalledWith(WORKSPACE);
         expect(sendSpy).toHaveBeenCalledWith({
-            workspaceRef: "workspace:9",
-            surfaceRef: "surface:3",
+            workspaceId: WORKSPACE,
+            surfaceId: SURFACE,
             tmuxSessionName: "my-session",
         });
-        expect(focusSpy).toHaveBeenCalledWith({ workspaceId: "workspace:9", paneId: "pane:2" });
-        expect(renameSpy).toHaveBeenCalledWith("workspace:9", "surface:3", "my-session");
+        expect(focusSpy).toHaveBeenCalledWith({ workspaceId: WORKSPACE, paneId: PANE });
+        expect(renameSpy).toHaveBeenCalledWith(WORKSPACE, SURFACE, "my-session");
 
         ensureSpy.mockRestore();
         splitSpy.mockRestore();
@@ -80,8 +87,52 @@ describe("attachTmuxToCmux", () => {
         await expect(
             attachTmuxToCmux({
                 tmuxSessionName: "missing",
-                target: { mode: "new_split", workspaceId: "workspace:1" },
+                target: { mode: "new_split", workspaceId: WORKSPACE },
             })
         ).rejects.toThrow("does not exist");
+    });
+
+    /**
+     * The dashboard sends the surface UUID it got from the layout. The pane is found by that UUID;
+     * the old lookup compared `surface_refs`, so a UUID never matched, and a stale `surface:N` matched
+     * whichever tab holds that number now (here OTHER_PANE's tab, which took `surface:3`).
+     */
+    test("existing_surface finds the pane by surface UUID, not by a ref another tab now holds", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests((cmd) => {
+            if (cmd.includes("list-sessions")) {
+                return { exitCode: 0, stdout: listSessionsStdout(["my-session", "1", "1"]) };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        // In call order: list-panes, list-pane-surfaces (the terminal check), identify (focus guard).
+        const listed = spyOn(cli, "runCmuxJSON")
+            .mockResolvedValueOnce({
+                panes: [
+                    { id: OTHER_PANE, ref: "pane:5", surface_ids: [OTHER_SURFACE], surface_refs: ["surface:3"] },
+                    { id: PANE, ref: "pane:2", surface_ids: [SURFACE], surface_refs: ["surface:8"] },
+                ],
+            })
+            .mockResolvedValueOnce({ surfaces: [{ id: SURFACE, ref: "surface:8", type: "terminal" }] })
+            .mockResolvedValueOnce({ focused: { workspace_id: WORKSPACE } });
+        const sendSpy = spyOn(workspace, "sendAttachCommand").mockResolvedValue(undefined);
+        spyOn(workspace, "renameSurfaceTab").mockResolvedValue(undefined);
+        const focusSpy = spyOn(controls, "focusCmuxPane").mockResolvedValue(undefined);
+
+        try {
+            const result = await attachTmuxToCmux({
+                tmuxSessionName: "my-session",
+                target: { mode: "existing_surface", workspaceId: WORKSPACE, surfaceId: SURFACE.toLowerCase() },
+            });
+
+            expect(result.paneId).toBe(PANE);
+            expect(listed.mock.calls[1]?.[0]).toEqual(["list-pane-surfaces", "--workspace", WORKSPACE, "--pane", PANE]);
+            expect(sendSpy).toHaveBeenCalledTimes(1);
+            expect(focusSpy).toHaveBeenCalledWith({ workspaceId: WORKSPACE, paneId: PANE });
+        } finally {
+            mock.restore();
+        }
     });
 });

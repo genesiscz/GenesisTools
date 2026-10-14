@@ -9,6 +9,14 @@ import {
     renameCmuxWorkspace,
 } from "@genesiscz/utils/cmux/lib/controls";
 
+// Code passes cmux UUIDs: a `surface:N` ref is renumbered at every relaunch.
+const WORKSPACE_1 = "11111111-1111-4111-8111-111111111101";
+const WORKSPACE_2 = "11111111-1111-4111-8111-111111111102";
+const PANE_2 = "22222222-2222-4222-8222-222222222202";
+const SURFACE_1 = "33333333-3333-4333-8333-333333333301";
+const SURFACE_3 = "33333333-3333-4333-8333-333333333303";
+const SURFACE_46 = "33333333-3333-4333-8333-333333333346";
+
 const okRunner =
     (calls: string[][]) =>
     async (args: string[]): Promise<CmuxRunResult> => {
@@ -26,17 +34,17 @@ describe("cmux controls", () => {
             return { code: 0, stdout: "", stderr: "" };
         };
 
-        await focusCmuxPane({ workspaceId: "workspace:1", paneId: "pane:2", runner });
+        await focusCmuxPane({ workspaceId: WORKSPACE_1, paneId: PANE_2, runner });
 
         expect(calls).toEqual([
-            ["select-workspace", "--workspace", "workspace:1"],
-            ["focus-pane", "--workspace", "workspace:1", "--pane", "pane:2"],
+            ["select-workspace", "--workspace", WORKSPACE_1],
+            ["focus-pane", "--workspace", WORKSPACE_1, "--pane", PANE_2],
         ]);
     });
 
     test("focusCmuxPane rejects blank identifiers", async () => {
-        await expect(focusCmuxPane({ workspaceId: "", paneId: "pane:2" })).rejects.toThrow("workspaceId");
-        await expect(focusCmuxPane({ workspaceId: "workspace:1", paneId: "" })).rejects.toThrow("paneId");
+        await expect(focusCmuxPane({ workspaceId: "", paneId: PANE_2 })).rejects.toThrow("workspaceId");
+        await expect(focusCmuxPane({ workspaceId: WORKSPACE_1, paneId: "" })).rejects.toThrow("paneId");
     });
 
     test("focusCmuxSurface sends surface.focus with a surface_id parameter", async () => {
@@ -47,14 +55,14 @@ describe("cmux controls", () => {
         const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 
         await focusCmuxSurface({
-            surfaceId: "surface:46",
+            surfaceId: SURFACE_46,
             sendRpc: async (method, params) => {
                 calls.push({ method, params });
                 return {};
             },
         });
 
-        expect(calls).toEqual([{ method: "surface.focus", params: { surface_id: "surface:46" } }]);
+        expect(calls).toEqual([{ method: "surface.focus", params: { surface_id: SURFACE_46 } }]);
     });
 
     test("focusCmuxSurface rejects a blank surface id before it reaches the daemon", async () => {
@@ -76,44 +84,41 @@ describe("cmux controls", () => {
 
 describe("cmux rename", () => {
     test("rename-tab args", () => {
-        expect(buildRenameTabArgs("workspace:1", "surface:3", "prod-audit")).toEqual([
+        expect(buildRenameTabArgs(WORKSPACE_1, SURFACE_3, "prod-audit")).toEqual([
             "rename-tab",
             "--workspace",
-            "workspace:1",
+            WORKSPACE_1,
             "--surface",
-            "surface:3",
+            SURFACE_3,
             "prod-audit",
         ]);
     });
 
     test("rename-workspace args", () => {
-        expect(buildRenameWorkspaceArgs("workspace:1", "audit")).toEqual([
+        expect(buildRenameWorkspaceArgs(WORKSPACE_1, "audit")).toEqual([
             "rename-workspace",
             "--workspace",
-            "workspace:1",
+            WORKSPACE_1,
             "audit",
         ]);
     });
 
     test("renameCmuxSurface runs rename-tab", async () => {
         const calls: string[][] = [];
-        await renameCmuxSurface(
-            { workspaceId: "workspace:1", surfaceId: "surface:3", title: "build" },
-            okRunner(calls)
-        );
-        expect(calls).toEqual([["rename-tab", "--workspace", "workspace:1", "--surface", "surface:3", "build"]]);
+        await renameCmuxSurface({ workspaceId: WORKSPACE_1, surfaceId: SURFACE_3, title: "build" }, okRunner(calls));
+        expect(calls).toEqual([["rename-tab", "--workspace", WORKSPACE_1, "--surface", SURFACE_3, "build"]]);
     });
 
     test("renameCmuxWorkspace runs rename-workspace", async () => {
         const calls: string[][] = [];
-        await renameCmuxWorkspace({ workspaceId: "workspace:2", title: "agent run" }, okRunner(calls));
-        expect(calls).toEqual([["rename-workspace", "--workspace", "workspace:2", "agent run"]]);
+        await renameCmuxWorkspace({ workspaceId: WORKSPACE_2, title: "agent run" }, okRunner(calls));
+        expect(calls).toEqual([["rename-workspace", "--workspace", WORKSPACE_2, "agent run"]]);
     });
 
     test("rejects blank inputs", async () => {
-        await expect(renameCmuxSurface({ workspaceId: "", surfaceId: "surface:1", title: "x" })).rejects.toThrow(
+        await expect(renameCmuxSurface({ workspaceId: "", surfaceId: SURFACE_1, title: "x" })).rejects.toThrow(
             "workspaceId"
         );
-        await expect(renameCmuxWorkspace({ workspaceId: "workspace:1", title: " " })).rejects.toThrow("title");
+        await expect(renameCmuxWorkspace({ workspaceId: WORKSPACE_1, title: " " })).rejects.toThrow("title");
     });
 });

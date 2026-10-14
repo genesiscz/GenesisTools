@@ -1,5 +1,6 @@
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { type PaneListPane, paneList, type SurfaceSplitResult } from "@genesiscz/utils/cmux/lib/socket";
+import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -7,7 +8,10 @@ import { logger } from "@genesiscz/utils/logger";
  * actually rebuild, since every pane is created by splitting another one.
  *
  * `paneIndex` on a leaf is the caller's own numbering (a saved profile's pane index,
- * a grid cell, …); `applySplitTree` hands back the live pane ref for each one.
+ * a grid cell, …); `applySplitTree` hands back the live pane UUID for each one.
+ *
+ * Panes and surfaces are named by UUID throughout: cmux renumbers `pane:N` and
+ * `surface:N` at a relaunch, and a UUID is what every later command is given.
  */
 export type SplitTree =
     | { kind: "leaf"; paneIndex: number }
@@ -27,25 +31,30 @@ export type SplitTree =
       };
 
 /**
- * Rebuild `tree` in a workspace that currently holds exactly one pane, and return
- * the live pane ref for every leaf index.
+ * Rebuild `tree` in a workspace (given by UUID) that currently holds exactly one pane,
+ * and return the live pane UUID for every leaf index.
  *
  * The workspace must already be FOCUSED (wrap the call in `withFocusedWorkspace`):
  * cmux resolves several of these verbs against the rendered workspace, and a
  * background workspace reports stale geometry.
  */
-export async function applySplitTree(tree: SplitTree, workspaceRef: string): Promise<Map<number, string>> {
-    const initialLayout = await paneList(workspaceRef);
+export async function applySplitTree(tree: SplitTree, workspaceId: string): Promise<Map<number, string>> {
+    const initialLayout = await paneList(workspaceId);
 
     if (initialLayout.panes.length !== 1) {
         throw new Error(`Expected a workspace with 1 pane, got ${initialLayout.panes.length}`);
     }
 
-    const rootSurface = initialLayout.panes[0].selected_surface_ref;
-    const paneRefByIndex = new Map<number, string>();
-    await applyTree(tree, rootSurface, workspaceRef, paneRefByIndex);
+    const rootSurface = initialLayout.panes[0].selected_surface_id;
+    const paneIdByIndex = new Map<number, string>();
+    await applyTree(tree, rootSurface, workspaceId, paneIdByIndex);
 
-    return paneRefByIndex;
+    return paneIdByIndex;
+}
+
+/** The pane that holds the surface with UUID `surfaceId`. */
+function paneHolding(panes: PaneListPane[], surfaceId: string): PaneListPane | undefined {
+    return panes.find((pane) => pane.surface_ids.some((id) => sameCmuxId(id, surfaceId)));
 }
 
 /**
@@ -57,34 +66,37 @@ export async function applySplitTree(tree: SplitTree, workspaceRef: string): Pro
  * render tick for it rather than reporting a delta it cannot compute.
  */
 export async function measureCellDelta(
-    workspaceRef: string,
+    workspaceId: string,
     wanted: Array<{ paneIndex: number; columns: number; rows: number }>,
-    paneRefByIndex: Map<number, string>
+    paneIdByIndex: Map<number, string>
 ): Promise<number> {
-    let layout = await paneList(workspaceRef);
+    let layout = await paneList(workspaceId);
 
     if (layout.panes.some((pane) => !Number.isFinite(pane.columns))) {
         await Bun.sleep(GEOMETRY_SETTLE_MS);
-        layout = await paneList(workspaceRef);
+        layout = await paneList(workspaceId);
     }
 
     let maxDelta = 0;
 
     for (const want of wanted) {
-        const ref = paneRefByIndex.get(want.paneIndex);
+        const paneId = paneIdByIndex.get(want.paneIndex);
 
-        if (!ref) {
+        if (!paneId) {
             logger.warn(
-                { paneIndex: want.paneIndex, mappedKeys: [...paneRefByIndex.keys()] },
+                { paneIndex: want.paneIndex, mappedKeys: [...paneIdByIndex.keys()] },
                 "[split-tree] pane index has no live pane mapping"
             );
             continue;
         }
 
-        const live = layout.panes.find((p) => p.ref === ref);
+        const live = layout.panes.find((p) => sameCmuxId(p.id, paneId));
 
         if (!live || !Number.isFinite(live.columns) || !Number.isFinite(live.rows)) {
-            logger.debug({ ref }, "[split-tree] pane has no cell geometry yet — excluded from the delta");
+            logger.debug(
+                { paneId, ref: live?.ref },
+                "[split-tree] pane has no cell geometry yet — excluded from the delta"
+            );
             continue;
         }
 
@@ -113,44 +125,47 @@ const GEOMETRY_SETTLE_MS = 150;
 async function applyTree(
     tree: SplitTree,
     anchorSurface: string,
-    workspaceRef: string,
+    workspaceId: string,
     map: Map<number, string>
 ): Promise<void> {
     if (tree.kind === "leaf") {
-        const layout = await paneList(workspaceRef);
-        const pane = layout.panes.find((p) => p.surface_refs.includes(anchorSurface));
+        const layout = await paneList(workspaceId);
+        const pane = paneHolding(layout.panes, anchorSurface);
 
         if (!pane) {
             throw new Error(`Could not locate pane containing surface ${anchorSurface}`);
         }
 
-        logger.debug({ anchor: anchorSurface, paneRef: pane.ref, paneIndex: tree.paneIndex }, "[split-tree] leaf");
-        map.set(tree.paneIndex, pane.ref);
+        logger.debug(
+            { anchor: anchorSurface, paneId: pane.id, paneRef: pane.ref, paneIndex: tree.paneIndex },
+            "[split-tree] leaf"
+        );
+        map.set(tree.paneIndex, pane.id);
         return;
     }
 
     const direction = tree.kind === "vsplit" ? "right" : "down";
-    const split = await splitFromSurface(direction, anchorSurface, workspaceRef);
+    const split = await splitFromSurface(direction, anchorSurface, workspaceId);
     logger.debug(
         { direction, anchor: anchorSurface, newPane: split.pane_ref, newSurface: split.surface_ref },
         "[split-tree] split"
     );
 
-    await resizeNewBorder(tree, anchorSurface, split.pane_ref, workspaceRef);
+    await resizeNewBorder(tree, anchorSurface, split.pane_id, workspaceId);
 
     if (tree.kind === "vsplit") {
-        await applyTree(tree.left, anchorSurface, workspaceRef, map);
-        await applyTree(tree.right, split.surface_ref, workspaceRef, map);
+        await applyTree(tree.left, anchorSurface, workspaceId, map);
+        await applyTree(tree.right, split.surface_id, workspaceId, map);
         return;
     }
 
-    await applyTree(tree.top, anchorSurface, workspaceRef, map);
-    await applyTree(tree.bottom, split.surface_ref, workspaceRef, map);
+    await applyTree(tree.top, anchorSurface, workspaceId, map);
+    await applyTree(tree.bottom, split.surface_id, workspaceId, map);
 }
 
 /**
  * Resize the brand-new border between `anchorSurface`'s pane and the just-split-off
- * `newPaneRef` until the wanted fraction is reached. cmux's `resize-pane --amount` is in
+ * `newPaneId` until the wanted fraction is reached. cmux's `resize-pane --amount` is in
  * PIXELS — not cells, despite the "tmux-compatible alias" framing — and each call doesn't
  * necessarily move the border by exactly `amount` pixels (cmux clamps to neighbour minimum
  * sizes and rounds to whole cells), so we re-read after each call and loop.
@@ -166,8 +181,8 @@ async function applyTree(
 async function resizeNewBorder(
     tree: Exclude<SplitTree, { kind: "leaf" }>,
     anchorSurface: string,
-    newPaneRef: string,
-    workspaceRef: string
+    newPaneId: string,
+    workspaceId: string
 ): Promise<void> {
     const MAX_ATTEMPTS = 8;
     const vsplit = tree.kind === "vsplit";
@@ -175,13 +190,13 @@ async function resizeNewBorder(
     let lastDeltaPx = Number.POSITIVE_INFINITY;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-        const layout = await paneList(workspaceRef);
-        const oldPane = layout.panes.find((p) => p.surface_refs.includes(anchorSurface));
-        const newPane = layout.panes.find((p) => p.ref === newPaneRef);
+        const layout = await paneList(workspaceId);
+        const oldPane = paneHolding(layout.panes, anchorSurface);
+        const newPane = layout.panes.find((p) => sameCmuxId(p.id, newPaneId));
 
         if (!oldPane || !newPane) {
             logger.warn(
-                { anchorSurface, newPaneRef, kind: tree.kind },
+                { anchorSurface, newPaneId, kind: tree.kind },
                 "[split-tree] could not locate split pair — aborting resize"
             );
             return;
@@ -200,8 +215,8 @@ async function resizeNewBorder(
 
         lastDeltaPx = step.deltaPx;
         const moved = await tryResize(
-            workspaceRef,
-            step.target === "new" ? newPane.ref : oldPane.ref,
+            workspaceId,
+            step.target === "new" ? newPane : oldPane,
             step.direction,
             step.amountPx
         );
@@ -276,8 +291,8 @@ export function resizeStep(input: {
 }
 
 async function tryResize(
-    workspaceRef: string,
-    paneRef: string,
+    workspaceId: string,
+    pane: PaneListPane,
     direction: "-L" | "-R" | "-U" | "-D",
     amount: number
 ): Promise<boolean> {
@@ -285,33 +300,45 @@ async function tryResize(
         await runCmuxOk([
             "resize-pane",
             "--workspace",
-            workspaceRef,
+            workspaceId,
             "--pane",
-            paneRef,
+            pane.id,
             direction,
             "--amount",
             String(amount),
         ]);
         return true;
     } catch (error) {
-        logger.warn({ error, paneRef, direction, amount }, "[split-tree] split-time resize failed");
+        logger.warn(
+            { error, paneId: pane.id, paneRef: pane.ref, direction, amount },
+            "[split-tree] split-time resize failed"
+        );
         return false;
     }
 }
 
 async function splitFromSurface(
     direction: "right" | "down",
-    surfaceRef: string,
-    workspaceRef: string
+    surfaceId: string,
+    workspaceId: string
 ): Promise<SurfaceSplitResult> {
     // CLI `new-split` rather than the raw `surface.split` RPC: the V1 RPC ignores its
     // explicit pane/workspace params and splits whatever pane is focused.
-    return runCmuxJSON<SurfaceSplitResult>([
+    const split = await runCmuxJSON<SurfaceSplitResult>([
         "new-split",
         direction,
         "--workspace",
-        workspaceRef,
+        workspaceId,
         "--surface",
-        surfaceRef,
+        surfaceId,
     ]);
+
+    // Without the UUIDs the next split would have to anchor on a ref; fail here, by name.
+    if (!split.pane_id || !split.surface_id) {
+        throw new Error(
+            `cmux new-split answered without pane_id/surface_id (got ${split.pane_ref} ${split.surface_ref})`
+        );
+    }
+
+    return split;
 }

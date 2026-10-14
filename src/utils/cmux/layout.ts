@@ -36,24 +36,27 @@ interface SurfaceRpc {
     selected_in_pane?: boolean;
 }
 
-function paneRef(pane: PaneRpc): string {
-    return pane.ref ?? pane.id ?? "pane:unknown";
+// Every `id` in the layout is the cmux UUID: cmux renumbers `pane:N` and `surface:N` at each
+// relaunch, and the ids go straight back into cmux commands (focus, rename, close). Refs are
+// only shown, as a fallback title.
+function paneId(pane: PaneRpc): string {
+    return pane.id ?? pane.ref ?? "pane:unknown";
 }
 
 function paneTitle(pane: PaneRpc): string {
-    return pane.title ?? paneRef(pane);
+    return pane.title ?? pane.ref ?? paneId(pane);
 }
 
-function surfaceRef(surface: SurfaceRpc): string {
-    return surface.ref ?? surface.id ?? "surface:unknown";
+function surfaceId(surface: SurfaceRpc): string {
+    return surface.id ?? surface.ref ?? "surface:unknown";
 }
 
 function surfaceTitle(surface: SurfaceRpc): string {
-    return surface.title ?? surfaceRef(surface);
+    return surface.title ?? surface.ref ?? surfaceId(surface);
 }
 
 function workspaceName(workspace: WorkspaceEntry): string {
-    return workspace.title ?? workspace.id ?? workspace.ref;
+    return workspace.title ?? workspace.ref ?? workspace.id;
 }
 
 const PREVIEW_LINE_BUDGET = 100;
@@ -117,23 +120,23 @@ async function fetchWorkspacePanes(
     workspace: WorkspaceEntry,
     options: FetchCmuxLayoutOptions
 ): Promise<CmuxLayoutPane[]> {
-    const workspaceId = workspace.ref;
+    const workspaceId = workspace.id;
     const paneResponse = await runCmuxJSON<PaneListRpc>(["list-panes", "--workspace", workspaceId]);
     const includePreviews = options.includePreviews !== false;
 
     return Promise.all(
         (paneResponse.panes ?? []).map(async (pane) => {
-            const paneId = paneRef(pane);
+            const livePaneId = paneId(pane);
             const surfaceResponse = await runCmuxJSON<SurfaceListRpc>([
                 "list-pane-surfaces",
                 "--workspace",
                 workspaceId,
                 "--pane",
-                paneId,
+                livePaneId,
             ]);
             const surfaces: CmuxLayoutSurface[] = await Promise.all(
                 (surfaceResponse.surfaces ?? []).map(async (surface) => {
-                    const id = surfaceRef(surface);
+                    const id = surfaceId(surface);
                     const selected = surface.selected_in_pane === true || surface.selected === true;
                     const preview =
                         selected && includePreviews ? await readSelectedSurfacePreview(workspaceId, id) : undefined;
@@ -149,7 +152,7 @@ async function fetchWorkspacePanes(
             );
 
             return {
-                id: paneId,
+                id: livePaneId,
                 title: paneTitle(pane),
                 active: pane.selected === true || pane.focused === true,
                 surfaces,
@@ -166,11 +169,11 @@ export async function fetchCmuxFullLayout(options: FetchCmuxLayoutOptions = {}):
 
         const layoutWindows: CmuxLayoutWindow[] = await Promise.all(
             windows.map(async (window) => {
-                const wsResponse = await workspaceList(window.ref);
+                const wsResponse = await workspaceList(window.id);
 
                 const workspaces: CmuxLayoutWorkspace[] = await Promise.all(
                     (wsResponse.workspaces ?? []).map(async (workspace) => ({
-                        id: workspace.ref,
+                        id: workspace.id,
                         name: workspaceName(workspace),
                         selected: workspace.selected,
                         panes: await fetchWorkspacePanes(workspace, options),
@@ -178,7 +181,7 @@ export async function fetchCmuxFullLayout(options: FetchCmuxLayoutOptions = {}):
                 );
 
                 return {
-                    id: window.ref,
+                    id: window.id,
                     index: window.index,
                     visible: window.visible,
                     workspaces,

@@ -7,8 +7,8 @@ import { profiler } from "@genesiscz/utils/profile";
 export interface OpenSessionResult {
     sessionId: string;
     command: string;
-    workspaceRef: string;
-    surfaceRef: string;
+    workspaceId: string;
+    surfaceId: string;
     target: OpenSessionTarget["kind"];
 }
 
@@ -44,8 +44,8 @@ export async function openSessionAt(
     return {
         sessionId: candidate.sessionId,
         command,
-        workspaceRef: placed.workspaceRef,
-        surfaceRef: placed.surfaceRef,
+        workspaceId: placed.workspaceId,
+        surfaceId: placed.surfaceId,
         target: target.kind,
     };
 }

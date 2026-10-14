@@ -1,5 +1,6 @@
 import { connect } from "node:net";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { isCmuxUuid, sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -148,10 +149,16 @@ export async function rpc<TResult = unknown>(
 }
 
 export interface PaneListPane {
+    /** Pane UUID; what every command names the pane by. */
+    id: string;
+    /** `pane:N`, for display: cmux renumbers it at every relaunch. */
     ref: string;
     index: number;
     surface_count: number;
+    /** Surface UUIDs, in tab order. */
+    surface_ids: string[];
     surface_refs: string[];
+    selected_surface_id: string;
     selected_surface_ref: string;
     focused: boolean;
     /**
@@ -168,21 +175,48 @@ export interface PaneListPane {
 }
 
 export interface PaneListResponse {
+    /** Echoed only under `--id-format both`, which `paneList` passes. */
+    workspace_id?: string;
     workspace_ref: string;
+    window_id?: string;
     window_ref: string;
     panes: PaneListPane[];
     container_frame: { width: number; height: number };
 }
 
-export async function paneList(workspaceRef: string): Promise<PaneListResponse> {
+export async function paneList(workspace: string): Promise<PaneListResponse> {
     // Raw pane.list can ignore workspace and return the focused workspace. The
     // CLI honors the target and now preserves the geometry used by restore.
-    const layout = await runCmuxJSON<PaneListResponse>(["list-panes", "--workspace", workspaceRef]);
-    if (workspaceRef.startsWith("workspace:") && layout.workspace_ref !== workspaceRef) {
-        throw new Error(`cmux returned ${layout.workspace_ref} when asked for ${workspaceRef}`);
-    }
+    // `--id-format both` makes it echo the workspace UUID, so a UUID request is checkable too.
+    const layout = await runCmuxJSON<PaneListResponse>(["--id-format", "both", "list-panes", "--workspace", workspace]);
+    assertLayoutIsFor(workspace, layout);
 
     return layout;
+}
+
+/**
+ * cmux answers `pane.list` for a workspace it cannot resolve (one created but never shown) with
+ * the ACTIVE workspace's panes instead of an error. Verified 2026-08-31: `list-panes --workspace
+ * workspace:999` returned workspace:3's layout. Trusting that answer types into whichever terminal
+ * the user is sitting in, so the echoed workspace must match the one asked about: by UUID when the
+ * request was a UUID, by ref when it was a ref. A bare index cannot be checked.
+ */
+export function assertLayoutIsFor(
+    workspace: string,
+    layout: Pick<PaneListResponse, "workspace_id" | "workspace_ref">
+): void {
+    const echoed = isCmuxUuid(workspace)
+        ? layout.workspace_id
+        : workspace.startsWith("workspace:")
+          ? layout.workspace_ref
+          : undefined;
+
+    if (echoed && !sameCmuxId(echoed, workspace)) {
+        throw new Error(
+            `cmux answered pane.list for ${layout.workspace_ref ?? echoed} when asked about ${workspace} — ` +
+                `select the workspace before asking for its panes`
+        );
+    }
 }
 
 export interface WindowEntry {
@@ -253,11 +287,16 @@ export async function workspaceCreate(
     return rpc<WorkspaceCreateResult>("workspace.create", params);
 }
 
+/** `new-split` and `new-surface` answer with the UUID and the ref of each object they touched. */
 export interface SurfaceSplitResult {
+    pane_id: string;
     pane_ref: string;
+    surface_id: string;
     surface_ref: string;
     type: string;
+    workspace_id: string;
     workspace_ref: string;
+    window_id: string;
     window_ref: string;
 }
 

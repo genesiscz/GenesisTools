@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isSelfIdentifyingSurface, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
+import { isSelfIdentifyingSurface, sameCmuxId, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 
 /**
  * Regression test: a stale CMUX_WORKSPACE_ID made `cmux send` reject a real
@@ -37,5 +37,17 @@ describe("isSelfIdentifyingSurface", () => {
     test("a bare index does not", () => {
         expect(isSelfIdentifyingSurface("4")).toBe(false);
         expect(isSelfIdentifyingSurface("")).toBe(false);
+    });
+});
+
+describe("sameCmuxId", () => {
+    test("cmux prints UUIDs upper case; an env var or a typed one may be lower case", () => {
+        expect(sameCmuxId("03DA1B10-D019-4CF2-8014-5F0AFB7BAF88", "03da1b10-d019-4cf2-8014-5f0afb7baf88")).toBe(true);
+    });
+
+    test("different ids, or a missing one, never match", () => {
+        expect(sameCmuxId("03DA1B10-D019-4CF2-8014-5F0AFB7BAF88", "04AA5245-8C6E-427B-AFDF-9937CFE1D36F")).toBe(false);
+        expect(sameCmuxId(undefined, undefined)).toBe(false);
+        expect(sameCmuxId("surface:1", undefined)).toBe(false);
     });
 });

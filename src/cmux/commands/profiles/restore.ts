@@ -140,7 +140,7 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
 
         if (opts.enter) {
             await reportWaitingPrompts(
-                outcome.workspaces.map((w) => w.ref),
+                outcome.workspaces.map((w) => w.id),
                 "Restore"
             );
         }

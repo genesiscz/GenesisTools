@@ -21,14 +21,14 @@ export interface CmuxOps {
 export const liveCmuxOps: CmuxOps = {
     async createWorkspace(opts) {
         const created = await createWorkspaceWithName(opts);
-        return { workspaceRef: created.workspace_ref };
+        return { workspaceRef: created.workspace_id };
     },
     async selectWorkspace(workspaceRef) {
         await runCmuxOk(["select-workspace", "--workspace", workspaceRef]);
     },
     async anchorSurface(workspaceRef) {
         const anchor = await pickAnchorSurface(workspaceRef);
-        return { surfaceRef: anchor.surfaceRef };
+        return { surfaceRef: anchor.surfaceId };
     },
     async send({ workspaceRef, surfaceRef, text }) {
         await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, text]);

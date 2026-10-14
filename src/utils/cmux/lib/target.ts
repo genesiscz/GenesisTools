@@ -18,6 +18,10 @@
  * A UUID or a `surface:N` ref is unique across the whole tree, so the workspace
  * adds nothing and can only be wrong. Only a bare index (`4`) is
  * workspace-relative and still needs the scope.
+ *
+ * Code passes the surface UUID: cmux renumbers every `surface:N` at a relaunch, so a
+ * stored ref can name another tab. A ref is still accepted here because a human may
+ * type one on the command line.
  */
 export function surfaceTargetArgs(surface: string, workspace?: string): string[] {
     if (!workspace || isSelfIdentifyingSurface(surface)) {
@@ -29,6 +33,18 @@ export function surfaceTargetArgs(surface: string, workspace?: string): string[]
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function isCmuxUuid(value: string): boolean {
+    return UUID_RE.test(value);
+}
+
 export function isSelfIdentifyingSurface(surface: string): boolean {
-    return UUID_RE.test(surface) || surface.startsWith("surface:") || surface.startsWith("tab:");
+    return isCmuxUuid(surface) || surface.startsWith("surface:") || surface.startsWith("tab:");
+}
+
+/**
+ * Whether two cmux ids name the same object. cmux prints UUIDs in upper case, while an env
+ * var or a hand-typed UUID may be lower case, and cmux accepts either.
+ */
+export function sameCmuxId(a: string | undefined, b: string | undefined): boolean {
+    return a !== undefined && b !== undefined && a.toLowerCase() === b.toLowerCase();
 }

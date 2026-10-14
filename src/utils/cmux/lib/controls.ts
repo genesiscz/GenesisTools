@@ -6,6 +6,7 @@ type CmuxCommandRunner = (args: string[]) => Promise<CmuxRunResult>;
 type CmuxRpcSender = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 
 interface FocusCmuxPaneOptions {
+    /** Workspace and pane UUIDs. */
     workspaceId: string;
     paneId: string;
     runner?: CmuxCommandRunner;
@@ -48,16 +49,14 @@ export async function focusCmuxSurface({ surfaceId, sendRpc = rpc }: FocusCmuxSu
     await sendRpc("surface.focus", { surface_id: surfaceId });
 }
 
-// `pane.workspaceId` and `surface.id` from the live snapshot are already the
-// cmux refs the CLI expects (`workspace.ref ?? workspace.id`,
-// `surface.ref ?? surface.id`), so they pass straight through — no separate
-// ref-resolution step like `focusCmuxPane` needs for panes.
-export function buildRenameTabArgs(workspaceRef: string, surfaceRef: string, title: string): string[] {
-    return ["rename-tab", "--workspace", workspaceRef, "--surface", surfaceRef, title];
+// Every id here is the cmux UUID, which is what the live snapshot and the layout carry as `id`.
+// cmux takes a UUID wherever it takes a ref, and unlike `surface:N` it survives a relaunch.
+export function buildRenameTabArgs(workspaceId: string, surfaceId: string, title: string): string[] {
+    return ["rename-tab", "--workspace", workspaceId, "--surface", surfaceId, title];
 }
 
-export function buildRenameWorkspaceArgs(workspaceRef: string, title: string): string[] {
-    return ["rename-workspace", "--workspace", workspaceRef, title];
+export function buildRenameWorkspaceArgs(workspaceId: string, title: string): string[] {
+    return ["rename-workspace", "--workspace", workspaceId, title];
 }
 
 export async function renameCmuxSurface(

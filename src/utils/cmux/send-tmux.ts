@@ -1,6 +1,7 @@
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { focusCmuxPane } from "@genesiscz/utils/cmux/lib/controls";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
+import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
 import type { AttachTmuxResult, CmuxSendTarget } from "@genesiscz/utils/cmux/types";
 import {
     assertTerminalSurface,
@@ -20,26 +21,25 @@ export interface AttachTmuxToCmuxOptions {
     focus?: boolean;
 }
 
+/** The pane UUID holding the surface with UUID `surfaceId`, which must be a terminal. */
 async function resolveSurfaceForExisting(
     workspaceId: string,
     surfaceId: string
 ): Promise<{ paneId: string; surfaceId: string }> {
-    const panes = await runCmuxJSON<{ panes?: Array<{ ref?: string; surface_refs?: string[] }> }>([
+    const panes = await runCmuxJSON<{ panes?: Array<{ id?: string; surface_ids?: string[] }> }>([
         "list-panes",
         "--workspace",
         workspaceId,
     ]);
 
     for (const pane of panes.panes ?? []) {
-        if (!pane.ref) {
+        if (!pane.id) {
             continue;
         }
 
-        const refs = pane.surface_refs ?? [];
-
-        if (refs.includes(surfaceId)) {
-            await assertTerminalSurface(workspaceId, pane.ref, surfaceId);
-            return { paneId: pane.ref, surfaceId };
+        if ((pane.surface_ids ?? []).some((id) => sameCmuxId(id, surfaceId))) {
+            await assertTerminalSurface(workspaceId, pane.id, surfaceId);
+            return { paneId: pane.id, surfaceId };
         }
     }
 
@@ -105,13 +105,13 @@ export async function attachTmuxToCmux({
         surfaceId = resolved.surfaceId;
 
         await withFocusedWorkspace(workspaceId, async () => {
-            await sendAttachCommand({ workspaceRef: workspaceId, surfaceRef: surfaceId, tmuxSessionName });
+            await sendAttachCommand({ workspaceId, surfaceId, tmuxSessionName });
         });
 
         return finalizeAttach(workspaceId, paneId, surfaceId, tmuxSessionName, focus);
     }
 
-    await sendAttachCommand({ workspaceRef: workspaceId, surfaceRef: surfaceId, tmuxSessionName });
+    await sendAttachCommand({ workspaceId, surfaceId, tmuxSessionName });
 
     return finalizeAttach(workspaceId, paneId, surfaceId, tmuxSessionName, focus);
 }

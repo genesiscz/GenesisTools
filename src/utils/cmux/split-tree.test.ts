@@ -1,12 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as cli from "@genesiscz/utils/cmux/lib/cli";
 import type { PaneListPane } from "@genesiscz/utils/cmux/lib/socket";
-import { resizeStep } from "@genesiscz/utils/cmux/split-tree";
+import * as socket from "@genesiscz/utils/cmux/lib/socket";
+import { applySplitTree, resizeStep } from "@genesiscz/utils/cmux/split-tree";
+
+const WORKSPACE = "11111111-1111-4111-8111-111111111111";
+const PANE_1 = "22222222-2222-4222-8222-222222222201";
+const PANE_2 = "22222222-2222-4222-8222-222222222202";
+const SURFACE_1 = "33333333-3333-4333-8333-333333333301";
+const SURFACE_2 = "33333333-3333-4333-8333-333333333302";
 
 function pane(overrides: Partial<PaneListPane> & { ref: string }): PaneListPane {
     return {
+        id: PANE_1,
         index: 0,
         surface_count: 1,
+        surface_ids: [SURFACE_1],
         surface_refs: ["surface:1"],
+        selected_surface_id: SURFACE_1,
         selected_surface_ref: "surface:1",
         focused: false,
         columns: 100,
@@ -137,5 +148,110 @@ describe("resizeStep", () => {
         });
 
         expect(step.kind).toBe("done");
+    });
+});
+
+describe("applySplitTree", () => {
+    afterEach(() => mock.restore());
+
+    /**
+     * Every call names panes and surfaces by UUID, and the result maps leaves to pane UUIDs. The
+     * listings renumber the refs on purpose (the new pane takes the old pane's `pane:7` and
+     * `surface:1`, as after a relaunch): matching by ref would map leaf 0 to the new pane.
+     */
+    test("splits, resizes and maps by UUID even when the refs move", async () => {
+        const calls: string[][] = [];
+        let resized = false;
+        let listings = 0;
+
+        spyOn(socket, "paneList").mockImplementation(async () => {
+            listings += 1;
+            // After the first listing the old pane is renumbered and the new one takes its refs.
+            const first = pane({
+                ref: listings === 1 ? "pane:7" : "pane:9",
+                surface_refs: listings === 1 ? ["surface:1"] : ["surface:3"],
+                focused: true,
+            });
+
+            if (listings === 1) {
+                return {
+                    workspace_id: WORKSPACE,
+                    workspace_ref: "workspace:1",
+                    window_ref: "window:1",
+                    container_frame: { width: 1800, height: 1000 },
+                    panes: [first],
+                };
+            }
+
+            const widths = resized ? [600, 1200] : [900, 900];
+            return {
+                workspace_id: WORKSPACE,
+                workspace_ref: "workspace:1",
+                window_ref: "window:1",
+                container_frame: { width: 1800, height: 1000 },
+                panes: [
+                    { ...first, pixel_frame: { x: 0, y: 0, width: widths[0], height: 1000 } },
+                    pane({
+                        id: PANE_2,
+                        ref: "pane:7",
+                        surface_ids: [SURFACE_2],
+                        surface_refs: ["surface:1"],
+                        selected_surface_id: SURFACE_2,
+                        pixel_frame: { x: widths[0], y: 0, width: widths[1], height: 1000 },
+                    }),
+                ],
+            };
+        });
+        const split = spyOn(cli, "runCmuxJSON").mockResolvedValue({
+            pane_id: PANE_2,
+            pane_ref: "pane:7",
+            surface_id: SURFACE_2,
+            surface_ref: "surface:1",
+        });
+        spyOn(cli, "runCmuxOk").mockImplementation(async (args: string[]) => {
+            calls.push(args);
+            resized = true;
+            return { code: 0, stdout: "", stderr: "" };
+        });
+
+        const map = await applySplitTree(
+            {
+                kind: "vsplit",
+                left: { kind: "leaf", paneIndex: 0 },
+                right: { kind: "leaf", paneIndex: 1 },
+                leftFraction: 1 / 3,
+            },
+            WORKSPACE
+        );
+
+        expect(split.mock.calls).toEqual([[["new-split", "right", "--workspace", WORKSPACE, "--surface", SURFACE_1]]]);
+        expect(calls).toEqual([["resize-pane", "--workspace", WORKSPACE, "--pane", PANE_2, "-L", "--amount", "300"]]);
+        expect([...map.entries()]).toEqual([
+            [0, PANE_1],
+            [1, PANE_2],
+        ]);
+    });
+
+    test("a new-split answer without UUIDs fails by name instead of anchoring on a ref", async () => {
+        spyOn(socket, "paneList").mockResolvedValue({
+            workspace_id: WORKSPACE,
+            workspace_ref: "workspace:1",
+            window_ref: "window:1",
+            container_frame: { width: 1800, height: 1000 },
+            panes: [pane({ ref: "pane:7" })],
+        });
+        spyOn(cli, "runCmuxJSON").mockResolvedValue({ pane_ref: "pane:8", surface_ref: "surface:2" });
+
+        await expect(
+            applySplitTree(
+                {
+                    kind: "vsplit",
+                    left: { kind: "leaf", paneIndex: 0 },
+                    right: { kind: "leaf", paneIndex: 1 },
+                    leftFraction: 0.5,
+                },
+                WORKSPACE
+            )
+        ).rejects.toThrow(/without pane_id\/surface_id/);
     });
 });

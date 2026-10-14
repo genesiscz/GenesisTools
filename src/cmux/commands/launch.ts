@@ -113,7 +113,7 @@ export function registerLaunchCommand(program: Command): void {
                         cwd: launch.cwd,
                     });
                     logger.info({ ...placed, surface: launch.surface ?? "new" }, "cmux launch opened");
-                    out.println(`Opened in cmux ${placed.workspaceRef} ${placed.surfaceRef}`);
+                    out.println(`Opened in cmux ${placed.workspaceId} ${placed.surfaceId}`);
                     return;
                 }
 

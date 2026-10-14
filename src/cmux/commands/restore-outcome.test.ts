@@ -39,11 +39,12 @@ test.each([
     spyOn(restore, "restoreProfile").mockResolvedValue({
         workspaces: [
             {
+                id: "11111111-1111-4111-8111-111111111111",
                 ref: "workspace:1",
                 title: "fixture",
                 converged: !failed,
                 maxCellDelta: failed ? null : 0,
-                failures: failed ? [{ paneRef: "pane:1", message: "fixture failure" }] : [],
+                failures: failed ? [{ pane: "pane:1", message: "fixture failure" }] : [],
             },
         ],
     });

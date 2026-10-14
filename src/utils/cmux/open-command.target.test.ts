@@ -18,6 +18,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
  */
 const argv: string[][] = [];
 
+const WINDOW = "0B000000-0000-4000-8000-000000000001";
+const WORKSPACE = "11111111-1111-4111-8111-111111111112";
+const SURFACE_UUID = "22222222-2222-4222-8222-222222222222";
+
 mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxOk: async (args: string[]) => {
         argv.push(args);
@@ -25,7 +29,7 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     },
     runCmuxJSON: async (args: string[]) => {
         argv.push(args);
-        return { caller: { window_ref: "window:1" } };
+        return { caller: { window_id: WINDOW, window_ref: "window:1" } };
     },
     runCmux: async (args: string[]) => {
         argv.push(args);
@@ -41,9 +45,6 @@ function sendArgs(): string[] {
     expect(sends).toHaveLength(1);
     return sends[0];
 }
-
-const WORKSPACE = "workspace:12";
-const SURFACE_UUID = "22222222-2222-4222-8222-222222222222";
 
 beforeEach(() => {
     argv.length = 0;
@@ -89,5 +90,19 @@ describe("livePlacementIO().send target flags", () => {
         await livePlacementIO().selectWorkspace(WORKSPACE);
 
         expect(argv).toEqual([["select-workspace", "--workspace", WORKSPACE]]);
+    });
+});
+
+describe("livePlacementIO() window", () => {
+    /** Without `--id-format both`, identify has no `window_id`, and the raise fell back to a ref. */
+    test("identifyWindow asks for UUIDs and answers with the window UUID, not its ref", async () => {
+        expect(await livePlacementIO().identifyWindow?.(WORKSPACE)).toBe(WINDOW);
+        expect(argv).toEqual([["--id-format", "both", "identify", "--workspace", WORKSPACE]]);
+    });
+
+    test("focusWindow names the window by the UUID it is given", async () => {
+        await livePlacementIO().focusWindow(WINDOW);
+
+        expect(argv).toEqual([["focus-window", "--window", WINDOW]]);
     });
 });

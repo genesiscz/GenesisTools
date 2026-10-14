@@ -14,7 +14,7 @@ describe("cmux socket RPC params", () => {
         const rpcSpy = spyOn(socket, "rpc").mockResolvedValue({ ...layout, workspace_ref: "workspace:1" });
         try {
             expect(await socket.paneList("workspace:5")).toEqual(layout);
-            expect(cliSpy).toHaveBeenCalledWith(["list-panes", "--workspace", "workspace:5"]);
+            expect(cliSpy).toHaveBeenCalledWith(["--id-format", "both", "list-panes", "--workspace", "workspace:5"]);
             expect(rpcSpy).not.toHaveBeenCalled();
         } finally {
             cliSpy.mockRestore();
@@ -31,6 +31,27 @@ describe("cmux socket RPC params", () => {
         } finally {
             cliSpy.mockRestore();
             rpcSpy.mockRestore();
+        }
+    });
+
+    /**
+     * Code asks by UUID now. The echoed ref cannot be compared with a UUID, and before
+     * `--id-format both` there was no echoed UUID either, so this answer was believed.
+     */
+    test("paneList rejects a response for another workspace when asked by UUID", async () => {
+        const asked = "11111111-1111-4111-8111-111111111105";
+        const layout = {
+            workspace_id: "11111111-1111-4111-8111-111111111101",
+            workspace_ref: "workspace:1",
+            panes: [],
+        };
+        const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue(layout);
+        try {
+            await expect(socket.paneList(asked)).rejects.toThrow("workspace:1");
+            cliSpy.mockResolvedValue({ ...layout, workspace_id: asked.toUpperCase() });
+            expect((await socket.paneList(asked)).workspace_ref).toBe("workspace:1");
+        } finally {
+            cliSpy.mockRestore();
         }
     });
     afterEach(() => {
