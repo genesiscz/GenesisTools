@@ -287,6 +287,29 @@ async function runSessionList(options: { agent?: string; all?: boolean; json?: b
     await out.flush();
 }
 
+async function runSessionStatus(options: { agent?: string; json?: boolean }): Promise<void> {
+    const inventory = await sessionInventory();
+    const sessions = [...inventory.recorded, ...inventory.adoptable].filter(
+        (session) => !options.agent || session.agent === options.agent
+    );
+    if (options.json) {
+        out.result(sessions);
+    } else {
+        out.println(sessions.length === 0 ? "No agent sessions in cmux." : formatTable(
+            sessions.map((session) => [
+                session.title ?? session.name,
+                session.agent,
+                session.state,
+                session.lastActivityAt ?? "-",
+                session.lastMessage?.replace(/\s+/g, " ").trim() || "-",
+            ]),
+            ["Title", "Agent", "State", "Last activity", "Last message"],
+            { maxColWidth: LIST_COLUMN_WIDTH }
+        ));
+    }
+    await out.flush();
+}
+
 /** Paths and session ids are long; the shared default of 50 would cut the cwd a reader needs. */
 const LIST_COLUMN_WIDTH = 120;
 
@@ -413,6 +436,15 @@ export function registerAgentsCommand(program: Command): void {
         .option("--json", "Print the records as JSON")
         .action(async (options: { agent?: string; all?: boolean; json?: boolean }) => {
             await guarded(() => runSessionList(options));
+        });
+
+    agents
+        .command("status")
+        .description("One table of agent titles, current states, last activity and last assistant messages")
+        .option("--agent <id>", `Only this agent: ${SESSION_AGENT_IDS.join(", ")}`)
+        .option("--json", "Print the enriched sessions as JSON")
+        .action(async (options: { agent?: string; json?: boolean }) => {
+            await guarded(() => runSessionStatus(options));
         });
 
     addCloseOptions(

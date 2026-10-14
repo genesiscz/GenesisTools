@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { out } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { formatSessionList, registerAgentsCommand, runSessionNew } from "../commands/agents";
+import * as inventory from "./session-inventory";
 import { accountChoiceMessage, budgetsFromCache, budgetsFromSnapshots } from "./account-budgets";
 import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import {
@@ -655,6 +656,33 @@ test("agents new advertises repo, account, prompt, tmux, focus, and json", async
         focus: "false",
         json: true,
     });
+});
+
+test("agents status prints one table with every title, state, activity and one-line message, plus JSON", async () => {
+    const program = new Command().exitOverride();
+    registerAgentsCommand(program);
+    const command = program.commands.find((entry) => entry.name() === "agents")?.commands.find((entry) => entry.name() === "status");
+    expect(command).toBeDefined();
+    const row: inventory.ListedAgentSession = {
+        type: "created", name: "fixture", sessionId: "fixture-id", agent: "grok", account: "work", model: null,
+        cwd: "/fixture", window: "window:1", workspace: "workspace:1", surface: "surface:1", tmuxSession: null,
+        pidFile: "", command: "", createdAt: "2026-01-01T00:00:00Z", createdBy: "adopted",
+        title: "fixture-title", state: "held-message", lastActivityAt: "2026-01-01T01:00:00Z", lastMessage: "first line\nsecond line",
+    };
+    const read = spyOn(inventory, "sessionInventory").mockResolvedValue({ recorded: [], adoptable: [row] });
+    try {
+        const output = await captureStdout(() => program.parseAsync(["agents", "status"], { from: "user" }).then(() => {}));
+        expect(output).toContain("Title");
+        expect(output).toContain("Last message");
+        expect(output).toContain("fixture-title");
+        expect(output).toContain("held-message");
+        expect(output).toContain("2026-01-01T01:00:00Z");
+        expect(output).toContain("first line second line");
+        const json = await captureStdout(() => program.parseAsync(["agents", "status", "--json"], { from: "user" }).then(() => {}));
+        expect(SafeJSON.parse(json)).toEqual([row]);
+    } finally {
+        read.mockRestore();
+    }
 });
 
 async function captureStdout(run: () => Promise<void>): Promise<string> {
