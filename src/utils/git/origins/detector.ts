@@ -48,11 +48,42 @@ export function classifyOriginUrl(url: string): OriginInfo {
 }
 
 /**
- * A remote that is a folder on this machine (`/path/repo`, `~/repo`, `../repo`, `file:///path`, `C:\repo`): a
- * clone of a local checkout. It has no host, so no forge can list its pull requests.
+ * A remote that is a folder on this machine, not a forge: a relative path (`repos/source.git`, `source.git`),
+ * a home or absolute path, a `file:` URL, a Windows drive (`C:\repo`, `C:repo`) or a UNC path
+ * (`\\server\share`). A URL scheme or an scp-like `host:path` (a colon before any slash) is a network remote.
+ * A local folder has no forge, so nothing can list its pull requests.
  */
 export function isLocalRemoteUrl(url: string): boolean {
-    return /^(\/|~|\.{1,2}[/\\]|file:\/\/|[A-Za-z]:[/\\])/.test(url.trim());
+    const trimmed = url.trim();
+
+    // `file:/path` and `file:///path` are a folder. Any other scheme is a network remote.
+    if (/^file:/i.test(trimmed)) {
+        return true;
+    }
+
+    if (!trimmed || /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+        return false;
+    }
+
+    // `C:\repo`, `C:/repo`, and a drive-relative `C:repo`. A leading letter and colon is a DOS drive, not an scp host.
+    if (/^[A-Za-z]:/.test(trimmed)) {
+        return true;
+    }
+
+    // `/repo`, `\repo`, `\\server\share`, `//server/share`.
+    if (/^[/\\]/.test(trimmed)) {
+        return true;
+    }
+
+    const slash = trimmed.search(/[/\\]/);
+    const colon = trimmed.indexOf(":");
+
+    // `[user@]host:path`, only when no slash comes first. `./foo:bar` is a local path that contains a colon.
+    if (colon >= 0 && (slash < 0 || colon < slash)) {
+        return false;
+    }
+
+    return true;
 }
 
 /** The `origin` remote of `cwd`, classified; null when there is no origin. */

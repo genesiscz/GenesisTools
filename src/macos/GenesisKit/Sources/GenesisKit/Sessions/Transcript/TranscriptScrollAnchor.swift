@@ -143,12 +143,13 @@ public final class TranscriptScrollAnchor: ObservableObject {
         release?.cancel()
         release = nil
         held = nil
-        follow = nil
+        stopFollowing()
     }
 
     /// The list scrolls itself now (a jump, the open at the latest turn, the Latest button): for
     /// `seconds` its moves are not undone, and the row it lands on becomes the anchor.
     public func listMoves(for seconds: Double = 0.6) {
+        stopFollowing()
         listMovesUntil = CFAbsoluteTimeGetCurrent() + seconds
         rowAnchor = nil
     }
@@ -254,9 +255,13 @@ public final class TranscriptScrollAnchor: ObservableObject {
                 }
                 if reader {
                     self.releaseHold()
-                    // A key moves the viewport as a wheel does (Page Up, Home, the arrows): a glide in flight stops too.
-                    if event.type == .scrollWheel || event.type == .keyDown {
+                    // A wheel, a key, or a click ends a glide. The pill's own click then starts a fresh chase in
+                    // `scrollToEnd`. Any other click (a tool row, "… +N lines") is the reader's growth: the chase
+                    // used to ignore it for two seconds and follow the expansion, so the header left the pointer.
+                    if event.type == .scrollWheel || event.type == .keyDown || event.type == .leftMouseDown {
                         self.stopFollowing()
+                    }
+                    if event.type == .scrollWheel || event.type == .keyDown {
                         self.readerScrollAt = CFAbsoluteTimeGetCurrent()
                     }
                     if event.type == .leftMouseDown {
@@ -298,9 +303,10 @@ public final class TranscriptScrollAnchor: ObservableObject {
             keep(held)
             // Only this move inside the resize costs the rows on screen their height listener.
             scheduleRemeasure()
-        } else if follow == nil, before <= Self.endSlack || animatingToEnd || chasingEnd, chasingEnd || !readerIsChanging, !readerMoving {
-            // Not while the reader scrolls: a row arriving as they left the end glided them back down, again and
-            // again, while their trackpad went up (Martin, 2026-10-07: "jumping like CRAZY", both directions).
+        } else if follow == nil, before <= Self.endSlack || animatingToEnd || chasingEnd, !readerIsChanging, !readerMoving {
+            // Not while the reader scrolls, and not for growth from their own click: a row arriving as they left
+            // the end glided them back down, again and again, while their trackpad went up (Martin, 2026-10-07:
+            // "jumping like CRAZY", both directions). The chase does not override that click.
             scheduleFollow(animatingToEnd ? 0 : max(0, before))
         } else {
             updateAtEnd()
@@ -324,7 +330,8 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// Glides to the content's end (the "N new" pill), and keeps gliding while the content below grows; instant
     /// under Reduce Motion. The pill sits inside the list, so its own click counted as the reader's: for 1.5 s every
     /// growth was theirs and never followed, and the glide stopped at the end the list had at the click (Martin,
-    /// 2026-10-13: "scrolls me down … but doesnt scroll me to the bottom entirely").
+    /// 2026-10-13: "scrolls me down … but doesnt scroll me to the bottom entirely"). A later click ends that chase
+    /// on mouse-down; this starts a fresh one and clears the pill's own click.
     public func scrollToEnd() {
         releaseHold()
         readerClickAt = nil

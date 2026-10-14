@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { repoFacts } from "../repo-facts";
 import { TestRepo } from "../test-repo";
-import { classifyOriginUrl, detectOrigin, originDriver } from "./detector";
+import { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
 import { ghDriver, parseGhPrList } from "./gh";
 import { glabDriver, parseGlabMrList } from "./glab";
 import {
@@ -863,5 +863,55 @@ describe("GitLab MR list and view", () => {
             ]),
         });
         expect(detail.commits.map((commit) => commit.body)).toEqual(["The reason.", null]);
+    });
+});
+
+describe("isLocalRemoteUrl", () => {
+    const local = [
+        "/Users/dev/repo.git",
+        "~/repo.git",
+        "~user/repo.git",
+        "../repo.git",
+        "./repo.git",
+        "repos/source.git",
+        "source.git",
+        "file:///Users/dev/repo.git",
+        "file://localhost/Users/dev/repo.git",
+        "file:/Users/dev/repo.git",
+        "C:\\repo.git",
+        "C:/repo.git",
+        "C:repo.git",
+        "\\\\server\\share\\repo.git",
+        "//server/share/repo.git",
+        "\\repo.git",
+        "repos\\source.git",
+        ".\\repo.git",
+        "./foo:bar",
+        "  /abs/repo.git  ",
+    ];
+    const remote = [
+        "https://github.com/o/r.git",
+        "http://gitlab.example/g/r.git",
+        "ssh://git@github.com/o/r.git",
+        "ssh://git@github.com:2222/o/r.git",
+        "git://github.com/o/r.git",
+        "ftp://example.com/repo.git",
+        "git@github.com:o/r.git",
+        "github.com:o/r.git",
+        "git@gitlab.internal.example:group/repo.git",
+        "foo:bar",
+        "",
+    ];
+
+    it("treats folder paths as local, including relative paths and Windows drive or UNC paths", () => {
+        expect(local.map((url) => ({ url, local: isLocalRemoteUrl(url) }))).toEqual(
+            local.map((url) => ({ url, local: true }))
+        );
+    });
+
+    it("leaves URL schemes and scp-like remotes to a forge driver", () => {
+        expect(remote.map((url) => ({ url, local: isLocalRemoteUrl(url) }))).toEqual(
+            remote.map((url) => ({ url, local: false }))
+        );
     });
 });

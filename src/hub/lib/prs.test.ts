@@ -117,6 +117,17 @@ describe("hubPrs / hubPr", () => {
         expect(result.skipped).toEqual([{ path: clone.dir, reason: `origin is a local folder: ${source.dir}` }]);
     });
 
+    it("skips a relative local origin instead of reporting that no driver exists", async () => {
+        const clone = await TestRepo.create({ prefix: "gt-review-prs-rel-" });
+        repos.push(clone);
+        await clone.git(["remote", "add", "origin", "repos/source.git"]);
+
+        const result = await hubPrs({ paths: [clone.dir], runner: fakeGh([]) });
+
+        expect(result.repos).toEqual([]);
+        expect(result.skipped).toEqual([{ path: clone.dir, reason: "origin is a local folder: repos/source.git" }]);
+    });
+
     it("passes the search query to the host", async () => {
         const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
         repos.push(repo);
@@ -170,6 +181,7 @@ describe("hubPrs / hubPr", () => {
         await expect(hubPr({ ref: "https://github.com/o/r/pull/7", runner: failing })).rejects.toThrow(PrRefError);
     });
 });
+
 describe("missingCommits", () => {
     it("names the commits the repository lacks and none it holds", async () => {
         const repo = await TestRepo.create({ prefix: "gt-review-prs-" });

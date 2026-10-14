@@ -296,6 +296,89 @@ final class SessionTranscriptScrollTests: XCTestCase {
         XCTAssertLessThan(gap, 40, "the pill left the reader \(Int(gap)) pt above the end")
     }
 
+    func testPromptNavigationDuringTheEndChaseKeepsTheRequestedPrompt() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 1200, height: 700))
+        defer { rig.close() }
+        rig.settle(0.8)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        rig.notches(at: rig.center(of: list), dx: 0, dy: 10, count: 30)
+        rig.settle(3.5)
+        let document = try XCTUnwrap(list.documentView)
+        let frame = list.convert(list.bounds, to: nil)
+        XCTAssertGreaterThan(document.frame.height - list.contentView.bounds.maxY, 300)
+        rig.click(at: NSPoint(x: frame.maxX - 40, y: frame.minY + 26))
+
+        // The wide toolbar is one 40 pt row above the list. Its navigator is 132 pt wide,
+        // inset 16 pt from the trailing edge; the first icon's centre is 10 pt into it.
+        let previous = NSPoint(x: frame.maxX - 138, y: frame.maxY + 20)
+        XCTAssertFalse(frame.contains(previous), "the toolbar click must be outside the list")
+        rig.click(at: previous)
+        rig.click(at: previous)
+        // Let the navigator's last positioning pass land, while the pill's two-second chase
+        // would still be active. Two Previous clicks select the second of the three prompts.
+        rig.settle(0.4)
+        let table = try XCTUnwrap(document as? NSTableView)
+        let prompt = try XCTUnwrap(session.document.sections[1].rows.first?.id)
+        let row = try XCTUnwrap(session.tableRows().firstIndex { $0 == prompt })
+        func promptTop() -> CGFloat {
+            table.rect(ofRow: row).minY - list.contentView.bounds.minY
+        }
+        let requestedTop = promptTop()
+        XCTAssertGreaterThanOrEqual(requestedTop, -2, "navigation did not put the requested prompt on screen")
+        XCTAssertLessThan(requestedTop, list.contentView.bounds.height / 2,
+                          "navigation did not put the requested prompt near the top")
+        rig.settle(0.5)
+        XCTAssertEqual(promptTop(), requestedTop, accuracy: 3,
+                       "the glide completion moved the requested prompt")
+        _ = rig.resize(width: 1100)
+        rig.settle(0.3)
+        XCTAssertEqual(promptTop(), requestedTop, accuracy: 3,
+                       "a document resize restarted the cancelled end chase")
+        rig.settle(1.5)
+        XCTAssertEqual(promptTop(), requestedTop, accuracy: 3,
+                       "the end chase pulled the requested prompt back down")
+    }
+
+    // A click during the pill's two-second chase is the reader's own growth (a tool row, "… +N lines").
+    // The chase used to ignore that click and follow the expansion, so the header left the pointer.
+    func testAClickDuringTheEndChaseKeepsTheOpenedRow() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(0.8)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        rig.notches(at: rig.center(of: list), dx: 0, dy: 10, count: 30)
+        rig.settle(3.5)
+        XCTAssertEqual(table.numberOfRows, session.tableRows().count, "not every streamed row arrived")
+        XCTAssertGreaterThan((list.documentView?.frame.height ?? 0) - list.contentView.bounds.maxY, 300, "the reader is not scrolled up")
+        let frame = list.convert(list.bounds, to: nil)
+        let chaseStart = Date()
+        rig.click(at: NSPoint(x: frame.maxX - 40, y: frame.minY + 26))
+        while Date().timeIntervalSince(chaseStart) < 1.2,
+              (list.documentView?.frame.height ?? 0) - list.contentView.bounds.maxY > 80 {
+            rig.settle(0.05)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(chaseStart), 1.5, "the click would land after the chase window")
+        let visible = list.contentView.bounds
+        let rows = session.tableRows()
+        let row = try XCTUnwrap(rows.indices.first { index in
+            guard let id = rows[index], session.tool(id)?.name == "Bash" else { return false }
+            let rect = table.rect(ofRow: index)
+            return rect.height < 80 && rect.minY > visible.minY + 24 && rect.maxY < visible.maxY - 16
+        }, "no closed Bash call on screen during the chase")
+        let before = table.rect(ofRow: row)
+        let headerInView = before.minY - visible.minY
+        rig.click(at: table.convert(NSPoint(x: before.minX + 120, y: before.minY + 11), to: nil))
+        rig.settle(0.8)
+        let after = table.rect(ofRow: row)
+        let headerNow = after.minY - list.contentView.bounds.minY
+        XCTAssertGreaterThan(after.height, before.height + 40, "the click did not open the call")
+        XCTAssertEqual(headerNow, headerInView, accuracy: 30,
+                       "the chase followed the opened call and moved its header \(Int(headerInView - headerNow)) pt")
+    }
+
     // GenesisTools adaptation: Martin, 2026-10-11: a working agent looked idle until its rows landed. The live
     // activity row is the transcript's last row and changes with every step; the scroll rules hold with it: the
     // reader at the end stays at the end, one who scrolled up is never moved, and the row never counts as new.
