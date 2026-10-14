@@ -77,6 +77,26 @@ describe("the app rung", () => {
         }
     });
 
+    test("a refusal is final for the process: the next read throws without asking the app again", async () => {
+        let asked = 0;
+        const app = createAppGateKeyProvider({
+            available: () => true,
+            rpc: async () => {
+                asked++;
+                return deny;
+            },
+            rpcSync: () => {
+                asked++;
+                return failure("timeout");
+            },
+        });
+
+        await expect(app.get()).rejects.toThrow("denied in the approval window");
+        await expect(app.get()).rejects.toThrow("denied in the approval window");
+        expect(() => app.getSync?.()).toThrow("denied in the approval window");
+        expect(asked).toBe(1);
+    });
+
     test("no answer within the window's time is a deny, not a fall-through to the keychain dialog", () => {
         const app = createAppGateKeyProvider({ available: () => true, rpcSync: () => failure("timeout") });
 
@@ -141,6 +161,14 @@ describe("the caller's name and command", () => {
             "claude"
         );
         expect(currentToolName(["/Users/x/.genesis-tools/bin/gt-say", "/somewhere/else.ts"])).toBe("say");
+        expect(currentToolName(["/Users/x/.bun/bin/bun", "/repo/src/ai/commands/usage/poll-daemon.ts"])).toBe("ai");
+        expect(
+            currentToolName(
+                ["/Users/x/.bun/bin/bun", "/repo/hooks/statusline.ts"],
+                "/Users/x/.genesis-tools/bin/gt-claude"
+            )
+        ).toBe("claude");
+        expect(currentToolName(["/Users/x/.bun/bin/bun", "/tmp/probe.ts"], "/Users/x/.bun/bin/bun")).toBe("probe");
         expect(currentCommandLine(["gt-say", "/repo/src/say/index.ts", "hello there", "--app", "claude"])).toBe(
             'tools say "hello there" --app claude'
         );

@@ -68,72 +68,6 @@ private func describeToken(_ kind: String?, provider: String) -> String {
 /// a little earlier and says why.
 private let gateDeadlineSeconds: Double = 170
 
-private func rememberLabel(_ seconds: Int) -> String {
-    if seconds <= 0 {
-        return "Allow once"
-    }
-
-    if seconds % 86_400 == 0 {
-        let days = seconds / 86_400
-        return "Allow for \(days) day\(days == 1 ? "" : "s")"
-    }
-
-    if seconds % 3_600 == 0 {
-        let hours = seconds / 3_600
-        return "Allow for \(hours) hour\(hours == 1 ? "" : "s")"
-    }
-
-    return "Allow for \(seconds / 60) min"
-}
-
-private func describeClient(_ client: GateClientInfo) -> String {
-    var lines: [String] = []
-
-    if let pid = client.pid {
-        lines.append("Process: pid \(pid)")
-    } else {
-        lines.append("Process: not identified (no pid)")
-    }
-
-    if let executable = client.executable, !executable.isEmpty {
-        lines.append("Executable: \(executable)")
-    } else if client.pid != nil {
-        lines.append("Executable: not running under that pid")
-    }
-
-    if let script = client.script, !script.isEmpty {
-        lines.append("Script: \(script)")
-    }
-
-    if let command = client.command, !command.isEmpty, command != client.executable {
-        lines.append("Command: \(command)")
-    }
-
-    if let cwd = client.cwd, !cwd.isEmpty {
-        lines.append("Working dir: \(cwd)")
-    }
-
-    if let ancestors = client.ancestors, !ancestors.isEmpty {
-        let chain = ancestors.map { "\($0.command) (\($0.pid))" }.joined(separator: " ← ")
-        lines.append("Started by: \(chain)")
-    }
-
-    if let injected = client.injected, !injected.isEmpty {
-        lines.append("⚠️ Extra code may be loaded: \(injected.joined(separator: ", "))")
-    }
-
-    // A running pid that did not start the request is refused before this window opens, so an
-    // unverified client here is either a real ancestor whose identity is incomplete, or no pid.
-    if client.verified != true {
-        let why = client.isAncestor == true
-            ? "its binary or script could not be established"
-            : "no running pid was given"
-        lines.append("⚠️ Unverified: \(why). Allow once at most; it will not be remembered.")
-    }
-
-    return lines.joined(separator: "\n")
-}
-
 private func gateEmit(decision: String, rememberSeconds: Int, method: String, reason: String) -> Never {
     logClick("gate.approve decision=\(decision) remember=\(rememberSeconds) method=\(method) reason=\(reason)")
     emitResult([
@@ -187,51 +121,119 @@ func authenticate(reason: String, completion: @escaping (_ method: String?, _ fa
     }
 }
 
-func approveGate(_ params: GateApproveParams) {
-    let choices = (params.rememberChoicesSeconds?.isEmpty == false ? params.rememberChoicesSeconds : nil) ?? [0, 8 * 3_600, 7 * 86_400]
-    let accountLabel = params.account.label.map { "\(params.account.name) (\($0))" } ?? params.account.name
+/// What the gate window shows, built from the CLI's request. Pure, so tests read it.
+struct GateWindowContent {
+    var title: String
+    var purpose: String
+    var facts: [ApprovalFact]
+    var details: [ApprovalFact]
+    var warning: String?
+    var rememberChoices: [ApprovalRemember]
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + gateDeadlineSeconds) {
-        gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: "no answer within \(Int(gateDeadlineSeconds))s")
+    static func rememberTitle(_ seconds: Int) -> String {
+        if seconds <= 0 { return "Just this once" }
+        if seconds % 86_400 == 0 { return "For \(Plural.count(seconds / 86_400, "day"))" }
+        if seconds % 3_600 == 0 { return "For \(Plural.count(seconds / 3_600, "hour"))" }
+        return "For \(seconds / 60) min"
     }
 
-    DispatchQueue.main.async {
-        NSApplication.shared.activate(ignoringOtherApps: true)
+    static func build(_ params: GateApproveParams, home: String = NSHomeDirectory()) -> GateWindowContent {
+        let client = params.client
+        let accountLabel = params.account.label.map { "\(params.account.name) (\($0))" } ?? params.account.name
+        let choices = (params.rememberChoicesSeconds?.isEmpty == false ? params.rememberChoicesSeconds : nil) ?? [0, 8 * 3_600, 7 * 86_400]
+        let program = client.script ?? client.executable
 
-        let isApiKey = params.tokenKind == "api-key"
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = isApiKey
-            ? "“\(params.client.name)” asks for the API KEY of the \(params.provider) account \(accountLabel)"
-            : "“\(params.client.name)” asks for the \(params.provider) token of \(accountLabel)"
-        alert.informativeText = describeClient(params.client)
-            + "\n\n" + describeToken(params.tokenKind, provider: params.provider) + " Touch ID confirms an allow."
-
-        for seconds in choices {
-            alert.addButton(withTitle: rememberLabel(seconds))
+        var facts = [ApprovalFact("Account", "\(accountLabel) · \(params.provider)")]
+        facts.append(ApprovalFact("Program", program.map { "\(client.name) · \(VaultWindowContent.shortPath($0, home: home))" } ?? client.name,
+                                  help: [client.executable, client.script].compactMap { $0 }.joined(separator: " ")))
+        if let cwd = client.cwd, !cwd.isEmpty {
+            facts.append(ApprovalFact("Folder", VaultWindowContent.shortPath(cwd, home: home), help: cwd))
         }
 
-        let deny = alert.addButton(withTitle: "Deny")
-        deny.keyEquivalent = "\u{1b}"
+        var details = [ApprovalFact("Process", client.pid.map { "pid \($0)" } ?? "not identified (no pid)")]
+        if let executable = client.executable, !executable.isEmpty {
+            details.append(ApprovalFact("Executable", executable, monospaced: true))
+        }
 
-        let response = alert.runModal()
-        let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if let command = client.command, !command.isEmpty, command != client.executable {
+            details.append(ApprovalFact("Command", command, monospaced: true))
+        }
 
-        guard index >= 0, index < choices.count else {
+        if let ancestors = client.ancestors, !ancestors.isEmpty {
+            details.append(ApprovalFact("Started by", ancestors.map { "\($0.command) (\($0.pid))" }.joined(separator: " ← ")))
+        }
+
+        var warnings: [String] = []
+        if let injected = client.injected, !injected.isEmpty {
+            warnings.append("Extra code may be loaded (\(injected.joined(separator: ", "))).")
+        }
+
+        // A running pid that did not start the request is refused before this window opens, so an unverified client
+        // here is either a real ancestor whose identity is incomplete, or no pid.
+        if client.verified != true {
+            warnings.append(client.isAncestor == true
+                ? "Unverified: its binary or script could not be established. It will not be remembered."
+                : "Unverified: no running pid was given. It will not be remembered.")
+        }
+
+        let isApiKey = params.tokenKind == "api-key"
+        return GateWindowContent(
+            title: isApiKey
+                ? "“\(client.name)” wants the \(params.provider) API key of \(params.account.name)"
+                : "“\(client.name)” wants the \(params.provider) token of \(params.account.name)",
+            purpose: describeToken(params.tokenKind, provider: params.provider),
+            facts: facts,
+            details: details,
+            warning: warnings.isEmpty ? nil : warnings.joined(separator: " "),
+            rememberChoices: choices.map { ApprovalRemember(seconds: $0, title: rememberTitle($0)) })
+    }
+}
+
+@MainActor private let gatePresenter = ApprovalPanelPresenter()
+
+func approveGate(_ params: GateApproveParams) {
+    let content = GateWindowContent.build(params)
+    let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+
+    DispatchQueue.main.async {
+        let model = ApprovalDialogModel(
+            title: content.title, purpose: content.purpose, symbol: "person.badge.key.fill", facts: content.facts,
+            details: content.details, warning: content.warning,
+            footnote: "Every decision is written to the gate audit log (tools ai gate audit).",
+            rememberChoices: content.rememberChoices.count > 1 ? content.rememberChoices : [],
+            rememberNote: content.rememberChoices.count > 1 ? nil : "Only once",
+            allowTitle: biometric ? "Allow with Touch ID" : "Allow…",
+            deadline: Date().addingTimeInterval(gateDeadlineSeconds), identifier: "gate-approve")
+
+        // The NSAlert this replaces ran a modal loop on the main queue, so this timer never fired there.
+        let deadline = DispatchWorkItem {
+            gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: "no answer within \(Int(gateDeadlineSeconds))s")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + gateDeadlineSeconds, execute: deadline)
+
+        model.onDeny = {
+            deadline.cancel()
+            gatePresenter.close()
             gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: "denied in the approval window")
         }
 
-        let remember = choices[index]
-        let reason = isApiKey
-            ? "give “\(params.client.name)” the API key of the \(params.provider) account \(params.account.name)"
-            : "allow “\(params.client.name)” to use the \(params.provider) account \(params.account.name)"
+        model.onAllow = { choice in
+            deadline.cancel()
+            gatePresenter.close()
+            let remember = choice?.seconds ?? 0
+            let reason = params.tokenKind == "api-key"
+                ? "give “\(params.client.name)” the API key of the \(params.provider) account \(params.account.name)"
+                : "allow “\(params.client.name)” to use the \(params.provider) account \(params.account.name)"
 
-        authenticate(reason: reason) { method, failure in
-            guard let method else {
-                gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: failure)
+            authenticate(reason: reason) { method, failure in
+                guard let method else {
+                    gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: failure)
+                }
+
+                gateEmit(decision: "allow", rememberSeconds: remember, method: method, reason: "")
             }
-
-            gateEmit(decision: "allow", rememberSeconds: remember, method: method, reason: "")
         }
+
+        gatePresenter.present(model)
     }
 }

@@ -4,17 +4,23 @@
 //
 // A `gt-<tool>` process needs the GenesisTools vault master key. Before this, each tool's own bun link read the
 // keychain item and macOS asked "gt-claude wants to use your confidential information" with nothing to judge. Now the
-// tool starts this process and the app reads the item as itself (macOS asks once, naming GenesisTools).
+// tool starts this process, and the app hands the key on after its own window.
 //
 // WHO comes from the kernel, never from the request: this process is the caller's child, so `getppid()` is the caller,
-// and its executable, arguments, environment (the session ids), working folder and parent chain are read from there.
-// WHY and WHAT come from the request, because only the caller knows them. A remembered approval for the same tool,
+// and its executable, script, arguments, environment (the session ids), working folder and parent chain are read from
+// there. WHY and WHAT come from the request, because only the caller knows them. A remembered approval for the same
 // executable and script skips the window; otherwise Touch ID confirms an allow. Every outcome goes to the gate's audit
 // log. A deny, a cancel, a failed authentication and a timeout all reply "deny" with a reason.
+//
+// Second version, after Martin's first look (2026-10-15 00:28, "this can be probably nicer", and "it wanted touchid
+// and when i gave it it wanted password 2 times always"): a SwiftUI panel instead of an NSAlert (whose modal loop
+// also kept the 170 s deadline from ever firing), `bun run <script>` read as the script it runs, and the app's own
+// copy of the key, so the login-keychain password is asked once per key rather than on every allow.
 
 import AppKit
 import Darwin
 import Foundation
+import LocalAuthentication
 import Security
 
 struct VaultUnlockParams: Decodable {
@@ -44,12 +50,40 @@ struct VaultCaller {
     var cwd: String?
     var ancestors: [(pid: pid_t, command: String)]
 
-    /// The script an interpreter runs (`bun …/src/claude/index.ts`), part of the identity a grant is remembered for.
-    var script: String? {
+    private static let scriptExtensions = [".ts", ".tsx", ".js", ".mjs", ".cjs"]
+
+    /// Where the script sits in the arguments: after the interpreter's flags and the `run` of `bun run <script>`.
+    private var scriptIndex: Int? {
         guard let arguments = args?.arguments, arguments.count > 1 else { return nil }
-        let candidate = arguments.dropFirst().first { !$0.hasPrefix("-") }
-        guard let candidate, [".ts", ".tsx", ".js", ".mjs", ".cjs"].contains(where: candidate.hasSuffix) else { return nil }
-        return candidate
+        var index = 1
+        while index < arguments.count, arguments[index].hasPrefix("-") || arguments[index] == "run" {
+            index += 1
+        }
+
+        guard index < arguments.count, Self.scriptExtensions.contains(where: arguments[index].hasSuffix) else { return nil }
+        return index
+    }
+
+    /// The script an interpreter runs (`bun run …/src/ai/commands/usage/poll-daemon.ts`): with the executable, the
+    /// identity a remembered approval is for.
+    var script: String? {
+        scriptIndex.flatMap { args?.arguments[$0] }
+    }
+
+    /// bun, node, deno, or a `gt-<tool>` link of bun: the program is the script, not the executable.
+    var isInterpreter: Bool {
+        let name = executable.map { ($0 as NSString).lastPathComponent } ?? ""
+        return ["bun", "node", "deno"].contains(name) || name.hasPrefix("gt-")
+    }
+
+    /// The tool as GenesisTools names it, from the kernel's view: `src/<tool>/` in the script, else the `gt-<tool>` link.
+    var toolName: String? {
+        if let script, let range = script.range(of: #"/src/([^/]+)/"#, options: .regularExpression) {
+            return String(script[range].dropFirst(5).dropLast())
+        }
+
+        let name = executable.map { ($0 as NSString).lastPathComponent } ?? ""
+        return name.hasPrefix("gt-") ? String(name.dropFirst(3)) : nil
     }
 
     /// Flags and environment that load code the script path does not name. Any of them: no remembered approval.
@@ -66,12 +100,21 @@ struct VaultCaller {
             }
         }
 
-        let flags = (args?.arguments.dropFirst() ?? []).prefix { $0.hasPrefix("-") }
+        let arguments = args?.arguments ?? []
+        let end = scriptIndex ?? arguments.count
+        let flags = arguments.count > 1 ? arguments[1..<max(1, end)].filter { $0.hasPrefix("-") } : []
         if flags.contains(where: { ["--preload", "-r", "--require", "--import", "--loader"].contains($0) }) {
             found.append("interpreter flags \(flags.joined(separator: " "))")
         }
 
         return found
+    }
+
+    /// Why this request can only be allowed once, or nil when an allow may be remembered.
+    var onceOnlyReason: String? {
+        if !injected.isEmpty { return "extra code may be loaded" }
+        if isInterpreter, script == nil { return "the script it runs is not known" }
+        return nil
     }
 }
 
@@ -164,25 +207,77 @@ enum VaultProcess {
     }
 }
 
-/// The session the caller belongs to, from its own environment and its parent chain.
-enum VaultSession {
-    static func describe(_ caller: VaultCaller) -> String? {
-        var parts: [String] = []
-        if let id = caller.args?.environmentValue("CLAUDE_CODE_SESSION_ID"), !id.isEmpty {
-            parts.append("Claude Code session \(id)")
-        } else if let agent = caller.ancestors.first(where: { ["claude", "codex", "grok"].contains($0.command.split(separator: " ").first.map(String.init) ?? "") }) {
-            parts.append("\(agent.command) (pid \(agent.pid))")
+/// The agent session the caller belongs to, from its own environment, its parent chain and the session's transcript.
+struct VaultSessionInfo: Equatable {
+    var sessionId: String?
+    var title: String?
+    var agent: String?
+    var cmuxTab: String?
+
+    /// "genesis-tools-native (Claude Code)", "Claude Code session 1b4001ba", "codex exec (pid 80)", or nil.
+    var summary: String? {
+        if let sessionId {
+            return title.map { "\($0) (Claude Code)" } ?? "Claude Code session \(sessionId.prefix(8))"
         }
 
-        if let tab = caller.args?.environmentValue("CMUX_SURFACE_ID"), !tab.isEmpty {
-            parts.append("cmux tab \(tab)")
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        return agent
     }
 }
 
-/// One remembered approval: this tool, this executable, this script.
+enum VaultSession {
+    static func info(_ caller: VaultCaller, claudeHome: String) -> VaultSessionInfo {
+        var info = VaultSessionInfo()
+        if let id = caller.args?.environmentValue("CLAUDE_CODE_SESSION_ID"), !id.isEmpty {
+            info.sessionId = id
+            info.title = claudeTitle(sessionId: id, claudeHome: caller.args?.environmentValue("CLAUDE_CONFIG_DIR") ?? claudeHome)
+        } else if let agent = caller.ancestors.first(where: { ["claude", "codex", "grok"].contains($0.command.split(separator: " ").first.map(String.init) ?? "") }) {
+            info.agent = "\(agent.command) (pid \(agent.pid))"
+        }
+
+        if let tab = caller.args?.environmentValue("CMUX_SURFACE_ID"), !tab.isEmpty {
+            info.cmuxTab = tab
+        }
+
+        return info
+    }
+
+    /// The session's name as Claude Code shows it, from the last 512 KB of its transcript (the title rows repeat).
+    static func claudeTitle(sessionId: String, claudeHome: String) -> String? {
+        let projects = (claudeHome as NSString).appendingPathComponent("projects")
+        guard sessionId.range(of: #"^[A-Za-z0-9-]+$"#, options: .regularExpression) != nil,
+              let folders = try? FileManager.default.contentsOfDirectory(atPath: projects) else { return nil }
+
+        for folder in folders {
+            let path = (projects as NSString).appendingPathComponent("\(folder)/\(sessionId).jsonl")
+            guard let handle = FileHandle(forReadingAtPath: path) else { continue }
+            defer { try? handle.close() }
+            let size = (try? handle.seekToEnd()) ?? 0
+            try? handle.seek(toOffset: size > 524_288 ? size - 524_288 : 0)
+            guard let data = try? handle.readToEnd() else { return nil }
+            return title(fromTranscriptTail: String(decoding: data, as: UTF8.self))
+        }
+
+        return nil
+    }
+
+    /// A name the user gave (`/rename`) beats the agent name, which beats the generated title; the last of each wins.
+    static func title(fromTranscriptTail text: String) -> String? {
+        for field in ["customTitle", "agentName", "aiTitle"] {
+            let pattern = "\"\(field)\":\"((?:[^\"\\\\]|\\\\.)*)\""
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+            guard let match = regex.matches(in: text, range: range).last,
+                  let raw = Range(match.range(at: 1), in: text),
+                  let value = try? JSONDecoder().decode(String.self, from: Data("\"\(text[raw])\"".utf8)),
+                  !value.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            return value
+        }
+
+        return nil
+    }
+}
+
+/// One remembered approval: this executable, this script. `tool` is for display and `revoke <tool>` only.
 struct VaultGrant: Codable, Equatable {
     var key: String
     var tool: String
@@ -195,6 +290,14 @@ struct VaultGrant: Codable, Equatable {
 
     func isLive(at now: Int64) -> Bool {
         until.map { $0 > now } ?? true
+    }
+
+    /// A grant without a script, for an interpreter, would cover every program it runs; the first version stored such
+    /// grants for `bun run <script>` callers. They match nothing and go on the next write.
+    var isTooBroad: Bool {
+        guard script == nil else { return false }
+        let name = (executable as NSString).lastPathComponent
+        return ["bun", "node", "deno"].contains(name) || name.hasPrefix("gt-")
     }
 }
 
@@ -225,14 +328,16 @@ enum VaultGrants {
         return file
     }
 
-    static func live(_ key: String, now: Int64, in file: VaultGrantsFile) -> VaultGrant? {
-        file.grants.last { $0.key == key && $0.isLive(at: now) }
+    static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile) -> VaultGrant? {
+        file.grants.last { $0.executable == executable && $0.script == script && !$0.isTooBroad && $0.isLive(at: now) }
     }
 
-    /// Replaces any grant for the same key and drops expired ones.
+    /// Replaces any grant for the same program and drops expired and too-broad ones.
     static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile) -> VaultGrantsFile {
         var next = file
-        next.grants = file.grants.filter { $0.key != grant.key && $0.isLive(at: now) } + [grant]
+        next.grants = file.grants.filter {
+            !($0.executable == grant.executable && $0.script == grant.script) && !$0.isTooBroad && $0.isLive(at: now)
+        } + [grant]
         return next
     }
 
@@ -247,8 +352,8 @@ enum VaultGrants {
     }
 }
 
-/// One open window per tool: the usage daemon starts a process every minute, and without this each one would open its
-/// own window while the first waits for an answer. The lock lives as long as this process (one request, one window).
+/// One open window per program: the usage daemon starts a process every minute, and without this each one would open
+/// its own window while the first waits for an answer. The lock lives as long as this process (one request, one window).
 enum VaultWindowLock {
     static func path(for key: String) -> String {
         let hash = key.utf8.reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1)) &* 1_099_511_628_211 }
@@ -269,70 +374,194 @@ enum VaultWindowLock {
     }
 }
 
-enum VaultWindow {
-    static func title(_ params: VaultUnlockParams) -> String {
-        "“\(params.tool)” asks for the GenesisTools vault key"
+/// What the window shows, built from the request, the kernel's caller and its session. Pure, so tests read it.
+struct VaultWindowContent {
+    var title: String
+    var purpose: String
+    var facts: [ApprovalFact]
+    var details: [ApprovalFact]
+    var warning: String?
+    var onceOnlyReason: String?
+
+    static let rememberChoices = [
+        ApprovalRemember(seconds: 0, title: "Just this once"),
+        ApprovalRemember(seconds: 8 * 3_600, title: "For 8 hours"),
+        ApprovalRemember(seconds: 7 * 86_400, title: "For 7 days"),
+        ApprovalRemember(seconds: nil, title: "Always for this program"),
+    ]
+
+    static let footnote = "The vault key unlocks every secret GenesisTools stores (AI account tokens and API keys), so an allowed program can read all of them."
+
+    static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {
+        path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 
-    static func body(_ params: VaultUnlockParams, caller: VaultCaller, session: String?) -> String {
-        var lines: [String] = ["Why: \(params.purpose)"]
-        if let secret = params.secret, !secret.isEmpty {
-            lines.append("It was reading: \(secret)")
-        }
+    /// `ai/acc_work/apiKey` reads as `acc_work › apiKey`.
+    static func secretLabel(_ secret: String) -> String {
+        let parts = secret.split(separator: "/").map(String.init)
+        return (parts.first == "ai" ? Array(parts.dropFirst()) : parts).joined(separator: " › ")
+    }
 
-        lines.append("")
-        lines.append("Who (read from the system, not from the request):")
-        lines.append("Process: pid \(caller.pid)")
-        lines.append("Executable: \(caller.executable ?? "unknown")")
+    /// The caller's phrase as a sentence: capital first letter, a full stop at the end.
+    static func sentence(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return trimmed }
+        let capitalised = first.uppercased() + trimmed.dropFirst()
+        return [".", "!", "?", ")"].contains(where: capitalised.hasSuffix) ? capitalised : capitalised + "."
+    }
+
+    static func build(_ params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
+                      home: String = NSHomeDirectory()) -> VaultWindowContent {
+        let tool = caller.toolName ?? params.tool
+        var facts = [ApprovalFact("Session", session.summary ?? "None found (not started from an agent session)")]
+
         if let script = caller.script {
-            lines.append("Script: \(script)")
-        }
-
-        if let arguments = caller.args?.arguments, !arguments.isEmpty {
-            let command = arguments.joined(separator: " ")
-            lines.append("Command: \(command.count > 300 ? String(command.prefix(299)) + "…" : command)")
+            facts.append(ApprovalFact("Program", "\(tool) · \(shortPath(script, home: home))",
+                                      help: "\(caller.executable ?? "unknown") \(script)"))
+        } else {
+            facts.append(ApprovalFact("Program", "\(tool) · \(shortPath(caller.executable ?? "unknown", home: home))",
+                                      help: caller.executable))
         }
 
         if let cwd = caller.cwd {
-            lines.append("Working dir: \(cwd)")
+            facts.append(ApprovalFact("Folder", shortPath(cwd, home: home), help: cwd))
+        }
+
+        if let secret = params.secret, !secret.isEmpty {
+            facts.append(ApprovalFact("Reading", secretLabel(secret), help: secret))
+        }
+
+        var details = [ApprovalFact("Process", "pid \(caller.pid)"),
+                       ApprovalFact("Executable", caller.executable ?? "unknown", monospaced: true)]
+        if let arguments = caller.args?.arguments, !arguments.isEmpty {
+            let command = arguments.joined(separator: " ")
+            details.append(ApprovalFact("Command", command.count > 400 ? String(command.prefix(399)) + "…" : command,
+                                        help: command, monospaced: true))
         }
 
         if !caller.ancestors.isEmpty {
-            lines.append("Started by: " + caller.ancestors.map { "\($0.command) (\($0.pid))" }.joined(separator: " ← "))
+            details.append(ApprovalFact("Started by", caller.ancestors.map { "\($0.command) (\($0.pid))" }.joined(separator: " ← ")))
         }
 
-        lines.append("Session: \(session ?? "none found (not started from an agent session)")")
-        if !caller.injected.isEmpty {
-            lines.append("⚠️ Extra code may be loaded: \(caller.injected.joined(separator: ", ")). Allow once at most.")
+        if let id = session.sessionId {
+            details.append(ApprovalFact("Session ID", id, monospaced: true))
         }
 
-        lines.append("")
-        lines.append("The vault key decrypts every secret GenesisTools stores (AI account tokens and API keys): an allowed tool can read all of them. Touch ID confirms an allow.")
-        return lines.joined(separator: "\n")
-    }
+        if let tab = session.cmuxTab {
+            details.append(ApprovalFact("cmux tab", tab, monospaced: true))
+        }
 
-    static func choices(rememberable: Bool) -> [Int?] {
-        rememberable ? [0, 8 * 3_600, 7 * 86_400, nil] : [0]
-    }
-
-    static func label(_ seconds: Int?) -> String {
-        guard let seconds else { return "Always allow this tool" }
-        if seconds == 0 { return "Allow once" }
-        if seconds % 86_400 == 0 { return "Allow for \(seconds / 86_400) days" }
-        return "Allow for \(seconds / 3_600) hours"
+        let injected = caller.injected
+        return VaultWindowContent(
+            title: "“\(tool)” wants the vault key",
+            purpose: sentence(params.purpose),
+            facts: facts,
+            details: details,
+            warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). It can only be allowed once.",
+            onceOnlyReason: caller.onceOnlyReason)
     }
 }
 
-private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: String?, detail: String = "") {
+/// The app's own copy of the key. The bun keychain rung created the `genesis-tools` item, so macOS asks for the login
+/// password whenever another program (this app) reads it; Martin got that twice per allow. The app reads it once, keeps
+/// a copy in an item it creates itself (its creator reads it without a prompt), and stamps the copy with the source
+/// item's modification date, so a rotated key is read again. Reading attributes alone never prompts.
+enum VaultKeychain {
+    static let service = "genesis-tools"
+    static let copyService = "genesis-tools-app-copy"
+    static let account = "master-key"
+
+    enum Outcome: Equatable {
+        case key(String, fromCopy: Bool)
+        case missing
+        case failed(String)
+    }
+
+    /// The copy may answer only for the exact source it was taken from.
+    static func copyIsCurrent(copyStamp: String?, sourceStamp: String?) -> Bool {
+        guard let copyStamp, let sourceStamp else { return false }
+        return copyStamp == sourceStamp
+    }
+
+    private static func query(_ service: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account,
+         kSecMatchLimit as String: kSecMatchLimitOne]
+    }
+
+    private static func stamp(of service: String) -> (status: OSStatus, stamp: String?) {
+        var request = query(service)
+        request[kSecReturnAttributes as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &item)
+        let attributes = item as? [String: Any]
+        let date = attributes?[kSecAttrModificationDate as String] as? Date
+        return (status, date.map { ISO8601DateFormatter().string(from: $0) })
+    }
+
+    private static func read(_ service: String) -> (status: OSStatus, value: String?, generic: String?) {
+        var request = query(service)
+        request[kSecReturnAttributes as String] = true
+        request[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &item)
+        let attributes = item as? [String: Any]
+        let value = (attributes?[kSecValueData as String] as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        let generic = (attributes?[kSecAttrGeneric as String] as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        return (status, value, generic)
+    }
+
+    private static func writeCopy(_ value: String, stamp: String) {
+        let fields: [String: Any] = [kSecValueData as String: Data(value.utf8),
+                                     kSecAttrGeneric as String: Data(stamp.utf8),
+                                     kSecAttrLabel as String: "GenesisTools vault key (app copy)"]
+        var lookup = query(copyService)
+        lookup.removeValue(forKey: kSecMatchLimit as String)
+        if SecItemUpdate(lookup as CFDictionary, fields as CFDictionary) == errSecItemNotFound {
+            _ = SecItemAdd(lookup.merging(fields) { $1 } as CFDictionary, nil)
+        }
+    }
+
+    static func key() -> Outcome {
+        let source = stamp(of: service)
+        if source.status == errSecItemNotFound { return .missing }
+
+        let copy = read(copyService)
+        if copy.status == errSecSuccess, let value = copy.value, copyIsCurrent(copyStamp: copy.generic, sourceStamp: source.stamp) {
+            return .key(value, fromCopy: true)
+        }
+
+        let original = read(service)
+        guard original.status == errSecSuccess, let value = original.value else {
+            if original.status == errSecItemNotFound { return .missing }
+            return .failed(SecCopyErrorMessageString(original.status, nil) as String? ?? "status \(original.status)")
+        }
+
+        if let stamp = source.stamp {
+            writeCopy(value, stamp: stamp)
+        }
+
+        return .key(value, fromCopy: false)
+    }
+}
+
+private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "") {
     var parts = ["purpose: \(params.purpose)"]
     if let secret = params.secret { parts.append("secret: \(secret)") }
-    if let session { parts.append("session: \(session)") }
+    if let summary = session.summary { parts.append("session: \(summary)") }
+    if let id = session.sessionId { parts.append("session id: \(id)") }
     if !detail.isEmpty { parts.append(detail) }
+
+    var client: [String: Any] = ["name": caller.toolName ?? params.tool, "pid": Int(caller.pid)]
+    client["executable"] = caller.executable
+    client["script"] = caller.script
+    client["cwd"] = caller.cwd
 
     let entry: [String: Any] = [
         "at": ISO8601DateFormatter().string(from: Date()),
         "event": event,
-        "client": ["name": params.tool, "pid": Int(caller.pid), "executable": caller.executable ?? NSNull(), "cwd": caller.cwd ?? NSNull()],
+        "client": client,
         "account": "vault",
         "detail": parts.joined(separator: "; "),
     ]
@@ -349,28 +578,16 @@ private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: Vaul
     try? handle.write(contentsOf: data + Data("\n".utf8))
 }
 
-/// The keychain item the bun rung writes (`genesis-tools` / `master-key`, base64), read as this app.
 private func emitVaultKey(remembered: Bool) -> Never {
-    let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "genesis-tools",
-        kSecAttrAccount as String: "master-key",
-        kSecReturnData as String: true,
-        kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
-    var item: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &item)
-
-    guard status == errSecSuccess, let data = item as? Data, let key = String(data: data, encoding: .utf8) else {
-        if status == errSecItemNotFound {
-            emitError(code: "no_key", message: "the keychain holds no genesis-tools master key", exitCode: 66)
-        }
-
-        let reason = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
+    switch VaultKeychain.key() {
+    case let .key(key, fromCopy):
+        logClick("vault.unlock key from=\(fromCopy ? "app copy" : "keychain item")")
+        emitResult(["decision": "allow", "key": key, "remembered": remembered])
+    case .missing:
+        emitError(code: "no_key", message: "the keychain holds no genesis-tools master key", exitCode: 66)
+    case let .failed(reason):
         emitError(code: "keychain", message: "GenesisTools could not read the vault key: \(reason)", exitCode: 74)
     }
-
-    emitResult(["decision": "allow", "key": key, "remembered": remembered])
 }
 
 private func vaultDeny(_ reason: String) -> Never {
@@ -378,73 +595,87 @@ private func vaultDeny(_ reason: String) -> Never {
     emitResult(["decision": "deny", "reason": reason])
 }
 
+@MainActor private let vaultPresenter = ApprovalPanelPresenter()
+
 func unlockVault(_ params: VaultUnlockParams) {
     let caller = VaultProcess.caller(getppid())
-    let session = VaultSession.describe(caller)
+    let session = VaultSession.info(caller, claudeHome: (NSHomeDirectory() as NSString).appendingPathComponent(".claude"))
     guard let executable = caller.executable else {
         vaultAudit("denied", params: params, caller: caller, session: session, detail: "the caller's executable could not be read")
         vaultDeny("the caller's executable could not be read")
     }
 
-    let rememberable = caller.injected.isEmpty
-    let key = VaultGrants.key(tool: params.tool, executable: executable, script: caller.script)
+    let tool = caller.toolName ?? params.tool
+    let rememberable = caller.onceOnlyReason == nil
+    let key = VaultGrants.key(tool: tool, executable: executable, script: caller.script)
     let now = Int64(Date().timeIntervalSince1970 * 1_000)
 
-    if rememberable, VaultGrants.live(key, now: now, in: VaultGrants.load()) != nil {
+    if rememberable, VaultGrants.live(executable: executable, script: caller.script, now: now, in: VaultGrants.load()) != nil {
         vaultAudit("remembered", params: params, caller: caller, session: session)
         emitVaultKey(remembered: true)
     }
 
-    guard VaultWindowLock.acquire(VaultWindowLock.path(for: key)) != nil else {
-        vaultAudit("denied", params: params, caller: caller, session: session, detail: "an approval window for this tool is already open")
-        vaultDeny("an approval window for “\(params.tool)” is already open; answer that one first")
+    guard VaultWindowLock.acquire(VaultWindowLock.path(for: "vault|\(executable)|\(caller.script ?? "")")) != nil else {
+        vaultAudit("denied", params: params, caller: caller, session: session, detail: "an approval window for this program is already open")
+        vaultDeny("an approval window for “\(tool)” is already open; answer that one first")
     }
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + 170) {
-        vaultAudit("denied", params: params, caller: caller, session: session, detail: "no answer within 170 s")
-        vaultDeny("no answer within 170 s")
-    }
+    let deadlineSeconds = 170.0
+    let content = VaultWindowContent.build(params, caller: caller, session: session)
+    let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
 
     DispatchQueue.main.async {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        vaultAudit("prompted", params: params, caller: caller, session: session)
+        let model = ApprovalDialogModel(
+            title: content.title, purpose: content.purpose, symbol: "key.fill", facts: content.facts, details: content.details,
+            warning: content.warning, footnote: VaultWindowContent.footnote,
+            rememberChoices: rememberable ? VaultWindowContent.rememberChoices : [],
+            rememberNote: content.onceOnlyReason.map { "Only once: \($0)" },
+            allowTitle: biometric ? "Allow with Touch ID" : "Allow…",
+            deadline: Date().addingTimeInterval(deadlineSeconds), identifier: "vault-unlock")
 
-        let choices = VaultWindow.choices(rememberable: rememberable)
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = VaultWindow.title(params)
-        alert.informativeText = VaultWindow.body(params, caller: caller, session: session)
-        for seconds in choices {
-            alert.addButton(withTitle: VaultWindow.label(seconds))
+        // A modal loop would hold the main queue and this timer with it; the panel leaves the run loop free.
+        let deadline = DispatchWorkItem {
+            vaultAudit("denied", params: params, caller: caller, session: session, detail: "no answer within \(Int(deadlineSeconds)) s")
+            vaultDeny("no answer within \(Int(deadlineSeconds)) s")
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + deadlineSeconds, execute: deadline)
 
-        let deny = alert.addButton(withTitle: "Deny")
-        deny.keyEquivalent = "\u{1b}"
-
-        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        guard index >= 0, index < choices.count else {
+        model.onDeny = {
+            deadline.cancel()
+            vaultPresenter.close()
             vaultAudit("denied", params: params, caller: caller, session: session, detail: "denied in the window")
             vaultDeny("denied in the approval window")
         }
 
-        let remember = choices[index]
-        authenticate(reason: "give “\(params.tool)” the GenesisTools vault key") { method, failure in
-            guard let method else {
-                vaultAudit("denied", params: params, caller: caller, session: session, detail: failure)
-                vaultDeny(failure)
-            }
+        model.onAllow = { choice in
+            // From the click on, Touch ID has the time the caller allows (180 s), not the window's deadline.
+            deadline.cancel()
+            vaultPresenter.close()
+            let remember = choice?.seconds ?? 0
+            authenticate(reason: "give “\(tool)” the GenesisTools vault key") { method, failure in
+                DispatchQueue.main.async {
+                    guard let method else {
+                        vaultAudit("denied", params: params, caller: caller, session: session, detail: failure)
+                        vaultDeny(failure)
+                    }
 
-            if remember != 0 {
-                let until = remember.map { now + Int64($0) * 1_000 }
-                let grant = VaultGrant(key: key, tool: params.tool, executable: executable, script: caller.script,
-                                       grantedAt: now, until: until, method: method)
-                VaultGrants.save(VaultGrants.remember(grant, now: now, in: VaultGrants.load()))
-            }
+                    let forever = rememberable && choice != nil && choice?.seconds == nil
+                    if rememberable, remember != 0 || forever {
+                        let until = forever ? nil : Optional(now + Int64(remember) * 1_000)
+                        let grant = VaultGrant(key: key, tool: tool, executable: executable, script: caller.script,
+                                               grantedAt: now, until: until, method: method)
+                        VaultGrants.save(VaultGrants.remember(grant, now: now, in: VaultGrants.load()))
+                    }
 
-            vaultAudit("allowed", params: params, caller: caller, session: session,
-                       detail: "method: \(method); remembered: \(remember.map { $0 == 0 ? "once" : "\($0 / 3_600) h" } ?? "always")")
-            logClick("vault.unlock decision=allow tool=\(params.tool) method=\(method)")
-            emitVaultKey(remembered: false)
+                    vaultAudit("allowed", params: params, caller: caller, session: session,
+                               detail: "method: \(method); remembered: \(forever ? "always" : remember == 0 ? "once" : "\(remember / 3_600) h")")
+                    logClick("vault.unlock decision=allow tool=\(tool) method=\(method)")
+                    emitVaultKey(remembered: false)
+                }
+            }
         }
+
+        vaultAudit("prompted", params: params, caller: caller, session: session)
+        vaultPresenter.present(model)
     }
 }

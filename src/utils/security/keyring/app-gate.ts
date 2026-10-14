@@ -105,7 +105,12 @@ export interface AppGateDeps {
     rpcSync?: (request: VaultUnlockRequest) => GenesisAppRpcOutcome<VaultUnlockReply>;
 }
 
-/** Tests build the rung with fakes; production uses `appGateKey`. A test process never reaches the real app. */
+/**
+ * Tests build the rung with fakes; production uses `appGateKey`. A test process never reaches the real app.
+ *
+ * A refusal is final for the process: the first version asked again on the next secret read, so one `tools say`
+ * opened a new window every three minutes (2026-10-15 00:30).
+ */
 export function createAppGateKeyProvider(deps: AppGateDeps = {}): MasterKeyProvider {
     const available = deps.available ?? (() => !isTestProcess() && isGenesisAppRpcAvailable());
     const options = { timeoutMs: VAULT_UNLOCK_TIMEOUT_MS, isResult: isReply };
@@ -118,6 +123,19 @@ export function createAppGateKeyProvider(deps: AppGateDeps = {}): MasterKeyProvi
         ((request: VaultUnlockRequest) =>
             genesisAppRpcSync<VaultUnlockReply>("vault.unlock", params(request), options));
 
+    let refusal: VaultKeyDeniedError | undefined;
+    const answer = (outcome: GenesisAppRpcOutcome<VaultUnlockReply>, tool: string): Buffer | undefined => {
+        try {
+            return keyFromReply(outcome, tool);
+        } catch (error) {
+            if (error instanceof VaultKeyDeniedError) {
+                refusal = error;
+            }
+
+            throw error;
+        }
+    };
+
     return {
         id: "app",
         async available() {
@@ -128,16 +146,24 @@ export function createAppGateKeyProvider(deps: AppGateDeps = {}): MasterKeyProvi
                 return undefined;
             }
 
+            if (refusal) {
+                throw refusal;
+            }
+
             const request = vaultUnlockRequest();
-            return keyFromReply(await rpc(request), request.tool);
+            return answer(await rpc(request), request.tool);
         },
         getSync() {
             if (!available()) {
                 return undefined;
             }
 
+            if (refusal) {
+                throw refusal;
+            }
+
             const request = vaultUnlockRequest();
-            return keyFromReply(rpcSync(request), request.tool);
+            return answer(rpcSync(request), request.tool);
         },
         async set() {
             throw new Error("GenesisTools.app only reads the vault key; a new key is stored by the keychain rung");

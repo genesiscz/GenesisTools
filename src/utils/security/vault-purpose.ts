@@ -45,17 +45,26 @@ export function _resetVaultContextForTest(): void {
     firstSecret = undefined;
 }
 
-/** The tool this process runs: `src/<tool>/index.ts` from the script path, else the `gt-<tool>` launcher name. */
-export function currentToolName(argv: string[] = process.argv): string {
+/**
+ * The tool this process runs: `src/<tool>/` in the script path (`src/ai/commands/usage/poll-daemon.ts` is `ai`), else
+ * the `gt-<tool>` launcher, else the script's own name. The first version read only `src/<tool>/index.ts` and called
+ * the usage daemon "bun".
+ */
+export function currentToolName(argv: string[] = process.argv, executable: string = process.execPath): string {
     const script = argv[1] ?? "";
-    const fromScript = script.match(/[/\\]src[/\\]([^/\\]+)[/\\]index\.tsx?$/)?.[1];
+    const fromScript = script.match(/[/\\]src[/\\]([^/\\]+)[/\\]/)?.[1];
 
     if (fromScript) {
         return fromScript;
     }
 
-    const launcher = basename(argv[0] ?? "");
-    return launcher.startsWith("gt-") ? launcher.slice(3) : launcher || "unknown";
+    for (const launcher of [basename(executable), basename(argv[0] ?? "")]) {
+        if (launcher.startsWith("gt-")) {
+            return launcher.slice(3);
+        }
+    }
+
+    return basename(script).replace(/\.[cm]?[jt]sx?$/, "") || basename(argv[0] ?? "") || "unknown";
 }
 
 /** `tools <tool> <args>`, cut to a length a window can show. Tokens never travel in argv (they go through stdin). */
