@@ -26,16 +26,16 @@ export function isShellPromptReady(text: string): boolean {
 }
 
 export async function waitForTerminalText({
-    workspaceRef,
-    surfaceRef,
+    workspaceId,
+    surfaceId,
     matches,
     description,
     timeoutMs = 30_000,
     intervalMs = 200,
     activateOnUnavailable = false,
 }: {
-    workspaceRef: string;
-    surfaceRef: string;
+    workspaceId: string;
+    surfaceId: string;
     matches: (text: string) => boolean;
     description: string;
     timeoutMs?: number;
@@ -45,12 +45,12 @@ export async function waitForTerminalText({
     const started = Date.now();
     let activated = false;
     while (Date.now() - started < timeoutMs) {
-        const result = await runCmux(["read-screen", "--workspace", workspaceRef, "--surface", surfaceRef], {
+        const result = await runCmux(["read-screen", "--workspace", workspaceId, "--surface", surfaceId], {
             timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
         });
         if (result.code === 0 && matches(result.stdout)) {
             logger.debug(
-                { workspaceRef, surfaceRef, description, elapsedMs: Date.now() - started },
+                { workspaceId, surfaceId, description, elapsedMs: Date.now() - started },
                 "[restore] terminal ready"
             );
             return;
@@ -64,10 +64,10 @@ export async function waitForTerminalText({
         ) {
             activated = true;
             try {
-                await runCmuxOk(["rpc", "surface.focus", SafeJSON.stringify({ surface_id: surfaceRef })]);
+                await runCmuxOk(["rpc", "surface.focus", SafeJSON.stringify({ surface_id: surfaceId })]);
             } catch (error) {
                 logger.warn(
-                    { error, surfaceRef },
+                    { error, surfaceId },
                     "[restore] optional terminal activation failed; continuing readiness polling"
                 );
             }
@@ -76,5 +76,5 @@ export async function waitForTerminalText({
         await Bun.sleep(intervalMs);
     }
 
-    throw new Error(`Timed out waiting for ${description} in ${workspaceRef} ${surfaceRef}; command was not replayed`);
+    throw new Error(`Timed out waiting for ${description} in ${workspaceId} ${surfaceId}; command was not replayed`);
 }

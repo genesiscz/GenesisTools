@@ -41,11 +41,11 @@ export async function readSessionDetails(live: LiveAgentSurface): Promise<Sessio
     }
 
     // Held peer messages are terminal UI state, not a completed transcript turn.
-    const screen = await runCmux(
-        ["read-screen", "--workspace", live.surface.workspace, "--surface", live.surface.ref, "--lines", "8"],
-        { timeoutMs: 1500 }
-    );
-    if (screen.code === 0 && /(?:^|\n)[^\n]*\b\d+\s+held messages?\b/i.test(screen.stdout)) {
+    // Read by UUID only: a ref names whichever tab holds that number now.
+    const screen = live.surface.id
+        ? await runCmux(["read-screen", "--surface", live.surface.id, "--lines", "8"], { timeoutMs: 1500 })
+        : null;
+    if (screen?.code === 0 && /(?:^|\n)[^\n]*\b\d+\s+held messages?\b/i.test(screen.stdout)) {
         details.state = "held-message";
     }
     return details;

@@ -303,8 +303,8 @@ async function clearPrompt(live: LiveTab): Promise<void> {
     await runCmuxOk(["send-key", "--surface", live.id, "ctrl-e"]);
     await runCmuxOk(["send-key", "--surface", live.id, "ctrl-u"]);
     await waitForTerminalText({
-        workspaceRef: live.workspaceId ?? live.workspaceRef,
-        surfaceRef: live.id,
+        workspaceId: live.workspaceId ?? live.workspaceRef,
+        surfaceId: live.id,
         matches: isShellPromptReady,
         description: "an empty prompt after Ctrl-U",
         timeoutMs: 5_000,

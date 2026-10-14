@@ -42,8 +42,8 @@ test.skipIf(
             const surface = listing.surfaces[0];
             await runCmuxOk(["select-workspace", "--workspace", created[0]]);
             await waitForTerminalText({
-                workspaceRef: created[0],
-                surfaceRef: surface.ref,
+                workspaceId: created[0],
+                surfaceId: surface.ref,
                 matches: isShellPromptReady,
                 description: "test shell",
                 activateOnUnavailable: true,
@@ -59,8 +59,8 @@ test.skipIf(
             expect(stableId).toBeDefined();
             await sendSurfaceText({ surfaceRef: surface.ref, text: "print -r -- CMUX_BEFORE_MOVE_PROOF\n" });
             await waitForTerminalText({
-                workspaceRef: created[0],
-                surfaceRef: surface.ref,
+                workspaceId: created[0],
+                surfaceId: surface.ref,
                 matches: (t) => t.includes("CMUX_BEFORE_MOVE_PROOF") && isShellPromptReady(t),
                 description: "first probe",
             });
@@ -78,8 +78,8 @@ test.skipIf(
             await runCmuxOk(["select-workspace", "--workspace", created[1]]);
             await sendSurfaceText({ surfaceRef: surface.ref, text: "print -r -- CMUX_AFTER_MOVE_PROOF\n" });
             await waitForTerminalText({
-                workspaceRef: created[1],
-                surfaceRef: surface.ref,
+                workspaceId: created[1],
+                surfaceId: surface.ref,
                 matches: (t) => t.includes("CMUX_AFTER_MOVE_PROOF") && isShellPromptReady(t),
                 description: "moved probe",
             });

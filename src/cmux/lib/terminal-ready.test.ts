@@ -17,8 +17,8 @@ test("waits through empty, unready, and unavailable screens before accepting the
         .mockResolvedValueOnce({ code: 0, stdout: "Last login: today", stderr: "" })
         .mockResolvedValue({ code: 0, stdout: "➜  repo ", stderr: "" });
     await waitForTerminalText({
-        workspaceRef: "workspace:5",
-        surfaceRef: "surface:40",
+        workspaceId: "workspace:5",
+        surfaceId: "surface:40",
         matches: isShellPromptReady,
         description: "shell prompt",
         intervalMs: 1,
@@ -32,8 +32,8 @@ test("times out without sending any command when the shell never becomes ready",
     const send = spyOn(cli, "runCmuxOk").mockRejectedValue(new Error("must not send"));
     await expect(
         waitForTerminalText({
-            workspaceRef: "workspace:5",
-            surfaceRef: "surface:40",
+            workspaceId: "workspace:5",
+            surfaceId: "surface:40",
             matches: isShellPromptReady,
             description: "shell prompt",
             intervalMs: 1,
@@ -56,8 +56,8 @@ test("restore can activate a dormant terminal once before retrying its read", as
         return { code: 0, stdout: "", stderr: "" };
     });
     await waitForTerminalText({
-        workspaceRef: "workspace:5",
-        surfaceRef: "surface:40",
+        workspaceId: "workspace:5",
+        surfaceId: "surface:40",
         matches: isShellPromptReady,
         description: "shell prompt",
         intervalMs: 1,
@@ -73,8 +73,8 @@ test("read-only waits never activate a terminal with unavailable text", async ()
     const activate = spyOn(cli, "runCmuxOk").mockRejectedValue(new Error("must not activate"));
     await expect(
         waitForTerminalText({
-            workspaceRef: "workspace:5",
-            surfaceRef: "surface:40",
+            workspaceId: "workspace:5",
+            surfaceId: "surface:40",
             matches: isShellPromptReady,
             description: "shell prompt",
             intervalMs: 1,
@@ -113,8 +113,8 @@ test("a failed optional focus RPC does not abort readiness polling", async () =>
         .mockResolvedValue({ code: 0, stdout: "host% ", stderr: "" });
     const activate = spyOn(cli, "runCmuxOk").mockRejectedValue(new Error("focus unavailable"));
     await waitForTerminalText({
-        workspaceRef: "workspace:5",
-        surfaceRef: "surface:40",
+        workspaceId: "workspace:5",
+        surfaceId: "surface:40",
         matches: isShellPromptReady,
         description: "shell",
         intervalMs: 1,

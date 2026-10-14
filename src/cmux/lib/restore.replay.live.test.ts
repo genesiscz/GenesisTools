@@ -66,14 +66,14 @@ test.skipIf(env.getProcessEnv().RUN_LIVE !== "1" || !env.getProcessEnv().CMUX_TE
             expect(result.workspaces[0].converged).toBe(false);
             const workspaceRef = result.workspaces[0].ref;
             const layout = await paneList(workspaceRef);
-            const surfaceRef = layout.panes[0].selected_surface_ref;
+            const surfaceId = layout.panes[0].selected_surface_id;
             await waitForTerminalText({
-                workspaceRef,
-                surfaceRef,
+                workspaceId: layout.workspace_id ?? workspaceRef,
+                surfaceId,
                 description: "test command output",
                 matches: (text) => text.includes("CMUX_REPLAY_OK:a\\tb"),
             });
-            const screen = await runCmuxOk(["read-screen", "--surface", surfaceRef]);
+            const screen = await runCmuxOk(["read-screen", "--surface", surfaceId]);
             expect(screen.stdout).toContain("CMUX_REPLAY_OK:a\\tb");
             expect(screen.stdout).toContain("/private/tmp");
             expect(screen.stdout).toContain("SAVED_TRANSCRIPT_FOR_RESTORE");

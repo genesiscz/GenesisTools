@@ -142,19 +142,19 @@ export async function captureSurfaceState(
     return { screen, command };
 }
 
-async function runCaptureSafely(workspaceRef: string, surfaceRef: string): Promise<string | undefined> {
+async function runCaptureSafely(workspaceId: string, surfaceId: string): Promise<string | undefined> {
     try {
-        const result = await runCmux(["capture-pane", "--workspace", workspaceRef, "--surface", surfaceRef]);
+        const result = await runCmux(["capture-pane", "--workspace", workspaceId, "--surface", surfaceId]);
         if (result.code !== 0) {
             logger.debug(
-                { workspaceRef, surfaceRef, stderr: result.stderr.trim() },
+                { workspaceId, surfaceId, stderr: result.stderr.trim() },
                 "[shell-probe] capture-pane non-zero exit"
             );
             return undefined;
         }
         return result.stdout;
     } catch (error) {
-        logger.warn({ error, workspaceRef, surfaceRef }, "[shell-probe] capture-pane failed");
+        logger.warn({ error, workspaceId, surfaceId }, "[shell-probe] capture-pane failed");
         return undefined;
     }
 }

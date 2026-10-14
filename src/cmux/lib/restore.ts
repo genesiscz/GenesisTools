@@ -607,8 +607,8 @@ export async function replayTerminal(
     opts: RestoreOptions
 ): Promise<string | undefined> {
     await waitForTerminalText({
-        workspaceRef: workspaceId,
-        surfaceRef: surfaceId,
+        workspaceId: workspaceId,
+        surfaceId: surfaceId,
         matches: isShellPromptReady,
         description: "shell prompt",
         activateOnUnavailable: true,
@@ -651,8 +651,8 @@ export async function replayTerminal(
             const ready = `printf '\\n%s%s\\n' 'cmux-ready-' '${marker.slice("cmux-ready-".length)}'`;
             await sendSurfaceText({ surfaceRef: surfaceId, text: internalRestoreCommand(parts, [ready]) });
             await waitForTerminalText({
-                workspaceRef: workspaceId,
-                surfaceRef: surfaceId,
+                workspaceId: workspaceId,
+                surfaceId: surfaceId,
                 matches: (text) => text.split("\n").some((line) => line.trim() === marker) && isShellPromptReady(text),
                 description: "working-directory and screen setup",
             });
