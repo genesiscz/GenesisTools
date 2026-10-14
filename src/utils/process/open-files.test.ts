@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { closeSync, existsSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, linkSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openFiles } from "./open-files";
@@ -54,6 +54,25 @@ describe("openFiles", () => {
             await child.exited;
         }
     });
+
+    test.skipIf(process.platform !== "linux")(
+        "on Linux a hard link to the file asked for counts, as lsof counts it",
+        () => {
+            const root = mkdtempSync(join(tmpdir(), "open-files-"));
+            const path = join(root, "cache.db");
+            const alias = join(root, "cache-link.db");
+            writeFileSync(path, "cache");
+            linkSync(path, alias);
+            const handle = openSync(alias, "r");
+
+            try {
+                const result = openFiles({ files: [path] });
+                expect(Array.isArray(result) ? result.map((entry) => entry.pid) : result).toContain(process.pid);
+            } finally {
+                closeSync(handle);
+            }
+        }
+    );
 
     test.skipIf(!hasLsof)("reports a clear result once the handle is closed", () => {
         const root = mkdtempSync(join(tmpdir(), "open-files-"));

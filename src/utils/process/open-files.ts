@@ -1,7 +1,7 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { listProcPids, procHeldPaths, readProcProcess } from "./linux-proc";
+import { listProcPids, procHeldFiles, readProcProcess } from "./linux-proc";
 import { processPlatform } from "./os";
 
 export interface OpenFileHandle {
@@ -105,19 +105,49 @@ function realPath(path: string): string {
     }
 }
 
+/** `<st_dev>:<st_ino>` of a file, as {@link procHeldFiles} names a held one; null when it cannot be read. */
+function fileId(path: string): string | null {
+    try {
+        const stat = statSync(path);
+        return `${stat.dev}:${stat.ino}`;
+    } catch {
+        return null;
+    }
+}
+
 /**
- * Linux with no `lsof` spawned: every readable process's held paths ({@link procHeldPaths}) matched against the files
- * and directory trees asked for. Like `lsof` run as this user, another user's process is not readable and is left out.
+ * Linux with no `lsof` spawned: every readable process's held files ({@link procHeldFiles}). A file asked for matches by
+ * device and inode, as `lsof` matches it, so a hard link or a renamed path is still found; a directory tree matches by
+ * path, as `lsof +D` walks it. Like `lsof` run as this user, another user's process is not readable and is left out.
  */
 function openFilesFromProc(files: string[], directories: string[]): OpenFileHandle[] {
-    const wanted = new Set(files.map(realPath));
+    const wanted = new Map<string, string>();
+
+    for (const path of files) {
+        const id = fileId(path);
+
+        if (id) {
+            wanted.set(id, path);
+        }
+    }
+
     const trees = directories.map(realPath);
     const handles: OpenFileHandle[] = [];
 
     for (const pid of listProcPids()) {
-        for (const path of procHeldPaths(pid) ?? []) {
-            if (wanted.has(path) || trees.some((tree) => path === tree || path.startsWith(`${tree}/`))) {
-                handles.push({ pid, command: readProcProcess(pid)?.comm ?? "", path });
+        const seen = new Set<string>();
+
+        for (const file of procHeldFiles(pid) ?? []) {
+            // A deleted file is no longer in the tree `lsof +D` walks.
+            const match =
+                (file.id !== null && wanted.has(file.id)) ||
+                (!file.path.endsWith(" (deleted)") &&
+                    trees.some((tree) => file.path === tree || file.path.startsWith(`${tree}/`)));
+
+            // One handle per file a process holds, however many descriptors and mappings point at it.
+            if (match && !seen.has(file.id ?? file.path)) {
+                seen.add(file.id ?? file.path);
+                handles.push({ pid, command: readProcProcess(pid)?.comm ?? "", path: file.path });
             }
         }
     }

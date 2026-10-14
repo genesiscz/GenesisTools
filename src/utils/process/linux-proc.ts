@@ -3,7 +3,7 @@
  * takes the `/proc` root, so the parsers are tested on fixtures on any OS. A file that is missing or unreadable
  * (the process exited, or belongs to another user and hides it) answers null, never throws.
  */
-import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const PROC_ROOT = "/proc";
@@ -218,12 +218,30 @@ export function readProcExe(pid: number, root = PROC_ROOT): string | null {
     return readLink(join(root, String(pid), "exe"));
 }
 
+export interface HeldFile {
+    /** As the kernel shows it; a file that was replaced or removed ends in ` (deleted)`. */
+    path: string;
+    /** `<st_dev>:<st_ino>` of the file itself, so a hard link or a renamed file still matches, as `lsof` matches. */
+    id: string | null;
+}
+
+/** `st_dev` from the `maps` device column (`major:minor` in hex), as glibc's makedev builds it. */
+function mapsDevice(text: string): number | null {
+    const [major, minor] = text.split(":").map((part) => Number.parseInt(part, 16));
+
+    if (major === undefined || minor === undefined || Number.isNaN(major) || Number.isNaN(minor)) {
+        return null;
+    }
+
+    return ((major & 0xfff) << 8) + (minor & 0xff) + (minor & ~0xff) * 4096;
+}
+
 /**
- * Every path `pid` holds the way `lsof` lists them: its descriptors, working directory, root, executable and mapped
- * files (`/proc/<pid>/{fd/*,cwd,root,exe,maps}`). A path the kernel marks ` (deleted)` keeps the mark, since it is no
- * longer the file at that path (`lsof` matches by inode). Null when the process is gone or belongs to another user.
+ * Every file `pid` holds the way `lsof` lists them: its descriptors, working directory, root, executable and mapped
+ * files (`/proc/<pid>/{fd/*,cwd,root,exe,maps}`), each with its device and inode (a `stat` of the `/proc` link follows
+ * it to the open file, even a deleted one). Null when the process is gone or belongs to another user.
  */
-export function procHeldPaths(pid: number, root = PROC_ROOT): Set<string> | null {
+export function procHeldFiles(pid: number, root = PROC_ROOT): HeldFile[] | null {
     const dir = join(root, String(pid));
     let fds: string[];
 
@@ -233,27 +251,36 @@ export function procHeldPaths(pid: number, root = PROC_ROOT): Set<string> | null
         return null;
     }
 
-    const paths = new Set<string>();
+    const held: HeldFile[] = [];
 
     for (const name of [...fds.map((fd) => join("fd", fd)), "cwd", "root", "exe"]) {
-        const target = readLink(join(dir, name));
+        const link = join(dir, name);
+        const target = readLink(link);
 
-        // Sockets, pipes and anonymous inodes (`socket:[123]`) are not paths.
-        if (target?.startsWith("/")) {
-            paths.add(target);
+        // Sockets, pipes and anonymous inodes (`socket:[123]`) are not files.
+        if (!target?.startsWith("/")) {
+            continue;
+        }
+
+        try {
+            const stat = statSync(link);
+            held.push({ path: target, id: `${stat.dev}:${stat.ino}` });
+        } catch {
+            held.push({ path: target, id: null });
         }
     }
 
     for (const line of (readText(join(dir, "maps")) ?? "").split("\n")) {
-        // address perms offset dev inode, then the path (which may hold spaces); `[heap]` and the like are not paths.
-        const match = line.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\d+\s+(\/.*)$/);
+        // address perms offset dev inode, then the path (which may hold spaces); `[heap]` and the like are not files.
+        const match = line.match(/^\S+\s+\S+\s+\S+\s+(\S+)\s+(\d+)\s+(\/.*)$/);
 
-        if (match?.[1]) {
-            paths.add(match[1]);
+        if (match?.[1] && match[2] && match[3]) {
+            const device = mapsDevice(match[1]);
+            held.push({ path: match[3], id: device === null ? null : `${device}:${match[2]}` });
         }
     }
 
-    return paths;
+    return held;
 }
 
 /** How many descriptors the process has open; null when its `fd` directory is unreadable. */
