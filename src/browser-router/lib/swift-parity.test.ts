@@ -26,7 +26,14 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         const configPath = join(home, "config.json");
         const binary = join(home, "router-cli");
         // Every preset on the invented link host, plus an alias onto a registered port.
-        const chosen = { "local-services": {}, "dashboard-names": {}, "genesis-md": {}, decide: {}, artifact: {} };
+        const chosen = {
+            "local-services": {},
+            "dashboard-names": {},
+            "genesis-md": {},
+            "genesis-hub": {},
+            decide: {},
+            artifact: {},
+        };
         const base: RouterConfig = {
             ...defaultRouterConfig(),
             linkHost: "links.example.test",
@@ -51,6 +58,9 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             "https://example.com/a",
             "https://links.example.test/md/open?path=%2Ftmp%2Fa%20b.md",
             "http://links.example.test/md/panel/chat",
+            // A commit link into the hub, `#` encoded, and the bare hub.
+            "https://links.example.test/hub?pr=acme%2Fapp%237&commit=abc1234",
+            "https://links.example.test/hub",
             "http://127.0.0.1:3000/x",
             "https://example.com/a?utm_source=newsletter",
             `https://links.example.test/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`,

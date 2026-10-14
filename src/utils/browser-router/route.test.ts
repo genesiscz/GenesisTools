@@ -49,6 +49,26 @@ describe("route", () => {
         expect(decision.url).toBe("genesis-md://panel/chat");
     });
 
+    test("/hub on the link host opens the hub link with the query as written", () => {
+        const hub = withPresets({ "genesis-hub": {} });
+        const commit = route("https://links.example.test/hub?pr=acme%2Fapp%237&commit=abc1234", hub);
+
+        expect(commit.kind).toBe("open");
+        expect(commit.url).toBe("genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234");
+
+        if (commit.kind !== "open") {
+            return;
+        }
+
+        // No bundle id: Launch Services hands the scheme to GenesisTools.app, whose link relay takes it.
+        expect(commit.openArguments).toEqual(["genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234"]);
+        expect(route("https://links.example.test/hub/?repo=%2Ftmp%2Fapp&commit=abc1234", hub).url).toBe(
+            "genesis-tools://hub?repo=%2Ftmp%2Fapp&commit=abc1234"
+        );
+        expect(route("https://links.example.test/hub", hub).url).toBe("genesis-tools://hub?");
+        expect(route("https://links.example.test/hubs?pr=1", hub).kind).toBe("forward");
+    });
+
     test("a pattern does not match when the URL merely contains it", () => {
         const decision = route("https://evil.test/?next=https://links.example.test/md/open", config);
 

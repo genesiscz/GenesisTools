@@ -83,6 +83,7 @@ describe("preset kinds", () => {
             "core",
             "local-services",
             "genesis-md",
+            "genesis-hub",
             "mail",
             "decide",
             "cmux-claude",

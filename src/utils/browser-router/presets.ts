@@ -110,6 +110,25 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             ]),
         },
         {
+            id: "genesis-hub",
+            title: "GenesisTools hub",
+            kind: "installable",
+            description:
+                "https://<link host>/hub?<query> opens genesis-tools://hub?<query>: a PR, a commit in it (pr=…&commit=…), a session.",
+            enabledIf: ["browser-router:installed"],
+            needsLinkHost: true,
+            probe: linkHost ? `https://${linkHost}/hub?pr=1&commit=0000000` : undefined,
+            routes: withHost((host) => [
+                {
+                    preset: "genesis-hub",
+                    name: "Open in the GenesisTools hub",
+                    // The query as written: the app reads it as `HubRequest.linkKeys` and drops any other key.
+                    pattern: on(host, "hub/?(?:\\?(.*))?"),
+                    action: { type: "open", to: "genesis-tools://hub?$1" },
+                },
+            ]),
+        },
+        {
             id: "mail",
             title: "Mail",
             kind: "installable",
