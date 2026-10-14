@@ -44,6 +44,11 @@ export interface SessionCmuxRefs {
     at: number;
     /** The user ended the session on purpose (`/exit`) at `at`; it must not be resumed in this tab. */
     ended?: boolean;
+    /**
+     * Set by `loadAllSessionCmuxRefs`: the first time the journal saw this session on the surface of its newest
+     * line. Which session a launch started first tells the tab's own agent from workers started inside it.
+     */
+    firstAt?: number;
 }
 
 export const CMUX_REFS_PATH = genesisToolsDir("claude-code", "cmux-refs.jsonl");
@@ -127,6 +132,8 @@ export function loadAllSessionCmuxRefs(
     options: { beforeMs?: number } = {}
 ): Map<string, SessionCmuxRefs> {
     const refs = new Map<string, SessionCmuxRefs>();
+    /** `<session>\n<surface>` → the first time that session was seen on that surface. */
+    const firstSeen = new Map<string, number>();
     const raw = readJournalTail(refsPath, options.beforeMs !== undefined);
 
     if (raw === null) {
@@ -163,10 +170,17 @@ export function loadAllSessionCmuxRefs(
 
         const id = entry.sessionId.toLowerCase();
         const existing = refs.get(id);
+        const spanKey = `${id}\n${entry.surfaceId?.toLowerCase() ?? ""}`;
+        firstSeen.set(spanKey, Math.min(firstSeen.get(spanKey) ?? Number.POSITIVE_INFINITY, entry.at ?? 0));
 
         if (!existing || (entry.at ?? 0) >= (existing.at ?? 0)) {
             refs.set(id, entry);
         }
+    }
+
+    for (const [id, entry] of refs) {
+        const first = firstSeen.get(`${id}\n${entry.surfaceId?.toLowerCase() ?? ""}`);
+        refs.set(id, { ...entry, ...(first !== undefined ? { firstAt: first } : {}) });
     }
 
     return refs;

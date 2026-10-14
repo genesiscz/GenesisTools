@@ -166,16 +166,64 @@ export interface SurfaceSessionInfo {
      * a live process, which is running now.
      */
     at?: number;
+    /** When the surface journal first saw this session in the tab (epoch ms). */
+    firstAt?: number;
+    /**
+     * The newest session of each agent the journal saw in this tab, newest first; the fields above are the first
+     * of them. A worker started inside the tab (a babysit grok, a Codex app-server) inherits the tab and can leave
+     * the newest line, so `pickSurfaceSession` chooses among these by what the tab ran.
+     */
+    candidates?: SurfaceSessionInfo[];
+}
+
+/**
+ * The session of the tab's own agent among the journal's candidates (Sonnet review F11, 2026-10-14):
+ * - the typed command names an agent (`grok -r …`, `tools codex run …`): that agent's newest session;
+ * - otherwise (any alias, `cr work`, a shell function): of the sessions seen after the command started, the one the
+ *   command started first, because workers start later, from inside it;
+ * - no command, or nothing after it: the newest session.
+ */
+export function pickSurfaceSession(
+    info: SurfaceSessionInfo | undefined,
+    typed?: Pick<CapturedCommand, "command" | "atMs">
+): SurfaceSessionInfo | undefined {
+    const candidates = info?.candidates;
+
+    if (!info || !candidates || candidates.length < 2 || !typed) {
+        return info;
+    }
+
+    const kind = agentKindFromLauncher(typed.command);
+
+    if (kind) {
+        return candidates.find((candidate) => candidate.provider === kind) ?? info;
+    }
+
+    const after = candidates.filter((candidate) => (candidate.at ?? 0) >= typed.atMs);
+
+    if (after.length === 0) {
+        return info;
+    }
+
+    return after.reduce((first, candidate) =>
+        (candidate.firstAt ?? candidate.at ?? 0) < (first.firstAt ?? first.at ?? 0) ? candidate : first
+    );
 }
 
 /** surface uuid (CMUX_SURFACE_ID) → newest known agent session + account. */
 export async function loadSurfaceSessions(
     options: { beforeMs?: number; refsPath?: string; pinsPath?: string } = {}
 ): Promise<Map<string, SurfaceSessionInfo>> {
-    const out = new Map<
-        string,
-        { sessionId: string; account?: string; provider: AccountProviderAlias; at: number; ended?: boolean }
-    >();
+    type Candidate = {
+        sessionId: string;
+        account?: string;
+        provider: AccountProviderAlias;
+        at: number;
+        firstAt?: number;
+        ended?: boolean;
+    };
+    /** surface → provider → that provider's newest session in the tab. */
+    const out = new Map<string, Map<AccountProviderAlias, Candidate>>();
     try {
         const refs = loadAllSessionCmuxRefs(options.refsPath, options);
         const pins = await loadPins({ readOnly: true, path: options.pinsPath });
@@ -184,11 +232,6 @@ export async function loadSurfaceSessions(
             if (!entry.surfaceId) {
                 continue;
             }
-            const existing = out.get(entry.surfaceId);
-            if (existing && existing.at >= (entry.at ?? 0)) {
-                continue;
-            }
-
             // The pin journal outranks the id shape. It is written per session by the same
             // SessionStart hook and names the provider outright, so it settles the ids the
             // v4/v7 habit gets wrong — the Codex rollouts from before its id switchover, and
@@ -203,33 +246,53 @@ export async function loadSurfaceSessions(
                 continue;
             }
 
-            out.set(entry.surfaceId, {
+            const byProvider = out.get(entry.surfaceId) ?? new Map<AccountProviderAlias, Candidate>();
+            const existing = byProvider.get(provider);
+
+            if (existing && existing.at >= (entry.at ?? 0)) {
+                continue;
+            }
+
+            byProvider.set(provider, {
                 sessionId: entry.sessionId,
                 // Only this agent's own pin: an untagged pin is Claude's, and reading it for a
                 // Codex surface would attach a Claude account to a Codex session.
                 account: (pin?.provider ?? "claude") === provider ? (pin?.account ?? undefined) : undefined,
                 provider,
                 at: entry.at ?? 0,
+                firstAt: entry.firstAt,
                 ended: entry.ended,
             });
+            out.set(entry.surfaceId, byProvider);
         }
     } catch (error) {
         logger.warn({ error }, "[command-capture] session refs/pins unavailable");
     }
 
-    // A tab whose last session was ended on purpose (`/exit`) has nothing to resume: the newest record
-    // decides, so an older session of the same tab does not come back either.
-    const ended = [...out].filter(([, v]) => v.ended);
+    const result = new Map<string, SurfaceSessionInfo>();
+    const endedTabs: string[] = [];
 
-    if (ended.length > 0) {
-        logger.debug({ surfaces: ended.map(([k]) => k) }, "[command-capture] tabs whose session was ended on purpose");
+    for (const [surface, byProvider] of out) {
+        const newestFirst = [...byProvider.values()].sort((a, b) => b.at - a.at);
+
+        // A tab whose last session was ended on purpose (`/exit`) has nothing to resume: the newest record
+        // decides, so an older session of the same tab does not come back either.
+        if (newestFirst[0]?.ended) {
+            endedTabs.push(surface);
+            continue;
+        }
+
+        const candidates = newestFirst
+            .filter((candidate) => !candidate.ended)
+            .map(({ sessionId, account, provider, at, firstAt }) => ({ sessionId, account, provider, at, firstAt }));
+        result.set(surface, { ...candidates[0], ...(candidates.length > 1 ? { candidates } : {}) });
     }
 
-    return new Map(
-        [...out]
-            .filter(([, v]) => !v.ended)
-            .map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider, at: v.at }])
-    );
+    if (endedTabs.length > 0) {
+        logger.debug({ surfaces: endedTabs }, "[command-capture] tabs whose session was ended on purpose");
+    }
+
+    return result;
 }
 
 /** session id → pinned account, for ids the process table (not the journal) supplied. */

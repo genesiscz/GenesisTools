@@ -12,6 +12,7 @@ import {
     isAgentLauncher,
     journalReplayCommand,
     loadSurfaceSessions,
+    pickSurfaceSession,
     resumeQueryFromCommand,
     resumeTargetFromCommand,
     setCcRunAliases,
@@ -529,6 +530,31 @@ describe("loadSurfaceSessions", () => {
         expect(sessions.has("surface-v7")).toBe(false);
     });
 
+    test("a tab keeps the newest session of each agent, so the restore can tell its own agent from a worker", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "cmux-refs-"));
+        const refsPath = join(dir, "cmux-refs.jsonl");
+        const pinsPath = join(dir, "session-pins.jsonl");
+        const claudeLine = SafeJSON.parse(line("6bdfb457-cee9-4202-8105-21be8a801757", "surface-mixed"));
+        const codexLine = SafeJSON.parse(line("01a08207-a472-7061-ae94-8dfc9f0ad887", "surface-mixed", "codex"));
+        writeFileSync(
+            refsPath,
+            [
+                SafeJSON.stringify({ ...claudeLine, at: Date.now() - 50_000 }),
+                SafeJSON.stringify({ ...codexLine, at: Date.now() - 40_000 }),
+                SafeJSON.stringify({ ...claudeLine, at: Date.now() - 30_000 }),
+                SafeJSON.stringify({ ...codexLine, at: Date.now() - 10_000 }),
+            ].join("\n")
+        );
+        writeFileSync(pinsPath, "");
+
+        const info = (await loadSurfaceSessions({ refsPath, pinsPath })).get("surface-mixed");
+
+        expect(info?.provider).toBe("codex");
+        expect(info?.candidates?.map((candidate) => candidate.provider)).toEqual(["codex", "claude"]);
+        expect(info?.candidates?.[1]?.firstAt).toBeLessThan(info?.candidates?.[0]?.firstAt ?? 0);
+        expect(pickSurfaceSession(info, { command: "ffff work", atMs: Date.now() - 60_000 })?.provider).toBe("claude");
+    });
+
     // A session the user ended with /exit must not come back at the next relaunch, and neither may an older
     // session of the same tab. A crash writes no such record, so a crashed session still resumes.
     test("a tab whose newest record is a deliberate end has no session to resume", async () => {
@@ -652,5 +678,39 @@ describe("stripModelFlags", () => {
             removed: ["--model opus", "--model=haiku"],
         });
         expect(stripModelFlags("grok -r abc")).toEqual({ command: "grok -r abc", removed: [] });
+    });
+});
+
+// Sonnet review F11 (2026-10-14): 12 of 547 tabs interleaved Claude and Codex records, because a worker started
+// inside a Claude tab inherits it. The tab's own agent is what the tab ran, not whoever wrote the newest line.
+describe("pickSurfaceSession", () => {
+    const claude = {
+        sessionId: "6bdfb457-cee9-4202-8105-21be8a801757",
+        provider: "claude" as const,
+        at: 2_000,
+        firstAt: 1_100,
+    };
+    const codexWorker = {
+        sessionId: "019a0000-0000-7000-8000-00000000c0de",
+        provider: "codex" as const,
+        at: 3_000,
+        firstAt: 1_500,
+    };
+    const info = { ...codexWorker, candidates: [codexWorker, claude] };
+
+    test("an unknown alias resumes the session it started first, not the worker that wrote last", () => {
+        expect(pickSurfaceSession(info, { command: "ffff work", atMs: 1_000 })?.sessionId).toBe(claude.sessionId);
+    });
+
+    test("a launcher that names an agent picks that agent's session", () => {
+        expect(pickSurfaceSession(info, { command: "codex resume 019a", atMs: 1_000 })?.provider).toBe("codex");
+        expect(pickSurfaceSession(info, { command: "claude --resume x", atMs: 1_000 })?.provider).toBe("claude");
+    });
+
+    test("without a command, or one tab session, the newest stays", () => {
+        expect(pickSurfaceSession(info)?.sessionId).toBe(codexWorker.sessionId);
+        expect(pickSurfaceSession({ ...claude }, { command: "ffff work", atMs: 1_000 })?.sessionId).toBe(
+            claude.sessionId
+        );
     });
 });

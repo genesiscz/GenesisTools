@@ -12,6 +12,7 @@ import {
     journalReplayCommand,
     loadPinnedAccounts,
     loadSurfaceSessions,
+    pickSurfaceSession,
     type SurfaceSessionInfo,
 } from "@app/cmux/lib/command-capture";
 import { loadSavedScreens, preferredScreenText } from "@app/cmux/lib/screen-cache";
@@ -506,10 +507,13 @@ export function buildTerminalSurfaceSnapshot(input: {
         return { type: "terminal", title, cwd, screen };
     }
 
-    const session =
+    // The tab's own agent among the journal's candidates, by what the tab last ran.
+    const session = pickSurfaceSession(
         capture && entry.id
             ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
-            : undefined;
+            : undefined,
+        journal
+    );
     const journalReplay = journal ? journalReplayCommand(journal, session) : undefined;
 
     if (journal && journalReplay && !isAgentLauncher(journalReplay.command)) {

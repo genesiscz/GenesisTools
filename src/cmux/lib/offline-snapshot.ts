@@ -21,6 +21,7 @@ import {
     isAgentLauncher,
     journalReplayCommand,
     loadSurfaceSessions,
+    pickSurfaceSession,
     type SurfaceSessionInfo,
 } from "@app/cmux/lib/command-capture";
 import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
@@ -219,9 +220,12 @@ export function buildOfflinePanes(
             const text = preferredScreenText(panel.terminal?.scrollback, cachedScreen?.text);
             const screen =
                 deps.captureScreen !== false && !isCaller && text ? { text, rows: text.split("\n").length } : undefined;
-            const session =
+            // The tab's own agent among the journal's candidates, by what the tab last ran.
+            const session = pickSurfaceSession(
                 deps.surfaceSessions.get(panel.id) ??
-                (panel.stableSurfaceId ? deps.surfaceSessions.get(panel.stableSurfaceId) : undefined);
+                    (panel.stableSurfaceId ? deps.surfaceSessions.get(panel.stableSurfaceId) : undefined),
+                captured
+            );
             const capturedReplay = captured ? journalReplayCommand(captured, session) : undefined;
             const capturedCommand = capturedReplay?.command;
             const recorded =
