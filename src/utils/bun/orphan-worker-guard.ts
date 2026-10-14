@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { formatLstart, readProcessBasics } from "../process/process-basics";
 // Relative on purpose: the ban below is on the `@genesiscz/*` alias graph, and this module
 // imports nothing itself, so a relative path keeps the guard loadable from a /tmp repro.
 import { isProcessAlive } from "../process-alive";
@@ -126,20 +127,10 @@ function shQuote(value: string): string {
  * is not identity. Returns null when `ps` cannot answer, and the caller then declines to
  * schedule a kill at all.
  */
-function startedAt(pid: number): string | null {
-    try {
-        // Normalise whitespace the same way the shell side does. `ps -o lstart=` pads its
-        // column, so a raw `$(ps ...)` in sh keeps leading spaces that `.trim()` here would
-        // strip — the two strings then never match and the kill silently never fires. That
-        // exact mismatch turned the guard's own SIGKILL test red, which is how it was caught.
-        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" })
-            .replace(/\s+/g, " ")
-            .trim();
-
-        return started.length > 0 ? started : null;
-    } catch {
-        return null;
-    }
+export function startedAt(pid: number): string | null {
+    const startMs = readProcessBasics(pid)?.startMs;
+    // Match the shell watchdog's whitespace-normalised `ps -o lstart=` identity exactly.
+    return startMs == null ? null : formatLstart(startMs).replace(/\s+/g, " ").trim();
 }
 
 /**

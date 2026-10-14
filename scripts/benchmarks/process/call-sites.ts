@@ -136,30 +136,32 @@ const AGENT_SCAN = { alias: "claude" as const, classify: (args: string) => (args
  * pays it.
  */
 export const CALL_SITES: CallSite[] = [
-    // Plugin hooks: standalone files that run their main on import, so the stand-in is the spawn the hook issues.
+    // Plugin hooks expose their read-only probes without running their entry points on import.
     {
         id: "hook-cmux-agent-tty",
         file: "plugins/genesis-tools/hooks/record-session-cmux.ts",
         spawn: "ps -o tty= -p <agent pid>",
         frequency: "per-tool-call",
-        standIn: "the hook runs its main on import",
-        run: () => bare(["ps", "-o", "tty=", "-p", String(process.ppid)]),
+        run: async () =>
+            (await import("../../../plugins/genesis-tools/hooks/record-session-cmux")).agentHasTty(
+                String(process.ppid)
+            ),
     },
     {
         id: "hook-inbox-hint-command",
         file: "plugins/genesis-tools/hooks/native-inbox-hint.ts",
         spawn: "ps -p <pid> -o command=",
         frequency: "per-command",
-        standIn: "the hook runs its main on import",
-        run: () => bare(["ps", "-p", String(process.ppid), "-o", "command="]),
+        run: async () =>
+            (await import("../../../plugins/genesis-tools/hooks/native-inbox-hint")).commandOf(process.ppid),
     },
     {
         id: "hook-account-ancestors",
         file: "plugins/genesis-tools/hooks/record-session-account.ts",
         spawn: "ps -o ppid=,command= -p <pid>, once per ancestor",
         frequency: "per-command",
-        standIn: "the hook runs its main on import",
-        run: () => walkAncestorsWithPs([]),
+        run: async () =>
+            (await import("../../../plugins/genesis-tools/hooks/record-session-account")).ancestorCommands(),
     },
     {
         id: "widget-drive-pid",
@@ -532,11 +534,10 @@ export const CALL_SITES: CallSite[] = [
         file: "src/utils/bun/orphan-worker-guard.ts",
         spawn: "ps -p <pid> -o lstart= (twice)",
         frequency: "per-command",
-        standIn: "installOrphanWorkerGuard starts a watchdog process",
-        run: () => [
-            bare(["ps", "-p", String(process.pid), "-o", "lstart="]),
-            bare(["ps", "-p", String(process.ppid), "-o", "lstart="]),
-        ],
+        run: async () => {
+            const { startedAt } = await import("@genesiscz/utils/bun/orphan-worker-guard");
+            return [startedAt(process.pid), startedAt(process.ppid)];
+        },
     },
     {
         id: "services-idle-clients",

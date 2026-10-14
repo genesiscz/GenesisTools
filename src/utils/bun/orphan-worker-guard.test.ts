@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildWatchdogScript } from "@genesiscz/utils/bun/orphan-worker-guard";
+import { buildWatchdogScript, startedAt } from "@genesiscz/utils/bun/orphan-worker-guard";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -221,6 +221,18 @@ afterEach(() => {
 });
 
 describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
+    test("kernel start time equals the shell watchdog's real ps identity", () => {
+        const expected = execFileSync("ps", ["-p", String(process.pid), "-o", "lstart="], {
+            encoding: "utf8",
+            env: process.env,
+        })
+            .replace(/\s+/g, " ")
+            .trim();
+
+        expect(expected.length).toBeGreaterThan(0);
+        expect(startedAt(process.pid)).toBe(expected);
+    });
+
     test("a busy-loop child survives SIGKILL of its parent (the 2026-09-08 class)", async () => {
         const { middlePid, childPid } = await spawnBusyChild({ guard: false });
 

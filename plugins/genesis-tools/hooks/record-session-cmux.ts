@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readProcessBasics } from "../lib/process-basics";
 import { type Harness, harnessFor } from "./harness";
 
 const SafeJSON = JSON;
@@ -91,22 +92,13 @@ function identifyRefs(): IdentifyCaller {
  * because the record is tagged with its harness and the claude reader filters it out — a
  * non-claude record can no longer claim a claude pane's tty.
  */
-function agentHasTty(): boolean {
-    const pid = process.env.CLAUDE_PID;
-
+export function agentHasTty(pid = process.env.CLAUDE_PID): boolean {
     if (!pid || !/^\d+$/.test(pid)) {
         return true;
     }
 
-    const result = spawnSync("ps", ["-o", "tty=", "-p", pid], { encoding: "utf8", timeout: 1500 });
-
-    if (result.status !== 0 || !result.stdout) {
-        return true;
-    }
-
-    // macOS prints `??` for "no controlling tty", Linux prints `?`.
-    const tty = result.stdout.trim();
-    return tty !== "??" && tty !== "?";
+    const entry = readProcessBasics(Number(pid));
+    return entry === null || entry.tty !== null;
 }
 
 function main(raw: string): void {
@@ -171,8 +163,10 @@ function main(raw: string): void {
     appendFileSync(REFS_PATH, `${SafeJSON.stringify(entry)}\n`, "utf8");
 }
 
-try {
-    main(await Bun.stdin.text());
-} catch {
-    // A bookkeeping record is never worth failing a session event over.
+if (import.meta.main) {
+    try {
+        main(await Bun.stdin.text());
+    } catch {
+        // A bookkeeping record is never worth failing a session event over.
+    }
 }

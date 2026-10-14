@@ -5,29 +5,17 @@
  * `scripts/test.ts` executes on import — it IS the runner — so nothing there is reachable
  * from a test file.
  *
- * 🛑 Like the rest of the `scripts/test-*` set, this module imports only `node:` builtins.
- * It runs BEFORE the dependency repair `scripts/test.ts` performs, so an import that reached
- * into `src/utils/**` would fail in exactly the broken-`node_modules` worktree the runner
- * exists to fix. That is why `startedAt` here is not shared with the near-identical helper in
- * `src/utils/bun/orphan-worker-guard.ts`: that one imports `../process-alive`, which pulls in
- * the tree that may not be installed yet.
+ * This module runs before dependency repair. Its process reader imports only `node:` and
+ * `bun:` builtins, so a broken or missing dependency tree cannot prevent reaping workers.
  */
 
-import { execFileSync } from "node:child_process";
+import { formatLstart, listProcessBasics, readProcessBasics } from "../src/utils/process/process-basics";
 
 /** One process, paired with the start time that proves it is still the same process. */
 export interface Worker {
     pid: number;
     start: string;
 }
-
-/**
- * A full process table can be large on a busy machine, and `execFileSync` defaults to a 1 MiB
- * buffer. Overflowing it throws `ENOBUFS`, the catch returns an empty list, and the reap then
- * silently sweeps nothing while the coordinator is killed anyway — leaving the orphaned
- * workers this whole path exists to collect.
- */
-const PS_MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
  * `ps` start time for `pid`, whitespace-normalised — the discriminator that separates
@@ -39,21 +27,8 @@ const PS_MAX_BUFFER = 64 * 1024 * 1024;
  * always safe, killing a stranger is not.
  */
 export function startedAt(pid: number): string | null {
-    try {
-        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
-            encoding: "utf8",
-            maxBuffer: PS_MAX_BUFFER,
-        })
-            .replace(/\s+/g, " ")
-            .trim();
-
-        return started.length > 0 ? started : null;
-    } catch {
-        // `ps` exits non-zero for a pid that is already gone. That is the ordinary case here
-        // and means the same to the caller as any other read failure: no identity, so no
-        // kill. This file predates the dependency repair it performs, so it has no logger.
-        return null;
-    }
+    const startMs = readProcessBasics(pid)?.startMs;
+    return startMs == null ? null : formatLstart(startMs).replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -126,24 +101,17 @@ export function descendantsFromTable(table: string, root: number): Worker[] {
 
 /**
  * Every descendant of `root`, each paired with the start time that proves its identity,
- * from ONE `ps` snapshot taken while `root` is still alive.
+ * from one process-table snapshot taken while `root` is still alive.
  *
  * It must be taken first, before the kill: the moment the coordinator dies its workers
  * reparent to pid 1 and the ppid chain that names them is gone for good.
  */
 export function descendantsOf(root: number): Worker[] {
-    let table: string;
-
-    try {
-        table = execFileSync("ps", ["-Ao", "pid=,ppid=,lstart="], {
-            encoding: "utf8",
-            maxBuffer: PS_MAX_BUFFER,
-        });
-    } catch {
-        // No process table means nothing to walk. The coordinator kill below still happens;
-        // only the descendant sweep is lost.
-        return [];
-    }
+    const table = listProcessBasics()
+        .flatMap((entry) =>
+            entry.startMs === null ? [] : [`${entry.pid} ${entry.ppid} ${formatLstart(entry.startMs)}`]
+        )
+        .join("\n");
 
     return descendantsFromTable(table, root);
 }

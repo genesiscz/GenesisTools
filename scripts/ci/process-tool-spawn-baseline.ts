@@ -6,12 +6,8 @@
  * which lowers the counts and refuses to raise one.
  */
 export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
-    "plugins/genesis-tools/hooks/native-inbox-hint.ts": 1,
-    "plugins/genesis-tools/hooks/record-session-account.ts": 1,
-    "plugins/genesis-tools/hooks/record-session-cmux.ts": 1,
     "scripts/history/retire-native-cache.ts": 1,
     "scripts/native/widget-drive.ts": 1,
-    "scripts/test-reap.ts": 2,
     "src/ai-proxy/lib/tunnel/cloudflared.ts": 1,
     "src/benchmark/lib/process-sample.ts": 1,
     "src/chrome-devtools/lib/platform.ts": 4,
@@ -45,7 +41,6 @@ export const PROCESS_TOOL_SPAWN_BASELINE: Readonly<Record<string, number>> = {
     "src/utils/DashboardApp/stopUiServerOnPort.ts": 2,
     "src/utils/ai/active-processes.ts": 3,
     "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts": 2,
-    "src/utils/bun/orphan-worker-guard.ts": 1,
     "src/utils/cmux/lib/health.ts": 1,
     "src/utils/network.ts": 2,
     "src/utils/process-identity.ts": 2,

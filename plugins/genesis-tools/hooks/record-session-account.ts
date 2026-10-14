@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { readProcessBasics } from "../lib/process-basics";
 import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
 
 const SafeJSON = JSON;
@@ -89,7 +89,7 @@ function modelFromCommand(command: string): string | null {
 /**
  * The ancestor command lines, nearest first, stopping at the first `claude`.
  * A hook is a grandchild of claude (claude → sh → this), so the launch flags are
- * only reachable by walking up the parent chain. One `ps` per hop, gives up quietly.
+ * only reachable by walking up the parent chain. An unreadable ancestor ends the walk.
  *
  * Walked ONCE and cached: model detection and keychain detection each used to
  * do their own walk, so a SessionStart could spawn `ps` up to 2 * MAX_PS_HOPS
@@ -97,7 +97,7 @@ function modelFromCommand(command: string): string | null {
  */
 let ancestorCommandsCache: string[] | null = null;
 
-function ancestorCommands(): string[] {
+export function ancestorCommands(): string[] {
     if (ancestorCommandsCache !== null) {
         return ancestorCommandsCache;
     }
@@ -106,25 +106,19 @@ function ancestorCommands(): string[] {
     let pid = process.ppid;
 
     for (let hop = 0; hop < MAX_PS_HOPS && pid > 1; hop++) {
-        const result = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], { encoding: "utf8" });
+        const entry = readProcessBasics(pid);
 
-        if (result.status !== 0 || !result.stdout) {
+        if (!entry?.command) {
             break;
         }
 
-        const match = /^\s*(\d+)\s+(.*)$/.exec(result.stdout.trim());
+        commands.push(entry.command);
 
-        if (!match) {
+        if (/(^|\/|\s)claude(\s|$)/.test(entry.command)) {
             break;
         }
 
-        commands.push(match[2]);
-
-        if (/(^|\/|\s)claude(\s|$)/.test(match[2])) {
-            break;
-        }
-
-        pid = Number(match[1]);
+        pid = entry.ppid;
     }
 
     ancestorCommandsCache = commands;
