@@ -15,13 +15,7 @@ import {
     timedSteps,
 } from "./app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
-import {
-    type AppProcess,
-    groupOldBuilds,
-    localNetworkAnswer,
-    parseLocalNetworkRules,
-    txtInodesByPid,
-} from "./local-network";
+import { type AppProcess, groupOldBuilds, localNetworkAnswer, parseLocalNetworkRules } from "./local-network";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
@@ -551,19 +545,14 @@ describe("old builds still running", () => {
         });
     }
 
-    it("reads each process's mapped files from lsof", () => {
-        const byPid = txtInodesByPid("p101\nfdtxt\ni11\ni99\np202\ni22\np303\n");
-        expect([...byPid.entries()].map(([pid, inodes]) => [pid, [...inodes]])).toEqual([
-            [101, [11, 99]],
-            [202, [22]],
-            [303, []],
-        ]);
-    });
-
     it("groups the processes per retired build and answers for that build's path", () => {
         const builds = groupOldBuilds({
             processes: genesisAppProcesses(ps, launcher),
-            inodesByPid: txtInodesByPid("p101\ni11\np202\ni11\np303\ni33\n"),
+            inodesByPid: new Map([
+                [101, new Set([11])],
+                [202, new Set([11])],
+                [303, new Set([33])],
+            ]),
             retired: [
                 { bundle: "/r/2/GenesisTools.app", binary: "/r/2/bin", retiredAt: new Date(2_000), inode: 22 },
                 { bundle: "/r/1/GenesisTools.app", binary: retiredBinaryFor(1), retiredAt: new Date(1_000), inode: 11 },

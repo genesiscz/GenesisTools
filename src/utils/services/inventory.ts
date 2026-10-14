@@ -105,27 +105,6 @@ export function parseLaunchctlList(stdout: string): LaunchdJob[] {
     });
 }
 
-/** `lsof -Fpn` rows: `p<pid>` then one `n<address>:<port>` per listening socket. */
-export function parseLsofListeners(stdout: string): Map<number, number[]> {
-    const ports = new Map<number, number[]>();
-    let pid: number | null = null;
-
-    for (const line of stdout.split("\n")) {
-        if (line.startsWith("p")) {
-            pid = Number(line.slice(1));
-            continue;
-        }
-
-        const port = line.startsWith("n") ? Number(line.slice(line.lastIndexOf(":") + 1)) : Number.NaN;
-
-        if (pid !== null && Number.isInteger(port)) {
-            ports.set(pid, [...new Set([...(ports.get(pid) ?? []), port])]);
-        }
-    }
-
-    return ports;
-}
-
 /**
  * Runs one probe command and logs how it went. A command that could not run (status null) left the
  * inventory blind, which once read as "no servers" under the daemon's PATH, so it is a warning.

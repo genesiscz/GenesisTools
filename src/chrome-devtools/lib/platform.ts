@@ -184,32 +184,6 @@ export interface ListeningPort {
     pid: number | null;
 }
 
-/** Parse `lsof -nP -iTCP -sTCP:LISTEN` (POSIX). */
-export function parseLsofListeners(stdout: string): ListeningPort[] {
-    const out: ListeningPort[] = [];
-    for (const line of stdout.split("\n")) {
-        const m = line.match(/^\S+\s+(\d+)\s+.*:(\d+)\s+\(LISTEN\)/);
-        if (m) {
-            out.push({ port: Number(m[2]), pid: Number(m[1]) });
-        }
-    }
-
-    return out;
-}
-
-/** Parse `netstat -ano -p TCP` LISTENING lines (win32). */
-export function parseNetstatListeners(stdout: string): ListeningPort[] {
-    const out: ListeningPort[] = [];
-    for (const line of stdout.split("\n")) {
-        const m = line.match(/^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/i);
-        if (m) {
-            out.push({ port: Number(m[1]), pid: Number(m[2]) });
-        }
-    }
-
-    return out;
-}
-
 /** Every listening TCP port with its owning pid. */
 export function listListeningTcpPorts(
     exec: ExecFn = defaultExec,

@@ -1,16 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { processFixture } from "./__tests__/process-fixture";
-import {
-    artifactPath,
-    listListeningTcpPorts,
-    parseLsofListeners,
-    parseNetstatListeners,
-    processArguments,
-    terminatePid,
-    tmpRoot,
-} from "./platform.ts";
+import { parseLsofListeners, processFixture } from "./__tests__/process-fixture";
+import { artifactPath, listListeningTcpPorts, processArguments, terminatePid, tmpRoot } from "./platform.ts";
 
 describe.skipIf(process.platform !== "darwin")("listListeningTcpPorts on live listeners", () => {
     test("answers one row per listening socket, as lsof lists them, IPv4 and IPv6 on one port included", async () => {
@@ -121,28 +113,6 @@ describe("tmpRoot / artifactPath", () => {
         // where the test happened to run.
         expect(tmpRoot("win32")).toBe(tmpdir());
         expect(artifactPath("cdp.har", "linux")).toBe("/tmp/cdp.har");
-    });
-});
-
-describe("listener parsers", () => {
-    test("lsof LISTEN lines yield port + pid", () => {
-        const out = parseLsofListeners(
-            "Brave   1030 Martin  43u  IPv4 0x0      0t0  TCP 127.0.0.1:9333 (LISTEN)\nbun     1823 Martin  10u  IPv4 0x0  0t0  TCP *:9876 (LISTEN)\n"
-        );
-        expect(out).toEqual([
-            { port: 9333, pid: 1030 },
-            { port: 9876, pid: 1823 },
-        ]);
-    });
-
-    test("netstat LISTENING lines yield port + pid", () => {
-        const out = parseNetstatListeners(
-            "  TCP    127.0.0.1:9222         0.0.0.0:0              LISTENING       4321\n  TCP    [::]:445               [::]:0                 LISTENING       4\n  UDP    0.0.0.0:5353           *:*                                    999\n"
-        );
-        expect(out).toEqual([
-            { port: 9222, pid: 4321 },
-            { port: 445, pid: 4 },
-        ]);
     });
 });
 

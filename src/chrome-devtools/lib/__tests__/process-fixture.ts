@@ -1,13 +1,31 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import {
-    type ExecFn,
-    type Platform,
-    type ProcessEntry,
-    type ProcessReader,
-    type ProcessSample,
-    parseLsofListeners,
-    parseNetstatListeners,
-} from "../platform";
+import type { ExecFn, ListeningPort, Platform, ProcessEntry, ProcessReader, ProcessSample } from "../platform";
+
+/** Parse `lsof -nP -iTCP -sTCP:LISTEN` (POSIX). */
+export function parseLsofListeners(stdout: string): ListeningPort[] {
+    const out: ListeningPort[] = [];
+    for (const line of stdout.split("\n")) {
+        const m = line.match(/^\S+\s+(\d+)\s+.*:(\d+)\s+\(LISTEN\)/);
+        if (m) {
+            out.push({ port: Number(m[2]), pid: Number(m[1]) });
+        }
+    }
+
+    return out;
+}
+
+/** Parse `netstat -ano -p TCP` LISTENING lines (win32). */
+function parseNetstatListeners(stdout: string): ListeningPort[] {
+    const out: ListeningPort[] = [];
+    for (const line of stdout.split("\n")) {
+        const m = line.match(/^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/i);
+        if (m) {
+            out.push({ port: Number(m[1]), pid: Number(m[2]) });
+        }
+    }
+
+    return out;
+}
 
 /** Parse `ps -axo pid=,ppid=,command=` output (darwin and linux procps agree on this shape). */
 function parsePsProcesses(stdout: string): ProcessEntry[] {

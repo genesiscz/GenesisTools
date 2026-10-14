@@ -129,27 +129,6 @@ export interface RetiredBinary {
     inode: number;
 }
 
-/** `lsof -a -d txt -Fpi -n -p <pids>`: a `p<pid>` line, then one `i<inode>` line per mapped file of that process. */
-export function txtInodesByPid(lsofStdout: string): Map<number, Set<number>> {
-    const byPid = new Map<number, Set<number>>();
-    let current: Set<number> | undefined;
-
-    for (const line of lsofStdout.split("\n")) {
-        if (line.startsWith("p")) {
-            current = new Set();
-            byPid.set(Number(line.slice(1)), current);
-        } else if (line.startsWith("i") && current) {
-            const inode = Number(line.slice(1));
-
-            if (Number.isInteger(inode)) {
-                current.add(inode);
-            }
-        }
-    }
-
-    return byPid;
-}
-
 /** The retired bundles whose binary a GenesisTools process still executes, oldest retirement first. */
 export function groupOldBuilds({
     processes,
