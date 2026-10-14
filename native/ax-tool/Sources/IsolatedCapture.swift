@@ -212,6 +212,16 @@ private struct SourceFrame {
     let contentRect: CGRect?
     /// Backing scale of the display the window was on when this surface was captured.
     let scale: CGFloat
+    /// What the surface holds, in screen points: the window's size, or its group's for a sheet.
+    let contentScreenSize: CGSize?
+}
+
+private func isolatedWindowRows(_ rows: [[CFString: Any]]) -> [IsolatedWindowRow] {
+    rows.compactMap { row -> IsolatedWindowRow? in
+        guard let id = row[kCGWindowNumber] as? CGWindowID, let pid = row[kCGWindowOwnerPID] as? pid_t,
+              let bounds = captureWindowBounds(row) else { return nil }
+        return IsolatedWindowRow(id: id, pid: pid, bounds: bounds)
+    }
 }
 
 @available(macOS 14.0, *)
@@ -274,11 +284,18 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
               let status = attachments.first?[SCStreamFrameInfo.status.rawValue] as? Int,
               SCFrameStatus(rawValue: status) == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sample) else { return }
-        contentRect = frameInfoRect(attachments.first?[SCStreamFrameInfo.contentRect.rawValue])
-        if let scale = attachments.first?[SCStreamFrameInfo.scaleFactor.rawValue] as? CGFloat, scale > 0 {
+        let info = attachments.first
+        if let scale = info?[SCStreamFrameInfo.scaleFactor.rawValue] as? CGFloat, scale > 0 {
             nativeScale = scale
         }
-        compositor?.receive(SourceFrame(buffer: buffer, contentRect: contentRect, scale: nativeScale), from: target.id)
+        let points = frameInfoRect(info?[SCStreamFrameInfo.contentRect.rawValue])
+        contentRect = points.map { surfacePixelRect(contentRect: $0, scaleFactor: nativeScale) }
+        var screenSize: CGSize?
+        if let points, let contentScale = info?[SCStreamFrameInfo.contentScale.rawValue] as? CGFloat, contentScale > 0 {
+            screenSize = contentScreenSize(contentRect: points, contentScale: contentScale)
+        }
+        compositor?.receive(SourceFrame(buffer: buffer, contentRect: contentRect, scale: nativeScale,
+                                        contentScreenSize: screenSize), from: target.id)
     }
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         compositor?.queue.async { [weak self] in
@@ -307,6 +324,10 @@ private final class IsolatedCompositor {
     var error: Error?
     var currentFps: Double
     var geometryHistory: [[String: Any]] = []
+    private(set) var placementWarnings: [String] = []
+    private var unplacedWarned: Set<CGWindowID> = []
+    /// The latest on-screen window list, where a sheet recorded without its parent finds the parent's frame.
+    private var windowRows: [IsolatedWindowRow]
     private var throttle = RenderThrottle()
     /// Set once the streams have stopped and the last pending content is in the movie.
     private var finished = false
@@ -317,8 +338,10 @@ private final class IsolatedCompositor {
     /// Session time of the first composite frame: stream startup before it is not movie time.
     var firstFrameAfterStartMs: Int? { throttle.firstRender.map { Int($0 * 1000) } }
 
-    init(recorder: NativeRecorder, options: RecordOptions, selected: [SelectedWindow], canvas: CGRect, displayCanvas: CGRect?, output: CGSize) {
+    init(recorder: NativeRecorder, options: RecordOptions, selected: [SelectedWindow], windows: [IsolatedWindowRow],
+         canvas: CGRect, displayCanvas: CGRect?, output: CGSize) {
         self.recorder = recorder
+        self.windowRows = windows
         self.options = options
         self.currentFps = options.activeFps
         self.output = output
@@ -359,9 +382,29 @@ private final class IsolatedCompositor {
         let union = visible.reduce(CGRect.null) { $0.union($1.bounds) }
         let canvas = displayCanvas ?? (union.isNull ? initialCanvas : union)
         let geometry = CaptureCanvasGeometry(canvas: canvas, output: output)
+        let selectedRows = visible.map { IsolatedWindowRow(id: $0.id, pid: $0.pid, bounds: $0.bounds) }
+        var placements: [CGWindowID: IsolatedContentPlacement] = [:]
         let paints = layers.paintOrder.compactMap { layer -> IsolatedPaint? in
             guard let frame = layer.frame else { return nil }
-            return IsolatedPaint(image: CIImage(cvPixelBuffer: frame.buffer), contentRect: frame.contentRect, bounds: layer.bounds)
+            let image = CIImage(cvPixelBuffer: frame.buffer)
+            let placement = isolatedContentPlacement(of: IsolatedWindowRow(id: layer.id, pid: layer.pid, bounds: layer.bounds),
+                                                     contentScreenSize: frame.contentScreenSize, selected: selectedRows,
+                                                     onScreen: windowRows)
+            placements[layer.id] = placement
+            switch placement {
+            case .window:
+                return IsolatedPaint(image: image, contentRect: frame.contentRect, bounds: layer.bounds)
+            case .shownBy:
+                return nil
+            case .group(let owner):
+                return IsolatedPaint(image: image, contentRect: frame.contentRect, bounds: owner, clip: layer.bounds)
+            case .unplaced:
+                if unplacedWarned.insert(layer.id).inserted, let size = frame.contentScreenSize {
+                    placementWarnings.append("window \(layer.id)'s stream holds \(Int(size.width))x\(Int(size.height)) points, more than the window, " +
+                                             "and no window of its app frames that; it is drawn shrunk into its own frame")
+                }
+                return IsolatedPaint(image: image, contentRect: frame.contentRect, bounds: layer.bounds)
+            }
         }
         let image = composeIsolatedFrame(paints, geometry: geometry, transparent: options.selection.transparent)
         let outputRect = CGRect(origin: .zero, size: output)
@@ -384,10 +427,18 @@ private final class IsolatedCompositor {
                 // Movie time: the origin kept frames use, so a geometry entry names the frame it describes.
                 "timestampMs": Int((movieSeconds * 1000).rounded()), "canvas": captureRectJSON(canvas), "pixelsPerPoint": geometry.scale,
                 "windows": zip(visible, sources).map { layer, source -> [String: Any] in
-                    ["id": layer.id, "bounds": captureRectJSON(layer.bounds),
-                     "nativeScale": source.nativeScale, "interpolatedUpscale": geometry.scale > source.nativeScale,
-                     "sourcePixels": ["width": source.pixels.width, "height": source.pixels.height],
-                     "sourceContentRect": captureRectJSON(source.contentRect)]
+                    var entry: [String: Any] = [
+                        "id": layer.id, "bounds": captureRectJSON(layer.bounds),
+                        "nativeScale": source.nativeScale, "interpolatedUpscale": geometry.scale > source.nativeScale,
+                        "sourcePixels": ["width": source.pixels.width, "height": source.pixels.height],
+                        "sourceContentRect": captureRectJSON(source.contentRect),
+                    ]
+                    switch placements[layer.id] {
+                    case .shownBy(let owner)?: entry["shownBy"] = owner
+                    case .group(let owner)?: entry["groupFrame"] = captureRectJSON(owner)
+                    default: break
+                    }
+                    return entry
                 },
             ])
         }
@@ -401,12 +452,9 @@ private final class IsolatedCompositor {
         finished = true
     }
     func refresh(_ rows: [[CFString: Any]]) {
-        let windows = rows.compactMap { row -> IsolatedWindowRow? in
-            guard let id = row[kCGWindowNumber] as? CGWindowID, let pid = row[kCGWindowOwnerPID] as? pid_t,
-                  let bounds = captureWindowBounds(row) else { return nil }
-            return IsolatedWindowRow(id: id, pid: pid, bounds: bounds)
-        }
+        let windows = isolatedWindowRows(rows)
         queue.async { [self] in
+            windowRows = windows
             let changed = layers.refresh(windows)
             updateSizes()
             render(force: changed)
@@ -456,8 +504,8 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     let nativeScale = selected.map(\.scale).max() ?? 1
     let output = options.selection.dimensions(points: canvas.size, nativeScale: nativeScale, video: options.videoOut != nil)
     let recorder = NativeRecorder(options: options, configuration: SCStreamConfiguration())
-    let compositor = IsolatedCompositor(recorder: recorder, options: options, selected: selected, canvas: canvas,
-                                        displayCanvas: displayCanvas, output: output)
+    let compositor = IsolatedCompositor(recorder: recorder, options: options, selected: selected, windows: isolatedWindowRows(rows),
+                                        canvas: canvas, displayCanvas: displayCanvas, output: output)
     recorder.rateChanged = { [weak compositor] fps in
         guard let compositor else { return }
         compositor.currentFps = fps
@@ -523,7 +571,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                                        "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason] as [String: Any] },
         "stats": ["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
                   "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1] as [String: Any],
-        "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings },
+        "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
     ]
     let contact = directory.appendingPathComponent("contact.png")
     if let layout = writeContactSheet(recorder.kept, in: directory, to: contact) {

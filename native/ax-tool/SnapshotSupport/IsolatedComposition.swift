@@ -175,6 +175,58 @@ public func frameInfoRect(_ value: Any?) -> CGRect? {
     return CGRect(dictionaryRepresentation: dictionary as CFDictionary)
 }
 
+/// ScreenCaptureKit reports `contentRect` in points of the frame, not in surface pixels: a 350x452
+/// point window on a 2x display arrives as a 700x904 pixel surface with a 350x452 content rect.
+/// Cropping the surface to the raw rect painted only its top-left quarter, scaled up twice.
+public func surfacePixelRect(contentRect points: CGRect, scaleFactor: CGFloat) -> CGRect {
+    CGRect(x: points.minX * scaleFactor, y: points.minY * scaleFactor,
+           width: points.width * scaleFactor, height: points.height * scaleFactor)
+}
+
+/// The size on screen, in points, of what a frame holds: `contentScale` is how far ScreenCaptureKit
+/// shrank the content to fit the surface.
+public func contentScreenSize(contentRect points: CGRect, contentScale: CGFloat) -> CGSize {
+    CGSize(width: points.width / contentScale, height: points.height / contentScale)
+}
+
+/// Where a window's stream content belongs. ScreenCaptureKit captures a window together with its
+/// attached sheets, and the stream of a sheet holds its whole parent with the sheet, shrunk into
+/// the sheet's size (measured on macOS 26.3.1: a 400x560 sheet of a 440x760 window arrives as the
+/// 440x760 window at content scale 0.737). Painted into the sheet's own frame, that drew a second,
+/// smaller copy of the parent below the real one.
+public enum IsolatedContentPlacement: Equatable {
+    /// The stream holds the window alone.
+    case window
+    /// The stream of this other selected window already shows it, so it is painted once, by that window.
+    case shownBy(CGWindowID)
+    /// The stream holds the window group framed by this on-screen rectangle, in global points.
+    case group(CGRect)
+    /// The stream holds more than the window, and no on-screen window of its app frames it.
+    case unplaced
+}
+
+/// `contentScreenSize` is the frame's `contentScreenSize`, nil when the frame info lacks it.
+/// `selected` and `onScreen` are the visible selected windows and the latest on-screen window list.
+public func isolatedContentPlacement(
+    of window: IsolatedWindowRow, contentScreenSize: CGSize?, selected: [IsolatedWindowRow], onScreen: [IsolatedWindowRow]
+) -> IsolatedContentPlacement {
+    func sameSize(_ a: CGSize, _ b: CGSize) -> Bool { abs(a.width - b.width) <= 1.5 && abs(a.height - b.height) <= 1.5 }
+    guard let size = contentScreenSize, !sameSize(size, window.bounds.size) else { return .window }
+    func frames(_ row: IsolatedWindowRow) -> Bool {
+        row.id != window.id && row.pid == window.pid && sameSize(row.bounds.size, size) &&
+            row.bounds.insetBy(dx: -1, dy: -1).contains(window.bounds)
+    }
+    if let owner = selected.first(where: frames) {
+        return .shownBy(owner.id)
+    }
+
+    if let owner = onScreen.first(where: frames) {
+        return .group(owner.bounds)
+    }
+
+    return .unplaced
+}
+
 /// Where the movie ends on the writer's own clock: the moment recording stopped, never before
 /// the last frame. Both are host-clock times, the clock the first frame started the session on;
 /// a duration measured from any other moment would cut the end short.
@@ -190,11 +242,15 @@ public struct IsolatedPaint {
     public let contentRect: CGRect?
     /// Global CG points.
     public let bounds: CGRect
+    /// Global CG points the paint may cover; nil means all of `bounds`. A sheet painted from its
+    /// parent's group keeps to the sheet's own frame.
+    public let clip: CGRect?
 
-    public init(image: CIImage, contentRect: CGRect?, bounds: CGRect) {
+    public init(image: CIImage, contentRect: CGRect?, bounds: CGRect, clip: CGRect? = nil) {
         self.image = image
         self.contentRect = contentRect
         self.bounds = bounds
+        self.clip = clip
     }
 }
 
@@ -218,7 +274,8 @@ public func composeIsolatedFrame(_ layers: [IsolatedPaint], geometry: CaptureCan
         let placed = raw.transformed(by: CGAffineTransform(scaleX: destination.width / raw.extent.width,
                                                            y: destination.height / raw.extent.height))
             .transformed(by: CGAffineTransform(translationX: destination.minX, y: destination.minY))
-        image = placed.cropped(to: canvasRect).composited(over: image)
+        let area = layer.clip.map { geometry.destination(for: $0).intersection(canvasRect) } ?? canvasRect
+        image = placed.cropped(to: area).composited(over: image)
     }
     return image.cropped(to: outputRect)
 }
