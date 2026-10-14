@@ -1289,9 +1289,6 @@ func cmdAct(appName _: String) {
     do {
     try dispatchSnapshotAction(context: context) {
     workflowDispatchState = "not_started"
-    if workflowFlag("--allow-outside") && action != "drag" {
-        throw WindowEventError.unavailable("--allow-outside applies to --action drag only")
-    }
     if !["get", "click", "move", "drag", "scroll"].contains(action) {
         let frame = tree.frames[elementIndex]
         let center = CGPoint(x: frame.midX, y: frame.midY)

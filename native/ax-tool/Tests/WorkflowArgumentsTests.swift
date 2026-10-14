@@ -104,6 +104,22 @@ final class WorkflowArgumentsTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowArguments(base, command: "act"), "An unpinned index cannot bypass full-window validation")
     }
 
+    func testOnlyADragMayLeaveTheWindow() throws {
+        // The parser keeps a list of flags per command; a flag missing from it is refused as an unknown
+        // option before anything runs, which is how the first --allow-outside build failed live.
+        let drag = try WorkflowArguments([
+            "--app", "Genesis", "--snapshot", "token", "--action", "drag", "--coords", "1676,1249",
+            "--to", "1100,1249", "--duration", "0.4", "--background", "--allow-outside",
+        ], command: "act")
+        XCTAssertTrue(drag.flags.contains("--allow-outside"))
+
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Genesis", "--snapshot", "token", "--action", "click", "--coords", "1676,1249", "--allow-outside",
+        ], command: "act")) { error in
+            XCTAssertEqual(error.localizedDescription, "option is not valid for click")
+        }
+    }
+
     func testRevalidateScopeOffersOnlyTheScopesThatAreImplemented() {
         // `app` was accepted and behaved exactly like `window`: no app-wide check existed.
         let base = ["--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press"]

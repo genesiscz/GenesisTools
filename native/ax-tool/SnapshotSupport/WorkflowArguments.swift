@@ -30,7 +30,7 @@ public struct WorkflowArguments {
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
                 "--budget-ms", "--target-ordinal", "--expect-value-sha256",
             ]
-            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
+            flagOptions = ["--background", "--allow-outside", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -184,6 +184,7 @@ public struct WorkflowArguments {
         // hover deliberately excluded from --background: the whole point is to move the REAL
         // pointer, and a window-addressed event does not.
         try reject(["--background"], unless: ["click", "move", "drag", "scroll"])
+        try reject(["--allow-outside"], unless: ["drag"])
         try reject(["--coords", "--region"], unless: ["click", "move", "drag", "scroll", "hover"])
         try reject(["--frame"], unless: ["click", "move", "drag", "scroll", "hover"])
         if let frame = values["--frame"] {
