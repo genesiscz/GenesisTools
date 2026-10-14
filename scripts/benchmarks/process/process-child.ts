@@ -7,7 +7,6 @@
  *
  *   bun scripts/benchmarks/process/process-child.ts <job> <arm> [pids,comma,separated]
  */
-import { FFIType } from "bun:ffi";
 import { statfsSync } from "node:fs";
 import { classifyClaudeArgs } from "@app/claude/lib/active-sessions";
 import {
@@ -20,7 +19,6 @@ import {
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
 import { captureAncestry, parsePidCommands, parsePidParents, walkParents } from "@app/say/lib/caller";
 import { listActiveAgentProcesses, listActiveAgentProcessesViaPs } from "@genesiscz/utils/ai/active-processes";
-import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 import { listHostProcesses } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -33,6 +31,7 @@ import {
 import { batchCwd, batchCwdViaLsof, listPsTable } from "@genesiscz/utils/process/ps";
 import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 import { processStartMs, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { cpuNowMs } from "./cpu";
 import { IDENTITY_PIDS, PROCESS_ARMS, type ProcessJob } from "./process-arms";
 
 const [job, arm, pidList = ""] = process.argv.slice(2) as [ProcessJob, string, string?];
@@ -40,33 +39,6 @@ const arms: readonly string[] | undefined = PROCESS_ARMS[job];
 
 if (!arms?.includes(arm)) {
     throw new Error(`usage: process-child.ts <${Object.keys(PROCESS_ARMS).join("|")}> <arm> [pids]`);
-}
-
-/** `getrusage` is not in node:process for children; `<sys/resource.h>`: RUSAGE_CHILDREN -1, ru_utime 0, ru_stime 16. */
-const rusage = defineSystemLibrary({
-    path: "/usr/lib/libSystem.B.dylib",
-    platforms: ["darwin"],
-    symbols: { getrusage: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 } },
-});
-const RUSAGE_CHILDREN = -1;
-/** `struct rusage` is 144 bytes; each `timeval` is a 64-bit `tv_sec` (two words) and a 32-bit `tv_usec`. */
-const rusageWords = new Uint32Array(144 / 4);
-
-function childrenCpuMs(): number {
-    const calls = rusage();
-
-    if (calls?.getrusage(RUSAGE_CHILDREN, rusageWords) !== 0) {
-        return 0;
-    }
-
-    const seconds = rusageWords[0] + rusageWords[1] * 2 ** 32 + rusageWords[4] + rusageWords[5] * 2 ** 32;
-    const micros = rusageWords[2] + rusageWords[6];
-    return seconds * 1000 + micros / 1000;
-}
-
-function cpuNowMs(): number {
-    const self = process.cpuUsage();
-    return (self.user + self.system) / 1000 + childrenCpuMs();
 }
 
 const pids = pidList
