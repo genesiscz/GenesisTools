@@ -15,6 +15,7 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcessRow } from "./libproc-table";
 
 const log = logger.child({ component: "process:cwd" });
 
@@ -81,9 +82,17 @@ function decodeCString(view: DataView, offset: number): string | null {
     return text.length > 0 ? text : null;
 }
 
-/** Parent pid of `pid`, or null when unknown (gone, foreign uid, unsupported platform). */
+/** Parent pid of `pid`, or null when unknown (gone, unsupported platform). */
 export function readParentPid(pid: number): number | null {
     if (process.platform === "darwin") {
+        // The kernel's process record answers for every user's process. proc_pidinfo answers only for this user's, so
+        // a walk up from a terminal stopped at the root-owned `login` and never reached the terminal app above it.
+        const row = readProcessRow(pid);
+
+        if (row) {
+            return row.ppid;
+        }
+
         const info = pidInfo(pid, PROC_PIDTBSDINFO, PROC_PIDTBSDINFO_SIZE);
         return info ? info.getUint32(PBI_PPID_OFFSET, true) : null;
     }
