@@ -71,11 +71,20 @@ function existingMode(filePath: string): number | undefined {
  * it names: renaming over the link itself would replace it with a plain file and cut the user's repo off.
  */
 function resolveSymlinkTarget(filePath: string): string {
+    let isSymlink: boolean;
+
     try {
-        return lstatSync(filePath).isSymbolicLink() ? realpathSync(filePath) : filePath;
-    } catch {
-        return filePath;
+        isSymlink = lstatSync(filePath).isSymbolicLink();
+    } catch (error) {
+        if (isMissingFileError(error)) {
+            return filePath;
+        }
+
+        throw error;
     }
+
+    // A dangling or cyclic link is still the user's link: failed resolution must refuse the write.
+    return isSymlink ? realpathSync(filePath) : filePath;
 }
 
 /** Local time as `YYYYMMDD-HHMMSS-mmm`, for file names that sort by age. */

@@ -488,6 +488,28 @@ describe("a failed write never costs the user the stored file", () => {
         expect(readFileSync(`${real}.bak`, "utf8")).toBe(USER_CONFIG);
     });
 
+    it.each(["absolute", "relative", "cyclic"] as const)(
+        "refuses an unresolved %s config symlink without replacing it",
+        (kind) => {
+            const target = join(dir, "missing.json");
+            const link = join(dir, "settings.json");
+            const linkText = kind === "absolute" ? target : kind === "relative" ? "missing.json" : "settings.json";
+            symlinkSync(linkText, link);
+            const write = spyOn(atomicWriteIo, "writeSync");
+
+            try {
+                expect(() => atomicWriteFileSync(link, USER_CONFIG, { mode: 0o600, backup: true })).toThrow();
+                expect(write).not.toHaveBeenCalled();
+                expect(lstatSync(link).isSymbolicLink()).toBe(true);
+                expect(fs.readlinkSync(link)).toBe(linkText);
+                expect(fs.existsSync(target)).toBe(false);
+                expect(readdirSync(dir)).toEqual(["settings.json"]);
+            } finally {
+                write.mockRestore();
+            }
+        }
+    );
+
     it("copies a truncated file aside before anything can replace it", () => {
         const target = join(dir, "state.json");
         const truncated = USER_CONFIG.slice(0, 30);
