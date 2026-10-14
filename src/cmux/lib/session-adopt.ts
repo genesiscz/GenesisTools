@@ -194,13 +194,16 @@ function resolveEntry(
         : undefined;
     const ref = byUuid?.ref ?? entry.surfaceRef ?? joined?.surface;
 
-    if (!ref || ref === tree.caller) {
+    if (!ref) {
         return null;
     }
 
     const live = byUuid ?? tree.surfaces.get(ref);
 
-    if (!live?.id) {
+    // The caller's own tab is never adopted; compared by UUID when the tree reported the caller's.
+    const isCaller = tree.callerId ? live?.id?.toLowerCase() === tree.callerId.toLowerCase() : ref === tree.caller;
+
+    if (!live?.id || isCaller) {
         return null;
     }
 

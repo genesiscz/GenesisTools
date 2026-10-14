@@ -3,7 +3,7 @@ import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
-import { runCmux, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
@@ -261,15 +261,29 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
     return {
         store,
         async listWorkspaces(window) {
-            const result = await runCmux(["workspace", "list", ...(window ? ["--window", window] : [])], {
-                json: true,
-            });
+            const listIn = async (target: string | null): Promise<ListedWorkspace[]> => {
+                const result = await runCmux(["workspace", "list", ...(target ? ["--window", target] : [])], {
+                    json: true,
+                });
 
-            if (result.code !== 0) {
-                throw new Error(`cmux workspace list failed (${result.code}): ${result.stderr.trim()}`);
+                if (result.code !== 0) {
+                    throw new Error(`cmux workspace list failed (${result.code}): ${result.stderr.trim()}`);
+                }
+
+                return parseWorkspaces(result.stdout).map((workspace) => ({
+                    ...workspace,
+                    ...(target ? { windowId: target } : {}),
+                }));
+            };
+
+            if (window) {
+                return listIn(window);
             }
 
-            return parseWorkspaces(result.stdout);
+            // Every window: a workspace is found by its UUID wherever a relaunch put it.
+            const windows = await runCmuxJSON<Array<{ id?: string }>>(["list-windows"]);
+            const ids = windows.map((entry) => entry.id).filter((id): id is string => Boolean(id));
+            return (await Promise.all(ids.map((id) => listIn(id)))).flat();
         },
         async adopt(query) {
             const tree = await liveTree();
@@ -284,7 +298,10 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             return adopted;
         },
         async surfaceId(surface) {
-            return (await liveTree()).surfaces.get(surface)?.id ?? null;
+            const surfaces = (await liveTree()).surfaces;
+            const wanted = surface.toLowerCase();
+            const byUuid = [...surfaces.values()].find((live) => live.id?.toLowerCase() === wanted);
+            return byUuid?.id ?? surfaces.get(surface)?.id ?? null;
         },
         async closeSurface(surface, window) {
             await runCmuxOk(["close-surface", "--surface", surface, ...(window ? ["--window", window] : [])]);

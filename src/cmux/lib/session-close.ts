@@ -44,6 +44,8 @@ export interface ListedWorkspace {
     ref: string;
     id: string;
     cwd: string | null;
+    /** The window UUID, when the listing covered every window. */
+    windowId?: string;
 }
 
 /**
@@ -67,12 +69,28 @@ export function isAdopted(subject: CloseSubject): subject is AdoptedSession {
 }
 
 /**
- * The surface the exit command and a surface close name on the cmux command line. An adopted session names its
- * UUID, which no other surface can take after a cmux restart; a recorded session names its ref, which the
- * identity checks verify right before each step (and `--force` may override).
+ * The surface the exit command and a surface close name on the cmux command line: its UUID, which no other
+ * surface can take after a cmux restart. Only a record written before UUIDs were stored names its ref, which
+ * the identity checks verify right before each step (and `--force` may override).
  */
 export function surfaceTarget(subject: CloseSubject): string {
-    return isAdopted(subject) ? subject.surfaceId : subject.surface;
+    return isAdopted(subject) ? subject.surfaceId : (subject.surfaceId ?? subject.surface);
+}
+
+/**
+ * A recorded session's workspace as cmux lists it now: by its UUID across every window (a relaunch renumbers
+ * the ref and can move the window), or by the ref in the recorded window for a record without a UUID.
+ */
+async function findRecordedWorkspace(
+    record: { workspace: string; workspaceId?: string | null },
+    window: string | null,
+    io: Pick<SessionCloseIO, "listWorkspaces">
+): Promise<ListedWorkspace | undefined> {
+    if (record.workspaceId) {
+        return (await io.listWorkspaces(null)).find((workspace) => sameId(workspace.id, record.workspaceId));
+    }
+
+    return (await io.listWorkspaces(window)).find((workspace) => workspace.ref === record.workspace);
 }
 
 /** Journal entries older than this before a record's start belong to an earlier occupant of its surface. */
@@ -83,8 +101,9 @@ const JOURNAL_START_SLACK_MS = 60_000;
  *
  * A --via-tmux agent starts in a detached tmux shell before its workspace exists, with the cmux identity
  * unset (session-new.ts `CMUX_IDENTITY_ENV`), so the hook records its tmux pane, never the new surface: such a
- * record matches by the panes of its tmux session. Any other record matches by surface UUID, or by ref when
- * it was written before UUIDs were stored.
+ * record matches by the panes of its tmux session. Any other record matches by surface UUID only: a record
+ * written before UUIDs were stored names its tab by a ref from that cmux run, which a relaunch renumbers, so
+ * it could name another agent's tab now.
  */
 export function recordedSessionIdOf(input: {
     record: SessionCreatedRecord;
@@ -103,7 +122,7 @@ export function recordedSessionIdOf(input: {
             return entry.tmuxPane !== null && input.tmuxPanes.includes(entry.tmuxPane);
         }
 
-        return record.surfaceId ? sameId(entry.surfaceId, record.surfaceId) : entry.surfaceRef === record.surface;
+        return record.surfaceId ? sameId(entry.surfaceId, record.surfaceId) : false;
     };
     let newest: SessionCmuxRefs | null = null;
 
@@ -254,10 +273,11 @@ export function recordedSessionFor(
 
 export interface SessionCloseIO {
     store: SessionStore;
+    /** The workspaces of one window, or with `null` of every window (each with its `windowId`). */
     listWorkspaces(window: string | null): Promise<ListedWorkspace[]>;
     /** A live agent session by session id (or 8+ char prefix), surface ref or workspace ref; null when none or several. */
     adopt?(query: string): Promise<AdoptedSession | null>;
-    /** The UUID of the surface cmux lists at this ref now, or null when it lists none. */
+    /** The UUID of the surface cmux lists under this UUID (or, for an old record, this ref) now; null when none. */
     surfaceId(surface: string): Promise<string | null>;
     /** `surface` is a ref or a UUID (`surfaceTarget`); a UUID needs no window. */
     closeSurface(surface: string, window: string | null): Promise<void>;
@@ -402,7 +422,7 @@ async function recordedIdentityProblem(input: {
     io: Pick<SessionCloseIO, "listWorkspaces" | "surfaceId" | "tmuxPanes">;
 }): Promise<{ reason: CloseReason; note: string } | null> {
     const { record, io } = input;
-    const listed = (await io.listWorkspaces(input.window)).find((workspace) => workspace.ref === record.workspace);
+    const listed = await findRecordedWorkspace(record, input.window, io);
     const holds = listed?.cwd ? ` (it holds ${listed.cwd})` : "";
 
     if (!record.workspaceId || !record.surfaceId) {
@@ -421,11 +441,17 @@ async function recordedIdentityProblem(input: {
         };
     }
 
+    // Right before the close: the workspace is closed by the UUID it was listed with, so it must still be listed.
     if (input.stage === "close") {
-        return null;
+        return listed
+            ? null
+            : {
+                  reason: "workspace-moved",
+                  note: `workspace ${record.workspaceId} (${record.workspace} when recorded) is no longer listed, so nothing is closed`,
+              };
     }
 
-    const surfaceId = await io.surfaceId(record.surface);
+    const surfaceId = await io.surfaceId(record.surfaceId);
     const typesIntoSurface = input.stage === "exit" && !record.tmuxSession;
 
     if (surfaceId === null ? typesIntoSurface : !sameId(surfaceId, record.surfaceId)) {
@@ -449,7 +475,7 @@ async function adoptedIdentityProblem(
     stage: IdentityStage,
     io: Pick<SessionCloseIO, "surfaceId" | "tmuxPanes">
 ): Promise<{ reason: CloseReason; note: string } | null> {
-    const live = await io.surfaceId(record.surface);
+    const live = await io.surfaceId(record.surfaceId);
 
     if (live === null) {
         return { reason: "not-found", note: `${record.surface} is gone; the session is no longer open in cmux` };
@@ -562,7 +588,10 @@ async function closeTarget(input: {
         return refuse("not-found", `${record.name} was closed by another close meanwhile`);
     }
 
-    const listed = (await io.listWorkspaces(report.window)).find((workspace) => workspace.ref === report.workspace);
+    const listed =
+        record && !isAdopted(record)
+            ? await findRecordedWorkspace(record, report.window, io)
+            : (await io.listWorkspaces(report.window)).find((workspace) => workspace.ref === report.workspace);
     const caller = io.callerWorkspaceId();
 
     // An adopted session closes only its own surface, so sharing the caller's workspace is fine; `adopt`
@@ -689,13 +718,16 @@ async function closeTarget(input: {
     if (record && isAdopted(record)) {
         await io.closeSurface(surfaceTarget(record), null);
     } else if (listed) {
-        await io.closeWorkspace(report.workspace, report.window, options.force === true);
+        // By UUID: the ref in the record (and in a listing made before a relaunch) can name another workspace.
+        await io.closeWorkspace(listed.id, listed.windowId ?? report.window, options.force === true);
     }
 
     const listedNow = async () =>
         record && isAdopted(record)
-            ? sameId(await io.surfaceId(record.surface), record.surfaceId)
-            : (await io.listWorkspaces(report.window)).some((workspace) => workspace.ref === report.workspace);
+            ? sameId(await io.surfaceId(record.surfaceId), record.surfaceId)
+            : (await io.listWorkspaces(listed?.windowId ? null : report.window)).some((workspace) =>
+                  listed ? sameId(workspace.id, listed.id) : workspace.ref === report.workspace
+              );
     const settleBy = io.now() + CLOSE_SETTLE_MS;
     let stillThere = await listedNow();
 

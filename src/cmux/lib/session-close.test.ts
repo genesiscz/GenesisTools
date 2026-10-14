@@ -53,7 +53,10 @@ function fake(input: {
     adoptable?: AdoptedSession | null;
     /** What cmux lists now; called once per listing, so a test can renumber refs mid-close. */
     listing?: (call: number) => ListedWorkspace[];
-    /** The UUID behind a surface ref, per lookup; defaults to `uuids`, then `S<n>` for `surface:<n>`. */
+    /**
+     * The UUID cmux lists for a surface UUID (or an old record's ref), per lookup; defaults to the listed
+     * surfaces, whose UUIDs are `uuids`, then `S<n>` for `surface:<n>`.
+     */
     surfaceUuid?: (surface: string, call: number) => string | null;
     /** Fixed UUIDs of listed surfaces, by ref. */
     uuids?: Record<string, string>;
@@ -102,7 +105,8 @@ function fake(input: {
                 return input.surfaceUuid(surface, lookups);
             }
 
-            return surfaces.has(surface) ? uuidOf(surface) : null;
+            const byUuid = [...surfaces].map(uuidOf).find((uuid) => uuid.toLowerCase() === surface.toLowerCase());
+            return byUuid ?? (surfaces.has(surface) ? uuidOf(surface) : null);
         },
         closeSurface: async (surface) => {
             calls.push(`close-surface ${surface}`);
@@ -123,7 +127,7 @@ function fake(input: {
         closeWorkspace: async (workspace, _window, force) => {
             calls.push(force ? `close ${workspace} --force` : `close ${workspace}`);
             forbid("the workspace close");
-            workspaces = workspaces.filter((entry) => entry.ref !== workspace);
+            workspaces = workspaces.filter((entry) => entry.ref !== workspace && entry.id !== workspace);
         },
         killTmux: async (session) => {
             calls.push(`kill ${session}`);
@@ -162,7 +166,8 @@ test("a recorded session quits its agent with the agent's own command, then its 
         sessionId: "s-1",
         steps: { exitSent: true, agentExited: true, workspaceClosed: true, tmuxKilled: false },
     });
-    expect(calls).toEqual(["exit /quit", "close workspace:9"]);
+    // The workspace closes by its UUID: the ref in the record is from the cmux run that wrote it.
+    expect(calls).toEqual(["exit /quit", "close W9"]);
     expect(openSessions(lines)).toEqual([]);
 });
 
@@ -175,12 +180,11 @@ test("no record, the caller's own workspace, a moved ref and a running turn are 
     expect(ownReport.reason).toBe("own-workspace");
     expect(own.calls).toEqual([]);
 
-    const moved = fake({
-        workspaces: [{ ref: "workspace:9", id: "W-OTHER", cwd: "/repo/app" }],
-        forbidIrreversible: true,
-    });
-    expect((await closeSession("codex-app-ab12cd", { graceMs: 0 }, moved.io)).reason).toBe("workspace-moved");
-    expect(moved.calls).toEqual([]);
+    // After a relaunch "workspace:9" names another workspace. The record is found by its UUIDs: its surface
+    // still runs the agent, so the agent quits there, and the workspace at the old ref is never closed.
+    const moved = fake({ workspaces: [{ ref: "workspace:9", id: "W-OTHER", cwd: "/repo/app" }], runningChecks: 1 });
+    await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, moved.io);
+    expect(moved.calls.filter((call) => call.startsWith("close "))).toEqual([]);
 
     const busy = fake({ turn: { kind: "read", sessionId: "s-1", state: "RUNNING" } });
     const busyReport = await closeSession("codex-app-ab12cd", { graceMs: 0 }, busy.io);
@@ -206,7 +210,7 @@ test("an agent that does not quit leaves the workspace open and the record open,
     const forced = fake({ runningChecks: 1_000 });
     expect((await closeSession("codex-app-ab12cd", { graceMs: 2_000, force: true }, forced.io)).outcome).toBe("closed");
     // cmux refuses to close a workspace with a live process unless it gets --force too.
-    expect(forced.calls).toContain("close workspace:9 --force");
+    expect(forced.calls).toContain("close W9 --force");
 });
 
 test("a dry run plans and touches nothing, and tmux stays unless --kill-tmux", async () => {
@@ -308,9 +312,10 @@ test("an adopted session whose surface UUID holds through every check closes by 
     expect(steady.calls).toEqual(["adopt 0199ee55", "exit /exit", "close-surface S21"]);
 });
 
-test("the exit command and the close target an adopted session's UUID and a recorded session's ref", () => {
+test("the exit command and the close target the surface UUID; only a record without one names its ref", () => {
     expect(surfaceTarget(adoptedGrok())).toBe("S21");
-    expect(surfaceTarget(created())).toBe("surface:8");
+    expect(surfaceTarget(created())).toBe("S8");
+    expect(surfaceTarget(created({ surfaceId: undefined }))).toBe("surface:8");
 });
 
 test("a live session belongs to the open record holding its surface UUID, never to one holding only its old ref", () => {
@@ -347,7 +352,7 @@ test("a session id whose surface agents new recorded closes as the recorded sess
     const report = await closeSession("0199bb22", { graceMs: 5_000 }, io);
 
     expect(report).toMatchObject({ adopted: false, session: "codex-app-ab12cd", outcome: "closed" });
-    expect(calls).toContain("close workspace:9");
+    expect(calls).toContain("close W9");
 });
 
 test("a recorded session whose UUIDs match closes even after its shell changed folder", async () => {
@@ -355,7 +360,7 @@ test("a recorded session whose UUIDs match closes even after its shell changed f
     const report = await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, drifted.io);
 
     expect(report).toMatchObject({ outcome: "closed", reason: null });
-    expect(drifted.calls).toEqual(["exit /quit", "close workspace:9"]);
+    expect(drifted.calls).toEqual(["exit /quit", "close w9"]);
 });
 
 test("a record without cmux UUIDs is never acted on without --force, and --force still closes it", async () => {
@@ -369,7 +374,7 @@ test("a record without cmux UUIDs is never acted on without --force, and --force
 
     const forced = fake({ lines: legacy, runningChecks: 1 });
     expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000, force: true }, forced.io)).outcome).toBe("closed");
-    expect(forced.calls).toEqual(["exit /quit", "close workspace:9 --force"]);
+    expect(forced.calls).toEqual(["exit /quit", "close W9 --force"]);
 });
 
 test("a renumbered surface ref is refused before the exit command is typed into it", async () => {
@@ -388,7 +393,7 @@ test("a renumbered surface ref is refused before the exit command is typed into 
     expect(restarted.calls).toEqual([]);
 });
 
-test("a workspace ref that turns into another workspace after the exit is refused before it closes", async () => {
+test("a workspace that is no longer listed by its UUID after the exit is not closed", async () => {
     const own = { ref: "workspace:9", id: "W9", cwd: "/repo/app" };
     const swapped = fake({
         // Listings 1 to 3: the first look, the identity check, the check before the exit. The fourth is before the close.
@@ -420,7 +425,7 @@ test("an adopted session on a stale record's surface ref but another surface UUI
 
     expect(report).toMatchObject({ adopted: true, outcome: "closed" });
     expect(calls).toContain("close-surface S-NEW");
-    expect(calls).not.toContain("close workspace:9");
+    expect(calls.filter((call) => call.startsWith("close "))).toEqual([]);
 });
 
 function journal(overrides: Partial<SessionCmuxRefs> & { sessionId: string; at: number }): SessionCmuxRefs {
@@ -460,7 +465,9 @@ test("a surface session is found by its surface UUID, and an entry from before i
     ];
 
     expect(recordedSessionIdOf({ record: created(), refs, tmuxPanes: [] })).toBe("agent");
-    expect(recordedSessionIdOf({ record: created({ surfaceId: undefined }), refs, tmuxPanes: [] })).toBe("renumbered");
+    // Without its UUID the record names its tab only by a ref, and after a relaunch "surface:8" is another
+    // tab (here a different agent): nothing is joined, so nothing can be closed by mistake.
+    expect(recordedSessionIdOf({ record: created({ surfaceId: undefined }), refs, tmuxPanes: [] })).toBeNull();
 });
 
 test("a turn state that could not be read refuses like a running turn, and --force still closes", async () => {
@@ -556,7 +563,7 @@ test("a recorded tmux session whose pane left its session is refused before the 
 
     const holds = fake({ lines, runningChecks: 1 });
     expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, holds.io)).outcome).toBe("closed");
-    expect(holds.calls).toEqual(["exit /quit", "close workspace:9"]);
+    expect(holds.calls).toEqual(["exit /quit", "close W9"]);
 });
 
 test("a tmux kill that fails leaves the close partial and the record open; one that works closes it", async () => {
@@ -807,7 +814,7 @@ test("a tmux session that came back under the same name and pane id gets no exit
     const forced = fake({ lines, tmuxPanes: () => pane(createdMs), runningChecks: 1 });
     const forcedReport = await closeSession("codex-app-ab12cd", { graceMs: 1_000, force: true }, forced.io);
     expect(forcedReport.outcome).toBe("closed");
-    expect(forced.calls).toEqual(["exit /quit", "close workspace:9 --force"]);
+    expect(forced.calls).toEqual(["exit /quit", "close W9 --force"]);
 
     // The control: the same generation still quits through its pane.
     const same = fake({ adoptable: adopted, tmuxPanes: () => pane(createdMs), runningChecks: 1 });
