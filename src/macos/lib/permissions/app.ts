@@ -833,23 +833,19 @@ function adoptLegacyRetired(appDir: string, retiredRoot: string): void {
 }
 
 /**
- * The inode of every running executable, from `lsof -d txt -Fi -n`. An inode survives the move to
- * `retired.noindex`, while lsof may still print a moved binary under its old path (it named
- * `GenesisTools.app.previous` for processes whose bundle had long moved on). `null` keeps every
- * bundle: a listing that failed would otherwise read as "nothing runs", and a failed run's partial
- * output can miss the one process that still executes a retired binary.
+ * The inode of every running executable among `pids`. An inode survives the move to `retired.noindex`, and the kernel's
+ * executable path follows the move, so the inode read through it is the running binary's own. A process whose
+ * executable cannot be read is skipped: `kernel_task` has none, and a binary an upgrade deleted is no bundle that could
+ * still be pruned. `null` keeps every bundle: no readable process at all means the listing failed, not that nothing
+ * runs.
  */
-export function runningExecutableInodes(listing: { code: number; stdout: string }): Set<number> | null {
-    if (listing.code !== 0) {
-        return null;
-    }
-
+export function runningExecutableInodes(pids: number[], inodeOf: (pid: number) => number | null): Set<number> | null {
     const inodes = new Set<number>();
 
-    for (const line of listing.stdout.split("\n")) {
-        const inode = line.startsWith("i") ? Number(line.slice(1)) : Number.NaN;
+    for (const pid of pids) {
+        const inode = inodeOf(pid);
 
-        if (Number.isInteger(inode)) {
+        if (inode !== null) {
             inodes.add(inode);
         }
     }
@@ -886,21 +882,12 @@ export function pinnedRetiredBundles({
     );
 }
 
-/** Deletes every retired bundle except the newest and the ones a running process executes. */
+/** {@link runningExecutableInodes} of every process on this machine, read from the kernel. */
 export function readRunningExecutableInodes(): Set<number> | null {
-    const entries = listProcesses({ commands: false });
-    if (entries.length === 0) {
-        return null;
-    }
-    const inodes = new Set<number>();
-    for (const entry of entries) {
-        const inode = executableInode(entry.pid);
-        if (inode === null) {
-            return null;
-        }
-        inodes.add(inode);
-    }
-    return inodes;
+    return runningExecutableInodes(
+        listProcesses({ commands: false }).map((entry) => entry.pid),
+        executableInode
+    );
 }
 
 /**
