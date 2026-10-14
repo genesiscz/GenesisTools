@@ -9,7 +9,7 @@
 //        git rebase --onto <newBase> <oldParentTip> <child>
 //      then force-with-lease (same algorithm as github/gh-stack cascadeRebase).
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Executor } from "@genesiscz/utils/cli";
@@ -101,15 +101,24 @@ function writeToken(): string | undefined {
     return getGhCliToken() ?? env.github.getToken();
 }
 
-function authedCloneUrl(owner: string, repo: string, token: string | undefined): string {
-    if (token) {
-        return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+/**
+ * The token reaches git through its environment (the `http.extraheader` actions/checkout uses), never through its
+ * argv, which any local user can read with `ps`, nor through the temp clone's .git/config.
+ */
+export function gitAuthEnv(token: string | undefined): Record<string, string> | undefined {
+    if (!token) {
+        return undefined;
     }
 
-    return `https://github.com/${owner}/${repo}.git`;
+    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+    return {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+        GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    };
 }
 
-function gitAt(cwd: string): Executor {
+function gitAt(cwd: string, token?: string): Executor {
     return new Executor({
         prefix: "git",
         cwd,
@@ -117,7 +126,18 @@ function gitAt(cwd: string): Executor {
         verbose: false,
         debug: false,
         label: "git-restack",
+        env: gitAuthEnv(token),
     });
+}
+
+/**
+ * The object store of the checkout this runs in, borrowed as an alternate so the fetch transfers only what it lacks.
+ * A cold fetch of both tips' full history timed out at 300 s on a slow link (2026-10-14, #505); with the alternate
+ * the same fetch took under a second and 4 KB.
+ */
+async function localObjectStore(): Promise<string | undefined> {
+    const result = await gitAt(process.cwd()).exec(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    return result.success && result.stdout ? join(result.stdout.trim(), "objects") : undefined;
 }
 
 async function gitOrThrow(g: Executor, args: string[], label: string, timeout = 120_000): Promise<string> {
@@ -140,15 +160,21 @@ export function createGitStackRestack(options?: { log?: RestackLog }): StackRest
     return {
         async restackBranch(input: RestackBranchInput): Promise<RestackBranchResult> {
             const { owner, repo, branch, expectedHeadSha, newBase, oldBaseSha, priorBaseShas } = input;
-            const token = writeToken();
-            const url = authedCloneUrl(owner, repo, token);
+            const url = `https://github.com/${owner}/${repo}.git`;
             const tmpRoot = await mkdtemp(join(tmpdir(), "gt-merge-restack-"));
-            const g = gitAt(tmpRoot);
+            const g = gitAt(tmpRoot, writeToken());
 
             log?.(`  restack: ${branch} onto ${newBase}${oldBaseSha ? ` (drop ≤ ${oldBaseSha.slice(0, 7)})` : ""}`);
 
             try {
                 await gitOrThrow(g, ["init", "-q"], "git init");
+                const localObjects = await localObjectStore();
+
+                if (localObjects) {
+                    await mkdir(join(tmpRoot, ".git", "objects", "info"), { recursive: true });
+                    await writeFile(join(tmpRoot, ".git", "objects", "info", "alternates"), `${localObjects}\n`);
+                }
+
                 await gitOrThrow(g, ["remote", "add", "origin", url], "git remote add");
                 // Fetch only the refs we need (full history of those tips — no --depth).
                 await gitOrThrow(

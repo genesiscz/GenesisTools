@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createNoopStackRestack, pickOldBase, unknownBaseRefusal } from "./stack-restack";
+import { createNoopStackRestack, gitAuthEnv, pickOldBase, unknownBaseRefusal } from "./stack-restack";
 
 describe("pickOldBase", () => {
     const inHistory = (shas: string[]) => async (sha: string) => shas.includes(sha);
@@ -47,5 +47,17 @@ describe("createNoopStackRestack", () => {
             rebased: false,
             alreadyLinear: true,
         });
+    });
+});
+
+describe("gitAuthEnv", () => {
+    test("carries the token as an extraheader in the environment, never in a URL", () => {
+        const auth = gitAuthEnv("tok-123");
+        expect(auth?.GIT_CONFIG_KEY_0).toBe("http.https://github.com/.extraheader");
+        const header = auth?.GIT_CONFIG_VALUE_0 ?? "";
+        expect(Buffer.from(header.replace("AUTHORIZATION: basic ", ""), "base64").toString()).toBe(
+            "x-access-token:tok-123"
+        );
+        expect(gitAuthEnv(undefined)).toBeUndefined();
     });
 });
