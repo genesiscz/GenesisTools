@@ -16,7 +16,7 @@ import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { flag, has, loadRun, worktreeFor } from "./run";
-import { HOOKS_OFF, newExecutablesStall, prepGit } from "./versions";
+import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall, prepGit } from "./versions";
 
 const run = loadRun();
 const pr = Number(flag("--pr"));
@@ -136,6 +136,7 @@ if (!has("--merge")) {
 
 if (newHead !== oldHead) {
     must(spawnIn(wt, ["bash", "scripts/ci/placeholder-check.sh"]), "placeholder-check");
+    console.log(`hooks: ${ensureConfigHooks(run.main)}`);
     const stalled = has("--no-push-hooks") && (await newExecutablesStall());
 
     if (has("--no-push-hooks") && !stalled) {

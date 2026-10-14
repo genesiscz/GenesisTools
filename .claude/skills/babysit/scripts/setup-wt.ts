@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { linkNativeFiles } from "./link-native";
 import { flag, loadRun, worktreeFor } from "./run";
-import { HOOKS_OFF } from "./versions";
+import { ensureConfigHooks, HOOKS_OFF } from "./versions";
 
 const run = loadRun();
 const pr = flag("--pr") ?? "";
@@ -51,6 +51,7 @@ step(["git", "fetch", "-q", "origin", branch], run.main, "fetch");
 // The repo's hooks would lock or index the throwaway worktree; it gets none.
 step(["git", ...HOOKS_OFF, "worktree", "add", "-q", "--detach", wt, `origin/${branch}`], run.main, "worktree add");
 step(["bun", "install", "--ignore-scripts"], wt, "bun install");
+console.log(`hooks: ${ensureConfigHooks(run.main)}`);
 
 if (existsSync(join(wt, "scripts/apply-patches.ts"))) {
     step(["bun", "scripts/apply-patches.ts"], wt, "apply-patches");

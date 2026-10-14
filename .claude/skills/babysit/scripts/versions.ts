@@ -4,7 +4,7 @@
  * replayed side" can be a downgrade). Every other conflict belongs to a worker or the lead.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,6 +61,37 @@ export async function newExecutablesStall(timeoutMs = 5_000): Promise<boolean> {
 
     rmSync(dir, { recursive: true, force: true });
     return !started;
+}
+
+/**
+ * The repo's hooks run as config hooks through their interpreter only while `core.hooksPath` is unset
+ * (`scripts/git/install-hooks.ts`). An install or a checkout on a branch with the older `prepare` sets it back to
+ * `.githooks`, git then executes each worktree's new hook copy directly, and a stuck syspolicyd froze every such
+ * first run (2026-10-14: commits from three sessions hung at their pre-commit hook). Before a commit or a push this
+ * puts the config hooks back with the repo's own installer, which Martin allowed the babysit to run.
+ */
+export function ensureConfigHooks(main: string): string {
+    const listed = Bun.spawnSync(["git", "hook", "list", "pre-commit"], {
+        cwd: main,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: process.env,
+    });
+
+    if (!listed.stdout.toString().includes("hook from hookdir")) {
+        return "config hooks in place";
+    }
+
+    const installer = join(main, "scripts/git/install-hooks.ts");
+
+    if (!existsSync(installer)) {
+        return "⚠ git runs the hook folder, and this checkout has no installer";
+    }
+
+    const fixed = Bun.spawnSync(["bun", installer], { cwd: main, stdout: "pipe", stderr: "pipe", env: process.env });
+    return fixed.exitCode === 0
+        ? "⚠ core.hooksPath was set again: the installer put the config hooks back"
+        : `⚠ the hook installer failed: ${fixed.stderr.toString().trim().slice(0, 200)}`;
 }
 
 /** Hooks off for the mechanical replays (rebase, cherry-pick, worktree add), which run no gate hook anyway: only

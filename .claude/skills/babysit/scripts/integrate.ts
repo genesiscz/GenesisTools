@@ -12,7 +12,7 @@ import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { flag, has, loadRun, worktreeFor } from "./run";
-import { HOOKS_OFF, newExecutablesStall } from "./versions";
+import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
 
 const run = loadRun();
 const pr = flag("--pr") ?? "";
@@ -103,6 +103,7 @@ if (oldHead !== newHead && !dry) {
     // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
     // --no-push-hooks counts only while new executables really stall (versions.ts): the gates above ran the hook's
     // probe, typecheck and repo rules, but its Biome check is then the lead's job.
+    console.log(`hooks: ${ensureConfigHooks(run.main)}`);
     const stalled = has("--no-push-hooks") && !has("--skip-gates") && (await newExecutablesStall());
 
     if (has("--no-push-hooks") && !stalled) {
