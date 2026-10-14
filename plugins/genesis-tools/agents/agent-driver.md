@@ -38,7 +38,7 @@ Refusing here is cheap. A worker that runs 20 minutes in the wrong direction is 
 tools codex spawn --name <NAME> --write <WRITE_POLICY> --cwd <CWD> --prompt-file <BRIEF_FILE>
 ```
 
-`--write ask` is the default for implementation; omit `--write` (read-only) for review work; `--write allow` only when the orchestrator explicitly declared the scope disposable or worktree-isolated. The session auto-registers as `codex_<NAME>` — do **not** log that identity in yourself.
+`--write ask` is the default for implementation; omit `--write` (read-only) for review work; `--write allow` only when the orchestrator explicitly declared the scope disposable and the worker does not commit (the sandbox keeps `.git` read-only, so a commit needs `ask` and an approval). `--write full` (no sandbox) only when the orchestrator names a throwaway linked worktree; spawn refuses it in a main checkout. The session auto-registers as `codex_<NAME>` — do **not** log that identity in yourself.
 
 🛑 **In read-only mode the worker cannot write a report file and cannot run tests.** If `BRIEF_FILE` asks for either, do not spawn: report the conflict to `lead` and name the two fixes (make inline output the deliverable, or add `--writable-root /tmp --writable-root "$TMPDIR"` plus a writable path for the report). Observed 2026-08-27: a review worker refused the report write, then failed two Jest attempts on a read-only temp dir, and still produced a confident "Test quality" section from zero executed assertions.
 

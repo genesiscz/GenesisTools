@@ -49,8 +49,21 @@ Write policy — the only real safety dial:
 | `--write` | sandbox | approvals | use for |
 |---|---|---|---|
 | omitted / `deny` | read-only | none possible | INLINE-only review. No file to write. |
-| `ask` | workspace-write | untrusted → forwarded to `lead`; the daemon accepts read-only commands itself | **default for implementation** |
-| `allow` | workspace-write | never prompts | tightly bounded folder: vault note, disposable worktree |
+| `ask` | workspace-write | untrusted → forwarded to `lead`; the daemon accepts read-only commands itself | **default for implementation, and the recommended way for a worker that must commit**: approve each `git add` and `git commit` |
+| `allow` | workspace-write | never prompts | a bounded folder with no commit: vault note, scratch output. It cannot commit. |
+| `full` | none (`danger-full-access`) | never prompts | **only a throwaway linked worktree** (or a non-git scratch folder) where the worker must commit or run `ps` itself. Refused in a main checkout. |
+
+`--write full` has no sandbox: the worker runs any command as you, with your files, network and credentials. `tools codex spawn` refuses it when the cwd is in a main checkout (a `.git` folder at or above it) and warns on every spawn that uses it. Make the throwaway worktree first (`git -C <main checkout> worktree add -b <branch> <path>`), spawn with `--cwd <path>`, and read the diff before you take any commit from it.
+
+### What a sandboxed worker cannot do
+
+Measured on 2026-10-14 with `codex sandbox` 0.162.1 in workspace-write, the sandbox of `ask` and `allow`. `tools codex spawn` prints the first two as warnings and returns them as `warnings` in its JSON result.
+
+- **Commit.** Every path inside a `.git` folder is read-only: in a main checkout, in a linked worktree (its git data is in the main checkout's `.git/worktrees/<name>`), and also when that `.git` is a `--writable-root`. `git add` and `git commit` fail with `Unable to create '…/index.lock': Operation not permitted`. The way around: `--write ask`, and approve each commit, which then runs outside the sandbox (the babysit skill's approval driver, `.claude/skills/babysit/scripts/approve-codex.ts`, does this). Or the driver commits after it verifies. Tell the worker to run `git add -- <paths>` and `git commit` as two commands. `--write full` in a throwaway worktree is the last resort.
+- **Run `ps`, `top` or `pgrep`.** `/bin/ps` and `top` are setuid root and fail at exec (`sandbox-exec: execvp() of '/bin/ps' failed: Operation not permitted`); `pgrep` prints `Cannot get process list`. So the readers in `@genesiscz/utils/process/ps` that spawn `ps` (`batchPsInfo`, `listPsRows`, `listPsTable`) return nothing, and a test that spawns `ps` fails inside the sandbox. The per-pid kernel readers work: `readProcessRow` and `readProcessArgs` (`@genesiscz/utils/process/libproc-table`), `readParentPid` and `readProcessCwd` (`@genesiscz/utils/process/cwd`), and `lsof` on your own processes. The whole-table `listProcessTable()` returns null, because the sandbox denies `sysctl(KERN_PROC_ALL)`. Brief such a test as one the driver runs.
+- **A `bun install` that downloads.** The sandbox has no network and cannot write bun's cache (`~/.bun/install/cache`). An install that needs a package that is not in the cache fails with `bun is unable to write files to tempdir: EPERM`, and with a writable cache it fails on `DNSResolveFailed`. An install that the cache covers works. `/tmp` and `$TMPDIR` are already writable, and no `--writable-root` adds network. The way around: the driver runs `bun install` in the worktree before the spawn. Do not add `~/.bun` as a writable root: installs outside the sandbox read that cache later.
+- **An MCP tool call that needs approval.** Codex refuses it when nothing can prompt: `MCP tool call requires approval, but approval policy is never` (measured under `allow`; `full` has the same `never` policy). The way around: `--write ask`.
+- **Report to `lead` when nobody listens (any mode).** The daemon's bus messages fail with `recipient "lead" not registered in this session` when no lead listener runs. The way around: start the lead listener before the spawn (`genesis-tools:agents-talk`, and the `tools agents login --agent-main --agent-name lead` line below).
 
 ### 🛑 File deliverables: never `--write deny`
 
