@@ -1,73 +1,28 @@
-import { existsSync, readFileSync } from "node:fs";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { getActiveSessionIds } from "@app/claude/lib/tail-list";
 import { accountFromEnv, type LiveAccount } from "@genesiscz/utils/ai/account-env";
-import {
-    type ActiveAgentProcess,
-    listActiveAgentProcesses,
-    type PsProcessRow,
-    parseLsofCwd,
-    parsePsLine,
-    runCapture,
-} from "@genesiscz/utils/ai/active-processes";
+import { type PsProcessRow, parseLsofCwd, parsePsLine } from "@genesiscz/utils/ai/active-processes";
+import type { AgentSessionFacts, AgentWhoSource } from "@genesiscz/utils/ai/active-sessions";
 import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
-import { CMUX_REFS_PATH, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
- * Live Claude Code processes and the account each one runs as. The account is
- * per-process: `tools claude run <name>` exports TOOLS_CLAUDE_ACCOUNT into the
- * launched claude's environment (start.ts / run.ts), so reading it back off the
- * process table is the ONLY truthful answer to "which account does this pane
- * bill" — session files and statusline state do not record it.
+ * Claude's part of `tools claude who`: which `ps` lines are Claude, the session its argv resumes, the live
+ * sessions and their names from the history index, and the last message off a transcript. The scan, the cmux join
+ * and the assignment are shared by every agent (`@genesiscz/utils/ai/active-sessions`). The account is
+ * per-process: `tools claude run <name>` exports TOOLS_CLAUDE_ACCOUNT into the launched claude's environment
+ * (start.ts / run.ts), so reading it back off the process table is the ONLY truthful answer to "which account does
+ * this pane bill"; session files and statusline state do not record it.
  */
 
 export type ClaudeProcessKind = "tui" | "sdk" | "mcp";
 
-// The ps / lsof / account-env scan is the same on every coding agent; only the enrichment
-// below it is Claude's. Re-exported so the tests that pin the parsers keep their import.
+// The ps / lsof / account-env scan is the same on every coding agent. Re-exported so the tests that pin the
+// parsers keep their import.
 export { type PsProcessRow, parseLsofCwd, parsePsLine };
-
-export interface ActiveClaudeSession {
-    pid: number;
-    ppid: number;
-    tty: string;
-    startedAt: number | null;
-    cpuTime: string;
-    kind: ClaudeProcessKind;
-    /** TOOLS_CLAUDE_ACCOUNT value; null = launched outside `tools claude run` (keychain login). */
-    account: string | null;
-    /** Set instead of account for ai-proxy sessions (TOOLS_CLAUDE_ACCOUNT=proxy:...). */
-    proxyTarget: string | null;
-    model: string | null;
-    resumeId: string | null;
-    cwd: string | null;
-    /** Resolved session id: the --resume arg, or an unambiguous active-session match by cwd. */
-    sessionId: string | null;
-    /** Active sessions sharing this cwd when the id could not be pinned to one. */
-    sessionCandidates: number;
-    /** How the session id was established, so a guess never reads like a fact. */
-    sessionSource: SessionIdSource;
-    /** cmux surface (tab) this process runs in, resolved by tty. */
-    surfaceRef: string | null;
-    /**
-     * How many live processes carry this same session id.
-     *
-     * A session CAN legitimately be open twice (`claude --resume <id>` in two panes), and
-     * both copies write to one transcript. Showing 1 for each would hide that, so the count
-     * is carried per row and rendered as a badge.
-     */
-    sessionInstances: number;
-    /** `/rename` title, else the summary or first prompt. */
-    sessionTitle: string | null;
-    /** Last main-thread user message, cleaned of reminder/notification wrappers. */
-    lastUserMessage: string | null;
-    /** Epoch ms of the last main-thread turn — the statusline's `@HH:MM:SS`. */
-    lastActivityAt: number | null;
-}
 
 export interface SessionTail {
     lastUserMessage: string | null;
@@ -242,277 +197,6 @@ export function parseAccountEnv(envArgs: string): LiveAccount {
     return accountFromEnv(envArgs, "claude");
 }
 
-export type SessionIdSource = "resume-arg" | "hook-tty" | "cwd-unique" | "none";
-
-export interface SessionIdAssignment {
-    sessionId: string | null;
-    candidates: number;
-    source: SessionIdSource;
-}
-
-/** The live terminal surfaces, from `cmux --json --id-format both tree --all`: tty by surface UUID, and each one's ref. */
-export interface CmuxSurfaceTtys {
-    /** Surface UUID (lower case) → tty. The journal records the UUID; a ref is renumbered at each relaunch. */
-    ttyBySurfaceId: Map<string, string>;
-    /** Surface UUID (lower case) → `surface:N`, for display. */
-    refBySurfaceId: Map<string, string>;
-}
-
-/**
- * The link the hook journal is missing: it records which cmux SURFACE a session runs on, but a
- * surface means nothing to `ps`. The tty is the shared key.
- */
-export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
-    const ttyBySurfaceId = new Map<string, string>();
-    const refBySurfaceId = new Map<string, string>();
-    const parsed: unknown = SafeJSON.parse(json, { strict: true });
-    const list = (value: unknown, key: string): unknown[] => {
-        const field = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : null;
-        return Array.isArray(field) ? field : [];
-    };
-
-    for (const window of list(parsed, "windows")) {
-        for (const workspace of list(window, "workspaces")) {
-            for (const pane of list(workspace, "panes")) {
-                for (const surface of list(pane, "surfaces")) {
-                    const { id, ref, tty } = surface as { id?: unknown; ref?: unknown; tty?: unknown };
-
-                    if (typeof id !== "string" || typeof tty !== "string" || !tty) {
-                        continue;
-                    }
-
-                    ttyBySurfaceId.set(id.toLowerCase(), tty);
-
-                    if (typeof ref === "string") {
-                        refBySurfaceId.set(id.toLowerCase(), ref);
-                    }
-                }
-            }
-        }
-    }
-
-    return { ttyBySurfaceId, refBySurfaceId };
-}
-
-/**
- * Latest journal line per CLAUDE session — later lines win, as the hook appends.
- *
- * 🛑 Codex and Grok run the same cmux hook, and a codex session started inside a claude pane
- * inherits that pane's surface. Its record therefore names a claude pane's tty, and
- * `assignSessionIds` drops BOTH hints for a tty that two sessions claim — so one nested codex
- * run used to blank `tools claude who` for the pane it ran in. A record with no `provider`
- * predates the tag and is claude's, which every existing line is.
- */
-export function latestRefsBySession(raw: string): Map<string, SessionCmuxRefs> {
-    const latest = new Map<string, SessionCmuxRefs>();
-
-    for (const line of raw.split("\n")) {
-        if (!line.trim()) {
-            continue;
-        }
-
-        let entry: SessionCmuxRefs;
-
-        try {
-            entry = SafeJSON.parse(line, { jsonl: true }) as SessionCmuxRefs;
-        } catch {
-            continue;
-        }
-
-        if (!entry?.sessionId || (entry.provider ?? "claude") !== "claude") {
-            continue;
-        }
-
-        const seen = latest.get(entry.sessionId);
-
-        if (!seen || (entry.at ?? 0) >= (seen.at ?? 0)) {
-            latest.set(entry.sessionId, entry);
-        }
-    }
-
-    return latest;
-}
-
-export interface SessionHint {
-    sessionId: string;
-    tty: string;
-    cwd: string | null;
-}
-
-/**
- * Session → tty, by joining the hook journal to the live cmux surfaces by surface UUID.
- *
- * Only the UUID: a surface REF is renumbered when cmux restarts, so a journal line's ref can
- * name a tab another session owns now. `assignSessionIds` additionally requires the cwd to agree.
- */
-export function buildSessionHints(
-    refs: Map<string, SessionCmuxRefs>,
-    ttyBySurfaceId: Map<string, string>
-): SessionHint[] {
-    const hints: SessionHint[] = [];
-
-    for (const [sessionId, entry] of refs) {
-        const tty = entry.surfaceId ? ttyBySurfaceId.get(entry.surfaceId.toLowerCase()) : undefined;
-
-        if (tty) {
-            hints.push({ sessionId, tty, cwd: entry.cwd });
-        }
-    }
-
-    return hints;
-}
-
-/**
- * Pin each process to a session id, strongest evidence first:
- *
- * 1. `--resume <id>` in argv — the process says so itself.
- * 2. The SessionStart hook's journal, joined to the live cmux surface list by tty. This is
- *    the only source that knows a fresh, never-resumed session's id, which is why `who`
- *    used to print "—" for exactly the panes you most wanted to identify.
- * 3. A cwd with exactly one unclaimed active session and one unresolved process.
- *
- * Anything else stays null with the candidate count, because guessing here would point
- * `cmux focus` at the wrong pane.
- */
-export function assignSessionIds(
-    procs: Array<{ pid: number; cwd: string | null; resumeId: string | null; tty?: string }>,
-    activeSessions: Array<{ sessionId: string; cwd: string | null }>,
-    hints: SessionHint[] = []
-): Map<number, SessionIdAssignment> {
-    const result = new Map<number, SessionIdAssignment>();
-    const claimed = new Set<string>();
-
-    for (const proc of procs) {
-        if (proc.resumeId) {
-            result.set(proc.pid, { sessionId: proc.resumeId, candidates: 1, source: "resume-arg" });
-            claimed.add(proc.resumeId);
-        }
-    }
-
-    // A tty hosts one interactive session at a time, so a tty shared by two hints means the
-    // journal is stale for at least one of them. Dropping both beats picking the wrong one.
-    const ttyCounts = new Map<string, number>();
-
-    for (const hint of hints) {
-        ttyCounts.set(hint.tty, (ttyCounts.get(hint.tty) ?? 0) + 1);
-    }
-
-    const hintByTty = new Map<string, SessionHint>();
-
-    for (const hint of hints) {
-        if (ttyCounts.get(hint.tty) === 1 && !claimed.has(hint.sessionId)) {
-            hintByTty.set(hint.tty, hint);
-        }
-    }
-
-    for (const proc of procs) {
-        if (result.has(proc.pid) || !proc.tty) {
-            continue;
-        }
-
-        const hint = hintByTty.get(proc.tty);
-
-        if (!hint || claimed.has(hint.sessionId)) {
-            continue;
-        }
-
-        // Corroboration: a renumbered surface ref can name the wrong session, and a wrong
-        // id here sends `focus` to someone else's pane. Matching cwds makes that a
-        // two-signal agreement rather than a lookup.
-        if (hint.cwd && proc.cwd && hint.cwd !== proc.cwd) {
-            continue;
-        }
-
-        result.set(proc.pid, { sessionId: hint.sessionId, candidates: 1, source: "hook-tty" });
-        claimed.add(hint.sessionId);
-    }
-
-    const byCwd = new Map<string, string[]>();
-
-    for (const session of activeSessions) {
-        if (!session.cwd || claimed.has(session.sessionId)) {
-            continue;
-        }
-
-        const list = byCwd.get(session.cwd) ?? [];
-        list.push(session.sessionId);
-        byCwd.set(session.cwd, list);
-    }
-
-    const unresolved = procs.filter((proc) => !result.has(proc.pid));
-
-    for (const proc of unresolved) {
-        const candidates = proc.cwd ? (byCwd.get(proc.cwd) ?? []) : [];
-        const siblings = unresolved.filter((other) => other.cwd === proc.cwd).length;
-
-        if (candidates.length === 1 && siblings === 1) {
-            result.set(proc.pid, { sessionId: candidates[0], candidates: 1, source: "cwd-unique" });
-        } else {
-            result.set(proc.pid, { sessionId: null, candidates: candidates.length, source: "none" });
-        }
-    }
-
-    return result;
-}
-
-/** tty → the surface's display ref (`surface:N`), from the UUID-keyed maps. */
-export function invertSurfaceTtys(surfaces: CmuxSurfaceTtys): Map<string, string> {
-    const surfaceByTty = new Map<string, string>();
-
-    for (const [surfaceId, tty] of surfaces.ttyBySurfaceId) {
-        const surfaceRef = surfaces.refBySurfaceId.get(surfaceId) ?? surfaceId;
-        // A tty belongs to exactly one surface; a duplicate means the listing is mid-change,
-        // and naming either one would be a guess.
-        if (surfaceByTty.has(tty)) {
-            surfaceByTty.set(tty, "");
-            continue;
-        }
-
-        surfaceByTty.set(tty, surfaceRef);
-    }
-
-    return surfaceByTty;
-}
-
-/** Count of live processes per session id, so a twice-opened session is visible. */
-export function countSessionInstances(sessionIds: Array<string | null>): Map<string, number> {
-    const counts = new Map<string, number>();
-
-    for (const id of sessionIds) {
-        if (id) {
-            counts.set(id, (counts.get(id) ?? 0) + 1);
-        }
-    }
-
-    return counts;
-}
-
-interface CmuxContext {
-    hints: SessionHint[];
-    surfaceByTty: Map<string, string>;
-}
-
-/** Journal + live cmux surfaces. Both are optional: no cmux simply means no hints. */
-async function readCmuxContext(runner: (cmd: string[]) => Promise<string>): Promise<CmuxContext> {
-    const empty: CmuxContext = { hints: [], surfaceByTty: new Map() };
-
-    try {
-        const surfaces = parseCmuxTreeTtys(await runner(["cmux", "--json", "--id-format", "both", "tree", "--all"]));
-        const surfaceByTty = invertSurfaceTtys(surfaces);
-
-        if (!existsSync(CMUX_REFS_PATH)) {
-            return { hints: [], surfaceByTty };
-        }
-
-        const refs = latestRefsBySession(readFileSync(CMUX_REFS_PATH, "utf8"));
-
-        return { hints: buildSessionHints(refs, surfaces.ttyBySurfaceId), surfaceByTty };
-    } catch (error) {
-        logger.debug({ error }, "[who] cmux session hints unavailable");
-        return empty;
-    }
-}
-
 /**
  * A `tools claude mcp` server is never a session, whatever its tty says: Grok and Cursor
  * spawn it with no controlling tty, and it used to read as a dead headless Claude session.
@@ -522,8 +206,8 @@ async function readCmuxContext(runner: (cmd: string[]) => Promise<string>): Prom
  * is a real, separately billable session and always shows.
  */
 export function isHelperChild(
-    proc: { kind: ClaudeProcessKind; tty: string },
-    all: Array<{ kind: ClaudeProcessKind; tty: string }>
+    proc: { kind: string; tty: string },
+    all: ReadonlyArray<{ kind: string; tty: string }>
 ): boolean {
     if (proc.kind === "mcp") {
         return true;
@@ -536,99 +220,31 @@ export function isHelperChild(
     return all.some((other) => other.kind === "tui" && other.tty === proc.tty);
 }
 
-export async function listActiveClaudeSessions(): Promise<ActiveClaudeSession[]> {
-    const scanned = await listActiveAgentProcesses({ alias: "claude", classify: classifyClaudeArgs });
-
-    if (scanned.length === 0) {
-        return [];
-    }
-
-    const partial = scanned.map((row: ActiveAgentProcess) => ({
-        ...row,
-        kind: row.kind as ClaudeProcessKind,
-        ...extractLaunchDetails(row.args),
-    }));
-
-    let activeSessions: Array<{ sessionId: string; cwd: string | null }> = [];
-    const pathBySessionId = new Map<string, string>();
-    const titleBySessionId = new Map<string, string>();
-
-    try {
+/** Claude's contribution to the shared `who`. */
+export const CLAUDE_WHO_SOURCE: AgentWhoSource = {
+    alias: "claude",
+    classify: classifyClaudeArgs,
+    isHelper: isHelperChild,
+    resumeIdFromArgs: (args) => extractLaunchDetails(args).resumeId,
+    async activeSessions(): Promise<AgentSessionFacts[]> {
         const activeIds = getActiveSessionIds();
         const listing = await getSessionListing({ excludeSubagents: true });
 
-        for (const session of listing.sessions) {
-            if (!session.sessionId) {
-                continue;
-            }
-
-            pathBySessionId.set(session.sessionId, session.filePath);
-            const title = session.customTitle ?? session.summary ?? session.firstPrompt;
-
-            if (title) {
-                titleBySessionId.set(session.sessionId, title.replace(/\s+/g, " ").trim());
-            }
-        }
-
-        activeSessions = listing.sessions
-            .filter((s): s is typeof s & { sessionId: string } => s.sessionId !== null && activeIds.has(s.sessionId))
-            .map((s) => ({ sessionId: s.sessionId, cwd: s.cwd }));
-    } catch (error) {
-        logger.debug({ error }, "[who] active session listing failed — session ids limited to --resume args");
-    }
-
-    const cmux = await readCmuxContext(runCapture);
-    const assignments = assignSessionIds(partial, activeSessions, cmux.hints);
-    // Only TUI processes count: an MCP/SDK child shares its parent's tty, and counting it
-    // would report every ordinary session as "open twice".
-    const instances = countSessionInstances(
-        partial.filter((proc) => proc.kind === "tui").map((proc) => assignments.get(proc.pid)?.sessionId ?? null)
-    );
-
-    // Only resolved sessions get a tail read: an unresolved pid has no single
-    // transcript to quote, and guessing one would attribute another session's
-    // prompt to this process.
-    const tails = new Map<string, SessionTail>();
-    await Promise.all(
-        [...new Set([...assignments.values()].map((a) => a.sessionId).filter((id): id is string => id !== null))].map(
-            async (sessionId) => {
-                const filePath = pathBySessionId.get(sessionId);
-
-                if (filePath) {
-                    tails.set(sessionId, await readSessionTail(filePath));
-                }
-            }
-        )
-    );
-
-    return partial.map((proc) => {
-        const assignment: SessionIdAssignment = assignments.get(proc.pid) ?? {
-            sessionId: null,
-            candidates: 0,
-            source: "none",
-        };
-        const tail = assignment.sessionId ? tails.get(assignment.sessionId) : undefined;
-
-        return {
-            pid: proc.pid,
-            ppid: proc.ppid,
-            tty: proc.tty,
-            startedAt: proc.startedAt,
-            cpuTime: proc.cpuTime,
-            kind: proc.kind,
-            account: proc.account,
-            proxyTarget: proc.proxyTarget,
-            model: proc.model,
-            resumeId: proc.resumeId,
-            cwd: proc.cwd,
-            sessionId: assignment.sessionId,
-            sessionCandidates: assignment.candidates,
-            sessionSource: assignment.source,
-            surfaceRef: cmux.surfaceByTty.get(proc.tty) || null,
-            sessionInstances: assignment.sessionId ? (instances.get(assignment.sessionId) ?? 1) : 0,
-            sessionTitle: assignment.sessionId ? (titleBySessionId.get(assignment.sessionId) ?? null) : null,
-            lastUserMessage: tail?.lastUserMessage ?? null,
-            lastActivityAt: tail?.lastActivityAt ?? null,
-        };
-    });
-}
+        // Every listed session, for its name and transcript: a session resumed by argv may be older than the
+        // active window. Only the active ones take part in the cwd rung.
+        return listing.sessions
+            .filter((s): s is typeof s & { sessionId: string } => s.sessionId !== null)
+            .map((s) => {
+                const title = s.customTitle ?? s.summary ?? s.firstPrompt;
+                return {
+                    sessionId: s.sessionId,
+                    cwd: s.cwd,
+                    title: title ? title.replace(/\s+/g, " ").trim() : null,
+                    filePath: s.filePath,
+                    active: activeIds.has(s.sessionId),
+                };
+            });
+    },
+    tail: async (session) =>
+        session.filePath ? readSessionTail(session.filePath) : { lastUserMessage: null, lastActivityAt: null },
+};

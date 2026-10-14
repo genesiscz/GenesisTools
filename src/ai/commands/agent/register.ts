@@ -78,7 +78,7 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
             return;
         }
 
-        registerAgentWhoCommand(program, { alias: spec.alias, tool, ...spec.processScan });
+        registerAgentWhoCommand(program, { ...spec.processScan, alias: spec.alias, tool });
     });
 
     shared("history", () => {

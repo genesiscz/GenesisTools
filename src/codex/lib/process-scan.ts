@@ -26,3 +26,12 @@ export function classifyCodexArgs(args: string): CodexProcessKind | null {
 
     return null;
 }
+
+/** The session a codex TUI resumes: `codex [flags] resume <id>`. Null for a new session or the picker. */
+export function codexResumeIdFromArgs(args: string): string | null {
+    const tokens = args.split(/\s+/);
+    const at = tokens.indexOf("resume");
+    const id = at >= 0 ? tokens.slice(at + 1).find((token) => !token.startsWith("-")) : undefined;
+
+    return id && /^[\w-]+$/.test(id) ? id : null;
+}

@@ -2,7 +2,7 @@ import type { AgentToolSpec } from "@app/ai/commands/agent/spec";
 import { createGrokAdapter } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { grokDriver } from "./driver";
 import { grokLauncher } from "./launcher";
-import { classifyGrokArgs } from "./process-scan";
+import { classifyGrokArgs, grokResumeIdFromArgs } from "./process-scan";
 
 /** What `tools grok` is. Every shared verb comes from this object and nothing else. */
 export const grokSpec: AgentToolSpec = {
@@ -12,7 +12,7 @@ export const grokSpec: AgentToolSpec = {
     adapter: () => createGrokAdapter(),
     launcher: grokLauncher,
     worker: grokDriver,
-    processScan: { classify: classifyGrokArgs },
+    processScan: { classify: classifyGrokArgs, resumeIdFromArgs: grokResumeIdFromArgs },
     help: {
         // xAI reports one monthly billing credit rather than percentage windows.
         usage: "Grok monthly billing credit (interactive TUI)",

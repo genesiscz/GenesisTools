@@ -1,20 +1,23 @@
 import { describe, expect, test } from "bun:test";
+import { codexResumeIdFromArgs } from "@app/codex/lib/process-scan";
+import { grokResumeIdFromArgs } from "@app/grok/lib/process-scan";
+import {
+    assignSessionIds,
+    buildSessionHints,
+    countSessionInstances,
+    invertSurfaceTtys,
+    parseCmuxTreeTtys,
+} from "@genesiscz/utils/ai/active-sessions";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
-    assignSessionIds,
-    buildSessionHints,
     classifyClaudeArgs,
     cleanUserText,
-    countSessionInstances,
     extractLaunchDetails,
     humanTextOf,
-    invertSurfaceTtys,
     isHelperChild,
-    latestRefsBySession,
     parseAccountEnv,
-    parseCmuxTreeTtys,
     parseLsofCwd,
     parsePsLine,
     parseSessionTail,
@@ -322,19 +325,21 @@ describe("parseCmuxTreeTtys", () => {
     });
 });
 
-describe("latestRefsBySession", () => {
-    test("later journal lines win", () => {
-        const raw = [
-            SafeJSON.stringify({ sessionId: "s1", surfaceRef: "surface:1", cwd: "/a", at: 100 }),
-            SafeJSON.stringify({ sessionId: "s1", surfaceRef: "surface:9", cwd: "/a", at: 200 }),
-            "not json",
-            SafeJSON.stringify({ sessionId: "s2", surfaceRef: "surface:2", cwd: "/b", at: 150 }),
-        ].join("\n");
-
-        const latest = latestRefsBySession(raw);
-
-        expect(latest.get("s1")?.surfaceRef).toBe("surface:9");
-        expect(latest.get("s2")?.surfaceRef).toBe("surface:2");
+// Each agent's own argv names the session it resumes; the shared `who` reads it through the agent's source.
+describe("resumeIdFromArgs per agent", () => {
+    test("claude, codex and grok each name their resumed session; a new session names none", () => {
+        expect(extractLaunchDetails("claude --resume 6bdfb457-cee9-4202-8105-21be8a801757").resumeId).toBe(
+            "6bdfb457-cee9-4202-8105-21be8a801757"
+        );
+        expect(
+            codexResumeIdFromArgs("/usr/local/bin/codex -c model=x resume 019a2b3c-0000-7000-8000-000000000001")
+        ).toBe("019a2b3c-0000-7000-8000-000000000001");
+        expect(codexResumeIdFromArgs("/usr/local/bin/codex")).toBeNull();
+        expect(grokResumeIdFromArgs("/Users/me/.local/bin/grok -r 01a1217a-f677-7f60-a597-41ac0ee91bff")).toBe(
+            "01a1217a-f677-7f60-a597-41ac0ee91bff"
+        );
+        expect(grokResumeIdFromArgs("grok --resume=01a1217a-f677")).toBe("01a1217a-f677");
+        expect(grokResumeIdFromArgs("grok")).toBeNull();
     });
 });
 

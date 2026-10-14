@@ -1,4 +1,5 @@
 import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import type { AgentWhoSource } from "@genesiscz/utils/ai/active-sessions";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { WorkerDriver } from "@genesiscz/utils/worker/driver";
@@ -92,14 +93,11 @@ export interface AgentToolSpec {
     /** One line for the `worker` group itself, when `workerMount` is set. */
     workerMountDescription?: string;
     /**
-     * How `who` recognises this agent's processes on the `ps` table. Absent: no `who` verb,
-     * which is the honest answer for an agent whose launcher exports no account.
+     * This agent's part of `who`: how it recognises its processes on the `ps` table, the session its argv
+     * resumes, and (optionally) its live sessions and transcript tail. The scan, the cmux join and the table are
+     * shared. Absent: no `who` verb, which is the honest answer for an agent whose launcher exports no account.
      */
-    processScan?: {
-        classify(args: string): string | null;
-        /** Kinds that are machinery rather than billable sessions; hidden unless `--all`. */
-        helperKinds?: readonly string[];
-    };
+    processScan?: Omit<AgentWhoSource, "alias">;
     /** Per-tool `--help` wording for the pinned doors; each has a usable default. */
     help?: {
         usage?: string;

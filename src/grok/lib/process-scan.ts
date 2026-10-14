@@ -21,3 +21,19 @@ export function classifyGrokArgs(args: string): GrokProcessKind | null {
 
     return tokens.some((token) => PROMPT_FLAGS.has(token)) ? "worker" : "tui";
 }
+
+/** The session a grok process resumes: `-r <id>`, `--resume <id>` or `--resume=<id>`. */
+export function grokResumeIdFromArgs(args: string): string | null {
+    const tokens = args.split(/\s+/);
+
+    for (let index = 0; index < tokens.length; index++) {
+        const token = tokens[index];
+        const id = token === "-r" || token === "--resume" ? tokens[index + 1] : token.match(/^--resume=(.+)$/)?.[1];
+
+        if (id && /^[\w-]+$/.test(id)) {
+            return id;
+        }
+    }
+
+    return null;
+}

@@ -3,7 +3,7 @@ import { registerRunCommand } from "@app/codex/commands/run";
 import { createCodexAdapter } from "@genesiscz/utils/agent-sessions/codex-sessions";
 import { codexDriver } from "./driver";
 import { codexLauncher } from "./launcher";
-import { CODEX_HELPER_KINDS, classifyCodexArgs } from "./process-scan";
+import { CODEX_HELPER_KINDS, classifyCodexArgs, codexResumeIdFromArgs } from "./process-scan";
 
 /** What `tools codex` is. Codex's own extra verbs register beside this, never inside it. */
 export const codexSpec: AgentToolSpec = {
@@ -13,7 +13,11 @@ export const codexSpec: AgentToolSpec = {
     adapter: () => createCodexAdapter(),
     launcher: codexLauncher,
     worker: codexDriver,
-    processScan: { classify: classifyCodexArgs, helperKinds: CODEX_HELPER_KINDS },
+    processScan: {
+        classify: classifyCodexArgs,
+        helperKinds: CODEX_HELPER_KINDS,
+        resumeIdFromArgs: codexResumeIdFromArgs,
+    },
     help: {
         // Codex has no presenter, so the Overview draws the two windows the app-server reports.
         usage: "Codex rate-limit windows (interactive TUI)",
