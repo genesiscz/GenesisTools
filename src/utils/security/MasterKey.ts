@@ -6,6 +6,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { appGateKey } from "./keyring/app-gate";
 import { envKeyProvider, fileKeyProvider, masterKeyFilePath, securityStorage } from "./keyring/headless";
 import { osKeyring } from "./keyring/os-keyring";
 import { MASTER_KEY_BYTES, type MasterKeyProvider, type MasterKeySource } from "./keyring/types";
@@ -30,10 +31,13 @@ interface KeyState {
 }
 
 let cached: KeyState | null = null;
-let providers: MasterKeyProvider[] = [envKeyProvider, osKeyring, fileKeyProvider];
+// The app rung sits before the keychain: with GenesisTools.app installed, the app's approval window replaces the
+// keychain's per-executable dialog. It answers nothing when the app cannot (then the keychain does), and throws on a
+// deny, so a refused key never falls through to the dialog it replaces.
+let providers: MasterKeyProvider[] = [envKeyProvider, appGateKey, osKeyring, fileKeyProvider];
 
 /**
- * Ladder, first hit wins: in-process cache, env, OS keychain, opt-in key file.
+ * Ladder, first hit wins: in-process cache, env, GenesisTools.app's approval window, OS keychain, opt-in key file.
  * Interactive processes generate and store a key when every rung misses;
  * headless ones fail loudly rather than minting a key nobody can find later.
  *
@@ -238,7 +242,8 @@ export async function writeMasterKey(key: Buffer): Promise<MasterKeySource> {
     }
 
     for (const provider of providers) {
-        if (provider.id === "env") {
+        // The env rung is the caller's own override and the app rung only reads, so neither stores a new key.
+        if (provider.id === "env" || provider.id === "app") {
             continue;
         }
 

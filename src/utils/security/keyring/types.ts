@@ -1,6 +1,6 @@
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
-export type MasterKeySource = "keychain" | "env" | "file";
+export type MasterKeySource = "keychain" | "env" | "file" | "app";
 
 export interface MasterKeyProvider {
     readonly id: MasterKeySource;

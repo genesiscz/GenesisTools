@@ -91,6 +91,21 @@ export type ApprovalDecision =
     | { decision: "deny"; reason: string };
 
 /** A remembered approval. Matched on client key, provider, account id and the token kind approved. */
+/**
+ * A remembered vault-key approval, written by GenesisTools.app's vault window (src/macos/GenesisTools/Sources/
+ * VaultUnlock.swift) into `vault-grants.json`. One tool, one executable, one script; `until` null means "always",
+ * until `tools ai gate revoke` drops it.
+ */
+export interface VaultGrant {
+    key: string;
+    tool: string;
+    executable: string;
+    script?: string | null;
+    grantedAt: number;
+    until: number | null;
+    method: string;
+}
+
 export interface GateGrant {
     key: string;
     clientName: string;

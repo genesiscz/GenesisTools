@@ -15,6 +15,7 @@ import {
 } from "./MasterKey";
 import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
+import { noteVaultSecret } from "./vault-purpose";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -192,6 +193,7 @@ class FileSecretStore implements SecretStore {
             return undefined;
         }
 
+        noteVaultSecret(path);
         try {
             return decryptEntry(await masterKeyForId(vault.keyId), path, entry);
         } catch (err) {
@@ -214,6 +216,7 @@ class FileSecretStore implements SecretStore {
                     return undefined;
                 }
 
+                noteVaultSecret(path);
                 key ??= masterKeyForId(vault.keyId);
                 try {
                     return decryptEntry(await key, path, entry);
@@ -240,6 +243,7 @@ class FileSecretStore implements SecretStore {
                 return undefined;
             }
 
+            noteVaultSecret(path);
             const key = masterKeyForIdSync(snapshot.keyId);
             if (!key) {
                 projectionMissedKey = true;

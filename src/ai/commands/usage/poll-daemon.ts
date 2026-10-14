@@ -17,6 +17,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { cpuMeta, profiler } from "@genesiscz/utils/profile";
+import { setVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 
 const ANTHROPIC_SUB = "anthropic-sub";
 /** The daemon runner kills this task at 60 s (`timeoutMs` in the task log); the tick keeps 10 s of headroom. */
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
         beforeMain: `${Math.round((beforeMain.user + beforeMain.system) / 1000)}ms`,
     }));
     logger.info("[ai-usage] daemon poll starting");
+    setVaultPurpose("refresh the usage of every AI account (the usage daemon, once a minute in the background)");
 
     const dashConfig = await loadDashboardConfig();
     const db = new UsageLimitsDb();

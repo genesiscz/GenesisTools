@@ -8,7 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import type { ClientIdentity, GateGrant, GateProvider, TokenKind } from "./types";
+import type { ClientIdentity, GateGrant, GateProvider, TokenKind, VaultGrant } from "./types";
 
 const { log } = logger.scoped("ai-gate");
 
@@ -121,6 +121,56 @@ export async function rememberGrant(grant: GateGrant): Promise<void> {
         ),
         grant,
     ]);
+}
+
+export function vaultGrantsPath(): string {
+    return join(gateDir(), "vault-grants.json");
+}
+
+function isVaultGrant(value: unknown): value is VaultGrant {
+    return isJsonObject(value) && typeof value.key === "string" && typeof value.tool === "string";
+}
+
+function readVaultGrants(): VaultGrant[] {
+    const path = vaultGrantsPath();
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    const parsed = parseJSON<{ grants?: unknown[] }>(readFileSync(path, "utf8"));
+    return (parsed?.grants ?? []).filter(isVaultGrant);
+}
+
+/** Vault-key approvals GenesisTools.app remembers that have not ended. */
+export function listVaultGrants(now = Date.now()): VaultGrant[] {
+    return readVaultGrants().filter((grant) => grant.until === null || grant.until > now);
+}
+
+/** Drop vault-key approvals by tool name or key; `"*"` drops every one. The app writes this file by atomic rename. */
+export async function revokeVaultGrants(selector: string): Promise<number> {
+    const path = vaultGrantsPath();
+    let removed = 0;
+
+    if (!existsSync(path)) {
+        return 0;
+    }
+
+    await withFileLock(
+        `${path}.lock`,
+        async () => {
+            const grants = readVaultGrants();
+            const kept = grants.filter(
+                (grant) => selector !== "*" && grant.key !== selector && grant.tool !== selector
+            );
+            removed = grants.length - kept.length;
+            atomicWriteFileSync(path, `${SafeJSON.stringify({ version: 1, grants: kept }, null, 2)}\n`, {
+                mode: 0o600,
+            });
+        },
+        10_000
+    );
+
+    return removed;
 }
 
 /** Drop grants by client key or client name; `"*"` drops every grant. Returns how many went. */

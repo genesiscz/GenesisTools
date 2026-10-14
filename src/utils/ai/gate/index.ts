@@ -13,9 +13,12 @@ export {
     gateDir,
     grantsPath,
     listGrants,
+    listVaultGrants,
     readAuditTail,
     rememberGrant,
     revokeGrants,
+    revokeVaultGrants,
+    vaultGrantsPath,
 } from "./grants";
 export { type GateDeps, providerTokenResolver, requestAccountAccess, type TokenResolver } from "./request";
 export * from "./types";

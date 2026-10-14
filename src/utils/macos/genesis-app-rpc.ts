@@ -115,6 +115,56 @@ export async function genesisAppRpc<T>(
 }
 
 /** Exported for tests: this is where a reply from something other than the app has to be caught. */
+/**
+ * `genesisAppRpc` for a caller that cannot await: the synchronous vault-key read behind `resolveSecretSync`. It blocks
+ * the event loop until the app answers, which for an approval window is up to `timeoutMs`; use it only where a sync
+ * signature leaves no choice.
+ */
+export function genesisAppRpcSync<T>(
+    method: string,
+    params?: Record<string, unknown>,
+    opts: GenesisAppRpcOptions<T> = {}
+): GenesisAppRpcOutcome<T> {
+    const launcher = installedGenesisAppLauncher();
+
+    if (!launcher) {
+        return {
+            ok: false,
+            error: { code: "unavailable", message: "GenesisTools.app is not installed, or routing is switched off" },
+        };
+    }
+
+    const request = SafeJSON.stringify(params ? { method, params: stripUndefined(params) } : { method });
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const proc = Bun.spawnSync([launcher, "--rpc", request], {
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        timeout: timeoutMs,
+    });
+    const stderr = proc.stderr.toString();
+
+    if (proc.exitedDueToTimeout) {
+        logger.debug({ method, timeoutMs }, "GenesisTools.app RPC timed out");
+        return { ok: false, error: { code: "timeout", message: `${method} timed out after ${timeoutMs}ms` } };
+    }
+
+    const line = proc.stdout.toString().trim().split("\n").filter(Boolean).at(-1);
+
+    if (!line) {
+        logger.debug({ method, exitCode: proc.exitCode, stderr }, "GenesisTools.app RPC returned no reply line");
+        return {
+            ok: false,
+            error: {
+                code: "handshake",
+                message: `${method} produced no reply (exit ${proc.exitCode})${stderr.trim() ? `: ${stderr.trim()}` : ""}`,
+            },
+        };
+    }
+
+    return parseReply<T>(method, line, proc.exitCode ?? -1, stderr, opts.isResult);
+}
+
 export function parseReply<T>(
     method: string,
     line: string,

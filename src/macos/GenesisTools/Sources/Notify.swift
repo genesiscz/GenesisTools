@@ -815,7 +815,7 @@ private func list() {
 /// bump it: a client discovers those from `rpc.hello`'s method list instead.
 let rpcProtocolVersion = 1
 
-let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings", "notify.reply", "gate.approve"]
+let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings", "notify.reply", "gate.approve", "vault.unlock"]
 
 /// `GenesisTools --rpc '<json>'`, or `--rpc -` to read the request from stdin: run one method and
 /// exit with one JSON line on stdout.
@@ -904,6 +904,13 @@ func runRpc(_ arguments: [String]) -> Never {
         }
 
         approveGate(request.params)
+
+    case "vault.unlock":
+        guard let request = try? decoder.decode(ParamsEnvelope<VaultUnlockParams>.self, from: data) else {
+            emitError(code: "params_invalid", message: "vault.unlock needs params.tool and params.purpose", exitCode: 64)
+        }
+
+        unlockVault(request.params)
 
     default:
         emitError(code: "method_unknown", message: "unknown method \(envelope.method)", exitCode: 69)

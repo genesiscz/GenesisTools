@@ -4,6 +4,7 @@ import { resolveProviderApiKey } from "@genesiscz/utils/ai/providers/resolve";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { SayProvider } from "@genesiscz/utils/macos/SayConfigManager";
+import { withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 
 export type SayCredentialCheck =
     | { kind: "ok"; apiKey?: string }
@@ -173,9 +174,9 @@ export async function sayAccountKey(account: SayAccount, deps: SayAccountDeps = 
     logger.debug({ account: account.entry.name, provider: account.provider, gated }, "[say] resolving the account key");
 
     try {
-        return gated
-            ? await (deps.requestGate ?? gateKey)(account.entry)
-            : await (deps.resolveKey ?? accountKey)(account.entry);
+        return await withVaultPurpose(`speak through ${account.provider} with the account ${account.entry.name}`, () =>
+            gated ? (deps.requestGate ?? gateKey)(account.entry) : (deps.resolveKey ?? accountKey)(account.entry)
+        );
     } catch (err) {
         if (err instanceof SayAccountError) {
             throw err;

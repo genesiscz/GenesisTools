@@ -4,6 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { normalizeLimits } from "../lib/usage/limits";
@@ -70,7 +71,10 @@ export async function resolveInfoAccount({
         return null;
     }
 
-    const config = await loadSecrets();
+    const config = await withVaultPurpose(
+        "match this Claude session's token to a configured account, for the statusline",
+        () => loadSecrets()
+    );
     return config.getAccountsByProvider("anthropic-sub").find((a) => a.tokens.longLivedToken === token) ?? null;
 }
 

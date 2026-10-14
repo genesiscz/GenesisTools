@@ -145,8 +145,8 @@ private func gateEmit(decision: String, rememberSeconds: Int, method: String, re
 }
 
 /// Touch ID first, then the account password when biometrics are unavailable or the user picks
-/// the fallback. A cancel at either step is a deny.
-private func authenticate(reason: String, completion: @escaping (_ method: String?, _ failure: String) -> Void) {
+/// the fallback. A cancel at either step is a deny. The vault window (VaultUnlock.swift) confirms with it too.
+func authenticate(reason: String, completion: @escaping (_ method: String?, _ failure: String) -> Void) {
     let biometric = LAContext()
     biometric.localizedFallbackTitle = "Use Password"
     var unavailable: NSError?

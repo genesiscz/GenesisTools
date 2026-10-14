@@ -8,9 +8,12 @@ import {
     grantsPath,
     isGateProvider,
     listGrants,
+    listVaultGrants,
     readAuditTail,
     requestAccountAccess,
     revokeGrants,
+    revokeVaultGrants,
+    vaultGrantsPath,
 } from "@genesiscz/utils/ai/gate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -135,9 +138,10 @@ export function registerGateCommands(program: Command): void {
         .option("--json", "Machine-readable output")
         .action((opts: { json?: boolean }) => {
             const grants = listGrants();
+            const vault = listVaultGrants();
 
             if (opts.json) {
-                out.result(grants);
+                out.result({ grants, vault });
                 return;
             }
 
@@ -156,8 +160,24 @@ export function registerGateCommands(program: Command): void {
             }
 
             out.println(table.toString());
+
+            renderCliHeader("Vault key", `${vault.length} remembered by GenesisTools.app`);
+            const vaultTable = createBoxTable(["TOOL", "EXECUTABLE", "SCRIPT", "UNTIL", "BY"]);
+
+            for (const grant of vault) {
+                vaultTable.push([
+                    truncateDisplay(grant.tool, 16),
+                    truncateDisplay(grant.executable, 32),
+                    truncateDisplay(grant.script ?? "", 40),
+                    grant.until === null ? "always" : new Date(grant.until).toLocaleString("sv-SE").slice(0, 16),
+                    grant.method,
+                ]);
+            }
+
+            out.println(vaultTable.toString());
             renderCliSection("Files");
             out.println(`  ${pc.dim(grantsPath())}`);
+            out.println(`  ${pc.dim(vaultGrantsPath())}`);
         });
 
     gate.command("revoke [client]")
@@ -174,7 +194,10 @@ export function registerGateCommands(program: Command): void {
             }
 
             const removed = await revokeGrants(selector);
-            out.log.info(`Revoked ${removed} grant${removed === 1 ? "" : "s"}.`);
+            const vault = await revokeVaultGrants(selector);
+            out.log.info(
+                `Revoked ${removed} grant${removed === 1 ? "" : "s"} and ${vault} vault-key approval${vault === 1 ? "" : "s"}.`
+            );
         });
 
     gate.command("audit")
