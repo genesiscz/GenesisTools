@@ -17,8 +17,9 @@ import {
     type SessionAgentId,
     sessionAgent,
 } from "../lib/session-agents";
-import { type AdoptedSession, closeSession, recordedSessionFor } from "../lib/session-close";
-import { liveAdoptableSessions, liveSessionCloseIO } from "../lib/session-close-live";
+import { closeSession } from "../lib/session-close";
+import { liveSessionCloseIO } from "../lib/session-close-live";
+import { type ListedAgentSession, type SessionDetails, sessionInventory } from "../lib/session-inventory";
 import {
     liveSessionIO,
     parseFocusFlag,
@@ -27,7 +28,7 @@ import {
     type SessionNewResult,
     startDevSession,
 } from "../lib/session-new";
-import { fileSessionStore, openSessions, type SessionCreatedRecord, type SessionStore } from "../lib/session-store";
+import { fileSessionStore, openSessions, type SessionStore } from "../lib/session-store";
 
 const { log } = logger.scoped("cmux-session");
 
@@ -268,15 +269,9 @@ async function runSessionClose(query: string, options: CloseFlags): Promise<void
 
 async function runSessionList(options: { agent?: string; all?: boolean; json?: boolean }): Promise<void> {
     const wanted = (agent: string) => !options.agent || agent === options.agent;
-    const allOpen = openSessions(fileSessionStore().read());
-    const open = allOpen.filter((record) => wanted(record.agent));
-    // A live session whose surface UUID an open record holds is that record (close treats it so); a stale record
-    // whose old ref a new surface took does not hide the new one.
-    const adoptable = options.all
-        ? (await liveAdoptableSessions()).filter(
-              (session) => wanted(session.agent) && !recordedSessionFor(allOpen, session.surfaceId)
-          )
-        : [];
+    const inventory = await sessionInventory();
+    const open = inventory.recorded.filter((record) => wanted(record.agent));
+    const adoptable = options.all ? inventory.adoptable.filter((session) => wanted(session.agent)) : [];
 
     if (options.json) {
         out.result(options.all ? { recorded: open, adoptable } : open);
@@ -297,8 +292,8 @@ const LIST_COLUMN_WIDTH = 120;
 
 /** The `agents list` inventory: one table of recorded sessions, one of adoptable ones, each only when it has rows. */
 export function formatSessionList(input: {
-    open: readonly SessionCreatedRecord[];
-    adoptable: readonly AdoptedSession[];
+    open: readonly (Omit<ListedAgentSession, keyof SessionDetails | "sessionId"> & Partial<SessionDetails>)[];
+    adoptable: readonly (Omit<ListedAgentSession, keyof SessionDetails> & Partial<SessionDetails>)[];
 }): string {
     const blocks: string[] = [];
 
@@ -307,13 +302,16 @@ export function formatSessionList(input: {
             formatTable(
                 input.open.map((record) => [
                     record.name,
+                    record.title ?? "-",
                     record.agent,
+                    record.state ?? "unknown",
+                    record.lastActivityAt ?? "-",
                     record.account,
                     record.workspace,
                     record.tmuxSession ?? "-",
                     record.cwd,
                 ]),
-                ["Name", "Agent", "Account", "Workspace", "Tmux", "Folder"],
+                ["Name", "Title", "Agent", "State", "Last activity", "Account", "Workspace", "Tmux", "Folder"],
                 { maxColWidth: LIST_COLUMN_WIDTH }
             )
         );
@@ -323,13 +321,16 @@ export function formatSessionList(input: {
         blocks.push(
             formatTable(
                 input.adoptable.map((session) => [
-                    session.sessionId,
+                    session.sessionId ?? "-",
+                    session.title ?? "-",
                     session.agent,
+                    session.state ?? "unknown",
+                    session.lastActivityAt ?? "-",
                     session.workspace,
                     session.surface,
                     session.cwd,
                 ]),
-                ["Adoptable session", "Agent", "Workspace", "Surface", "Folder"],
+                ["Adoptable session", "Title", "Agent", "State", "Last activity", "Workspace", "Surface", "Folder"],
                 { maxColWidth: LIST_COLUMN_WIDTH }
             )
         );

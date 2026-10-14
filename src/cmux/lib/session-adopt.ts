@@ -1,6 +1,8 @@
+import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { TmuxClientInfo, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
+import { titleMatchKeys } from "./agent-replay";
 import { isSessionAgentId, type SessionAgentId } from "./session-agents";
 import type { AdoptedSession } from "./session-close";
 
@@ -333,6 +335,8 @@ export function ttyRunsAgent(psArgs: string, agent: SessionAgentId): boolean {
 
 export interface LiveAgentSurface {
     sessionId: string;
+    /** Native transcript found without a journal record. */
+    transcriptPath?: string;
     agent: SessionAgentId;
     surface: LiveSurface;
     cwd: string | null;
@@ -375,12 +379,14 @@ export function tmuxPaneStillShown(input: {
     return { ok: true };
 }
 
-/** The newest agent session of each live surface (caller excluded), with the agent named. */
+/** Journal sessions plus uniquely identified native sessions without a hook record (caller excluded). */
 export function liveAgentSurfaces(input: {
     refs: Iterable<SessionCmuxRefs>;
     tree: CmuxTreeView;
     tmux?: ReadonlyMap<string, TmuxPaneSurface>;
     providerOf: (entry: SessionCmuxRefs) => string | undefined;
+    agentOnTty?: (tty: string) => SessionAgentId | undefined;
+    titles?: (query: string, provider: SessionAgentId) => TitledSession[];
 }): LiveAgentSurface[] {
     const found: LiveAgentSurface[] = [];
 
@@ -389,6 +395,44 @@ export function liveAgentSurfaces(input: {
 
         if (agent && isSessionAgentId(agent)) {
             found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd, tmux });
+        }
+    }
+
+    const known = new Set(found.map((entry) => entry.surface.ref));
+    for (const surface of input.tree.surfaces.values()) {
+        if (
+            known.has(surface.ref) ||
+            surface.ref === input.tree.caller ||
+            !surface.id ||
+            !surface.tty ||
+            !surface.title
+        ) {
+            continue;
+        }
+
+        const joined = [...(input.tmux?.values() ?? [])].find((pane) => pane.surface === surface.ref);
+        const agent = input.agentOnTty?.(joined?.paneTty ?? surface.tty);
+        if (!agent || !input.titles) {
+            continue;
+        }
+
+        for (const key of titleMatchKeys(surface.title, agent)) {
+            const hits = input.titles(key, agent);
+            if (hits.length === 1) {
+                found.push({
+                    sessionId: hits[0].sessionId,
+                    agent,
+                    surface,
+                    cwd: null,
+                    tmux: joined ?? null,
+                    transcriptPath: hits[0].locator,
+                });
+                break;
+            }
+
+            if (hits.length > 1) {
+                break;
+            }
         }
     }
 

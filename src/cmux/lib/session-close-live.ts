@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { runCmux, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
@@ -24,7 +26,9 @@ import {
     type TmuxPaneSurface,
     tmuxPaneStillShown,
     ttyProcessesShowAgent,
+    ttyRunsAgent,
 } from "./session-adopt";
+import { SESSION_AGENT_IDS, type SessionAgentId } from "./session-agents";
 import {
     type AdoptedSession,
     type CloseSubject,
@@ -140,7 +144,7 @@ async function liveTmuxJoin(tree: CmuxTreeView): Promise<Map<string, TmuxPaneSur
 
 async function liveTree() {
     // The surface UUIDs let adoption tell a session's own surface from a renumbered ref.
-    const result = await runCmux(["--id-format", "both", "tree"], { json: true });
+    const result = await runCmux(["--id-format", "both", "tree", "--all"], { json: true });
 
     if (result.code !== 0) {
         throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
@@ -201,11 +205,33 @@ export async function tmuxPaneStillShownNow(
 /** Every live agent session in cmux with its tab and workspace titles (newest per surface, caller excluded). */
 export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
     const tree = await liveTree();
+    const pins = await loadPins({ readOnly: true });
+    const agents = new Map<string, Set<SessionAgentId>>();
+    for (const process of listProcesses()) {
+        if (!process.tty || !process.command || process.zombie || process.uid !== globalThis.process.getuid?.()) {
+            continue;
+        }
+
+        for (const agent of SESSION_AGENT_IDS) {
+            if (ttyRunsAgent(process.command, agent)) {
+                const tty = process.tty.replace(/^\/dev\//, "");
+                const found = agents.get(tty) ?? new Set<SessionAgentId>();
+                found.add(agent);
+                agents.set(tty, found);
+            }
+        }
+    }
+
     return liveAgentSurfaces({
         refs: loadAllSessionCmuxRefs().values(),
         tree,
         tmux: await liveTmuxJoin(tree),
-        providerOf: (entry) => resolveRefsProvider(entry, undefined),
+        providerOf: (entry) => resolveRefsProvider(entry, pins.get(entry.sessionId)),
+        agentOnTty: (tty) => {
+            const found = agents.get(tty.replace(/^\/dev\//, ""));
+            return found?.size === 1 ? [...found][0] : undefined;
+        },
+        titles: (query, provider) => findSessionsByTitle(query, { provider }),
     });
 }
 

@@ -572,6 +572,9 @@ test("agents list renders recorded and adoptable sessions as aligned tables with
     const record = {
         type: "created" as const,
         name: "codex-app-ab12cd",
+        title: "fixture-codex",
+        state: "running" as const,
+        lastActivityAt: "2026-10-08T17:02:00.000Z",
         agent: "codex" as const,
         account: "side",
         model: null,
@@ -599,9 +602,11 @@ test("agents list renders recorded and adoptable sessions as aligned tables with
     };
     const lines = formatSessionList({ open: [record], adoptable: [adopted] }).split("\n");
 
-    expect(lines[0]).toMatch(/^Name\s+Agent\s+Account\s+Workspace\s+Tmux\s+Folder$/);
-    expect(lines[2]).toMatch(/^codex-app-ab12cd\s+codex\s+side\s+workspace:9\s+-\s+\/repo\/app$/);
-    expect(lines[4]).toMatch(/^Adoptable session\s+Agent\s+Workspace\s+Surface\s+Folder$/);
+    expect(lines[0]).toMatch(/^Name\s+Title\s+Agent\s+State\s+Last activity/);
+    expect(lines[2]).toContain("fixture-codex");
+    expect(lines[2]).toContain("running");
+    expect(lines[2]).toContain("2026-10-08T17:02:00.000Z");
+    expect(lines[4]).toMatch(/^Adoptable session\s+Title\s+Agent\s+State\s+Last activity/);
     expect(lines[6].indexOf("surface:21")).toBe(lines[4].indexOf("Surface"));
     expect(formatSessionList({ open: [], adoptable: [adopted] }).split("\n")[0]).toMatch(/^Adoptable session/);
 });

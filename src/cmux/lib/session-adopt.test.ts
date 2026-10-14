@@ -69,6 +69,38 @@ function refs(
 const tree = parseCmuxTree(TREE);
 const providerOf = (entry: SessionCmuxRefs) => entry.provider;
 
+test("unrecorded Grok and Codex surfaces use a unique native title only with a matching live process", () => {
+    for (const agent of ["grok", "codex"] as const) {
+        const liveTree = parseCmuxTree(TREE);
+        const tab = liveTree.surfaces.get("surface:6")!;
+        tab.title = `fixture project - ${agent}`;
+        const options = {
+            refs: [],
+            tree: liveTree,
+            providerOf,
+            agentOnTty: (tty: string) => (tty === "ttys006" ? agent : undefined),
+            titles: () => [
+                {
+                    sessionId: "fixture-session",
+                    title: "fixture project",
+                    locator: "/fixture/transcript.jsonl",
+                    mtime: 1,
+                },
+            ],
+        };
+        const found = liveAgentSurfaces(options);
+        expect(found).toHaveLength(1);
+        expect(found[0]).toMatchObject({ agent, sessionId: "fixture-session", surface: { title: tab.title } });
+        expect(liveAgentSurfaces({ ...options, agentOnTty: () => undefined })).toEqual([]);
+        expect(
+            liveAgentSurfaces({
+                ...options,
+                titles: () => [...options.titles(), { ...options.titles()[0], sessionId: "other-session" }],
+            })
+        ).toEqual([]);
+    }
+});
+
 test("the tree gives each terminal surface its tty, workspace and window, and names the caller", () => {
     expect(tree.caller).toBe("surface:1");
     expect(tree.surfaces.get("surface:6")).toEqual({
