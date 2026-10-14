@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import * as kernel from "./libproc-table";
 import * as linux from "./linux-proc";
 import {
     listProcProcesses,
@@ -41,6 +42,7 @@ import {
     readExecutablePath,
     readProcess,
     readProcessEnvironment,
+    readProcessesWithUsage,
     readProcessUsages,
     userName,
 } from "./processes";
@@ -80,6 +82,122 @@ function spawnedPrograms(run: () => void): string[] {
         Array.isArray(first) ? String(first[0]) : String((first as { cmd?: string[] }).cmd?.[0])
     );
 }
+
+describe("bounded process hydration", () => {
+    test("Linux reads each requested owner once and omits a vanished owner", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+        const table = spyOn(linux, "listProcProcesses").mockImplementation(() => {
+            throw new Error("must not enumerate unrelated processes");
+        });
+        const read = spyOn(linux, "readProcProcess").mockImplementation((pid) => {
+            if (pid !== 42) {
+                return null;
+            }
+
+            return {
+                pid,
+                ppid: 1,
+                pgid: 42,
+                uid: 1000,
+                comm: "node",
+                argv: ["node", "server.js"],
+                state: "S",
+                tty: null,
+                startMs: 1000,
+                cpuTimeMs: 50,
+                rssBytes: 4096,
+                threads: 2,
+            };
+        });
+        try {
+            const rows = readProcessesWithUsage([42, 42, 43, -1, Number.NaN]);
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                pid: 42,
+                command: "node server.js",
+                usage: { pid: 42, cpuTimeMs: 50, rssBytes: 4096, threads: 2, running: false },
+            });
+            expect(read.mock.calls.map(([pid]) => pid)).toEqual([42, 43]);
+            expect(table).not.toHaveBeenCalled();
+            read.mockClear();
+            expect(readProcessesWithUsage([])).toEqual([]);
+            expect(read).not.toHaveBeenCalled();
+        } finally {
+            platform.mockRestore();
+            table.mockRestore();
+            read.mockRestore();
+        }
+    });
+
+    test("macOS reads only the distinct owner's row, command and usage", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("darwin");
+        const available = spyOn(os, "darwinKernel").mockReturnValue(true);
+        const table = spyOn(kernel, "listProcessTable").mockImplementation(() => {
+            throw new Error("must not enumerate unrelated processes");
+        });
+        const row = spyOn(kernel, "readProcessRow").mockImplementation((pid) => {
+            if (pid !== 42) {
+                return null;
+            }
+
+            return {
+                pid,
+                ppid: 1,
+                pgid: 42,
+                uid: 1000,
+                comm: "node",
+                state: "S",
+                tty: null,
+                startMs: 1000,
+                zombie: false,
+            };
+        });
+        const command = spyOn(kernel, "readPsCommand").mockReturnValue("node server.js");
+        const usage = spyOn(kernel, "readProcessUsage").mockReturnValue({
+            cpuTimeMs: 50,
+            rssBytes: 4096,
+            threads: 2,
+            running: false,
+        });
+        try {
+            const rows = readProcessesWithUsage([42, 42, 43]);
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ pid: 42, command: "node server.js", usage: { rssBytes: 4096 } });
+            expect(row.mock.calls.map(([pid]) => pid)).toEqual([42, 43]);
+            expect(command.mock.calls.map(([pid]) => pid)).toEqual([42]);
+            expect(usage.mock.calls.map(([pid]) => pid)).toEqual([42]);
+            expect(table).not.toHaveBeenCalled();
+        } finally {
+            platform.mockRestore();
+            available.mockRestore();
+            table.mockRestore();
+            row.mockRestore();
+            command.mockRestore();
+            usage.mockRestore();
+        }
+    });
+
+    test("Windows shares one CIM query and does none for an empty request", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const capture = spyOn(ps, "captureSync").mockReturnValue({
+            stdout: '[{"ProcessId":42,"Name":"node.exe","WorkingSetSize":4096},{"ProcessId":99,"Name":"unrelated.exe"}]',
+            stderr: "",
+            status: 0,
+        });
+        try {
+            expect(readProcessesWithUsage([])).toEqual([]);
+            expect(capture).not.toHaveBeenCalled();
+            const rows = readProcessesWithUsage([42, 42, 43]);
+            expect(rows.map((row) => row.pid)).toEqual([42]);
+            expect(rows[0].usage?.rssBytes).toBe(4096);
+            expect(capture).toHaveBeenCalledTimes(1);
+            expect(capture.mock.calls[0][0]).toBe("powershell");
+        } finally {
+            platform.mockRestore();
+            capture.mockRestore();
+        }
+    });
+});
 
 describe("linux /proc parsers", () => {
     test("stat keeps a comm with spaces and parentheses, and reads fields after the last parenthesis", () => {

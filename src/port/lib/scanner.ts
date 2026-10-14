@@ -4,7 +4,12 @@ import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/asy
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { listOpenFiles } from "@genesiscz/utils/process/process-files";
-import { listProcessesWithUsage, type ProcessWithUsage, userName } from "@genesiscz/utils/process/processes";
+import {
+    listProcessesWithUsage,
+    type ProcessWithUsage,
+    readProcessesWithUsage,
+    userName,
+} from "@genesiscz/utils/process/processes";
 import { batchCwd, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
 import { listSockets, type SocketEntry } from "@genesiscz/utils/process/sockets";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -342,7 +347,12 @@ function enrichPortProcesses(processes: PortProcess[], table: Map<number, Proces
     }
 
     const pids = [...new Set(processes.map((processInfo) => processInfo.pid))];
-    const psMap = new Map([...table].map(([pid, entry]) => [pid, processRow(entry)]));
+    const psMap = new Map(
+        pids.flatMap((pid) => {
+            const entry = table.get(pid);
+            return entry ? [[pid, processRow(entry)] as const] : [];
+        })
+    );
     const cwdMap = batchCwd(pids);
 
     return processes
@@ -438,23 +448,27 @@ function socketProcesses(
 }
 
 export function getPortDetails(port: number): PortSnapshot[] {
-    const table = new Map(listProcessesWithUsage().map((entry) => [entry.pid, entry]));
-    return enrichPortProcesses(socketProcesses(listSockets({ port }), { ownPid: process.pid, table }), table);
+    const sockets = listSockets({ port }).filter((socket) => socket.pid !== process.pid);
+    const table = new Map(
+        readProcessesWithUsage(sockets.map((socket) => socket.pid)).map((entry) => [entry.pid, entry])
+    );
+    return enrichPortProcesses(socketProcesses(sockets, { ownPid: process.pid, table }), table);
 }
 
 export function getListeningPorts(): PortSnapshot[] {
-    const table = new Map(listProcessesWithUsage().map((entry) => [entry.pid, entry]));
-    const seen = new Set<number>();
-    const unique = socketProcesses(listSockets({ protocol: "TCP", state: "LISTEN" }), { ownPid: -1, table }).filter(
-        (entry) => {
-            const port = extractPort(entry.name);
-            if (!port || seen.has(port)) {
-                return false;
-            }
-            seen.add(port);
-            return true;
-        }
+    const sockets = listSockets({ protocol: "TCP", state: "LISTEN" });
+    const table = new Map(
+        readProcessesWithUsage(sockets.map((socket) => socket.pid)).map((entry) => [entry.pid, entry])
     );
+    const seen = new Set<number>();
+    const unique = socketProcesses(sockets, { ownPid: -1, table }).filter((entry) => {
+        const port = extractPort(entry.name);
+        if (!port || seen.has(port)) {
+            return false;
+        }
+        seen.add(port);
+        return true;
+    });
     return enrichPortProcesses(unique, table);
 }
 

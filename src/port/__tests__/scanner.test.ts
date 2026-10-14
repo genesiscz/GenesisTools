@@ -1,7 +1,11 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { userInfo } from "node:os";
+import * as linux from "@genesiscz/utils/process/linux-proc";
 import * as os from "@genesiscz/utils/process/os";
+import * as files from "@genesiscz/utils/process/process-files";
+import * as processes from "@genesiscz/utils/process/processes";
 import * as ps from "@genesiscz/utils/process/ps";
+import * as sockets from "@genesiscz/utils/process/sockets";
 import {
     getAllProcesses,
     getListeningPorts,
@@ -64,6 +68,78 @@ function parseLsofOutput(output: string, ownPid = process.pid): PortProcess[] {
     return Array.from(byPid.values());
 }
 
+describe("port owner hydration", () => {
+    it("does no process work for an unused port or self-only socket and reads duplicate owners once", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+        const socketRead = spyOn(sockets, "listSockets").mockReturnValue([]);
+        const table = spyOn(linux, "listProcProcesses").mockImplementation(() => {
+            throw new Error("port scans must not enumerate unrelated processes");
+        });
+        const read = spyOn(linux, "readProcProcess").mockImplementation((pid) => ({
+            pid,
+            ppid: 1,
+            pgid: pid,
+            uid: 1000,
+            comm: "node",
+            argv: ["node", "server.js"],
+            state: "S",
+            tty: null,
+            startMs: 1000,
+            cpuTimeMs: 50,
+            rssBytes: 10485760,
+            threads: 2,
+        }));
+        const openFiles = spyOn(files, "listOpenFiles").mockReturnValue([]);
+        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
+        const user = spyOn(processes, "userName").mockReturnValue("fixture-user");
+        const socket: sockets.SocketEntry = {
+            pid: 42,
+            protocol: "TCP",
+            family: "IPv4",
+            address: "127.0.0.1",
+            port: 3000,
+            remoteAddress: "",
+            remotePort: 0,
+            state: "LISTEN",
+        };
+
+        try {
+            expect(getPortDetails(3000)).toEqual([]);
+            expect(socketRead).toHaveBeenLastCalledWith({ port: 3000 });
+            socketRead.mockReturnValue([{ ...socket, pid: process.pid }]);
+            expect(getPortDetails(3000)).toEqual([]);
+            expect(read).not.toHaveBeenCalled();
+            expect(table).not.toHaveBeenCalled();
+            expect(openFiles).not.toHaveBeenCalled();
+            expect(cwd).not.toHaveBeenCalled();
+            expect(user).not.toHaveBeenCalled();
+
+            socketRead.mockReturnValue([socket, { ...socket, family: "IPv6", address: "[::1]" }]);
+            for (const scan of [() => getPortDetails(3000), getListeningPorts]) {
+                read.mockClear();
+                openFiles.mockClear();
+                user.mockClear();
+                const rows = scan();
+                expect(rows).toHaveLength(1);
+                expect(rows[0]).toMatchObject({ pid: 42, command: "node server.js", memory: "10.0 MB" });
+                expect(read.mock.calls.map(([pid]) => pid)).toEqual([42]);
+                expect(openFiles.mock.calls.map(([pid]) => pid)).toEqual([42]);
+                expect(cwd).toHaveBeenLastCalledWith([42]);
+                expect(user.mock.calls.every(([uid]) => uid === 1000)).toBe(true);
+                expect(table).not.toHaveBeenCalled();
+            }
+        } finally {
+            platform.mockRestore();
+            socketRead.mockRestore();
+            table.mockRestore();
+            read.mockRestore();
+            openFiles.mockRestore();
+            cwd.mockRestore();
+            user.mockRestore();
+        }
+    });
+});
+
 describe("Windows port scan batching", () => {
     it("queries CIM once per scan even with multiple sockets for each owner", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
@@ -79,6 +155,9 @@ describe("Windows port scan batching", () => {
                       : "",
         }));
         try {
+            expect(getPortDetails(9999)).toEqual([]);
+            expect(capture.mock.calls.filter(([command]) => command === "powershell")).toHaveLength(0);
+            expect(capture.mock.calls.filter(([command]) => command === "netstat")).toHaveLength(1);
             for (const scan of [() => getPortDetails(3000), getListeningPorts, getAllProcesses]) {
                 capture.mockClear();
                 const rows = scan();

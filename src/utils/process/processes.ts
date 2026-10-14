@@ -625,6 +625,52 @@ export interface ProcessWithUsage extends ProcessEntry {
 }
 
 /**
+ * Metadata and usage for distinct requested pids only. Linux reads each proc entry once; macOS reads only those
+ * kernel rows and their usage. Windows and the non-kernel fallback share one table read, never one per pid.
+ * An empty request does no process reads; gone or unreadable processes are omitted.
+ */
+export function readProcessesWithUsage(pids: number[]): ProcessWithUsage[] {
+    const wanted = new Set(pids.filter((pid) => Number.isInteger(pid) && pid >= 0));
+
+    if (wanted.size === 0) {
+        return [];
+    }
+
+    if (processPlatform() === "linux") {
+        return [...wanted].flatMap((pid) => {
+            const entry = readProcProcess(pid);
+            if (!entry) {
+                return [];
+            }
+
+            return [
+                {
+                    ...fromLinux(entry, true),
+                    usage: {
+                        pid,
+                        rssBytes: entry.rssBytes,
+                        cpuTimeMs: entry.cpuTimeMs,
+                        threads: entry.threads,
+                        running: entry.state === "R",
+                    },
+                },
+            ];
+        });
+    }
+
+    if (!darwinKernel()) {
+        return listProcessesWithUsage().filter((entry) => wanted.has(entry.pid));
+    }
+
+    const entries = [...wanted].flatMap((pid) => {
+        const entry = readProcess(pid);
+        return entry ? [entry] : [];
+    });
+    const usages = readProcessUsages(entries.map((entry) => entry.pid));
+    return entries.map((entry) => ({ ...entry, usage: usages.get(entry.pid) ?? null }));
+}
+
+/**
  * Every process with its command line and usage: `ps -axo pid,ppid,user,state,pcpu,rss,lstart,command` without the
  * spawn. On macOS, `otherUsers` fills in what the kernel withholds from this user (another user's command line,
  * memory and CPU time) with ONE batched `ps`, never one per question. `commands: false` leaves every command line
