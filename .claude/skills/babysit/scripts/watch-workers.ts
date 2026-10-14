@@ -7,7 +7,7 @@
  * path ignores `--tail` and stops at the end of a turn, so a restart replayed the whole history (2026-10-14).
  * Grok has one stream per turn: the script polls `tools grok status` and tails each running turn.
  *
- * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180] [--run <dir>]
+ * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180] [--run <dir>]…
  *
  * With --run, each line also names the PR and round the worker was last steered to (from the run's ledger): a worker
  * keeps its first PR's name across later PRs, so "bs-compress turn 13" read as the compress PR taking 13 turns when
@@ -17,7 +17,6 @@ import { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readEvents } from "./ledger";
-import { flag } from "./run";
 
 const args = process.argv.slice(2);
 const stallIndex = args.indexOf("--stall-s");
@@ -30,17 +29,17 @@ const workers = args
     });
 type Worker = (typeof workers)[number];
 
-const runDir = flag("--run");
+// --run may repeat: a worker steered from another repository's run (GenesisPlayground) logs into that run's ledger,
+// and a watcher reading one ledger kept naming its first PR and round (2026-10-14, bs-gp "#94 r1" on round 2).
+const runDirs = args.filter((_, i) => args[i - 1] === "--run");
 
-/** ` #516 r3` for the worker's latest steer or spawn in the ledger; empty without --run or a match. */
+/** ` #516 r3` for the worker's latest steer or spawn across the runs' ledgers; empty without --run or a match. */
 function currentTask(name: string): string {
-    if (!runDir) {
-        return "";
-    }
-
-    const last = readEvents(runDir).findLast(
-        (event) => event.worker === name && (event.kind === "steer" || event.kind === "spawn")
-    );
+    const last = runDirs
+        .flatMap((dir) => readEvents(dir))
+        .filter((event) => event.worker === name && (event.kind === "steer" || event.kind === "spawn"))
+        .sort((a, b) => a.at.localeCompare(b.at))
+        .at(-1);
     return last?.pr ? ` #${last.pr}${last.round ? ` r${last.round}` : ""}` : "";
 }
 
