@@ -803,6 +803,57 @@ export function unlockSessionWorktrees(sessionId: string): string[] {
 }
 
 /**
+ * Remove a linked worktree before this session ends, when the only lock on it is this session's own.
+ * An orchestrator that names its workers' worktrees in commands holds their locks until SessionEnd,
+ * and the PostToolUse hook locks again any worktree a command names, so a separate unlock would be
+ * undone by the very command that ran it. So this unlocks and runs `git worktree remove` (never
+ * forced) in one process, and puts the same lock back when git refuses (uncommitted or untracked
+ * files). A lock that names another session, or is not a session lock at all, is never touched.
+ */
+export function releaseSessionWorktree(options: { worktree: string; sessionId: string }): {
+    removed: boolean;
+    detail: string;
+} {
+    if (!SAFE_SESSION_ID.test(options.sessionId)) {
+        return { removed: false, detail: `not a session id: ${options.sessionId}` };
+    }
+
+    const worktree = linkedWorktreeOf(options.worktree);
+
+    if (!worktree || worktree.root !== resolve(options.worktree)) {
+        return { removed: false, detail: `${options.worktree} is not the root of a linked worktree` };
+    }
+
+    const reason = readLockReason(worktree.adminDir);
+    const holder = reason === null ? null : parseLockReason(reason);
+
+    if (reason !== null && !(holder?.kind === "session" && holder.sessionId === options.sessionId)) {
+        return { removed: false, detail: `locked by someone else: ${reason}` };
+    }
+
+    if (reason !== null && !unlockWorktree(worktree, reason)) {
+        return { removed: false, detail: `cannot unlock: ${reason}` };
+    }
+
+    const removal = git(worktree.commonDir, ["worktree", "remove", worktree.root]);
+
+    if (!removal.ok) {
+        if (reason !== null) {
+            git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
+        }
+
+        return { removed: false, detail: `git refused, lock kept: ${removal.stderr}` };
+    }
+
+    dayLog("info", "released and removed a session worktree", {
+        session: options.sessionId,
+        worktree: worktree.root,
+    });
+
+    return { removed: true, detail: `removed ${worktree.root}` };
+}
+
+/**
  * The absolute paths a shell command names, `~/` expanded. Text only: a command that names no path
  * costs one regex and nothing else.
  */
@@ -897,10 +948,22 @@ export function lockWorktreeAtSessionStart(
 
 /**
  * `bun worktree-lock.ts stale <repo> [--clear]` lists the stale session locks of a repository, one JSON
- * line each, and with `--clear` unlocks them. Any other call is a hook: the payload comes on stdin.
+ * line each, and with `--clear` unlocks them. `release <worktree> --session <id>` removes a worktree whose
+ * only lock is that session's (`releaseSessionWorktree`). Any other call is a hook: the payload comes on stdin.
  */
 async function main(): Promise<void> {
-    const [command, repo = process.cwd(), flag] = process.argv.slice(2);
+    const [command, repo = process.cwd(), flag, value] = process.argv.slice(2);
+
+    if (command === "release") {
+        const result =
+            flag === "--session" && value
+                ? releaseSessionWorktree({ worktree: repo, sessionId: value })
+                : { removed: false, detail: "usage: worktree-lock.ts release <worktree> --session <session id>" };
+        process.stdout.write(`${SafeJSON.stringify(result)}\n`);
+        process.exitCode = result.removed ? 0 : 1;
+
+        return;
+    }
 
     if (command === "stale") {
         const locks = flag === "--clear" ? clearStaleWorktreeLocks(repo) : findStaleWorktreeLocks(repo);

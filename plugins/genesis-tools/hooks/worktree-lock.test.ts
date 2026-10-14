@@ -15,6 +15,7 @@ import {
     lockWorktreesForToolUse,
     parseLockReason,
     readLockReason,
+    releaseSessionWorktree,
     shellCommandPaths,
     unlockSessionWorktrees,
 } from "./worktree-lock";
@@ -90,6 +91,36 @@ beforeEach(() => {
 afterAll(() => {
     fakeAgent.kill();
     rmSync(base, { recursive: true, force: true });
+});
+
+describe("releaseSessionWorktree", () => {
+    // Its own worktree: a removal must not take away the `wt` every other test uses.
+    const wt2 = join(base, "wt2");
+    const admin2 = join(main, ".git", "worktrees", "wt2");
+    const ours = `claude session s-rel pid ${DEAD_PID} since 2026-10-14T00:00:00.000Z`;
+
+    it("removes only a worktree whose lock is this session's, and keeps the lock when git refuses", () => {
+        git(["-C", "main", "worktree", "add", "-q", "--detach", "../wt2"]);
+        writeFileSync(join(admin2, "locked"), `${ours}\n`);
+
+        // Another session's id: refused, nothing changes.
+        expect(releaseSessionWorktree({ worktree: wt2, sessionId: "s-other" })).toMatchObject({ removed: false });
+        expect(readLockReason(admin2)).toBe(ours);
+
+        // An untracked file: git refuses the plain remove, and the same lock goes back.
+        writeFileSync(join(wt2, "scratch.txt"), "x\n");
+        const refused = releaseSessionWorktree({ worktree: wt2, sessionId: "s-rel" });
+        expect(refused.removed).toBe(false);
+        expect(refused.detail).toContain("lock kept");
+        expect(readLockReason(admin2)).toBe(ours);
+        expect(existsSync(wt2)).toBe(true);
+
+        // Clean and ours: removed.
+        unlinkSync(join(wt2, "scratch.txt"));
+        expect(releaseSessionWorktree({ worktree: wt2, sessionId: "s-rel" })).toMatchObject({ removed: true });
+        expect(existsSync(wt2)).toBe(false);
+        expect(existsSync(admin2)).toBe(false);
+    });
 });
 
 describe("worktree-lock", () => {
