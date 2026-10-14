@@ -593,6 +593,34 @@ function unlockWorktree(worktree: LinkedWorktree, expectedReason: string): boole
     }
 }
 
+/** Restore our reason under the guard, using exclusive creation so a competing lock is never overwritten. */
+function restoreWorktreeLock(worktree: LinkedWorktree, reason: string): boolean {
+    const result = git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
+    try {
+        if (readLockReason(worktree.adminDir) === null) {
+            writeFileSync(join(worktree.adminDir, "locked"), `${reason}\n`, { flag: "wx", mode: 0o600 });
+        }
+
+        if (readLockReason(worktree.adminDir) === reason) {
+            if (!result.ok) {
+                dayLog("warn", "git lock restoration failed; protection recovered through the lock file", {
+                    worktree: worktree.root,
+                    stderr: result.stderr,
+                });
+            }
+            return true;
+        }
+    } catch (error) {
+        dayLog("error", "cannot restore a worktree lock", { worktree: worktree.root, error: messageOf(error) });
+    }
+
+    dayLog("error", "worktree lock restoration failed; expected protection was not restored", {
+        worktree: worktree.root,
+        stderr: result.stderr,
+    });
+    return false;
+}
+
 /** Every worktree git has registered in `commonDir`, with its lock reason. Reads files only. */
 function registeredWorktrees(commonDir: string): Array<LinkedWorktree & { reason: string | null }> {
     const parent = join(commonDir, "worktrees");
@@ -638,7 +666,8 @@ function registeredWorktrees(commonDir: string): Array<LinkedWorktree & { reason
  * runs `ps`; it never changes a lock. `clearStaleWorktreeLocks` is the step that acts on it.
  */
 export function findStaleWorktreeLocks(repoPath: string, now = Date.now()): StaleLock[] {
-    return scanStaleWorktreeLocks(repoPath, now).locks;
+    const { locks, checks } = scanStaleWorktreeLocks(repoPath, now);
+    return locks.filter((lock) => liveUsers(lock, now, checks).length === 0);
 }
 
 function scanStaleWorktreeLocks(
@@ -678,7 +707,7 @@ export function clearStaleWorktreeLocks(repoPath: string, now = Date.now()): Sta
                 lock,
                 () =>
                     readLockReason(lock.adminDir) === lock.reason &&
-                    handoffOrUnlock({ worktree: lock, reason: lock.reason, checks, now })
+                    handoffOrUnlock({ worktree: lock, reason: lock.reason, checks, now }) === "unlocked"
             )
         ) {
             cleared.push(lock);
@@ -884,11 +913,11 @@ function handoffOrUnlock({
     reason: string;
     checks?: Map<number, ProcessCheck>;
     now?: number;
-}): boolean {
+}): "unlocked" | "handed-off" | "failed" {
     const successor = liveUsers(worktree, now, checks)[0];
 
     if (!successor) {
-        return unlockWorktree(worktree, reason);
+        return unlockWorktree(worktree, reason) ? "unlocked" : "failed";
     }
 
     const path = join(worktree.adminDir, "locked");
@@ -898,7 +927,7 @@ function handoffOrUnlock({
         `${formatLockReason({ agent: successor, sessionId: successor.sessionId, since: new Date(successor.since) })}\n`
     );
     renameSync(temp, path);
-    return false;
+    return "handed-off";
 }
 
 function removeIfPresent(path: string): void {
@@ -1051,7 +1080,7 @@ export function lockWorktreesForPaths(options: {
                 return "held";
             }
 
-            if (current !== null && !handoffOrUnlock({ worktree, reason: current, now })) {
+            if (current !== null && handoffOrUnlock({ worktree, reason: current, now }) !== "unlocked") {
                 rememberUser(worktree, user);
                 return "held";
             }
@@ -1124,25 +1153,44 @@ export function unlockSessionWorktrees(sessionId: string): string[] {
             continue;
         }
 
-        const released = withWorktreeLock(worktree, () => {
-            const reason = readLockReason(worktree.adminDir);
-            const holder = reason === null ? null : parseLockReason(reason);
+        let released: boolean | undefined;
+        try {
+            released = withWorktreeLock(worktree, () => {
+                const reason = readLockReason(worktree.adminDir);
+                const holder = reason === null ? null : parseLockReason(reason);
 
-            if (
-                holder?.kind === "session" &&
-                holder.sessionId === sessionId &&
-                holder.pid !== record.pid &&
-                agentAlive(holder.pid)
-            ) {
+                if (
+                    holder?.kind === "session" &&
+                    holder.sessionId === sessionId &&
+                    holder.pid !== record.pid &&
+                    agentAlive(holder.pid)
+                ) {
+                    return undefined;
+                }
+
+                removeIfPresent(userPath(worktree, sessionId));
+                if (reason !== null && holder?.kind === "session" && holder.sessionId === sessionId) {
+                    const transition = handoffOrUnlock({ worktree, reason });
+                    if (transition === "failed") {
+                        return undefined;
+                    }
+
+                    removeIfPresent(recordShard(sessionId, worktree.adminDir));
+                    return transition === "unlocked";
+                }
+
+                removeIfPresent(recordShard(sessionId, worktree.adminDir));
                 return false;
-            }
-
-            removeIfPresent(userPath(worktree, sessionId));
-            removeIfPresent(recordShard(sessionId, worktree.adminDir));
-            return reason !== null && holder?.kind === "session" && holder.sessionId === sessionId
-                ? handoffOrUnlock({ worktree, reason })
-                : false;
-        });
+            });
+        } catch (error) {
+            dayLog("warn", "session ownership transition failed; keeping its record for retry", {
+                session: sessionId,
+                worktree: worktree.root,
+                error: messageOf(error),
+            });
+            busy = true;
+            continue;
+        }
 
         if (released) {
             unlocked.push(worktree.root);
@@ -1222,11 +1270,17 @@ export function releaseSessionWorktree(options: { worktree: string; sessionId: s
             const removal = git(worktree.commonDir, ["worktree", "remove", worktree.root], REMOVE_TIMEOUT_MS);
 
             if (!removal.ok) {
-                if (reason !== null) {
-                    git(worktree.commonDir, ["worktree", "lock", "--reason", reason, worktree.root]);
+                if (reason === null) {
+                    return { removed: false, detail: `git refused; worktree was not locked: ${removal.stderr}` };
                 }
 
-                return { removed: false, detail: `git refused, lock kept: ${removal.stderr}` };
+                const restored = restoreWorktreeLock(worktree, reason);
+                return {
+                    removed: false,
+                    detail: restored
+                        ? `git refused, lock kept: ${removal.stderr}`
+                        : `git refused; lock restoration failed, protection not restored: ${removal.stderr}`,
+                };
             }
 
             dayLog("info", "released and removed a session worktree", {

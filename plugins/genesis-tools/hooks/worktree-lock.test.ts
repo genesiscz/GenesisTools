@@ -451,6 +451,132 @@ describe("worktree-lock", () => {
         }
     });
 
+    it("merged followup: stale inspection excludes a live registered survivor using one process scan", async () => {
+        lockWorktreesForPaths({ sessionId: "stale-survivor", paths: [wt], agent: me });
+        plantLock(DEAD_LOCK);
+        const scan = await withSpawnCounter(async () => findStaleWorktreeLocks(main));
+        expect(scan.result).toEqual([]);
+        expect(scan.count).toBe(1);
+        expect(lockReason()).toBe(DEAD_LOCK);
+        expect(clearStaleWorktreeLocks(main)).toEqual([]);
+        expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "stale-survivor" });
+        expect(unlockSessionWorktrees("stale-survivor")).toEqual([wt]);
+    });
+
+    it("merged followup: SessionEnd preserves retry records when unlock or handoff fails", () => {
+        const spawnSync = Bun.spawnSync;
+        const unlink = fs.unlinkSync;
+        const rename = fs.renameSync;
+        const failure = spawnSync(["git", "--invalid-fixture-option"], { env: process.env, stderr: "pipe" });
+
+        for (const mode of ["unlock", "handoff"]) {
+            const session = `retry-${mode}`;
+            lockWorktreesForPaths({ sessionId: session, paths: [wt, otherWt], agent: me });
+            if (mode === "handoff") {
+                lockWorktreesForPaths({ sessionId: "handoff-survivor", paths: [wt], agent: me });
+            }
+            const reason = lockReason();
+            const shards = join(
+                env.getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
+                ".genesis-tools",
+                "claude-code",
+                "worktree-locks",
+                `${session}.json.d`
+            );
+            const locked = join(admin, "locked");
+            const spawn = spyOn(Bun, "spawnSync").mockImplementation((command, options) => {
+                if (Array.isArray(command) && command[0] === "git" && command[3] === "unlock" && command[4] === wt) {
+                    return failure;
+                }
+                return Array.isArray(command) ? spawnSync(command, options) : spawnSync(command);
+            });
+            const remove = spyOn(fs, "unlinkSync").mockImplementation((file) => {
+                if (mode === "unlock" && file === locked) {
+                    throw new Error("fixture denied lock unlink");
+                }
+                unlink(file);
+            });
+            const publish = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+                if (mode === "handoff" && to === locked) {
+                    throw new Error("fixture denied handoff rename");
+                }
+                rename(from, to);
+            });
+            let ended: string[] | undefined;
+            let error: unknown;
+            try {
+                ended = unlockSessionWorktrees(session);
+            } catch (caught) {
+                error = caught;
+            } finally {
+                spawn.mockRestore();
+                remove.mockRestore();
+                publish.mockRestore();
+            }
+            expect(error).toBeUndefined();
+            expect(ended).toEqual([otherWt]);
+            expect(lockReason()).toBe(reason);
+            expect(existsSync(shards)).toBe(true);
+            expect(fs.readdirSync(shards)).toHaveLength(1);
+            const retried = unlockSessionWorktrees(session);
+            expect(retried).toEqual(mode === "unlock" ? [wt] : []);
+            if (mode === "handoff") {
+                expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "handoff-survivor" });
+                expect(unlockSessionWorktrees("handoff-survivor")).toEqual([wt]);
+            }
+            expect(lockReason()).toBeNull();
+            expect(existsSync(shards)).toBe(false);
+        }
+    });
+
+    it("merged followup: failed Git restoration recovers exclusively or reports the unprotected lock", () => {
+        const spawnSync = Bun.spawnSync;
+        const write = fs.writeFileSync;
+        const failure = spawnSync(["git", "--invalid-fixture-option"], { env: process.env, stderr: "pipe" });
+        const dirty = join(wt, "restoration-fixture.txt");
+        writeFileSync(dirty, "git must refuse removal of this fixture");
+        const locked = join(admin, "locked");
+        try {
+            for (const mode of ["recover", "denied", "foreign"]) {
+                const reason = `claude session restore-owner pid ${me.pid} since ${new Date().toISOString()}`;
+                plantLock(reason);
+                const spawn = spyOn(Bun, "spawnSync").mockImplementation((command, options) => {
+                    if (Array.isArray(command) && command[0] === "git" && command[3] === "lock") {
+                        if (mode === "foreign") {
+                            write(locked, "manual protection\n");
+                        }
+                        return failure;
+                    }
+                    return Array.isArray(command) ? spawnSync(command, options) : spawnSync(command);
+                });
+                const persist = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+                    if (file === locked && mode === "denied") {
+                        throw new Error("fixture denied lock restoration");
+                    }
+                    write(file, data, options);
+                });
+                try {
+                    const result = releaseSessionWorktree({ worktree: wt, sessionId: "restore-owner" });
+                    expect(result.removed).toBe(false);
+                    expect(existsSync(wt)).toBe(true);
+                    if (mode === "recover") {
+                        expect(lockReason()).toBe(reason);
+                        expect(result.detail).toContain("lock kept");
+                    } else {
+                        expect(result.detail).toContain("lock restoration failed");
+                        expect(result.detail).not.toContain("lock kept");
+                        expect(lockReason()).toBe(mode === "foreign" ? "manual protection" : null);
+                    }
+                } finally {
+                    spawn.mockRestore();
+                    persist.mockRestore();
+                }
+            }
+        } finally {
+            unlinkSync(dirty);
+        }
+    });
+
     it("protects both live sessions until the last user ends, and refuses release while another user remains", () => {
         lockWorktreesForPaths({ sessionId: "shared-a", paths: [wt], agent: me });
         lockWorktreesForPaths({ sessionId: "shared-b", paths: [wt], agent: me });
