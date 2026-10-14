@@ -64,6 +64,13 @@ For the exact window-only recording and contact-sheet recipe, use
 [recording-animations.md](references/recording-animations.md). It keeps actions inside the capture
 interval and distinguishes window isolation, Retina detail, callback timing and video sampling.
 
+## Camera, Vision and screen overlays
+
+For camera frames, Vision pose cost, overlay panels the WindowServer has to composite, panels kept out of
+screen captures, and dragging a panel by its body, read [camera-and-vision.md](references/camera-and-vision.md).
+Window moves your own code makes, and tests that touch the system (defaults suites, executables they create), are
+in [gotchas.md](references/gotchas.md).
+
 ## Measuring
 
 Instruments, what each answers and the traps in reading them: [references/measuring.md](references/measuring.md).
