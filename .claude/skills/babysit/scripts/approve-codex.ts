@@ -111,6 +111,8 @@ export function decide(entry: RunEntry, request: ApprovalRequest): { ok: boolean
     return { ok: isCommand && sameCwd && command !== null && allowedCommand(entry, command), label: detail };
 }
 
+const STATUS_FAILURE_LIMIT = 10;
+
 export async function watchApprovals({
     entry,
     exec = execTool,
@@ -129,6 +131,9 @@ export async function watchApprovals({
     const seen = new Set<string>();
     const failures = new Map<string, number>();
     const deadline = now() + timeoutMs;
+    // After a worker's turn ended, `codex status` failed with empty stderr on every poll until the deadline (2026-10-14
+    // #516 round 4): say what failed, and hand over to the lead instead of printing it every 1.5 s for 30 minutes.
+    let statusFailures = 0;
     const options = () => ({ cwd: entry.cwd, timeout: Math.max(1, Math.min(30_000, deadline - now())) });
     while (now() < deadline) {
         const status = await exec(["codex", "status", "--name", entry.name, "--json"], options());
@@ -136,11 +141,23 @@ export async function watchApprovals({
         try {
             if (status.success && !status.timedOut) {
                 meta = SafeJSON.parse(status.stdout, { strict: true });
+                statusFailures = 0;
             } else {
-                console.error("[approver] status failed: " + status.stderr);
+                statusFailures += 1;
+                const said = (status.stderr.trim() || status.stdout.trim() || "no output").replace(/\s+/g, " ");
+                console.error(
+                    `[approver] status failed (exit ${status.exitCode}${status.timedOut ? ", timed out" : ""}): ${said.slice(0, 200)}`
+                );
             }
         } catch (error) {
             console.error("[approver] invalid status: " + String(error));
+        }
+
+        if (statusFailures >= STATUS_FAILURE_LIMIT) {
+            console.error(
+                `[approver] NEEDS LEAD: codex status failed ${statusFailures} times in a row for ${entry.name}; stopped`
+            );
+            return;
         }
 
         if (meta?.status === "closed") {
