@@ -332,3 +332,42 @@ events, ms of CPU per event, two interleaved rounds each:
   avoid height changes after appear); a Stack Overflow answer (72070486) explains that a table asking each row for its
   height re-runs row bodies, so give rows a fixed height. Public case studies (kean.blog, troz.net) moved big lists to
   AppKit tables but published no per-row numbers.
+## Third pass on the markdown viewer: the file tree "laggy" (2026-10-14 16:35)
+
+Bench: `MarkdownTreeLagBenchTests` (genesistools.md), 24 tabs, the vault folder of the report, a hosted 1900×1150
+window, load average 15 to 25. Stall reports from the real app showed 509 to 1268 ms on the main thread, all layout.
+
+### A window root's hosting view must not size itself
+- An `NSHostingView` with the default `sizingOptions` derives the window's min, max and intrinsic size from SwiftUI.
+  On every update it sizes the WHOLE tree again (`NSHostingView.invalidateSizeConstraintsIfNecessary` →
+  `minSize()` → `ViewGraph.sizeThatFits`): 1258 of 2133 layout samples for an update that changed one string. Set
+  `sizingOptions = []` on a window's content and give the window an explicit `minSize` (the hub found the same in
+  2026-09, `HubGlass`). **Measured:** 20 unrelated publishes 1104 to 1187 ms busy → 232 ms; the longest pass of a tab
+  switch 621 to 827 ms → 112 to 156 ms.
+- A frame-owned panel already did this; a plain `window.contentView = NSHostingView(rootView:)` is the trap. Build the
+  content through one factory so tests host the same view the window does (`contentView(model:)`).
+- The sizing it drops is real: the content held the window at 603 pt, 743 with three sidebars open. Measure that
+  minimum per state with the standard sizing once, state it as a formula (`MarkdownWindowMinimum`), set
+  `contentMinSize` when its inputs change and grow a narrower window, and test the formula against the measurement.
+
+### A row list inside a view that observes a big model
+- A tree view that observes a 30-property model walks its `ForEach` on every publish. `.equatable()` on each row skips
+  the row's body, but the list still builds every visible row value. Move the list into an `Equatable` child that
+  takes values (rows, selection, style, pulse, git marks) and compare those. **Measured (60 publishes):** 1214 ms →
+  654 to 816 ms busy.
+- Tabs the same: each tab observed the model, so one publish ran all 24 tab bodies (480 for 20 publishes). A tab now
+  gets `active`, `preview` and its fill as values and observes only its document: 0 tab bodies for an unrelated
+  publish, and only the changed tabs on a selection.
+
+### Derived git marks off the main thread
+- The file tree's marks (`GitTreeDecorationsModel.update`) were built from the whole repository status on the main
+  thread, twice per refresh, plus two dictionary comparisons: 24% of the main thread in the tab-switch bench on a vault
+  with 1,825 status entries, at every start, git change and move of the tree's root. Build and compare them on a
+  utility queue and publish the result with a ticket. The folder walks also asked `String.count` per level of every
+  entry; cutting at the last "/" in UTF-8 made one call 2.6 to 8.5 times faster (117 → 31 ms, debug), parity equal
+  on three roots of the real vault.
+
+### Count row construction, not only bodies
+- A body probe (`tree.row`) cannot see a list that rebuilds its rows and then skips every body. A probe in the row's
+  `init` (`tree.rowItem`) counts it, and it exists in the old code too, so a regression test can fail on the old
+  version (`MarkdownWindowPublishCostTests`: 9 rows built and 9 tab bodies for 3 publishes before, 0 after).
