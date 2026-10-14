@@ -14,6 +14,7 @@ import { commandTokenIndex, commandWord, scanShell, splitPipeline, tokenize } fr
 import { commandEditsFiles } from "../../changes/log";
 import { hookDiag } from "../log";
 import { hookDataRoot, touchesPath } from "../paths";
+import type { HookPayload } from "../payload";
 import { covers, type Mentions, readSessionState } from "./mentions";
 import { assertPrivateFile } from "./private-dir";
 
@@ -108,6 +109,71 @@ const READ_ONLY_GIT = new Set([
     "for-each-ref",
     "name-rev",
 ]);
+
+/** The session, or `session:agent` for a subagent's call, so a subagent's edit is not its parent's. */
+export function actorOf(payload: HookPayload): string {
+    const agent = payload.raw.agent_id ?? payload.raw.agentId;
+    const session = payload.sessionId ?? "";
+
+    return typeof agent === "string" && agent.length > 0 ? `${session}:${agent}` : session;
+}
+
+/** git verbs that bring content the command did not write: other commits, a stash, another branch. */
+const HISTORY_GIT = new Set(["rebase", "cherry-pick", "merge", "pull", "am", "revert", "switch", "checkout", "reset"]);
+
+/**
+ * The git verb that rewrote the work tree with content the command did not write, or `null`:
+ * `rebase`, `cherry-pick`, `stash pop`. Read from the command word of each pipeline element, so a
+ * heredoc body that merely mentions `git rebase` does not count.
+ *
+ * A stopped rebase or cherry-pick leaves the half-applied commit in the work tree, and `stash pop`
+ * restores earlier edits; both read as the command's own edits without this (2026-10-14: 7 stopped
+ * rebases printed 72 files, 2 stash pops 17).
+ */
+export function gitOperation(command: string): string | null {
+    let units: ReturnType<typeof scanShell>["units"];
+
+    try {
+        units = scanShell(command).units;
+    } catch (err) {
+        hookDiag("Could not scan the command for a git operation", { err });
+        return null;
+    }
+
+    for (const unit of units) {
+        for (const statement of unit) {
+            for (const element of splitPipeline(statement)) {
+                const tokens = tokenize(element);
+                const index = commandTokenIndex(tokens);
+                const word = index === -1 ? undefined : tokens[index];
+
+                if (!word || commandWord(word.text) !== "git") {
+                    continue;
+                }
+
+                const rest = tokens.slice(index + 1).map((token) => token.text);
+                let at = 0;
+
+                while (at < rest.length && rest[at]?.startsWith("-")) {
+                    at += rest[at] === "-C" || rest[at] === "-c" ? 2 : 1;
+                }
+
+                const verb = rest[at];
+                const sub = rest[at + 1];
+
+                if (verb === "stash" && (sub === "pop" || sub === "apply")) {
+                    return `stash ${sub}`;
+                }
+
+                if (verb && HISTORY_GIT.has(verb)) {
+                    return verb;
+                }
+            }
+        }
+    }
+
+    return null;
+}
 
 /**
  * Whether every stage of the command only reads. Judged by the command word of each pipeline
@@ -375,6 +441,11 @@ export interface AttributionContext {
     readOnly: () => boolean;
     others: () => Map<string, Touch[]>;
     busyRoots: () => Set<string>;
+    /**
+     * Files another call of this session still in flight names (a parallel call, a subagent's call,
+     * a background call): theirs, not this call's, even when this session mentioned them earlier.
+     */
+    siblings: () => Set<string>;
 }
 
 export function attribute(file: string, root: string, context: AttributionContext): Attribution {
@@ -385,6 +456,14 @@ export function attribute(file: string, root: string, context: AttributionContex
 
     if (covers(context.named, file, root, "deep")) {
         return "named";
+    }
+
+    // Before the mention index, which is per SESSION: a subagent's Edit, or a parallel call, puts the
+    // file there too, and the call that happened to finish first used to print it (2026-10-14:
+    // `tools grok usage --help` showed a sibling's `agents-bridge.ts +1-1`). A file another actor
+    // touched during this call, or another call in flight names, is that actor's.
+    if (context.siblings().has(file) || context.others().has(file)) {
+        return "others";
     }
 
     if (covers(context.mentions(), file, root, "file")) {

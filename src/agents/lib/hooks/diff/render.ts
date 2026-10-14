@@ -519,7 +519,9 @@ function themedRow(line: PatchLine, palette: Palette, shape: RowShape): string {
         .map((row, at) => {
             const head = at === 0 ? `${band}${DIM}${number}${UNDIM} ${mark}` : `${band}${" ".repeat(INDENT)}`;
             const room = columns - row.width;
-            const fill = shape.fill && band && room > 0 ? `${band}${" ".repeat(room)}` : "";
+            // A row whose last span restored the band (a word highlight does) needs no second copy of it.
+            const reopen = row.text.endsWith(band) ? "" : band;
+            const fill = shape.fill && band && room > 0 ? `${reopen}${" ".repeat(room)}` : "";
 
             return `${head}${row.text}${fill}${OFF}`;
         })
@@ -665,6 +667,8 @@ export interface DiffBlock {
     dress?: BlockDress;
     /** The block's file and raw patch, for the full diff a cut message links to. */
     source?: { label: string; patch: string };
+    /** Body lines left out before fitting, because the block is past `maxBlockLines`; counted as elided. */
+    hidden?: number;
 }
 
 export interface BlockDress {
@@ -961,7 +965,7 @@ export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: 
             const shown = [...(held ?? [])]
                 .sort((first, second) => first - second)
                 .map((at) => tinted[index]?.get(at) ?? block.body[at]?.text ?? "");
-            const elided = block.body.length - shown.length;
+            const elided = block.body.length - shown.length + (block.hidden ?? 0);
 
             elidedTotal += elided;
             return [block.head, ...shown, ...(elided > 0 ? [moreLines(elided)] : [])].join("\n");

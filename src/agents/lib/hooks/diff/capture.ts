@@ -4,13 +4,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type DiffConfig, defaultLogPath, megabytes } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
+import { actorOf } from "./attribution";
 import { commandDirs, namedArguments } from "./command-paths";
-import { canonical, coverage, refreshMentions } from "./mentions";
+import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
 import { makePrivateDir } from "./private-dir";
 
@@ -47,7 +49,7 @@ export function harnessOwnFile(path: string): boolean {
 }
 
 /** The Claude transcript this call belongs to, from the payload. */
-function transcriptOf(payload: HookPayload): string | null {
+export function transcriptOf(payload: HookPayload): string | null {
     const value = payload.raw.transcript_path ?? payload.raw.transcriptPath;
 
     return typeof value === "string" && value.length > 0 ? value : null;
@@ -412,6 +414,25 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     // `stamp` is whole seconds (mtime comparisons); the writer journal needs the real start.
     writePrivateFile(join(dir, "started-ms"), String(Date.now()));
     writePrivateFile(join(dir, "roots.txt"), roots.length > 0 ? `${roots.join("\n")}\n` : "");
+    // What this call names, canonical, so a PARALLEL call of the same session (or a subagent's)
+    // whose post phase runs while this one is still in flight can leave these files to it.
+    const ownNamed = [
+        ...wanted,
+        ...mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }).filter(
+            (path) => !path.startsWith("glob:")
+        ),
+    ].map(canonical);
+    writePrivateFile(join(dir, "named.txt"), `${[...new Set(ownNamed)].join("\n")}\n`);
+    // The call itself, for a background call whose diff is taken when the task ends, not now.
+    writePrivateFile(
+        join(dir, "call.json"),
+        SafeJSON.stringify({
+            command: payload.command,
+            cwd: payload.cwd,
+            event: payload.event,
+            actor: actorOf(payload),
+        })
+    );
     // One line per root, aligned by index with roots.txt. An empty line means "no HEAD".
     writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));
 

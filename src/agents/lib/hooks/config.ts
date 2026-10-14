@@ -31,6 +31,12 @@ export interface DiffConfig {
      */
     maxFiles: number;
     maxLinesPerFile: number;
+    /**
+     * A file with more added plus removed lines than this prints its header and counts only, and
+     * the message links its full diff. A regenerated ledger printed 30 lines of +12,459 -6,099
+     * churn that nobody reads (2026-10-14: 20 such blocks in a day).
+     */
+    maxBlockLines: number;
     contextLines: number;
     maxRoots: number;
     untrackedExpansionCap: number;
@@ -93,6 +99,12 @@ export interface DiffConfig {
      * created INSIDE a git root is unaffected; this covers only named paths.
      */
     namedPathsShowCreated: boolean;
+    /**
+     * Whether a named file in a temp folder outside every git work tree is printed: a session's
+     * PR body, repro script or scratch JSON. Off: 146 such blocks in a day (2026-10-14), none of
+     * them the work itself.
+     */
+    showTempScratch: boolean;
     /**
      * Print one file change at most ONCE across every session on the machine. Sessions share
      * repositories, and a file another session writes during this command's window is newer
@@ -317,6 +329,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         enabled: true,
         maxFiles: 15,
         maxLinesPerFile: 30,
+        maxBlockLines: 400,
         contextLines: 3,
         maxRoots: 4,
         untrackedExpansionCap: 200,
@@ -333,6 +346,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxNamedPaths: 8,
         maxNamedPathMB: 2,
         namedPathsShowCreated: false,
+        showTempScratch: false,
         dedupeAcrossSessions: true,
         othersSummary: "line",
         maxMessageChars: 9_900,
@@ -503,6 +517,11 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             value: stored?.maxLinesPerFile,
             fallback: base.maxLinesPerFile,
         }),
+        maxBlockLines: countOr({
+            field: "diff.maxBlockLines",
+            value: stored?.maxBlockLines,
+            fallback: base.maxBlockLines,
+        }),
         contextLines: countOr({
             field: "diff.contextLines",
             value: stored?.contextLines,
@@ -547,6 +566,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             fallback: base.maxNamedPathMB,
         }),
         namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
+        showTempScratch: boolOr(stored?.showTempScratch, base.showTempScratch),
         dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
         replaceNative: boolOr(stored?.replaceNative, base.replaceNative),
         othersSummary: othersSummaryOr(stored?.othersSummary, base.othersSummary),
@@ -643,6 +663,7 @@ function mergedHarnesses(
 const OVERRIDE_COUNTS = [
     "maxFiles",
     "maxLinesPerFile",
+    "maxBlockLines",
     "maxRoots",
     "untrackedExpansionCap",
     "maxCaptureFiles",
@@ -657,6 +678,7 @@ const OVERRIDE_BOOLEANS = [
     "standDownWhenNative",
     "watchNamedPaths",
     "namedPathsShowCreated",
+    "showTempScratch",
     "dedupeAcrossSessions",
     "replaceNative",
 ] as const;

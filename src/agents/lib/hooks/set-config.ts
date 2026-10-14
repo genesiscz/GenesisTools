@@ -20,6 +20,7 @@ const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
 const NUMERIC_DIFF = [
     "maxFiles",
     "maxLinesPerFile",
+    "maxBlockLines",
     "maxMessageChars",
     "maxCaptureMB",
     "maxCaptureFileMB",
@@ -33,6 +34,7 @@ export const SETTABLE_KEYS = [
     "diff.enabled",
     "diff.maxFiles",
     "diff.maxLinesPerFile",
+    "diff.maxBlockLines",
     "diff.maxMessageChars",
     "diff.maxCaptureMB",
     "diff.maxCaptureFileMB",
@@ -43,6 +45,7 @@ export const SETTABLE_KEYS = [
     "diff.columns",
     "diff.fullDiff",
     "diff.replaceNative",
+    "diff.showTempScratch",
     "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
     "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
     "maxLogMB",
@@ -278,6 +281,11 @@ export function applySetting(
 
     if (key === "diff.replaceNative") {
         next.diff.replaceNative = asBoolean(key, value);
+        return next;
+    }
+
+    if (key === "diff.showTempScratch") {
+        next.diff.showTempScratch = asBoolean(key, value);
         return next;
     }
 

@@ -1,7 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+    closeSync,
+    existsSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    readSync,
+    renameSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
     type ChangeBytes,
@@ -22,7 +34,9 @@ import { type HookPayload, normalizeEvent } from "../payload";
 import {
     type Attribution,
     type AttributionContext,
+    actorOf,
     attribute,
+    gitOperation,
     inFlightRoots,
     othersTouches,
     readOnlyCommand,
@@ -31,9 +45,11 @@ import {
     type Touch,
 } from "./attribution";
 import { alreadyGone, beforeCopy, leftOutOfCapture } from "./before";
+import { transcriptOf } from "./capture";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
+import { commandDirs, namedArguments } from "./command-paths";
 import { fullDiffLine, writeFullDiff } from "./full";
 import { appendMentions, canonical, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
@@ -44,7 +60,8 @@ import { writerChanges } from "./writers";
 
 export interface DiffDecision {
     /** `noted`: no diff block, only the one-line summaries of files it could not show. */
-    decision: "emitted" | "noted" | "silent" | "skip";
+    /** `deferred`: a call that went to the background; its diff is taken when the task ends. */
+    decision: "emitted" | "noted" | "silent" | "skip" | "deferred";
     reason: string;
     message?: string;
     files: string[];
@@ -52,6 +69,8 @@ export interface DiffDecision {
     others?: string[];
     /** What the message carried, for the decision log and `diff log`. */
     stats?: { chars: number; blocks: number; elided: number; dropped: number; fullDiff?: string };
+    /** Set on a background call's diff, taken when its task ended (`flushDeferred`). */
+    task?: { id: string; toolUseId: string; command: string };
 }
 
 /**
@@ -106,6 +125,284 @@ function displayPath(path: string, cwd: string): string {
         : path.replace(/^\/private(?=\/(?:tmp|var)\/)/, "");
 }
 
+/** A call that began this long before another and never ended was interrupted; its names are stale. */
+const SIBLING_WINDOW_MS = 10 * 60_000;
+
+/**
+ * The files other calls still in flight name: another agent's call (a subagent beside its parent),
+ * or a background call of any agent. Their capture folders sit beside this one until their post
+ * phase. Claude Code runs one agent's editing Bash calls one at a time, so another capture of the
+ * SAME agent that is not a background call is a denied or interrupted call, never a running one,
+ * and a read-only command edits nothing whoever runs it; neither takes a file away.
+ */
+function siblingNamed({ ownDir, since, actor }: { ownDir: string; since: number; actor: string }): Set<string> {
+    const found = new Set<string>();
+    const parent = dirname(ownDir);
+    let names: string[];
+
+    try {
+        names = readdirSync(parent);
+    } catch {
+        return found;
+    }
+
+    for (const name of names) {
+        const dir = join(parent, name);
+
+        if (dir === ownDir) {
+            continue;
+        }
+
+        try {
+            const started = Number(readFileSync(join(dir, "started-ms"), "utf8").trim());
+            const deferred = existsSync(join(dir, "background.json"));
+            const made = SafeJSON.parse(readFileSync(join(dir, "call.json"), "utf8")) as {
+                command?: string;
+                actor?: string;
+            };
+            const running =
+                deferred || (made.actor !== actor && Number.isFinite(started) && started >= since - SIBLING_WINDOW_MS);
+
+            if (!running || readOnlyCommand(made.command ?? "")) {
+                continue;
+            }
+
+            for (const line of readFileSync(join(dir, "named.txt"), "utf8").split("\n")) {
+                if (line.length > 0) {
+                    found.add(line);
+                }
+            }
+        } catch {
+            // The call ended between the listing and the read: nothing of its own to leave.
+        }
+    }
+
+    return found;
+}
+
+/** More files than this in one root, and renames are not looked for: two git spawns cover them all. */
+const RENAME_SCAN_LIMIT = 400;
+
+/**
+ * Files moved without a change (`git mv`, `mv`): a deleted path whose blob at `base` equals a
+ * changed file's content. They printed as a whole-file Deleted block each (2026-10-14: a moved
+ * fixtures folder, 18 blocks); now one line names them. Two git spawns, only when a root has both
+ * a deletion and another change.
+ */
+function renamesIn({ root, base, files }: { root: string; base: string; files: ChangedFile[] }): Array<{
+    from: string;
+    to: string;
+}> {
+    const gone = files.filter((file) => file.deleted);
+    const fresh = files.filter((file) => !file.deleted);
+
+    if (gone.length === 0 || fresh.length === 0 || files.length > RENAME_SCAN_LIMIT) {
+        return [];
+    }
+
+    const blobs = new Map<string, string>();
+    const listing = gitOut(root, ["ls-tree", "-z", base, "--", ...gone.map((file) => relative(root, file.path))], {
+        quiet: true,
+    });
+
+    for (const entry of listing.split("\0")) {
+        const match = /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(entry);
+
+        if (match?.[1] && match[2]) {
+            blobs.set(match[1], join(root, match[2]));
+        }
+    }
+
+    if (blobs.size === 0) {
+        return [];
+    }
+
+    const hashes = gitOut(root, ["hash-object", "--", ...fresh.map((file) => file.path)], { quiet: true }).split("\n");
+    const pairs: Array<{ from: string; to: string }> = [];
+
+    fresh.forEach((file, index) => {
+        const hash = hashes[index]?.trim() ?? "";
+        const from = blobs.get(hash);
+
+        if (from) {
+            pairs.push({ from, to: file.path });
+            blobs.delete(hash);
+        }
+    });
+
+    return pairs;
+}
+
+function renameLine(root: string, pairs: Array<{ from: string; to: string }>): string {
+    const shown = pairs.slice(0, 3).map((pair) => `${relative(root, pair.from)} → ${relative(root, pair.to)}`);
+    const more = pairs.length > 3 ? ` and ${pairs.length - 3} more` : "";
+
+    return `${pairs.length} file(s) moved unchanged in ${basename(root)}: ${shown.join(", ")}${more}`;
+}
+
+/**
+ * A file in a temp folder that no git work tree holds: a session's scratch (a PR body, a repro
+ * script, `bk.json`). 146 such blocks in one day (2026-10-14), none of them the work itself.
+ */
+function inTempScratch(path: string): boolean {
+    const tops = [...new Set([tmpdir(), canonical(tmpdir()), "/tmp", "/private/tmp"])];
+    const top = tops.find((root) => path.startsWith(`${root}/`));
+
+    if (!top) {
+        return false;
+    }
+
+    for (let dir = dirname(path); dir.length > top.length; dir = dirname(dir)) {
+        if (existsSync(join(dir, ".git"))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/** A call that went to the background, as its post phase left it in `background.json`. */
+interface DeferredCall {
+    id: string;
+    output: string;
+    agent?: string;
+}
+
+/**
+ * The background task a Bash call went to, or `null`. Claude Code's tool response carries only the
+ * id (`backgroundTaskId`); the output file is `<tmp>/claude-<uid>/<project>/<session>/tasks/<id>.output`,
+ * with `<project>` the folder name of the transcript (Claude Code 2.1.296). `null` when that file is
+ * not found, so the call is diffed now, as before, rather than deferred with no way to see it end.
+ */
+function backgroundTaskOf(payload: HookPayload): DeferredCall | null {
+    const response = payload.raw.tool_response ?? payload.raw.toolResponse;
+    const id =
+        typeof response === "object" && response !== null && "backgroundTaskId" in response
+            ? response.backgroundTaskId
+            : undefined;
+    const transcript = transcriptOf(payload);
+
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id) || !transcript || !payload.sessionId) {
+        return null;
+    }
+
+    const folder = join(`claude-${process.getuid?.() ?? 0}`, basename(dirname(transcript)), payload.sessionId, "tasks");
+    const agent = payload.raw.agent_id ?? payload.raw.agentId;
+
+    for (const base of new Set(["/private/tmp", "/tmp", tmpdir()])) {
+        const output = join(base, folder, `${id}.output`);
+
+        if (existsSync(output)) {
+            return { id, output, ...(typeof agent === "string" ? { agent } : {}) };
+        }
+    }
+
+    return null;
+}
+
+/** Whether a background task is over: its output file ends with `[exited with code N]`, or is gone. */
+function taskEnded(output: string): boolean {
+    let tail: string;
+
+    try {
+        const fd = openSync(output, "r");
+
+        try {
+            const size = statSync(output).size;
+            const buffer = Buffer.alloc(Math.min(size, 120));
+            readSync(fd, buffer, 0, buffer.length, size - buffer.length);
+            tail = buffer.toString("utf8");
+        } finally {
+            closeSync(fd);
+        }
+    } catch (err) {
+        return (err as NodeJS.ErrnoException)?.code === "ENOENT";
+    }
+
+    return /\[exited with code -?\d+\]\s*$/.test(tail);
+}
+
+/**
+ * The diffs of this session's background calls whose task has ended, each taken now through the
+ * same `runDiffPost`, so the claim store still keeps a file a later call printed from printing
+ * twice. Runs at every post phase of the session: a parent directory listing and one small read
+ * per deferred call. `background.json` is renamed before the diff, so of two post phases running
+ * at once only one takes it.
+ */
+export function flushDeferred({
+    payload,
+    config,
+    record,
+    maxChars,
+}: {
+    payload: HookPayload;
+    config: HooksConfig;
+    record?: EditRecorder;
+    maxChars?: number;
+}): DiffDecision[] {
+    const session = safeSegment(payload.sessionId);
+    const call = safeSegment(payload.toolUseId);
+
+    if (session === null || call === null) {
+        return [];
+    }
+
+    const parent = dirname(callDir(payload.harness, session, call));
+    const decisions: DiffDecision[] = [];
+    let names: string[];
+
+    try {
+        names = readdirSync(parent);
+    } catch {
+        return [];
+    }
+
+    for (const name of names) {
+        const dir = join(parent, name);
+        let deferred: DeferredCall;
+        let made: { command: string; cwd: string; event: string };
+
+        try {
+            deferred = SafeJSON.parse(readFileSync(join(dir, "background.json"), "utf8")) as DeferredCall;
+            made = SafeJSON.parse(readFileSync(join(dir, "call.json"), "utf8")) as typeof made;
+        } catch {
+            continue;
+        }
+
+        if (!taskEnded(deferred.output)) {
+            continue;
+        }
+
+        try {
+            renameSync(join(dir, "background.json"), join(dir, "background.taken"));
+        } catch {
+            continue;
+        }
+
+        const decision = runDiffPost({
+            payload: {
+                ...payload,
+                toolUseId: name,
+                command: made.command,
+                cwd: made.cwd,
+                event: made.event,
+                nativeDiffFiles: [],
+                raw: {
+                    transcript_path: transcriptOf(payload),
+                    ...(deferred.agent ? { agent_id: deferred.agent } : {}),
+                },
+            },
+            config,
+            record,
+            maxChars,
+        });
+
+        decisions.push({ ...decision, task: { id: deferred.id, toolUseId: name, command: made.command } });
+    }
+
+    return decisions;
+}
+
 /** A Claude theme in force for this call: its palette, the folder labels are relative to, the row width. */
 interface Look {
     palette: Palette;
@@ -138,15 +435,28 @@ function blockFrom(
     }
 
     const rendered = renderPatch(patch, look?.palette ?? null);
+    // A regenerated ledger printed 30 lines of +12,459 -6,099 churn (2026-10-14): past this size a
+    // block is its header only, and the message links the full diff.
+    const oversized = rendered.added + rendered.removed > config.maxBlockLines;
 
     if (rendered.body.length === 0 && !file.deleted) {
         return null;
+    }
+
+    const hidden = oversized ? rendered.body.length : 0;
+
+    if (oversized) {
+        rendered.body = [];
     }
 
     const label = look ? displayPath(file.path, look.cwd) : file.path;
     const block = renderBlock(file, rendered, hadBefore, category, label, look?.width ?? 0);
 
     block.source = { label: `${label} (+${rendered.added} -${rendered.removed})`, patch };
+
+    if (hidden > 0) {
+        block.hidden = hidden;
+    }
 
     if (look) {
         block.dress = themedDress(look.palette, file.path, look.width);
@@ -456,11 +766,18 @@ function readBlobs(root: string, specs: string[]): ChangeBytes[] {
     return results;
 }
 
-export function runDiffPost(
-    payload: HookPayload,
-    config: HooksConfig,
-    record: EditRecorder = recordBashEdits
-): DiffDecision {
+export function runDiffPost({
+    payload,
+    config,
+    record = recordBashEdits,
+    maxChars,
+}: {
+    payload: HookPayload;
+    config: HooksConfig;
+    record?: EditRecorder;
+    /** The message budget when it must share the hook's one message (`flushDeferred`); else `diff.maxMessageChars`. */
+    maxChars?: number;
+}): DiffDecision {
     const diff = diffFor(config, payload.harness);
 
     if (!diff.enabled) {
@@ -481,6 +798,20 @@ export function runDiffPost(
 
     if (!existsSync(rootsFile)) {
         return { decision: "skip", reason: "no capture from the pre phase", files: [] };
+    }
+
+    // A backgrounded call's post phase runs when it STARTS, so its edits came later and printed under
+    // an unrelated call, or never (504 such calls in a day). Its capture is kept, and `flushDeferred`
+    // takes the diff once the task's output file says it exited.
+    const task = backgroundTaskOf(payload);
+
+    if (task && existsSync(join(dir, "call.json"))) {
+        writeFileSync(join(dir, "background.json"), SafeJSON.stringify(task), { mode: 0o600 });
+        return {
+            decision: "deferred",
+            reason: `the call went to the background (task ${task.id}); its diff is taken when the task ends`,
+            files: [],
+        };
     }
 
     const roots = readFileSync(rootsFile, "utf8")
@@ -508,7 +839,12 @@ export function runDiffPost(
     let claimed = 0;
     let stale = 0;
     const suppressed = new Map<DiffCategory, number>();
-    const attribution = attributionContext(payload, since);
+    const attribution = attributionContext({ payload, since, dir });
+    let operation: string | null | undefined;
+    const operationOf = (): string | null => {
+        operation ??= gitOperation(payload.command);
+        return operation;
+    };
     // Resolved once and only for a call that renders: `claude` reads Claude Code's settings file.
     let look: Look | null | undefined;
     const lookOf = (): Look | null => {
@@ -521,12 +857,13 @@ export function runDiffPost(
     };
     const touches: Touch[] = [];
     const historyNotes: string[] = [];
+    const renameNotes: string[] = [];
     const unattributed: Array<{ path: string; root: string }> = [];
     // Changed files the root pass reached after `maxFiles` blocks: named in a note, listed in the full diff.
     const notShown: string[] = [];
     const uncapturedFiles: Array<{ path: string; root: string }> = [];
     const touch = (path: string, kind: Attribution) =>
-        touches.push({ session: payload.sessionId ?? "", start: since, end: attribution.now, kind, path });
+        touches.push({ session: actorOf(payload), start: since, end: attribution.now, kind, path });
 
     roots.forEach((root, index) => {
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
@@ -551,7 +888,13 @@ export function runDiffPost(
         const base = moved && from ? from : "HEAD";
         const committed = moved && from && nowOn && from !== nowOn ? committedPaths(root, from, nowOn) : [];
 
-        if (move && startedOn && nowOn) {
+        // Once per move: a parallel call of the same session saw the same move and printed it again.
+        if (
+            move &&
+            startedOn &&
+            nowOn &&
+            claimChange({ path: `${root}#HEAD ${startedOn}..${nowOn}`, mtimeMs: 0, size: 0 }, payload.sessionId)
+        ) {
             const carried = committedPaths(root, startedOn, nowOn).length;
 
             historyNotes.push(
@@ -559,7 +902,17 @@ export function runDiffPost(
             );
         }
 
-        for (const file of changedFiles(root, since, diff, { entries: summary.entries, committed })) {
+        const changed = changedFiles(root, since, diff, { entries: summary.entries, committed });
+        const renames = renamesIn({ root, base, files: changed });
+        const renamed = new Set(renames.flatMap((pair) => [pair.from, pair.to]));
+        const carried: string[] = [];
+        const ownCommits = new Set(committed.map((name) => join(root, name)));
+
+        if (renames.length > 0) {
+            renameNotes.push(renameLine(root, renames));
+        }
+
+        for (const file of changed) {
             if (full() && !logsEdits) {
                 break;
             }
@@ -573,9 +926,27 @@ export function runDiffPost(
                 continue;
             }
 
+            if (renamed.has(file.path)) {
+                continue;
+            }
+
             // Before any copy is read: a change another session made is neither rendered, nor
             // claimed (which would steal that session's render), nor logged as this session's.
             const kind = attribute(file.path, root, attribution);
+
+            // A rebase that stopped, a cherry-pick, a stash pop: what git wrote is not the command's
+            // edit. Only a file the command names itself still renders (`git checkout -- a.ts`).
+            // A commit made after the move is the command's own (`git rebase master && git commit`).
+            if (
+                kind !== "named" &&
+                kind !== "others" &&
+                kind !== "ambiguous" &&
+                !ownCommits.has(file.path) &&
+                operationOf()
+            ) {
+                carried.push(file.path);
+                continue;
+            }
 
             // A read-only command's "others" is no claim at all, so it leaves no row.
             if (kind !== "others") {
@@ -639,6 +1010,12 @@ export function runDiffPost(
             files.push(file.path);
             blocks.push(block);
         }
+
+        if (carried.length > 0) {
+            historyNotes.push(
+                `${carried.length} file(s) changed by git ${operationOf()} in ${basename(root)}, no diff shown`
+            );
+        }
     });
 
     // Files the command NAMED rather than worked in. They are read from a copy, so this adds
@@ -697,6 +1074,10 @@ export function runDiffPost(
             continue;
         }
 
+        if (!diff.showTempScratch && inTempScratch(change.path)) {
+            continue;
+        }
+
         if (
             change.before === null &&
             !change.deleted &&
@@ -751,13 +1132,22 @@ export function runDiffPost(
         hookDiag("Could not remove the capture directory", { err, dir });
     }
 
+    // Another writer's change is worth a line only when it is news: not after a command that only
+    // read (34 of 107 such lines followed a `tail` or `cat`), and not for a log that something appends to.
+    const othersWorthALine = attribution.readOnly()
+        ? []
+        : unattributed.filter((item) => {
+              const kind = classifyChange(item.path, "", item.root);
+              return kind !== "log" && kind !== "generated";
+          });
     const notes = [
         ...historyNotes,
+        ...renameNotes,
         ...(uncapturedFiles.length > 0
             ? [summaryLine("dirty file(s) changed with no captured before-state", uncapturedFiles)]
             : []),
-        ...(unattributed.length > 0 && diff.othersSummary === "line"
-            ? [summaryLine("file(s) changed by others in this root", unattributed)]
+        ...(othersWorthALine.length > 0 && diff.othersSummary === "line"
+            ? [summaryLine("file(s) changed by others in this root", othersWorthALine)]
             : []),
         ...(notShown.length > 0 ? [`${notShown.length} more changed file(s) past diff.maxFiles ${diff.maxFiles}`] : []),
         ...(blocks.length > 0 && normalizeEvent(payload.event) === "posttoolusefailure"
@@ -777,7 +1167,7 @@ export function runDiffPost(
     }
 
     const noteChars = notes.reduce((total, line) => total + line.length + 2, 0);
-    const budget = Math.max(0, diff.maxMessageChars - noteChars);
+    const budget = Math.max(0, (maxChars ?? diff.maxMessageChars) - noteChars);
     let fitted = fitMessage(blocks, { ...diff, maxMessageChars: budget });
     let body = fitted.message;
     let fullDiff: string | undefined;
@@ -819,10 +1209,26 @@ export function runDiffPost(
 }
 
 /** What `attribute` needs for one post phase. Only what the command names is read eagerly. */
-function attributionContext(payload: HookPayload, since: number): AttributionContext {
+function attributionContext({
+    payload,
+    since,
+    dir,
+}: {
+    payload: HookPayload;
+    since: number;
+    dir: string;
+}): AttributionContext {
     const session = payload.sessionId ?? "";
+    const actor = actorOf(payload);
     const now = Date.now();
-    const named = mentionsFrom(mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }));
+    // The capture parser's paths too: it resolves `F=rel/a.ts; cd $R && edit $F` against the folder
+    // `$F` is USED in, where the mention parser resolved it against the folder it was SET in, and the
+    // file fell to "others" (11 calls on 2026-10-14).
+    const named = mentionsFrom([
+        ...mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }),
+        ...namedArguments(payload.command, commandDirs(payload.command, payload.cwd)).map(canonical),
+    ]);
+    let siblings: Set<string> | undefined;
     let mentions: Mentions | undefined;
     let readOnly: boolean | undefined;
     let others: Map<string, Touch[]> | undefined;
@@ -842,8 +1248,12 @@ function attributionContext(payload: HookPayload, since: number): AttributionCon
             return readOnly;
         },
         others: () => {
-            others ??= othersTouches(session, since);
+            others ??= othersTouches(actor, since);
             return others;
+        },
+        siblings: () => {
+            siblings ??= siblingNamed({ ownDir: dir, since, actor });
+            return siblings;
         },
         busyRoots: () => {
             busy ??= inFlightRoots(session, now);
@@ -1021,7 +1431,7 @@ export function noteFileToolInput(payload: HookPayload): void {
         recordTouches(
             named
                 .filter((path) => !path.startsWith("glob:"))
-                .map((path) => ({ session: payload.sessionId ?? "", start: now, end: now, kind: "named", path }))
+                .map((path) => ({ session: actorOf(payload), start: now, end: now, kind: "named", path }))
         );
     } catch (err) {
         hookDiag("Could not note the file-tool input", { err });
