@@ -273,7 +273,8 @@ the worker who knows the PR, as a merge-prep steer that authorizes the rebase. `
 forked from on its parent (a child stacked on a parent that kept growing forked before the parent's later commits;
 find it with `git merge-base <child> <old parent head>`). Check with `git range-diff`, run the area tests, give a
 child that changes plugin files a version above its new base, then push with `--force-with-lease`. A restack is new
-code: wait for CI and the reviewer bot before the merge.
+code: wait for CI and the reviewer bot before the merge. When the restack carries a fix round too, push it with
+`integrate.ts … --restacked-from <old head>`: the lease is that old head, and the gates check only the PR's own commits.
 
 ## 7c. Disk: watch it, reclaim /tmp safely
 

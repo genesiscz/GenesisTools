@@ -6,6 +6,10 @@
  *
  *   bun integrate.ts --run <dir> --pr 508 --round 1 [--wt <dir>] [--replies <json>] [--session bs-508-r1]
  *                    [--sha-map old=new,…] [--range a..b] [--skip-gates] [--no-post] [--dry] [--no-push-hooks]
+ *                    [--restacked-from <old head>]
+ *
+ * --restacked-from: HEAD was rebased on purpose (restack.ts, merge prep). The push is then forced with a lease on that
+ * exact old head, and refused when the remote moved since; the gates check only the PR's own commits after the restack.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -51,18 +55,41 @@ function must(cmd: string[], label: string, cwd?: string): string {
     return r.out;
 }
 
-const view = must(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName"], "pr view");
-const branch = (SafeJSON.parse(view, { strict: true }) as { headRefName: string }).headRefName;
-must(["git", "fetch", "-q", "origin", branch], "fetch");
+const view = must(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName,baseRefName"], "pr view");
+const { headRefName: branch, baseRefName } = SafeJSON.parse(view, { strict: true }) as {
+    headRefName: string;
+    baseRefName: string;
+};
+must(["git", "fetch", "-q", "origin", branch, baseRefName], "fetch");
 const oldHead = must(["git", "rev-parse", `origin/${branch}`], "rev-parse").trim();
 const newHead = must(["git", "rev-parse", "HEAD"], "rev-parse HEAD").trim();
+const restackedFrom = flag("--restacked-from");
 
-if (exec(["git", "merge-base", "--is-ancestor", oldHead, newHead], { quiet: true }).code !== 0) {
+if (restackedFrom) {
+    // 2026-10-14: #500, #517 and #510 were restacked for landing and integrate refused them as "someone pushed", so the
+    // lead pushed by hand. The lease is the old head the lead rebased from: anything newer on the remote is refused.
+    const from = must(
+        ["git", "rev-parse", "--verify", `${restackedFrom}^{commit}`],
+        "rev-parse --restacked-from"
+    ).trim();
+
+    if (from !== oldHead) {
+        console.log(
+            `✖ origin/${branch} is ${oldHead.slice(0, 9)}, not the restacked-from ${from.slice(0, 9)}: someone pushed`
+        );
+        process.exit(1);
+    }
+} else if (exec(["git", "merge-base", "--is-ancestor", oldHead, newHead], { quiet: true }).code !== 0) {
     console.log(
         `✖ HEAD ${newHead.slice(0, 9)} does not contain origin/${branch} ${oldHead.slice(0, 9)}: someone pushed; rebase first`
     );
     process.exit(1);
 }
+
+// A restack replays the base's commits too: gate only the PR's own commits on top of its base.
+const gateFrom = restackedFrom
+    ? must(["git", "merge-base", `origin/${baseRefName}`, newHead], "merge-base").trim()
+    : oldHead;
 
 const dirty = must(["git", "status", "--short", "--untracked-files=no"], "status").trim();
 
@@ -76,7 +103,7 @@ if (!has("--skip-gates") && oldHead !== newHead) {
     must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
     // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
     // error through to the pre-push hook (2026-10-14, #502 round 6). The main checkout's binary is already assessed.
-    const changed = must(["git", "diff", "--name-only", "--diff-filter=d", `${oldHead}..${newHead}`], "changed files")
+    const changed = must(["git", "diff", "--name-only", "--diff-filter=d", `${gateFrom}..${newHead}`], "changed files")
         .split("\n")
         .filter((file) => /\.(ts|tsx|js|jsx|json)$/.test(file));
 
@@ -91,7 +118,7 @@ if (!has("--skip-gates") && oldHead !== newHead) {
     must(["bun", "run", "lint:rules"], "lint-rules");
     must(["bun", "scripts/ci/check-tool-commands.ts"], "check-tool-commands");
     must(["bash", "scripts/ci/placeholder-check.sh"], "placeholder-check");
-    const commits = must(["bun", "scripts/git/check-commits.ts", `${oldHead}..${newHead}`], "check-commits");
+    const commits = must(["bun", "scripts/git/check-commits.ts", `${gateFrom}..${newHead}`], "check-commits");
 
     if (!/0 with a subject to fix/.test(commits)) {
         console.log(`✖ check-commits:\n${commits}`);
@@ -101,7 +128,7 @@ if (!has("--skip-gates") && oldHead !== newHead) {
 
 // --skip-gates (another repository's PR) skips the repository rules above, but never the personal-data probe: it runs
 // on the target worktree and blocks only a hit in a line this push adds (probe.ts).
-if (has("--skip-gates") && oldHead !== newHead && !probeAddedLines({ wt, from: oldHead, to: newHead })) {
+if (has("--skip-gates") && oldHead !== newHead && !probeAddedLines({ wt, from: gateFrom, to: newHead })) {
     process.exit(1);
 }
 
@@ -118,13 +145,15 @@ if (oldHead !== newHead && !dry) {
     }
 
     const hooks = stalled ? HOOKS_OFF : [];
-    must(["git", ...hooks, "push", "origin", `${newHead}:refs/heads/${branch}`], "push");
-    console.log(`✔ pushed ${branch} ${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}`);
+    const lease = restackedFrom ? [`--force-with-lease=refs/heads/${branch}:${oldHead}`] : [];
+    must(["git", ...hooks, "push", ...lease, "origin", `${newHead}:refs/heads/${branch}`], "push");
+    const pushed = `${oldHead.slice(0, 9)}${restackedFrom ? "..." : ".."}${newHead.slice(0, 9)}`;
+    console.log(`✔ pushed ${branch} ${pushed}${restackedFrom ? " (forced, restack)" : ""}`);
     appendEvent(run.dir, {
         kind: "push",
         pr: Number(pr),
         round: Number(round),
-        meta: { branch, range: `${oldHead.slice(0, 9)}..${newHead.slice(0, 9)}` },
+        meta: { branch, range: pushed, ...(restackedFrom ? { forced: `lease on ${oldHead.slice(0, 9)}` } : {}) },
     });
 } else {
     console.log(oldHead === newHead ? "no new commits: nothing to push" : "dry: push skipped");
@@ -154,7 +183,7 @@ for (const item of data.items ?? []) {
 const replies = join(run.vault, basename(repliesIn));
 writeFileSync(replies, `${SafeJSON.stringify(data, null, 2)}\n`);
 const summary = replies.replace(/-replies\.json$/, "-summary.md");
-const range = flag("--range") ?? (oldHead !== newHead ? `${oldHead}..${newHead}` : undefined);
+const range = flag("--range") ?? (oldHead !== newHead ? `${gateFrom}..${newHead}` : undefined);
 must(
     [
         "bun",
