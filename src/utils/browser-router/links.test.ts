@@ -3,6 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFile
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { linkGate, linkGatePath, presetUrl } from "./link-gate";
 import { linkFor, mintLink, planMintedLink, presetEnabled } from "./links";
 import { presets } from "./presets";
 import { defaultRouterConfig } from "./route";
@@ -205,4 +207,27 @@ describe("token file", () => {
             });
         }
     );
+});
+
+describe("presetUrl and the link gate", () => {
+    const routed = { at: 0, configMtimeMs: 0, linkHost: "genesis.tools", enabledPresets: ["genesis-md"] };
+
+    test("builds the link only for a preset the router routes", () => {
+        expect(presetUrl({ preset: "genesis-md", path: "/md/open?path=/a.md", gate: routed })).toBe(
+            "https://genesis.tools/md/open?path=/a.md"
+        );
+        expect(presetUrl({ preset: "mail", path: "x", gate: routed })).toBeNull();
+        expect(presetUrl({ preset: "genesis-md", path: "x", gate: { ...routed, linkHost: null } })).toBeNull();
+    });
+
+    test("answers from a fresh gate file, and recomputes a stale one", () => {
+        const cached = { ...routed, at: Date.now(), configMtimeMs: 0, linkHost: "cached.example" };
+
+        mkdirSync(dirname(linkGatePath()), { recursive: true });
+        writeFileSync(linkGatePath(), SafeJSON.stringify(cached));
+        expect(linkGate().linkHost).toBe("cached.example");
+
+        writeFileSync(linkGatePath(), SafeJSON.stringify({ ...cached, at: Date.now() - 60 * 60_000 }));
+        expect(linkGate().linkHost).not.toBe("cached.example");
+    });
 });

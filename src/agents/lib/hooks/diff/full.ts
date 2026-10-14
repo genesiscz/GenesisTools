@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { presetUrl } from "@genesiscz/utils/browser-router/link-gate";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { hookDiag } from "../log";
 import { safeSegment } from "../paths";
@@ -74,10 +75,12 @@ export function fullDiffLine(path: string, mode: FullDiffMode): string | null {
     }
 
     // `encodeURI` keeps the slashes and encodes spaces and non-ASCII letters, which is what the
-    // Genesis router expects in `path=`.
-    const target = mode === "genesis" ? `https://genesis.tools/md/open?path=${encodeURI(path)}` : path;
+    // Genesis router expects in `path=`. A router that is off, or does not route Markdown, gets the
+    // plain path: a link it cannot open is worse than none.
+    const url =
+        mode === "genesis" ? presetUrl({ preset: "genesis-md", path: `md/open?path=${encodeURI(path)}` }) : null;
 
-    return `Full diff: ${target}`;
+    return `Full diff: ${url ?? path}`;
 }
 
 /** The full diff of a call, by its id or a prefix of it. */

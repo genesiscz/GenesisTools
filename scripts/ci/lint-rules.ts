@@ -54,6 +54,8 @@ interface Rule {
     kinds: string[];
     /** Given the node's source text, does it violate? */
     test: (text: string) => boolean;
+    /** Files where the pattern is the implementation, not a violation. */
+    allowedIn?: RegExp;
 }
 
 /**
@@ -73,6 +75,9 @@ const HOMEDIR_MESSAGE =
 
 const LITERAL_KINDS = ["string", "template_string"];
 
+/** An https link on the browser router's host. */
+const GENESIS_ROUTER_LINK = /genesis\.tools\//;
+
 const RULES: Rule[] = [
     {
         name: "no-hardcoded-tmp",
@@ -91,6 +96,17 @@ const RULES: Rule[] = [
             "Hardcoded user-specific path. Use `homedir()` from node:os, `process.env.HOME`, or resolve relative " +
             "to the repo/project root.",
         test: (text) => HARDCODED_USER_PATH.test(text),
+    },
+    {
+        name: "no-raw-genesis-link",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A genesis.tools link opens something only when GenesisTools.app is installed, is the https handler and " +
+            "routes that preset. Build it with `presetUrl()` from @genesiscz/utils/browser-router/link-gate, which " +
+            "returns null so the caller prints its fallback instead of a dead link.",
+        test: (text) => GENESIS_ROUTER_LINK.test(text),
+        allowedIn: /(^|\/)src\/utils\/browser-router\//,
     },
 ];
 
@@ -547,7 +563,7 @@ export function checkSource(file: string, source: string): Finding[] {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (rule.test(text)) {
+            if (rule.test(text) && !rule.allowedIn?.test(file)) {
                 record(node, rule);
             }
         }
@@ -758,7 +774,7 @@ async function scanAll(files: string[]): Promise<Finding[]> {
                         const text = node.text();
 
                         for (const rule of RULES) {
-                            if (rule.test(text)) {
+                            if (rule.test(text) && !rule.allowedIn?.test(node.getRoot().filename())) {
                                 push(node, rule);
                             }
                         }
