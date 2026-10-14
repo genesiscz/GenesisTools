@@ -54,6 +54,11 @@ export interface TurnSnapshot {
     question: string | null;
     /** True when the user stopped the turn (Esc in Claude, `turn_aborted` in Codex). The turn has ended. */
     interrupted: boolean;
+    /**
+     * The error the turn ended with, else null: Codex writes it on `task_complete` (an API outage, a failed remote
+     * compaction, a model at capacity). The turn ended without doing its work, so callers must not read it as done.
+     */
+    turnError: string | null;
     /** Epoch ms of the newest turn-level record. Null when the tail holds none. Grows when a turn ends. */
     lastEventAt: number | null;
     /**
@@ -264,6 +269,7 @@ function snapshotOf({
     question = null,
     endedTurn,
     interrupted = false,
+    turnError = null,
     turnStartedAt,
     turnStartOffset,
     calls,
@@ -275,6 +281,7 @@ function snapshotOf({
     question?: string | null;
     endedTurn: boolean;
     interrupted?: boolean;
+    turnError?: string | null;
     turnStartedAt: number | null;
     turnStartOffset?: number;
     calls: TurnCalls;
@@ -295,6 +302,7 @@ function snapshotOf({
         asksQuestion,
         question,
         interrupted,
+        turnError,
         lastEventAt,
         turnStartedAt,
         ...(turnStartOffset !== undefined ? { turnStartOffset } : {}),
@@ -702,6 +710,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     let message = "";
     let ended = false;
     let aborted = false;
+    let turnError: string | null = null;
     let question: string | null = null;
     // call_id → question text of a `request_user_input` with no `function_call_output` yet.
     const open = new Map<string, string>();
@@ -722,6 +731,10 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         if (record.type === "event_msg" && (parsed.type === "task_complete" || parsed.type === "turn_aborted")) {
             ended = true;
             aborted = parsed.type === "turn_aborted";
+            // 2026-10-14: a worker whose remote compaction failed ended every turn at once with this error, and
+            // `tools codex wait` reported each one as done.
+            const failure = parsed.payload.error;
+            turnError = isRecord(failure) && typeof failure.message === "string" ? failure.message : null;
             calls.end();
             events.push({ ts, kind: "question" });
 
@@ -788,6 +801,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
 
         ended = false;
         aborted = false;
+        turnError = null;
         events.push({ ts, kind: "output" });
     }
 
@@ -801,6 +815,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         question: question || null,
         endedTurn: ended || waiting,
         interrupted: aborted,
+        turnError: ended ? turnError : null,
         turnStartedAt,
         calls,
     });

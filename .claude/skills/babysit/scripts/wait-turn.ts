@@ -50,12 +50,21 @@ if (!fromFile) {
 }
 
 let text = "";
+let failure: string | null = null;
 let meta: Record<string, unknown> = { exit: exitCode, file };
 
 try {
-    const result = SafeJSON.parse(raw, { strict: true }) as { lastText?: string; outcome?: string; state?: string };
+    const result = SafeJSON.parse(raw, { strict: true }) as {
+        lastText?: string;
+        outcome?: string;
+        state?: string;
+        error?: string | null;
+    };
     text = result.lastText ?? "";
-    meta = { ...meta, outcome: result.outcome, state: result.state };
+    // `tools codex wait` exits 4 and names the error when the turn died on the API side (2026-10-14: bs-storage's
+    // failed remote compaction ended every steer at once, and this line printed "done" with no text).
+    failure = result.error ?? null;
+    meta = { ...meta, outcome: result.outcome, state: result.state, ...(failure ? { error: failure } : {}) };
 } catch {
     text = `(no JSON from tools codex wait) ${stderr.slice(0, 500)}`;
 }
@@ -70,4 +79,13 @@ appendEvent(run.dir, {
     meta,
 });
 const result = text.match(/RESULT:\s*(.+)/)?.[1] ?? "";
-console.log(`${worker} #${pr} r${round} turn ended exit=${exitCode} ${result.slice(0, 120)} → ${file}`);
+
+if (failure) {
+    console.log(`✖ ${worker} #${pr} r${round} turn FAILED (exit ${exitCode}): ${failure} → ${file}`);
+    console.log("  the worker did no work: steer it again later, or move the brief to another worker");
+} else {
+    console.log(`${worker} #${pr} r${round} turn ended exit=${exitCode} ${result.slice(0, 120)} → ${file}`);
+}
+
+// A saved result (--from-file) has no process exit of its own: a failed turn still exits 4, like `tools codex wait`.
+process.exitCode = failure && exitCode === 0 ? 4 : exitCode;

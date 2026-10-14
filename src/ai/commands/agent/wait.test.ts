@@ -43,6 +43,7 @@ import {
     WAIT_EXIT_DONE,
     WAIT_EXIT_STALLED,
     WAIT_EXIT_TIMEOUT,
+    WAIT_EXIT_TURN_FAILED,
     waitCommand,
 } from "./wait";
 
@@ -78,6 +79,13 @@ describe("wait exit codes", () => {
         expect(new Set([exitCodeOf("done"), exitCodeOf("stalled"), exitCodeOf("timeout")]).size).toBe(3);
         expect(WAIT_EXIT_TIMEOUT).toBe(124);
     });
+
+    it("a turn that ended on an error exits with its own status, and only a done turn can", () => {
+        expect(exitCodeOf("done", "Selected model is at capacity")).toBe(WAIT_EXIT_TURN_FAILED);
+        expect(exitCodeOf("done", null)).toBe(WAIT_EXIT_DONE);
+        expect(exitCodeOf("stalled", "ignored")).toBe(WAIT_EXIT_STALLED);
+        expect(new Set([WAIT_EXIT_DONE, WAIT_EXIT_STALLED, WAIT_EXIT_TIMEOUT, WAIT_EXIT_TURN_FAILED]).size).toBe(4);
+    });
 });
 
 describe("answeredBeforeWatch", () => {
@@ -88,6 +96,7 @@ describe("answeredBeforeWatch", () => {
             asksQuestion: false,
             question: null,
             interrupted: false,
+            turnError: null,
             lastEventAt: turnStartedAt,
             turnStartedAt,
             lastActivityAt: 0,
