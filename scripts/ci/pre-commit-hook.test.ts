@@ -2,10 +2,12 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import {
     chmodSync,
     copyFileSync,
+    existsSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
     renameSync,
+    rmSync,
     symlinkSync,
     writeFileSync,
 } from "node:fs";
@@ -28,6 +30,181 @@ const env: Record<string, string | undefined> = { ...process.env };
 delete env.GIT_DIR;
 delete env.GIT_INDEX_FILE;
 delete env.GIT_WORK_TREE;
+
+describe("config hook installer", () => {
+    function scratch(unsupported = false) {
+        const directory = mkdtempSync(join(tmpdir(), "gt-hook-installer-"));
+        const testEnv: Record<string, string | undefined> = {
+            ...env,
+            GIT_CONFIG_GLOBAL: join(directory, "global"),
+            GIT_CONFIG_SYSTEM: join(directory, "system"),
+        };
+        const runGit = (...args: string[]) => {
+            const r = Bun.spawnSync(["git", ...args], { cwd: directory, env: testEnv, stdout: "pipe", stderr: "pipe" });
+            return { code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString() };
+        };
+        expect(runGit("init", "-q").code).toBe(0);
+        expect(runGit("config", "user.name", "Hook Test").code).toBe(0);
+        expect(runGit("config", "user.email", "hook-test@example.com").code).toBe(0);
+        mkdirSync(join(directory, "scripts/git"), { recursive: true });
+        copyFileSync(join(ROOT, "scripts/git/install-hooks.ts"), join(directory, "scripts/git/install-hooks.ts"));
+        mkdirSync(join(directory, ".githooks"));
+        writeFileSync(
+            join(directory, ".githooks/pre-commit"),
+            '#!/bin/sh\nprintf "pre-commit\\n" >> hook-runs\ntest ! -f fail-hook\n'
+        );
+        writeFileSync(join(directory, ".githooks/commit-msg"), '#!/bin/sh\nprintf "%s\\n" "$@" > hook-args\n');
+        if (unsupported) {
+            const bin = join(directory, "bin");
+            mkdirSync(bin);
+            const realGit = Bun.which("git");
+            if (!realGit) {
+                throw new Error("git is required");
+            }
+
+            writeFileSync(
+                join(bin, "git"),
+                `#!/bin/sh\nif [ "$1" = hook ] && [ "$2" = list ]; then exit 1; fi\nexec '${realGit}' "$@"\n`
+            );
+            chmodSync(join(bin, "git"), 0o755);
+            testEnv.PATH = `${bin}:${testEnv.PATH}`;
+        }
+
+        const install = () => {
+            const r = Bun.spawnSync([process.execPath, "scripts/git/install-hooks.ts"], {
+                cwd: directory,
+                env: testEnv,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            expect(r.exitCode, r.stderr.toString()).toBe(0);
+        };
+        return { directory, testEnv, runGit, install };
+    }
+
+    const capabilityProbe = scratch();
+    capabilityProbe.runGit("config", "hook.capability-probe.command", "true");
+    capabilityProbe.runGit("config", "hook.capability-probe.event", "pre-commit");
+    const supportsConfigHooks = capabilityProbe.runGit("hook", "list", "pre-commit").out.includes("capability-probe");
+
+    test.each([false, true])("preserves a custom local hooksPath or /dev/null, unsupported=%s", (unsupported) => {
+        for (const hooksPath of ["custom-hooks", "/dev/null", ""]) {
+            const s = scratch(unsupported);
+            expect(s.runGit("config", "--local", "core.hooksPath", hooksPath).code).toBe(0);
+            s.install();
+            expect(s.runGit("config", "--local", "--get", "core.hooksPath").code).toBe(0);
+            expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(hooksPath);
+        }
+    });
+
+    test.each([false, true])("preserves inherited global and system hook paths, unsupported=%s", (unsupported) => {
+        for (const scope of ["--global", "--system"]) {
+            for (const local of [false, true]) {
+                const s = scratch(unsupported);
+                expect(s.runGit("config", scope, "core.hooksPath", "inherited-hooks").code).toBe(0);
+                if (local) {
+                    expect(s.runGit("config", "--local", "core.hooksPath", ".githooks").code).toBe(0);
+                }
+
+                s.install();
+                if (local && !unsupported) {
+                    chmodSync(join(s.directory, ".githooks/pre-commit"), 0o755);
+                    chmodSync(join(s.directory, ".githooks/commit-msg"), 0o755);
+                    expect(s.runGit("commit", "--allow-empty", "-qm", "inherited path fixture").code).toBe(0);
+                    expect(readFileSync(join(s.directory, "hook-runs"), "utf8")).toBe("pre-commit\n");
+                }
+
+                expect(s.runGit("config", scope, "--get", "core.hooksPath").out).toBe("inherited-hooks");
+                expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(local ? ".githooks" : "");
+                expect(s.runGit("config", "--get", "core.hooksPath").out).toBe(local ? ".githooks" : "inherited-hooks");
+            }
+        }
+    });
+
+    test("older Git keeps the repository hook folder when unset or repository-owned", () => {
+        for (const local of [false, true]) {
+            const s = scratch(true);
+            if (local) {
+                expect(s.runGit("config", "--local", "core.hooksPath", ".githooks").code).toBe(0);
+            }
+
+            s.install();
+            expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(".githooks");
+        }
+    });
+
+    test.skipIf(!supportsConfigHooks).each([false, true])(
+        "config hooks execute through their interpreter, local .githooks=%s",
+        (local) => {
+            const s = scratch();
+            if (local) {
+                expect(s.runGit("config", "--local", "core.hooksPath", ".githooks").code).toBe(0);
+            }
+
+            s.install();
+            expect(s.runGit("hook", "list", "pre-commit").out).toContain("genesis-tools-pre-commit");
+            expect(s.runGit("config", "--local", "--get", "core.hooksPath").code).toBe(1);
+            const commit = s.runGit("commit", "--allow-empty", "-qm", "fixture");
+            expect(commit.code, commit.err).toBe(0);
+            expect(readFileSync(join(s.directory, "hook-runs"), "utf8")).toBe("pre-commit\n");
+            expect(readFileSync(join(s.directory, "hook-args"), "utf8").trim()).toMatch(/COMMIT_EDITMSG$/);
+
+            writeFileSync(join(s.directory, "fail-hook"), "");
+            const before = s.runGit("rev-parse", "HEAD").out;
+            expect(s.runGit("commit", "--allow-empty", "-qm", "blocked").code).not.toBe(0);
+            expect(s.runGit("rev-parse", "HEAD").out).toBe(before);
+            expect(s.runGit("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-qm", "disabled").code).toBe(
+                0
+            );
+            expect(s.runGit("-c", "core.hooksPath=", "commit", "--allow-empty", "-qm", "empty override").code).toBe(0);
+            expect(readFileSync(join(s.directory, "hook-runs"), "utf8")).toBe("pre-commit\npre-commit\n");
+        }
+    );
+
+    test("checkout and rebase early exits never start git or tools", () => {
+        const s = scratch();
+        const bin = join(s.directory, "blocked-bin");
+        mkdirSync(bin);
+        for (const command of ["git", "bun", "tools"]) {
+            const file = join(bin, command);
+            writeFileSync(file, '#!/bin/sh\nprintf "unexpected process\\n" >> unexpected-process\nexit 99\n');
+            chmodSync(file, 0o755);
+        }
+
+        const linked = join(s.directory, "linked");
+        mkdirSync(linked);
+        writeFileSync(join(linked, ".git"), `gitdir: ${join(s.directory, ".git")}\n`);
+        const isolatedEnv = { ...s.testEnv, PATH: bin };
+        for (const args of [
+            ["old", "new", "0"],
+            ["old", "new", "1"],
+            ["0000000000000000000000000000000000000000", "new", "1"],
+        ]) {
+            const r = Bun.spawnSync(["/bin/bash", join(ROOT, ".githooks/post-checkout"), ...args], {
+                cwd: args[0].startsWith("0000") ? s.directory : linked,
+                env: isolatedEnv,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            expect(r.exitCode).toBe(0);
+        }
+
+        for (const state of ["rebase-merge", "rebase-apply"]) {
+            mkdirSync(join(s.directory, ".git", state));
+            const r = Bun.spawnSync(["/bin/bash", join(ROOT, ".githooks/post-commit")], {
+                cwd: linked,
+                env: { ...isolatedEnv, GIT_INDEX_FILE: join(s.directory, ".git/index") },
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            expect(r.exitCode).toBe(0);
+            rmSync(join(s.directory, ".git", state), { recursive: true });
+        }
+
+        expect(existsSync(join(s.directory, "unexpected-process"))).toBe(false);
+        expect(existsSync(join(linked, "unexpected-process"))).toBe(false);
+    });
+});
 
 // The scratch repo lives under the test temp root, which the bun test preload removes on a green exit.
 let repo = "";

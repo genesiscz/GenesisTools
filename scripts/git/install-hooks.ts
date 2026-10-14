@@ -55,21 +55,26 @@ const hooks = readdirSync(join(root, HOOKS_DIR)).flatMap((name) => {
 for (const { name, interpreter } of hooks) {
     // A branch from before a hook existed has no file for it: the commit or checkout goes on.
     const path = `${HOOKS_DIR}/${name}`;
-    const command = `test -n "$(git config --get core.hooksPath)" || test ! -f ${path} || exec ${interpreter} ${path}`;
+    const command = `git config --get core.hooksPath >/dev/null || test ! -f ${path} || exec ${interpreter} ${path}`;
     change(["config", `hook.${PREFIX}${name}.command`, command]);
     change(["config", "--replace-all", `hook.${PREFIX}${name}.event`, name]);
 }
 
-const hooksPath = read(["config", "--get", "core.hooksPath"]);
+const localHooksPath = read(["config", "--local", "--get", "core.hooksPath"]);
+const inheritedHooksPath =
+    read(["config", "--global", "--get", "core.hooksPath"]) ?? read(["config", "--system", "--get", "core.hooksPath"]);
+const managesHooksPath = (localHooksPath === null || localHooksPath === HOOKS_DIR) && inheritedHooksPath === null;
 const probe = hooks[0]?.name;
 const listed = probe !== undefined && (read(["hook", "list", probe]) ?? "").includes(`${PREFIX}${probe}`);
 
-if (print) {
-    console.log("git config --unset core.hooksPath   # only when `git hook list` names the configured hooks");
-} else if (!listed) {
-    // This git ignores config hooks, so the hook folder must stay the way hooks run.
-    change(["config", "core.hooksPath", HOOKS_DIR]);
-} else if (hooksPath === HOOKS_DIR) {
-    // Otherwise git would run each hook twice: the config hook, then the file from the hook folder.
-    change(["config", "--unset", "core.hooksPath"]);
+if (managesHooksPath) {
+    if (print) {
+        console.log("git config --unset core.hooksPath   # only when `git hook list` names the configured hooks");
+    } else if (!listed) {
+        // This git ignores config hooks, so the repository-owned hook folder must stay the way hooks run.
+        change(["config", "--local", "core.hooksPath", HOOKS_DIR]);
+    } else if (localHooksPath === HOOKS_DIR) {
+        // Unsetting this would expose an inherited path, so only migrate when no global or system path exists.
+        change(["config", "--local", "--unset", "core.hooksPath"]);
+    }
 }
