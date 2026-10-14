@@ -40,14 +40,14 @@ report, its reply file (every verdict and every reply text it wants posted) and 
      edit.
    - **Removed test lines are guilty until explained.** List them (`judge-pack` puts the test diff first); a deleted
      or loosened assertion must be replaced by a stronger one, or it is a weakened check.
-10. **A spy on the logger must read what the logger writes.** `SafeJSON.stringify(spy.mock.calls)` turns an `Error`
+9. **A spy on the logger must read what the logger writes.** `SafeJSON.stringify(spy.mock.calls)` turns an `Error`
    argument into `{}`, so a "the secret is not logged" test passes on the leaking code (2026-10-14, the Grok auth
    reader logged `{ err }`; the first test was green before the fix). Map each argument the way pino does (an Error's
    message, an object's values) before asserting, and plant the old line to prove the test fails.
-11. **A plant must remove the whole fix.** When a fix has two parts (a ticket bump AND a guard), planting only one can
+10. **A plant must remove the whole fix.** When a fix has two parts (a ticket bump AND a guard), planting only one can
    pass because the other still covers it. That proves the test tests the part you left, not that it is weak: plant
    the other part too before you call a test useless (#501 round 1).
-9. **Plants run the tests the commit changed.** Plant each fixed source and run the test files the worker's commit
+11. **Plants run the tests the commit changed.** Plant each fixed source and run the test files the worker's commit
    touched (`git show --stat`), not the source's folder: on 2026-10-14 two plants "passed" only because the folder
    held none of the new tests.
 8. **Cherry-pickability** (unified mode): test-pick onto the PR branch before you correct, so the correction can avoid
