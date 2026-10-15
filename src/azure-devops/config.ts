@@ -2,8 +2,17 @@
  * Azure DevOps CLI - Configuration loading and management
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import {
+    azureDataDir,
+    CONFIG_ENV_VAR,
+    CONFIG_FLAG,
+    ConfigPathError,
+    type ConfigPathInput,
+    configPathSourceLabel,
+    explicitConfigPath,
+    resolveConfigPath,
+} from "@app/azure-devops/lib/config-path";
 import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -15,37 +24,41 @@ export function getRelativeTime(date: Date): string {
     return formatRelativeTime(date, { rounding: "round" });
 }
 
-/**
- * Search for config file starting from cwd, up to 3 parent levels
- */
-export function findConfigPath(): string | null {
-    const configName = ".claude/azure/config.json";
-    let currentDir = resolve(env.paths.getClarityProjectCwd());
+let configFlag: string | undefined;
 
-    for (let i = 0; i < 4; i++) {
-        // current + 3 levels up
-        const configPath = join(currentDir, configName);
+/** Remember the value of the global --config option for the rest of the run. */
+export function setConfigFlag(value: string | undefined): void {
+    configFlag = value;
+}
 
-        if (existsSync(configPath)) {
-            return configPath;
-        }
-
-        const parentDir = dirname(currentDir);
-
-        if (parentDir === currentDir) {
-            break; // reached root
-        }
-        currentDir = parentDir;
-    }
-
-    return null;
+function activeConfigInput(): ConfigPathInput {
+    return {
+        flag: configFlag,
+        envValue: env.paths.getAzureDevopsConfig(),
+        searchFrom: env.paths.getClarityProjectCwd(),
+        cwd: process.cwd(),
+    };
 }
 
 /**
- * Get the config directory for the current project (in cwd)
+ * The config file: --config, then AZURE_DEVOPS_CONFIG, then a search from cwd up to 3 parent levels.
+ * Throws a ConfigPathError when an explicit path is not a readable file.
+ */
+export function findConfigPath(): string | null {
+    return resolveConfigPath(activeConfigInput())?.path ?? null;
+}
+
+/** The path --config or AZURE_DEVOPS_CONFIG names, whether or not the file exists yet. */
+export function getExplicitConfigPath(): string | null {
+    return explicitConfigPath(activeConfigInput())?.path ?? null;
+}
+
+/**
+ * Get the config directory: the folder of an explicit config, otherwise `.claude/azure` in cwd.
+ * The tasks and wiki folders live in it.
  */
 export function getLocalConfigDir(): string {
-    return join(process.cwd(), ".claude/azure");
+    return azureDataDir(activeConfigInput());
 }
 
 /**
@@ -72,16 +85,37 @@ export function extractOrgName(orgUrl: string): string | null {
  * Load config from file or return null if not found.
  */
 export function loadConfig(): AzureConfig | null {
-    const configPath = findConfigPath();
+    const found = resolveConfigPath(activeConfigInput());
 
-    if (!configPath) {
+    if (!found) {
         return null;
     }
 
     try {
-        return SafeJSON.parse(readFileSync(configPath, "utf-8"));
-    } catch {
-        return null;
+        return SafeJSON.parse(readFileSync(found.path, "utf-8"));
+    } catch (error) {
+        if (found.source === "search") {
+            return null;
+        }
+
+        const reason = error instanceof Error ? error.message : String(error);
+
+        throw new ConfigPathError(
+            `Azure DevOps config cannot be parsed: ${found.path} (from ${configPathSourceLabel(found.source)}): ${reason}`
+        );
+    }
+}
+
+function loadConfigOrExit(): AzureConfig | null {
+    try {
+        return loadConfig();
+    } catch (error) {
+        if (error instanceof ConfigPathError) {
+            out.error(`\n❌ ${error.message}\n`);
+            process.exit(1);
+        }
+
+        throw error;
     }
 }
 
@@ -89,7 +123,7 @@ export function loadConfig(): AzureConfig | null {
  * Require config or exit with helpful error
  */
 export function requireConfig(): AzureConfig {
-    const config = loadConfig();
+    const config = loadConfigOrExit();
 
     if (!config) {
         out.error(`
@@ -101,6 +135,7 @@ Run configure with any Azure DevOps URL from your project:
   ${toolCommand("azure-devops configure")} "https://myorg.visualstudio.com/MyProject/_queries/query/..."
 
 This will create .claude/azure/config.json in the current directory.
+To use a config file elsewhere, pass ${CONFIG_FLAG} <path> or set ${CONFIG_ENV_VAR}.
 `);
         process.exit(1);
     }
@@ -112,7 +147,7 @@ This will create .claude/azure/config.json in the current directory.
  * Load config with TimeLog settings or exit with helpful error
  */
 export function requireTimeLogConfig(): AzureConfigWithTimeLog {
-    const config = loadConfig() as AzureConfigWithTimeLog | null;
+    const config = loadConfigOrExit() as AzureConfigWithTimeLog | null;
 
     if (!config) {
         out.error(`

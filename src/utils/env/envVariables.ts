@@ -247,6 +247,8 @@ export const env = {
         getClaudeConfigDir: () => getTrimmed("CLAUDE_CONFIG_DIR"),
         getHistfile: () => getTrimmed("HISTFILE"),
         getClarityProjectCwd: () => getTrimmed("CLARITY_PROJECT_CWD") ?? cwd(),
+        /** Explicit path of the Azure DevOps tool's config.json (`AZURE_DEVOPS_CONFIG`). `--config` wins over it. */
+        getAzureDevopsConfig: () => getTrimmed("AZURE_DEVOPS_CONFIG"),
         getAppData: () => getTrimmed("APPDATA"),
         /** Where `tools learn-from-fable bootstrap` proposes to put the pack repo. */
         getFablePackPath: () => getTrimmed("GT_FABLE_PACK_PATH"),

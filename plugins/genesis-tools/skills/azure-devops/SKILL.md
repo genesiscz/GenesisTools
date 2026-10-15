@@ -19,7 +19,7 @@ az login --allow-no-subscriptions --use-device-code    # if Conditional Access b
 tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
 ```
 
-`configure` takes any Azure DevOps URL of the project and writes `.claude/azure/config.json`. The tool finds that file from the current directory up to three parent levels. A missing login or config stops the command with a message that names the missing step. Add `-v` for debug logging. `tools azure-devops --readme` prints the full README.
+`configure` takes any Azure DevOps URL of the project and writes `.claude/azure/config.json`. The tool finds that file from the current directory up to three parent levels. To use a config file from any folder, pass `--config <path>` (a global option, valid before or after the subcommand) or set `AZURE_DEVOPS_CONFIG=<path>`. The order is `--config`, then `AZURE_DEVOPS_CONFIG`, then the search. An explicit path that is not a readable file stops the command with an error; it never falls back to the search. With an explicit config, the `tasks/` and `wiki/` folders live next to that file instead of in the working directory, and `configure` writes to that path. A missing login or config stops the command with a message that names the missing step. Add `-v` for debug logging. `tools azure-devops --readme` prints the full README.
 
 ## CLI Reference
 

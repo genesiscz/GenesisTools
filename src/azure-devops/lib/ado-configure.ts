@@ -69,12 +69,12 @@ export interface SavedAdoConfig {
     config: AzureConfigWithTimeLog;
 }
 
-export function saveAdoConfig(config: AzureConfig, configDir: string): SavedAdoConfig {
+export function saveAdoConfig(config: AzureConfig, configDir: string, fileName = "config.json"): SavedAdoConfig {
     if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true });
     }
 
-    const configPath = join(configDir, "config.json");
+    const configPath = join(configDir, fileName);
     const existing = readExistingConfig(configPath);
 
     // Supplemental settings are only meaningful within one project. `team` names

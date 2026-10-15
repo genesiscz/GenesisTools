@@ -530,6 +530,13 @@ Configuration is saved to `.claude/azure/config.json` in your project directory.
 
 **Config Search**: The tool searches for `.claude/azure/config.json` starting from the current directory, then up to 3 parent levels. This allows running the tool from subdirectories.
 
+**Explicit config**: To run from a folder with no config above it, pass the global option `--config <path>` or set `AZURE_DEVOPS_CONFIG=<path>`. The order is `--config`, then `AZURE_DEVOPS_CONFIG`, then the search. A path that is missing, is a folder, or cannot be read is an error; the tool never falls back to the search. `tasks/` and `wiki/` are then created next to the config file, and `configure` writes the config to that path.
+
+```bash
+tools azure-devops --config /path/to/project/.claude/azure/config.json workitem 12345
+AZURE_DEVOPS_CONFIG=/path/to/project/.claude/azure/config.json tools azure-devops workitem 12345
+```
+
 ## Output Formats
 
 ### AI Format (Default)

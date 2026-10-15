@@ -40,6 +40,7 @@ handleReadmeFlag(import.meta.url);
 // Import command registration functions
 import { registerAncestorsCommand } from "@app/azure-devops/commands/ancestors";
 import { registerCommentCommand } from "@app/azure-devops/commands/comment";
+import { registerConfigOption } from "@app/azure-devops/commands/config-option";
 import { registerConfigureCommand } from "@app/azure-devops/commands/configure";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
 import { registerHistoryCommand } from "@app/azure-devops/commands/history";
@@ -72,6 +73,8 @@ program
         showHelpFull();
         process.exit(0);
     });
+
+registerConfigOption(program);
 
 // Register all commands
 registerConfigureCommand(program);
@@ -115,6 +118,7 @@ Commands:
   comment <subcommand>   Work item comments: list, add, edit, delete
 
 Global Options:
+  --config <path>        Config file to use (or set AZURE_DEVOPS_CONFIG); wins over the search from the working directory
   --team <name>          Optional team; narrows team-scoped lists (overrides config.team)
   -v, --verbose          Enable verbose debug logging
   --readme               Print this tool's README and exit
@@ -271,10 +275,10 @@ History Commands:
   ${toolCommand("azure-devops history mentions")}           Comments that named a user in a date window (--user, --from, --to)
 
 Storage:
-  Config:  .claude/azure/config.json (per-project, searched up to 3 levels)
+  Config:  --config <path>, then $AZURE_DEVOPS_CONFIG, then .claude/azure/config.json (per-project, searched up to 3 levels)
   Cache:   ~/.genesis-tools/azure-devops/cache/ (global; queries 180 days, work items 365 days
            with a 5-minute freshness window, history and comments 7 days)
-  Tasks:   .claude/azure/tasks/ (per-project, in cwd)
+  Tasks:   .claude/azure/tasks/ (per-project, in cwd; next to the config file when --config or AZURE_DEVOPS_CONFIG is set)
 
 Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-devops
 `);

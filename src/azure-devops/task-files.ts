@@ -4,14 +4,15 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { getLocalConfigDir } from "@app/azure-devops/config";
 import type { FoundTaskFile } from "@app/azure-devops/types";
 import { slugify } from "@genesiscz/utils/string";
 
 /**
- * Get the tasks directory (always in cwd), optionally with category subdirectory
+ * Get the tasks directory (in cwd, or next to an explicit config), optionally with category subdirectory
  */
 export function getTasksDir(category?: string): string {
-    const base = join(process.cwd(), ".claude/azure/tasks");
+    const base = join(getLocalConfigDir(), "tasks");
     return category ? join(base, category) : base;
 }
 

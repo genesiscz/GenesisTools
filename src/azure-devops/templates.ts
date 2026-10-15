@@ -4,6 +4,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getLocalConfigDir } from "@app/azure-devops/config";
 import type { WorkItem, WorkItemFull, WorkItemTemplate, WorkItemType } from "@app/azure-devops/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
@@ -472,7 +473,7 @@ export function saveTemplate(template: WorkItemTemplate, baseDir?: string): stri
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `${timestamp}-New${template.type.replace(/\s+/g, "")}.json`;
 
-    const dir = baseDir || join(process.cwd(), ".claude/azure/tasks/created");
+    const dir = baseDir || join(getLocalConfigDir(), "tasks/created");
 
     if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });

@@ -5,10 +5,11 @@
  * and project configuration from any Azure DevOps URL.
  */
 
+import { basename } from "node:path";
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
 import { azDevopsDefaults, buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import { azNotOnPathMessage, isAzOnPath } from "@app/azure-devops/lib/az-cli.utils";
-import { getLocalConfigDir } from "@app/azure-devops/utils";
+import { getExplicitConfigPath, getLocalConfigDir } from "@app/azure-devops/utils";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -62,7 +63,8 @@ async function handleConfigure(url: string): Promise<void> {
     // Report what was SAVED, not what the URL carried. A same-project reconfigure
     // keeps the team and the timelog block, so printing newConfig said
     // "Team: (none)" while the file on disk still had one (PR #333 review t7).
-    const saved = saveAdoConfig(newConfig, configDir);
+    const explicitConfig = getExplicitConfigPath();
+    const saved = saveAdoConfig(newConfig, configDir, explicitConfig ? basename(explicitConfig) : undefined);
 
     if (saved.config.team) {
         const kept = newConfig.team ? "" : " (kept from the existing config)";
