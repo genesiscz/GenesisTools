@@ -333,15 +333,36 @@ enum VaultGrants {
         return file
     }
 
-    static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile) -> VaultGrant? {
-        file.grants.last { $0.executable == executable && $0.script == script && !$0.isTooBroad && $0.isLive(at: now) }
+    /// The runtime a grant is keyed by. Bun and GenesisTools' `gt-<tool>` launchers are one program: every launcher is
+    /// a hard link of `~/.bun/bin/bun`, and which one starts a script depends on the tool that spawned it. The usage
+    /// daemon ran as bun, gt-services, gt-claude and gt-codex on one morning (2026-10-15), and each asked again for the
+    /// same script after "Always". Only these paths count, so a binary elsewhere that calls itself bun still asks.
+    static func runtime(of executable: String, home: String = genesisHome()) -> String {
+        let bun = ["\(home)/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun"]
+        let launchers = "\(home)/.genesis-tools/bin/"
+        let isLauncher = executable.hasPrefix(launchers) && (executable as NSString).lastPathComponent.hasPrefix("gt-")
+            && !executable.dropFirst(launchers.count).contains("/")
+        return bun.contains(executable) || isLauncher ? "bun" : executable
+    }
+
+    static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = genesisHome()) -> Bool {
+        grant.script == script && runtime(of: grant.executable, home: home) == runtime(of: executable, home: home)
+    }
+
+    static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile,
+                     home: String = genesisHome()) -> VaultGrant? {
+        file.grants.last {
+            sameProgram($0, executable: executable, script: script, home: home) && !$0.isTooBroad && $0.isLive(at: now)
+        }
     }
 
     /// Replaces any grant for the same program and drops expired and too-broad ones.
-    static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile) -> VaultGrantsFile {
+    static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile,
+                         home: String = genesisHome()) -> VaultGrantsFile {
         var next = file
         next.grants = file.grants.filter {
-            !($0.executable == grant.executable && $0.script == grant.script) && !$0.isTooBroad && $0.isLive(at: now)
+            !sameProgram($0, executable: grant.executable, script: grant.script, home: home) && !$0.isTooBroad
+                && $0.isLive(at: now)
         } + [grant]
         return next
     }
@@ -629,7 +650,7 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true)
     }
 
-    guard VaultWindowLock.acquire(VaultWindowLock.path(for: "vault|\(executable)|\(caller.script ?? "")")) != nil else {
+    guard VaultWindowLock.acquire(VaultWindowLock.path(for: "vault|\(VaultGrants.runtime(of: executable))|\(caller.script ?? "")")) != nil else {
         vaultAudit("denied", params: params, caller: caller, session: session, detail: "an approval window for this program is already open")
         vaultDeny("an approval window for “\(tool)” is already open; answer that one first")
     }

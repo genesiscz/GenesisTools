@@ -83,6 +83,29 @@ final class VaultUnlockTests: XCTestCase {
                                          in: VaultGrants.remember(always, now: 1_000, in: file)), "always lasts until revoked")
     }
 
+    func testBunAndEveryGtLauncherAreOneProgramForTheSameScript() {
+        let home = "/Users/alice"
+        let daemon = "/repo/src/ai/commands/usage/poll-daemon.ts"
+        let grant = VaultGrant(key: "k", tool: "ai", executable: "\(home)/.bun/bin/bun", script: daemon,
+                               grantedAt: 1_000, until: nil, method: "touch-id")
+        let file = VaultGrants.remember(grant, now: 1_000, in: VaultGrantsFile(version: 1, grants: []), home: home)
+
+        for launcher in ["\(home)/.genesis-tools/bin/gt-codex", "\(home)/.genesis-tools/bin/gt-services", "\(home)/.bun/bin/bun"] {
+            XCTAssertNotNil(VaultGrants.live(executable: launcher, script: daemon, now: 2_000, in: file, home: home), launcher)
+        }
+
+        XCTAssertNil(VaultGrants.live(executable: "/tmp/evil/bun", script: daemon, now: 2_000, in: file, home: home),
+                     "a binary elsewhere that calls itself bun is not the runtime")
+        XCTAssertNil(VaultGrants.live(executable: "\(home)/.genesis-tools/bin/sub/gt-x", script: daemon, now: 2_000, in: file, home: home))
+        XCTAssertNil(VaultGrants.live(executable: "\(home)/.genesis-tools/bin/gt-codex", script: "/repo/src/other.ts",
+                                      now: 2_000, in: file, home: home), "the script still decides")
+
+        let again = VaultGrant(key: "k2", tool: "ai", executable: "\(home)/.genesis-tools/bin/gt-claude", script: daemon,
+                               grantedAt: 3_000, until: nil, method: "touch-id")
+        XCTAssertEqual(VaultGrants.remember(again, now: 3_000, in: file, home: home).grants, [again],
+                       "one grant per runtime and script, not one per launcher")
+    }
+
     func testAGrantWithoutAScriptForAnInterpreterMatchesNothingAndGoesOnTheNextWrite() {
         let broad = VaultGrant(key: "vault|bun|/Users/alice/.bun/bin/bun|", tool: "bun", executable: "/Users/alice/.bun/bin/bun",
                                script: nil, grantedAt: 1_000, until: nil, method: "touch-id")
