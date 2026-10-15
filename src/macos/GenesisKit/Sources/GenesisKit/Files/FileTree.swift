@@ -152,22 +152,20 @@ public final class FileTreeModel: ObservableObject {
 
     private func watch(_ rootPath: String) {
         watcher?.stop()
-        watcher = DirectoryWatcher(paths: [rootPath], latency: 0.4) { [weak self] paths in
-            MainActor.assumeIsolated { self?.diskChanged(paths) }
+        // Folder events: one path per changed folder and batch, so a build inside the root stays cheap here.
+        watcher = DirectoryWatcher(paths: [rootPath], latency: 0.4, fileEvents: false) { [weak self] folders in
+            MainActor.assumeIsolated { self?.diskChanged(folders) }
         }
     }
 
-    /// One FSEvents batch: every read folder that holds a changed path is read again. Most events are a note saved
-    /// in place; its folder's listing comes back equal and the rows stay as they are.
-    private func diskChanged(_ paths: [String]) {
-        var folders = Set<String>()
-        for path in paths {
-            let parent = (path as NSString).deletingLastPathComponent
-            if children[parent] != nil {
-                folders.insert(parent)
-            }
+    /// One FSEvents batch of changed folders: each one the tree has read is read again. Most are a note saved in
+    /// place; its folder's listing comes back equal and the rows stay as they are.
+    private func diskChanged(_ folders: [String]) {
+        // Folder events name the folder with a trailing "/".
+        let paths = Set(folders.map { $0.count > 1 && $0.hasSuffix("/") ? String($0.dropLast()) : $0 })
+        for folder in paths where children[folder] != nil {
+            relist(folder)
         }
-        folders.forEach(relist)
     }
 
     /// Reads a folder the tree already lists again, without the loading spinner, and rebuilds only when the listing

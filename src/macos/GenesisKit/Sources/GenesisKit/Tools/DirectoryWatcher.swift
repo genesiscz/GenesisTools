@@ -23,8 +23,11 @@ public final class DirectoryWatcher {
     private let onChange: ([String]) -> Void
 
     /// `latency` in seconds: FSEvents holds events this long and hands them over as one batch.
-    /// `onChange` gets the accepted paths of one batch; it runs on the main queue.
-    public init(paths: [String], latency: TimeInterval = 0.5, accepts: @escaping (String) -> Bool = { _ in true }, onChange: @escaping ([String]) -> Void) {
+    /// `onChange` gets the accepted paths of one batch; it runs on the main queue. `fileEvents` false reports the
+    /// folder whose contents changed instead of each file, once per batch: a watcher that only re-reads listings
+    /// (a file tree) needs no more, and a build in the watched tree then costs one path per folder, not per file.
+    public init(paths: [String], latency: TimeInterval = 0.5, fileEvents: Bool = true,
+                accepts: @escaping (String) -> Bool = { _ in true }, onChange: @escaping ([String]) -> Void) {
         self.paths = paths
         self.accepts = accepts
         self.onChange = onChange
@@ -55,7 +58,7 @@ public final class DirectoryWatcher {
             paths as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             max(0.1, latency),
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | (fileEvents ? kFSEventStreamCreateFlagFileEvents : 0))
         )
         if let stream {
             FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
