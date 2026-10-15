@@ -16,7 +16,7 @@ describe("kit API declaration", () => {
         expect(dts).toContain("badge?: {");
         expect(dts).toContain("export declare function DayChart(");
         // One name per roadmap kit file, so a file missing from KIT_FILES fails here.
-        for (const name of ["SERIES_COLOR", "contrastRatio(", "Tooltip(", "NumberInput("]) {
+        for (const name of ["SERIES_COLOR", "contrastRatio(", "Tooltip(", "NumberInput(", "Gantt("]) {
             expect(dts).toContain(name);
         }
         expect(dts).not.toContain("bun:test");

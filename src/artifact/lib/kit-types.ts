@@ -42,6 +42,7 @@ const KIT_FILES = [
     "color.ts",
     "tooltip.tsx",
     "forms.tsx",
+    "gantt.tsx",
     "index.ts",
 ];
 
