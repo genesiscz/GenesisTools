@@ -359,3 +359,27 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **Accessibility hit tests scale with the number of views.** With 100 tabs (about 880 accessibility elements), one
   `NSHostingView.accessibilityHitTest` from an outside AX client held the main thread 785 ms (HangWatch stack,
   2026-10-15 00:08). Every AX client (window managers, `tools control see`) pays it. Keep long strips lazy or capped.
+
+## SwiftUI rows in tests, a tree's stale listings, and far scrolls — 2026-10-15 06:35
+
+- **In-process accessibility cannot see SwiftUI list rows.** `accessibilityChildren()` walked from the list's
+  `NSScrollView` never reaches them, and an xctest process has no accessibility windows (`tools control see --app
+  <xctest pid>` answers "no AX windows"). To check which rows are on screen, render the scroll view
+  (`cacheDisplay(in:to:)`) and read it with Vision (`TreeDrawnText` in GenesisKitTests). A narrow column cuts a name
+  in the middle ("2026-10-15-…osals.sol3.md"): match its two ends.
+- **A test can show the real window for a recording without taking focus.** `orderFrontRegardless()` from xctest
+  never activates; write `window.windowNumber` to a file and run `tools control capture record --window-ids <n>`
+  (`MarkdownSidebarRevealDemoTests`). The same test on the old and the new code gives a before and after video.
+- **A file tree that caches folder listings must watch them.** Without a watcher a folder stays as its first read
+  showed it. A note another app wrote later had no row, so "Show in Sidebar" found nothing and did nothing, silently
+  (2026-10-15, note written 05:30:49, reveal 05:33:14). One FSEvents stream over the root; re-read only folders
+  already listed, off the main thread, and rebuild only when the listing changed. A reveal also re-reads a folder
+  whose listing lacks the file.
+- **An animated `scrollTo` to a far row of a `LazyVStack` does not glide.** Recorded at 15 fps: it lands on an
+  estimate, waits about half a second, then jumps to the row. `NSClipView.animator().setBoundsOrigin` on a SwiftUI
+  `ScrollView` did not animate at all, and a position computed from the row index overshot. What works: scroll
+  without animation so the row sits at the nearer edge (`Transaction.disablesAnimations`), wait a moment for the
+  list to lay it out, then animate the last stretch to the centre.
+- **Driving a background app's context menu with `tools control` is not safe yet.** `AXShowMenu` on a SwiftUI tab
+  blocked 2 s and opened the parent's menu first; the menu rows were not in `see --scope menu`; a coordinate click
+  into the open menu closed it without choosing. Trigger the code path from a test instead.
