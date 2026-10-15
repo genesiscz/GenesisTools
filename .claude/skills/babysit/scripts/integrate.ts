@@ -20,6 +20,10 @@ import { flag, has, loadRun, worktreeFor } from "./run";
 import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
 
 const run = loadRun();
+// This repository's gates (tsgo, lint-rules, check-tool-commands, check-commits) exist only in GenesisTools. Another
+// repository's run card skips them by itself: GenesisPlayground #94 round 1 ran `bunx tsgo` in a Swift app, printed the
+// compiler's help and stopped the push (2026-10-15).
+const skipGates = has("--skip-gates") || run.repo !== "genesiscz/GenesisTools";
 const pr = flag("--pr") ?? "";
 const round = flag("--round") ?? "1";
 const wt = flag("--wt") ?? worktreeFor(run, pr);
@@ -101,7 +105,7 @@ if (dirty) {
     process.exit(1);
 }
 
-if (!has("--skip-gates") && oldHead !== newHead) {
+if (!skipGates && oldHead !== newHead) {
     const tsgo = join(wt, "node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo");
     must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
     // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
@@ -131,7 +135,7 @@ if (!has("--skip-gates") && oldHead !== newHead) {
 
 // --skip-gates (another repository's PR) skips the repository rules above, but never the personal-data probe: it runs
 // on the target worktree and blocks only a hit in a line this push adds (probe.ts).
-if (has("--skip-gates") && oldHead !== newHead && !probeAddedLines({ wt, from: gateFrom, to: newHead })) {
+if (skipGates && oldHead !== newHead && !probeAddedLines({ wt, from: gateFrom, to: newHead })) {
     process.exit(1);
 }
 
@@ -141,7 +145,7 @@ if (oldHead !== newHead && !dry) {
     // --no-push-hooks counts only while new executables really stall (versions.ts): the gates above ran the hook's
     // probe, typecheck and repo rules, but its Biome check is then the lead's job.
     console.log(`hooks: ${ensureConfigHooks(run.main)}`);
-    const stalled = has("--no-push-hooks") && !has("--skip-gates") && (await newExecutablesStall());
+    const stalled = has("--no-push-hooks") && !skipGates && (await newExecutablesStall());
 
     if (has("--no-push-hooks") && !stalled) {
         console.log("= --no-push-hooks ignored: new executables start normally, so the push hooks run");
