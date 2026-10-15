@@ -29,8 +29,9 @@ final class GenRenderSwapTests: XCTestCase {
     struct Host: View {
         @ObservedObject var rig: Rig
         let timeout: TimeInterval
+        var fade: GenRenderSwapFade = .swiftUI
         var body: some View {
-            GenRenderSwap(id: rig.id, timeout: timeout) { id, ready in
+            GenRenderSwap(id: rig.id, timeout: timeout, fade: fade) { id, ready in
                 Probe(id: id, ready: ready, rig: rig)
             }
         }
@@ -64,6 +65,32 @@ final class GenRenderSwapTests: XCTestCase {
         XCTAssertEqual(rig.mounted, ["b", "c"])
         pump(0.6)
         XCTAssertEqual(rig.mounted, ["c"], "the timeout swaps without a ready")
+    }
+
+    /// The markdown viewer's fade: the old content goes in the swap's own pass, and the crossfade is an animation on the
+    /// hosting view's layer, so no SwiftUI frame runs for it.
+    func testALayerFadeSwapsAtOnceAndCrossfadesTheHostingLayer() throws {
+        let rig = Rig()
+        let hosting = NSHostingView(rootView: Host(rig: rig, timeout: 0.6, fade: .layer))
+        hosting.frame = NSRect(x: 0, y: 0, width: 300, height: 200)
+        hosting.wantsLayer = true
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.contentView = nil }
+        pump(0.1)
+        XCTAssertEqual(rig.mounted, ["a"])
+
+        rig.id = "b"
+        pump(0.1)
+        XCTAssertEqual(rig.mounted, ["a", "b"], "the new content builds under the old one")
+        let layer = try XCTUnwrap(hosting.layer)
+        XCTAssertNil(layer.animation(forKey: kCATransition))
+        rig.readies["b"]?()
+        pump(0.03)
+        XCTAssertEqual(rig.mounted, ["b"], "the old content goes at once, not after the fade")
+        let fade = try XCTUnwrap(layer.animation(forKey: kCATransition) as? CATransition, "a crossfade on the hosting layer")
+        XCTAssertEqual(fade.type, .fade)
     }
 
     final class Doc: ObservableObject {

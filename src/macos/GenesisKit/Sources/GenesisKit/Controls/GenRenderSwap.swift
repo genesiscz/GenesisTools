@@ -7,6 +7,8 @@
 //  2026-10-13: "on tab change, wait until the new content is rendered, then swap with a transition".
 //
 
+import AppKit
+import QuartzCore
 import SwiftUI
 
 /// What a content calls once it is really on screen (a page rendered its text). `GenRenderSwap` hands one to each
@@ -38,6 +40,18 @@ public extension EnvironmentValues {
     }
 }
 
+/// How the old content leaves once the new one is ready.
+public enum GenRenderSwapFade: Sendable {
+    /// A SwiftUI opacity animation on the old content. Every frame of it updates the whole window's view graph: in the
+    /// markdown viewer with 100 tabs the 0.14 s fade cost about 130 ms of main thread per tab switch, more than the
+    /// switch itself (2026-10-15, MarkdownTreeLagBenchTests with MARKDOWN_TREE_BENCH_SELECT_GAP=0.5).
+    case swiftUI
+    /// The old content goes at once and Core Animation crossfades the hosting view's layer from what was on screen.
+    /// The render server draws the frames; the main thread draws none. Anything else in that hosting view that changes
+    /// in the same instant crossfades with it.
+    case layer
+}
+
 /// Shows the content for `value`. When its id changes, the content for the old value stays on top while the content
 /// for the new one builds underneath; when the new one calls its `ready` (or `timeout` passes, so a content that never
 /// signals still arrives) the old one fades out on a quick ease-out, at once under Reduce Motion. A content with
@@ -48,6 +62,9 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
     private let idPath: KeyPath<Value, ID>
     private let timeout: TimeInterval
     private let content: (Value, GenRenderReady) -> Content
+    private let fade: GenRenderSwapFade
+    /// The hosting view a `.layer` fade crossfades.
+    @State private var anchor = GenRenderSwapAnchor()
     /// On screen.
     @State private var current: Value?
     /// Building underneath, not yet ready.
@@ -59,11 +76,12 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
 
     static var fadeDuration: TimeInterval { 0.14 }
 
-    public init(value: Value, id: KeyPath<Value, ID>, timeout: TimeInterval = 0.6,
+    public init(value: Value, id: KeyPath<Value, ID>, timeout: TimeInterval = 0.6, fade: GenRenderSwapFade = .swiftUI,
                 @ViewBuilder content: @escaping (Value, GenRenderReady) -> Content) {
         self.value = value
         self.idPath = id
         self.timeout = timeout
+        self.fade = fade
         self.content = content
     }
 
@@ -99,6 +117,9 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
                     .allowsHitTesting(id == key(current) && building == nil)
                     .zIndex(id == key(leaving) ? 2 : id == key(current) ? 1 : 0)
             }
+        }
+        .background {
+            if fade == .layer { GenRenderSwapAnchorView(anchor: anchor) }
         }
         .onAppear {
             if current == nil { current = value }
@@ -151,6 +172,18 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
             leaving = nil
             return
         }
+        if fade == .layer, let host = anchor.host, let layer = host.layer {
+            leaving = nil
+            let transition = CATransition()
+            transition.type = .fade
+            transition.duration = Self.fadeDuration
+            transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            // Core Animation files a transition under `kCATransition` whatever key it is given.
+            layer.add(transition, forKey: kCATransition)
+            // The swap lands in this transaction, so the crossfade runs from the old content to the new.
+            host.layoutSubtreeIfNeeded()
+            return
+        }
         leaving = old
         fading = false
         withAnimation(.easeOut(duration: Self.fadeDuration)) { fading = true }
@@ -165,7 +198,44 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
 
 public extension GenRenderSwap where Value == ID {
     /// The content for an id alone.
-    init(id: ID, timeout: TimeInterval = 0.6, @ViewBuilder content: @escaping (ID, GenRenderReady) -> Content) {
-        self.init(value: id, id: \.self, timeout: timeout, content: content)
+    init(id: ID, timeout: TimeInterval = 0.6, fade: GenRenderSwapFade = .swiftUI,
+         @ViewBuilder content: @escaping (ID, GenRenderReady) -> Content) {
+        self.init(value: id, id: \.self, timeout: timeout, fade: fade, content: content)
+    }
+}
+
+/// Where a `.layer` fade finds its hosting view: a view of no size and no hit area behind the swap's contents.
+@MainActor
+final class GenRenderSwapAnchor {
+    weak var view: NSView?
+
+    /// The nearest hosting view around the swap: its layer holds both contents. The window's content view when none
+    /// is found by name.
+    var host: NSView? {
+        var next = view?.superview
+        while let candidate = next {
+            if String(describing: type(of: candidate)).contains("HostingView") { return candidate }
+            next = candidate.superview
+        }
+        return view?.window?.contentView
+    }
+}
+
+private struct GenRenderSwapAnchorView: NSViewRepresentable {
+    let anchor: GenRenderSwapAnchor
+
+    final class Marker: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func isAccessibilityElement() -> Bool { false }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let marker = Marker()
+        anchor.view = marker
+        return marker
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        anchor.view = nsView
     }
 }

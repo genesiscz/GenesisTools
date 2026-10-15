@@ -110,8 +110,9 @@ struct MarkdownDocumentsView: View {
                             .frame(width: MarkdownSidebarWidth.outline)
                         Rectangle().fill(model.theme.border).frame(width: 1)
                     }
-                    // The old tab's page stays until the new one has rendered: no blank frame on a switch.
-                    GenRenderSwap(value: doc, id: \.id) { shown, ready in
+                    // The old tab's page stays until the new one has rendered: no blank frame on a switch. The fade is
+                    // Core Animation's: a SwiftUI one re-rendered the whole window on each of its frames.
+                    GenRenderSwap(value: doc, id: \.id, fade: .layer) { shown, ready in
                         MarkdownDocumentPane(doc: shown, model: model, leaving: shown.id != model.selected?.id)
                             .environment(\.genRenderReady, ready)
                             .onAppear {
