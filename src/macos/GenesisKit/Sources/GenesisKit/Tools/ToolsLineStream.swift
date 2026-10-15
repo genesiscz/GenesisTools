@@ -18,6 +18,35 @@ public final class ToolsLineStream: @unchecked Sendable {
         /// Darwin background policy from the first instruction (`taskpolicy -b`, so disk and network I/O are
         /// throttled and every child it spawns inherits it), and nice 15.
         case background
+
+        var niceValue: Int32 {
+            switch self {
+            case .background: return 15
+            case .utility: return 0
+            }
+        }
+
+        /// Points `process` at `plan`, wrapping a background run in `taskpolicy -b` when that tool exists.
+        /// `DetachedToolsJob.start` uses the same method, so the two launchers cannot drift.
+        func configure(_ process: Process, plan: ToolsBridge.ProcessLaunchPlan,
+                       taskPolicyPath: String = ToolsLineStream.taskPolicyPath) {
+            let wrap = self == .background && FileManager.default.isExecutableFile(atPath: taskPolicyPath)
+            if wrap {
+                process.executableURL = URL(fileURLWithPath: taskPolicyPath)
+                process.arguments = ["-b", plan.executable.path] + plan.arguments
+            } else {
+                process.executableURL = plan.executable
+                process.arguments = plan.arguments
+            }
+            process.currentDirectoryURL = plan.workingDirectory
+            process.qualityOfService = self == .background ? .background : .utility
+        }
+
+        /// Nice 15 after `run()` for a background child. Children spawned from then on inherit it.
+        func applyNice(to pid: Int32) {
+            guard self == .background else { return }
+            _ = setpriority(PRIO_PROCESS, id_t(pid), niceValue)
+        }
     }
 
     public struct Exit: Sendable {
@@ -72,22 +101,14 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
 
         let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: [subcommand] + args)
-        if priority == .background, FileManager.default.isExecutableFile(atPath: Self.taskPolicyPath) {
-            // taskpolicy execs the command in place: the same pid, so stop() and the exit report are unchanged.
-            process.executableURL = URL(fileURLWithPath: Self.taskPolicyPath)
-            process.arguments = ["-b", plan.executable.path] + plan.arguments
-        } else {
-            process.executableURL = plan.executable
-            process.arguments = plan.arguments
-        }
-        process.currentDirectoryURL = plan.workingDirectory
+        // taskpolicy execs the command in place: the same pid, so stop() and the exit report are unchanged.
+        priority.configure(process, plan: plan)
         var environment = ToolsBridge.scrubbedEnvironment()
         for (key, value) in extraEnv where ToolsBridge.envAllowlist.contains(key) {
             environment[key] = value
         }
         environment[ToolsCallTrace.environmentKey] = traceId
         process.environment = environment
-        process.qualityOfService = priority == .background ? .background : .utility
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
@@ -121,10 +142,7 @@ public final class ToolsLineStream: @unchecked Sendable {
             self?.finish(exited: true)
         }
         try process.run()
-        if priority == .background {
-            // Children spawned from now on inherit it; the policy above already holds from the start.
-            _ = setpriority(PRIO_PROCESS, id_t(process.processIdentifier), 15)
-        }
+        priority.applyNice(to: process.processIdentifier)
     }
 
     static let taskPolicyPath = "/usr/sbin/taskpolicy"

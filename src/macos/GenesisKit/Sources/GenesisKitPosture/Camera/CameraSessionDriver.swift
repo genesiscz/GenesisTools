@@ -90,13 +90,26 @@ final class AVCameraSessionDriver: CameraSessionDriving, @unchecked Sendable {
         output.setSampleBufferDelegate(delegate, queue: queue)
     }
 
+    /// `canAdd` false is a failure. The session does not hold the input, so storing it and returning
+    /// success used to report a device the session had refused.
+    static func refusedInput(canAdd: Bool, deviceName: String) -> CameraSourceState? {
+        guard canAdd else {
+            return .failed("\(deviceName) cannot be used by this session.")
+        }
+        return nil
+    }
+
     func prepare(selection: CameraSelection) -> CameraSourceState? {
         guard input == nil else { return nil }
         guard let device = selection.resolve() else { return .noDevice }
         do {
             let newInput = try AVCaptureDeviceInput(device: device)
             session.beginConfiguration()
-            if session.canAddInput(newInput) { session.addInput(newInput) }
+            if let refused = Self.refusedInput(canAdd: session.canAddInput(newInput), deviceName: device.localizedName) {
+                session.commitConfiguration()
+                return refused
+            }
+            session.addInput(newInput)
             if !outputAdded, session.canAddOutput(output) {
                 session.addOutput(output)
                 outputAdded = true

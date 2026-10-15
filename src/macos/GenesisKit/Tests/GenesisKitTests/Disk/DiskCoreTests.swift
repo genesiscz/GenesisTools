@@ -121,6 +121,33 @@ final class VolumeSpaceMonitorTests: XCTestCase {
         await waitUntil("a configuration change reads again and publishes") { published >= 2 }
     }
 
+    /// Two identical readings under the free-space tier: the chart publishes once, and the policy still
+    /// gets both, so `confirmSamples` of 2 can arm.
+    @MainActor
+    func testASteadyReadingStillConfirmsFreeSpace() {
+        let monitor = VolumeSpaceMonitor(configuration: .init(
+            volumePath: "/tmp", minimumChange: 1 << 50, watchesLowDiskEvents: false, watchesWorkspace: false))
+        var readings = 0
+        var published = 0
+        monitor.onReading = { _ in readings += 1 }
+        monitor.onSample = { _ in published += 1 }
+        let reading = VolumeSample(volumePath: "/tmp", total: 100_000_000_000, free: 500_000_000,
+                                   available: 500_000_000, date: Date(timeIntervalSince1970: 1_800_000_000))
+        monitor.receive(reading, generation: 0)
+        monitor.receive(reading, generation: 0)
+        XCTAssertEqual(published, 1)
+        XCTAssertEqual(readings, 2)
+        var policy = AlertPolicy.freeSpace()
+        var armed = AlertState()
+        var once = AlertState()
+        _ = policy.evaluate(Double(reading.available), at: reading.date, state: &once)
+        XCTAssertNil(once.tierID, "one sample is not enough")
+        for _ in 0 ..< readings {
+            _ = policy.evaluate(Double(reading.available), at: reading.date, state: &armed)
+        }
+        XCTAssertEqual(armed.tierID, "critical")
+    }
+
     func testRefreshDetailedAddsFindersFigureAndKeepsItBetweenReads() async {
         let monitor = VolumeSpaceMonitor(configuration: .init(minimumChange: 0, watchesWorkspace: false))
         let detailed = await monitor.refreshDetailed()
@@ -617,6 +644,33 @@ extension BigFileRadarTests {
         XCTAssertEqual(radar.folderReads, 0)
         XCTAssertEqual(radar.statCount, 0)
     }
+
+    /// A permission error is not "gone". chmod 000 on the parent makes lstat of the file fail with EACCES.
+    func testAnUnreadableFileStaysAHit() throws {
+        XCTAssertTrue(BigFileRadar.isMissingErrno(ENOENT))
+        XCTAssertTrue(BigFileRadar.isMissingErrno(ENOTDIR))
+        XCTAssertFalse(BigFileRadar.isMissingErrno(EACCES))
+        XCTAssertFalse(BigFileRadar.isMissingErrno(EPERM))
+        let radar = radar()
+        let big = try write("locked/big.bin", bytes: 2_000_000)
+        XCTAssertEqual(radar.processNow(batch([big])).map(\.path), [big])
+        let folder = directory.appendingPathComponent("locked").path
+        let previous = try FileManager.default.attributesOfItem(atPath: folder)[.posixPermissions] as? NSNumber
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: folder)
+        defer {
+            if let previous {
+                try? FileManager.default.setAttributes([.posixPermissions: previous], ofItemAtPath: folder)
+            }
+        }
+        let again = radar.processResultNow(batch([big], flags: [.itemRemoved, .itemIsFile]))
+        XCTAssertTrue(again.removed.isEmpty)
+        XCTAssertEqual(radar.hits.map(\.path), [big])
+        XCTAssertEqual(radar.statErrors[big], EACCES)
+        if case .unreadable(EACCES) = BigFileRadar.pathState(big) {
+        } else {
+            XCTFail("expected EACCES, got \(BigFileRadar.pathState(big))")
+        }
+    }
 }
 
 extension DiskHistoryStoreTests {
@@ -677,6 +731,22 @@ extension SpaceForecasterTests {
         let later = forecaster.forecast(filling, now: now)
         XCTAssertEqual(later.asOf, now)
         XCTAssertNotEqual(later.verdict, .filling, "three quiet hours fade the old pace")
+    }
+
+    /// The window ends at `now`. A cleanup that has aged out of it does not stay in `cleanedBytes`.
+    func testACleanupOlderThanTheWindowDoesNotCount() {
+        let points = [
+            SpacePoint(date: start, available: 20 * gb),
+            SpacePoint(date: start.addingTimeInterval(60), available: 25 * gb),
+            SpacePoint(date: start.addingTimeInterval(1800), available: 25 * gb),
+        ]
+        let forecaster = SpaceForecaster(floor: 10 * gb, window: 3600)
+        let soon = forecaster.forecast(points, now: start.addingTimeInterval(1800))
+        XCTAssertEqual(soon.cleanedBytes, 5 * gb)
+        let later = forecaster.forecast(points, now: start.addingTimeInterval(1800 + 5 * 3600))
+        XCTAssertEqual(later.cleanedBytes, 0)
+        XCTAssertEqual(later.jumpsIgnored, 0)
+        XCTAssertEqual(later.verdict, .notEnoughHistory)
     }
 }
 
