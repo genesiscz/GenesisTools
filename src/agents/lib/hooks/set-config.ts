@@ -47,6 +47,7 @@ export const SETTABLE_KEYS = [
     "diff.highlighter",
     "diff.fill",
     "diff.fillMax",
+    "diff.commandLines",
     "diff.columns",
     "diff.fullDiff",
     "diff.replaceNative",
@@ -67,6 +68,7 @@ export const SETTABLE_KEYS = [
     "decisions.injectAnswers",
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
     "agentsTalk.hint",
+    "mods.fullDiff",
 ] as const;
 
 /** One `decisions.*` key. The stop hook takes off|warn|block; `harnesses` a comma list. */
@@ -365,6 +367,11 @@ export function applySetting(
         return next;
     }
 
+    if (key === "diff.commandLines") {
+        next.diff.commandLines = asCount(key, value, 0);
+        return next;
+    }
+
     if (key === "diff.fullDiff") {
         const mode = FULL_DIFF_MODES.find((candidate) => candidate === value);
 
@@ -411,6 +418,11 @@ export function applySetting(
 
     if (key === "agentsTalk.hint") {
         next.agentsTalk = { ...config.agentsTalk, hint: asBoolean(key, value) };
+        return next;
+    }
+
+    if (key === "mods.fullDiff") {
+        next.mods = { ...config.mods, fullDiff: asBoolean(key, value) };
         return next;
     }
 

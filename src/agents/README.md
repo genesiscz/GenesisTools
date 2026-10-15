@@ -202,9 +202,19 @@ Every mode drops escape codes that change nothing (a reset before a new colour, 
 colour on blanks); that loses no colour, so there is no raw mode. A message that cuts lines links
 the call's full diff (`diff.fullDiff`: `genesis`, `path` or `off`). The `genesis` link is printed
 only while the browser router routes Markdown on this Mac; otherwise the message names the path.
-`tools agents hooks diff show <call>` prints it too. The message starts with a dim line that names
-the call's command (its first line, at most 60 characters): Claude Code folds a finished call into
-"ran N shell commands" and leaves only the hook message under the fold. A file or a whole folder moved with `mv` or
+`tools agents hooks diff show <call>` prints it too. The message starts with the call's command, dim:
+its first `diff.commandLines` lines (3; 0 shows none), each cut to 80 characters, then how many lines were
+left out. Claude Code folds a finished call into "ran N shell commands" and leaves only the hook message
+under the fold, so without them nothing says which command changed the files.
+
+**The full-diff mod.** `tools agents hooks mods install --write` installs the plugin `genesis-tools-mods`
+from this repository's marketplace (`plugins/genesis-tools-mods/`). It is a Claude Code mod: when a hook
+message cut lines, it draws the call's whole diff (the `hook-diffs/<call>.md` note) with Claude Code's own
+diff element under the call's row, so the 10,000-character message limit no longer hides the rest. A running
+session needs `/reload-plugins`. `tools agents hooks mods` shows whether it is installed;
+`tools agents hooks config set mods.fullDiff false --write` turns it off without an uninstall (the mod reads
+the hooks file). It draws nothing while `diff.fullDiff` is `off`. The mod API is early access in Claude Code
+(2.1.287 and later), so a release can change it; the mod then draws nothing and the hook message is unchanged. A file or a whole folder moved with `mv` or
 `git mv` is one line, `old/ → new/ (284 files)`, when the new copies match the old ones byte for byte
 (up to 4,000 files; a file over 4 MiB is not compared).
 

@@ -54,6 +54,7 @@ import {
     wiringStatus,
 } from "./install";
 import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
+import { MODS_PLUGIN, modsPluginState } from "./mods";
 import { nativeDiffState } from "./native-diff";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
@@ -631,6 +632,38 @@ describe("applySetting", () => {
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "nonsense", "1")).toThrow("unknown key");
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "shadow", "maybe")).toThrow("true or false");
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "rules.find-from-root", "loud")).toThrow("takes one of");
+    });
+
+    it("diff.commandLines and mods.fullDiff are set, checked and loaded", () => {
+        expect(DEFAULT_HOOKS_CONFIG.diff.commandLines).toBe(3);
+        expect(DEFAULT_HOOKS_CONFIG.mods.fullDiff).toBe(true);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "diff.commandLines", "0").diff.commandLines).toBe(0);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.fullDiff", "false").mods.fullDiff).toBe(false);
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "diff.commandLines", "-1")).toThrow();
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "mods.fullDiff", "off")).toThrow("true or false");
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-mods-")), "hooks.json");
+
+        writeFileSync(path, SafeJSON.stringify({ diff: { commandLines: 5 }, mods: { fullDiff: false } }));
+        expect(loadHooksConfig(path).diff.commandLines).toBe(5);
+        expect(loadHooksConfig(path).mods.fullDiff).toBe(false);
+    });
+
+    it("reads the mods plugin's row from claude plugin list --json", () => {
+        const listed = SafeJSON.stringify([
+            { id: "other@somewhere", enabled: true },
+            { id: MODS_PLUGIN, enabled: false, scope: "user", version: "1.0.0", readFromFolder: "/repo/plugins/x" },
+        ]);
+
+        expect(modsPluginState(listed)).toEqual({
+            installed: true,
+            enabled: false,
+            scope: "user",
+            version: "1.0.0",
+            readFrom: "/repo/plugins/x",
+        });
+        expect(modsPluginState("[]")).toEqual({ installed: false, enabled: false });
+        expect(modsPluginState("not json")).toEqual({ installed: false, enabled: false });
     });
 
     it("agentsTalk.hint is a boolean switch that ships on and survives a load", () => {

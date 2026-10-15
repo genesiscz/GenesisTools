@@ -155,6 +155,12 @@ export interface DiffConfig {
      */
     maxMessageChars: number;
     /**
+     * How many lines of the call's command head its message, dim, each cut to 80 characters; 0 shows
+     * none. Claude Code folds a finished call into "ran N shell commands" and leaves only the hook
+     * message under the fold, so without them nothing says which command changed the files.
+     */
+    commandLines: number;
+    /**
      * Which KINDS of change are printed. `source` is anything that is not one of the others.
      *
      * `log` and `generated` ship OFF: a jest run redirected into `/tmp/z1.log` and truncated
@@ -257,6 +263,18 @@ export interface AgentsTalkConfig {
 }
 
 /**
+ * The Claude Code mods of the `genesis-tools-mods` plugin (`tools agents hooks mods install`). The plugin
+ * reads this section of the hooks file itself, so a change here needs no reinstall.
+ */
+export interface ModsConfig {
+    /**
+     * Draw the whole diff of a call whose hook message was cut, with Claude Code's own diff element,
+     * under the call's row. Reads `hook-diffs/<call>.md`, so it needs `diff.fullDiff` not `off`.
+     */
+    fullDiff: boolean;
+}
+
+/**
  * The Stop-phase reminder about commits that are not pushed yet. It fires for a branch with an
  * upstream when MORE than `maxCommits` commits are unpushed, or when the oldest unpushed commit
  * is older than `maxAgeMinutes`, whichever comes first. One reminder per repository per
@@ -274,6 +292,7 @@ export interface HooksConfig {
     diff: DiffConfig;
     decisions: DecisionsHookConfig;
     agentsTalk: AgentsTalkConfig;
+    mods: ModsConfig;
     unpushed: UnpushedConfig;
     logPath: string;
     /**
@@ -376,6 +395,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         dedupeAcrossSessions: true,
         othersSummary: "line",
         maxMessageChars: 9_900,
+        commandLines: 3,
         categories: { source: true, formatting: true, log: false, generated: false },
         harnesses: {
             // 🛑 OFF for Grok, because Grok cannot show a diff. Observed 2026-09-22 on a real
@@ -397,6 +417,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
     agentsTalk: { hint: true },
+    mods: { fullDiff: true },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
     // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
@@ -579,6 +600,12 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         highlighter: HIGHLIGHTERS.find((name) => name === stored?.highlighter) ?? base.highlighter,
         fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
         fillMax: countOr({ field: "diff.fillMax", value: stored?.fillMax, fallback: base.fillMax, min: 0 }),
+        commandLines: countOr({
+            field: "diff.commandLines",
+            value: stored?.commandLines,
+            fallback: base.commandLines,
+            min: 0,
+        }),
         theme: themeOr(stored?.theme, base.theme),
         columns: columnsOr(stored?.columns, base.columns),
         fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
@@ -947,6 +974,7 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
         diff: mergeDiff(stored.diff),
         decisions: mergeDecisions(stored.decisions),
         agentsTalk: { hint: boolOr(stored.agentsTalk?.hint, DEFAULT_HOOKS_CONFIG.agentsTalk.hint) },
+        mods: { fullDiff: boolOr(stored.mods?.fullDiff, DEFAULT_HOOKS_CONFIG.mods.fullDiff) },
         unpushed: mergeUnpushed(stored.unpushed),
         shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
         logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),

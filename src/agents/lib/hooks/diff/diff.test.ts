@@ -58,7 +58,7 @@ import {
     captureChunks,
     capturedBefore,
     capturedBefores,
-    commandLine,
+    commandLines,
     composePostDiff,
     type DiffDecision,
     flushDeferred,
@@ -4304,7 +4304,7 @@ describe("the misfires of 2026-10-14", () => {
         }
     });
 
-    it("names the call's command in a dim first line, cut to 60 characters, and only above its own message", () => {
+    it("heads the call's own message with dim command lines, each cut to 80 characters, as diff.commandLines sets", () => {
         const target = join(repo, "command-line-probe.ts");
         const long = `sed -i s/a/b/ ${target} # ${"x".repeat(80)}`;
 
@@ -4318,20 +4318,35 @@ describe("the misfires of 2026-10-14", () => {
             writeFileSync(target, "COMMAND-LINE\n");
 
             const { message } = composePostDiff({ payload: call, config: plain });
-            const [first, second] = stripAnsi(message).split("\n");
+            const [first, second, third] = stripAnsi(message).split("\n");
 
-            expect(message.startsWith("\u001b[2m$ ")).toBe(true);
-            expect(first).toBe(`$ ${long.slice(0, 59)}…`);
-            expect(second).toMatch(/^Added .*command-line-probe\.ts \(\+1 -0\)$/);
+            expect(message.slice(0, 6)).toBe("\u001b[2m$ ");
+            expect(first).toBe(`$ ${long.slice(0, 79)}…`);
+            expect(second).toBe("  second line");
+            expect(third).toMatch(/^Added .*command-line-probe\.ts \(\+1 -0\)$/);
             expect(
                 readMessage(message)
                     .blocks.map((block) => block.path)
                     .join(" ")
             ).toContain("command-line-probe.ts");
-            expect(stripAnsi(commandLine("bun x.ts <<'EOF'\nbody\nEOF"))).toBe("$ bun x.ts <<'EOF' …");
+
+            const off = { ...plain, diff: { ...plain.diff, commandLines: 0 } };
+            const again = begin({ command: long });
+
+            writeFileSync(target, "COMMAND-LINE\nAGAIN\n");
+
+            const bare = composePostDiff({ payload: again, config: off }).message;
+
+            expect(stripAnsi(bare)).toMatch(/^Updated .*command-line-probe\.ts \(\+1 -0\)/);
         } finally {
             rmSync(target, { force: true });
         }
+
+        const heredoc = "bun x.ts <<'EOF'\nbody\nEOF";
+
+        expect(stripAnsi(commandLines(heredoc, 3))).toBe("$ bun x.ts <<'EOF'\n  body\n  EOF");
+        expect(stripAnsi(commandLines(heredoc, 1))).toBe("$ bun x.ts <<'EOF'\n  … 2 more line(s)");
+        expect(commandLines(heredoc, 0)).toBe("");
     });
 
     it("puts the call's own diff before the background tasks it prints, so diff log can split them", () => {

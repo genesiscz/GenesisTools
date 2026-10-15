@@ -25,6 +25,16 @@
             ]
         },
         {
+            "name": "genesis-tools-mods",
+            "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row. Install with: tools agents hooks mods install --write.",
+            "version": "1.0.0",
+            "author": {
+                "name": "GenesisTools"
+            },
+            "source": "./plugins/genesis-tools-mods",
+            "category": "development"
+        },
+        {
             "name": "genesis-tools-server",
             "description": "A single Claude Code command for Linux server security auditing: log analysis, intrusion detection, malware scanning, and rootkit detection. Not an MCP server, despite the name.",
             "version": "1.0.0",

@@ -41,6 +41,7 @@ import {
     uninstallHooks,
     wiringStatus,
 } from "../lib/hooks/install";
+import { claudePlugin, MODS_PLUGIN, MODS_SCOPES, type ModsScope, modsPluginState } from "../lib/hooks/mods";
 import { nativeDiffForced, nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
@@ -524,6 +525,8 @@ export function registerHooksCommands(program: Command): void {
             }
         });
 
+    registerMods(hooks);
+
     const diffCommand = hooks.command("diff").description("The Bash diff hook");
 
     diffCommand
@@ -708,4 +711,101 @@ export function registerHooksCommands(program: Command): void {
                 ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));
             }
         });
+}
+
+/**
+ * `hooks mods`: the Claude Code mods of this repository (the `genesis-tools-mods` plugin). They share the
+ * hooks file: `mods.fullDiff` switches the full-diff mod, which reads the diff hook's `hook-diffs` notes.
+ */
+function registerMods(hooks: Command): void {
+    const mods = hooks
+        .command("mods")
+        .description(
+            `Claude Code mods (${MODS_PLUGIN}): status, install, uninstall. Settings: mods.* in the hooks config`
+        );
+
+    mods.command("status", { isDefault: true })
+        .description("Whether the mods plugin is installed and enabled, and what the hooks config sets for it")
+        .action(() => {
+            const list = claudePlugin(["list", "--json"]);
+
+            if (!list.ok) {
+                ui.err(`claude plugin list failed: ${list.stderr.trim() || list.stdout.trim()}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const state = modsPluginState(list.stdout);
+            const config = loadHooksConfig();
+            const fullDiff = diffFor(config, "claude").fullDiff;
+
+            ui.raw(
+                `${pc.bold(MODS_PLUGIN)}: ${state.installed ? (state.enabled ? pc.green("installed, enabled") : pc.yellow("installed, disabled")) : pc.red("not installed")}`
+            );
+
+            if (state.installed) {
+                ui.raw(
+                    pc.dim(
+                        `  scope ${state.scope ?? "?"} · version ${state.version ?? "?"} · read from ${state.readFrom ?? "its install copy"}`
+                    )
+                );
+            }
+
+            ui.raw(`mods.fullDiff: ${config.mods.fullDiff ? pc.green("on") : pc.dim("off")}`);
+
+            if (config.mods.fullDiff && fullDiff === "off") {
+                ui.raw(pc.yellow(`diff.fullDiff is off, so no call has a full-diff note for the mod to draw.`));
+            }
+
+            if (!state.installed) {
+                ui.raw(`Install: ${toolCommand("agents hooks mods install", "--write")}`);
+            }
+        });
+
+    mods.command("install")
+        .description("Install the mods plugin from this repository's marketplace")
+        .option("--scope <scope>", `Where Claude Code records it: ${MODS_SCOPES.join(", ")}`, "user")
+        .option("--write", "Actually install; without it this is a dry run")
+        .action((options: { scope: string; write?: boolean }) => {
+            const scope = MODS_SCOPES.find((candidate): candidate is ModsScope => candidate === options.scope);
+
+            if (!scope) {
+                ui.raw(suggestEnumFlag("tools agents hooks mods install", "--scope", MODS_SCOPES));
+                process.exitCode = 1;
+                return;
+            }
+
+            runPluginCommand({ args: ["install", MODS_PLUGIN, "--scope", scope], write: Boolean(options.write) });
+        });
+
+    mods.command("uninstall")
+        .description("Uninstall the mods plugin")
+        .option("--write", "Actually uninstall; without it this is a dry run")
+        .action((options: { write?: boolean }) => {
+            runPluginCommand({ args: ["uninstall", MODS_PLUGIN], write: Boolean(options.write) });
+        });
+}
+
+function runPluginCommand({ args, write }: { args: string[]; write: boolean }): void {
+    const shown = `claude plugin ${args.join(" ")}`;
+
+    if (!write) {
+        ui.raw(`would run: ${shown}`);
+        ui.raw(pc.yellow("dry run: nothing was changed. Pass --write to apply."));
+        return;
+    }
+
+    const run = claudePlugin(args);
+    const said = `${run.stdout}${run.stderr}`.trim();
+
+    if (!run.ok) {
+        ui.err(`${shown} failed${said ? `: ${said}` : ""}`);
+        process.exitCode = 1;
+        return;
+    }
+
+    ui.raw(said || `${shown}: done`);
+    ui.raw(
+        pc.dim("A running Claude Code session picks it up after /reload-plugins; a new session loads it by itself.")
+    );
 }

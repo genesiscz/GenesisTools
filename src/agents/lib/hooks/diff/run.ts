@@ -531,28 +531,38 @@ function fitDecision(decision: DiffDecision, room: number | undefined): DiffDeci
     return { ...decision, message, ...(stats ? { stats } : {}) };
 }
 
-/** The most characters of a command that `commandLine` shows, the "…" included. */
-const COMMAND_CHARS = 60;
+/** The most characters of one command line that `commandLines` shows, the "…" included. */
+const COMMAND_CHARS = 80;
 
 /**
- * The dim line above a call's own message: the first line of its command, cut to `COMMAND_CHARS`.
- * Claude Code folds a finished call into "ran N shell commands" and leaves only the hook message
- * under the fold, so without this line nothing says which command changed the files.
+ * The dim lines above a call's own message: the first `count` lines of its command, each cut to
+ * `COMMAND_CHARS`, then how many lines were left out (`diff.commandLines`; 0 shows none). Claude Code
+ * folds a finished call into "ran N shell commands" and leaves only the hook message under the fold,
+ * so without them nothing says which command changed the files.
  */
-export function commandLine(command: string): string {
-    const lines = command.trim().split("\n");
-    const first = [...(lines[0] ?? "").replace(/\p{Cc}/gu, " ").trimEnd()];
+export function commandLines(command: string, count: number): string {
+    const lines = command
+        .trim()
+        .split("\n")
+        .map((line) => line.replace(/\p{Cc}/gu, " ").trimEnd());
 
-    if (first.length === 0) {
+    if (count <= 0 || !lines[0]) {
         return "";
     }
 
-    const shown =
-        first.length > COMMAND_CHARS
-            ? `${first.slice(0, COMMAND_CHARS - 1).join("")}…`
-            : `${first.join("")}${lines.length > 1 ? " …" : ""}`;
+    const shown = lines.slice(0, count).map((line) => {
+        const chars = [...line];
 
-    return `\u001b[2m$ ${shown}\u001b[0m`;
+        return chars.length > COMMAND_CHARS ? `${chars.slice(0, COMMAND_CHARS - 1).join("")}…` : line;
+    });
+    const left = lines.length - shown.length;
+    const rows = [
+        `$ ${shown[0]}`,
+        ...shown.slice(1).map((line) => `  ${line}`),
+        ...(left > 0 ? [`  … ${left} more line(s)`] : []),
+    ];
+
+    return rows.map((row) => `\u001b[2m${row}\u001b[0m`).join("\n");
 }
 
 /** Headings plus messages, in the order `composePostDiff` joins them after the call's own diff. */
@@ -582,7 +592,7 @@ export function composePostDiff({
     const flushedParts = deferredMessageParts(flushed);
     // `+ 2` per part is the `\n\n` between parts, including the one after this call's own diff.
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
-    const heading = commandLine(payload.command);
+    const heading = commandLines(payload.command, diffFor(config, payload.harness).commandLines);
     const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
     const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room }), room);
     const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];

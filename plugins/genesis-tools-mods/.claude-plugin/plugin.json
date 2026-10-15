@@ -1,0 +1,8 @@
+{
+    "name": "genesis-tools-mods",
+    "version": "1.0.0",
+    "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row. Configured in the hooks file: tools agents hooks config set mods.fullDiff true|false.",
+    "author": {
+        "name": "GenesisTools"
+    }
+}
