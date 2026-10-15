@@ -27,8 +27,55 @@ public struct FileTreeRow: Identifiable, Equatable, Sendable {
     public let depth: Int
     public var expanded = false
     public var loading = false
+    /// The row's identity in the lists: the path with its hash taken once.
+    public let key: FileTreeRowKey
+
+    public init(id: String, name: String, isFolder: Bool, depth: Int, expanded: Bool = false, loading: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isFolder = isFolder
+        self.depth = depth
+        self.expanded = expanded
+        self.loading = loading
+        self.key = FileTreeRowKey(id)
+    }
 
     public var url: URL { URL(fileURLWithPath: id) }
+
+    /// The name follows from the path, so the key stands in for both.
+    public static func == (left: FileTreeRow, right: FileTreeRow) -> Bool {
+        left.key == right.key && left.isFolder == right.isFolder && left.depth == right.depth
+            && left.expanded == right.expanded && left.loading == right.loading
+    }
+}
+
+/// A path as a list identity, hashed once. SwiftUI hashes and compares a lazy list's ids on every scroll frame, and a
+/// non-ASCII `String` ("ČEZ") is normalized to NFC on each hash and each comparison: the profile of a tree scroll in
+/// the installed viewer had that normalization as its largest piece of app-side work (2026-10-15). Equal keys have
+/// equal bytes; the paths come from one directory listing, so one path never arrives in two normal forms.
+public struct FileTreeRowKey: Hashable, Sendable {
+    public let path: String
+    private let hash: Int
+
+    public init(_ path: String) {
+        var path = path
+        path.makeContiguousUTF8()
+        var hasher = Hasher()
+        path.utf8.withContiguousStorageIfAvailable { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
+        self.path = path
+        self.hash = hasher.finalize()
+    }
+
+    public static func == (left: FileTreeRowKey, right: FileTreeRowKey) -> Bool {
+        guard left.hash == right.hash else { return false }
+        return left.path.utf8.withContiguousStorageIfAvailable { l in
+            right.path.utf8.withContiguousStorageIfAvailable { r in l.elementsEqual(r) }
+        }.flatMap { $0 } ?? left.path.utf8.elementsEqual(right.path.utf8)
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(hash)
+    }
 }
 
 /// One directory entry.
@@ -489,10 +536,11 @@ public struct FileTreeView: View {
 
     public var body: some View {
         let _ = RenderProbe.hit("tree.view")
+        let selectedKey = selected.map(FileTreeRowKey.init)
         LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(changedOnly && git != nil ? Self.changedRows(model.rows, git ?? .none) : model.rows) { row in
+            ForEach(changedOnly && git != nil ? Self.changedRows(model.rows, git ?? .none) : model.rows, id: \.key) { row in
                 FileTreeRowView(
-                    row: row, selected: row.id == selected, icon: icon(row), style: style, model: model, actions: actions,
+                    row: row, selected: row.key == selectedKey, icon: icon(row), style: style, model: model, actions: actions,
                     pulse: pulse?.id == row.id ? pulse : nil,
                     change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
                     lines: git?.count(for: row.id)

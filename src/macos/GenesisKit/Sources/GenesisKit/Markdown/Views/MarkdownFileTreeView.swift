@@ -98,18 +98,20 @@ struct MarkdownFileTreeView: View {
             }
             Rectangle().fill(model.theme.border).frame(height: 1)
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Color.clear.frame(height: 0).id(Self.topID)
-                        if showingResults {
-                            LazyVStack(alignment: .leading, spacing: 0) { results }
-                        } else {
-                            treeRows
+                Group {
+                    if showingResults {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Color.clear.frame(height: 0).id(Self.topID)
+                                LazyVStack(alignment: .leading, spacing: 0) { results }
+                            }
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                    } else {
+                        // An AppKit table with its own scroll view (`MarkdownTreeTable`).
+                        treeRows
                     }
-                    .padding(.vertical, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(MarkdownTreeScrollFinder(box: scrollBox))
                 }
                 // The empty space under the rows: the root's own verbs (New File…, New Folder…). A row's
                 // own menu wins over it.
@@ -177,7 +179,7 @@ struct MarkdownFileTreeView: View {
         let rows = git.map { changedOnly ? FileTreeView.changedRows(tree.rows, $0) : tree.rows } ?? tree.rows
         return MarkdownFileTreeRows(
             rows: rows, selected: selected, style: style, actions: actions, pulse: pulse, git: git, tree: tree,
-            model: model
+            model: model, box: scrollBox
         )
         .equatable()
     }
@@ -350,7 +352,9 @@ struct MarkdownFileTreeView: View {
         switch pulse.target {
         case .header:
             headerPulse = FileTreePulse(id: "", token: pulse.token)
-            withAnimation(scrollAnimation) { proxy.scrollTo(Self.topID, anchor: .top) }
+            if let scroll = scrollBox.scrollView {
+                MarkdownTreeScroll.toTop(scroll, animated: scrollAnimation != nil)
+            }
             if let target = model.revealTarget?.standardizedFileURL, target.path != tree.root.path,
                !MarkdownLinkRoute.isFolder(target) {
                 reveal(target, pulse: nil, proxy: proxy)
@@ -384,8 +388,8 @@ struct MarkdownFileTreeView: View {
             let rows = displayedRows
             if animation != nil, let index = rows.firstIndex(where: { $0.id == pending.id }), let scroll = scrollBox.scrollView {
                 MarkdownTreeScroll.glide(toRow: index, of: rows.count, in: scroll, box: scrollBox)
-            } else {
-                withAnimation(animation) { proxy.scrollTo(pending.id, anchor: .center) }
+            } else if let index = rows.firstIndex(where: { $0.id == pending.id }), let scroll = scrollBox.scrollView {
+                MarkdownTreeScroll.jump(toRow: index, of: rows.count, in: scroll)
             }
             // Stamped now: a slow folder read must not let the pulse expire before it shows.
             rowPulse = pending.pulse.map { FileTreePulse(id: $0.id, token: $0.token) }
@@ -553,6 +557,17 @@ private struct MarkdownFileTreeRows: View, Equatable {
     let tree: FileTreeModel
     /// For the hover preview only: not observed.
     let model: MarkdownDocumentsModel
+    let box: MarkdownTreeScrollBox
+
+    /// What the cells draw besides the rows: when it changes, the cells on screen are built again.
+    struct Revision: Equatable {
+        let selected: String?
+        let pulse: FileTreePulse?
+        let actions: Int
+        let git: GitTreeDecorations?
+        let metrics: FileTreeMetrics
+        let colors: [Color]
+    }
 
     static func == (left: MarkdownFileTreeRows, right: MarkdownFileTreeRows) -> Bool {
         left.selected == right.selected && left.pulse == right.pulse && left.actions.revision == right.actions.revision
@@ -564,17 +579,24 @@ private struct MarkdownFileTreeRows: View, Equatable {
 
     var body: some View {
         let _ = RenderProbe.hit("md.fileTreeRows")
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(rows) { row in
+        let selectedKey = selected.map(FileTreeRowKey.init)
+        let (style, tree, actions, pulse, git, model) = (style, tree, actions, pulse, git, model)
+        return MarkdownTreeTable(
+            rows: rows,
+            revision: Revision(selected: selected, pulse: pulse, actions: actions.revision, git: git, metrics: style.metrics,
+                               colors: [style.text, style.secondary, style.muted, style.accent, style.selection]),
+            box: box
+        ) { row in
+            AnyView(
                 FileTreeRowView(
-                    row: row, selected: row.id == selected, icon: FileTreeView.defaultIcon(row), style: style,
+                    row: row, selected: row.key == selectedKey, icon: FileTreeView.defaultIcon(row), style: style,
                     model: tree, actions: actions, pulse: pulse?.id == row.id ? pulse : nil,
                     change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
                     lines: git?.count(for: row.id)
                 )
                 .equatable()
                 .markdownHoverPreview(row.isFolder ? nil : row.url, model: model)
-            }
+            )
         }
     }
 }
@@ -634,8 +656,8 @@ private struct MarkdownFileTreeResultRow: View {
     }
 }
 
-/// The tree's scroll view, found from inside its content (`MarkdownTreeScrollFinder`). A class, so finding it does
-/// not re-render the tree. It owns the one glide that may write that scroll view's origin.
+/// The tree's scroll view, set by `MarkdownTreeTable`. A class, so setting it does not re-render the tree. It owns the
+/// one glide that may write that scroll view's origin.
 final class MarkdownTreeScrollBox {
     weak var scrollView: NSScrollView?
     /// The glide writing this scroll view, when one is running.
@@ -696,38 +718,6 @@ final class MarkdownTreeGlide {
     }
 }
 
-/// A zero-size AppKit view in the tree's scroll content that hands its enclosing scroll view to the box.
-private struct MarkdownTreeScrollFinder: NSViewRepresentable {
-    let box: MarkdownTreeScrollBox
-
-    func makeNSView(context: Context) -> Finder {
-        let view = Finder()
-        view.box = box
-        return view
-    }
-
-    func updateNSView(_ view: Finder, context: Context) {
-        view.box = box
-        view.capture()
-    }
-
-    final class Finder: NSView {
-        weak var box: MarkdownTreeScrollBox?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if window == nil { box?.cancelGlide() }
-            capture()
-        }
-
-        func capture() {
-            if let scroll = enclosingScrollView { box?.scrollView = scroll }
-        }
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    }
-}
-
 /// The reveal's glide. The rows are one height, so the document's height over the row count places a row before the
 /// lazy list has laid it out.
 enum MarkdownTreeScroll {
@@ -748,6 +738,45 @@ enum MarkdownTreeScroll {
     static func glideStart(from current: CGFloat, to target: CGFloat, visibleHeight: CGFloat) -> CGFloat {
         guard abs(target - current) > visibleHeight * 1.5 else { return current }
         return target > current ? target - visibleHeight : target + visibleHeight
+    }
+
+    /// The clip origin that centres row `index`: from the table's own row rect, else from the document's height.
+    @MainActor
+    static func centeredOrigin(row index: Int, of count: Int, in scroll: NSScrollView) -> CGFloat {
+        let visible = scroll.contentView.bounds.height
+        guard let table = scroll.documentView as? NSTableView, index < table.numberOfRows else {
+            return centeredOrigin(index: index, count: count, documentHeight: scroll.documentView?.frame.height ?? 0,
+                                  visibleHeight: visible)
+        }
+        let insets = scroll.contentInsets
+        let top = -insets.top
+        let bottom = max(table.frame.height + insets.bottom - visible, top)
+        return min(max(table.rect(ofRow: index).midY - visible / 2, top), bottom)
+    }
+
+    /// Reduce Motion: the row in the middle at once.
+    @MainActor
+    static func jump(toRow index: Int, of count: Int, in scroll: NSScrollView) {
+        scroll.window?.contentView?.layoutSubtreeIfNeeded()
+        let clip = scroll.contentView
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: centeredOrigin(row: index, of: count, in: scroll)))
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    /// The list's top, for a new root.
+    @MainActor
+    static func toTop(_ scroll: NSScrollView, animated: Bool) {
+        let clip = scroll.contentView
+        let top = NSPoint(x: clip.bounds.origin.x, y: -scroll.contentInsets.top)
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                clip.animator().setBoundsOrigin(top)
+            }
+        } else {
+            clip.scroll(to: top)
+        }
+        scroll.reflectScrolledClipView(clip)
     }
 
     /// Ease in and out over `progress` 0...1.
@@ -772,9 +801,7 @@ enum MarkdownTreeScroll {
         let clip = scroll.contentView
         let visible = clip.bounds.height
         func height() -> CGFloat { scroll.documentView?.frame.height ?? 0 }
-        func target() -> CGFloat {
-            centeredOrigin(index: index, count: count, documentHeight: height(), visibleHeight: visible)
-        }
+        func target() -> CGFloat { centeredOrigin(row: index, of: count, in: scroll) }
         let start = glideStart(from: clip.bounds.origin.y, to: target(), visibleHeight: visible)
         GenesisKit.log("markdown: tree reveal row \(index) of \(count), document \(Int(height())) pt, glide \(Int(clip.bounds.origin.y)) -> \(Int(start)) -> \(Int(target()))")
         func place(_ y: CGFloat) {

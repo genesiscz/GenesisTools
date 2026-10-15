@@ -43,14 +43,15 @@ final class MarkdownSidebarFarRevealTests: XCTestCase {
         tree.contentView.scroll(to: .zero)
         tree.reflectScrolledClipView(tree.contentView)
         settle(window, until: Date().addingTimeInterval(0.3))
-        XCTAssertFalse(TreeDrawnText.lines(of: tree).contains { $0.contains("zz-target") }, "the target row starts off screen")
+        XCTAssertFalse(TreeDrawnText.lines(of: tree).contains { $0.lowercased().contains("zz-target") }, "the target row starts off screen")
 
         model.revealInSidebar(target)
+        // Lowercased: Vision read the row as "Zz-target.md" in 3 of 6 runs.
         let deadline = Date().addingTimeInterval(2)
         var visible = false
         while Date() < deadline, !visible {
             settle(window, until: Date().addingTimeInterval(0.2))
-            visible = TreeDrawnText.lines(of: tree).contains { $0.contains("zz-target") }
+            visible = TreeDrawnText.lines(of: tree).contains { $0.lowercased().contains("zz-target") }
         }
         XCTAssertTrue(visible, "Show in Sidebar leaves the row off screen")
     }
@@ -91,14 +92,14 @@ final class MarkdownSidebarFarRevealTests: XCTestCase {
         tree.contentView.scroll(to: .zero)
         tree.reflectScrolledClipView(tree.contentView)
         settle(window, until: Date().addingTimeInterval(0.3))
-        XCTAssertFalse(TreeDrawnText.lines(of: tree).contains { $0.contains("inside-target") }, "the note starts hidden")
+        XCTAssertFalse(TreeDrawnText.lines(of: tree).contains { $0.lowercased().contains("inside-target") }, "the note starts hidden")
 
         model.revealInSidebar(target)
         let deadline = Date().addingTimeInterval(2.5)
         var visible = false
         while Date() < deadline, !visible {
             settle(window, until: Date().addingTimeInterval(0.2))
-            visible = TreeDrawnText.lines(of: tree).contains { $0.contains("inside-target") }
+            visible = TreeDrawnText.lines(of: tree).contains { $0.lowercased().contains("inside-target") }
         }
         XCTAssertTrue(visible, "Show in Sidebar opens the closed folder and brings the note on screen")
     }
