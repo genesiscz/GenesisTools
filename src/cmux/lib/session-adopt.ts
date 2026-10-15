@@ -2,10 +2,10 @@ import type { CmuxTreeView, LiveSurface } from "@app/cmux/lib/live-layout";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import type { TmuxClientInfo, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
-import { titleMatchKeys } from "./agent-replay";
 import { isSessionAgentId, type SessionAgentId } from "./session-agents";
 import type { AdoptedSession } from "./session-close";
 import { commandRunsAgent } from "./tab-process";
+import { titleMatchKeys } from "./title-match";
 
 /**
  * A tmux pane a cmux surface shows right now: the surface's tty is the tty of the only tmux client attached to

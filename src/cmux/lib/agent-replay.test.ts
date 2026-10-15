@@ -2,13 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
     correctNativeResumeBindings,
     dedupeResumeTargets,
-    inferLauncherFromTitle,
-    matchAgentSession,
-    type ReplayCatalog,
-    type ReplayCatalogSession,
     replayCommandForSurface,
     withInferredReplayCommands,
 } from "@app/cmux/lib/agent-replay";
+import type { ReplayCatalog, ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
+import { inferLauncherFromTitle, matchAgentSession } from "@app/cmux/lib/title-match";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 

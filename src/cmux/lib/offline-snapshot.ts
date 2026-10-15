@@ -1,4 +1,4 @@
-import { loadGrokCatalog, type ReplayCatalogSession, replayCommandForSurface } from "@app/cmux/lib/agent-replay";
+import { replayCommandForSurface } from "@app/cmux/lib/agent-replay";
 import {
     type AutosavePanel,
     type AutosaveSession,
@@ -12,6 +12,7 @@ import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/captur
 import { journalReplayCommand } from "@app/cmux/lib/command-capture";
 import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/launchers";
 import { deriveReplayCommand } from "@app/cmux/lib/render-resume";
+import { loadGrokCatalog, type ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
 import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import {

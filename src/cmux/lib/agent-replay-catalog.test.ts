@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { historyDatabasePath } from "@genesiscz/utils/agent-sessions/database";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { loadCodexCatalog, loadGrokCatalog } from "./agent-replay";
+import { loadCodexCatalog, loadGrokCatalog } from "./replay-catalog";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
 const CWD = "/projects/catalog-fixture";
