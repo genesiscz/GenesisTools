@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "command": "update",
+  "schema_version": 1,
+  "scan_id": null,
+  "root": "/Users/example",
+  "deferred": true,
+  "queued": 2,
+  "regions": [],
+  "promoted": 0,
+  "removed": 0,
+  "ignored": [
+    "/Volumes/External/photos"
+  ],
+  "elapsed_ms": 2004
+}

@@ -1,0 +1,114 @@
+{
+  "target": "/Users/alice/Projects/demo/app",
+  "root": "/Users/alice/Projects/demo",
+  "target_shared_bytes": 259895,
+  "partner_bytes": 259895,
+  "partner_files_total": 21,
+  "files_opened": 21,
+  "denied_dirs": 0,
+  "denied_files": 0,
+  "partner_dirs": [
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib",
+      "shared_bytes": 122209,
+      "files": 15
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/native",
+      "shared_bytes": 107658,
+      "files": 4
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone",
+      "shared_bytes": 30028,
+      "files": 2
+    }
+  ],
+  "partner_files": [
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/native/clonesize.c",
+      "shared_bytes": 101785
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/index.ts",
+      "shared_bytes": 23800
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/format.ts",
+      "shared_bytes": 20731
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/format.test.ts",
+      "shared_bytes": 17488
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/engine.ts",
+      "shared_bytes": 16814
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/bun-scan.ts",
+      "shared_bytes": 13763
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/cache.test.ts",
+      "shared_bytes": 13386
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/ffi-scan.ts",
+      "shared_bytes": 9163
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/README.md",
+      "shared_bytes": 6228
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/bigfiles.test.ts",
+      "shared_bytes": 6132
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/types.ts",
+      "shared_bytes": 6102
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/clone-controls.test.ts",
+      "shared_bytes": 3952
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/clone-fixture.ts",
+      "shared_bytes": 3559
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/native/bench.sh",
+      "shared_bytes": 3494
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/options.test.ts",
+      "shared_bytes": 3276
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/merge.test.ts",
+      "shared_bytes": 3252
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/native/l2p_shim.c",
+      "shared_bytes": 2281
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/worktrees.ts",
+      "shared_bytes": 2207
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/options.ts",
+      "shared_bytes": 1712
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/lib/scan-worker.ts",
+      "shared_bytes": 672
+    },
+    {
+      "path": "/Users/alice/Projects/demo/app-clone/native/.gitignore",
+      "shared_bytes": 98
+    }
+  ],
+  "elapsed_ms": 47
+}

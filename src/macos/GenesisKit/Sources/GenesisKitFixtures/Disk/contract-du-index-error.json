@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "command": "build",
+  "code": "locked",
+  "message": "Another index build or update holds /Users/example/.genesis-tools/du/index.db.lock (pid 4242). Try again when it finishes.",
+  "exit_code": 3
+}

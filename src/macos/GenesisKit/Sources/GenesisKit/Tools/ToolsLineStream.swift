@@ -10,6 +10,16 @@ import Darwin
 /// that watches its stdin ends when this process quits or crashes and the kernel closes the pipe.
 /// `stop()` closes it and sends SIGTERM (`tools` forwards it to the process that does the work).
 public final class ToolsLineStream: @unchecked Sendable {
+    /// How the child competes with the user's own work.
+    public enum Priority: Sendable, Equatable {
+        /// Utility quality of service (the default).
+        case utility
+        /// For work that must never compete with the user (an index build): background quality of service, the
+        /// Darwin background policy from the first instruction (`taskpolicy -b`, so disk and network I/O are
+        /// throttled and every child it spawns inherits it), and nice 15.
+        case background
+    }
+
     public struct Exit: Sendable {
         public let status: Int32
         /// True for a `stop()` of ours; false when the child ended on its own or was killed.
@@ -49,6 +59,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         subcommand: String,
         args: [String],
         extraEnv: [String: String] = [:],
+        priority: Priority = .utility,
         onLines: @escaping @MainActor ([String]) -> Void,
         onExit: @escaping @MainActor (Exit) -> Void
     ) throws {
@@ -61,8 +72,14 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
 
         let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: [subcommand] + args)
-        process.executableURL = plan.executable
-        process.arguments = plan.arguments
+        if priority == .background, FileManager.default.isExecutableFile(atPath: Self.taskPolicyPath) {
+            // taskpolicy execs the command in place: the same pid, so stop() and the exit report are unchanged.
+            process.executableURL = URL(fileURLWithPath: Self.taskPolicyPath)
+            process.arguments = ["-b", plan.executable.path] + plan.arguments
+        } else {
+            process.executableURL = plan.executable
+            process.arguments = plan.arguments
+        }
         process.currentDirectoryURL = plan.workingDirectory
         var environment = ToolsBridge.scrubbedEnvironment()
         for (key, value) in extraEnv where ToolsBridge.envAllowlist.contains(key) {
@@ -70,7 +87,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
         environment[ToolsCallTrace.environmentKey] = traceId
         process.environment = environment
-        process.qualityOfService = .utility
+        process.qualityOfService = priority == .background ? .background : .utility
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
@@ -104,7 +121,13 @@ public final class ToolsLineStream: @unchecked Sendable {
             self?.finish(exited: true)
         }
         try process.run()
+        if priority == .background {
+            // Children spawned from now on inherit it; the policy above already holds from the start.
+            _ = setpriority(PRIO_PROCESS, id_t(process.processIdentifier), 15)
+        }
     }
+
+    static let taskPolicyPath = "/usr/sbin/taskpolicy"
 
     deinit {
         if process.isRunning {

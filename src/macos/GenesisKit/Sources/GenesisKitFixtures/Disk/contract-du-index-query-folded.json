@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "found": false,
+  "as_of": {
+    "scan_id": 43,
+    "kind": "update",
+    "status": "done",
+    "finished_at_ms": 1760382000000,
+    "age_s": 3600,
+    "last_build_scan_id": 42,
+    "last_build_at_ms": 1760313600000
+  },
+  "root": "/Users/example",
+  "path": "/Users/example/Projects/app/src/components",
+  "reason": "folded",
+  "folded_in": "/Users/example/Projects/app",
+  "hint": "tools du clonesize /Users/example/Projects/app/src/components --depth 1"
+}

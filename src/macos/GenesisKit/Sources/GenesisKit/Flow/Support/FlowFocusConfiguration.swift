@@ -210,126 +210,37 @@ public final class FlowFocusConfiguration: ObservableObject {
         return result
     }
 
+    /// The file this configuration reads and writes. A lock in another writer's format is never removed by its age
+    /// here (`staleLockAge: nil`), and failures keep this type's error domain and log category.
+    nonisolated static func configFile(directory: URL, lockTimeout: TimeInterval = 5) -> ClientConfigFile {
+        ClientConfigFile(directory: directory, lockTimeout: lockTimeout, staleLockAge: nil,
+                         errorDomain: "FlowFocusConfiguration", log: FlowFocusLog.focus)
+    }
+
     nonisolated private static func readRaw(directory: URL) -> [String: Any] {
-        for name in ["client.json", "config.json"] {
-            if let data = try? Data(contentsOf: directory.appendingPathComponent(name)),
-               let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                return name == "config.json" ? clientKeys(fromLegacy: raw) : raw
-            }
-        }
-        return [:]
+        configFile(directory: directory).read()
     }
 
     /// Reads under the writer lock. Only a missing file permits fallback. A malformed or
     /// unreadable client.json must remain byte-for-byte intact until the user repairs it.
     nonisolated private static func readForWrite(directory: URL) throws -> [String: Any] {
-        for name in ["client.json", "config.json"] {
-            let data: Data
-            do {
-                data = try Data(contentsOf: directory.appendingPathComponent(name))
-            } catch {
-                let cocoa = error as NSError
-                if cocoa.domain == NSCocoaErrorDomain && cocoa.code == NSFileReadNoSuchFileError {
-                    continue
-                }
-                throw error
-            }
-            guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw NSError(domain: "FlowFocusConfiguration", code: 2,
-                              userInfo: [NSLocalizedDescriptionKey: "\(name) must contain a JSON object; it was left unchanged."])
-            }
-            return name == "config.json" ? clientKeys(fromLegacy: raw) : raw
-        }
-        return [:]
+        try configFile(directory: directory).readForWrite()
     }
 
     nonisolated static func clientKeys(fromLegacy legacy: [String: Any]) -> [String: Any] {
-        var result: [String: Any] = [:]
-        for key in ["app", "obsidian", "server"] {
-            if let value = legacy[key] { result[key] = value }
-        }
-        if let auth = legacy["auth"] as? [String: Any], let session = auth["sessionToken"] {
-            result["auth"] = ["sessionToken": session]
-        }
-        return result
+        ClientConfigFile.clientKeys(fromLegacy: legacy)
     }
 
-    nonisolated static let lockMarkerPrefix = "genesis-kit pid="
+    nonisolated static let lockMarkerPrefix = ClientConfigFile.lockMarkerPrefix
 
-    /// A lock this code wrote whose pid no longer runs is removed: the process died between creating it and its
-    /// `defer`. A lock in any other format (ConfigStore, the CLI) or of a live pid is never touched, and age alone
-    /// never counts. A reused pid only keeps the lock in place, never removes a live one. The content is read again
-    /// just before the removal, so a lock another writer reclaimed and re-created in between is left alone.
-    nonisolated static func reclaimIfOwnerDied(_ lock: URL) -> Bool {
-        guard let first = try? Data(contentsOf: lock), let text = String(data: first, encoding: .utf8),
-              text.hasPrefix(lockMarkerPrefix),
-              let pid = pid_t(text.dropFirst(lockMarkerPrefix.count).trimmingCharacters(in: .whitespacesAndNewlines)),
-              pid > 0, pid != getpid()
-        else { return false }
-        guard kill(pid, 0) == -1, errno == ESRCH else { return false }
-        guard (try? Data(contentsOf: lock)) == first else { return false }
-        do {
-            try FileManager.default.removeItem(at: lock)
-            FlowFocusLog.focus.warning("configuration lock of dead pid \(pid) removed")
-            return true
-        } catch {
-            FlowFocusLog.focus.error("configuration lock of dead pid \(pid) not removed: \(error.localizedDescription)")
-            return false
-        }
-    }
-
-    /// Matches ConfigStore and the CLI's O_EXCL protocol. Runs off the main thread and never
-    /// falls back to an unlocked write when another writer has not released its lock. While another writer holds
-    /// the lock it suspends (no thread is held) and retries every 100 ms until `lockTimeout`, then throws.
+    /// Matches ConfigStore and the CLI's O_EXCL protocol through `ClientConfigFile`. Runs off the main thread and
+    /// never falls back to an unlocked write when another writer has not released its lock. While another writer
+    /// holds the lock it suspends (no thread is held) and retries every 100 ms until `lockTimeout`, then throws. The
+    /// patch is deep-merged into `app`, and the file is rewritten even when the merge changed nothing.
     nonisolated static func persist(_ data: Data, directory: URL, lockTimeout: TimeInterval = 5) async throws {
         let patch = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                                attributes: [.posixPermissions: 0o700])
-        let lock = directory.appendingPathComponent("client.json.lock")
-        let deadline = Date().addingTimeInterval(max(0.1, lockTimeout))
-        let marker = Data("\(lockMarkerPrefix)\(getpid())\n".utf8)
-        while true {
-            let descriptor = open(lock.path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0o600)
-            if descriptor >= 0 {
-                // The owner's pid, so a later writer can prove this lock is stale if this process dies holding it.
-                _ = marker.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
-                close(descriptor)
-                break
-            }
-            guard errno == EEXIST else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-            }
-            if reclaimIfOwnerDied(lock) { continue }
-            guard Date() < deadline else {
-                throw NSError(domain: "FlowFocusConfiguration", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for client.json.lock"])
-            }
-            let pause = min(0.1, max(0, deadline.timeIntervalSinceNow))
-            try await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
-        }
-        defer {
-            do { try FileManager.default.removeItem(at: lock) }
-            catch { FlowFocusLog.focus.warning("configuration lock cleanup failed: \(error.localizedDescription)") }
-        }
-        var raw = try readForWrite(directory: directory)
-        raw["app"] = merge(raw["app"] as? [String: Any] ?? [:], patch)
-        let encoded = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys])
-        let destination = directory.appendingPathComponent("client.json")
-        // Owner-only before it becomes visible: a temporary file is chmodded and then renamed over client.json,
-        // so the file never exists under the process umask.
-        let temporary = directory.appendingPathComponent(".client.json.\(UUID().uuidString).tmp")
-        do {
-            try encoded.write(to: temporary)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
-            guard rename(temporary.path, destination.path) == 0 else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-            }
-        } catch {
-            if FileManager.default.fileExists(atPath: temporary.path) {
-                do { try FileManager.default.removeItem(at: temporary) }
-                catch let cleanup { FlowFocusLog.focus.warning("client.json temporary not removed: \(cleanup.localizedDescription)") }
-            }
-            throw error
+        try await configFile(directory: directory, lockTimeout: lockTimeout).mutate(alwaysWrite: true) { raw in
+            raw["app"] = merge(raw["app"] as? [String: Any] ?? [:], patch)
         }
     }
 }

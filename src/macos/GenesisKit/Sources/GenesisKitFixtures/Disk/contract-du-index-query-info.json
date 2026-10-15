@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "db": "/Users/example/.genesis-tools/du/index.db",
+  "db_bytes": 1835008,
+  "root": "/Users/example",
+  "as_of": {
+    "scan_id": 43,
+    "kind": "update",
+    "status": "done",
+    "finished_at_ms": 1760382000000,
+    "age_s": 3600,
+    "last_build_scan_id": 42,
+    "last_build_at_ms": 1760313600000
+  },
+  "meta": {
+    "schema_version": "1",
+    "tool_version": "0.1.0",
+    "created_at_ms": "1757721600000",
+    "root": "/Users/example",
+    "volume_fsid": "0100000e0000001a",
+    "private": "1",
+    "min_dir_bytes": "1048576",
+    "big_file_floor": "8388608",
+    "snapshot_floor": "67108864",
+    "excludes": "[]",
+    "include_cloud": "0",
+    "blocked_dirs": "3",
+    "last_build_scan_id": "42",
+    "last_update_scan_id": "43"
+  },
+  "counts": {
+    "dirs": 15120,
+    "tombstones": 12,
+    "big_files": 498,
+    "snapshots": 9,
+    "snapshot_dirs": 2210,
+    "dirty_queue": 0,
+    "blocked": 3
+  },
+  "scans": [
+    {
+      "id": 43,
+      "kind": "update",
+      "status": "done",
+      "started_at_ms": 1760381999882,
+      "finished_at_ms": 1760382000000,
+      "files": 6222,
+      "dirs": 195,
+      "alloc_bytes": 36339892224,
+      "walk_ms": 64,
+      "threads": 4
+    },
+    {
+      "id": 42,
+      "kind": "build",
+      "status": "done",
+      "started_at_ms": 1760313593470,
+      "finished_at_ms": 1760313600000,
+      "files": 1301243,
+      "dirs": 159603,
+      "alloc_bytes": 36291559424,
+      "walk_ms": 5412,
+      "threads": 8
+    }
+  ]
+}

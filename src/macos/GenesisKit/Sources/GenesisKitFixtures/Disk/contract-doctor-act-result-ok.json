@@ -1,0 +1,55 @@
+{
+    "schemaVersion": 1,
+    "runId": "2026-10-13T19-40-11-123Z",
+    "analyzerId": "temp-leaks",
+    "actionId": "delete-clone",
+    "method": "delete",
+    "dryRun": false,
+    "startedAt": "2026-10-13T19:40:11.123Z",
+    "endedAt": "2026-10-13T19:40:12.870Z",
+    "volume": {
+        "path": "/private/var/folders/qz/qz1example0000000000000000gn/X/com.google.Chrome.code_sign_clone",
+        "availableBefore": 9663676416,
+        "availableAfter": 10607394816,
+        "deltaBytes": 943718400,
+        "settleNote": "df may keep rising for several minutes after a large delete"
+    },
+    "manifestPath": "/Users/alice/.genesis-tools/doctor/manifests/2026-10-13T19-40-11-123Z.jsonl",
+    "items": [
+        {
+            "findingId": "temp-leaks:codesign-clone:com.google.Chrome:Ok4jVh",
+            "status": "ok",
+            "severity": "cautious",
+            "paths": [
+                "/private/var/folders/qz/qz1example0000000000000000gn/X/com.google.Chrome.code_sign_clone/code_sign_clone.Ok4jVh"
+            ],
+            "estimatedBytes": 471859200,
+            "remeasuredBytes": 1395421184,
+            "freesNow": "yes",
+            "restore": null
+        },
+        {
+            "findingId": "temp-leaks:codesign-clone:com.google.Chrome:Pq2Rs8",
+            "status": "ok",
+            "severity": "cautious",
+            "paths": [
+                "/private/var/folders/qz/qz1example0000000000000000gn/X/com.google.Chrome.code_sign_clone/code_sign_clone.Pq2Rs8"
+            ],
+            "estimatedBytes": 471859200,
+            "remeasuredBytes": 1395421184,
+            "freesNow": "yes",
+            "restore": null
+        }
+    ],
+    "totals": {
+        "requested": 2,
+        "ok": 2,
+        "staged": 0,
+        "skipped": 0,
+        "failed": 0,
+        "refused": 0,
+        "estimatedBytes": 943718400,
+        "remeasuredBytes": 2790842368
+    },
+    "followUps": []
+}

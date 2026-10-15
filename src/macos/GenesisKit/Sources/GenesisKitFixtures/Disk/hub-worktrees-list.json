@@ -1,0 +1,494 @@
+{
+  "rows": [
+    {
+      "path": "/private/tmp/cc/GenesisTools/session-1/worktrees/kit-posture",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-13-posture-disk-kit-posture",
+      "head": "041adfa93c3ad591f76aae2eeff3efa84e39440b",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791915362000,
+      "lastActivityAt": 1791917141157.8376,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/cc/GenesisTools/session-1/worktrees/kit-core",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-13-posture-disk-kit-core",
+      "head": "041adfa93c3ad591f76aae2eeff3efa84e39440b",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [
+        {
+          "pid": 50205,
+          "name": "zsh"
+        },
+        {
+          "pid": 50210,
+          "name": "swift-test"
+        },
+        {
+          "pid": 50323,
+          "name": "xctest"
+        }
+      ],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791915362000,
+      "lastActivityAt": 1791917114689.806,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        },
+        {
+          "kind": "process",
+          "text": "Running in it: zsh (50205), swift-test (50210), xctest (50323)"
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/cc/GenesisTools/session-1/worktrees/kit-ui",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-13-posture-disk-kit-ui",
+      "head": "041adfa93c3ad591f76aae2eeff3efa84e39440b",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [
+        {
+          "pid": 51546,
+          "name": "zsh"
+        },
+        {
+          "pid": 51569,
+          "name": "swift-test"
+        },
+        {
+          "pid": 51714,
+          "name": "swift-driver"
+        }
+      ],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791915362000,
+      "lastActivityAt": 1791917083930.1892,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        },
+        {
+          "kind": "process",
+          "text": "Running in it: zsh (51546), swift-test (51569), swift-driver (51714)"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/Projects/GenesisTools/.worktrees/claude-haiku-5-5",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-13-claude-haiku-5-5",
+      "head": "552bde812f920e2470837a2c2944f84a0eb5f5f0",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791916051000,
+      "lastActivityAt": 1791916203200.569,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/Projects/GenesisTools/.worktrees/posture-disk-kit",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-13-posture-disk-kit",
+      "head": "041adfa93c3ad591f76aae2eeff3efa84e39440b",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791915362000,
+      "lastActivityAt": 1791915948494.0017,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/cc/GenesisTools/session-2/worktrees/agents-monitor-format",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-13-agents-monitor-format",
+      "head": "4fd433fa0e4cbbd32ffb665ad29c5ae7c1c1b34d",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791907907000,
+      "lastActivityAt": 1791907908100.214,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/.genesis-tools/ts/sourcemaps/dev-dashboard/worktree",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": null,
+      "head": "705ef691e7241c34f9b63a0707140e834ed58c8d",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "STALE",
+      "how": "superseded",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791830488000,
+      "lastActivityAt": 1791831163234.6782,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "Detached HEAD 705ef691e is stale, not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/Projects/GenesisTools/.claude/worktrees/feat-query-redux-probes",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-12-query-redux-probes",
+      "head": "934e42531d47647680ac783e1bf13aecfee17b21",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "STALE",
+      "how": "superseded",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791828692000,
+      "lastActivityAt": 1791828693013.5593,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is stale, not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/Projects/GenesisTools/.claude/worktrees/BoomFeatures",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/boom-features",
+      "head": "2b3bb55ca1b2dfd1bb671e78ba79ea50abaf32ed",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791323123000,
+      "lastActivityAt": 1791742369252.507,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/.codex/worktrees/bug-to-test/GenesisTools",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": null,
+      "head": "d045b9ce14e46b869cbe01a277ea33f5189246af",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791252785000,
+      "lastActivityAt": 1791663440291.6436,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "Detached HEAD d045b9ce1 is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/.codex/worktrees/show-once/GenesisTools",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": null,
+      "head": "d0703a2ec47652a42d9ca048bfa850092211fb7f",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791246358000,
+      "lastActivityAt": 1791663440277.5305,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "Detached HEAD d0703a2ec is not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/Projects/GenesisTools/.claude/worktrees/gitlab-skilltest-fixes",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/2026-10-07-gitlab-skilltest-fixes",
+      "head": "e1913999149f7449ee25f984e952949081ca4500",
+      "present": true,
+      "locked": null,
+      "prunable": null,
+      "verdict": "STALE",
+      "how": "superseded",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791347768000,
+      "lastActivityAt": 1791663440273.8047,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "unmerged",
+          "text": "The branch is stale, not merged into origin/master"
+        }
+      ]
+    },
+    {
+      "path": "/Users/alice/Projects/GenesisTools/.claude/worktrees/feat-show-once",
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "repo": "GenesisTools",
+      "branch": "feat/show-once",
+      "head": "81e1b9560ce9cc975da4c76fc58befcbeb3ee58c",
+      "present": true,
+      "locked": null,
+      "prunable": "gitdir file points to non-existent location",
+      "verdict": "UNMERGED",
+      "how": "none",
+      "verdictError": null,
+      "statusError": null,
+      "base": "origin/master",
+      "changedCount": 0,
+      "changed": [],
+      "untrackedCount": 0,
+      "untracked": [],
+      "ignored": [],
+      "stashes": [],
+      "stashError": null,
+      "processes": [],
+      "sessions": [],
+      "sessionsError": null,
+      "lastCommitAt": 1791323129000,
+      "lastActivityAt": 1791323129000,
+      "removable": false,
+      "blockers": [
+        {
+          "kind": "missing",
+          "text": "The folder is gone; `git worktree prune` clears the entry"
+        },
+        {
+          "kind": "unmerged",
+          "text": "The branch is not merged into origin/master"
+        }
+      ]
+    }
+  ],
+  "bases": [
+    {
+      "repoRoot": "/Users/alice/Projects/GenesisTools",
+      "base": "origin/master",
+      "source": "inferred",
+      "detail": "origin HEAD"
+    }
+  ],
+  "warnings": [],
+  "elapsedMs": 3987
+}

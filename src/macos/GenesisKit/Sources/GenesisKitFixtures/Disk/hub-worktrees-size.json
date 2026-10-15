@@ -1,0 +1,17 @@
+[
+  {
+    "path": "/Users/alice/Projects/demo/app",
+    "bytes": 303104,
+    "freeableBytes": 0,
+    "files": 21,
+    "elapsedMs": 42
+  },
+  {
+    "path": "/Users/alice/Projects/demo/gone",
+    "bytes": 0,
+    "freeableBytes": null,
+    "files": 0,
+    "elapsedMs": 0,
+    "error": "The folder does not exist"
+  }
+]

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "root": "/Users/example",
+  "from": {
+    "snapshot_id": 40,
+    "scan_id": 40,
+    "taken_at_ms": 1759708800000
+  },
+  "to": {
+    "snapshot_id": null,
+    "scan_id": 43,
+    "taken_at_ms": 1760382000000,
+    "live": true
+  },
+  "floor": 67108864,
+  "attribute": "leaf",
+  "total_delta": {
+    "alloc_bytes": 9663676416,
+    "files": 21000
+  },
+  "rows": [
+    {
+      "path": "/Users/example/Library/Containers/com.docker.docker",
+      "before": 6442450944,
+      "after": 13958643712,
+      "delta": 7516192768,
+      "status": "grown",
+      "files_delta": 40,
+      "approx": false
+    },
+    {
+      "path": "/Users/example/Projects/new-app/node_modules",
+      "before": 0,
+      "after": 1610612736,
+      "delta": 1610612736,
+      "status": "new",
+      "files_delta": 18000,
+      "approx": false
+    },
+    {
+      "path": "/Users/example/Library/Caches/com.example.app",
+      "before": null,
+      "after": 314572800,
+      "delta": 314572800,
+      "status": "grown",
+      "files_delta": 2400,
+      "approx": true
+    },
+    {
+      "path": "/Users/example/Downloads/old-installer",
+      "before": 2147483648,
+      "after": 0,
+      "delta": -2147483648,
+      "status": "gone",
+      "files_delta": -12,
+      "approx": false
+    },
+    {
+      "path": "/Users/example/Library/Logs/DiagnosticReports",
+      "before": 536870912,
+      "after": 134217728,
+      "delta": -402653184,
+      "status": "shrunk",
+      "files_delta": -300,
+      "approx": false
+    }
+  ],
+  "truncated": false
+}

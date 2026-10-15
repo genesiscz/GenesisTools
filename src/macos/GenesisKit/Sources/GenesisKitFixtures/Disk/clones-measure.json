@@ -1,0 +1,38 @@
+{
+  "roots": [
+    "/Users/alice/Projects/demo"
+  ],
+  "nodeModulesMode": false,
+  "minReal": 1,
+  "tree": [
+    {
+      "path": "/Users/alice/Projects/demo/dup-lib",
+      "depth": 1,
+      "logical": 122209,
+      "allocated": 155648,
+      "real": 155648,
+      "overcount": 1,
+      "children": []
+    }
+  ],
+  "totals": {
+    "logical": 641999,
+    "allocated": 761856,
+    "real": 155648,
+    "uniqueAllocated": 458752,
+    "overcount": 4.894736842105263
+  },
+  "cloneAnalysis": {
+    "families": 21,
+    "clonedFiles": 42,
+    "sharedBytes": 0,
+    "crossTreePartners": [],
+    "notes": []
+  },
+  "freeSpace": {
+    "total": 994662584320,
+    "free": 13592551424,
+    "available": 13592551424
+  },
+  "errors": []
+}

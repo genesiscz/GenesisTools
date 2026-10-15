@@ -1,0 +1,45 @@
+{
+  "type": "result",
+  "command": "update",
+  "schema_version": 1,
+  "scan_id": 43,
+  "root": "/Users/example",
+  "deferred": false,
+  "queued": 0,
+  "regions": [
+    {
+      "owner": "/Users/example/Library/Caches",
+      "owner_id": 17,
+      "files": 4012,
+      "dirs": 55,
+      "kept": 12,
+      "walk_ms": 41,
+      "delta": {
+        "alloc_bytes": 52428800,
+        "logical_bytes": 52000000,
+        "private_bytes": 52428800,
+        "files": 12,
+        "dirs": 1
+      }
+    },
+    {
+      "owner": "/Users/example/Projects/app",
+      "owner_id": 311,
+      "files": 2210,
+      "dirs": 140,
+      "kept": 4,
+      "walk_ms": 23,
+      "delta": {
+        "alloc_bytes": -4096000,
+        "logical_bytes": -4090000,
+        "private_bytes": -4096000,
+        "files": -3,
+        "dirs": 0
+      }
+    }
+  ],
+  "promoted": 1,
+  "removed": 0,
+  "ignored": [],
+  "elapsed_ms": 118
+}

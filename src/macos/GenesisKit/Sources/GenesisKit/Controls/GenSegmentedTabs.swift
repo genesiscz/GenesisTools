@@ -25,16 +25,21 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     @Binding private var selection: ID
     private let label: String
     private let minSegmentWidth: CGFloat
+    private let identifier: String?
     /// Light text on the dark panels it was made for, dark text in a light window (the markdown viewer's light theme).
     @Environment(\.colorScheme) private var scheme
     @GenReduceMotion private var reduceMotion
     private var ink: Color { scheme == .dark ? .white : .black }
 
-    public init(_ label: String, items: [Item], selection: Binding<ID>, minSegmentWidth: CGFloat = 72) {
+    /// `identifier` names the group for UI automation; each segment is then `<identifier>.<id>`, the id as
+    /// `GenAccessibilityID.suffix` spells it (an enum case's name, a string as it is).
+    public init(_ label: String, items: [Item], selection: Binding<ID>, minSegmentWidth: CGFloat = 72,
+                identifier: String? = nil) {
         self.label = label
         self.items = items
         _selection = selection
         self.minSegmentWidth = minSegmentWidth
+        self.identifier = identifier
     }
 
     public var body: some View {
@@ -70,6 +75,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .fixedSize()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier ?? "")
     }
 
     private func segment(_ item: Item) -> some View {
@@ -83,6 +89,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .buttonStyle(GenSegmentStyle(selected: selected, ink: ink))
         .anchorPreference(key: GenSegmentFrames.self, value: .bounds) { [AnyHashable(item.id): $0] }
         .accessibilityLabel(item.title)
+        .accessibilityIdentifier(identifier.map { "\($0).\(GenAccessibilityID.suffix(item.id))" } ?? "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

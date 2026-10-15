@@ -1,0 +1,10 @@
+{
+    "error": {
+        "kind": "rollback-space",
+        "message": "Cannot rollback: needs ~5368709120 bytes (×1.1), only 2147483648 available.",
+        "command": "optimize --rollback",
+        "processId": "2026-10-08T20-41-40-760Z.51673.1",
+        "required": 5368709120,
+        "available": 2147483648
+    }
+}

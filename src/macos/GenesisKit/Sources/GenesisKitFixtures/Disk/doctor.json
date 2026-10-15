@@ -1,0 +1,170 @@
+{
+  "runId": "2026-10-13T18-56-32-547Z",
+  "startedAt": "2026-10-13T18:56:32.553Z",
+  "endedAt": "2026-10-13T18:57:07.631Z",
+  "analyzers": [
+    "disk-space",
+    "dev-caches",
+    "system-caches"
+  ],
+  "findings": [
+    {
+      "id": "disk-downloads",
+      "analyzerId": "disk-space",
+      "title": "~/Downloads - 13.4 GB",
+      "detail": "Downloads folder - often safe to clean old installers and archives.",
+      "severity": "cautious",
+      "reclaimableBytes": 14419988480,
+      "availableActionIds": [
+        "reveal"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Downloads"
+      }
+    },
+    {
+      "id": "dev-sim-iOS 26 5",
+      "analyzerId": "dev-caches",
+      "title": "Simulators: iOS 26 5 x 1",
+      "detail": "4.4 GB · 0 unavailable · 0 stale",
+      "severity": "cautious",
+      "reclaimableBytes": 4731273216,
+      "availableActionIds": [
+        "delete-all-for-runtime"
+      ],
+      "metadata": {
+        "runtime": "iOS 26 5",
+        "count": 1,
+        "totalBytes": 4731273216
+      }
+    },
+    {
+      "id": "dev-brew-cache",
+      "analyzerId": "dev-caches",
+      "title": "Homebrew download cache",
+      "detail": "396.1 MB · safely removable",
+      "severity": "safe",
+      "reclaimableBytes": 415367168,
+      "availableActionIds": [
+        "brew-cleanup"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/Homebrew",
+        "bytes": 415367168
+      }
+    },
+    {
+      "id": "sys-cache-org.swift.swiftpm",
+      "analyzerId": "system-caches",
+      "title": "~/Library/Caches/org.swift.swiftpm",
+      "detail": "2.0 GB",
+      "severity": "cautious",
+      "reclaimableBytes": 2149732352,
+      "availableActionIds": [
+        "delete-cache"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/org.swift.swiftpm",
+        "bytes": 2149732352
+      }
+    },
+    {
+      "id": "sys-cache-bun",
+      "analyzerId": "system-caches",
+      "title": "~/Library/Caches/bun",
+      "detail": "981.7 MB",
+      "severity": "cautious",
+      "reclaimableBytes": 1029423104,
+      "availableActionIds": [
+        "delete-cache"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/bun",
+        "bytes": 1029423104
+      }
+    },
+    {
+      "id": "sys-cache-Homebrew",
+      "analyzerId": "system-caches",
+      "title": "~/Library/Caches/Homebrew",
+      "detail": "396.1 MB",
+      "severity": "cautious",
+      "reclaimableBytes": 415367168,
+      "availableActionIds": [
+        "delete-cache"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/Homebrew",
+        "bytes": 415367168
+      }
+    },
+    {
+      "id": "sys-cache-pip",
+      "analyzerId": "system-caches",
+      "title": "~/Library/Caches/pip",
+      "detail": "469.9 MB",
+      "severity": "cautious",
+      "reclaimableBytes": 492761088,
+      "availableActionIds": [
+        "delete-cache"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/pip",
+        "bytes": 492761088
+      }
+    },
+    {
+      "id": "sys-cache-node-gyp",
+      "analyzerId": "system-caches",
+      "title": "~/Library/Caches/node-gyp",
+      "detail": "179.9 MB",
+      "severity": "cautious",
+      "reclaimableBytes": 188690432,
+      "availableActionIds": [
+        "delete-cache"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/node-gyp",
+        "bytes": 188690432
+      }
+    },
+    {
+      "id": "sys-cache-electron",
+      "analyzerId": "system-caches",
+      "title": "~/Library/Caches/electron",
+      "detail": "175.7 MB",
+      "severity": "cautious",
+      "reclaimableBytes": 184242176,
+      "availableActionIds": [
+        "delete-cache"
+      ],
+      "metadata": {
+        "path": "/Users/alice/Library/Caches/electron",
+        "bytes": 184242176
+      }
+    },
+    {
+      "id": "sys-var-log",
+      "analyzerId": "system-caches",
+      "title": "6 archived log(s) in /var/log older than 7 days",
+      "detail": "996.2 KB · requires sudo to delete",
+      "severity": "cautious",
+      "reclaimableBytes": 1020131,
+      "availableActionIds": [
+        "copy-archived-log-command"
+      ],
+      "metadata": {
+        "paths": [
+          "/var/log/wifi.log.10.bz2",
+          "/var/log/system.log.7.gz",
+          "/var/log/wifi.log.8.bz2",
+          "/var/log/wifi.log.9.bz2",
+          "/var/log/wifi.log.7.bz2",
+          "/var/log/wifi.log.6.bz2"
+        ],
+        "totalSize": 1020131
+      }
+    }
+  ],
+  "errors": []
+}

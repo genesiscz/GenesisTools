@@ -848,6 +848,19 @@ final class ToolsLineStreamTests: XCTestCase {
         return (ToolsBridge(binaryPath: file.path), dir)
     }
 
+    func testABackgroundStreamRunsTheCommandAtNiceFifteen() throws {
+        let (bridge, dir) = try script("sleep 0.5; echo \"$1\"; ps -o nice= -p $$")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var lines: [String] = []
+        let exited = expectation(description: "exit")
+        let stream = try ToolsLineStream(bridge: bridge, subcommand: "index", args: [], priority: .background,
+                                         onLines: { lines += $0 }, onExit: { _ in exited.fulfill() })
+        wait(for: [exited], timeout: 5)
+        XCTAssertEqual(lines.first, "index", "the argv reaches the command through taskpolicy")
+        XCTAssertEqual(lines.last?.trimmingCharacters(in: .whitespaces), "15")
+        _ = stream
+    }
+
     func testDeliversWholeLinesThenTheExit() throws {
         let (bridge, dir) = try script("printf 'one\\ntw'; printf 'o\\nthree\\n'; echo oops >&2; exit 3")
         defer { try? FileManager.default.removeItem(at: dir) }

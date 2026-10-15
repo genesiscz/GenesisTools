@@ -10,6 +10,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "GenesisKit", targets: ["GenesisKit"]),
+        // Test targets only: the one copy of the `tools` disk fixtures (KitFixture). The GenesisTools bun tests
+        // read the same files by path. An app target never links it.
+        .library(name: "GenesisKitFixtures", targets: ["GenesisKitFixtures"]),
     ],
     // The markdown viewer's "Native+" renderer: diagrams and highlighted code without a web view.
     dependencies: [
@@ -28,6 +31,9 @@ let package = Package(
             // Contents/Resources/webview, which is read first; `swift test` and `swift run` read it from here.
             resources: [.copy("Markdown/Resources/webview")]
         ),
-        .testTarget(name: "GenesisKitTests", dependencies: ["GenesisKit"], path: "Tests/GenesisKitTests"),
+        // Disk/: the frozen CLI contracts and real `tools` JSON output the disk decoders are tested against.
+        .target(name: "GenesisKitFixtures", path: "Sources/GenesisKitFixtures", resources: [.copy("Disk")]),
+        .testTarget(name: "GenesisKitTests", dependencies: ["GenesisKit", "GenesisKitFixtures"],
+                    path: "Tests/GenesisKitTests"),
     ]
 )

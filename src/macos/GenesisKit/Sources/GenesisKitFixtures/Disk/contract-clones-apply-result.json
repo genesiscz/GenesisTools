@@ -1,0 +1,48 @@
+{
+    "id": "2026-10-13T19-12-03-114Z.48211",
+    "state": "applied",
+    "roots": [
+        "/Users/alice/Projects/shop/node_modules",
+        "/Users/alice/Projects/shop/.worktrees/feature-a/node_modules"
+    ],
+    "startedAt": "2026-10-13T19:12:03.114Z",
+    "endedAt": "2026-10-13T19:12:04.902Z",
+    "planCache": { "hit": true, "ageMs": 18234 },
+    "ops": [
+        {
+            "seq": 1,
+            "ts": "2026-10-13T19:12:03.420Z",
+            "op": "clone",
+            "status": "ok",
+            "bytes": 52428800,
+            "keep": "/Users/alice/Projects/shop/node_modules/typescript/lib/typescript.js",
+            "replace": "/Users/alice/Projects/shop/.worktrees/feature-a/node_modules/typescript/lib/typescript.js",
+            "modeBefore": 33188,
+            "mtimeBeforeMs": 1760000000000,
+            "sha256Before": "9f2b5c1e0d7a4b3c8e6f1a2d5b7c9e0f1a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d",
+            "sha256After": "9f2b5c1e0d7a4b3c8e6f1a2d5b7c9e0f1a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d",
+            "privateBytes": 52428800
+        },
+        {
+            "seq": 2,
+            "ts": "2026-10-13T19:12:03.611Z",
+            "op": "skip",
+            "status": "already-cloned",
+            "bytes": 10485760,
+            "keep": "/Users/alice/Projects/shop/node_modules/esbuild/bin/esbuild",
+            "replace": "/Users/alice/Projects/shop/.worktrees/feature-a/node_modules/esbuild/bin/esbuild",
+            "modeBefore": 33261,
+            "mtimeBeforeMs": 1760000000000,
+            "sha256Before": "1a3c5e7f9b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a"
+        }
+    ],
+    "totals": { "cloned": 1, "skipped": 1, "errors": 0, "bytesReclaimed": 52428800 },
+    "freeBytes": { "before": 9663676416, "after": 9716105216 },
+    "plan": {
+        "runId": "2026-10-13T19-11-45-002Z.48190",
+        "totalReclaimable": 62914560,
+        "totalFreeable": 52428800,
+        "totalFreeableUpTo": 62914560,
+        "sets": 2
+    }
+}

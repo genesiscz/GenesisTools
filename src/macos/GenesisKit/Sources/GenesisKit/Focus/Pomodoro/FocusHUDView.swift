@@ -600,22 +600,15 @@ public struct FocusHUDView: View {
 
 // MARK: - Sparkline
 
-/// Keystrokes per tick as a polyline. A `Shape` rather than a `Canvas` so it participates in
-/// normal diffing and costs nothing when the samples do not change.
+/// Keystrokes per tick as a polyline from zero to the peak: the kit's `SparklinePath` over counts. A `Shape` rather
+/// than a `Canvas` so it participates in normal diffing and costs nothing when the samples do not change.
 public struct FocusSparkline: Shape {
     public var samples: [Int]
 
     public func path(in rect: CGRect) -> Path {
-        var path = Path()
-        guard samples.count > 1 else { return path }
-        let peak = max(samples.max() ?? 1, 1)
-        let step = rect.width / CGFloat(samples.count - 1)
-        for (index, sample) in samples.enumerated() {
-            let x = rect.minX + CGFloat(index) * step
-            let y = rect.maxY - (CGFloat(sample) / CGFloat(peak)) * rect.height
-            if index == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
-        }
-        return path
+        guard samples.count > 1 else { return Path() }
+        let peak = Double(max(samples.max() ?? 1, 1))
+        return SparklinePath(values: samples.map(Double.init), range: 0...peak).path(in: rect)
     }
 }
 

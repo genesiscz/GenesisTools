@@ -1,0 +1,210 @@
+{
+  "roots": [
+    "/Users/alice/Projects/demo"
+  ],
+  "sets": [
+    {
+      "kind": "file",
+      "what": "app-clone/lib/clone-controls.test.ts",
+      "copies": 2,
+      "eachBytes": 3952,
+      "reclaimable": 3952,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/clone-controls.test.ts",
+        "/Users/alice/Projects/demo/dup-lib/clone-controls.test.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/clone-controls.test.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/bun-scan.ts",
+      "copies": 2,
+      "eachBytes": 13763,
+      "reclaimable": 13763,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/bun-scan.ts",
+        "/Users/alice/Projects/demo/dup-lib/bun-scan.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/bun-scan.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/worktrees.ts",
+      "copies": 2,
+      "eachBytes": 2207,
+      "reclaimable": 2207,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/worktrees.ts",
+        "/Users/alice/Projects/demo/dup-lib/worktrees.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/worktrees.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/merge.test.ts",
+      "copies": 2,
+      "eachBytes": 3252,
+      "reclaimable": 3252,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/merge.test.ts",
+        "/Users/alice/Projects/demo/dup-lib/merge.test.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/merge.test.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/scan-worker.ts",
+      "copies": 2,
+      "eachBytes": 672,
+      "reclaimable": 672,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/scan-worker.ts",
+        "/Users/alice/Projects/demo/dup-lib/scan-worker.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/scan-worker.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/cache.test.ts",
+      "copies": 2,
+      "eachBytes": 13386,
+      "reclaimable": 13386,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/cache.test.ts",
+        "/Users/alice/Projects/demo/dup-lib/cache.test.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/cache.test.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/format.test.ts",
+      "copies": 2,
+      "eachBytes": 17488,
+      "reclaimable": 17488,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/format.test.ts",
+        "/Users/alice/Projects/demo/dup-lib/format.test.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/format.test.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/engine.ts",
+      "copies": 2,
+      "eachBytes": 16814,
+      "reclaimable": 16814,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/engine.ts",
+        "/Users/alice/Projects/demo/dup-lib/engine.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/engine.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/clone-fixture.ts",
+      "copies": 2,
+      "eachBytes": 3559,
+      "reclaimable": 3559,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/clone-fixture.ts",
+        "/Users/alice/Projects/demo/dup-lib/clone-fixture.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/clone-fixture.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/ffi-scan.ts",
+      "copies": 2,
+      "eachBytes": 9163,
+      "reclaimable": 9163,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/ffi-scan.ts",
+        "/Users/alice/Projects/demo/dup-lib/ffi-scan.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/ffi-scan.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/types.ts",
+      "copies": 2,
+      "eachBytes": 6102,
+      "reclaimable": 6102,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/types.ts",
+        "/Users/alice/Projects/demo/dup-lib/types.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/types.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/format.ts",
+      "copies": 2,
+      "eachBytes": 20731,
+      "reclaimable": 20731,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/format.ts",
+        "/Users/alice/Projects/demo/dup-lib/format.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/format.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/options.test.ts",
+      "copies": 2,
+      "eachBytes": 3276,
+      "reclaimable": 3276,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/options.test.ts",
+        "/Users/alice/Projects/demo/dup-lib/options.test.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/options.test.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/bigfiles.test.ts",
+      "copies": 2,
+      "eachBytes": 6132,
+      "reclaimable": 6132,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/bigfiles.test.ts",
+        "/Users/alice/Projects/demo/dup-lib/bigfiles.test.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/bigfiles.test.ts"
+    },
+    {
+      "kind": "file",
+      "what": "app-clone/lib/options.ts",
+      "copies": 2,
+      "eachBytes": 1712,
+      "reclaimable": 1712,
+      "members": [
+        "/Users/alice/Projects/demo/app-clone/lib/options.ts",
+        "/Users/alice/Projects/demo/dup-lib/options.ts"
+      ],
+      "keep": "/Users/alice/Projects/demo/app-clone/lib/options.ts"
+    }
+  ],
+  "totalReclaimable": 122209,
+  "grouped": false,
+  "hardStop": [
+    "/Users/alice/Projects/demo"
+  ],
+  "stats": {
+    "walkedFiles": 57,
+    "walkedDirs": 8,
+    "walkMs": 16.104040999999995,
+    "bucketsTotal": 21,
+    "bucketsDroppedByClone": 6,
+    "bucketsHashed": 15,
+    "cloneIdCalls": 0,
+    "sha256Calls": 30,
+    "sha256Bytes": 244418,
+    "byteCompareCalls": 0,
+    "hashMs": 92.20495799999998,
+    "cacheHits": 0,
+    "cacheMisses": 30,
+    "prefixHashCalls": 0,
+    "prefixHashDrops": 0,
+    "deniedDirs": 0
+  }
+}

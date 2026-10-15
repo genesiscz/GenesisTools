@@ -1,0 +1,8 @@
+{"type":"start","command":"build","schema_version":1,"scan_id":42,"root":"/Users/example","db":"/Users/example/.genesis-tools/du/index.db","threads":8,"private":true,"started_at_ms":1760313593470}
+{"type":"progress","phase":"walk","files":412000,"dirs":51000,"bytes":12884901888,"elapsed_ms":1500,"files_per_s":274666,"dir":"/Users/example/Projects/app/node_modules/react"}
+{"type":"blocked","phase":"walk","path":"/Users/example/Library/Containers/com.example.other-app/Data","waited_ms":10012}
+{"type":"progress","phase":"walk","files":1201000,"dirs":147000,"bytes":35433480192,"elapsed_ms":5000,"files_per_s":240200,"dir":"/Users/example/Library/Caches/com.example.app"}
+{"type":"phase","phase":"ingest","rows":15120,"elapsed_ms":5420}
+{"type":"phase","phase":"commit","rows":15120,"elapsed_ms":6180}
+{"type":"phase","phase":"checkpoint","rows":null,"elapsed_ms":6300}
+{"type":"result","command":"build","schema_version":1,"scan_id":42,"snapshot_id":42,"root":"/Users/example","db":"/Users/example/.genesis-tools/du/index.db","threads":8,"private":true,"min_dir_bytes":1048576,"big_file_floor":8388608,"files":1301243,"dirs":159603,"stored_dirs":15120,"folded_dirs":144484,"big_files":498,"alloc_bytes":36291559424,"logical_bytes":33816203264,"private_bytes":21369782272,"denied_dirs":3,"vanished_dirs":1,"read_errors":0,"skipped_cloud":["/Users/example/Library/CloudStorage"],"skipped_mounts":["/Users/example/OrbStack"],"blocked_dirs":1,"blocked_paths":["/Users/example/Library/Containers/com.example.other-app/Data"],"reset":null,"walk_ms":5412,"ingest_ms":812,"elapsed_ms":6530,"db_bytes":1835008}

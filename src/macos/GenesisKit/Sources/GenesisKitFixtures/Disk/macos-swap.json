@@ -1,0 +1,57 @@
+{
+  "system": {
+    "totalBytes": 0,
+    "usedBytes": 0,
+    "freeBytes": 0
+  },
+  "processes": [
+    {
+      "pid": 9957,
+      "name": "/Users/alice/.bun/bin/claude",
+      "rssBytes": 1482063872,
+      "swapBytes": 208142336,
+      "uptimeMs": 110473000
+    },
+    {
+      "pid": 35875,
+      "name": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "rssBytes": 1145602048,
+      "swapBytes": 206674329.6,
+      "uptimeMs": 115357000
+    },
+    {
+      "pid": 30214,
+      "name": "/Users/alice/.bun/bin/claude",
+      "rssBytes": 959332352,
+      "swapBytes": 47815065.6,
+      "uptimeMs": 13060000
+    },
+    {
+      "pid": 27687,
+      "name": "/Users/alice/.bun/bin/claude",
+      "rssBytes": 852295680,
+      "swapBytes": 40894464,
+      "uptimeMs": 10925000
+    },
+    {
+      "pid": 55422,
+      "name": "/Users/alice/.bun/bin/claude",
+      "rssBytes": 982122496,
+      "swapBytes": 32715571.2,
+      "uptimeMs": 13528000
+    },
+    {
+      "pid": 90028,
+      "name": "/Users/alice/.bun/bin/claude",
+      "rssBytes": 1069858816,
+      "swapBytes": 11744051.2,
+      "uptimeMs": 5314000
+    }
+  ],
+  "scannedCount": 8,
+  "totalProcesses": 1262,
+  "cacheHits": 3,
+  "freshScans": 5,
+  "inaccessibleCount": 1,
+  "wasAllMode": false
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "as_of": {
+    "scan_id": 43,
+    "kind": "update",
+    "status": "done",
+    "finished_at_ms": 1760382000000,
+    "age_s": 3600,
+    "last_build_scan_id": 42,
+    "last_build_at_ms": 1760313600000
+  },
+  "root": "/Users/example",
+  "largest": "dirs",
+  "rows": [
+    {
+      "id": 17,
+      "parent_id": 3,
+      "name": "Containers",
+      "path": "/Users/example/Library/Containers",
+      "alloc_bytes": 21474836480,
+      "logical_bytes": 20186346291,
+      "private_bytes": 15247133901,
+      "files": 400000,
+      "dirs": 50000,
+      "max_file_bytes": 2386092942,
+      "newest_mtime_s": 1760371200,
+      "dir_mtime_ms": 1759622400000,
+      "flags": 0,
+      "scan_id": 42,
+      "stored_children": 41,
+      "local_alloc_bytes": 9663676416
+    },
+    {
+      "id": 18,
+      "parent_id": 3,
+      "name": "Caches",
+      "path": "/Users/example/Library/Caches",
+      "alloc_bytes": 12884901888,
+      "logical_bytes": 12111807775,
+      "private_bytes": 9148280340,
+      "files": 300000,
+      "dirs": 40000,
+      "max_file_bytes": 1431655765,
+      "newest_mtime_s": 1760370600,
+      "dir_mtime_ms": 1759536000000,
+      "flags": 0,
+      "scan_id": 43,
+      "stored_children": 37,
+      "local_alloc_bytes": 4294967296
+    }
+  ],
+  "truncated": true
+}

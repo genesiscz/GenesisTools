@@ -1,0 +1,55 @@
+{
+  "runId": "2026-10-13T18-58-33-511Z.58404.1",
+  "selector": {
+    "dirs": [
+      "/Users/alice/Projects/reclaim-demo"
+    ],
+    "targets": [
+      "node_modules"
+    ],
+    "exclude": [],
+    "minReal": 1,
+    "keepPartners": []
+  },
+  "roots": [
+    "/Users/alice/Projects/reclaim-demo/api/node_modules",
+    "/Users/alice/Projects/reclaim-demo/web/node_modules"
+  ],
+  "rootStamps": [
+    {
+      "path": "/Users/alice/Projects/reclaim-demo/api/node_modules",
+      "mtimeMs": 1791917911013.3694
+    },
+    {
+      "path": "/Users/alice/Projects/reclaim-demo/web/node_modules",
+      "mtimeMs": 1791917910727.6736
+    }
+  ],
+  "skipped": [],
+  "keepRoots": [],
+  "sets": [
+    {
+      "kind": "dir",
+      "what": "api/node_modules/du-lib",
+      "copies": 2,
+      "eachBytes": 122209,
+      "reclaimable": 122209,
+      "members": [
+        "/Users/alice/Projects/reclaim-demo/api/node_modules/du-lib",
+        "/Users/alice/Projects/reclaim-demo/web/node_modules/du-lib"
+      ],
+      "keep": "/Users/alice/Projects/reclaim-demo/api/node_modules/du-lib",
+      "freeable": 155648,
+      "freeableUpTo": 155648
+    }
+  ],
+  "totalReclaimable": 122209,
+  "totalFreeable": 155648,
+  "totalFreeableUpTo": 155648,
+  "dropped": {
+    "sets": 0,
+    "naiveBytes": 0
+  },
+  "fromSnapshot": false,
+  "deniedDirs": 0
+}

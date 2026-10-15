@@ -1,0 +1,315 @@
+{
+    "schemaVersion": 1,
+    "runId": "2026-10-13T19-05-12-345Z",
+    "startedAt": "2026-10-13T19:05:12.345Z",
+    "endedAt": "2026-10-13T19:05:13.901Z",
+    "analyzers": ["temp-leaks", "app-bloat"],
+    "scanGate": {
+        "gated": false,
+        "reasons": [],
+        "availableBytes": 11811160064,
+        "floorBytes": 1073741824,
+        "fseventsdRssBytes": 26214400,
+        "fseventsdLimitBytes": 1073741824
+    },
+    "findings": [
+        {
+            "id": "temp-leaks:codesign-clone:com.google.Chrome:Ok4jVh",
+            "analyzerId": "temp-leaks",
+            "title": "Leaked Google Chrome app copy (code_sign_clone.Ok4jVh)",
+            "detail": "1.3 GB allocated, at least 450.0 MB freed · born 1d ago, no running Google Chrome owns it. Prevent new copies: start automation Chrome with --disable-features=MacAppCodeSignClone, and close it with Browser.close (tools chrome-devtools close), never a kill signal.",
+            "severity": "cautious",
+            "reclaimableBytes": 471859200,
+            "fromCache": false,
+            "pathsHash": "sha256:87676f27b331ff1106cc66a19d06d15e50276b4f967e594aceb21e43eb5d945f",
+            "availableActionIds": ["delete-clone"],
+            "actions": [
+                {
+                    "id": "delete-clone",
+                    "label": "Delete the leaked app copy",
+                    "confirm": "yesno",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "codesign-clone",
+                "paths": [
+                    "/private/var/folders/qz/qz1example0000000000000000gn/X/com.google.Chrome.code_sign_clone/code_sign_clone.Ok4jVh"
+                ],
+                "allocatedBytes": 1395421184,
+                "apparentBytes": 1401872384,
+                "freeableFloorBytes": 471859200,
+                "ageDays": 1,
+                "owner": null,
+                "regenerates": false,
+                "sizeKnown": true,
+                "fileCount": 2817,
+                "bundleId": "com.google.Chrome",
+                "appName": "Google Chrome",
+                "bornAt": "2026-10-12T12:27:55.000Z",
+                "prevention": {
+                    "chromeFlag": "--disable-features=MacAppCodeSignClone",
+                    "close": "Close automation Chrome with Browser.close (tools chrome-devtools close --port <n>), never a kill signal"
+                }
+            }
+        },
+        {
+            "id": "temp-leaks:tmp-cc-session:GenesisTools:5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71",
+            "analyzerId": "temp-leaks",
+            "title": "Agent scratch /tmp/cc/GenesisTools/5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71",
+            "detail": "2.0 GB allocated, at least 1.5 GB freed · last change 6d ago · worktrees/ left out (remove those with tools hub worktrees remove)",
+            "severity": "cautious",
+            "reclaimableBytes": 1610612736,
+            "fromCache": false,
+            "pathsHash": "sha256:d9cfb6d684cf6bdb19c5fa58c90eeb96dda31e3f7c24646bad5f8c37b602c272",
+            "availableActionIds": ["delete-scratch"],
+            "actions": [
+                {
+                    "id": "delete-scratch",
+                    "label": "Delete the stale scratch entries",
+                    "confirm": "yesno",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "tmp-cc-session",
+                "paths": [
+                    "/private/tmp/cc/GenesisTools/5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71/bench-before",
+                    "/private/tmp/cc/GenesisTools/5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71/notes.txt"
+                ],
+                "allocatedBytes": 2147483648,
+                "apparentBytes": 2101346304,
+                "freeableFloorBytes": 1610612736,
+                "ageDays": 6,
+                "owner": null,
+                "regenerates": false,
+                "sizeKnown": true,
+                "project": "GenesisTools",
+                "session": "5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71",
+                "excluded": [
+                    {
+                        "path": "/private/tmp/cc/GenesisTools/5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71/worktrees",
+                        "reason": "git worktrees: remove them with tools hub worktrees remove <path> --yes --json"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "temp-leaks:tmpdir:md-chrome",
+            "analyzerId": "temp-leaks",
+            "title": "$TMPDIR md-chrome* · 3 entries older than 3 days",
+            "detail": "300.0 MB allocated · oldest 9d, newest 4d",
+            "severity": "safe",
+            "reclaimableBytes": 314572800,
+            "fromCache": false,
+            "pathsHash": "sha256:00d7b1c42dcc89f3449af47247a707b2ffd5ae44dc6d9adb1e9c6fa2c645a84f",
+            "availableActionIds": ["delete-tmp-group"],
+            "actions": [
+                {
+                    "id": "delete-tmp-group",
+                    "label": "Delete these old temp entries",
+                    "confirm": "yesno",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "tmpdir-group",
+                "paths": [
+                    "/private/var/folders/qz/qz1example0000000000000000gn/T/md-chrome-A1b2C3",
+                    "/private/var/folders/qz/qz1example0000000000000000gn/T/md-chrome-D4e5F6",
+                    "/private/var/folders/qz/qz1example0000000000000000gn/T/md-chrome-G7h8I9"
+                ],
+                "allocatedBytes": 314572800,
+                "apparentBytes": 312475648,
+                "ageDays": 4,
+                "owner": null,
+                "regenerates": true,
+                "sizeKnown": true,
+                "prefix": "md-chrome",
+                "entries": 3,
+                "oldestAgeDays": 9,
+                "ownedPrefix": true
+            }
+        },
+        {
+            "id": "temp-leaks:swiftpm-build:/private/tmp/cc/GenesisTools/1b7e4f20-0c3d-4a5b-8e9f-6a7b8c9d0e1f/worktrees/kit/.build",
+            "analyzerId": "temp-leaks",
+            "title": "SwiftPM .build copy in /tmp/cc/GenesisTools/1b7e4f20-0c3d-4a5b-8e9f-6a7b8c9d0e1f/worktrees/kit",
+            "detail": "900.0 MB allocated · last build 4d ago · rebuilt by the next swift build",
+            "severity": "safe",
+            "reclaimableBytes": 943718400,
+            "fromCache": false,
+            "pathsHash": "sha256:c6de52106869534e68110a80c0bbe707334c391955292d3b6b92eeeedb23b3c2",
+            "availableActionIds": ["delete-swiftpm-build"],
+            "actions": [
+                {
+                    "id": "delete-swiftpm-build",
+                    "label": "Delete the whole .build folder",
+                    "confirm": "yesno",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "swiftpm-build",
+                "paths": ["/private/tmp/cc/GenesisTools/1b7e4f20-0c3d-4a5b-8e9f-6a7b8c9d0e1f/worktrees/kit/.build"],
+                "allocatedBytes": 943718400,
+                "apparentBytes": 931135488,
+                "freeableFloorBytes": 943718400,
+                "ageDays": 4,
+                "owner": null,
+                "requires": { "absentProcesses": ["swift-build", "swift-frontend", "swift-test", "xctest"] },
+                "regenerates": true,
+                "sizeKnown": true,
+                "fileCount": 18450,
+                "packagePath": "/private/tmp/cc/GenesisTools/1b7e4f20-0c3d-4a5b-8e9f-6a7b8c9d0e1f/worktrees/kit/Package.swift"
+            }
+        },
+        {
+            "id": "app-bloat:claude-vm-bundles",
+            "analyzerId": "app-bloat",
+            "title": "Claude Desktop VM bundle · 11.5 GB",
+            "detail": "rootfs.img and sessiondata.img; rootfs.img.zst (the seed) stays. Claude Desktop rebuilds the VM on the next Cowork start.",
+            "severity": "cautious",
+            "reclaimableBytes": 12348030976,
+            "fromCache": false,
+            "pathsHash": "sha256:e425403513e5bc0f84189c6edb3396f7eb6ac9b8068e9612e3d751f8309301b9",
+            "availableActionIds": ["delete-app-cache"],
+            "actions": [
+                {
+                    "id": "delete-app-cache",
+                    "label": "Delete the VM disk images",
+                    "confirm": "typed",
+                    "confirmPhrase": "DELETE",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "claude-vm-bundles",
+                "paths": [
+                    "/Users/alice/Library/Application Support/Claude/vm_bundles/claudevm.bundle/rootfs.img",
+                    "/Users/alice/Library/Application Support/Claude/vm_bundles/claudevm.bundle/sessiondata.img"
+                ],
+                "allocatedBytes": 12348030976,
+                "apparentBytes": 68719476736,
+                "ageDays": 3,
+                "owner": null,
+                "requires": { "absentProcesses": ["Claude", "Claude Helper"] },
+                "regenerates": true,
+                "restoreHint": "Claude Desktop re-creates the VM from rootfs.img.zst on the next Cowork start. The built-in path is Developer > Troubleshooting > Delete VM Bundle and Restart.",
+                "sizeKnown": true,
+                "kept": ["/Users/alice/Library/Application Support/Claude/vm_bundles/claudevm.bundle/rootfs.img.zst"]
+            }
+        },
+        {
+            "id": "app-bloat:shipit-update:com.example.notes.ShipIt:update.Qx7Lm2",
+            "analyzerId": "app-bloat",
+            "title": "Superseded update download ~/Library/Caches/com.example.notes.ShipIt/update.Qx7Lm2",
+            "detail": "812.0 MB · ShipItState.plist stages update.Zr4Kp9, so this one is dead",
+            "severity": "safe",
+            "reclaimableBytes": 851443712,
+            "fromCache": false,
+            "pathsHash": "sha256:b5a0cca6f788e9224e7c13473c3e32c65582ee3d7b63ae967c96f424835da730",
+            "availableActionIds": ["delete-app-cache"],
+            "actions": [
+                {
+                    "id": "delete-app-cache",
+                    "label": "Delete the dead update download",
+                    "confirm": "yesno",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "shipit-update",
+                "paths": ["/Users/alice/Library/Caches/com.example.notes.ShipIt/update.Qx7Lm2"],
+                "allocatedBytes": 851443712,
+                "apparentBytes": 848297984,
+                "ageDays": 21,
+                "owner": null,
+                "regenerates": false,
+                "sizeKnown": true,
+                "fileCount": 412,
+                "shipItFolder": "/Users/alice/Library/Caches/com.example.notes.ShipIt",
+                "stagedUpdate": "/Users/alice/Library/Caches/com.example.notes.ShipIt/update.Zr4Kp9"
+            }
+        },
+        {
+            "id": "app-bloat:playwright-cache:/Users/alice/Library/Caches/ms-playwright",
+            "analyzerId": "app-bloat",
+            "title": "Playwright browsers ~/Library/Caches/ms-playwright · 850.0 MB",
+            "detail": "Playwright downloads them again on its next run",
+            "severity": "safe",
+            "reclaimableBytes": 891289600,
+            "fromCache": false,
+            "pathsHash": "sha256:89699dc10deb939c1a9d34cdde7d7aaf5b2d7c1e50c79904f980471eb82303fb",
+            "availableActionIds": ["delete-app-cache"],
+            "actions": [
+                {
+                    "id": "delete-app-cache",
+                    "label": "Delete the Playwright browsers",
+                    "confirm": "yesno",
+                    "staged": false,
+                    "kind": "remove-path",
+                    "actable": true
+                }
+            ],
+            "metadata": {
+                "kind": "playwright-cache",
+                "paths": ["/Users/alice/Library/Caches/ms-playwright"],
+                "allocatedBytes": 891289600,
+                "apparentBytes": 887095296,
+                "freeableFloorBytes": 891289600,
+                "ageDays": 12,
+                "owner": null,
+                "requires": { "absentProcesses": ["playwright", "ms-playwright"] },
+                "regenerates": true,
+                "sizeKnown": true,
+                "fileCount": 4211
+            }
+        },
+        {
+            "id": "app-bloat:docker-sparse:orbstack",
+            "analyzerId": "app-bloat",
+            "title": "OrbStack VM disk · 19.7 GB allocated (926.4 GB apparent)",
+            "detail": "Sparse VM disk. Never delete it; prune inside the guest with a pinned context.",
+            "severity": "blocked",
+            "blacklistReason": "Sparse VM disk: deleting it destroys every container, image and volume. Prune inside the guest instead.",
+            "fromCache": false,
+            "pathsHash": "sha256:5014e8d90035c0ced7ab08fca667437d5df0ba19af1f46a4a28c10ff229f92de",
+            "availableActionIds": [],
+            "actions": [],
+            "metadata": {
+                "kind": "docker-sparse",
+                "paths": [
+                    "/Users/alice/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/data.img.raw",
+                    "/Users/alice/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/swap.img"
+                ],
+                "allocatedBytes": 21152055296,
+                "apparentBytes": 994662416384,
+                "ageDays": 0,
+                "owner": null,
+                "regenerates": false,
+                "sizeKnown": true,
+                "engine": "orbstack",
+                "context": "orbstack",
+                "guestCommands": [
+                    "docker --context orbstack system df",
+                    "docker --context orbstack builder prune -af",
+                    "docker --context orbstack image prune -f"
+                ]
+            }
+        }
+    ],
+    "errors": []
+}

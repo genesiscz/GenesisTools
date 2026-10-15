@@ -1,0 +1,31 @@
+{
+  "roots": [
+    "/Users/alice/Projects/demo/app"
+  ],
+  "nodeModulesMode": false,
+  "minReal": 1,
+  "tree": [],
+  "totals": {
+    "logical": 259895,
+    "allocated": 303104,
+    "real": 0,
+    "uniqueAllocated": 303104,
+    "overcount": null
+  },
+  "cloneAnalysis": {
+    "families": 0,
+    "clonedFiles": 0,
+    "sharedBytes": 303104,
+    "crossTreePartners": [],
+    "notes": [
+      "296.0 KB of measured bytes are shared with files OUTSIDE the scan roots and won't be freed by deleting these dirs.",
+      "21 clone family(ies) have partners outside the scan — rerun with --show-partners to locate them."
+    ]
+  },
+  "freeSpace": {
+    "total": 994662584320,
+    "free": 13597003776,
+    "available": 13597003776
+  },
+  "errors": []
+}

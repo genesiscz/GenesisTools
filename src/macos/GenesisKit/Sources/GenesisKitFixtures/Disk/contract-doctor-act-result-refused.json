@@ -1,0 +1,65 @@
+{
+    "schemaVersion": 1,
+    "runId": "2026-10-13T19-42-30-007Z",
+    "analyzerId": "temp-leaks",
+    "actionId": "delete-scratch",
+    "method": "delete",
+    "dryRun": false,
+    "startedAt": "2026-10-13T19:42:30.007Z",
+    "endedAt": "2026-10-13T19:42:30.219Z",
+    "volume": {
+        "path": null,
+        "availableBefore": null,
+        "availableAfter": null,
+        "deltaBytes": null,
+        "settleNote": "df may keep rising for several minutes after a large delete"
+    },
+    "manifestPath": null,
+    "items": [
+        {
+            "findingId": "temp-leaks:tmp-sibling:X:180E24A1-0335-5A34-BDCE-7D736273A8E1",
+            "status": "refused",
+            "reason": "blocked",
+            "severity": "blocked",
+            "paths": ["/private/var/folders/qz/qz1example0000000000000000gn/X/180E24A1-0335-5A34-BDCE-7D736273A8E1"],
+            "estimatedBytes": null,
+            "remeasuredBytes": null,
+            "freesNow": "no",
+            "blacklistReason": "System-owned folder (root). macOS manages it; listing it fails with fts_read: Result too large."
+        },
+        {
+            "findingId": "temp-leaks:tmp-cc-session:GenesisTools:9f8e7d6c-5b4a-4321-8fed-cba987654321",
+            "status": "refused",
+            "reason": "confirm-required",
+            "severity": "cautious",
+            "paths": ["/private/tmp/cc/GenesisTools/9f8e7d6c-5b4a-4321-8fed-cba987654321"],
+            "estimatedBytes": 7516192768,
+            "remeasuredBytes": 7516192768,
+            "freesNow": "no",
+            "requiredConfirm": "typed",
+            "expectedPhrase": "DELETE"
+        },
+        {
+            "findingId": "temp-leaks:tmp-cc-session:example-tools:0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+            "status": "refused",
+            "reason": "outside-allowlist",
+            "severity": "cautious",
+            "paths": ["/private/tmp/cc/example-tools/0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9"],
+            "estimatedBytes": 104857600,
+            "remeasuredBytes": 104857600,
+            "freesNow": "no",
+            "error": "/private/tmp/cc/example-tools/0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9 resolves to /Users/alice/Documents/reports, outside the allow roots of temp-leaks"
+        }
+    ],
+    "totals": {
+        "requested": 3,
+        "ok": 0,
+        "staged": 0,
+        "skipped": 0,
+        "failed": 0,
+        "refused": 3,
+        "estimatedBytes": 0,
+        "remeasuredBytes": 0
+    },
+    "followUps": []
+}

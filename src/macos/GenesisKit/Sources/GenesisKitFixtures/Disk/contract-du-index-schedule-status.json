@@ -1,0 +1,6 @@
+{
+  "task": "du-index-refresh",
+  "registered": true,
+  "every": "every day at 02:15",
+  "command": "'/usr/local/bin/bun' run '/Users/example/Projects/GenesisTools/src/du/lib/index/index-daemon.ts'"
+}

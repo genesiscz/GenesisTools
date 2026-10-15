@@ -1,0 +1,51 @@
+{
+    "schemaVersion": 1,
+    "runId": "2026-10-13T19-38-02-551Z",
+    "analyzerId": "app-bloat",
+    "actionId": "delete-app-cache",
+    "method": "delete",
+    "dryRun": true,
+    "startedAt": "2026-10-13T19:38:02.551Z",
+    "endedAt": "2026-10-13T19:38:02.803Z",
+    "volume": {
+        "path": "/Users/alice/Library/Caches",
+        "availableBefore": 9663676416,
+        "availableAfter": null,
+        "deltaBytes": null,
+        "settleNote": "df may keep rising for several minutes after a large delete"
+    },
+    "manifestPath": null,
+    "items": [
+        {
+            "findingId": "app-bloat:playwright-cache:/Users/alice/Library/Caches/ms-playwright",
+            "status": "skipped",
+            "severity": "safe",
+            "paths": ["/Users/alice/Library/Caches/ms-playwright"],
+            "estimatedBytes": 891289600,
+            "remeasuredBytes": 891289600,
+            "freesNow": "no",
+            "restore": null
+        },
+        {
+            "findingId": "app-bloat:shipit-update:com.example.notes.ShipIt:update.Qx7Lm2",
+            "status": "skipped",
+            "severity": "safe",
+            "paths": ["/Users/alice/Library/Caches/com.example.notes.ShipIt/update.Qx7Lm2"],
+            "estimatedBytes": 851443712,
+            "remeasuredBytes": 851443712,
+            "freesNow": "no",
+            "restore": null
+        }
+    ],
+    "totals": {
+        "requested": 2,
+        "ok": 0,
+        "staged": 0,
+        "skipped": 2,
+        "failed": 0,
+        "refused": 0,
+        "estimatedBytes": 1742733312,
+        "remeasuredBytes": 1742733312
+    },
+    "followUps": []
+}

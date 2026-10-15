@@ -12,7 +12,10 @@ logging, the title bar zone and the small controls. One copy, two consumers:
 
 ## Layout
 
-One target, folders by job. A file goes where its job is, not where its first caller was.
+One target, folders by job. A file goes where its job is, not where its first caller was. The second product,
+`GenesisKitFixtures` (`Sources/GenesisKitFixtures/`), is for test targets only: the one copy of the `tools` disk
+fixtures, read with `KitFixture.url(_:)`, `data(_:)` and `string(_:)` by file name (`contract-doctor-act.ndjson`).
+A fixture an app test needs goes there under its own name, never into a test target.
 
 | Folder | What |
 |---|---|
@@ -25,6 +28,12 @@ One target, folders by job. A file goes where its job is, not where its first ca
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
 | `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
+| `Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
+| `Camera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
+| `Disk/` | Free-space sampling (`VolumeSpaceMonitor`), forecasts, history, a resumable FSEvents stream, the big-file radar, the du index reader and the decoders for the tools disk commands (`ToolsDiskProvider`); unrelated to `DiskCache` in `Tools/` |
+| `Overlay/` | Screen effects: click-through panels over every display (vignette, sepia, blur, dim, edge glow), a message pill and a camera bubble (`ScreenEffectsController`) |
+| `Pose/` | Pose samples, the Vision body and face engines and the AirPods engine, and the skeleton overlay |
+| `Posture/` | PostureWatcher's logic: metrics, scorer, state machine, health, calibration slots, history, the activity gate and `PostureMonitor` |
 | `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit; `HostWindow` + `HostWindowReader` (the window a view is in, without SwiftUI state); `WindowSnapshot` (a `--snapshot` PNG as the window server composes it, Liquid Glass included); `WindowRaise` (one window forward, not the whole app); `SingleInstance` (one process of a kind per login session: a later launch hands its arguments over and exits) |
 | `Permissions/` | `PermissionKind` (every privacy grant: title, reason, exact System Settings pane, request style), `PermissionAccess` (status and in-place request through TCC, with the `GenesisToolsSimulateDeniedPermissions` denial simulation on top), `PermissionCenter` + `PermissionNeed` (the one permission dialog: one per kind at a time, grants in place where macOS allows it, otherwise explains and opens the pane, offers Relaunch for a grant only a new process sees, closes itself when the grant arrives), `PermissionDialogView` / `PermissionPanelPresenter` |
 | `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
@@ -44,28 +53,91 @@ options as `name: Type = default`, and shows a short usage example. Internal hel
 that only serve another entry are described inside that entry, not listed on their own. The number is the entry
 count of the section.
 
+- [Alerts](#alerts) (4)
 - [Audio](#audio) (4)
-- [Charts](#charts) (4)
+- [Camera](#camera) (8)
+- [Charts](#charts) (15)
 - [Clicky](#clicky) (13)
 - [Cmux](#cmux) (6)
 - [Controls](#controls) (42)
 - [Diff](#diff) (11)
+- [Disk](#disk) (10)
 - [Files](#files) (11)
 - [Flow](#flow) (39)
 - [Focus](#focus) (31)
 - [Markdown](#markdown) (28)
 - [Media](#media) (25)
+- [Overlay](#overlay) (6)
 - [Paths](#paths) (16)
 - [Perf](#perf) (11)
 - [Permissions](#permissions) (16)
+- [Pose](#pose) (8)
+- [Posture](#posture) (9)
 - [Providers](#providers) (3)
 - [Sessions](#sessions) (65)
-- [Settings](#settings) (39)
-- [Style](#style) (31)
+- [Settings](#settings) (49)
+- [Style](#style) (32)
 - [Time](#time) (5)
 - [Tools](#tools) (21)
 - [Widgets](#widgets) (40)
 - [Window](#window) (18)
+
+### Alerts
+
+Alerts turn a stream of measured values (free bytes, a health score) into a few events a person should see. `AlertPolicy` is pure: it keeps no clock and no timer, and the caller passes each value with its time and keeps the `AlertState`. The events it returns go to the app's channels through `AlertDispatcher` and an `AlertChannelMatrix` (tiers by channels), and the app implements each `AlertChannel` (a banner, a sound, speech, a screen glow, the menu tint).
+
+#### `AlertPolicy`
+
+The rules, as a `Codable` value a settings page can edit. A value is in the worst tier whose threshold it crossed (`.below`: under the threshold). A tier, once on, ends only when the value recovers past `threshold ± margin`, so a value that hovers at a threshold raises once and does not flap. A worse tier notifies at once; recovery into a milder tier reports `.improved`, and past every tier `.cleared` (neither interrupts). While a tier lasts it notifies again every `repeatInterval`. Quiet hours and a snooze hold interrupting events back; an event at or above `emergencyOverride` breaks through both, and a snooze ends early when the value reaches a worse severity than the snoozed one. A held-back alert notifies as a `.reminder` once the quiet hours or the snooze end. A policy stored by an older build decodes with defaults for the newer fields.
+
+- `direction: Direction = .below`: `.below` (lower is worse) or `.above`.
+- `tiers: [AlertTier]`: each has `id: String`, `threshold: Double`, `severity: AlertSeverity` (`info < warning < critical < emergency`), `clearMargin: Double? = nil` (overrides the fraction) and `repeatInterval: TimeInterval? = nil` (overrides the policy's).
+- `hysteresisFraction: Double = 0.1`: the default clear margin as a fraction of the threshold (0.5: a 10 GB tier ends above 15 GB).
+- `repeatInterval: TimeInterval? = 3600`: nil never repeats.
+- `quietHours: AlertQuietHours? = nil`: `startMinute` and `endMinute` since local midnight; a start after the end wraps past midnight.
+- `emergencyOverride: AlertSeverity? = .emergency`: nil lets nothing through quiet hours or a snooze.
+- `confirmSamples: Int = 1`, `confirmDuration: TimeInterval = 0`: a worse tier is entered only after that many consecutive samples past its threshold and after that long, so one dip does not alert.
+- `evaluate(_ value: Double, at: Date, state: inout AlertState, calendar: Calendar = .current) -> [AlertEvent]`: feeds one value; usually returns nothing.
+- `snoozed(_ state: AlertState, until: Date, severity: AlertSeverity? = nil) -> AlertState`: snoozes the tier on now (or `severity`).
+- `orderedTiers`, `crosses(_:_:)`, `clearPoint(of:)`, `tier(for:current:)`, `suppression(for:at:state:calendar:)`: the pieces `evaluate` uses, for a settings preview.
+- `AlertPolicy.freeSpace(watch:low:critical:repeatInterval:quietHours:)` (in `Disk/`): the free-space default, Watch under 10 GB, Low under 3 GB, Critical (`.emergency`) under 1 GB, two samples to arm, re-armed only above 1.5 times the floor.
+
+`AlertState` is `Codable` too, so a snooze survives a restart: `tierID`, `lastNotified` (nil while the tier was held back), `snooze` (`until`, `severity`) and the pending confirmation.
+
+```swift
+let policy = AlertPolicy.freeSpace()
+var state = AlertState()
+let events = policy.evaluate(Double(sample.available), at: sample.date, state: &state)
+dispatcher.dispatch(events)
+state = policy.snoozed(state, until: .now.addingTimeInterval(3600))   // "Snooze 1 h"
+```
+
+#### `AlertEvent`
+
+One change the policy reports: `kind` (`.raised`, `.escalated`, `.reminder`, `.improved`, `.cleared`), `tier` (nil for `.cleared`), `previousTier`, `value`, `date`, `notifies` (the policy's verdict for interrupting channels) and `suppression` (`.snoozed` or `.quietHours` when it was held back). `severity` is the tier's, or the ended tier's for `.cleared`. A `.reminder` always notifies.
+
+#### `AlertChannel`
+
+A `@MainActor` protocol the app implements once per way of reaching the user.
+
+- `id: String`: the column of the matrix (`banner`, `sound`, `speech`, `glow`, `menu`).
+- `interrupts: Bool`: true for a channel that interrupts (it gets a `.raised`, `.escalated` or `.reminder` only when `notifies` is true); false for a status channel such as the menu tint, which gets every event, held back or not.
+- `receivesRecovery: Bool` (default false): true for an interrupting channel that shows a state and must take it back (an edge glow, a persistent banner). It also gets `.improved` and `.cleared`, with `notifies == false`. A channel that only posts (a sound) keeps the default and is never called on a recovery.
+- `deliver(_ event: AlertEvent)`.
+
+#### `AlertDispatcher`
+
+Sends events to the channels by an `AlertChannelMatrix`. An `.improved` or `.cleared` event goes to the channels of the tier that ended (and, for `.improved`, of the milder tier now on): every status channel, and each interrupting channel with `receivesRecovery`, so a status channel drops its tint and a glow fades when the disk recovers. `AlertChannelMatrix(routes: [String: Set<String>] = [:], fallback: Set<String> = [])` maps a tier id to channel ids; a tier missing from `routes` uses `fallback`. `set(_:tierID:channelID:)` and `contains(tierID:channelID:)` back a tiers-by-channels settings grid; `materialized(tierIDs:)` gives every tier an explicit route (the fallback for a missing one), for a grid that binds `routes` directly.
+
+- `channels: [AlertChannel]`, `matrix: AlertChannelMatrix`.
+- `add(_ channel:)`: adds a channel, replacing one with the same id.
+- `targets(for event:) -> [AlertChannel]`, `dispatch(_ events:)`.
+
+```swift
+let dispatcher = AlertDispatcher(channels: [bannerChannel, soundChannel, menuTint],
+                                 matrix: AlertChannelMatrix(routes: ["critical": ["banner", "sound", "menu"]],
+                                                            fallback: ["menu"]))
+```
 
 ### Audio
 
@@ -167,9 +239,118 @@ do {
 }
 ```
 
+### Camera
+
+Camera runs one webcam as cheaply as a posture check allows and shows it. `CameraFrameSource` owns the `AVCaptureSession`: the 640x480 preset, 32BGRA pixels, late frames dropped, the device's own frame rate where the format allows it, and an interval mode that turns the camera off between short bursts. `CameraPreviewView` shows the same session. `CameraAuthorization` reads and requests the camera grant directly through `AVCaptureDevice`; the camera is deliberately not a `PermissionKind` case. `CameraDevice` and `CameraSelection` list and pick cameras. `CameraCaptureMode`, `CameraFrame`, `CameraWarmup` and `FrameThrottle` are the small value types the source runs on.
+
+A host that uses the camera needs `NSCameraUsageDescription` and, to see an iPhone as a Continuity camera, `NSCameraUseContinuityCameraDeviceType` in its Info.plist. macOS ends a process that asks for the camera without a usage description, and it judges the responsible process: a tool started from a terminal (`swift test`, `swift run`) is ended even when its own Info.plist has the key. No test in this package reads the real grant or opens a camera.
+
+#### `CameraFrameSource`
+
+One camera, run as cheaply as the mode allows. A `final class`, thread-safe: every method may be called from any thread.
+
+- A continuous mode sets `activeVideoMinFrameDuration` to the slowest rate the active format supports at or above the asked rate, so the sensor does less work, and drops the remaining extra frames in software (`FrameThrottle`). A rate no format supports is never set, because AVFoundation raises an exception for it.
+- Interval mode starts the session every `every` seconds, discards frames until the exposure settles (`CameraWarmup`: at least 0.5 s and 5 frames, then `isAdjustingExposure` false and two frames within 0.02 brightness, at most 1.5 s), delivers `frames` frames 0.2 s apart and stops the session. The camera light is off between bursts. A `DispatchSourceTimer` with 10% leeway schedules the bursts. Each burst has a number, so a burst that ends after a newer mode began (a slouch seen on its last frame switches to continuous) changes nothing.
+- A rate of zero or less is the same as `.off` (`FrameThrottle(fps: 0)` admits nothing).
+- Frames go to `onFrame` on `deliveryQueue`. Run the pose work there: while it runs, late frames are dropped.
+- It recovers by itself: a runtime error and a session that macOS stopped are retried, a wake restarts a continuous session, an unplugged camera reports `.noDevice` and starts again when it comes back, and a watchdog restarts a continuous session that delivered no frame for 10 s. Every restart counts, the watchdog's too: after `maximumRestarts` (3) in a row without a delivered frame it stops with `.failed` and the light off, until the next `setMode` or `refresh()`.
+- It never asks for the grant. After `CameraAuthorization.request()` returns true, call `refresh()`.
+
+Initializer:
+
+- `selection: CameraSelection = .systemDefault`: which camera.
+- `preset: AVCaptureSession.Preset = .vga640x480`: the session preset; `.vga640x480`, `.medium` and `.low` are tried next when the device refuses it. A new session starts at High, and Dorso found CIF broke capture cards, so VGA is the floor.
+- `deliveryQueue: DispatchQueue? = nil`: the serial queue for frames; nil makes a utility-QoS queue.
+- `warmup: CameraWarmup = CameraWarmup()`: the burst warm-up rule.
+
+Properties:
+
+- `session: AVCaptureSession`: for `CameraPreviewView`. Do not reconfigure it.
+- `onFrame: (@Sendable (CameraFrame) -> Void)?`: each delivered frame, on `deliveryQueue`.
+- `onStateChange: ((CameraSourceState) -> Void)?`: each state change, on the main queue.
+- `state: CameraSourceState`: `.stopped`, `.starting`, `.running`, `.waiting` (between bursts), `.interrupted`, `.failed(String)`, `.unauthorized`, `.noDevice`. `state.issue` gives the `PostureCameraIssue` it means, nil when the camera is fine or off.
+- `mode: CameraCaptureMode` and `activeDeviceID: String?`: what it was asked for and which camera it opened.
+
+Methods:
+
+- `setMode(_ mode: CameraCaptureMode)`: `.off`, `.continuous(fps:)` or `.interval(every:frames:)`. The same mode twice does nothing.
+- `select(_ selection: CameraSelection)`: switch cameras; applies at once when running.
+- `refresh()`: read the grant and the devices again.
+- `stop()`: the same as `setMode(.off)`.
+- `static frameDuration(for fps: Double, ranges: [(min: Double, max: Double)]) -> Double?`: the frame duration it asks the device for. Pure.
+
+```swift
+// Alone. A PostureMonitor given this camera sets onFrame and the mode itself.
+let camera = CameraFrameSource(selection: .systemDefault)
+let engine = VisionBodyPoseEngine()
+camera.onFrame = { frame in
+    if let sample = engine.analyze(frame) { record(sample) }
+}
+if await CameraAuthorization.request() { camera.refresh() }
+camera.setMode(.interval(every: 30, frames: 3))
+```
+
+#### `CameraPreviewView`
+
+The live image of a running `CameraFrameSource`, through an `AVCaptureVideoPreviewLayer` on the source's own session, so no second session opens the camera. Aspect fill, continuous rounded corners and a white 10% hairline on the inside edge. Between interval bursts the layer keeps the last frame. Take the view off screen when its window hides, so the layer stops taking frames. Accessibility identifier `camera.preview`.
+
+- `session: AVCaptureSession` or `source: CameraFrameSource` (unlabeled first argument names which).
+- `mirrored: Bool = true`: show it like a mirror. Pass the same value to `PoseSkeletonOverlay`.
+- `cornerRadius: CGFloat = 16`.
+
+```swift
+ZStack {
+    CameraPreviewView(source: camera)
+    PoseSkeletonLiveOverlay(feed: monitor.feed, target: .lastGood)
+}
+.aspectRatio(4.0 / 3.0, contentMode: .fit)
+```
+
+#### `CameraAuthorization`
+
+The camera grant, read and asked for straight through `AVCaptureDevice`. An `enum` with static members.
+
+- `status: CameraAuthorizationStatus`: `.notDetermined`, `.restricted`, `.denied` or `.authorized`. Reading it never prompts.
+- `hasUsageDescription: Bool`: whether the running bundle declares `NSCameraUsageDescription`.
+- `request() async -> Bool`: shows the macOS prompt while the user has not answered; `true` when allowed. Returns `false` without asking when the bundle has no usage description, and after a denial until the user changes it in System Settings.
+- `settingsURL: URL`: Privacy & Security, Camera.
+
+```swift
+switch CameraAuthorization.status {
+case .authorized: camera.refresh()
+case .notDetermined: if await CameraAuthorization.request() { camera.refresh() }
+case .denied, .restricted: NSWorkspace.shared.open(CameraAuthorization.settingsURL)
+}
+```
+
+#### `CameraDevice`
+
+A camera the user can pick: `id` (`AVCaptureDevice.uniqueID`, stable across launches), `name` and `kind` (`.builtIn`, `.external`, `.continuity`, `.other`). A struct with a public init.
+
+- `static available() -> [CameraDevice]`: the built-in, external and Continuity cameras (`AVCaptureDevice.DiscoverySession`). Desk View is left out. A Continuity camera reports its own kind only with `NSCameraUseContinuityCameraDeviceType` in the Info.plist; otherwise macOS calls it built in.
+
+#### `CameraSelection`
+
+`.systemDefault` or `.device(id:)`. The system default is the built-in camera when there is one, else the default video device; it never follows `systemPreferredCamera`, which switches by itself when an iPhone comes near.
+
+- `storageValue: String` and `init(storageValue: String?)`: `"default"` or the unique id, for settings.
+- `resolve() -> AVCaptureDevice?`: the device it names now; nil when that camera is not connected.
+
+#### `CameraCaptureMode`
+
+`.off`, `.continuous(fps:)` or `.interval(every:frames:)`. `usesCamera` is false only for `.off`. `PostureStateMachine.captureMode(...)` picks one from a posture state.
+
+#### `CameraFrame`
+
+One frame on its way to a pose engine: `pixelBuffer`, `time` (uptime seconds), `meanLuma` (0...1 from a sparse 16 by 12 grid, about 20 µs a frame), `isBurst`, `imageAspect`, and `isLowLight` (below `lowLightLuma`, 0.08). A dark frame makes a posture reading "unknown", never "away" (Dorso #67).
+
+#### `CameraWarmup` and `FrameThrottle`
+
+The pure rules behind the source. `CameraWarmup(minimumWait: 0.5, minimumFrames: 5, maximumWait: 1.5, lumaTolerance: 0.02)` answers `settled(at:luma:adjustingExposure:) -> Bool` per frame. `FrameThrottle(fps:)` answers `admit(_ time:) -> Bool`; it keeps the long-run rate exact and lets a frame in up to 10% of an interval early, so timestamp jitter never costs a whole frame.
+
 ### Charts
 
-Three native chart views built on SwiftUI Charts, all drawn in mint, plus the helper that bins and formats their data. `NativeTimeSeriesChart` is the main one: a pannable, zoomable timeline. `NativeMatrixHeatmap` shows a grid of intensities and `NativeCategoryChart` shows ranked bars. Clicky's Stats page uses all three, and its Performance page uses the timeline.
+Native chart views. Three are built on SwiftUI Charts and drawn in mint: `NativeTimeSeriesChart` (a pannable, zoomable timeline), `NativeMatrixHeatmap` (a grid of intensities) and `NativeCategoryChart` (ranked bars); Clicky's Stats and Performance pages use them. The rest are drawn by hand for the dark kit look and share one palette (`ChartPalette`): `RingGauge`, `SegmentedDonut`, `HealthBar` and `Sparkline` for single values and trends, and `SunburstChart` and `TreemapView` for a hierarchy (`ChartNode`), with their pure layouts (`SunburstLayout`, `SquarifiedLayout`, `TreemapLayout`) public and tested. None of them animates at rest: a value change glides once, and a drill moves the arcs once.
 
 #### `NativeTimeSeriesChart`
 
@@ -243,6 +424,192 @@ let hourly = NativeChartSampling.bins(
 )
 let total = hourly.reduce(0) { $0 + $1.value }
 let summary = NativeChartSampling.valueText(total)
+```
+
+#### `ChartPalette`
+
+The colours the hand-drawn charts use: ten hues of similar weight for the dark background (blue, teal, amber, rose, violet, green, orange, sky, pink, lime), a quiet grey for "other" and unaccounted space, and the health ramp.
+
+- `static let categorical: [Color]`: the ten hues, in order.
+- `static let muted: Color`: the grey.
+- `static func color(_ index: Int) -> Color`: hue `index`, wrapping past the end.
+- `static func ramp(_ value: Double) -> Color`: red at 0, amber through the middle third, green from about 0.85 (the `HealthBar` colour).
+
+```swift
+let slices = categories.enumerated().map { index, category in
+    DonutSegment(id: category.id, value: category.bytes, color: ChartPalette.color(index), label: category.name)
+}
+```
+
+#### `ChartNode`
+
+One node of the hierarchy a `SunburstChart` or a `TreemapView` draws (a folder and its subfolders). A node is drawn at its `value` or at its children's sum, whichever is larger; space a node has beyond its children stays empty in the next ring (sunburst) or becomes a grey cell (treemap), so a gap means "here, but not in a child".
+
+- `id: String`: unique in the tree; the focus binding and the callbacks use it.
+- `name: String`: the label.
+- `value: Double`: the node's own size. A node's drawn size is the larger of its value and its positive children's sum, so a folder of value 0 with files in it is kept; a node whose drawn size is zero or less is left out with its subtree.
+- `children: [ChartNode] = []`
+- `muted: Bool = false`: drawn grey whatever its branch (files, unaccounted space).
+- `color: ChartColor? = nil`: replaces the branch's hue (colour by age or type). `ChartColor(red:green:blue:)` holds sRGB numbers, so a node stays `Sendable` and `Equatable`.
+
+The tree is flattened once into a `ChartPartition` (each node's span of the root, depth, parent, children, top-level branch and rank among its siblings; children ordered by size, ties by id), in one pass over the tree. The charts cache it until the tree changes, so pass the same tree value on every render. `ChartPartition` is `Sendable` and `Equatable`: a host with a large tree can build it off the main thread once and pass it to both charts through their `partition:` initializers, so switching views never rebuilds it.
+
+```swift
+let root = ChartNode(id: "/", name: "Macintosh HD", value: 0, children: [
+    ChartNode(id: "/Users", name: "Users", value: 322e9),
+    ChartNode(id: "/private", name: "Unaccounted", value: 12e9, muted: true),
+])
+```
+
+#### `SunburstChart`
+
+A sunburst of a `ChartNode` tree, DaisyDisk's space map: the focused node is the centre disc, its children the first ring, their children the next, up to `maxDepth` rings. Each top-level branch has its own hue; siblings turn it a little, and each ring is lighter and calmer. Arcs too thin to see, and the children past the `maxArcs` largest, fold into one translucent "N smaller items" arc per parent. Arcs are separated by real one-point gaps, cut out of the drawing. Labels sit along an arc, or across a deep narrow one, only where they fit, turned so they never read upside down.
+
+The pointer lights an arc and its ancestors (the rest dims) and shows its name, size, share of the centre and "Click to open" in a card beside it. A click on an arc calls `onSelect` and, when the node has children, makes it the centre; a click on the centre goes up one level. Every focus change moves all arcs to their new place in one 0.55 s transition on the `GenMotion` curve, at once under Reduce Motion; a drill or new data clears the hover card. The arcs redraw only when the data, the focus, the size or the hover change, not when the host's view updates for another reason. The first ring is exposed to VoiceOver as buttons with their size as value, and the centre's back button stays its own element.
+
+- `root: ChartNode`: the tree. Or `partition: ChartPartition`: one the host built (same options).
+- `focus: Binding<String?>`: the id of the centre node; nil is the root. The chart writes it on a drill or a back click.
+- `maxDepth: Int = 4`: rings around the centre.
+- `maxArcs: Int = 14`: the most children one parent shows as their own arcs.
+- `identifier: String = "sunburst"`: the chart's accessibility identifier; the centre button is `<identifier>.center`.
+- `valueText: (Double) -> String = { "%.0f" }`: a node's size as text.
+- `onHover: ((String?) -> Void)? = nil`: the node under the pointer (nil off the chart or over a folded arc).
+- `onSelect: ((String) -> Void)? = nil`: a clicked node.
+
+```swift
+SunburstChart(
+    root: model.tree, focus: $model.focus, maxDepth: 3, identifier: "disk-explorer-chart",
+    valueText: { ByteFormat.file(Int64($0)) },
+    onHover: { model.hovered = $0 },
+    onSelect: { model.select($0) })
+    .frame(minWidth: 320, minHeight: 320)
+```
+
+#### `SunburstLayout`
+
+The pure geometry behind `SunburstChart`, for a host that draws its own sunburst or tests one.
+
+- `init(partition: ChartPartition, maxDepth: Int = 4, minAngle: Double = 0.012, centerFraction: Double = 0.26, maxChildren: Int = 14)`: `minAngle` is the narrowest arc in radians (on an inner ring the floor is higher, so an arc keeps about 2.5 points of its inner edge and is never all gap); `centerFraction` is the centre disc's radius over the outer radius. Folded children form runs of neighbours, so a fold never covers the arcs between two runs (ids `<parent>#smaller`, `<parent>#smaller-2`).
+- `func arcs(_ viewport: SunburstViewport, radius: Double) -> [SunburstArc]`: the visible arcs. A `SunburstViewport(x0:x1:depth:)` is the focused node's span and depth (`SunburstViewport(item)` for a partition item); a viewport between two foci is a frame of the drill transition. A `SunburstArc` has the item, id, name, value, `ring` (1 next to the centre), start and end angle (radians clockwise from twelve o'clock), inner and outer radius, and `isAggregate` / `count` for a folded arc.
+- `func hit(_ point: CGPoint, radius: Double, arcs: [SunburstArc]) -> Hit`: `.center`, `.arc(arc)` or `.none` for a point relative to the centre (y down).
+- `static func angle(of:)`, `static func point(angle:radius:)`: the angle convention, both ways.
+- `static func labelPlacement(_ arc: SunburstArc, size: CGSize, padding: Double = 4) -> SunburstLabelPlacement?`: where a label of `size` sits (centre, rotation, `.tangential` or `.radial`), or nil when it does not fit.
+
+```swift
+let layout = SunburstLayout(partition: ChartPartition(root: tree), maxDepth: 3)
+let arcs = layout.arcs(SunburstViewport(layout.partition.items[0]), radius: 160)
+if case .arc(let arc) = layout.hit(point, radius: 160, arcs: arcs) { print(arc.name) }
+```
+
+#### `TreemapView`
+
+A squarified treemap of a `ChartNode` tree (GrandPerspective, WinDirStat): the focused node's children as rectangles sized by value and, with `levels` 2, each big child's own children inside it under a title strip. It shares the tree, the colours and the focus binding with `SunburstChart`, so a host can switch views of the same data. Children too small to see fold into one "N smaller items" cell; a parent's own space is a grey cell. Labels (name, then size) are drawn only where they fit and never outside their cell. The pointer outlines the cell under it and shows its name, size and share in a card; a click calls `onSelect` and drills into a node with children, with a short cross-fade (none under Reduce Motion). Cells are known by node id, so new data that shifts the tree keeps the hover on the same node and is not mistaken for a drill. The cells redraw only when the data, the focus, the size or the formatter's output change; a hover redraws only the outline.
+
+- `root: ChartNode` (or `partition: ChartPartition`), `focus: Binding<String?>`: as for the sunburst.
+- `levels: Int = 2`: 1 or 2 nesting levels.
+- `shading: Shading = .cushion`: `.cushion` (a soft light-to-shade gradient with a lit top rim) or `.flat`.
+- `identifier: String = "treemap"`, `valueText`, `onHover`, `onSelect`: as for the sunburst.
+
+```swift
+TreemapView(root: model.tree, focus: $model.focus, shading: model.flat ? .flat : .cushion,
+            identifier: "disk-explorer-chart", valueText: { ByteFormat.file(Int64($0)) })
+```
+
+#### `SquarifiedLayout`
+
+Squarified treemap layout (Bruls, Huizing and van Wijk, 2000): rectangles with areas proportional to the values and sides as close to square as the values allow. Values are placed largest first (ties by position), in rows along the shorter side; the same input always gives the same output, and the rectangles tile the space exactly.
+
+- `static func layout(_ values: [Double], in rect: CGRect) -> [CGRect?]`: one rectangle per value, in input order; nil for a zero, negative or non-finite value. A value far too small next to the others (`[1e20, 1]`) can get an empty rectangle; `TreemapLayout` folds such values first.
+- `static func worst(_ areas: [Double], sum: Double, side: Double) -> Double`: the row's worst aspect ratio (the paper's criterion).
+- `static func aspect(_ rect: CGRect) -> Double`: a rectangle's aspect ratio, at least 1.
+
+```swift
+let rects = SquarifiedLayout.layout([6, 6, 4, 3, 2, 2, 1], in: CGRect(x: 0, y: 0, width: 600, height: 400))
+```
+
+#### `TreemapLayout`
+
+The cells of a `TreemapView`, pure.
+
+- `static func cells(_ partition: ChartPartition, focus: Int, in bounds: CGRect, levels: Int = 2) -> [TreemapCell]`: a `TreemapCell` has the item, its `rect`, `level`, `isGroup` (draws children under a title strip of `header` points), `isRemainder` (the parent's own space), and `folded` / `foldedValue` (small children folded together; `minimumArea` is the cut-off in square points). `isNode` is true for a cell that stands for a node.
+- `static func hit(_ point: CGPoint, cells: [TreemapCell]) -> TreemapCell?`: the deepest cell under a point.
+
+```swift
+let cells = TreemapLayout.cells(ChartPartition(root: tree), focus: 0, in: CGRect(x: 0, y: 0, width: 640, height: 400))
+```
+
+#### `RingGauge`
+
+A progress ring: a quiet track and an arc from twelve o'clock, clockwise, with round ends and a sweep from a lighter start to the full tint. Anything can sit in the middle. A change of `progress` glides on the `GenMotion` curve (at once under Reduce Motion); changes under half a percent apply without an animation, so raw values fed often cost nothing extra.
+
+- `progress: Double`: 0...1, clamped.
+- `tint: Color = .accentColor`
+- `track: Color = .white.opacity(0.09)`
+- `lineWidth: CGFloat = 8`
+- `label: String? = nil`: what it measures, for accessibility; the value reads as a percentage.
+- `identifier: String? = nil`: the gauge's accessibility identifier.
+- `center: () -> Center`: the middle (`@ViewBuilder`; omit it for an empty ring).
+
+```swift
+RingGauge(progress: used / total, tint: ChartPalette.color(1), lineWidth: 10, label: "Disk used") {
+    Text(verbatim: "\(Int(used / total * 100))%").font(.system(size: 20, weight: .semibold, design: .rounded))
+}
+.frame(width: 120, height: 120)
+```
+
+#### `SegmentedDonut`
+
+A ring cut into slices (what fills a disk, a day's posture minutes), with thin gaps and a soft inner shade per slice. The slice under the pointer, and the selected one, lift out while the rest dim; the middle shows the focused slice. A click selects a slice, a second click clears it; a selection that names no slice (the data changed under it) selects nothing. Each slice is an accessibility child with its value and share.
+
+- `segments: [DonutSegment]`: `DonutSegment(id:value:color:label:)`; zero or negative slices are left out.
+- `lineWidth: CGFloat = 18`, `gapAngle: Angle = .degrees(1.6)`: a gap shrinks when slices are many.
+- `identifier: String = "donut"`
+- `selection: Binding<String?> = .constant(nil)`: the selected slice's id.
+- `onHover: ((String?) -> Void)? = nil`
+- `valueText: ((Double) -> String)? = nil`: a slice's value for accessibility (the convenience init passes its own).
+- `center: (DonutSegment?) -> Center`: the middle for the focused slice (hovered, else selected, else nil). The convenience init takes `title: String` and `valueText: (Double) -> String` instead and shows `DonutCenterLabel` (the slice's label and value, or the title and the total).
+
+`DonutLayout.arcs(_:gap:)` and `DonutLayout.hit(_:arcs:inner:outer:)` are the pure geometry.
+
+```swift
+SegmentedDonut(segments: slices, identifier: "disk-overview-donut", selection: $model.slice,
+               title: "Used", valueText: { ByteFormat.file(Int64($0)) })
+    .frame(width: 200, height: 200)
+```
+
+#### `HealthBar`
+
+A health meter (SlouchSniper's "health 98%" row): the title in the bar's colour, a rounded bar that drains from green through amber to red (`ChartPalette.ramp`), an optional threshold marker, the percentage on the right and any accessory after it, as its own control (VoiceOver reaches a help button). A change of `value` glides (at once under Reduce Motion); changes under half a percent apply without an animation.
+
+- `title: String = "Health"` (unlabeled)
+- `value: Double`: 0...1, clamped. Or `value: Double?`: nil (nothing measured yet) draws a muted title, an empty track and "—", reads "Not measured", and still shows the accessory.
+- `threshold: Double? = nil`: 0...1, marked on the track.
+- `identifier: String? = nil`: the meter reads as its title with the percentage as value.
+- `accessory: () -> Accessory`: optional trailing view (a help button).
+
+```swift
+HealthBar(value: model.health, threshold: 0.4, identifier: "posture-health") {
+    IconButton(systemName: "questionmark.circle", tooltip: "What health measures") { model.explain() }
+}
+```
+
+#### `Sparkline`
+
+A small trend line over `[Double]`: a rounded stroke, optionally a fill fading down from it, optionally dots at the lowest (grey) and highest (tint) point. Draws nothing for no values; one value is a flat line.
+
+- `values: [Double]`
+- `tint: Color = .mint`, `lineWidth: CGFloat = 1.5`
+- `fill: Bool = false`, `showsExtrema: Bool = false`
+- `range: ClosedRange<Double>? = nil`: a fixed vertical scale (0...peak for counts); nil fits the values.
+- `label: String? = nil`: for accessibility; the value reads the latest, lowest and highest.
+- `identifier: String? = nil`
+- `valueText: ((Double) -> String)? = nil`: how accessibility reads a value (bytes: `{ ByteFormat.file(Int64($0)) }`); without one, large numbers read compact ("1.2B"), never as "1.2e+09".
+
+`SparklinePath(values:range:)` is the polyline as a `Shape`, for a host that strokes it itself (`FocusSparkline` draws through it).
+
+```swift
+Sparkline(values: card.growth, tint: ChartPalette.color(7), fill: true, showsExtrema: true, label: "Size, last 24 h")
+    .frame(width: 120, height: 32)
 ```
 
 ### Clicky
@@ -791,6 +1158,7 @@ A segmented choice that looks the same in every window. The native segmented `Pi
 - `items: [Item]`: the segments. `Item` is built as `Item(id, title)` and has the public properties `id: ID` and `title: String`.
 - `selection: Binding<ID>`: the selected segment id.
 - `minSegmentWidth: CGFloat = 72`: the least width of one segment.
+- `identifier: String? = nil`: the group's accessibility identifier; each segment is then `<identifier>.<id>` (`GenAccessibilityID.suffix`).
 
 ```swift
 GenSegmentedTabs("Panel", items: [
@@ -1589,6 +1957,149 @@ real paths: `/private/tmp` for `/tmp`). Pass `decorations` to `FileTreeView(git:
 Which agent session and turn wrote the lines of the file on screen (GenesisTools' `tools agents blame`, through the
 provider). `source(forLines:)` names the session that wrote most of a range; `AgentBlame.open(_:)` shows it (the
 GenesisTools hub, its transcript searched for the turn). The blame is of the file on disk.
+
+### Disk
+
+The live sensors and the data layer of a disk manager, at near-zero idle cost. Free space is one `statfs` per sample on a private queue (about 1 µs of CPU on this Mac under load), woken by the kernel's own low-disk events, wake from sleep and mounts, with a slow backstop timer. File activity comes from a resumable FSEvents stream on narrow roots, and a radar `lstat`s only the paths an event names. Heavy data (the size index, clone plans, the reclaim catalog) comes from the `tools` CLI: `ToolsDiskProvider` runs and decodes it, and `DuIndexReader` reads the index file directly, read-only. Nothing here walks the disk.
+
+#### `VolumeSpaceMonitor`
+
+Watches one volume's free space, as a `@MainActor` `ObservableObject`. Each sample is one `statfs` on a utility queue; the result is published only when a figure moved by `minimumChange` or macOS's low-disk level changed. It wakes on the kernel's `EVFILT_FS` events (VQ_NEARLOWDISK, VQ_LOWDISK, VQ_VERYLOWDISK, VQ_DESIRED_DISK; no privileges needed), on wake from sleep, on a mount or unmount, and on `poke()`. A `DispatchSourceTimer` with 10% leeway is the backstop: every `farInterval` far from the floor, every `nearInterval` within `nearBand` of it, pushed out again by every event-driven read. Finder's "Available" (free plus purgeable, from CacheDelete) costs about 10 ms of CPU and many log lines per read, so only `refreshDetailed()` reads it; the opportunistic figure is never read, because it sits far below free space.
+
+- `configuration: Configuration`: changing it applies at once, `watchesWorkspace` included. Fields: `volumePath: String = VolumeSpaceMonitor.defaultVolumePath` (`/System/Volumes/Data`, whose `statfs` is the container's free space), `floor: Int64 = 10_000_000_000`, `nearBand: Int64 = 5_000_000_000`, `farInterval: TimeInterval = 300`, `nearInterval: TimeInterval = 30`, `minimumChange: Int64 = 1_000_000`, `pokeSpacing: TimeInterval = 2` (pokes closer than this become one read), `settleSchedule: [TimeInterval] = [5, 30, 120, 300, 900, 1200]`, `watchesLowDiskEvents: Bool = true`, `watchesWorkspace: Bool = true`.
+- `sample: VolumeSample?` (published): `volumePath`, `total`, `free`, `available`, `importantUsage: Int64?` (Finder's figure; between detailed reads its purgeable part rides along on the new free figure), `lowDiskLevel: VolumeLowDiskLevel` (`.unknown` until the kernel's first event, then `.ok`, `.nearLow`, `.low`, `.veryLow`; system-wide, because the kernel names no volume: a nearly full USB stick also reads `.low`, and the per-volume query needs root, so decide on the byte figures and show the level as a hint), `date`, and `usedFraction`.
+- `settling: SpaceSettling?` (published): after `beginSettling`, the `baselineAvailable`, `latestAvailable`, `gained`, `checksDone` of `checksTotal` and `finished`.
+- `onSample: ((VolumeSample) -> Void)?`: every published sample, on the main actor (feed `AlertPolicy`, `DiskHistoryStore`).
+- `start()`, `stop()`, `isRunning`, `poke()`. None of them waits for a read in progress, so a network volume that hangs `statfs` never blocks the main actor.
+- `refreshDetailed() async -> VolumeSample?`: a read with Finder's figure. Call it while a page that shows it is visible.
+- `beginSettling(label: String, baseline: VolumeSample? = nil)`, `endSettling()`: after a reclaim, APFS frees large deletes over several transactions and clone-shared blocks only with their last copy, so free space keeps rising for minutes; the monitor reads again on `settleSchedule` and the UI says "space returning" instead of "0 bytes freed".
+- Static, any thread: `read(path:level:date:) throws -> VolumeSample` (one `statfs`), `readImportantUsage(path:) -> Int64?`, `mountedVolumes(includingNetwork: Bool = false) -> [DiskVolume]` (`path`, `name`, `total`, `available`, `isInternal`, `isRoot`; reads capacity, so call it off the main thread; network volumes are left out by default, because one whose server went away blocks for tens of seconds).
+
+```swift
+let monitor = VolumeSpaceMonitor(configuration: .init(floor: 10_000_000_000))
+monitor.onSample = { sample in dispatcher.dispatch(policy.evaluate(Double(sample.available), at: sample.date, state: &state)) }
+monitor.start()
+// after `tools doctor act` freed space:
+monitor.beginSettling(label: "Leaked Chrome copies", baseline: before)
+```
+
+#### `SpaceForecaster`
+
+When the disk fills at the current pace, and how sure that is. Pure: an exponentially weighted average of the rate between consecutive `SpacePoint`s (`date`, `available`; `SpacePoint(sample)` from a `VolumeSample`) whose weights halve every `halfLife`, over the last `window`. A rise of at least `jumpThreshold` in one step is a delete or a purge and is left out; a drop of at least `dropJumpThreshold` in one step is one large copy and is left out too, so it does not read as a pace.
+
+- `floor: Int64`, `halfLife: TimeInterval = 1800`, `window: TimeInterval = 3600`, `minimumSpan: TimeInterval = 600`, `minimumPairs: Int = 3`, `jumpThreshold: Int64 = 1_000_000_000`, `stableBytesPerHour: Double = 50_000_000`, `erraticRatio: Double = 4`, `dropJumpThreshold: Int64? = 5_000_000_000` (nil keeps every drop).
+- `forecast(_ points: [SpacePoint], now: Date) -> SpaceForecast`: the forecast as of `now`. The monitor publishes only after `minimumChange`, so readings stop while the disk is quiet; the time from the last reading to `now` counts as a flat stretch and an old pace fades. `forecast(_:)` is the same as of the last reading.
+- `SpaceForecast`: `verdict` (`.filling`, `.stable`, `.freeing`, `.notEnoughHistory`, `.erratic`, so the UI can refuse honestly), `bytesPerSecond` and `bytesPerHour` (negative while filling), `timeToFloor` and `timeToZero` (set while filling; 0 under the floor already), `confidence` (0...1), `pairsUsed`, `jumpsIgnored` (rises and large drops left out), `span`, `asOf` (the moment the times count from).
+
+```swift
+let forecast = SpaceForecaster(floor: 10_000_000_000).forecast(points, now: Date())
+if forecast.verdict == .filling, let eta = forecast.timeToFloor { print("under the floor in \(Int(eta / 60)) min") }
+```
+
+#### `DiskHistoryStore`
+
+An actor that keeps free-space history and reclaim markers in two append-only NDJSON files in a host-given folder (`samples.ndjson`, `events.ndjson`, about 70 bytes a line). Every `compactEvery` appends, or when the file outgrows `maxSampleBytes`, the samples are rewritten downsampled through a temporary file and a rename: full resolution for `fullResolution`, the lowest reading per hour for `hourlyFor`, per day up to `keepFor`. A file it cannot read (permissions, an I/O error, a file not downloaded) or cannot parse (more than a tenth of its lines broken, or no readable line at all) is never rewritten: `health` turns `.unreadable(path)`, appends stop and the original bytes stay. Only a missing file starts an empty history. A broken last line (a write cut short) is dropped quietly, and the next append starts on a new line. A failed compaction (a full disk) waits for the next `compactEvery` appends. Keep one store per folder: two processes that append to and compact the same folder drop each other's lines.
+
+- `directory: URL`, `limits: Limits = Limits()`: `minimumSpacing: TimeInterval = 60` (a closer reading is skipped unless free space moved `minimumChange: Int64 = 100_000_000`), `fullResolution = 86_400`, `hourlyFor = 30 days`, `keepFor = 400 days`, `maxSampleBytes = 1_000_000`, `maxEvents = 1000`, `compactEvery = 240`.
+- `append(_ sample: VolumeSample) throws -> Bool`, `record(_ event: DiskHistoryEvent) throws` (`date`, `kind`, `label`, `bytes`, `availableBefore`, `availableAfter`).
+- `points(since: Date? = nil) throws -> [DiskHistoryPoint]`, `events(since:) throws -> [DiskHistoryEvent]`, `compact(now:) throws`, `health`.
+- `downsample(_:now:limits:)` (static, pure).
+
+```swift
+let history = DiskHistoryStore(directory: appSupport.appendingPathComponent("disk-history"))
+// One task that drains a stream keeps the samples in order (a Task per sample does not).
+let (samples, feed) = AsyncStream.makeStream(of: VolumeSample.self)
+Task { for await sample in samples { _ = try? await history.append(sample) } }
+monitor.onSample = { feed.yield($0) }
+```
+
+#### `FileEventStream`
+
+An FSEvents stream on its own serial queue that continues where it stopped. Batches arrive on that queue, never on the main thread, with one `FileEvent` per path (flags OR-ed, the latest id) in the order the paths first appeared. Every flag that means "the event list is incomplete" becomes `rescanRoots`: MustScanSubDirs, a dropped buffer (`dropped`, all watched roots), wrapped ids, a moved root, a mount. With a `cursorKey` and a `FileEventCursorStore`, the last event id and the FSEvents UUID of each watched volume (`FSEventsCopyUUIDForDevice`) are saved at most every `cursorSaveInterval` and on `stop()`, and the next `start()` replays everything since then (`isReplay` until `historyDone`). A cursor that does not fit (another volume UUID, an id ahead of the system's) is dropped, and the first batch (on the stream's queue, after `start()` returned) asks for a rescan of every root with `historyInvalid`.
+
+Watch narrow roots (`$TMPDIR`, `/tmp`, the code-sign clone folder, a project). A file-level stream over all of `$HOME` makes `fseventsd` grow; use `.directory` there, which still sends one event per change (this type merges them per path). `ignoreSelf` hides this process's own writes but not its child processes' (a `tools` run).
+
+- `configuration: Configuration`: `paths: [String]`, `granularity: Granularity = .file` (or `.directory`), `latency: TimeInterval = 2`, `ignoreSelf: Bool = true`, `watchRoot: Bool = true`, `excludedPaths: [String] = []` (FSEvents takes 8), `cursorKey: String? = nil`, `cursorSaveInterval: TimeInterval = 30`.
+- `cursorStore: FileEventCursorStore? = nil`: `loadCursor(forKey:)` and `saveCursor(_:forKey:)`, called on the stream's queue. `FileEventCursorFileStore(directory:)` keeps each cursor as a small JSON file.
+- `onBatch: @escaping @Sendable (FileEventBatch) -> Void`: `events`, `rescanRoots`, `dropped`, `historyInvalid`, `historyDone`, `isReplay`, `lastEventId`.
+- `start() -> Bool` (false when FSEvents refused it), `stop()` (safe from any thread and from the batch callback), `saveCursor()`, `isRunning`, `lastEventId`.
+- Static: `currentEventId`, `deviceUUID(forPath:) -> String?`.
+- `FileEventFlags` names every `kFSEventStreamEventFlag*` (`.itemCreated`, `.itemRemoved`, `.itemModified`, `.itemIsFile`, `.itemIsDir`, `.mustScanSubDirs`, `.dropped`, …).
+- Paths are reported in the `/var` and `/tmp` spelling, not `/private/var`.
+
+```swift
+let stream = FileEventStream(configuration: .init(paths: [tmpdir, "/private/tmp"], latency: 5, cursorKey: "disk.temp"),
+                             cursorStore: FileEventCursorFileStore(directory: stateFolder)) { batch in
+    radar.consume(batch)
+}
+stream.start()
+```
+
+#### `BigFileRadar`
+
+Finds big new or growing files from `FileEventStream` batches. It `lstat`s only the paths a batch names (and, bounded, the direct entries of a folder event or a rescan root, plus the files it already tracks there), so its cost follows the event rate; an ignored folder is not listed. Work runs on its own utility queue. A file is reported when its allocated size (`st_blocks`; the real cost of a sparse disk image) first reaches `threshold`, and again each time it grew by `growthStep`. A file that is removed, moved away (or sits in a removed or moved folder), or shrinks below `threshold` leaves `hits` and is reported to `onRemove`; a listed file that changed less than a step shows its current size.
+
+- `configuration: Configuration`: `threshold: Int64 = 500_000_000`, `growthStep: Int64 = 100_000_000`, `ignorePatterns: [String] = []` (`fnmatch` patterns in which `*` also crosses `/`, `~` is the home), `maxTracked: Int = 20_000`, `maxHits: Int = 500`, `maxDirectoryEntries: Int = 2_000`.
+- `onHits: @escaping @Sendable ([RadarHit]) -> Void`: the new hits of a batch, on the radar's queue. `RadarHit`: `path`, `allocatedBytes`, `logicalBytes`, `delta`, `culprit: RadarCulprit?`, `firstSeen`, `lastSeen`, `isNew`.
+- `onRemove: (@Sendable ([String]) -> Void)?`: the paths that left `hits`, on the radar's queue.
+- `consume(_ batch:)`, `check(paths:)`, `forget(_:)`, `reset()`, `hits` (the latest hit per path that is still there: the newest batch first, the biggest first within a batch).
+- `RadarCulprit` (`id`, `title`, `hint`): `.codeSignClone`, `.dockerImage`, `.xcodeDerivedData`, `.simulatorRuntime`, `.swiftPMBuild`, `.nodeModules`, `.jsonlLog`, `.logFile`, `.temporaryFile`; `RadarCulprit.all`, `RadarCulprit.classify(path:)`.
+
+```swift
+let radar = BigFileRadar(configuration: .init(ignorePatterns: ["*/node_modules/*"])) { hits in
+    Task { @MainActor in model.add(hits) }
+}
+```
+
+#### `FseventsdHealth` and `FseventsdGate`
+
+The scan gate's input. `FseventsdHealth.read() -> FseventsdHealth?` runs one `ps` (libproc answers EPERM for this daemon; about 20 ms, blocking, so call it off the main thread) and returns `pid`, `rssBytes`, `cpuSeconds` and `date`. `FseventsdGate` keeps successive readings and says whether the daemon is hot: resident memory at or above `rssLimit` (1 GiB), growth of `growthLimit` (500 MB) within `growthWindow` (10 minutes), or `cpuLimit` (1.5 cores) over at least `cpuWindow` (60 s). Its normal load is about 0.6 of a core, so CPU alone uses a high bar. `update(_:) -> Bool`, `isHot`. A restarted daemon starts a new history.
+
+#### `TempLocation`
+
+The temporary folders and the rule macOS cleans each by, as data for a Temp & Leaks page: `id`, `title`, `path`, `cleanedAtBoot`, `cleanTime` (`HH:mm` local, nil when nothing cleans it while the Mac runs), `maxAgeDays` and `note`. `TempLocation.standard()` resolves `/tmp` (00:00, 3 days), `/var/tmp` (never), `$TMPDIR` (`T`, 03:35, 3 days), the cache folder `C`, the user folder `0` and the `X` folder (boot only) with `confstr`, so it does not depend on `TMPDIR`.
+
+#### `CodeSignClone`
+
+Chrome, Brave, Edge and Teams copy their app into `X/<bundle id>.code_sign_clone/` at every launch and remove the copy only on a clean quit. `CodeSignClone.scan(xFolder: String? = nil) -> [CodeSignClone]` lists them at fixed depth (no walk), oldest first: `path`, `bundleID`, `created`, and `state`: `.current` when the copy's main executable is a hard link of the installed app (it shares nearly all blocks), `.stale` when it holds an older version's blocks alone (deleting it frees real space).
+
+#### `ToolsDiskProvider`
+
+Runs the `tools` disk commands through `ToolsBridge` with a long timeout (`timeoutSeconds: Int = 600`) and decodes their JSON off the main actor. A non-zero exit throws `ToolsDiskProviderError.exit(code:stderr:)` with the stderr tail; a bad document throws `.decode(command:detail:)`. A preamble before the JSON is skipped. Build it without an output sink, so large JSON is not written to a log per call.
+
+- Reads (they delete, rewrite or apply nothing): `duVolume`, `duClonesize(path:options:)`, `duPartners`, `clonesMeasure`, `clonesDu`, `clonesDuplicates`, `clonesReclaimPlan`, `doctorReport` (`--json --dry-run`), `hubWorktrees`, `hubWorktreeSizes`, `macosSwap`, `duIndexQuery`, `duIndexLargest`, `duIndexInfo`, `duIndexDiff`.
+- Changes: `duIndexUpdate(paths:shallow:recursive:fromQueue:db:)`, `duIndexSchedule(enable:db:)`, `doctorAct(actionId:analyzerId:findingIDs:method:yes:confirmPhrases:dryRun:expect:expectPaths:)` (a refused item is a result, not a throw). `expect` maps a finding id to the `reclaimableBytes` the UI showed and `expectPaths` to the finding's `pathsHash`; the CLI refuses an item whose size drifted or whose path set changed as `stale`. A finding's `actions` carry `confirm`, `confirmPhrase` (the exact phrase a `typed` confirmation needs, such as `DELETE` or `yes, trash`) and `method`.
+- Clones changes: `clonesReclaimApply(_:usesCachedPlan:) -> ClonesReclaimApplyOutcome` (`.applied(ClonesApplyResult)`, or `.nothingToApply(ClonesReclaimPlan)` when the CLI printed the plan), `clonesRollback(processId:)`, `clonesPresetSave(id:options:) -> ClonesPreset`, `clonesPresetRemove(id:)`, `clonesDaemonEnable()` and `clonesDaemonDisable()` (`ClonesDaemonChange`: `enabled`, `newlyRegistered` or `removed`, and `registered` after the call), `clonesDaemonStatus()` (`ClonesDaemonStatus`), `clonesConfig()` and `clonesConfigUpdate(addDirs:removeDirs:)` (`ClonesConfig`; the CLI skips a folder that does not exist, and a path with a comma is refused because the CLI splits comma lists). Each argv is a static `…Arguments` function. An error envelope throws `ClonesCommandError` (`rollback-space` with `required` and `available`, `unknown-process` with `closest`, `unknown-preset` with `known`, …).
+- A command that changes the disk (`doctorAct`, `clonesReclaimApply`, `clonesRollback`) runs detached: cancelling the calling task (a view's `.task` that ended) does not stop it halfway. It ends on its own or after `actTimeoutSeconds` (3600). A streamed act through `ToolsLineStream` belongs in a task that is not tied to a view for the same reason.
+- A relative path that starts with `-` is passed as `./-…`, so it never parses as a flag.
+- Streams, for `ToolsLineStream`: `duIndexBuildArguments(...)` (parse each line with `DuIndexEvent.parse(line:)`: `.start`, `.progress`, `.phase`, `.blocked` (a folder the walk gave up on, usually behind a privacy prompt; the build result lists them in `blockedPaths`), `.built`, `.updated`, `.failed`, `.other` for a type this build does not know, and `.undecodable(type:detail:)` for a known line that did not decode, so a caller stops waiting for `.built`) and `doctorActArguments(..., ndjson: true)` (`DoctorActEvent.parse(line:)`: `.plan`, `.itemStarted`, `.itemDone`, `.volumeAfter`, `.result`, `.other`, `.undecodable`; after an undecodable `result`, read the run's manifest). Run the build with `ToolsLineStream(..., priority: .background)` so it never competes with the user. The nested event structs have public initializers for previews and tests.
+- A `du index` error document (`locked`, `schema_newer`, `disk_low`, `inconsistent` (rebuild the index), …) is thrown as `DuIndexError`; a query result carries `blockedBelow` (blocked folders at or under the path) and `--info` carries `counts.blocked` and `meta.blockedDirs`; a clones error envelope as `ClonesCommandError` (`decodeClonesApply(_:)`).
+- `decode(_:from:command:)` and `decode(_:from:command:snakeCaseKeys:)` (static) decode captured output.
+- The models mirror the CLI field by field (`Du*`, `Clones*`, `Doctor*`, `HubWorktree*`, `Swap*`, `DuIndex*`). A string the CLI may grow new values for is an open `RawRepresentable` struct, so a new value never fails a decode. Tests decode real captured output and the frozen contract fixtures in `Sources/GenesisKitFixtures/Disk/`: the `GenesisKitFixtures` product (`KitFixture.url` / `data` / `string` by file name) is their only copy, for test targets only. The kit's and Genesis's tests load them through it, and the GenesisTools bun tests read the same files by path and check every `contract-*` file's keys and nesting against the real output of the command that prints it.
+
+```swift
+let provider = ToolsDiskProvider(bridge: ToolsBridge(resolveBinaryPath: { ToolsBridge.defaultBinaryPath() }))
+let report = try await provider.doctorReport(only: ["temp-leaks", "app-bloat"])
+let result = try await provider.doctorAct(actionId: "delete-clone", analyzerId: "temp-leaks",
+                                          findingIDs: [report.findings[0].id], method: .delete, yes: true)
+```
+
+#### `DuIndexReader`
+
+Reads the size index `tools du index` writes (`~/.genesis-tools/du/index.db`, schema version 1) for an Explorer, read-only by construction: `SQLITE_OPEN_READONLY`, `PRAGMA query_only`, no DDL, no `journal_mode`, no checkpoint, and each call is one short read transaction. A running build (WAL) never waits for the UI, and the UI sees the last committed snapshot. Calls block on SQLite (with `busyTimeout` for the moment a checkpoint holds the file), so call them off the main thread. A newer schema is refused at `init`.
+
+- `init(path: String = DuIndexReader.defaultPath, busyTimeout: Int32 = 2_000) throws`: throws `ReaderError.missing` (offer `tools du index build`), `.open` (also for a database without a `schema_version`), `.schemaNewer(found:supported:)`; a failed read throws `.query(_:busy:)`.
+- `lookup(_ path:) -> DuIndexLookup`: `.found(DuIndexNode)`, `.folded(path:into:)` (below a stored folder whose small subfolders were folded into it; `tools du clonesize <path> --depth 1` measures it), or `.notIndexed`.
+- `roots()`, `node(id:)`, `children(of:sort:limit:minBytes:)` (sorted by `DuIndexChildSort`: `.alloc`, `.logical`, `.private`, `.files`, `.mtime`, `.name`; each child gets its `path` and `share`; a child with an attention flag (`DuIndexDirFlags.attention`: denied, incomplete, skipped, blocked) carries no bytes, so it is always listed after the others whatever `minBytes` and `limit` say, as the CLI does), `local(of:)` (the folder's own files and folded subfolders). Both read the node again in the same transaction, so a node from an older read still gives consistent shares and sizes. `blockedDirCount()` (`counts.blocked`) and `blockedBelow(_ node:)` (the query's `blocked_below`: 0 at once when meta `blocked_dirs` says the last walk blocked nothing), `topFiles(under:limit:)` (a range scan on the path key), `largestFiles(limit:)`, `scans(limit:)`, `meta()`, `schemaVersion()`, `path(of:)` (nil for a parent cycle in a damaged index).
+- `DuIndexNode.flags` is a `DuIndexDirFlags` set: `.denied`, `.incomplete`, `.cloudSkipped`, `.mountSkipped`, `.gone`, `.blocked` (its totals are missing). Tombstones are left out of every read.
+
+```swift
+let reader = try DuIndexReader()
+if case .found(let library) = try reader.lookup(home + "/Library") {
+    let rows = try reader.children(of: library)
+    if let path = library.path { let files = try reader.topFiles(under: path, limit: 10) }   // "" would read as "/"
+}
+```
 
 ### Files
 
@@ -4759,6 +5270,125 @@ if let action = ImageViewerKeys.action(
 }
 ```
 
+### Overlay
+
+Screen effects: a click-through panel over each targeted display that tints the screen (vignette, sepia, blur, dim, edge glow, or no tint), with an optional message pill and a camera bubble. PostureWatcher uses it to nudge a slouch, Disk Manager for the critical-space edge glow. The panels never take a click, the keyboard or focus, and show on every Space and over full-screen apps. The look is a still SwiftUI view; the ramp in and out is one window-alpha animation, so nothing redraws while an effect sits on screen.
+
+Screen shares: no public API keeps a window out of another app's capture. `NSWindow.sharingType = .none` only works against the legacy `CGWindowList` captures; ScreenCaptureKit (Zoom, Meet, Teams, QuickTime and the screenshot tools on macOS 15 and later) captures the panels anyway, and Apple calls `.none` a legacy value not to be used for this. So the controller asks `ScreenCaptureDetector` whether a capture runs, when an effect shows and once a second while it is up, and hides what `duringScreenCapture` names: by default the camera bubble, so the user's face never reaches a share. The tint and the message still show unless the host picks a stricter behaviour.
+
+#### `ScreenEffectsController`
+
+Owns the panels. `show()` ramps the effect in over `rampIn` on the screens `target` picks; `hide()` clears it over `rampOut` (both at once under Reduce Motion). A configuration change applies to the panels on screen at once. When displays change, the panels are rebuilt half a second later at the current strength, without a new ramp.
+
+Safety: an effect hides itself after `maximumDuration` and calls `onTimeout`. `suppress(until:)` is the kill switch: it hides at once and refuses every show, previews included, until then (`clearSuppression()` lifts it). `ScreenEffectsController.dismissAll(suppressingUntil:)` is the same for every controller of the process, and also orders out any panel left on screen. Releasing a controller takes its panels down even without `tearDown()` (AppKit would otherwise keep an ordered-in panel on screen forever), and the timeout clears the panels even when the controller is gone. `preview(_:seconds:)` shows a configuration for a few seconds and puts the old one back; it never covers a real effect, and a real `show()` during a preview takes it over.
+
+- `configuration: ScreenEffectConfiguration = .init()`
+- `screens: () -> [ScreenEffectScreen] = NSScreen.screens`: the displays, main first. Tests pass made-up screens.
+- `cursor: () -> CGPoint = NSEvent.mouseLocation`, `now: () -> Date = Date.init`
+- `reduceMotion: () -> Bool`, `reduceTransparency: () -> Bool`: the system settings by default, read at each show.
+- `screenCapture: () -> Bool? = ScreenCaptureDetector.current`: whether the screen is captured now, nil when unknown (counted as captured). Tests pass a fake.
+
+Members: `show() -> Bool` (false while suppressed), `hide(animated:)`, `suppress(until:)`, `clearSuppression()`, `static dismissAll(suppressingUntil: Date? = nil)`, `preview(_:seconds:) -> Bool`, `setCameraBubble(_ view: NSView?)` (the host's camera preview in a round bubble at the bottom-right of the target screen, shown only with the effect and hidden during a capture), `tearDown()` (also calls `onVisibilityChange(false)` when an effect was up), `isVisible` (true also while `.holdBack` keeps it off screen), `isPreviewing`, `suppressedUntil`, `isScreenCaptureDetected`, `onTimeout`, `onVisibilityChange: ((Bool) -> Void)?`.
+
+The bubble shows whatever the host's view draws. A camera that stops between interval checks (Battery saver) leaves a black or frozen picture, so keep the camera running while the bubble shows, or pass nil until it runs.
+
+Panel facts: borderless and non-activating, level `.statusBar` (above the Dock and the menu bar, below menus and pop-up windows), `hidesOnDeactivate = false`, `ignoresMouseEvents = true`, collection behavior `[.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]`, accessibility identifiers `screen-effect-<display>` and `screen-effect-bubble`.
+
+```swift
+let effects = ScreenEffectsController(configuration: ScreenEffectConfiguration(
+    style: .vignette, intensity: settings.intensity, target: .allScreens,
+    message: ScreenEffectMessage("Sit up straight", symbol: "figure.stand")))
+effects.onTimeout = { monitor.noteEffectTimedOut() }
+effects.setCameraBubble(camera.previewView)
+effects.show()                                        // slouching
+effects.hide()                                        // upright again
+effects.suppress(until: .now.addingTimeInterval(600)) // menu: "Hide Screen Effect"
+```
+
+#### `ScreenEffectConfiguration`
+
+What a screen effect draws and how it behaves.
+
+- `style: ScreenEffectStyle = .vignette`: `.vignette`, `.transparent` (pill and bubble only), `.sepia`, `.blur` (behind-window blur, `.active`, strength through its alpha; drawn as `.dim` under Reduce Transparency), `.dim`, `.edgeGlow`. Each case has `title`, `detail` and `symbol` for a settings picker.
+- `intensity: Double = 1`: 0...2 (×); `clampedIntensity` is the value drawn.
+- `glow: ChartColor = red`: the edge glow's colour.
+- `target: ScreenEffectTarget = .allScreens`: `.allScreens`, `.mainScreen` or `.cursorScreen` (each with a `title`).
+- `message: ScreenEffectMessage? = nil`: `ScreenEffectMessage(text, symbol:)`, the pill a third of the way down each screen.
+- `coversMenuBar: Bool = true`: the whole frame, or only the visible frame.
+- `rampIn: TimeInterval = 2.0`, `rampOut: TimeInterval = 0.3`
+- `maximumDuration: TimeInterval? = 180`: nil is no limit.
+- `sharingType: NSWindow.SharingType = .none`: keeps the panels out of legacy `CGWindowList` captures only (see the section intro). The bubble always uses `.none`.
+- `duringScreenCapture: ScreenCaptureBehavior = .hideCameraBubble`: `.showEverything`, `.hideCameraBubble`, `.hideCameraBubbleAndMessage`, or `.holdBack` (nothing drawn; the effect stays on, its timeout keeps counting, and it appears when the capture ends). Each case has a `title`.
+
+The blur's alpha is capped at 0.85 and the dim's opacity at 0.78, so the screen stays readable at intensity 2.
+
+```swift
+var configuration = ScreenEffectConfiguration(style: .edgeGlow, target: .allScreens, maximumDuration: 30)
+configuration.glow = ChartColor(red: 0.96, green: 0.38, blue: 0.40)
+```
+
+#### `ScreenEffectView`
+
+What one screen of an effect shows: the tint of `style` at `intensity` and the pill. A still view, cheap to keep on screen; a settings page can show it in a small frame as a live preview of the chosen style.
+
+- `style: ScreenEffectStyle`, `intensity: Double`
+- `glow: ChartColor = red`
+- `message: ScreenEffectMessage? = nil`
+- `pillCenter: CGPoint? = nil`: the pill's centre from the top-left; nil is a third of the way down.
+- `reduceTransparency: Bool = false`: blur as dim, the pill solid.
+
+```swift
+ScreenEffectView(style: model.style, intensity: model.intensity,
+                 message: ScreenEffectMessage("Sit up straight", symbol: "figure.stand"))
+    .background(LinearGradient(colors: [.gray, .black], startPoint: .top, endPoint: .bottom))
+    .frame(width: 240, height: 150)
+    .clipShape(RoundedRectangle(cornerRadius: 10))
+```
+
+#### `ScreenEffectGeometry`
+
+The pure geometry, for tests and for a host that places its own panels. A `ScreenEffectScreen(id:frame:visibleFrame:)` (or `ScreenEffectScreen(nsScreen)`) is a display as values.
+
+- `static func screens(for: ScreenEffectTarget, among: [ScreenEffectScreen], cursor: CGPoint) -> [ScreenEffectScreen]`: the cursor's screen falls back to the main one.
+- `static func panelFrame(on:coversMenuBar:) -> CGRect`
+- `static func bubbleScreen(for:among:cursor:) -> ScreenEffectScreen?`, `static func bubbleFrame(on:) -> CGRect` (`bubbleSize` 176, `bubbleMargin` 28)
+- `static func pillCenter(panel:visible:) -> CGPoint`
+
+```swift
+let screens = NSScreen.screens.map(ScreenEffectScreen.init)
+let covered = ScreenEffectGeometry.screens(for: .cursorScreen, among: screens, cursor: NSEvent.mouseLocation)
+```
+
+#### `ScreenCaptureDetector`
+
+Whether something captures the screen right now: a share, a recording, a screenshot tool, an always-on recorder. It reads WindowServer's "screen watcher present" flag (`SLSIsScreenWatcherPresent` from the private SkyLight framework, `CGSIsScreenWatcherPresent` as a fallback), looked up with `dlsym`, so nothing links against a private symbol.
+
+- `static func current() -> Bool?`: nil when this macOS has no such check.
+- `static var isAvailable: Bool`
+
+Measured on macOS 26.3: false at rest, true within 0.1 s after a ScreenCaptureKit stream starts and while `screencapture -v` records, false within a second after either stops; one call costs about 5 ns. Not guaranteed: it is private API (a later macOS can drop it, and then `current()` is nil); it was not tried with Zoom, Meet, Teams or FaceTime themselves, only with ScreenCaptureKit and `screencapture`, which they use; any capture counts, not only a share; it is polled, so a capture that starts between two checks can catch up to a second of the screen; and it cannot see a camera or a capture card pointed at the display. `ScreenEffectsTests.testTheSystemCaptureCheckSeesARealRecording` records a 2 by 2 pixel corner for two seconds to check it (opt in with `GENESISKIT_CAPTURE_PROBE=1`).
+
+```swift
+if ScreenCaptureDetector.current() ?? true {
+    effects.setCameraBubble(nil) // or let the controller's duringScreenCapture do it
+}
+```
+
+#### `ScreenEffectMachine`
+
+The show, hide, timeout and kill-switch rules without windows or timers (the controller runs on it).
+
+- `mutating func show(at: Date, preview: Bool = false) -> ShowResult`: `.presented`, `.promoted` (a preview became real), `.alreadyShown` or `.suppressed(until:)`.
+- `mutating func hide() -> Bool`, `mutating func suppress(until:) -> Bool`, `mutating func clearSuppression()`
+- `func deadline(maximumDuration:) -> Date?`, `isShown`, `isPreview`, `isSuppressed(at:)`, `suppressedUntil`
+
+```swift
+var machine = ScreenEffectMachine()
+_ = machine.show(at: .now)
+machine.suppress(until: .now.addingTimeInterval(600))
+assert(machine.show(at: .now) == .suppressed(until: machine.suppressedUntil!))
+```
+
 ### Paths
 
 Everything a host needs to show a file or folder path and act on it. `PathLabel` is the main entry point: a clickable path with copy, reveal and open icons, and a right-click menu (`PathActionsMenu`). A host that configures its own verbs lists them as `[PathAction]`, builds the menu with `PathMenu`, shows it as a context menu (`PathActionsMenu`) or below a button (`PathMenuButton`), and supplies the verbs that need its window through `PathMenuHandlers`. Under the menus, `PathOpener` decides and performs each open through a `PathWorkspace` that tests can replace. `Clipboard` and `CopyToast` copy text and confirm it next to the pointer, and `DefaultApp` finds the app macOS opens a file with. Views never call `NSWorkspace` or `NSPasteboard` for these tasks themselves.
@@ -5719,6 +6349,248 @@ let center = PermissionCenter(
     presenter: PermissionPanelPresenter(),
     relaunch: { PermissionRelaunch.relaunchCurrentProcess() }
 )
+```
+
+### Pose
+
+Pose turns camera frames or AirPods motion into `PoseSample` values and draws them. `VisionBodyPoseEngine` (the default) and `VisionFaceEngine` read frames through Apple Vision, with no model download; `HeadphoneMotionEngine` pushes AirPods head pitch. `PoseSkeletonOverlay` draws a sample over `CameraPreviewView`, and `PoseSkeletonLiveOverlay` does it from a `PoseSampleFeed`, the only object a live sample reaches on the main thread.
+
+Measured on synthetic 640x480 frames on this Mac (`VisionPoseBenchTests`, `POSTURE_BENCH=1`, four fresh processes, 60 calls each, load average 10 to 17): body pose 4.4 ms wall and 0.7 ms of process CPU per call, face rectangles 3.4 ms wall and 1.9 ms CPU, both together 8.9 ms wall and 3.3 ms CPU. The body request runs mostly off the CPU, so the face request is not cheaper in CPU; the energy saver is the Battery saver interval policy, not the face engine. The frames held no real person, so a real face may cost more in the later pose stage.
+
+#### `PoseSample`
+
+One reading of the user's pose. A `Codable`, `Equatable`, `Sendable` struct with a public init.
+
+- `time: TimeInterval`: uptime seconds (`ProcessInfo.systemUptime`), so durations survive a clock change.
+- `engine: PoseEngineKind`: `.visionBody`, `.visionFace` or `.headphones`.
+- `joints: [PoseJoint: PoseJointPoint] = [:]`: nose, both eyes, both ears, neck and both shoulders, each with `x`, `y` and `confidence`. Coordinates run 0...1 from the top left of the image as the sensor delivers it, not mirrored. Vision names the subject's own left and right.
+- `face: PoseFace? = nil`: the face `box` in the same space, `confidence`, and `roll`, `yaw`, `pitch` in radians (pitch positive nodding down).
+- `headphonePitch: Double? = nil`: AirPods pitch in radians, positive nodding down.
+- `imageAspect: Double = 4/3`: what the overlay needs to match an aspect-fill preview.
+- `lowLight: Bool = false`: too dark to judge.
+
+Members: `joint(_:) -> PoseJointPoint?` returns a joint above `minimumConfidence` (0.3, Dorso's and Apple's gate); `hasPerson` is true for a confident nose, a face, both shoulders or AirPods motion. The shoulders count so that a head bent out of the frame reads as a slouch, not as away.
+
+#### `PoseEngine` and `FramePoseEngine`
+
+`PoseEngine` is any source of samples: `kind` and `usesCamera`. `FramePoseEngine` adds `analyze(_ frame: CameraFrame) -> PoseSample?`, called from one serial queue (the camera's delivery queue); the engine keeps its Vision request between calls and makes a fresh request handler per frame. Nil means Vision failed; a sample without a person means nobody is there.
+
+#### `VisionBodyPoseEngine`
+
+Vision 2D body pose (`VNDetectHumanBodyPoseRequest`, `preferBackgroundProcessing`). It keeps the nearest person: the widest confident shoulders, else the most confident nose.
+
+- `faceDetection: FaceDetection = .fallback`: `.fallback` runs face rectangles on the same frame when the body has no confident nose (a seated upper body sometimes yields no body, which is why Dorso has the same fallback); `.always` runs both on every frame (use it while calibrating, so the baseline also holds the face measures); `.never`. Change it only from the queue that calls `analyze`.
+
+#### `VisionFaceEngine`
+
+Vision face rectangles alone (`VNDetectFaceRectanglesRequest` revision 3): the face box, roll, yaw and pitch. No shoulders, so it measures head drop, forward head (face width), sideways tilt and head pitch. It still works when a chair back or a monitor hides the shoulders.
+
+#### `HeadphoneMotionEngine`
+
+AirPods head pitch as samples, with no camera (`CMHeadphoneMotionManager`, macOS 14). A `final class`.
+
+- Updates arrive at about 25 Hz; it forwards at most one sample per `sampleInterval` and does nothing else per update.
+- Taking a bud out sends a disconnect and putting it back a connect (Automatic Ear Detection). `isConnected` and `onConnectionChange` (main queue) report it, and `stop(keepConnectionMonitor: true)` keeps that monitor alive while motion stops.
+- macOS ends a process that starts motion updates without `NSMotionUsageDescription`, and creating the manager already sends a privacy request, so the manager is made only on first use and only with the key. `start()` returns false without it, after a refusal, or with no supported headset paired. The first start shows the motion prompt. `isAvailable` reads the manager only once the grant is given (or after a start), so it never raises the prompt by itself.
+- `stop()` without `keepConnectionMonitor` also forgets the buds: `isConnected` turns false, since nothing reports them any more.
+
+Initializer: `sampleInterval: TimeInterval = 0.5`, `queue: DispatchQueue? = nil` (where samples arrive).
+
+Members: `onSample: (@Sendable (PoseSample) -> Void)?`, `onConnectionChange: ((Bool) -> Void)?`, `isConnected`, `latestPitch`, `isAvailable`, `start() -> Bool`, `startConnectionMonitor() -> Bool` (the in-ear monitor without motion updates), `stop(keepConnectionMonitor: Bool = false)`, and the statics `authorization: HeadphoneMotionAuthorization`, `hasUsageDescription`, `settingsURL` (Privacy & Security, Motion & Fitness).
+
+```swift
+let airPods = HeadphoneMotionEngine()
+monitor.setSource(.auto, headphones: airPods)   // AirPods while a bud is in, the camera otherwise
+```
+
+#### `PoseSkeletonOverlay`
+
+The detected pose drawn over a camera preview: joints as small rings (3.5 pt, a centre dot), the shoulder line and the neck up to the nose as 1.5 pt lines, each over a faint dark halo so it reads on a bright wall without a shadow. A face-only sample draws its face box. With a `target` it draws that pose as a dashed ghost in `targetTint` and an arrow from every joint that moved further than `arrowThreshold` from it (SlouchSniper's "overlay target"). One `Canvas` pass, no animation of its own, no hit testing, hidden from accessibility (the status line says the same). It is `Equatable`, so a parent update with the same inputs does not repaint it.
+
+- `sample: PoseSample?`
+- `target: PoseSample? = nil`
+- `mirrored: Bool = true`: match `CameraPreviewView`.
+- `tint: Color = .white`, `targetTint: Color = .mint`
+- `arrowThreshold: Double = 0.03`: a fraction of the view's shorter side.
+
+`PoseOverlayGeometry(size:imageAspect:mirrored:)` is the pure aspect-fill mapping it uses: `imageRect`, `point(_:_:)`, `rect(_:)`.
+
+```swift
+PoseSkeletonOverlay(sample: snapshot, target: slot.referencePose, mirrored: true)
+    .equatable()
+```
+
+#### `PoseSkeletonLiveOverlay`
+
+`PoseSkeletonOverlay` fed by a `PoseSampleFeed`. It is the only view that observes the feed, so a new sample re-renders this leaf and nothing else in the window, and it tells the feed it is watched while it is on screen.
+
+- `feed: PoseSampleFeed` (usually `monitor.feed`)
+- `target: PoseOverlayTarget = .none`: `.none`, `.lastGood` (the last upright, clear sample) or `.pose(PoseSample)` (the calibration's reference pose).
+- `mirrored: Bool = true`, `tint: Color = .white`, `targetTint: Color = .mint`
+
+#### `PoseSampleFeed`
+
+The live sample for a preview, apart from the monitor's state. A `@MainActor` `ObservableObject` with `sample`, `lastGood` and `score` (the sample's `PostureScore`: each fault's drift and thresholds, for a debug metrics view). The monitor publishes into it only while it is watched, so a hidden window costs no main-thread hop per frame. `beginWatching()` and `endWatching()` count the views that show it (the live overlay calls them); `isWatched` reads or overrides the count; `setLastGood(_:)` sets the target by hand.
+
+### Posture
+
+Posture is the logic of a webcam posture coach (PostureWatcher in Genesis), kept pure wherever it can be. `PostureMetrics` reads scale-free measures from a pose sample, `PostureScorer` scores them against a `PostureBaseline` with a dead zone and a sensitivity, and `PostureStateMachine` turns readings into monitoring, slouching, recovery and away with an onset delay, hysteresis and a reset-streak time. `PostureHealth` is the health bar. `PostureCalibrationBook` keeps named calibration slots, picked by the connected displays. `PostureHistoryStore` keeps per-minute history. `ActivityGate` says when to pause, by events only. `PostureMonitor` runs it all off the main thread and drives a `CameraFrameSource`.
+
+A frontal webcam cannot measure the clinical craniovertebral angle (that needs a side view), so every metric is a proxy that only means something against the user's own baseline. Defaults come from Dorso's source (tldev/dorso at 80a41c22) and the PostureApps and PoseEngines research notes in the vault (`GenesisTools.native/Posture/`); each default below names where it comes from.
+
+#### `PostureMetrics`
+
+The measures read from one sample, as `[PostureMeasure: Double]` with a subscript. `init(sample:)` reads every measure the sample supports. Horizontal distances are first scaled by `imageAspect`, so lengths are in image heights and angles are true angles; body measures are then divided by the shoulder width, so the distance to the camera cancels out. `median(_:)` takes the per-measure median of several readings and drops a measure present in fewer than half of them.
+
+Measures (`PostureMeasure`) and the fault (`PostureMetricKind`) each stands in for:
+
+- `headHeight` (shoulder midpoint y − nose y, over shoulder width), `faceCenterY`: `.headDrop`.
+- `eyeSpanRatio` (eye span over shoulder width), `faceWidth`: `.forwardHead`.
+- `shoulderWidth`: `.leanIn`.
+- `shoulderTilt` (radians): `.shoulderTilt`.
+- `lateralOffset`, `faceRoll`, `faceCenterX`: `.lateralLean`.
+- `headphonePitch`, `facePitch`: `.headPitch`.
+
+A fault reads its first available measure in that order, so body joints win over the face box.
+
+#### `PostureBaseline`
+
+The calibrated upright posture: the upright `metrics` (median), the `tolerance` each measure may always drift (noise, looking around the screen: the spread of the upright readings, never below the measure's minimum), and the `span`, the drift that counts as one whole slouch (from the slouch sample when there was one). `Codable`.
+
+- `static calibrate(upright: [PostureMetrics], slouch: [PostureMetrics] = []) -> PostureBaseline?`: nil with fewer than `minimumUprightReadings` (4, Dorso) usable readings.
+
+Defaults without a slouch sample: span 0.15 and minimum tolerance 0.05 for `faceWidth` and `eyeSpanRatio` (Dorso's forward-head numbers), span 0.3 rad and tolerance 0.15 rad for pitch (Dorso's AirPods numbers); the other measures use proposals in the same units (head height span 0.2 shoulder widths, shoulder tilt 0.17 rad).
+
+#### `PostureScorer`
+
+Scores a reading against a baseline. Pure.
+
+- `deadZone: PostureDeadZone = .medium`: Strict 0, Tight 0.08, Medium 0.15, Relaxed 0.25, Loose 0.40 of the calibrated range (Dorso `SettingsWindow.swift:61`; the middle default because the tight end drew unwanted-alert reports, Dorso #55 and #84).
+- `sensitivity: PostureSensitivity = .medium`: the effect curve `strength = severity ^ (1 / exponent)` with Gentle 0.08, Easy 0.15, Medium 0.35, Firm 0.65, Aggressive 1.2 (Dorso's "Intensity", `PostureEngine.swift:226`). It changes how hard the effect hits, not what counts as a slouch.
+- `enabled: Set<PostureMetricKind> = all`.
+
+Per fault: bad above `tolerance + deadZone × span`, clear again below `0.85 × tolerance + 0.7 × deadZone × span` (Dorso exits at 0.7 of its threshold), severity `(drift − enter) / (span × (1 − deadZone))` clamped to 0...1. The reading takes the worst fault (Dorso takes the max). Shoulders in view with no nose and no face, against a baseline with a head height, score as a full head drop (severity 1): the head went below the frame.
+
+`score(_:against:) -> PostureScore` gives `signals` (one `PostureSignal` per fault, with drift, thresholds and severity), `severity`, `strength`, `isBad`, `isClear` and `worst`, the fault to name in the UI ("Head drop"), so the score is never opaque.
+
+`PostureSmoother(window: 1, maxCount: 5)` takes the median of the readings of the last second; Dorso averages 5 readings, and a time window keeps the lag the same at 2 and 10 fps.
+
+```swift
+let scorer = PostureScorer(deadZone: .relaxed, sensitivity: .firm)
+let score = scorer.score(PostureMetrics(sample: sample), against: baseline)
+if score.isBad { statusLine = score.worst?.title ?? "Slouching" }
+```
+
+#### `PostureStateMachine`
+
+The decisions as a value: control inputs and readings in, a `PostureState` and `PostureEvent`s out. Time is passed in (uptime seconds), so tests run without waiting.
+
+States, in the order they win: `.disabled`, `.needsCalibration`, `.paused(PosturePause)` (reasons and an optional end), `.cameraUnavailable(PostureCameraIssue)`, then `.away`, `.monitoring`, `.slouching`, `.recovery`. `isWatching` and `isPosturePhase` group them; `title` is a short label.
+
+`PostureTiming`, all in seconds so the behaviour is the same at every frame rate (Dorso issue #14):
+
+- `confirmBad = 2` and `confirmGood = 0.5`: Dorso's 8 readings at 4 fps and 5 at 10 fps.
+- `onsetDelay = 15`, range 0 to 60: the wait after confirmation before the slouch state and the effect. Dorso defaults to 0 and drew "looking down is a slouch" reports (#84); HeadsUp waits 15 s.
+- `resetStreak = 10`, range 5 to 60: upright time in recovery before the episode ends (a proposal; no app documents a number).
+- `awayAfter = 4`: no person for this long is away (Dorso's 15 readings are 3.75 s at 4 fps). Dark frames never count.
+- `resumeGrace = 5`: after a resume, an unlock or a return from away, the first slouch waits this much longer (Dorso #35).
+
+Methods: `setControl(enabled:hasBaseline:userPause:gateReasons:cameraIssue:usesCamera:at:)` returns the state change, and coming back to a posture phase starts afresh; `observe(_ reading: PostureReading, at:) -> Step` returns the events and the time to credit to health and history. `isConfirming` is true while a bad reading waits out the delay. A slouch that returns during recovery comes back without a new `slouchStarted`, so there is one alert per episode.
+
+`static captureMode(state:confirming:policy:rates:) -> CameraCaptureMode` picks the camera mode. `PostureFrameRatePolicy`: `.batterySaver` (bursts of 3 frames every 30 s, 4 fps to confirm a bad burst; steal list and PoseEngines research), `.balanced` (2 fps upright, 10 fps while a slouch is pending, on or recovering, 1 fps away; Dorso's 2 and 4 fps cost about the same, so 1 fps upright gains little), `.responsive` (10 fps). Off whenever nothing is watched, so the light goes dark while paused. The rates are `PostureCaptureRates`.
+
+#### `PostureHealth`
+
+The health bar, 0...1. It drains 1% a second while slouching and refills 3% a second while upright (100 s to empty, about 33 s back to full: Dorso's 3-to-1 ramp asymmetry at a slower scale; no source gives SlouchSniper's numbers). A pending slouch, away and paused freeze it. It keeps `uprightStreak`, `bestUprightStreak` and `slouchStreak`; `percent` is the whole-percent value a bar shows.
+
+#### `PostureCalibrationBook`
+
+Named calibration slots and the active one. `Codable`; a file from an older version still loads.
+
+- `static standard`: Home, Office and Cafe (ids `home`, `office`, `cafe`), none calibrated, Home active.
+- `PostureCalibrationSlot`: `id`, `name`, `kind` (`PostureSlotKind`), `baseline`, `referencePose` (the overlay's ghost), `cameraID`, `displaySet` (sorted display UUIDs), `calibratedAt`.
+- `store(_:referencePose:cameraID:displaySet:at:in:)`, `addCustom(name:)`, `remove(id:)`, `clear(id:)`.
+- `slot(matching:)` and `autoSelect(displaySet:) -> Bool`: the calibrated slot of the connected displays, an exact match first, else the one sharing the most displays (Dorso keys calibrations by display set). `autoSelectByDisplays` turns it off.
+
+`PostureDisplays.currentSet()` gives the sorted UUIDs of the active displays. `PostureCalibrationSession` collects samples during a guided calibration (`add(_:as: .upright | .slouch)`, skipping empty and dark ones) and returns `baseline()` and `referencePose`.
+
+`PostureCalibrationStore(directory:fileName:)` saves a book as JSON off the main thread (`load() async -> LoadResult`, `save(_:completion:)`). A file it cannot read is never overwritten: `load` reports `.unreadable` and `save` refuses until `discardUnreadable()`. `save` also refuses until the first `load()`, so a save that races the start-up load cannot replace slots nobody read. Only a missing file is `.missing`; any other read error (permissions, a folder in its place) is `.unreadable`.
+
+```swift
+var book = PostureCalibrationBook.standard
+book.autoSelect(displaySet: PostureDisplays.currentSet())
+monitor.setBaseline(book.activeSlot?.baseline)
+```
+
+#### `PostureHistoryStore`
+
+Per-minute history in a folder the host names: one append-only JSON-lines file per local day, about 70 bytes a row. Files older than `retentionDays` (60) are pruned once a day and a day file stops growing at `maxBytesPerDay` (512 KB), so the folder stays bounded. A line it cannot read is skipped and the file is never rewritten. Every read and write runs on its own utility queue.
+
+- `append(_ rows: [PostureMinute])`; `minutes(on:) async`, `summary(for:) async -> PostureDaySummary`, `lastDays(_:endingAt:) async` (oldest first, empty days as zero rows); `flush()`.
+- `clear(completion: (@Sendable (Error?) -> Void)? = nil)`: deletes every day file, after the writes queued before it; other files in the folder stay.
+- Rows are appended with `O_APPEND` and never rewrite the file; a torn last line gets a newline first, so the next row is still readable.
+- `PostureMinute`: `minute`, `upright`, `slouch`, `away` (seconds) and `alerts`. Several rows may name one minute; readers add them up. A pending slouch counts as slouch time.
+- `PostureDaySummary`: the day's totals and `uprightFraction`.
+- `PostureMinuteAccumulator` folds credited time into rows across minute boundaries.
+
+```swift
+let today = await history.summary(for: Date())
+let week = await history.lastDays(7, endingAt: Date())
+```
+
+#### `ActivityGate`
+
+Says why watching should pause, by events only: NSWorkspace sleep, wake, screen sleep and session changes, the distributed screen lock and screen saver notifications, an IOKit power-source run-loop source, Low Power Mode, the screen list (debounced 0.5 s, Dorso), and key-value observation of the chosen camera's `isInUseByAnotherApplication` (Apple's documented signal; whether it fires for a shared built-in camera is not verified). No polling timer runs. Idle is the one input macOS does not post: one one-shot timer for the moment the threshold would pass, then a global event monitor that waits for the next mouse event (keys reach it only with Accessibility). A `@MainActor` `ObservableObject`.
+
+- `reasons: Set<ActivityPauseReason>`: every reason that applies now (`.systemSleep`, `.screensAsleep`, `.screenLocked`, `.screenSaver`, `.sessionInactive`, `.onBattery`, `.lowPowerMode`, `.laptopOnlyDisplay`, `.cameraInUse`, `.idle`, `.fullScreenApp`; `.user` and `.headphonesRemoved` come from the monitor). Published only on change.
+- `watchesFullScreenApps: Bool = false`: reports `.fullScreenApp` while the frontmost app (not this one) has a normal-level window the size of a screen. It checks 0.6 s after the frontmost app or the Space changes (the Space animation), never on a timer. `static frontmostAppIsFullScreen()` and the pure `coversScreen(windows:pid:screens:)` are public.
+- `onChange: ((Set<ActivityPauseReason>) -> Void)?`
+- `idleThreshold: TimeInterval? = nil`: nil turns the idle check off.
+- `start()`, `stop()`, `observeCamera(uniqueID:)`.
+- Statics: `isOnBattery()`, `isScreenLocked()`, `activeDisplaysBuiltIn()`, `isLaptopOnly(builtIn:)`.
+
+#### `PostureMonitor`
+
+Runs PostureWatcher. A `@MainActor` `ObservableObject`.
+
+- Readings are scored off the main thread, on the camera's delivery queue or the AirPods queue, under one lock. The main actor hears only changes: `state`, `healthPercent`, `strength` (in 5% steps), `worst`, `cameraState`, `source`, `lastAlert`. The camera mode and the snapshot leave the core while its lock is held, so a reading scored just before a pause cannot turn the camera back on after it. A frame that changes none of them costs the main thread nothing (`PostureMonitorTests.testTheMainActorHearsOnlyChanges` plants the regression).
+- The live skeleton goes to `feed` (a `PoseSampleFeed`), only while a view watches it.
+- It sets the camera's mode from the state and the policy, so the light goes dark while disabled, paused or not calibrated.
+- A timed pause ends on one wall-clock timer; nothing else runs while paused. AirPods motion stops too; their in-ear monitor stays on, so a bud going back in is seen.
+- In `.auto`, AirPods drive it only while a bud is in and the baseline has an AirPods pitch; otherwise it keeps the camera.
+- Releasing the monitor turns the camera off, stops AirPods motion and cancels a calibration, even without `disable()`.
+- History rows go to the store, which writes off the main thread.
+
+Initializer: `configuration: Configuration = Configuration()`, `camera: CameraFrameSource?` (it takes over `onFrame` and `onStateChange`; nil for AirPods only), `engine: FramePoseEngine = VisionBodyPoseEngine()`, `history: PostureHistoryStore? = nil`.
+
+`Configuration`: `scorer`, `timing`, `policy`, `rates`, `pauseReasons` (default: sleep, screen sleep, lock, screen saver, another session, AirPods removed; battery, laptop-only, call and idle are opt-in), `drainPerSecond`, `refillPerSecond`.
+
+Methods: `enable()`, `disable()`, `setBaseline(_:)`, `pause(for:)`, `pause(until:)`, `resume()`, `observe(gate:)`, `setEngine(_:)`, `setSource(_:headphones:)` (`PostureSource`: `.camera`, `.headphones`, `.auto`), `ingest(_:)` (any thread), `resetHealth()`, `flushHistory()` (writes the open minute and waits until it is on disk), `setHistory(_ store: PostureHistoryStore?)` (swap or switch off history; the open minute goes to the old store), and `history: PostureHistoryStore?`. `onEvent` gets each `PostureEvent` on the main actor: state changes, `slouchStarted` (one per episode), `recoveryStarted`, `streakReset`.
+
+`collectCalibrationSamples(count: Int, timeout: TimeInterval) async throws -> [PoseSample]` gathers `count` samples with a person in them (dark frames skipped) from the running pipeline: the camera runs at the active rate meanwhile whatever the state, a Vision body engine adds the face request, and readings are not scored. It throws `PostureCalibrationError`: `.busy` while another collection runs, `.timedOut(collected:)` and `.cameraUnavailable(_:collected:)` with what it gathered, `.cancelled` when the task is cancelled or the monitor goes away. No second camera lease is needed.
+
+`holdScoring(_ hold: Bool)` holds scoring while a calibration sheet is open (`isScoringHeld` reads it back): readings still reach `feed` and a collection, but none is judged, so the slouch a calibration asks for never starts an episode or an alert. Holding, releasing and a different `setBaseline` all start the posture afresh (upright, with the resume grace), so a slouch judged against the old baseline does not outlive it.
+
+`PostureScorer.forwardHeadWithoutShoulders` (`PostureForwardHeadFallback?`) decides Forward head when a body-pose reading has no shoulders and only the face width is left, since the face also grows when the user only sits closer: `.needsShoulders` leaves it out and lists it in `PostureScore.unjudged`, `.faceSize` judges the face width with at least `PostureForwardHeadFallback.faceOnlyTolerance` (0.20) tolerated, and nil keeps the calibrated tolerance. The monitor judges Vision face engine readings as nil whatever the setting, because that engine never sees shoulders.
+
+`onAlert: ((PostureAlert) -> Void)?` and `lastAlert` describe each new slouch episode, right after its `slouchStarted`. `PostureAlert` carries the `kind`, the `measure`, the `deviation` from the baseline in its `unit`, `severity`, `strength`, `rangeFraction` (the drift over the calibrated slouch) and every fault's `signals`. A frontal webcam gives no centimetres, so `unit` is honest: `.shoulderWidths` (head drop, sideways lean on the body engine), `.faceWidths` (the face engine), `.radians` (tilt, roll, pitch; `degrees` converts) or `.fraction` (forward head, leaning in; `percent` converts). `approximateCentimeters(shoulderWidthCM: 39, faceWidthCM: 14)` turns the first two into an estimate from typical body sizes, nil for the others; show it as "about".
+
+```swift
+let camera = CameraFrameSource()
+let monitor = PostureMonitor(camera: camera, history: PostureHistoryStore(directory: historyFolder))
+monitor.configuration.policy = .batterySaver
+monitor.setBaseline(book.activeSlot?.baseline)
+monitor.observe(gate: gate)
+monitor.onEvent = { event in if event == .slouchStarted { effects.show() } }
+monitor.onAlert = { alert in
+    let size = alert.approximateCentimeters().map { ", about \(Int($0.rounded())) cm" } ?? ""
+    notify("\(alert.kind.title)\(size)")
+}
+monitor.enable()
+
+// Calibration from the running pipeline.
+let upright = try await monitor.collectCalibrationSamples(count: 12, timeout: 15)
+monitor.setBaseline(PostureBaseline.calibrate(upright: upright.map(PostureMetrics.init(sample:))))
 ```
 
 ### Providers
@@ -7175,7 +8047,7 @@ CodeBlockCache.shared.set(key, rendered)
 
 ### Settings
 
-The native settings window and the controls that fill it. A host describes its settings as `NativeSettingsPage` values (an id, a title, an SF Symbol, a tint and a SwiftUI view), groups them into `NativeSettingsSection`s that sort by `order`, and gives the sections to `FeatureSettingsWindowController`. The controller owns a `NativeSettingsStore` (the catalog and the selected page) and shows it in `FeatureSettingsView`; a host can also build the store and the view itself, or add sections later with `register(section:)`. Inside a page, the host builds its controls from `NativeSettingsCard`, `NativeSettingsRow`, `NativeSettingsToggle` and the pickers. Every page reads `NativeSettingsAppearance` (reduce motion, reduce transparency, theme) from the environment, and the glass and backdrop modifiers draw each surface for the chosen theme. The Hub pages and the notification client at the end are ready-made pieces for specific hosts.
+The native settings window and the controls that fill it. A host describes its settings as `NativeSettingsPage` values (an id, a title, an SF Symbol, a tint and a SwiftUI view), groups them into `NativeSettingsSection`s that sort by `order`, and gives the sections to `FeatureSettingsWindowController`. The controller owns a `NativeSettingsStore` (the catalog and the selected page) and shows it in `FeatureSettingsView`; a host can also build the store and the view itself, or add sections later with `register(section:)`. Inside a page, the host builds its controls from `NativeSettingsCard`, `NativeSettingsRow`, `NativeSettingsToggle` and the pickers. Every page reads `NativeSettingsAppearance` (reduce motion, reduce transparency, theme) from the environment, and the glass and backdrop modifiers draw each surface for the chosen theme. The Hub pages and the notification client at the end are ready-made pieces for specific hosts. `ClientConfigFile`, `KitSettingsBackend` and `SettingsDocument` keep a feature's own settings: one Codable value per feature, in `~/.genesis/client.json` or a `UserDefaults` suite.
 
 #### `FeatureSettingsWindowController`
 
@@ -7486,6 +8358,143 @@ NativeSettingsCard("Quiet hours") {
     NativeSettingsTimePicker("Start", identifier: "acme.quiet.start", minutes: $model.quietStart)
     NativeSettingsTimePicker("End", identifier: "acme.quiet.end", minutes: $model.quietEnd)
 }
+```
+
+
+#### `NativeSettingsSlider`
+
+A row with a slider: the title and detail on the left, the track and its formatted value ("1.00×", "45 s") on the right. The value applies live while the knob moves; `onCommit` runs once at the end of each gesture that changed the value (mouse-up or a drag the system cancelled, each arrow-key step, each accessibility increment), so a host that persists with a synchronous file write does it once per gesture, never per drag tick or plain click. The track is drawn by the kit: it keeps the accent fill in every window, grows the knob under the pointer, shows the pointing hand, takes the arrow keys when focused through keyboard navigation (Shift for ten steps) and adjusts through VoiceOver and UI automation (AXIncrement).
+
+- `title: String` (unlabeled), `detail: String? = nil`
+- `identifier: String`: the slider's accessibility identifier.
+- `value: Binding<Double>`
+- `in range: ClosedRange<Double>`
+- `step: Double? = nil`: snap to multiples of `step` from the lower bound; nil is continuous (keys then move a twentieth of the range).
+- `ticks: [Double] = []`: values marked under the track.
+- `width: CGFloat = 200`: the track width.
+- `format: (Double) -> String`: the value label, also the accessibility value.
+- `onCommit: ((Double) -> Void)? = nil`: the final value of each gesture.
+
+```swift
+NativeSettingsSlider(
+    "Effect intensity", detail: "How strong the overlay should feel.", identifier: "posture.effects.intensity",
+    value: $model.intensity, in: 0.25...2, step: 0.05, ticks: [0.5, 1, 1.5, 2],
+    format: { String(format: "%.2f×", $0) },
+    onCommit: { _ in model.save() })
+```
+
+#### `NativeSettingsSegmented`
+
+A row whose choice is a few short words side by side, drawn with `GenSegmentedTabs` (accent pill in every window, hover fill, pointer). When the selected option has a `detail`, it shows under the row in a quiet note. Options are `NativeSettingsOption(value, title, detail:, symbol:)`, shared with `NativeSettingsPicker`; each segment's identifier is `<identifier>.<value>` (`GenAccessibilityID.suffix`).
+
+- `title: String` (unlabeled), `detail: String? = nil`
+- `identifier: String`
+- `options: [NativeSettingsOption<Value>]`
+- `selection: Binding<Value>`
+- `minSegmentWidth: CGFloat = 64`
+
+```swift
+NativeSettingsSegmented(
+    "Frame rate", identifier: "posture.detection.rate",
+    options: [
+        .init(.batterySaver, "Battery saver", detail: "Checks every 30 s, camera off in between."),
+        .init(.balanced, "Balanced", detail: "4 fps, 10 fps while correcting."),
+        .init(.responsive, "Responsive", detail: "10 fps."),
+    ],
+    selection: $model.rate)
+```
+
+#### `NativeSettingsPicker`
+
+A row that picks one of several options, each with a title and a sentence that says what it does. The button shows the selected title (and its symbol); a click opens a list of every option with its description, built only while it is open (Up and Down move, Return picks, Escape closes). The selected option's description stays under the row. Each option's identifier is `<identifier>.option.<value>`.
+
+- `title: String` (unlabeled), `detail: String? = nil`
+- `identifier: String`: the button's identifier.
+- `options: [NativeSettingsOption<Value>]`
+- `selection: Binding<Value>`
+- `width: CGFloat = 220`: the button width.
+
+```swift
+NativeSettingsPicker(
+    "Effect style", detail: "The look of the screen while you slouch.", identifier: "posture.effects.style",
+    options: ScreenEffectStyle.allCases.map { .init($0, $0.title, detail: $0.detail, symbol: $0.symbol) },
+    selection: $model.style)
+```
+
+#### `NativeSettingsPathList`
+
+A block for a list of folders ("Watch these folders", "Never scan"): the title and an Add button on top, then one row per folder with its home-relative path (the full path in a tooltip), Show in Finder and Remove. Add opens the system chooser (several at once) and never adds a folder twice. A folder that no longer exists keeps its row and says "Missing", so the user decides. A `~/` path from a config file is read as the home folder's (for "Missing", Show in Finder and duplicates), and a list that holds the same path twice still draws every row. Identifiers: `<identifier>.add`, and per row `.row.<index>`, `.reveal.<index>`, `.remove.<index>`.
+
+- `title: String` (unlabeled), `detail: String? = nil`
+- `identifier: String`
+- `paths: Binding<[String]>`: absolute paths.
+- `addTitle: String = "Add Folder…"`, `emptyText: String = "No folders yet."`
+- `allowsFiles: Bool = false`: the chooser also takes files.
+- `onCommit: (([String]) -> Void)? = nil`: the new list after each add or remove.
+
+```swift
+NativeSettingsPathList(
+    "Watched folders", detail: "New big files here show in the radar.", identifier: "disk.radar.folders",
+    paths: $model.watched, onCommit: { _ in model.save() })
+```
+
+#### `NativeSettingsByteThreshold`
+
+A row for a size limit ("Warn below 10 GB"): a typed number and a unit menu. Bytes are decimal like `ByteFormat.file` and Finder (1 GB = 1,000,000,000). Typing changes nothing until Return or focus loss; then the text is read (a comma counts as the decimal point), multiplied by the unit, clamped to `range`, written once, and `onCommit` runs when the bytes changed. Text that was not edited is never read back, so tabbing through keeps the exact bytes (the field shows two decimals). Picking a unit converts the value when nothing was typed (10 GB shows as 10000 MB) and reads a typed number in the new unit ("2" with GB picked is 2 GB). Text that is not a number keeps the old value. A range up to `Int64.max` is safe. The field's tooltip names the range. Identifiers: `<identifier>` (field) and `<identifier>.unit`.
+
+- `title: String` (unlabeled), `detail: String? = nil`
+- `identifier: String`
+- `bytes: Binding<Int64>`
+- `range: ClosedRange<Int64>`
+- `units: [Unit] = [.mb, .gb]`: from `.kb`, `.mb`, `.gb`, `.tb`. The field starts in the largest unit the value fills.
+- `onCommit: ((Int64) -> Void)? = nil`
+
+```swift
+NativeSettingsByteThreshold(
+    "Warn below", detail: "Free space that starts the warning tier.", identifier: "disk.alerts.watch",
+    bytes: $model.watchFloor, range: 100_000_000...500_000_000_000, onCommit: { _ in model.save() })
+```
+
+#### `NativeSettingsChannelMatrix`
+
+Which channels each tier uses: tiers down the left (`NativeSettingsMatrixTier(id:title:detail:tint:)`), channels across the top as symbols (`NativeSettingsMatrixChannel(id:title:symbol:)`, each named in an instant tooltip), one switch per cell that fills with its tier's colour. A click on a channel's symbol turns it on for every tier (off when all had it); a click on a tier's name does the same across its row. Identifiers: `<identifier>.<tier>.<channel>`, `<identifier>.channel.<channel>`, `<identifier>.tier.<tier>`, each id spelled by `GenAccessibilityID.suffix`.
+
+- `identifier: String`
+- `tiers: [NativeSettingsMatrixTier]`, `channels: [NativeSettingsMatrixChannel]`
+- `selection: Binding<[String: Set<String>]>`: tier id to channel ids; a missing tier has none.
+- `isAvailable: (String, String) -> Bool = { _, _ in true }`: false dims a cell and stops it switching (a channel that needs a grant).
+- `onCommit: (([String: Set<String>]) -> Void)? = nil`: the new map after each click.
+
+For an `AlertChannelMatrix`, use `init(identifier:tiers:channels:matrix: Binding<AlertChannelMatrix>, isAvailable:onCommit:)`: a tier missing from `routes` shows the `fallback` channels as on (as the dispatcher routes it), a click writes the tiers' channels into `routes`, and `onCommit` gets the new matrix. Binding `$matrix.routes` to `selection` instead shows routed fallback channels as off.
+
+```swift
+NativeSettingsChannelMatrix(
+    identifier: "disk.alerts.channels",
+    tiers: [.init(id: "watch", title: "Watch", detail: "Under 10 GB", tint: KitPalette.modified),
+            .init(id: "critical", title: "Critical", detail: "Under 1 GB", tint: KitPalette.removed)],
+    channels: [.init(id: "banner", title: "Banner", symbol: "bell.badge"),
+               .init(id: "voice", title: "Voice", symbol: "waveform"),
+               .init(id: "glow", title: "Edge glow", symbol: "rectangle.inset.filled")],
+    selection: $model.channels, onCommit: { _ in model.save() })
+```
+
+#### `NativeSettingsActionRow`
+
+A row that runs something ("Preview effect", "Benchmark engines", "Reset history"): one button on the right. While the async action runs, the button shows a small spinner and `progressTitle`, cannot be pressed again, and reads "In progress"; when it throws, the error's message stays under the row (in red) until the next run. The run belongs to the row's `identifier`, not to the view: leaving the page does not stop it, coming back shows it still running (or its error), and no second run starts while one goes, so each action needs its own identifier. With `confirmation`, a sheet asks first, its confirming button titled like the row's button (red for `.destructive`). Identifiers: `<identifier>`, `<identifier>.confirm`, `<identifier>.error`.
+
+- `title: String` (unlabeled), `detail: String? = nil`
+- `identifier: String`
+- `buttonTitle: String`, `symbol: String? = nil`
+- `role: Role = .normal`: `.normal`, `.prominent` (accent fill) or `.destructive` (red).
+- `progressTitle: String? = nil`
+- `confirmation: String? = nil`
+- `action: () async throws -> Void`
+
+```swift
+NativeSettingsActionRow(
+    "Clear history", detail: "Deletes every posture minute stored on this Mac.", identifier: "posture.user.clear",
+    buttonTitle: "Clear", symbol: "trash", role: .destructive,
+    confirmation: "Delete all posture history?") { try await model.clearHistory() }
 ```
 
 #### `NativeSettingsApplicationRow`
@@ -7807,6 +8816,79 @@ A small seam over the notification permission of the app. A model that needs the
 let stub = NativeNotificationClient(
     status: { .authorized }, request: { true }, openSettings: { true })
 let model = ClickyModel(notificationClient: stub)
+```
+
+#### `ClientConfigFile`
+
+`~/.genesis/client.json`, the settings file the Genesis app, its CLI and the kit share. A write takes the same `client.json.lock` (an `O_EXCL` file) as the app's ConfigStore and the TypeScript client, reads the file again inside the lock, and lands through a 0600 temporary file that is renamed over `client.json`. The temporary file is created 0600 with `O_EXCL` and synced to disk before the rename, so a reader never sees half a write, a crash leaves the old file or the new one, and the file never exists under the process umask. Reads are lenient, for display. A write reads strictly: a malformed or unreadable `client.json` throws and stays byte-for-byte intact until the user repairs it. A missing `client.json` falls back to the legacy `config.json`, of which only the client keys (`app`, `obsidian`, `server`, `auth.sessionToken`) are carried over. Every call does file I/O on the calling task, so call it off the main actor. `FlowFocusConfiguration` writes through this type with its deep merge.
+
+- `directory: URL = ClientConfigFile.defaultDirectory`: the folder with `client.json` (`~/.genesis`).
+- `lockTimeout: TimeInterval = 5`: how long a write waits for another writer's lock (it retries every 100 ms and suspends instead of holding a thread), then throws.
+- `staleLockAge: TimeInterval? = 10`: a lock without this code's pid marker (ConfigStore, the CLI) that is older than this is a crashed writer's and is removed, as ConfigStore and the TypeScript client do. nil never removes a lock by age. A lock with this code's marker (`genesis-kit pid=<pid>`) is removed only when its pid no longer runs, never by age.
+- `fileURL: URL`, `lockURL: URL`: `client.json` and `client.json.lock`.
+- `read() -> [String: Any]`, `readApp() -> [String: Any]`, `readAppValue(_ key: String) -> Any?`: lenient reads of the whole file, the `app` object and one `app.<key>`. A malformed `client.json` reads as empty; only a missing one falls back to `config.json`.
+- `readForWrite() throws -> [String: Any]`: the strict read a write uses.
+- `replaceAppValue(_ value: Any?, forKey key: String) async throws`: replaces `app.<key>` as a whole (no merge, so a removed nested key really goes); nil removes the key. Nothing is written when the stored value is already equal. A value JSON cannot hold (a `Date`, a `URL`) throws before the lock is taken.
+- `mutate(_ body: (inout [String: Any]) throws -> Void) async throws -> Bool`: a locked read-modify-write of the whole file. It returns whether it wrote; an unchanged object is not written.
+- `clientKeys(fromLegacy:) -> [String: Any]` (static): the client part of a legacy `config.json`.
+
+```swift
+let file = ClientConfigFile()
+// Deleting a calibration slot: a deep merge could not remove it.
+try await file.replaceAppValue(["sensitivity": 4, "slots": ["home": ["pitch": 1]]], forKey: "posture")
+let posture = file.readAppValue("posture") as? [String: Any]
+```
+
+#### `KitSettingsBackend`
+
+Where a `SettingsDocument` keeps its value: JSON bytes under one key, stored and replaced as a whole. The methods run off the main actor and may block on file I/O or a cross-process lock, so an implementation does its I/O where it is called and never hops to the main actor for it. The Genesis app passes a backend over its own config store; the kit ships two.
+
+- `loadData(forKey:) async throws -> Data?`: the stored JSON, or nil when nothing is stored.
+- `saveData(_ data: Data?, forKey:) async throws`: stores the JSON value as a whole; nil removes the key.
+- `observeChanges(forKey:_ onChange: @escaping @Sendable () -> Void) -> SettingsObservation?`: calls `onChange` on any thread when the stored value may have changed outside this backend (also after its own writes; the caller reads again and compares). nil when the backend cannot observe. `SettingsObservation` stops on `cancel()` or when it is released.
+
+The two backends:
+
+- `ClientConfigBackend(file: ClientConfigFile = ClientConfigFile(), coalesce: TimeInterval = 0.25)`: `app.<key>` in `client.json` through `ClientConfigFile.replaceAppValue`. It observes the folder with one kqueue source (no polling) and merges the events of one write (lock, temporary file, rename) into one call. Writes of other files in the folder do not reach `onChange`: it runs only when `client.json`'s inode, size or modification time moved. A missing folder is created (0700), so a document made before the first write still sees later ones.
+- `UserDefaultsSettingsBackend(defaults: UserDefaults = .standard, suite: String? = nil)`: one `Data` value of a defaults suite. Changes from another process sharing the suite arrive through key-value observing, which needs a key without dots; a dotted key observes nothing.
+
+```swift
+struct ConfigStoreBackend: KitSettingsBackend {          // in an app
+    func loadData(forKey key: String) async throws -> Data? { /* read app.<key> */ nil }
+    func saveData(_ data: Data?, forKey key: String) async throws { /* write app.<key> off the main actor */ }
+    func observeChanges(forKey key: String, _ onChange: @escaping @Sendable () -> Void) -> SettingsObservation? { nil }
+}
+```
+
+#### `SettingsDocument`
+
+One feature's settings as a Codable value under one backend key, as an `ObservableObject` on the main actor. A change applies in memory at once; the save waits `debounce` after the last change and then runs off the main actor in order, so a slider drag or a burst of toggles costs one write and the UI never waits for a lock or the disk. Every `@Published` property is assigned only when its value changed.
+
+- `key: String`: the backend key (`disk`, `posture`).
+- `backend: KitSettingsBackend`.
+- `defaultValue: Value`: the value while nothing is stored. `Value` is `Codable & Equatable & Sendable`; give new fields a default in a custom `init(from:)` so an older stored value still decodes.
+- `debounce: Duration = .milliseconds(400)`.
+- `observesExternalChanges: Bool = true`: reads the value again when the backend reports a change.
+- `value: Value` (published): the current value.
+- `state: State` (published): `.loading` until the first load lands, `.ready`, or `.unreadable(String)` when the stored value could not be read or decoded. Nothing is saved while unreadable, so the original bytes survive.
+- `lastError: String?` (published): the last load or save failure, nil after the next success. A failed save (a full disk, a lock held past its timeout) keeps the edit pending: it is retried after 5, 15, 30, 60 and 60 s, then on the next edit or `flush()`, and an outside change waits for it instead of reverting it.
+- `hasPendingChanges: Bool`: an edit has not reached the backend yet.
+- `load() async`: waits for the first load, which starts in `init` off the main actor. An edit made before it lands is replayed on top of the stored value.
+- `update(_ change: @escaping (inout Value) -> Void)`, `set(_ newValue: Value)`: change the value now and save after the debounce.
+- `binding(_ keyPath:) -> Binding<Field>`: a binding to one field for a settings control.
+- `flush() async -> Bool`: saves a pending edit now (also one whose save failed before) and waits for every save made before the call. Call it when a window closes, and at quit: `applicationWillTerminate` cannot await, so return `.terminateLater` from `applicationShouldTerminate`, await `flush()` with a bounded wait (5 s), then call `NSApp.reply(toApplicationShouldTerminate: true)`. False when unreadable or a save failed.
+- `reload() async`: reads the stored value again; a pending edit is saved first.
+- `overwriteUnreadableValue()`: leaves `.unreadable` and saves the in-memory value over the stored one. Call it only when the user chose to replace what could not be read. It replaces an undecodable value under this key; when the whole `client.json` is malformed the save fails with the same error, and the file needs a repair first.
+
+An external change is read back after the backend reports it. A pending local edit wins: the read waits until that edit is saved, and a read whose value equals the current one publishes nothing. The value is stored as a whole, so a build that does not know a field drops it on its next save: two builds that write the same key (an installed app and a worktree build) remove each other's newer fields.
+
+```swift
+struct DiskSettings: Codable, Equatable, Sendable { var floorGB = 10; var radarRoots: [String] = [] }
+
+let settings = SettingsDocument(key: "disk", backend: ClientConfigBackend(), defaultValue: DiskSettings())
+Stepper("Floor", value: settings.binding(\.floorGB), in: 1 ... 100)   // in a page
+settings.update { $0.floorGB = 3 }
+_ = await settings.flush()                                  // when the window closes
 ```
 
 ### Style
@@ -8320,6 +9402,16 @@ let footprint = ByteFormat.memory(residentBytes)
 Text("\(size) on disk, \(footprint) in memory")
 ```
 
+#### `GenAccessibilityID`
+
+How a kit control spells a value inside an accessibility identifier, so a UI scenario can name a segment, an option or a matrix cell without knowing the Swift type.
+
+- `static func suffix(_ value: some Hashable) -> String`: the value as text (an enum case's name, a string as it is), the first letter lowercased, spaces and dots as `-`; `none` for an empty string. The spelling is lossy ("a b" and "a.b" both give "a-b", "Foo" and "foo" both give "foo"), so keep one control's values distinct after it.
+
+```swift
+let id = "posture.effects.style.option.\(GenAccessibilityID.suffix(ScreenEffectStyle.edgeGlow))"   // ...option.edgeGlow
+```
+
 ### Time
 
 Relative-time labels that keep themselves current. `LiveTime` is the main entry point: it shows a date in one of eight wordings (`LiveTimeStyle`) and redraws only itself, on the second or the minute when its text changes. `LiveAgo` wraps it for an optional date with a fallback text. `LiveTimeFormat` is the formatter behind both, and `LiveTimeSchedule` is the clock they share. Use the formatter and the schedule directly when you need the same wording outside a `LiveTime` label.
@@ -8533,6 +9625,7 @@ Initializer (throws when the binary is missing or the child cannot start). It st
 - `subcommand: String`: the `tools` subcommand.
 - `args: [String]`: its arguments.
 - `extraEnv: [String: String] = [:]`: extra environment, filtered by `ToolsBridge.envAllowlist`.
+- `priority: Priority = .utility`: `.background` for work that must never compete with the user (an index build): background quality of service, the Darwin background policy from the first instruction (`taskpolicy -b`, which throttles disk and network I/O and is inherited by every child), and nice 15. The pid stays the command's own, so `stop()` and the exit report are unchanged.
 - `onLines: @escaping @MainActor ([String]) -> Void`: complete lines of one chunk.
 - `onExit: @escaping @MainActor (Exit) -> Void`: the end report.
 
