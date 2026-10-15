@@ -9,8 +9,12 @@ public struct MenuSnapshotToken: Codable {
     public let digest: String
     public let created: Double
     public let rootTitle: String?
+    /// Set when the observation was an open context menu rather than the menu bar. Optional, so a token
+    /// minted before the field existed still decodes, and as the menu bar.
+    public let contextMenu: Bool?
 
-    public init(pid: Int32, launch: Double, depth: Int, digest: String, created: Double, rootTitle: String? = nil) {
+    public init(pid: Int32, launch: Double, depth: Int, digest: String, created: Double, rootTitle: String? = nil,
+                contextMenu: Bool = false) {
         self.version = 1
         self.surface = "menu"
         self.pid = pid
@@ -19,6 +23,7 @@ public struct MenuSnapshotToken: Codable {
         self.digest = digest
         self.created = created
         self.rootTitle = rootTitle
+        self.contextMenu = contextMenu ? true : nil
     }
     public func validate(pid: Int32, launch: Double, digest: String, element: Int, count: Int, now: Double) throws {
         guard version == 1, surface == "menu", self.pid > 0, self.launch.isFinite, self.launch > 0,
@@ -44,15 +49,18 @@ public struct MenuSnapshotToken: Codable {
 /// app, so that one genuinely needs the key window. AXPick selects an item outright and AXCancel
 /// dismisses; neither needs the app in front. Gating all three on frontmost meant every menu
 /// action stole the user's focus to do its job.
-public func menuActionRequiresFrontmost(_ action: String) -> Bool {
-    return !["AXPick", "AXCancel"].contains(action)
+///
+/// An item of a context menu that is already open needs nothing in front either: the menu is tracking
+/// already, and the app that owns it was never activated to open it (a right-click is a background act).
+public func menuActionRequiresFrontmost(_ action: String, contextMenu: Bool = false) -> Bool {
+    return !contextMenu && !["AXPick", "AXCancel"].contains(action)
 }
 
 public func dispatchMenuAction<T>(token: MenuSnapshotToken, pid: Int32, launch: Double, digest: String,
     element: Int, count: Int, now: Double, frontmost: Bool, enabled: Bool, action: () throws -> T,
     axAction: String = "AXPress") throws -> T {
     try token.validate(pid: pid, launch: launch, digest: digest, element: element, count: count, now: now)
-    guard frontmost || !menuActionRequiresFrontmost(axAction) else {
+    guard frontmost || !menuActionRequiresFrontmost(axAction, contextMenu: token.contextMenu == true) else {
         throw SnapshotError.refusal(.focusMismatch, "\(axAction) on a menu needs the app frontmost; AXPick selects an item without focus")
     }
     guard enabled else { throw SnapshotError.refusal(.missingTarget, "menu item is disabled") }

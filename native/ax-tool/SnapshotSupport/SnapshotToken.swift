@@ -61,10 +61,29 @@ public struct SnapshotToken: Codable {
             throw SnapshotError.refusal(.missingTarget, "element index outside snapshot")
         }
         guard self.digest == digest else {
-            throw SnapshotError.refusal(.staleObservation, "UI changed; run see again")
+            throw SnapshotError.refusal(.staleObservation, SnapshotToken.changedMessage)
         }
         return element
     }
+
+    /// The refusal for a tree whose digest moved since `see`.
+    public static let changedMessage = "UI changed; run see again"
+}
+
+/// The refusal a `--coords` (or `--region`) act gets when the window's tree moved since `see` and no
+/// identity pins it. 🛑 "UI changed; run see again" sent callers into a loop on any window with a
+/// ticking label: the next see is stale a second later too. A point names no element to re-find, so
+/// the only thing that can survive the churn is the WINDOW row's identity, and the refusal now says so
+/// outright, with the key to pass when the current tree has one (reported 2026-10-15).
+public func coordinateStaleRefusal(_ error: Error, windowStableKey: String?) -> Error {
+    guard case SnapshotError.refusal(.staleObservation, let message) = error,
+          message == SnapshotToken.changedMessage else { return error }
+
+    let key = windowStableKey.map { "--target-key \($0)" } ?? "--target-key <the window row's stableKey from see>"
+    return SnapshotError.refusal(.staleObservation,
+        "UI changed since see, and --coords names no element that could be found again. Pass \(key) "
+            + "--revalidate-scope element (the stableKey of row 0, the window), so a window whose text updates stays "
+            + "actionable; or run see again")
 }
 
 public enum SnapshotRefusal: String, Codable {

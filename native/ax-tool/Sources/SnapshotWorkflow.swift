@@ -186,6 +186,37 @@ private func workflowWindows(_ pid: pid_t) -> [[CFString: Any]] {
         as? [[CFString: Any]] ?? []).filter { ($0[kCGWindowOwnerPID] as? Int32) == pid }
 }
 
+/// The menu windows (`popUpMenuWindowLayer`) the app has on screen right now.
+private func workflowMenuWindows(_ pid: pid_t) -> Set<Int> {
+    let windows = workflowWindows(pid).map { info in
+        Dictionary(uniqueKeysWithValues: info.map { ($0.key as String, $0.value) })
+    }
+
+    return menuWindowIDs(in: windows, pid: pid)
+}
+
+/// AXShowMenu on `element` through `showContextMenu` (which says why it must not wait for the call),
+/// then up to one second looking for the menu it opened.
+private func workflowShowMenu(_ element: AXUIElement, window: ObservedWindow, pid: pid_t, token: SnapshotToken,
+                              menusBefore: Set<Int>) -> ShowMenuOutcome {
+    showContextMenu(perform: { AXUIElementPerformAction(element, "AXShowMenu" as CFString) }, menuAppeared: {
+        workflowContextMenuAppears(window: window, pid: pid, depth: token.depth, scope: token.effectiveScope,
+                                   menusBefore: menusBefore, within: 1)
+    })
+}
+
+/// The element of this app under `point`, from a hit test rooted at the app, so the answer is never
+/// another app's window on top.
+private func workflowElement(at point: CGPoint, pid: pid_t) -> AXUIElement? {
+    var hit: AXUIElement?
+    guard AXUIElementCopyElementAtPosition(AXUIElementCreateApplication(pid), Float(point.x), Float(point.y), &hit) == .success,
+          let hit else { return nil }
+    var owner: pid_t = 0
+    guard AXUIElementGetPid(hit, &owner) == .success, owner == pid else { return nil }
+
+    return hit
+}
+
 private func workflowSameFrame(_ first: CGRect, _ second: CGRect) -> Bool {
     abs(first.minX - second.minX) < 1 && abs(first.minY - second.minY) < 1
         && abs(first.width - second.width) < 1 && abs(first.height - second.height) < 1
@@ -318,8 +349,9 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
     let capturedAt = Date().timeIntervalSince1970
     let refreshed = try observedWindow(window.ax, pid: pid)
     let after = try captureImage ? observedTree(window.ax, depth: depth, scope: scope) : tree
+    let toleratedDrift = after.digest == tree.digest ? nil : toleratedObservationDrift(before: tree.rows, after: after.rows)
     guard refreshed.id == window.id, refreshed.bounds == window.bounds,
-          try observedLaunch(pid) == launch, after.digest == tree.digest else {
+          try observedLaunch(pid) == launch, after.digest == tree.digest || toleratedDrift != nil else {
         var changes: [[String: Any]] = []
         for index in 0..<max(tree.rows.count, after.rows.count) {
             let beforeRow = index < tree.rows.count ? tree.rows[index] : [:]
@@ -395,6 +427,11 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
             "elements": publicRows]
     if !queryReport.isEmpty {
         output["query"] = queryReport
+    }
+    if let toleratedDrift {
+        // The rows and the token describe the FIRST read; the screenshot may show either width.
+        output["observationTolerated"] = ["reason": "static text width changed between the reads around the screenshot",
+                                          "changes": toleratedDrift]
     }
     if !tree.truncatedAt.isEmpty {
         // Rows at --depth whose children were left out; every index still addresses the same element.
@@ -483,8 +520,13 @@ private func applicationShowsMenu(pid: pid_t) -> Bool {
 /// and the AX call itself cannot say, since it returns only when the menu closes. Only a menu seen
 /// counts: an application that cannot be read proves nothing here. The wait has its own phase
 /// deadline, so one slow tree read cannot outlast it, and the caller's deadline comes back after.
+///
+/// A new menu window on the window server's menu layer is checked first: SwiftUI nests a context
+/// menu inside the view that owns it, deeper than a shallow tree read may reach, while the menu
+/// window exists wherever the Accessibility tree puts the menu. `menusBefore` holds the menu windows
+/// that were open before the dispatch, so a menu already open does not answer for a new one.
 private func workflowContextMenuAppears(window: ObservedWindow, pid: pid_t, depth: Int, scope: String,
-                                        within seconds: TimeInterval) -> Bool {
+                                        menusBefore: Set<Int>, within seconds: TimeInterval) -> Bool {
     let deadline = ProcessInfo.processInfo.systemUptime + seconds
     let callerPhase = workflowPhaseDeadline
     workflowPhaseDeadline = min(callerPhase ?? deadline, deadline)
@@ -492,6 +534,10 @@ private func workflowContextMenuAppears(window: ObservedWindow, pid: pid_t, dept
     func left() -> TimeInterval { deadline - ProcessInfo.processInfo.systemUptime }
 
     while left() > 0 {
+        if menuWindowAppeared(before: menusBefore, after: workflowMenuWindows(pid)) {
+            return true
+        }
+
         if applicationMenuState(pid: pid, timeout: min(left(), 0.5)) == true {
             return true
         }
@@ -955,7 +1001,10 @@ func cmdAct(appName _: String) {
     // its focus step for it: a foreground right-click activated the target, which took the user's
     // focus every time an agent opened a menu (Martin, 2026-10-13).
     let secondaryClick = action == "click" && workflowArgument("--button") == "right"
-    let activeBefore = secondaryClick ? activeApplicationPid() : nil
+    // AXShowMenu opens the same context menu a right-click does, so it gets the same front guard and
+    // the same reading of frontmostChanged: the open menu holds the keyboard without activating the app.
+    let contextMenuAction = secondaryClick || (action == "perform" && workflowArgument("--ax-action") == "AXShowMenu")
+    let activeBefore = contextMenuAction ? activeApplicationPid() : nil
     // The user stops an agent by putting the pointer in the menu-bar corner. Checked before anything
     // that changes the UI, the activation --prepare does included; the gate checks again per event.
     if action != "get" {
@@ -1035,7 +1084,8 @@ func cmdAct(appName _: String) {
         _ = try dispatchToken.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
                                element: elementIndex, count: tree.elements.count, now: Date().timeIntervalSince1970)
     } catch {
-        workflowFailure(error)
+        workflowFailure(rawCoords == nil ? error
+            : coordinateStaleRefusal(error, windowStableKey: tree.rows.first?["stableKey"] as? String))
     }
     let element = tree.elements[elementIndex]
     ActionCursor.describe(element)
@@ -1186,9 +1236,13 @@ func cmdAct(appName _: String) {
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
                 now: Date().timeIntervalSince1970)
         } else {
-            _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
-                digest: fresh.digest, element: elementIndex, count: fresh.elements.count,
-                now: Date().timeIntervalSince1970)
+            do {
+                _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
+                    digest: fresh.digest, element: elementIndex, count: fresh.elements.count,
+                    now: Date().timeIntervalSince1970)
+            } catch where rawCoords != nil {
+                throw coordinateStaleRefusal(error, windowStableKey: fresh.rows.first?["stableKey"] as? String)
+            }
         }
         if operation == .input {
             if action == "key", CFEqual(element, window.ax) {
@@ -1263,6 +1317,24 @@ func cmdAct(appName _: String) {
 
             workflowAXAction(tree.elements[menu], action: "AXCancel")
             actionExtras["cancelledMenuElement"] = menu
+            break
+        }
+        if name == "AXShowMenu" {
+            guard axActionNames(element).contains(name) else {
+                workflowFailure("element does not expose AXShowMenu; inspect actions in a fresh see result")
+            }
+            let outcome = workflowShowMenu(element, window: window, pid: pid, token: token,
+                                           menusBefore: workflowMenuWindows(pid))
+            if case .failed(let code) = outcome {
+                workflowFailure("AXShowMenu failed (AX \(code)); no menu opened, inspect before retrying")
+            }
+            contextMenuSeen = outcome == .opened
+            actionExtras["menuOpened"] = contextMenuSeen
+            actionExtras["delivery"] = "AXShowMenu"
+            if !contextMenuSeen {
+                actionOK = false
+                actionExtras["error"] = "AXShowMenu was dispatched but no menu was seen opening; the outcome is uncertain, inspect before retrying"
+            }
             break
         }
         workflowAXAction(element, action: name)
@@ -1659,24 +1731,23 @@ func cmdAct(appName _: String) {
                 // modifier or an element without AXShowMenu gets the window-addressed event below. Both
                 // left a background AppKit probe inactive (measured 2026-10-13); the front guard at the
                 // end covers an app that activates itself anyway.
+                let menusBefore = workflowMenuWindows(pid)
+                var outcome = ShowMenuOutcome.notSeen
                 try dispatchAfterPresentation(present: {
                     ActionCursor.emit("showmenu", point: point, background: true, target: "ax", button: "right")
                 }, validate: {
                     try validateAfterFeedback()
                     try inputGate.check()
                 }, dispatch: {
-                    // A context menu runs its tracking loop inside the AX request, so the call returns
-                    // only when the menu closes; a timeout here means the menu is open.
-                    let error = performActionWithTimeout(element, action: "AXShowMenu", timeoutMs: 600)
-                    guard error == .success else {
-                        throw WindowEventError.unavailable("AXShowMenu failed (AX \(error.rawValue)); a menu may or may not be open, inspect before retrying")
+                    outcome = workflowShowMenu(element, window: window, pid: pid, token: token, menusBefore: menusBefore)
+                    if case .failed(let code) = outcome {
+                        throw WindowEventError.unavailable("AXShowMenu failed (AX \(code)); no menu opened, inspect before retrying")
                     }
                 })
                 actionExtras["delivery"] = "AXShowMenu"
-                // The timeout above also fires for an app that hangs, so success needs a menu seen open,
-                // as the press path's requireOpenedMenu does.
-                contextMenuSeen = workflowContextMenuAppears(window: window, pid: pid, depth: token.depth,
-                                                             scope: token.effectiveScope, within: 1)
+                // An app that hangs looks like a tracking menu to the call, so success needs a menu seen
+                // open, as the press path's requireOpenedMenu does.
+                contextMenuSeen = outcome == .opened
                 actionExtras["menuOpened"] = contextMenuSeen
                 if !contextMenuSeen {
                     actionOK = false
@@ -1693,6 +1764,7 @@ func cmdAct(appName _: String) {
                 // Held modifiers travel on the events themselves (the app reads them from its current
                 // event), so an option-click or cmd-click never touches the real keyboard state.
                 let modifierFlags = try workflowArgument("--modifiers").map(NativeKeyChord.modifiers) ?? []
+                let menusBefore = secondaryClick ? workflowMenuWindows(pid) : []
                 for click in 1...(workflowFlag("--double") ? 2 : 1) {
                     _ = try verifyPoint(point, pin: .element)
                     let down = try factory.mouse(type: downType, point: point, clickCount: click)
@@ -1718,7 +1790,28 @@ func cmdAct(appName _: String) {
                     Thread.sleep(forTimeInterval: 0.03)
                 }
                 if secondaryClick {
-                    actionExtras["delivery"] = "window-event"
+                    var delivery = "window-event"
+                    contextMenuSeen = workflowContextMenuAppears(window: window, pid: pid, depth: token.depth,
+                        scope: token.effectiveScope, menusBefore: menusBefore, within: 1)
+                    // 🛑 The window event reported `ok: true, dispatched` even when no menu opened
+                    // (reported 2026-10-15). One more background delivery is tried, and only when NO
+                    // menu window of the app is open, so it cannot close a menu the event did open:
+                    // AXShowMenu on the element under the point, which an app that ignores a synthetic
+                    // right mouse event still answers. Neither delivery moves the pointer.
+                    if !contextMenuSeen, modifierFlags.isEmpty, !workflowFlag("--double"),
+                       workflowMenuWindows(pid).isEmpty, let target = workflowElement(at: point, pid: pid),
+                       axActionNames(target).contains("AXShowMenu") {
+                        try inputGate.check()
+                        delivery = "window-event, then AXShowMenu on the element under the point"
+                        contextMenuSeen = workflowShowMenu(target, window: window, pid: pid, token: token,
+                                                           menusBefore: menusBefore) == .opened
+                    }
+                    actionExtras["delivery"] = delivery
+                    actionExtras["menuOpened"] = contextMenuSeen
+                    if !contextMenuSeen {
+                        actionOK = false
+                        actionExtras["error"] = contextMenuNotSeenMessage(delivery: delivery)
+                    }
                 }
             }
         } catch {
@@ -1927,7 +2020,7 @@ func cmdAct(appName _: String) {
         payload["refreshRequired"] = true
         payload["note"] = "action dispatched; use see to verify the resulting UI"
     }
-    if secondaryClick {
+    if contextMenuAction {
         // Long enough for an app that activates itself from its menu handler to have done it.
         if !workflowFlag("--refresh") {
             Thread.sleep(forTimeInterval: 0.12)
@@ -1942,7 +2035,7 @@ func cmdAct(appName _: String) {
     } catch {
         // A right-click that failed after its dispatch (an AX error from AXShowMenu) may still have
         // let the target activate itself, so the front goes back before the failure is reported.
-        workflowFailure(error, extras: secondaryClick ? secondaryClickFrontGuard(before: activeBefore, target: pid) : [:])
+        workflowFailure(error, extras: contextMenuAction ? secondaryClickFrontGuard(before: activeBefore, target: pid) : [:])
     }
 }
 

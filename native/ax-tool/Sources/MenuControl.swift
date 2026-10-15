@@ -29,7 +29,38 @@ private struct MenuBarHierarchy: HierarchySource {
         return CFEqual(element,root) ? try base.children(of:element) : []
     }
 }
-private func menuTree(_ pid: pid_t, depth: Int, rootTitle: String?) throws -> ObservedTreeData {
+/// The app's open context menu, looked for only while the window server shows a menu window for the
+/// app, so a plain menu-bar read stays one cheap call. A menu-bar menu is a menu window too, but
+/// `findOpenContextMenu` never enters the bar, so that case falls through to the bar.
+private func openContextMenu(_ pid: pid_t) -> AXUIElement? {
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    guard !menuWindowIDs(in: windows, pid: pid).isEmpty else { return nil }
+
+    return findOpenContextMenu(app: AXUIElementCreateApplication(pid), source: LiveHierarchySource())
+}
+
+/// 🛑 `see --scope menu` listed only the menu bar, so a context menu that `act --button right` had just
+/// opened could not be read or pressed through the menu surface (reported 2026-10-15). While one is
+/// open it is the menu this app is tracking, and the bar cannot be used anyway, so it is listed
+/// instead of the bar. A context-menu token re-finds the open menu at act time and refuses when it
+/// closed, rather than falling back to the bar and pressing a bar row by the same index.
+private func menuTree(_ pid: pid_t, depth: Int, rootTitle: String?,
+                      contextMenu: Bool? = nil) throws -> (tree: ObservedTreeData, contextMenu: Bool) {
+    if rootTitle == nil, contextMenu != false {
+        if let menu = openContextMenu(pid) {
+            return (try buildObservedTree(root: menu, source: LiveHierarchySource(), depth: depth, scope: "menu"), true)
+        }
+
+        if contextMenu == true {
+            throw SnapshotError.refusal(.staleObservation,
+                "the context menu is no longer open (a click or key press anywhere closes it); open it again, then see --scope menu")
+        }
+    }
+
+    return (try menuBarTree(pid, depth: depth, rootTitle: rootTitle), false)
+}
+
+private func menuBarTree(_ pid: pid_t, depth: Int, rootTitle: String?) throws -> ObservedTreeData {
     let app = AXUIElementCreateApplication(pid)
     guard let raw = axAttribute(app, kAXMenuBarAttribute as String),
           CFGetTypeID(raw) == AXUIElementGetTypeID() else {
@@ -66,12 +97,21 @@ func cmdMenu(_ command: String) {
             try token.validate(pid:pid,launch:launch,digest:token.digest,element:index,count:4000,now:Date().timeIntervalSince1970)
         }
         let rootTitle = token?.rootTitle ?? input["--menu"]
-        let tree = try menuTree(pid,depth:token?.depth ?? 40,rootTitle:rootTitle)
+        let observed = try menuTree(pid, depth: token?.depth ?? 40, rootTitle: rootTitle,
+                                    contextMenu: token.map { $0.contextMenu == true })
+        let tree = observed.tree
         if command == "menu-see" {
-            let token = MenuSnapshotToken(pid:pid,launch:launch,depth:40,digest:tree.digest,created:Date().timeIntervalSince1970,rootTitle:rootTitle)
+            let token = MenuSnapshotToken(pid:pid,launch:launch,depth:40,digest:tree.digest,created:Date().timeIntervalSince1970,
+                                          rootTitle:rootTitle,contextMenu:observed.contextMenu)
             let raw = try JSONEncoder().encode(token).base64EncodedString()
-            jsonOutput(["ok":true,"app":appName,"pid":pid,"processLaunch":launch,"surface":"menu","snapshot":raw,
-                        "elements":tree.rows.map { $0.filter { $0.key != "identity" } }])
+            var output: [String: Any] = ["ok":true,"app":appName,"pid":pid,"processLaunch":launch,"surface":"menu","snapshot":raw,
+                        "elements":tree.rows.map { $0.filter { $0.key != "identity" } }]
+            if observed.contextMenu {
+                output["contextMenu"] = true
+                output["note"] = "an open context menu is listed instead of the menu bar; press an item with act --snapshot "
+                    + "<this snapshot> --element <n> --action press. It closes on the user's next click or key press"
+            }
+            jsonOutput(output)
             return
         }
         guard let token, tree.elements.indices.contains(index) else {
@@ -101,12 +141,12 @@ func cmdMenu(_ command: String) {
             } else {
                 ActionCursor.emit("press", point: nil)
             }
-            let fresh = try menuTree(pid, depth: token.depth, rootTitle: rootTitle)
+            let fresh = try menuTree(pid, depth: token.depth, rootTitle: rootTitle, contextMenu: token.contextMenu == true).tree
             _ = try token.validate(pid: pid, launch: observedLaunch(pid), digest: fresh.digest,
                 element: index, count: fresh.elements.count, now: Date().timeIntervalSince1970)
             // Same rule as the outer guard: a press that must open a tracking menu needs the key
             // window, while AXPick and AXCancel do not, so they must not fail here either.
-            guard frontmostPid() == pid || !menuActionRequiresFrontmost(action) else {
+            guard frontmostPid() == pid || !menuActionRequiresFrontmost(action, contextMenu: token.contextMenu == true) else {
                 throw SnapshotError.refusal(.focusMismatch, "menu lost focus while presenting cursor")
             }
             started = true

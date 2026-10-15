@@ -282,7 +282,7 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option(
             "--scope [name]",
-            "window (default), chrome (omit web-area descendants for browser controls), or menu (the app's MENU BAR; pair with --menu to descend into one top-level menu)"
+            "window (default), chrome (omit web-area descendants for browser controls), or menu (the app's open context menu when one is open, else its MENU BAR; pair with --menu to descend into one top-level menu)"
         )
         .option(
             "--menu <title>",
