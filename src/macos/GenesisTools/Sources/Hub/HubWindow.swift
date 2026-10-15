@@ -643,7 +643,7 @@ final class HubModel: ObservableObject {
 
     /// Back and forward (Hub/HubNavigation.swift). Taken from the published selection itself, so
     /// every path that changes it (rows, the palette, a handed-over `--session`, "Open") is recorded.
-    @Published var history = HubNavHistory()
+    @Published private(set) var history = HubNavHistory()
     private var navRecorder: AnyCancellable?
     private var navRecordPending = false
     private var navRestoring = false
@@ -719,6 +719,11 @@ final class HubModel: ObservableObject {
 
     /// The selection of a mode entry that shows its whole list (Inbox, Today).
     static let wholeList = "*"
+
+    /// Seeds the back stack. A mode switch would load a list; the keymap test does not.
+    func replaceHistory(_ history: HubNavHistory) {
+        self.history = history
+    }
 
     @MainActor
     func goBack() {

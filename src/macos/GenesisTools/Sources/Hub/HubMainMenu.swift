@@ -32,13 +32,18 @@ enum AppMainMenu {
         bind(app, "Quit \(name)", #selector(NSApplication.terminate(_:)), "hub.app.quit", keymap: keymap)
         bar.addItem(withTitle: name, action: nil, keyEquivalent: "").submenu = app
 
+        let close = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "")
+        HubKeymap.bind(close, to: "hub.window.close", keymap: keymap)
         if let hub {
-            let close = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "")
-            HubKeymap.bind(close, to: "hub.window.close", keymap: keymap)
             bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("File", HubMenuCommands.file, hub: hub, keymap: keymap, tail: [
                 NSMenuItem.separator(),
                 close,
             ])
+        } else {
+            // The review window has no hub commands. It still closes with ⌘W.
+            let file = NSMenu(title: "File")
+            file.addItem(close)
+            bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = file
         }
 
         let edit = NSMenu(title: "Edit")
@@ -91,6 +96,15 @@ enum AppMainMenu {
             bar.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
             // The Help menu's search field finds any menu item by name.
             NSApp.helpMenu = help
+        } else {
+            let help = NSMenu(title: "Help")
+            let shortcuts = help.addItem(
+                withTitle: "Keyboard Shortcuts", action: #selector(AppMenuTarget.showKeyboardShortcuts(_:)), keyEquivalent: ""
+            )
+            shortcuts.target = AppMenuTarget.shared
+            HubKeymap.bind(shortcuts, to: "hub.help.shortcuts", keymap: keymap)
+            bar.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
+            NSApp.helpMenu = help
         }
 
         NSApp.mainMenu = bar
@@ -132,6 +146,11 @@ final class AppMenuTarget: NSObject {
     /// (`GenesisTools --clicky`, ClickyEntry.swift).
     @objc func openSettings(_ sender: Any?) {
         ClickyLaunch.openSettings()
+    }
+
+    /// The review window's keys live in the hub library: the shared menu, Close Window, and panel find.
+    @objc func showKeyboardShortcuts(_ sender: Any?) {
+        KeymapHelpWindow.show(HubKeymap.shared)
     }
 
     /// The privacy grants window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).

@@ -18,6 +18,8 @@ enum HubKeymap {
 
     /// The command palette's scope: its keys work while the palette is open.
     static let paletteScope: KeymapScope = "hub.palette"
+    /// Panel find, shared by the hub and the review window. Narrower than the window, so ⇧⌘G can also be Glass.
+    static let findScope: KeymapScope = "hub.find"
 
     static let commandPalette = "hub.find.palette"
     static let promptLibrary = "hub.file.prompts"
@@ -27,6 +29,10 @@ enum HubKeymap {
     static let paletteDown = "hub.palette.down"
     static let paletteComplete = "hub.palette.complete"
     static let paletteClose = "hub.palette.close"
+    static let findOpen = "hub.find.open"
+    static let findNext = "hub.find.next"
+    static let findPrevious = "hub.find.previous"
+    static let findClose = "hub.find.close"
 
     /// Hidden buttons used to take these even when the menu item was greyed out. The key still does.
     private static let liveWhenGreyed: Set<String> = [
@@ -83,6 +89,13 @@ enum HubKeymap {
         KeymapCommand("hub.find.transcripts", "Search All Transcripts", group: "Find",
                       keys: [.character("f", [.option, .command])]),
         KeymapCommand("hub.find.history", "Search Session History", group: "Find", keys: []),
+        // The find bar in a hub panel and in the review diff. ⇧⌘G is Previous Match only while the bar is open.
+        KeymapCommand(findOpen, "Find", group: "Find", keys: [.character("f", .command)], scope: findScope),
+        KeymapCommand(findNext, "Next Match", group: "Find", detail: "Return in the find field does the same.",
+                      keys: [.character("g", .command)], scope: findScope),
+        KeymapCommand(findPrevious, "Previous Match", group: "Find", detail: "⇧Return in the find field does the same.",
+                      keys: [.character("g", [.shift, .command])], scope: findScope),
+        KeymapCommand(findClose, "Close Find", group: "Find", keys: [.code(53)], scope: findScope, configurable: false),
     ]
 
     /// ⌘1 to ⌘6 and ⌥⌘1 to ⌥⌘4. A digit is a character, so ⌘ with the Czech ě key still reaches ⌘2.
@@ -174,6 +187,16 @@ enum HubKeymap {
                 }
                 command.run(model)
             }
+        }
+    }
+
+    /// ⌘W for one window. The review window holds this; an app-wide registration would also close that window
+    /// while the Keyboard Shortcuts panel or Settings is key.
+    static func registerCloseWindow(
+        _ window: NSWindow, keymap: Keymap = shared, dispatcher: KeymapDispatcher = .shared
+    ) -> KeymapRegistration {
+        dispatcher.register("hub.window.close", in: keymap, window: window) { [weak window] in
+            window?.performClose(nil)
         }
     }
 
