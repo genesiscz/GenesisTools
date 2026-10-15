@@ -1051,6 +1051,34 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
     });
 
+    it("reads the relative paths of a git -C element against its folder, not the session cwd", () => {
+        const main = join(vault, "git-c-main");
+        const other = join(vault, "git-c-other");
+
+        for (const dir of [main, other]) {
+            mkdirSync(join(dir, "src"), { recursive: true });
+            writeFileSync(join(dir, "src", "a.ts"), "x");
+        }
+
+        const mine = join(other, "src", "a.ts");
+        const theirs = join(main, "src", "a.ts");
+
+        for (const command of [
+            `W=${other}; git -C $W add src/a.ts`,
+            `W=${other}; git -C "$W" add src/a.ts && git -C "$W" commit -m x`,
+            `git -c core.quotepath=off -C ${other} add src/a.ts`,
+            `git -C ${vault} -C git-c-other add src/a.ts`,
+        ]) {
+            const named = namedArguments(command, [main]);
+
+            expect(named).toContain(mine);
+            expect(named).not.toContain(theirs);
+        }
+
+        // A subcommand's -C is not git's: `git commit -C HEAD` reuses that commit's message.
+        expect(namedArguments("git commit -C HEAD src/a.ts", [main])).toContain(theirs);
+    });
+
     it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {
         expect(namedArguments(`V=${vault}; cat "$V}/wrapup.md"`, [vault])).toEqual([]);
         expect(namedArguments(`V=${vault}; cat "\${V/wrapup.md"`, [vault])).toEqual([]);

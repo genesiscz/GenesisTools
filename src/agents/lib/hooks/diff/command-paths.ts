@@ -331,6 +331,76 @@ function add({
 }
 
 /**
+ * The folder a `git -C <dir> …` element works in, or null. Git reads the element's relative paths
+ * against it, so the session cwd, where the same relative path often exists too (a worktree and its
+ * main checkout), must not win: `git -C $W add src/a.ts` watched the main checkout's `src/a.ts`,
+ * and a merge there then rendered as this command's named edit (2026-10-15). Only the options
+ * before the subcommand count, because `git commit -C <commit>` reuses a commit message.
+ */
+function gitDirectory({
+    command,
+    tokens,
+    bases,
+    known,
+}: {
+    command: string;
+    tokens: Span[];
+    bases: string[];
+    known: Map<string, string>;
+}): string | null {
+    const index = commandTokenIndex(tokens);
+    const word = index === -1 ? undefined : tokens[index];
+
+    if (!word || commandWord(word.text) !== "git") {
+        return null;
+    }
+
+    let dir: string | null = null;
+
+    for (let at = index + 1; at < tokens.length; at += 1) {
+        const token = tokens[at] as Span;
+        const text = rawToken(command, token);
+
+        if (text !== "-C" && text !== "-c") {
+            if (text.startsWith("-")) {
+                continue;
+            }
+
+            break;
+        }
+
+        const raw = nextRawArgument(command, token.start + token.text.length);
+        const next = tokens[at + 1];
+
+        // An unquoted value is the next token. A quoted one was blanked and has no token.
+        if (next && raw !== null && rawToken(command, next) === raw) {
+            at += 1;
+        }
+
+        if (text === "-c") {
+            continue;
+        }
+
+        const value = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
+
+        if (!value) {
+            return null;
+        }
+
+        // `git -C a -C b` works in `a/b`.
+        const from: string[] = dir ? [dir] : bases;
+        const candidates: string[] = isAbsolute(value) ? [value] : from.map((base) => resolve(base, value));
+        dir = candidates.find((candidate) => existsSync(candidate)) ?? null;
+
+        if (!dir) {
+            return null;
+        }
+    }
+
+    return dir;
+}
+
+/**
  * Absolute paths the command NAMES, plus relative ones resolved against `bases`.
  *
  * Two reads per token, because the two shapes need different handling. `rawToken` recovers an
@@ -354,10 +424,17 @@ export function namedArguments(command: string, bases: string[]): string[] {
 
             for (const element of elements) {
                 const tokens = tokenize(element);
+                const gitDir = gitDirectory({ command, tokens, bases, known });
+                const from = gitDir ? [gitDir] : bases;
 
                 for (const token of tokens) {
-                    add({ into: found, raw: rawToken(command, token), bases, known });
-                    add({ into: found, raw: nextRawArgument(command, token.start + token.text.length), bases, known });
+                    add({ into: found, raw: rawToken(command, token), bases: from, known });
+                    add({
+                        into: found,
+                        raw: nextRawArgument(command, token.start + token.text.length),
+                        bases: from,
+                        known,
+                    });
                 }
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
