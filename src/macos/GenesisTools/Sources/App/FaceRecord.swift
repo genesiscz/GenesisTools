@@ -19,7 +19,7 @@ enum FaceRecord {
             return false
         }
         let first = argv.first ?? ""
-        return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--clicky"
+        return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--clicky" || first == "--markdown"
     }
 
     static func encode(pid: Int32, argv: [String]) -> Data? {

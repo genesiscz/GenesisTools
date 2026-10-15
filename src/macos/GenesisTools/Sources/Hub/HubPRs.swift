@@ -1900,7 +1900,7 @@ struct PRDetailView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
-                        MarkdownContentView(markdown: linkedDescription(body))
+                        MarkdownContentView(markdown: linkedDescription(body), style: .hub)
                             .findField("desc")
                             .findRow(Self.descriptionID)
                             .tint(Color(red: 0.62, green: 0.78, blue: 1))

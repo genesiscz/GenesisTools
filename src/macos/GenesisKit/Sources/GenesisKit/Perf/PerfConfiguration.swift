@@ -21,6 +21,8 @@ public struct PerfConfiguration: Sendable {
     public var appName: String
     /// The notification goes out only from a bundle whose id starts with this; nil never posts one.
     public var alertBundlePrefix: String?
+    /// The first word of every span and mark (`PerfSpans`): "hub" in GenesisTools, "genesis" in Genesis.
+    public var spanPrefix: String
 
     public init(
         environmentKey: String,
@@ -31,7 +33,8 @@ public struct PerfConfiguration: Sendable {
         processTag: String = "",
         stackFilePrefix: String = "stack-",
         appName: String,
-        alertBundlePrefix: String?
+        alertBundlePrefix: String?,
+        spanPrefix: String = "app"
     ) {
         self.environmentKey = environmentKey
         self.enabledByDefault = enabledByDefault
@@ -42,6 +45,7 @@ public struct PerfConfiguration: Sendable {
         self.stackFilePrefix = stackFilePrefix
         self.appName = appName
         self.alertBundlePrefix = alertBundlePrefix
+        self.spanPrefix = spanPrefix
     }
 
     /// An app that declares no host: off unless `GENESIS_PERF` asks, logs in `~/.genesis/logs`.

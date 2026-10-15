@@ -73,6 +73,7 @@
             "!scripts/codemod/__fixtures__",
             "!scripts/benchmarks/clones/microbenches",
             "!apps/eve",
+            "!**/*.min.js",
             "!!**/node_modules",
             "!!.worktrees",
             "!!.claude/worktrees"

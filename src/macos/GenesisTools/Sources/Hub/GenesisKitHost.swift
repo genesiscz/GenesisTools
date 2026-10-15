@@ -6,8 +6,9 @@ import SwiftUI
 // the import above. Never declare a copy of one of its modifiers here: two public extension members
 // of one name make every call "ambiguous".
 
-/// What the kit borrows from this app: the perf log, cmux for "Open in a new cmux workspace", and
-/// `FindText` so a panel find marks path labels. The kit finds this class by its Objective-C name.
+/// What the kit borrows from this app: the perf log, cmux for "Open in a new cmux workspace",
+/// `FindText` so a panel find marks path labels, and the notes vault the markdown viewer links into.
+/// The kit finds this class by its Objective-C name.
 @objc(GenesisKitHostAdapter)
 final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
     func log(_ line: String) {
@@ -29,14 +30,29 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
         AnyView(FindText(text, field: field))
     }
 
-    /// The transcript's replies and prompt parts in Hub/MarkdownShim.swift, which marks panel-find hits.
+    /// The transcript's replies and prompt parts in GenesisKit's `MarkdownContentView`. `[[x]]` stays
+    /// text: this app has no vault to route a wikilink to.
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? {
-        AnyView(MarkdownContentView(markdown: text, style: MarkdownStyle(style)))
+        AnyView(MarkdownContentView(markdown: text, style: MarkdownStyle(style).with { $0.wikilinks = false }))
     }
 
     /// A new `GenesisTools --permission-status` process (PermissionFaces.swift) reads TCC without this one's cache.
     func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? {
         await probeFreshPermissionStatus(kind)
+    }
+
+    /// `OBSIDIAN_VAULT_PATH`, else the vault the plugins config names (`obsidian.vaultRoot` in
+    /// ~/.genesis-tools/plugins/config.json, the one the wrap-up skill writes to).
+    var markdownVaultRoot: String? {
+        if let path = ProcessInfo.processInfo.environment["OBSIDIAN_VAULT_PATH"], !path.isEmpty {
+            return path
+        }
+        let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/plugins/config.json")
+        guard let data = try? Data(contentsOf: config),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let root = (object["obsidian"] as? [String: Any])?["vaultRoot"] as? String, !root.isEmpty
+        else { return nil }
+        return (root as NSString).expandingTildeInPath
     }
 
     /// On by default: the app always ships as a release build (`bun run app`), and the hub's loads
@@ -49,7 +65,8 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
             logDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/logs"),
             fileName: "app-perf.log",
             appName: "GenesisTools",
-            alertBundlePrefix: "com.genesiscz.genesistools"
+            alertBundlePrefix: "com.genesiscz.genesistools",
+            spanPrefix: "hub"
         )
     }
 }

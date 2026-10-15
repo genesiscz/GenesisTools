@@ -165,22 +165,77 @@ public enum PathOpener {
     /// `cursor -g path:line` when a line is known, else the folder or file.
     public static func cursor(_ path: String, line: Int? = nil) {
         let path = fileURL(path).path
+        runCursor(cliArguments: line.map { ["-g", "\(path):\($0)"] } ?? [path], paths: [path])
+    }
+
+    /// What "Open in Cursor" hands Cursor for a path menu: the whole folder, and for a file its folder
+    /// first and then the file, so the file opens inside its folder's window rather than alone.
+    public static func cursorWorkspacePaths(for path: String, kind: PathKind) -> [String] {
+        let path = fileURL(path).path
+        guard kind == .file else { return [path] }
+        return [(path as NSString).deletingLastPathComponent, path]
+    }
+
+    /// "Open in Cursor" from a path menu (`PathMenu`): the folder as a workspace, a file inside its folder.
+    public static func cursorWorkspace(_ path: String, kind: PathKind) {
+        let paths = cursorWorkspacePaths(for: path, kind: kind)
+        runCursor(cliArguments: paths, paths: paths)
+    }
+
+    /// The `cursor` CLI with `cliArguments`, or `open -a Cursor` with `paths` when it is not installed.
+    private static func runCursor(cliArguments: [String], paths: [String]) {
         let cli = ["~/.local/bin/cursor", "/usr/local/bin/cursor", "/opt/homebrew/bin/cursor"]
             .map { ($0 as NSString).expandingTildeInPath }
             .first { FileManager.default.isExecutableFile(atPath: $0) }
         let process = Process()
         if let cli {
             process.executableURL = URL(fileURLWithPath: cli)
-            process.arguments = line.map { ["-g", "\(path):\($0)"] } ?? [path]
+            process.arguments = cliArguments
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["-a", "Cursor", path]
+            process.arguments = ["-a", "Cursor"] + paths
         }
         do {
             try process.run()
         } catch {
-            GenesisKit.log("path.cursor failed for \(path): \(error.localizedDescription)")
+            GenesisKit.log("path.cursor failed for \(paths.joined(separator: " ")): \(error.localizedDescription)")
             CopyToast.post(title: "Cursor did not start", detail: error.localizedDescription, style: .problem)
+        }
+    }
+
+    /// `obsidian://open?path=<absolute path>`: Obsidian finds the vault that holds the file itself.
+    public static func obsidianURL(for path: String) -> URL? {
+        var components = URLComponents(string: "obsidian://open")
+        components?.queryItems = [URLQueryItem(name: "path", value: fileURL(path).path)]
+        return components?.url
+    }
+
+    /// "Open in Obsidian": the note in the vault that holds it.
+    public static func obsidian(_ path: String) {
+        guard let url = obsidianURL(for: path) else { return }
+        GenesisKit.log("path.obsidian \(url.absoluteString)")
+        NSWorkspace.shared.open(url)
+    }
+
+    /// "Open in Terminal": the app's own terminal (a cmux workspace, `GenesisKitHost.openTerminal`) when it
+    /// has one, else Terminal.app in the path's folder (a file: its folder).
+    public static func terminal(_ path: String) {
+        if GenesisKit.host?.opensTerminal == true {
+            cmux(path)
+            return
+        }
+
+        let folder = URL(fileURLWithPath: terminalFolder(for: fileURL(path).path))
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+            CopyToast.post(title: "No Terminal app", detail: PathLabel.display(folder.path), style: .problem)
+            return
+        }
+
+        NSWorkspace.shared.open([folder], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error {
+                GenesisKit.log("path.terminal failed for \(folder.path): \(error.localizedDescription)")
+                CopyToast.post(title: "Terminal did not open it", detail: PathLabel.display(folder.path), style: .problem)
+            }
         }
     }
 

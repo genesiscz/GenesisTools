@@ -57,6 +57,43 @@ final class HubPanelFindTests: XCTestCase {
         XCTAssertEqual(MarkdownContentView.searchBlocks(markdown), ["First bold word.", "Heading bold", "let bold = 1"])
     }
 
+    /// The hub draws markdown with GenesisKit's view; `.findField` hands it these marks. Every unit the
+    /// view draws is a block of the matches: a list item and a table cell each count on their own.
+    func testTheHubsMarkdownMarksTheCurrentMatchInItsUnitAndNamesItsAnchor() {
+        let markdown = "First **bold** word.\n\n- a bold item\n\n| col |\n|---|\n| bold cell |"
+        let row = PanelFindRow(id: "pr", fields: [PanelFindField("desc", markdown, markdown: true)])
+        let found = PanelFind.matches(of: "bold", in: [row], caseSensitive: false)
+        XCTAssertEqual(found.map(\.block), [0, 1, 3], "the paragraph, the list item, the body cell (the header is unit 2)")
+
+        let highlight = PanelFindHighlight(query: "bold", caseSensitive: false, current: found[1])
+        let marks = highlight.markdownMarks(row: "pr", field: "desc")
+        var item = AttributedString("a bold item")
+        marks.mark(&item, 1)
+        let current = item.runs.filter { $0.backgroundColor == PanelFindHighlight.currentBackground }.map { String(item[$0.range].characters) }
+        XCTAssertEqual(current, ["bold"])
+        var paragraph = AttributedString("First bold word.")
+        marks.mark(&paragraph, 0)
+        XCTAssertTrue(paragraph.runs.contains { $0.backgroundColor == PanelFindHighlight.matchBackground }, "another unit's match is tinted, not current")
+
+        XCTAssertEqual(marks.anchor(3), "pr|desc#3")
+        XCTAssertNil(highlight.markdownMarks(row: nil, field: "desc").anchor(0), "no row, no scroll target")
+        XCTAssertEqual(marks, highlight.markdownMarks(row: "pr", field: "desc"))
+        XCTAssertNotEqual(marks, PanelFindHighlight(query: "bold", caseSensitive: false, current: found[0]).markdownMarks(row: "pr", field: "desc"))
+    }
+
+    func testTheHubStyleKeepsThePanelsLook() {
+        let hub = MarkdownStyle.hub
+        XCTAssertEqual(hub.selection, .all)
+        XCTAssertFalse(hub.wikilinks)
+        XCTAssertTrue(hub.codeWraps)
+        XCTAssertFalse(hub.codeShowsLanguage)
+        XCTAssertNil(hub.codeFontSize, "code follows each panel's body size")
+        XCTAssertFalse(hub.dimsMinorHeadings)
+        XCTAssertEqual(hub.headingSizes.first, 18.5)
+        XCTAssertTrue(hub.cleansHTML)
+        XCTAssertEqual(hub.textColor, .white.opacity(0.92))
+    }
+
     // MARK: Next and previous
 
     func testStepWrapsAtBothEnds() {

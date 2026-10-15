@@ -48,7 +48,7 @@ if NativeStaging.refuses(arguments, facesEnabled: NativeStaging.facesEnabled) {
 // The launcher passes its caller's environment through untouched.
 if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
     let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
-    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || firstArgument == "--widget" || firstArgument == "--clicky" || hubLink
+    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || firstArgument == "--widget" || firstArgument == "--clicky" || firstArgument == "--markdown" || hubLink
     ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
     // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
     // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
@@ -138,6 +138,11 @@ if firstArgument == "--clicky" {
 // window (see Review/ReviewWindow.swift).
 if firstArgument == "--review" {
     runReview(Array(arguments.dropFirst()))
+}
+
+// GenesisTools --markdown [paths...]: GenesisKit's markdown viewer, the Genesis Markdown screen (see Markdown/MarkdownFace.swift).
+if firstArgument == "--markdown" {
+    runMarkdown(Array(arguments.dropFirst()))
 }
 
 runLauncher(arguments)

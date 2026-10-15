@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+    cpSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
@@ -24,6 +34,8 @@ import { withFileLock } from "@genesiscz/utils/storage";
 import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
+/** GenesisKit's markdown renderer (markdown-it, highlight.js, mermaid); the viewer reads Contents/Resources/webview first. */
+const MARKDOWN_WEBVIEW_SOURCE = resolve(APP_SOURCE_DIR, "../GenesisKit/Sources/GenesisKit/Markdown/Resources/webview");
 /** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
 const APP_SCRATCH_PATH = join(APP_SOURCE_DIR, ".build", "opt");
 export const APP_TOOLS_PATH = resolve(APP_SOURCE_DIR, "../../../tools");
@@ -578,6 +590,8 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     }
 
     await buildDiffViewer(contents, step);
+    step("copy markdown webview");
+    cpSync(MARKDOWN_WEBVIEW_SOURCE, join(contents, "Resources", "webview"), { recursive: true });
 
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
     const identity = pickCodesignIdentity(

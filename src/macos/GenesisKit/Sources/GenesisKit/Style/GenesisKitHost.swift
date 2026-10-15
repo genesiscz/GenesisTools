@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 
 /// What an app lends the kit: where its log lines go, how it opens a terminal, and how it renders
@@ -24,6 +25,19 @@ public protocol GenesisKitHost: AnyObject {
     /// What a NEW process of this app reads for `kind`. macOS caches Input Monitoring and Screen Recording per
     /// process, so a grant given while this one runs shows only in a new one. nil when the app has no probe.
     func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus?
+    /// The notes vault the markdown viewer resolves vault links and `[[wikilinks]]` against (Genesis: the
+    /// Obsidian vault); nil when the app has none.
+    var markdownVaultRoot: String? { get }
+    /// The vault path the app's config names, which gives "Open in Obsidian" its vault name.
+    var markdownConfiguredVault: String? { get }
+    /// `[[` and `#` completion values from the app's vault index; nil when it has none.
+    func markdownCompletions(_ request: MarkdownCompletion.Request) -> [String]?
+    /// Property keys and their values as JSON for the Properties block; nil when there is no vault index.
+    func markdownPropertyVocabularyJSON() -> String?
+    /// The bundle id the viewer offers, once, as the default app for the file types it reads; nil never offers.
+    var markdownDefaultAppBundleID: String? { get }
+    /// The `tools` binary the viewer runs (the dev-dashboard share); nil resolves it the usual way.
+    var toolsBinaryPath: String? { get }
 }
 
 public extension GenesisKitHost {
@@ -34,6 +48,12 @@ public extension GenesisKitHost {
     var perf: PerfConfiguration { .fallback }
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? { nil }
     func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? { nil }
+    var markdownVaultRoot: String? { nil }
+    var markdownConfiguredVault: String? { nil }
+    func markdownCompletions(_ request: MarkdownCompletion.Request) -> [String]? { nil }
+    func markdownPropertyVocabularyJSON() -> String? { nil }
+    var markdownDefaultAppBundleID: String? { nil }
+    var toolsBinaryPath: String? { nil }
 }
 
 public enum GenesisKit {
@@ -65,7 +85,11 @@ public enum GenesisKit {
 
     static func log(_ line: String) {
         host?.log(line)
+        unifiedLog.notice("\(line, privacy: .public)")
     }
+
+    /// Every kit log line also goes here, so an app with no log of its own still keeps it.
+    private static let unifiedLog = Logger(subsystem: "genesiskit", category: "kit")
 }
 
 /// A shown text that the host's panel find can mark, else a plain `Text`.

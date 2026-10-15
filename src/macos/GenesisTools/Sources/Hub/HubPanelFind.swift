@@ -11,7 +11,8 @@ import SwiftUI
 //   - `.panelFind(find, revision:rows:)` on its root: the text it can search, as rows of fields;
 //   - `PanelFindBar(find:)` under its header (draws nothing while closed);
 //   - `.findRow(id)` on each row, and `FindText(text, field:)` where the row shows a field.
-//     A `MarkdownContentView` inside a row highlights by itself under `.findField(key)`.
+//     A `MarkdownContentView` (GenesisKit) inside a row highlights under `.findField(key)`, which hands
+//     it the find's marks (`markdownFindMarks`).
 //
 // ⌘F goes to the panel the keyboard is in (`PanelFindRouter`): the panel of the last click, else the
 // one holding the first responder, else the one used last, else the largest. The transcript, the
@@ -96,7 +97,7 @@ enum PanelFind {
         for row in rows {
             for field in row.fields {
                 let parts: [(block: Int?, text: String)] = field.markdown
-                    ? MarkdownContentView.searchBlocks(field.text).enumerated().map { ($0.offset, $0.element) }
+                    ? MarkdownContentView.searchBlocks(field.text, style: .hub).enumerated().map { ($0.offset, $0.element) }
                     : [(nil, field.text)]
                 for part in parts {
                     let count = ranges(of: query, in: part.text, caseSensitive: caseSensitive).count
@@ -350,6 +351,17 @@ struct PanelFindHighlight: Equatable {
         return current.occurrence
     }
 
+    /// The find's marks for a `MarkdownContentView` under `row` and `field`. Each unit the view draws
+    /// (a paragraph, a heading, a list item, a table cell) is a block of `PanelFind.matches`, and its
+    /// own scroll target while the row is known.
+    func markdownMarks(row: String?, field: String) -> MarkdownFindMarks {
+        MarkdownFindMarks(
+            id: MarkdownMarksKey(query: query, caseSensitive: caseSensitive, current: current, row: row, field: field),
+            mark: { text, unit in mark(&text, row: row, field: field, block: unit) },
+            anchor: { unit in row.map { PanelFind.anchorID(row: $0, field: field, block: unit) } }
+        )
+    }
+
     /// Marks the matches in already styled text (inline markdown). The ranges are found in the
     /// plain characters and walked once, so a long reply costs one pass.
     /// `skipped`: occurrences cut off before this text (a one-line text shown from its match).
@@ -373,6 +385,15 @@ struct PanelFindHighlight: Equatable {
             cursor = upper
         }
     }
+}
+
+/// Everything the markdown marks depend on: equal keys draw the same marks.
+private struct MarkdownMarksKey: Hashable {
+    let query: String
+    let caseSensitive: Bool
+    let current: PanelFindMatch?
+    let row: String?
+    let field: String
 }
 
 private struct PanelFindHighlightKey: EnvironmentKey {
@@ -513,7 +534,7 @@ extension View {
 
     /// The field key of a `MarkdownContentView` (or any `FindText` that reads it) under a find row.
     func findField(_ key: String) -> some View {
-        environment(\.panelFindField, key)
+        modifier(FindFieldModifier(key: key))
     }
 
     /// The panel's find: searches `rows()`, highlights, scrolls to the current match, and takes ⌘F
@@ -541,6 +562,19 @@ private struct PanelFindModalModifier: ViewModifier {
         content
             .onAppear { PanelFindRouter.shared.modalShown(true) }
             .onDisappear { PanelFindRouter.shared.modalShown(false) }
+    }
+}
+
+/// `.findField`: the key for a `FindText`, and the find's marks for a `MarkdownContentView`.
+private struct FindFieldModifier: ViewModifier {
+    let key: String
+    @Environment(\.panelFindHighlight) private var highlight
+    @Environment(\.panelFindRow) private var row
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.panelFindField, key)
+            .environment(\.markdownFindMarks, highlight?.markdownMarks(row: row, field: key))
     }
 }
 
@@ -595,18 +629,6 @@ private struct PanelFindHost<Revision: Equatable>: ViewModifier {
                     proxy.scrollTo(target, anchor: anchor)
                 }
             }
-        }
-    }
-}
-
-extension View {
-    /// A markdown paragraph's scroll anchor under a find row, applied only while a find is open.
-    @ViewBuilder
-    func panelFindAnchor(_ id: String?) -> some View {
-        if let id {
-            self.id(id)
-        } else {
-            self
         }
     }
 }

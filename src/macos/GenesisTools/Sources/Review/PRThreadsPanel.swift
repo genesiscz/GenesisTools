@@ -986,7 +986,7 @@ private struct PRThreadRow: View {
 
     /// A note's markdown at the list's size, `inline code` on a faint fill as the host pages draw it.
     static let noteStyle: MarkdownStyle = {
-        var style = MarkdownStyle()
+        var style = MarkdownStyle.hub
         style.bodySize = 12
         style.textColor = Color.white.opacity(0.86)
         style.codeBackground = Color.black.opacity(0.3)

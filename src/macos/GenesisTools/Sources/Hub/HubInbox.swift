@@ -1487,7 +1487,7 @@ struct InboxDecisionCard: View {
     }
 
     private var contextStyle: MarkdownStyle {
-        var style = MarkdownStyle()
+        var style = MarkdownStyle.hub
         style.bodySize = 12
         style.textColor = .white.opacity(0.82)
         style.blockSpacing = 6
@@ -1712,7 +1712,7 @@ private struct InboxReplySheet: View {
                 IconButton(systemName: "xmark", tooltip: "Close") { dismiss() }
             }
             ScrollView {
-                MarkdownContentView(markdown: markdown)
+                MarkdownContentView(markdown: markdown, style: .hub)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

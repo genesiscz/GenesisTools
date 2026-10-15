@@ -67,26 +67,3 @@ public struct PathLabel: View {
         }
     }
 }
-
-/// Every action on a path, for a `.contextMenu` on any row that shows one.
-public struct PathActionsMenu: View {
-    let path: String
-    var line: Int?
-
-    public init(path: String, line: Int? = nil) {
-        self.path = path
-        self.line = line
-    }
-
-    public var body: some View {
-        Button("Open in Finder") { PathOpener.finder(path) }
-        Button("Reveal in Finder") { PathOpener.reveal(path) }
-        Button("Open in Cursor") { PathOpener.cursor(path, line: line) }
-        if GenesisKit.host?.opensTerminal == true {
-            Button("Open in a new cmux workspace") { PathOpener.cmux(path) }
-        }
-        Divider()
-        Button("Copy path") { PathOpener.copy(path, what: "path") }
-        Button("Copy ~ path") { PathOpener.copy(PathLabel.display(path), what: "path") }
-    }
-}

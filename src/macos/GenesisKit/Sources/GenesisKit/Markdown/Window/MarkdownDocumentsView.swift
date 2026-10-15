@@ -1,0 +1,611 @@
+//
+//  MarkdownDocumentsView.swift
+//  GenesisKit
+//
+//  The window's screen: the toolbar, the tab row, the sidebar and the document panes.
+//
+
+import AppKit
+import Combine
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct MarkdownDocumentsView: View {
+    @ObservedObject var model: MarkdownDocumentsModel
+
+    /// The empty state's "Open…": Markdown and plain-text files, several at once.
+    @MainActor
+    static func chooseFiles(into model: MarkdownDocumentsModel) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "md"), UTType(filenameExtension: "markdown"), .plainText,
+        ].compactMap { $0 }
+        if panel.runModal() == .OK { model.open(panel.urls) }
+    }
+
+    @State private var filesDragStart: Double?
+
+    /// The sidebar's right edge: drag to resize, double-click for the standard width, arrows when focused.
+    private var filesDivider: some View {
+        MarkdownSplitDivider(
+            line: NSColor(model.theme.border),
+            accent: NSColor(model.theme.accent),
+            onBegin: { filesDragStart = model.filesWidth },
+            onDrag: { dx in
+                model.filesWidth = MarkdownSidebarWidth.clamped((filesDragStart ?? model.filesWidth) + dx)
+            },
+            onEnd: { filesDragStart = nil },
+            onReset: { model.filesWidth = MarkdownSidebarWidth.standard },
+            onStep: { direction in
+                model.filesWidth = MarkdownSidebarWidth.clamped(
+                    model.filesWidth + Double(direction) * MarkdownSidebarWidth.keyboardStep
+                )
+            },
+            label: "File sidebar divider",
+            valueText: "\(Int(model.filesWidth)) points wide"
+        )
+        .frame(width: 6)
+        .accessibilityIdentifier("markdown-files-divider")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let doc = model.selected {
+                MarkdownDocumentToolbar(doc: doc, model: model)
+            }
+            if model.docs.count > 1 {
+                tabBar
+                    .background(model.theme.chrome)
+                    // Chrome too, under the zone's strip: the same double-click as the title bar.
+                    .onTapGesture(count: 2) {
+                        if let window = MarkdownDocumentWindowController.shared.window {
+                            WindowTitlebar.performDoubleClick(on: window)
+                        }
+                    }
+                Rectangle().fill(model.theme.border).frame(height: 1)
+            }
+            if let doc = model.selected {
+                HStack(spacing: 0) {
+                    // Files first, then the outline: both are sidebars, and the
+                    // one that answers "which document" belongs outside the one
+                    // that answers "where in this document".
+                    if model.showFiles {
+                        MarkdownFileTreeView(model: model)
+                            .frame(width: model.filesWidth)
+                        filesDivider
+                    }
+                    if model.showOutline {
+                        MarkdownOutlineView(doc: doc, model: model)
+                            .frame(width: 220)
+                        Rectangle().fill(model.theme.border).frame(width: 1)
+                    }
+                    MarkdownDocumentPane(doc: doc, model: model)
+                        .id(doc.id)
+                }
+                MarkdownStatusBar(doc: doc, model: model)
+            } else {
+                // A bare grey line gave no way forward. Say what the window
+                // is for and offer the three ways to get a file into it.
+                VStack(spacing: 12) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(model.theme.textMuted)
+                    Text("No document open")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(model.theme.text)
+                    Text("Drop a Markdown file here, open one, or run genesis open <file> in a terminal.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(model.theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 340)
+                    Button("Open…") { Self.chooseFiles(into: model) }
+                        .buttonStyle(.genHover(accent: model.theme.accent))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(model.theme.accent)
+                        .instantTooltip("Choose Markdown files to open as tabs")
+                        .accessibilityIdentifier("markdown-viewer-open-files")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        // Paints the whole window but takes no clicks in the toolbar row: its empty part belongs to
+        // the window's `.titlebarZone(below:)` (Window/WindowTitlebar.swift). Below the row it still
+        // takes clicks and drops, as the plain fill did.
+        .background { model.theme.page.allowsHitTesting(false) }
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .padding(.top, MarkdownDocumentToolbar.height)
+        }
+        .sheet(isPresented: $model.goToOpen) {
+            MarkdownGoToSheet(model: model)
+        }
+        // The views read the configuration through the model (`model.theme` carries its contrast), so a
+        // change to it is a change to the model.
+        .onReceive(model.configuration.objectWillChange) { _ in model.objectWillChange.send() }
+        // The AppKit panes take their own drops (they would otherwise navigate
+        // or paste a path); this covers the chrome around them.
+        .dropDestination(for: URL.self) { urls, _ in
+            model.acceptDrop(urls)
+            return true
+        }
+        .overlay(alignment: .topLeading) {
+            // ⌘F has no button of its own; the shortcut needs a live view to hang on.
+            VStack {
+                Button("Find") { model.openFind() }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("Bigger") { model.zoomStep(1) }
+                    .keyboardShortcut("=", modifiers: .command)
+                Button("Reopen closed tab") { model.reopenLastClosed() }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                Button("Split editor and preview") { model.toggleSplit() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                // ⌘W used to reach the main menu's Close and take the whole
+                // window with every tab in it. Caught here, before the menu,
+                // it closes the selected tab; ⌘⇧W is the window.
+                Button("Close tab") { MarkdownDocumentWindowController.shared.closeSelectedTabOrWindow() }
+                    .keyboardShortcut("w", modifiers: .command)
+                Button("Close window") { MarkdownDocumentWindowController.shared.window?.performClose(nil) }
+                    .keyboardShortcut("w", modifiers: [.command, .shift])
+                Button("Find in files") { model.openTreeSearch() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                // Here as well as in the viewer's menu: the window also runs inside Genesis.app,
+                // whose menu does not have it.
+                Button("Go to Location") { model.goToOpen = true }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                // ⌘⇧] / ⌘⇧[ live in `MarkdownDocumentWindow.performKeyEquivalent`,
+                // matched by key position rather than by character.
+            }
+            .buttonStyle(.genHoverPlain())
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var tabBar: some View {
+        MarkdownTabBar(model: model, configuration: model.configuration)
+    }
+}
+
+/// The tab row: one scrolling strip, or every tab on as many rows as it takes (`wrapTabs`). Either way the
+/// selected tab is on screen. A right-click on its empty part offers Wrap Tabs.
+private struct MarkdownTabBar: View {
+    @ObservedObject var model: MarkdownDocumentsModel
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        Group {
+            if configuration.wrapTabs {
+                MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
+                    ForEach(model.docs) { doc in
+                        MarkdownDocumentTab(doc: doc, model: model)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                strip
+            }
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            MarkdownWrapTabsToggle(configuration: configuration)
+        }
+        .accessibilityIdentifier("markdown-tab-bar")
+    }
+
+    /// A newly opened or switched-to tab can sit past the edge of an
+    /// overflowing strip, so the strip follows the selection. A nil anchor
+    /// scrolls the least amount that shows the whole tab.
+    private var strip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(model.docs) { doc in
+                        MarkdownDocumentTab(doc: doc, model: model)
+                            .id(doc.id)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 6)
+                .padding(.bottom, 6)
+            }
+            .onChange(of: model.selected?.id, initial: true) { _, id in
+                guard let id else { return }
+                proxy.scrollTo(id, anchor: nil)
+            }
+        }
+    }
+}
+
+/// "Wrap Tabs", in the tab bar's menu and in every tab's.
+private struct MarkdownWrapTabsToggle: View {
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        Toggle("Wrap Tabs", isOn: $configuration.wrapTabs)
+    }
+}
+
+/// One tab. Its own view so it observes its document: the model publishes the
+/// list of tabs, not the edits inside them, so the dirty dot and the
+/// changed-on-disk mark would otherwise wait for an unrelated model update.
+/// Selecting is a real button, so the keyboard and VoiceOver can reach it.
+private struct MarkdownDocumentTab: View {
+    @ObservedObject var doc: MarkdownDocument
+    @ObservedObject var model: MarkdownDocumentsModel
+
+    var body: some View {
+        let active = doc.id == model.selected?.id
+        let preview = model.isPreview(doc)
+        // A tab that previews on hover shows its path in the preview's header instead: a tooltip there
+        // would sit under the preview.
+        let previews = !active && model.configuration.hoverPreview
+        HStack(spacing: 6) {
+            Button {
+                selectOrKeep()
+            } label: {
+                HStack(spacing: 6) {
+                    if doc.hasDiskChange {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.genWarning)
+                            .instantTooltip("Changed on disk while you have unsaved edits")
+                    }
+                    Text(doc.isDirty ? "\(doc.title) •" : doc.title)
+                        .lineLimit(1)
+                        .font(.system(size: 12, weight: active ? .semibold : .regular))
+                        // The preview tab, which the next single click in the file tree replaces.
+                        .italic(preview)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .accessibilityLabel(accessibilityTitle)
+            .accessibilityAddTraits(active ? .isSelected : [])
+            Button {
+                model.close(doc)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    // A 9pt glyph alone was a 9×9pt target.
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .opacity(0.6)
+            .instantTooltip("Close tab")
+            .accessibilityLabel("Close \(doc.title)")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(active ? model.theme.fill : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .onTapGesture { selectOrKeep() }
+        .contextMenu {
+            if preview {
+                Button("Keep Tab") { model.keep(doc) }
+                Divider()
+            }
+            MarkdownTabMenu(doc: doc, model: model)
+            Divider()
+            MarkdownWrapTabsToggle(configuration: model.configuration)
+        }
+        .instantTooltip(previews ? "" : doc.url.path)
+        .markdownHoverPreview(active ? nil : doc.url, model: model)
+    }
+
+    /// A click selects. The second click of a double-click also keeps a preview tab, as in an editor;
+    /// a separate double-tap gesture would hold every single click back by the double-click interval.
+    private func selectOrKeep() {
+        model.select(doc.id)
+        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+            model.keep(doc)
+        }
+    }
+
+    private var accessibilityTitle: String {
+        var parts = [doc.title]
+        if model.isPreview(doc) { parts.append("preview") }
+        if doc.isDirty { parts.append("unsaved") }
+        if doc.hasDiskChange { parts.append("changed on disk") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// The preview text in split view: a beat behind the keystrokes, because a
+/// render runs markdown-it, highlight.js and mermaid over the whole document,
+/// which is far too much work to repeat on every character.
+@MainActor
+final class MarkdownLivePreview: ObservableObject {
+    @Published private(set) var text: String
+
+    /// The document's text from the start: an empty first value went to the page as an empty render.
+    init(_ text: String = "") {
+        self.text = text
+    }
+    static let delay: Duration = .milliseconds(220)
+    private var task: Task<Void, Never>?
+
+    /// What the pending task will publish. nil = nothing is pending, so the
+    /// preview already shows `text`.
+    private var pending: String?
+
+    /// Show `new` at once (a new document, or the pane entering split view).
+    func reset(_ new: String) {
+        task?.cancel()
+        task = nil
+        pending = nil
+        text = new
+    }
+
+    func update(_ new: String) {
+        // Typing and undoing inside one delay: the pending render targets the
+        // text that no longer exists, so it has to be cancelled rather than
+        // left to fire. Comparing against `text` alone misses this.
+        guard new != (pending ?? text) else { return }
+        task?.cancel()
+        if new == text {
+            task = nil
+            pending = nil
+            return
+        }
+        pending = new
+        task = Task { [weak self] in
+            try? await Task.sleep(for: Self.delay)
+            guard !Task.isCancelled, let self else { return }
+            text = new
+            pending = nil
+        }
+    }
+}
+
+private struct MarkdownDocumentPane: View {
+    @ObservedObject var doc: MarkdownDocument
+    @ObservedObject var model: MarkdownDocumentsModel
+    @StateObject private var live: MarkdownLivePreview
+
+    init(doc: MarkdownDocument, model: MarkdownDocumentsModel) {
+        self.doc = doc
+        self.model = model
+        _live = StateObject(wrappedValue: MarkdownLivePreview(doc.displayText))
+    }
+    /// The ratio when the drag started, so the pointer stays on the divider.
+    @State private var dragStartRatio: Double?
+    /// The body line the editor is showing, sent to the preview in split view.
+    @State private var syncLine: MarkdownLineSync?
+    /// This pane's links, as one anchor of the hover preview.
+    @State private var linkHoverOwner = UUID()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if doc.hasDiskChange || doc.mergeConflicts > 0 || (doc.missing && doc.isDirty) {
+                MarkdownConflictBanner(doc: doc, model: model)
+            }
+            content
+                // ⌘F: a panel floating over the document's top right, below any banner.
+                .overlay { MarkdownFindOverlay(model: model) }
+        }
+        .sheet(isPresented: $model.compareOpen) {
+            MarkdownCompareSheet(doc: doc, model: model)
+        }
+        .onAppear { live.reset(doc.displayText) }
+        .onChange(of: doc.displayText) { _, new in live.update(new) }
+        .onChange(of: model.modeRaw) { _, _ in live.reset(doc.displayText) }
+        // A render moves every block, so the page needs the line again.
+        .onChange(of: live.text) { _, _ in
+            guard let current = syncLine else { return }
+            syncLine = MarkdownLineSync(line: current.line, token: current.token + 1)
+        }
+        // A text hit from the file sidebar: the page counts body lines, the
+        // hit counts file lines, so the frontmatter comes off first.
+        .onChange(of: model.lineTarget) { _, target in
+            guard let target else { return }
+            follow(target.line)
+        }
+        .onAppear {
+            if let target = model.lineTarget { follow(target.line) }
+        }
+        // A link preview waiting on this pane's page has no anchor once the pane is gone.
+        .onDisappear { MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner) }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        // A deleted or renamed file with unsaved edits keeps its draft on
+        // screen (with the banner above), so it can still be read, copied or
+        // saved back. Only a clean document shows the empty state.
+        if doc.missing && !doc.isDirty {
+            VStack(spacing: 8) {
+                Text("File is gone")
+                    .font(.headline)
+                Text(doc.url.path)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            switch model.mode {
+            case .source: sourceView(onTopLine: nil).onAppear { model.webProxy.web = nil }
+            case .preview: previewView(doc.displayText, sync: syncLine)
+            case .split: splitView
+            }
+        }
+    }
+
+    /// Editor on the left, the rendered document on the right, divider dragged
+    /// to taste and remembered. The preview lags the typing by a beat.
+    private var splitView: some View {
+        GeometryReader { geo in
+            let total = geo.size.width
+            HStack(spacing: 0) {
+                // BOTH panes get a definite size from the geometry, never an
+                // intrinsic one. An NSTextView and a WKWebView answer
+                // `sizeThatFits` from their own content, so leaving either
+                // dimension free lets the stack propose a width, get a content
+                // height back, re-propose, and never settle — the layout
+                // transaction that wedged the app on 2026-09-10 11:33 (79
+                // minutes at 100% of a core, 5.9 GB, stuck in
+                // `StackLayout.prioritize` → `PlatformViewLayoutEngine`).
+                sourceView(onTopLine: follow)
+                    .frame(
+                        width: MarkdownSplit.editorWidth(total: total, ratio: model.splitRatio),
+                        height: geo.size.height
+                    )
+                divider(total: total)
+                previewView(live.text, sync: syncLine)
+                    .frame(
+                        width: MarkdownSplit.previewWidth(total: total, ratio: model.splitRatio),
+                        height: geo.size.height
+                    )
+            }
+        }
+    }
+
+    private func divider(total: CGFloat) -> some View {
+        MarkdownSplitDivider(
+            line: NSColor(model.theme.border),
+            accent: NSColor(model.theme.accent),
+            onBegin: { dragStartRatio = model.splitRatio },
+            onDrag: { dx in
+                guard MarkdownSplit.draggable(total: total) else { return }
+                let start = dragStartRatio ?? model.splitRatio
+                model.splitRatio = MarkdownSplit.ratio(afterMoving: dx, from: start, total: total)
+            },
+            onEnd: { dragStartRatio = nil },
+            onReset: { model.splitRatio = MarkdownSplit.defaultRatio },
+            onStep: { direction in
+                guard MarkdownSplit.draggable(total: total) else { return }
+                model.splitRatio = MarkdownSplit.ratio(
+                    afterMoving: Double(direction) * MarkdownSplit.keyboardStep,
+                    from: model.splitRatio,
+                    total: total
+                )
+            },
+            ratio: MarkdownSplit.editorWidth(total: total, ratio: model.splitRatio) / max(1, total)
+        )
+        .frame(width: MarkdownSplit.dividerWidth)
+        .accessibilityIdentifier("markdown-split-divider")
+    }
+
+    @ViewBuilder
+    private func previewView(_ markdown: String, sync: MarkdownLineSync? = nil) -> some View {
+        // A json, csv, yaml or log tab is not markdown, and handing it to the renderer as-is
+        // reflowed it into a paragraph of prose. Line sync goes with it: once the preview is a
+        // reformatted document, it no longer has the editor's lines to scroll to.
+        let native = DocumentPreview.presentation(for: doc.url) == .markdown
+        let rendered = native ? markdown : DocumentPreview.markdown(for: doc.url, text: markdown)
+
+        if model.renderer == .web {
+            MarkdownWebView(
+                markdown: rendered,
+                scrollTarget: model.scrollTarget,
+                highlightQuery: nil,
+                highlightToken: 0,
+                onWikilink: { model.follow($0, from: doc) },
+                onActiveSection: { model.activeSectionSlug = $0 },
+                onRelativeLink: { model.follow($0, from: doc) },
+                findCommand: model.findCommand,
+                onFindResult: { model.webFindResult(index: $0, count: $1) },
+                onLinkHover: { previewLink($0) },
+                zoom: model.zoom,
+                proxy: model.webProxy,
+                cssVariables: model.theme.cssVariables,
+                // In split view the divider owns the width, so the page fills
+                // its pane and its own column grips step aside.
+                articleWidth: model.mode == .split || model.articleWidth <= 0 ? nil : model.articleWidth,
+                onArticleWidth: { model.articleWidth = $0 },
+                columnResizable: model.mode != .split,
+                restoreScroll: model.scrollOffset(for: doc.id, pane: .preview),
+                onScroll: { model.rememberScroll($0, for: doc.id, pane: .preview) },
+                syncLine: native ? sync : nil,
+                lineNumbers: !native && DocumentPreview.presentation(for: doc.url) != .table,
+                lineHighlight: webHighlight,
+                // Faded out by a click: gone until a new range is opened, also
+                // when the page is rebuilt (a mode switch).
+                onLineHighlightCleared: { model.lineHighlight = nil },
+                propertyVocabulary: { MarkdownVaultSuggestions.shared.propertyVocabularyJSON() },
+                onProperties: { doc.edit(MarkdownFrontmatter.replacing(properties: $0, in: doc.displayText)) },
+                onDropFiles: { model.acceptDrop($0) },
+                documentURL: doc.url,
+                vaultRoot: GenesisKit.host?.markdownVaultRoot
+            )
+        } else {
+            MarkdownPreviewView(
+                markdown: rendered,
+                scrollTarget: model.scrollTarget,
+                onWikilink: { model.follow($0, from: doc) },
+                highlightQuery: nil,
+                highlightToken: 0,
+                rich: model.renderer == .nativeRich
+            )
+        }
+    }
+
+    /// `model.lineHighlight` in the page's terms. A markdown note's blocks carry
+    /// 0-based body lines (frontmatter off), so every block whose source lines
+    /// overlap the range is marked; a code, json or text file is numbered by its
+    /// own lines; a CSV table has one row per file line.
+    private var webHighlight: MarkdownWebView.LineHighlight? {
+        guard let h = model.lineHighlight else { return nil }
+        switch DocumentPreview.presentation(for: doc.url) {
+        case .markdown:
+            let offset = MarkdownFrontmatter.bodyLineOffset(in: doc.displayText)
+            return .init(
+                first: max(0, h.range.first - 1 - offset), last: max(0, h.range.last - 1 - offset),
+                mode: .blocks, token: h.token
+            )
+        case .fenced:
+            return .init(first: h.range.first, last: h.range.last, mode: .lines, token: h.token)
+        case .table:
+            return .init(first: h.range.first, last: h.range.last, mode: .rows, token: h.token)
+        }
+    }
+
+    /// The source, editable. ⌘S writes it; the preview shows the draft too.
+    private func sourceView(onTopLine: ((Int) -> Void)?) -> some View {
+        MarkdownSourceEditor(
+            text: Binding(get: { doc.displayText }, set: { doc.edit($0) }),
+            font: .monospacedSystemFont(ofSize: 12 * model.zoom, weight: .regular),
+            textColor: NSColor(model.theme.text),
+            background: NSColor(model.theme.page),
+            restoreScroll: model.scrollOffset(for: doc.id, pane: .source),
+            onScroll: { model.rememberScroll($0, for: doc.id, pane: .source) },
+            selection: model.sourceSelection,
+            onSelectionChange: { model.editorSelectionChanged($0, byUser: $1, in: doc.id) },
+            onTopLine: onTopLine,
+            onOpenLink: { model.follow($0, from: doc) },
+            completions: { MarkdownVaultSuggestions.shared.values(for: $0) },
+            onDropFiles: { model.acceptDrop($0) }
+        )
+    }
+
+    /// The pointer on a link in the page: the note or file it points at previews next to the link, as a
+    /// tab does. A web address, a heading in this note or a folder shows nothing.
+    private func previewLink(_ hover: MarkdownLinkHover?) {
+        let controller = MarkdownHoverPreviewController.shared
+        guard let hover,
+              let url = MarkdownHoverTarget.url(
+                  forLink: hover.href, folder: doc.folder, text: doc.displayText, vaultRoot: GenesisKit.host?.markdownVaultRoot
+              ),
+              let web = model.webProxy.web,
+              let anchor = MarkdownHoverPlacement.screenRect(ofTopLeft: hover.rect, in: web)
+        else {
+            controller.exit(owner: linkHoverOwner)
+            return
+        }
+        controller.enter(owner: linkHoverOwner, url: url, model: model, view: web) { anchor }
+    }
+
+    /// The editor scrolled to `line` (counted over the whole file). The page
+    /// counts lines over the body alone, so the frontmatter comes off first.
+    private func follow(_ line: Int) {
+        let body = max(0, line - MarkdownFrontmatter.bodyLineOffset(in: doc.displayText))
+        syncLine = MarkdownLineSync(line: body, token: (syncLine?.token ?? 0) + 1)
+    }
+}
