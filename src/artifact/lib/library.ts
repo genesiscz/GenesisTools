@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { artifactServePlugin, cachedScan } from "./catalog";
 import { createMountCache } from "./mount-cache";
+import { GALLERY_DIR } from "./paths";
 import { type DashboardEntry, loadRegistry } from "./registry";
 import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate } from "./templates";
 import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, fsAllowRoots } from "./vite";
@@ -41,32 +42,50 @@ function ageLabel(iso: string): string {
     return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
+/** Shipped folders the library always shows, even with an empty registry. A registered folder of the same name wins. */
+export const BUILTIN_ENTRIES: DashboardEntry[] = [
+    { name: "kit-gallery", dir: GALLERY_DIR, createdAt: "2026-10-15T00:00:00.000Z", entry: "index.tsx" },
+];
+
+/** The registered folder named `name`, else the built-in one. */
+export function findLibraryEntry(registry: DashboardEntry[], name: string): DashboardEntry | undefined {
+    return registry.find((e) => e.name === name) ?? BUILTIN_ENTRIES.find((e) => e.name === name);
+}
+
 function renderLibraryHtml(entries: DashboardEntry[], templateDir: string): string {
     const now = Date.now();
+    const listRow = (e: DashboardEntry, builtin: boolean): string => {
+        const listing = cachedScan(e.dir, now);
+        const counts = [
+            listing.tsx.length ? `${listing.tsx.length} tsx` : "",
+            listing.html.length ? `${listing.html.length} html` : "",
+            listing.md.length ? `${listing.md.length} md` : "",
+        ]
+            .filter(Boolean)
+            .join(" · ");
+        const meta = [counts || "empty", builtin ? "built in" : ageLabel(e.createdAt), e.entry ?? ""]
+            .filter(Boolean)
+            .join(" · ");
+
+        return (
+            `<li><a href="${escapeHtml(`/a/${encodeURIComponent(e.name)}/${e.entry ? encodeHrefPath(e.entry.replace(/\.(tsx|jsx|html|md)$/, "")) : ""}`)}">` +
+            `<span class="name">${escapeHtml(e.name)}<br><small style="color:var(--dim)">${escapeHtml(e.dir)}</small></span>` +
+            `<span class="kind">${escapeHtml(meta)}</span></a></li>`
+        );
+    };
+    const builtins = BUILTIN_ENTRIES.filter((b) => existsSync(b.dir) && !entries.some((e) => e.name === b.name))
+        .map((b) => listRow(b, true))
+        .join("\n");
     const rows = entries
         .filter((e) => existsSync(e.dir))
-        .map((e) => {
-            const listing = cachedScan(e.dir, now);
-            const counts = [
-                listing.tsx.length ? `${listing.tsx.length} tsx` : "",
-                listing.html.length ? `${listing.html.length} html` : "",
-                listing.md.length ? `${listing.md.length} md` : "",
-            ]
-                .filter(Boolean)
-                .join(" · ");
-            const meta = [counts || "empty", ageLabel(e.createdAt), e.entry ?? ""].filter(Boolean).join(" · ");
-
-            return (
-                `<li><a href="${escapeHtml(`/a/${encodeURIComponent(e.name)}/${e.entry ? encodeHrefPath(e.entry.replace(/\.(tsx|jsx|html|md)$/, "")) : ""}`)}">` +
-                `<span class="name">${escapeHtml(e.name)}<br><small style="color:var(--dim)">${escapeHtml(e.dir)}</small></span>` +
-                `<span class="kind">${escapeHtml(meta)}</span></a></li>`
-            );
-        })
+        .map((e) => listRow(e, false))
         .join("\n");
 
-    const sections = `<section><h2>Registered artifacts</h2>\n<ul>${
+    const registered = `<section><h2>Registered artifacts</h2>\n<ul>${
         rows || `<li class="empty">nothing registered — ${toolCommand("artifact add")} &lt;dir&gt;</li>`
     }</ul></section>`;
+    const builtIn = builtins ? `\n<section><h2>Built in</h2>\n<ul>${builtins}</ul></section>` : "";
+    const sections = `${registered}${builtIn}`;
 
     return renderTemplate(loadTemplate(templateDir, "catalog.html"), {
         TITLE: "Artifact Library",
@@ -141,7 +160,7 @@ export async function startLibrary(options: LibraryOptions): Promise<LibraryHand
 
             if (mount) {
                 const name = decodeURIComponent(mount[1]);
-                const entry = loadRegistry().find((e) => e.name === name);
+                const entry = findLibraryEntry(loadRegistry(), name);
 
                 if (!entry || !existsSync(entry.dir) || !statSync(entry.dir).isDirectory()) {
                     res.statusCode = 404;

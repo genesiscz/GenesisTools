@@ -70,6 +70,12 @@ describe("library server", () => {
         expect(body).not.toContain("INDEX_ONLY");
     }, 60_000);
 
+    test("the built-in kit gallery is listed with no registration", async () => {
+        const { body } = await get("/");
+        expect(body).toContain("Built in");
+        expect(body).toContain("/a/kit-gallery/index");
+    });
+
     test("an unregistered name 404s", async () => {
         expect((await get("/a/definitely-not-registered/")).status).toBe(404);
     });
