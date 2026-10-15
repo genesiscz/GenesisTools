@@ -75,7 +75,8 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
   decimation; wheel/pinch zoom, drag pan, Shift-drag box zoom, brush strip, presets, keyboard;
   series chips with Alt-click solo, combined/split layout, per-unit log, % of max, table, CSV and
   PNG export; clustered `markers`; `spans` as Gantt lanes; `syncId` shares viewport and crosshair;
-  `id` persists the view in localStorage and the URL hash). Demo: `src/artifact/gallery/time-series.tsx`
+  `id` persists the view in localStorage and the URL hash; `groups` titles split panels,
+  `markerKinds` sets the marker kinds shown at first, `series={[]}` with `spans` draws an activity timeline). Demo: `src/artifact/gallery/time-series.tsx`
 - Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid)
 - Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid),
   `Gantt` + `GanttTable` (sprint axis, tinted lanes, baseline ghosts with a shift label,
