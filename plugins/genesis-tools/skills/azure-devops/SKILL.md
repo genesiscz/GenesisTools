@@ -46,6 +46,7 @@ tools azure-devops comment add <id> --file x.md  # Post markdown (--text, --file
 tools azure-devops comment edit <id> <commentId> --file x.md   # Replace a comment's text
 tools azure-devops comment delete <id> <commentId> --yes   # --yes is required without a terminal (alias: rm)
 tools azure-devops workitem-create               # Create work item (alias: create)
+tools azure-devops workitem-post <id>            # Read multilineFieldsFormat; with --field, patch in one request
 tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
 tools azure-devops timelog types                 # List available time types
 tools azure-devops timelog list -w <id>          # List time logs for work item (--day <date>, --from/--to, --user @me)
@@ -331,6 +332,23 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Download all attachments for task 12345" | `tools azure-devops workitem 12345 --attachments-from 2000-01-01` |
 | "Get task 12345 with screenshots" | `tools azure-devops workitem 12345 --task-folders --images` |
 | "Analyze bug with images" | Fetch with `--images` → Read images → Explore agent with visual context |
+
+### Post field updates
+
+`workitem-post` reads one work item, including `multilineFieldsFormat`, and can update fields in a single JSON Patch. Without `--confirm` it prints the patch and writes nothing. Field names are the caller's; the command hard-codes none.
+
+```bash
+tools azure-devops workitem-post 12345 --json
+tools azure-devops workitem-post 12345 \
+  --field System.Description=@description.html \
+  --markdown System.Description \
+  --image-root ./drafts \
+  --reuse posted-images.json \
+  --rev 6 \
+  --confirm --json
+```
+
+`--field` repeats. A value that starts with `@` is a file path. `--markdown` repeats and switches that multiline field to Markdown when it is not already; the server cannot switch it back. `--reuse` is a JSON object `{ "<file name>": { "sha256": "<hex>", "url": "<attachment url>" } }`. A local `<img src>` whose file still has that sha256 keeps the URL and is not uploaded again. The patch always starts with `test /rev` (the live rev, or `--rev` when it still matches). After `--confirm`, the read-back treats these server rewrites as the same text: an emoji stored as `&#128279;`, a quoted integer attribute stored without quotes (`width="375"` as `width=375`; `width="48%"` keeps the quotes), and an image `src` replaced by its attachment URL. `--json` prints the result. A differing read-back exits 1.
 
 ## Creating Work Items
 

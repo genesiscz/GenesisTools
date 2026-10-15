@@ -119,6 +119,23 @@ export interface TeamMembersResponse {
     value: Array<{ identity: IdentityRef }>;
 }
 
+/** One team member as `work/teamsettings/iterations/{id}/capacities` returns it (7.0+ `teamMembers`, older `value`). */
+export interface TeamMemberCapacityApi {
+    teamMember: { displayName: string; uniqueName?: string; id?: string };
+    activities?: Array<{ name?: string | null; capacityPerDay?: number }>;
+    daysOff?: Array<{ start: string; end: string }>;
+}
+
+export interface TeamCapacitiesResponse {
+    teamMembers?: TeamMemberCapacityApi[];
+    value?: TeamMemberCapacityApi[];
+}
+
+/** Raw response from `work/teamsettings/iterations/{id}/teamdaysoff`. */
+export interface TeamDaysOffResponse {
+    daysOff?: Array<{ start: string; end: string }>;
+}
+
 /** Raw response from projects list */
 export interface ProjectsListResponse {
     value: Array<{ id: string; name: string }>;

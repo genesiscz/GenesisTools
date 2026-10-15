@@ -12,6 +12,7 @@
  *   tools azure-devops dashboard <url|id> [options]
  *   tools azure-devops list
  *   tools azure-devops workitem-create [options]
+ *   tools azure-devops workitem-post <id> [--field Name=value] [--markdown Field] [--confirm]
  *   tools azure-devops timelog <add|list|delete|types|import|configure|prepare-import|export-month> [options]
  *   tools azure-devops history <show|search|sync|activity|mentions> [options]
  *   tools azure-devops iterations [options]
@@ -50,6 +51,7 @@ import { registerWikiCommand } from "@app/azure-devops/commands/wiki";
 import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
+import { registerWorkItemPostCommand } from "@app/azure-devops/commands/workitem-post";
 import { runTool } from "@genesiscz/utils/cli";
 
 // Wire up cross-command dependencies
@@ -78,6 +80,7 @@ registerWorkitemCommand(program);
 registerAncestorsCommand(program);
 registerTreeCommand(program);
 registerWorkitemCreateCommand(program);
+registerWorkItemPostCommand(program);
 registerWorkitemCacheCommand(program);
 registerDashboardCommand(program);
 registerTimelogCommand(program);

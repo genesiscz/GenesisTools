@@ -10,3 +10,4 @@ export { registerWikiCommand } from "./wiki";
 export { registerWorkitemCommand } from "./workitem";
 export { registerWorkitemCacheCommand } from "./workitem-cache";
 export { registerWorkitemCreateCommand } from "./workitem-create";
+export { registerWorkItemPostCommand } from "./workitem-post";

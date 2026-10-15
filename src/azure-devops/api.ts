@@ -17,8 +17,11 @@ import type {
     IterationClassificationNode,
     QueryNode,
     SavedQueryApi,
+    TeamCapacitiesResponse,
+    TeamDaysOffResponse,
     TeamIteration,
     TeamIterationsResponse,
+    TeamMemberCapacityApi,
     TeamMembersResponse,
     TeamsListResponse,
     WikiListResponse,
@@ -49,6 +52,7 @@ import type {
     WiqlResponse,
     WorkItem,
     WorkItemFull,
+    WorkItemLive,
     WorkItemType,
     WorkItemTypeDefinition,
     WorkItemUpdate,
@@ -293,31 +297,46 @@ export class Api {
     private async send(
         method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
         url: string,
-        options: { body?: unknown; contentType?: string; description?: string } = {}
+        options: { body?: unknown; rawBody?: Uint8Array; contentType?: string; description?: string } = {}
     ): Promise<Response> {
-        const { body, contentType = "application/json", description } = options;
+        const { body, rawBody, contentType = "application/json", description } = options;
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
 
         logger.debug(`[api] ${method} ${shortUrl}${description ? ` (${description})` : ""}`);
+
         if (body !== undefined) {
             const bodyStr = SafeJSON.stringify(body);
             const truncated = bodyStr.length > 500 ? `${bodyStr.slice(0, 500)}... (${bodyStr.length} chars)` : bodyStr;
             logger.debug(`[api] ${method} body: ${truncated}`);
+        } else if (rawBody !== undefined) {
+            logger.debug(`[api] ${method} body: ${rawBody.byteLength} bytes`);
         }
+
         const startTime = Date.now();
 
         const token = await this.getAccessToken();
         const headers: Record<string, string> = {
             Authorization: `Bearer ${token}`,
         };
-        if (body !== undefined) {
+
+        if (body !== undefined || rawBody !== undefined) {
             headers["Content-Type"] = contentType;
+        }
+
+        let payload: BodyInit | undefined;
+
+        if (rawBody !== undefined) {
+            const copy = new ArrayBuffer(rawBody.byteLength);
+            new Uint8Array(copy).set(rawBody);
+            payload = new Blob([copy]);
+        } else if (body !== undefined) {
+            payload = SafeJSON.stringify(body);
         }
 
         const response = await fetch(url, {
             method,
             headers,
-            body: body !== undefined ? SafeJSON.stringify(body) : undefined,
+            body: payload,
         });
 
         const elapsed = Date.now() - startTime;
@@ -1077,6 +1096,37 @@ export class Api {
         };
     }
 
+    /** One work item, including `multilineFieldsFormat`, which the batch read does not ask for. */
+    async getWorkItemLive(id: number): Promise<WorkItemLive> {
+        const url = Api.witUrl(this.config, ["workitems", String(id)], { $expand: "relations" });
+        const item = await this.get<WorkItemLive>(url, `work item #${id}`);
+
+        return {
+            id: item.id,
+            rev: item.rev,
+            fields: item.fields ?? {},
+            multilineFieldsFormat: item.multilineFieldsFormat ?? {},
+            relations: item.relations,
+        };
+    }
+
+    /** Upload bytes as a work-item attachment. The returned URL is what an `<img src>` stores. */
+    async uploadAttachment(fileName: string, bytes: Uint8Array): Promise<string> {
+        const url = Api.witUrl(this.config, "attachments", { fileName });
+        const response = await this.send("POST", url, {
+            rawBody: bytes,
+            contentType: "application/octet-stream",
+            description: `attachment ${fileName}`,
+        });
+        const created = SafeJSON.parse(await response.text()) as { url?: string };
+
+        if (!created?.url) {
+            throw new Error(`attachment upload of ${fileName} returned no url`);
+        }
+
+        return created.url;
+    }
+
     /**
      * Get the definition of a work item type including fields, states, and transitions
      */
@@ -1205,6 +1255,42 @@ export class Api {
         const data = await this.get<TeamIterationsResponse>(url, `iterations for team "${team}"`);
         logger.debug(`[api] Team "${team}" has ${data.value?.length ?? 0} iterations`);
         return data.value ?? [];
+    }
+
+    /** Every team of the project, up to 500. */
+    async getTeams(): Promise<TeamsListResponse["value"]> {
+        const url = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"], { $top: "500" });
+        const data = await this.get<TeamsListResponse>(url, "teams");
+
+        return data.value ?? [];
+    }
+
+    /** Capacity of every member of `team` in one iteration, per activity, with the member's days off. */
+    async getTeamCapacities(team: string, iterationId: string): Promise<TeamMemberCapacityApi[]> {
+        const url = Api.teamApiUrl(this.config, team, [
+            "work",
+            "teamsettings",
+            "iterations",
+            iterationId,
+            "capacities",
+        ]);
+        const data = await this.get<TeamCapacitiesResponse>(url, `capacity of team "${team}"`);
+
+        return data.teamMembers ?? data.value ?? [];
+    }
+
+    /** The days off the whole team shares in one iteration. */
+    async getTeamDaysOff(team: string, iterationId: string): Promise<NonNullable<TeamDaysOffResponse["daysOff"]>> {
+        const url = Api.teamApiUrl(this.config, team, [
+            "work",
+            "teamsettings",
+            "iterations",
+            iterationId,
+            "teamdaysoff",
+        ]);
+        const data = await this.get<TeamDaysOffResponse>(url, `team days off of "${team}"`);
+
+        return data.daysOff ?? [];
     }
 
     /**

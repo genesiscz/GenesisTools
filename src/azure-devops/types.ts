@@ -37,6 +37,15 @@ export interface AzWorkItemRaw {
     relations?: Relation[];
 }
 
+/** One work item as `GET wit/workitems/{id}` returns it, including the multiline field formats. */
+export interface WorkItemLive {
+    id: number;
+    rev: number;
+    fields: Record<string, unknown>;
+    multilineFieldsFormat: Record<string, string>;
+    relations?: Relation[];
+}
+
 export interface WorkItem {
     id: number;
     rev: number;
@@ -398,7 +407,7 @@ export interface WorkItemTemplate {
 
 /** JSON Patch operation for Azure DevOps API */
 export interface JsonPatchOperation {
-    op: "add" | "remove" | "replace";
+    op: "add" | "remove" | "replace" | "test";
     path: string;
     value?: unknown;
 }
