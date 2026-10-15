@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFirstLines, readLastLines } from "./read-lines";
+import { readFirstLines, readLastLines, readLinesBackwardSync } from "./read-lines";
 
 const dir = mkdtempSync(join(tmpdir(), "read-lines-"));
 
@@ -79,6 +79,34 @@ for (const method of ["fs", "ffi"] as const) {
         });
     });
 }
+
+describe("readLinesBackwardSync", () => {
+    it("yields every line newest first across chunk borders, a missing last newline and blank lines skipped", () => {
+        const lines = Array.from({ length: 50 }, (_, index) => `line ${index} ${"x".repeat(index % 7)}`);
+        const path = file("backward.txt", `${lines.join("\n")}\n\npartial`);
+
+        for (const chunkBytes of [1, 3, 16, 1024]) {
+            expect([...readLinesBackwardSync(path, { chunkBytes })]).toEqual(["partial", ...lines.reverse()]);
+            lines.reverse();
+        }
+    });
+
+    it("reads no further back than the caller iterates", () => {
+        const path = file("backward-stop.txt", "old\nmiddle\nnew\n");
+        const seen: string[] = [];
+
+        for (const line of readLinesBackwardSync(path, { chunkBytes: 4 })) {
+            seen.push(line);
+
+            if (line === "middle") {
+                break;
+            }
+        }
+
+        expect(seen).toEqual(["new", "middle"]);
+        expect([...readLinesBackwardSync(file("empty.txt", ""))]).toEqual([]);
+    });
+});
 
 describe("readLastLines window bound", () => {
     it.each(["fs", "ffi"] as const)(

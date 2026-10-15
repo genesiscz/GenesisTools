@@ -1,6 +1,7 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { readLinesBackwardSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -75,54 +76,45 @@ export function appendSessionCmuxRef(
  */
 export const CMUX_REFS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * The journal is append-only and only the NEWEST record per session wins, so
- * older bytes can never change the answer. Reading the whole file grew the cost
- * of every `claude who` / usage listing without changing the result, so the read
- * is capped at the tail and a truncated first line is dropped.
- *
- * The cap is not free: a session whose ONLY record sits in the truncated head
- * resolves as unrecorded. The hook writes a line per prompt, so one busy session
- * fills a small window fast: on 2026-10-14 a 512 KB tail of the 6.8 MB journal
- * held the last few hours (25 sessions of 129), and a cmux restart lost the tab
- * of every session idle for longer. The cap is now a runaway guard, not a
- * window: the whole 6.8 MB file parses in about 10 ms (1 ms for the old tail).
- */
-const MAX_JOURNAL_READ_BYTES = 32 * 1024 * 1024;
+/** Lines are appended in time order (0 of 19,344 out of order on 2026-10-15); this covers a writer's clock skew. */
+const JOURNAL_ORDER_SLACK_MS = 60 * 60_000;
+/** One stray old line (a hand-edited or restored record) must not hide the newer-but-in-window lines before it. */
+const OLD_LINES_BEFORE_STOP = 64;
+const AT_FIELD = /"at":(\d+)/;
 
-function readJournalTail(refsPath: string, historical: boolean = false): string | null {
+/**
+ * The journal lines written since `sinceMs`, oldest first, read from the END of the file. The journal is kept whole
+ * (every line, for history and triage); a reader only needs its last days, and the lines are in time order, so the
+ * read stops after a run of lines older than `sinceMs` (with an hour of slack). On 2026-10-15 the 6.9 MB journal held
+ * 13,825 lines older than the readers' 7 days. Null when the file is missing or unreadable.
+ */
+function readJournalSince(refsPath: string, sinceMs: number): string[] | null {
     if (!existsSync(refsPath)) {
         return null;
     }
 
+    const lines: string[] = [];
+    let oldRun = 0;
+
     try {
-        const size = statSync(refsPath).size;
+        for (const line of readLinesBackwardSync(refsPath)) {
+            const at = Number(AT_FIELD.exec(line)?.[1]);
+            oldRun = at < sinceMs - JOURNAL_ORDER_SLACK_MS ? oldRun + 1 : 0;
 
-        if (historical || size <= MAX_JOURNAL_READ_BYTES) {
-            return readFileSync(refsPath, "utf8");
-        }
+            if (oldRun >= OLD_LINES_BEFORE_STOP) {
+                break;
+            }
 
-        const fd = openSync(refsPath, "r");
-
-        try {
-            const buffer = Buffer.alloc(MAX_JOURNAL_READ_BYTES);
-            const read = readSync(fd, buffer, 0, MAX_JOURNAL_READ_BYTES, size - MAX_JOURNAL_READ_BYTES);
-            const text = buffer.subarray(0, read).toString("utf8");
-            // The window almost certainly starts mid-line; that fragment is not
-            // valid JSON and would only inflate the parse-failure count.
-            const firstBreak = text.indexOf("\n");
-
-            return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
-        } finally {
-            closeSync(fd);
+            lines.push(line);
         }
     } catch (err) {
         // A permission or I/O failure must not read as "no journal": that
         // silently disables session enrichment with nothing to triage from.
         log.warn({ err, refsPath }, "cannot read the cmux refs journal");
-
         return null;
     }
+
+    return lines.reverse();
 }
 
 /**
@@ -137,15 +129,14 @@ export function loadAllSessionCmuxRefs(
     const refs = new Map<string, SessionCmuxRefs>();
     /** `<session>\n<surface>` → the first time that session was seen on that surface. */
     const firstSeen = new Map<string, number>();
-    const raw = readJournalTail(refsPath, options.beforeMs !== undefined);
+    const cutoff = (options.beforeMs ?? Date.now()) - CMUX_REFS_MAX_AGE_MS;
+    const lines = readJournalSince(refsPath, cutoff);
 
-    if (raw === null) {
+    if (lines === null) {
         return refs;
     }
 
-    const cutoff = (options.beforeMs ?? Date.now()) - CMUX_REFS_MAX_AGE_MS;
-
-    for (const line of raw.split("\n")) {
+    for (const line of lines) {
         if (!line.trim()) {
             continue;
         }

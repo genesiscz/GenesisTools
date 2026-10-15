@@ -16,6 +16,30 @@ test("historical lookup retains the pane before restart instead of a later resum
     expect(loadAllSessionCmuxRefs(path, { beforeMs }).get(SESSION)?.surfaceId).toBe("original");
 });
 
+// The journal is kept whole and read from its end; the read must not reach past the readers' 7 days.
+test("the reader stops in the old part of the journal, and a stray old line does not hide the lines before it", () => {
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const ancient = Array.from({ length: 200 }, (_, index) =>
+        entry({ sessionId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, at: now - 30 * DAY })
+    );
+    // A malformed line deep in the old part: a reader that got that far would log a parse failure, not throw.
+    const path = journal([
+        entry({ sessionId: "11111111-1111-4111-8111-111111111111", at: now - 40 * DAY }),
+        ...ancient.slice(0, 100),
+        "not json" as unknown as object,
+        ...ancient.slice(100),
+        entry({ surfaceId: "in-window", at: now - 2 * DAY }),
+        entry({ sessionId: "22222222-2222-4222-8222-222222222222", at: now - 9 * DAY }),
+        entry({ sessionId: "33333333-3333-4333-8333-333333333333", at: now - 1000 }),
+    ]);
+
+    const refs = loadAllSessionCmuxRefs(path);
+    expect(refs.get(SESSION)?.surfaceId).toBe("in-window");
+    expect(refs.has("33333333-3333-4333-8333-333333333333")).toBe(true);
+    expect(refs.size).toBe(2);
+});
+
 function journal(lines: object[]): string {
     const dir = mkdtempSync(join(tmpdir(), "cmux-refs-"));
     const path = join(dir, "cmux-refs.jsonl");

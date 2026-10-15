@@ -315,3 +315,55 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
         reader.close(fd);
     }
 }
+
+/**
+ * The lines of a plain file from its END backwards, newest first, read in chunks of `chunkBytes` (256 KB by
+ * default): for an append-only journal whose readers want only its recent part. Stop iterating as soon as a line is
+ * older than you need, and the rest of the file is never read. A line without its trailing newline (a writer in the
+ * middle of it) still comes out. Throws when the file cannot be opened; `.zst` files are not supported.
+ */
+export function* readLinesBackwardSync(
+    path: string,
+    { chunkBytes = 256 * 1024 }: { chunkBytes?: number } = {}
+): Generator<string> {
+    const fd = openSync(path, "r");
+
+    try {
+        let position = fstatSync(fd).size;
+        // Bytes of a line that started before the chunk just read.
+        let carry = Buffer.alloc(0);
+
+        while (position > 0) {
+            const size = Math.min(chunkBytes, position);
+            position -= size;
+            const chunk = Buffer.allocUnsafe(size);
+            const read = readSync(fd, chunk, 0, size, position);
+            const buffer = Buffer.concat([chunk.subarray(0, read), carry]);
+            let end = buffer.length;
+
+            for (
+                let newline = buffer.lastIndexOf(10, end - 1);
+                newline !== -1;
+                newline = buffer.lastIndexOf(10, end - 1)
+            ) {
+                if (newline + 1 < end) {
+                    yield buffer.toString("utf8", newline + 1, end);
+                }
+
+                end = newline;
+
+                if (end === 0) {
+                    break;
+                }
+            }
+
+            carry = buffer.subarray(0, end);
+        }
+
+        if (carry.length > 0) {
+            yield carry.toString("utf8");
+        }
+    } finally {
+        closeSync(fd);
+    }
+}
