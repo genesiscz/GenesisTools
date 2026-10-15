@@ -235,6 +235,12 @@ public struct PostureScorer: Equatable, Sendable {
                              enterThreshold: enter, exitThreshold: 0.85 * tolerance + 0.7 * zone * span, severity: 1)
     }
 
+    /// How much bigger the face is than in the baseline (0.1: ten percent), nil without a face in both.
+    static func faceGrowth(_ metrics: PostureMetrics, baseline: PostureBaseline) -> Double? {
+        guard let current = metrics[.faceWidth], let base = baseline.metrics[.faceWidth], base > 0 else { return nil }
+        return current / base - 1
+    }
+
     public func score(_ metrics: PostureMetrics, against baseline: PostureBaseline) -> PostureScore {
         let zone = deadZone.fraction
         let faceWidth = baseline.metrics[.faceWidth]
@@ -247,8 +253,16 @@ public struct PostureScorer: Equatable, Sendable {
             }
             for measure in PostureMeasure.preference(for: kind) {
                 guard let current = metrics[measure], let base = baseline.metrics[measure],
-                      let deviation = measure.deviation(current: current, baseline: base, baselineFaceWidth: faceWidth)
+                      var deviation = measure.deviation(current: current, baseline: base, baselineFaceWidth: faceWidth)
                 else { continue }
+                if kind == .forwardHead, measure != .faceWidth, let grown = Self.faceGrowth(metrics, baseline: baseline) {
+                    // A head that comes forward comes closer to the camera, so the face itself grows. A ratio to
+                    // the shoulders that grows while the face does not comes from the shoulder reading: 3D
+                    // shoulders estimated below a low camera's frame jumped 0.44 → 0.77 → 0.58 image heights between
+                    // runs while the face stayed within 5% (debug recording 2026-10-15 19:35, an upright sitter
+                    // judged "head forward 133%" all along). Forward head counts as far as both agree.
+                    deviation = min(deviation, grown)
+                }
                 var tolerance = baseline.tolerance[measure] ?? measure.minimumTolerance
                 if kind == .forwardHead, measure == .faceWidth, let fallback = forwardHeadWithoutShoulders {
                     guard fallback == .faceSize else {

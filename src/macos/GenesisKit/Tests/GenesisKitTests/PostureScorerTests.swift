@@ -115,6 +115,24 @@ final class PostureScorerTests: XCTestCase {
         XCTAssertEqual(scorer.score(PostureMetrics(sample: postureSample(noseX: 0.62)), against: base).worst, .lateralLean)
     }
 
+    /// Debug recording 2026-10-15 19:35 (Office): an upright sitter, face the size of the baseline, 3D shoulders
+    /// estimated below a low camera's frame at 0.445 image heights against 0.630. The face-to-shoulder ratio rose 49%
+    /// and the app said "head forward" for the whole recording. The face did not grow, so the head did not come forward.
+    func testAFaceToShoulderRatioWithoutAGrowingFaceIsNotAForwardHead() {
+        let base = PostureBaseline(
+            metrics: PostureMetrics([.faceWidth: 0.3686, .faceWidthRatio: 0.5881, .shoulderWidth: 0.6298]),
+            tolerance: PostureMetrics([.faceWidth: 0.05, .faceWidthRatio: 0.09, .shoulderWidth: 0.12]),
+            span: PostureMetrics([.faceWidth: 0.15, .faceWidthRatio: 0.15, .shoulderWidth: 0.2])
+        )
+        let scorer = PostureScorer(enabled: [.forwardHead])
+        let wrongShoulders = PostureMetrics([.faceWidth: 0.3886, .faceWidthRatio: 0.874, .shoulderWidth: 0.4446])
+        XCTAssertFalse(scorer.score(wrongShoulders, against: base).isBad, "face +5%: not a forward head")
+
+        // A real forward head: the face grows a quarter and the ratio with it.
+        let forward = PostureMetrics([.faceWidth: 0.46, .faceWidthRatio: 0.74, .shoulderWidth: 0.62])
+        XCTAssertEqual(scorer.score(forward, against: base).worst, .forwardHead)
+    }
+
     func testADisabledFaultIsNotScored() throws {
         let base = try baseline()
         let scorer = PostureScorer(enabled: [.forwardHead])
