@@ -7,17 +7,24 @@ describe("size", () => {
     });
 
     it("formatBytes kb boundary", () => {
-        expect(formatBytes(1023)).toBe("1023 B");
-        expect(formatBytes(1024)).toBe("1.0 KB");
+        expect(formatBytes(999)).toBe("999 B");
+        expect(formatBytes(1000)).toBe("1.0 KB");
     });
 
-    it("formatBytes mb / gb", () => {
-        expect(formatBytes(1048576)).toBe("1.0 MB");
-        expect(formatBytes(1073741824)).toBe("1.0 GB");
+    it("formatBytes uses decimal units like the Finder", () => {
+        expect(formatBytes(1_000_000)).toBe("1.0 MB");
+        expect(formatBytes(1_000_000_000)).toBe("1.0 GB");
+        // The 600 MiB test file of 2026-10-14: the Finder and the Disk Manager both say 629 MB.
+        expect(formatBytes(629_145_600)).toBe("629.1 MB");
+    });
+
+    it("formatBytes moves up a unit instead of printing 1000.0", () => {
+        expect(formatBytes(999_960_000)).toBe("1.0 GB");
+        expect(formatBytes(999_940_000)).toBe("999.9 MB");
     });
 
     it("formatBytes tb", () => {
-        expect(formatBytes(1099511627776)).toBe("1.0 TB");
+        expect(formatBytes(1_000_000_000_000)).toBe("1.0 TB");
     });
 
     it("sumBytes totals an array of findings with reclaimableBytes", () => {

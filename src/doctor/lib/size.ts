@@ -1,16 +1,22 @@
 import { run } from "./run";
 
+/**
+ * Decimal (SI) bytes, like the Finder, `diskutil` and the Genesis Disk Manager. Until 2026-10-14 this divided by 1024
+ * and still printed "MB", so one 629,145,600-byte file read "600.0 MB" in a finding next to the Disk Manager's
+ * "629 MB" for the same bytes.
+ */
 export function formatBytes(bytes: number): string {
-    if (bytes < 1024) {
+    if (bytes < 1000) {
         return `${bytes} B`;
     }
 
     const units = ["KB", "MB", "GB", "TB", "PB"];
-    let value = bytes / 1024;
+    let value = bytes / 1000;
     let unitIdx = 0;
 
-    while (value >= 1024 && unitIdx < units.length - 1) {
-        value /= 1024;
+    // 999.96 MB would print as "1000.0 MB": move up a unit before toFixed rounds into it.
+    while (value >= 999.95 && unitIdx < units.length - 1) {
+        value /= 1000;
         unitIdx++;
     }
 

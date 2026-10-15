@@ -2,12 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { createRemainingAnalyzers, remainingAnalyzerConstructors } from "@app/doctor/analyzers/remaining";
 
 describe("remaining analyzer barrel", () => {
-    it("exports all eight analyzers in picker order", () => {
+    it("exports all ten analyzers in picker order", () => {
         const analyzers = createRemainingAnalyzers();
 
         expect(analyzers.map((analyzer) => analyzer.id)).toEqual([
             "dev-caches",
             "system-caches",
+            "temp-leaks",
+            "app-bloat",
             "startup",
             "brew",
             "battery",
@@ -15,6 +17,6 @@ describe("remaining analyzer barrel", () => {
             "security",
             "extensions",
         ]);
-        expect(remainingAnalyzerConstructors).toHaveLength(8);
+        expect(remainingAnalyzerConstructors).toHaveLength(10);
     });
 });

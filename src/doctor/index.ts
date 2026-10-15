@@ -10,6 +10,7 @@ import {
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { wipeCache } from "@app/doctor/lib/cache";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
+import { runActCli } from "@app/doctor/ui/act";
 import { runJson } from "@app/doctor/ui/json";
 import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
@@ -34,6 +35,9 @@ const program = new Command();
 
 program
     .name("doctor")
+    // Root options (--json, --dry-run, --fresh) only before a subcommand, so `doctor act ... --dry-run --json`
+    // reaches the subcommand instead of the root dashboard's flags.
+    .enablePositionalOptions()
     .description("Diagnose and fix common macOS dev-machine problems")
     .option("--plain", "Use linear clack renderer instead of OpenTUI dashboard")
     .option("--thorough", "Deeper scans, no time caps")
@@ -156,6 +160,41 @@ program
         }
 
         await runPlain(shared);
+    });
+
+function collect(value: string, previous: string[]): string[] {
+    return [...previous, value];
+}
+
+program
+    .command("act")
+    .description(
+        "Run one reclaim action on findings re-derived from a fresh scan, without prompts (the Disk Manager's door). Prints one JSON result; exit 0 all done, 1 something refused or failed, 2 invalid call"
+    )
+    .argument("<actionId>", "Action id, e.g. delete-clone, delete-app-cache, delete-cache")
+    .option("--analyzer <id>", "Analyzer that owns the findings (required)")
+    .option("--id <findingId>", "Finding id (repeatable; ids contain paths, so no comma lists)", collect, [])
+    .option("--method <method>", "trash or delete: required for removal actions, refused for command actions")
+    .option("--yes", "Satisfies a yes/no confirmation")
+    .option("--confirm <phrase>", "Satisfies a typed confirmation (exact, case sensitive; repeatable)", collect, [])
+    .option(
+        "--expect <findingId=bytes>",
+        "The reclaimableBytes the caller showed; >25% drift refuses the item as stale",
+        collect,
+        []
+    )
+    .option(
+        "--expect-paths <findingId=hash>",
+        "The pathsHash the caller showed; a changed path set refuses the item as stale",
+        collect,
+        []
+    )
+    .option("--dry-run", "Re-check and plan only: no change, no manifest, no history")
+    .option("--ndjson", "Stream plan / item / volume events, the last line is {type: result}")
+    .option("--json", "Print one result object (the default)")
+    .action(async (actionId: string, opts: Parameters<typeof runActCli>[1]) => {
+        const argv = ["doctor", ...process.argv.slice(Math.max(0, process.argv.indexOf("act")))];
+        process.exitCode = await runActCli(actionId, opts, argv);
     });
 
 program

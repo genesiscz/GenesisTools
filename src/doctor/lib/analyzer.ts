@@ -12,6 +12,31 @@ export abstract class Analyzer {
 
     protected abstract run(ctx: AnalyzerContext): AsyncIterable<Finding>;
 
+    /** Folders a `remove-path` action of this analyzer may delete inside (never the folder itself). `doctor act`
+     *  refuses any path whose real path is not strictly inside one of them. Empty means nothing is removable. */
+    allowRoots(): string[] {
+        return [];
+    }
+
+    /**
+     * Re-derive findings by id from a fresh scan: never from the cache (a cached finding has lost its `execute`), and
+     * never from what a caller passed in, so `doctor act` acts only on what is on disk now. Analyzers whose full scan
+     * is costly override this with a targeted re-stat of the ids they are asked about.
+     */
+    async recheck(ids: string[], ctx: AnalyzerContext): Promise<Finding[]> {
+        const wanted = new Set(ids);
+        const found: Finding[] = [];
+        const freshCtx: AnalyzerContext = { ...ctx, opts: { ...ctx.opts, fresh: true } };
+
+        for await (const finding of this.run(freshCtx)) {
+            if (wanted.has(finding.id)) {
+                found.push(finding);
+            }
+        }
+
+        return found;
+    }
+
     async analyze(ctx: AnalyzerContext): Promise<AnalyzerResult> {
         this.logStart({ action: "analyze" });
         const startedAt = Date.now();

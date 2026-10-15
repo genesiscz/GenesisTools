@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { isAppBloatCacheName } from "@app/doctor/lib/claims";
 import { classifyCachePath } from "@app/doctor/lib/safety";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
@@ -28,8 +29,23 @@ export class SystemCachesAnalyzer extends Analyzer {
     readonly category: AnalyzerCategory = "system";
     readonly cacheTtlMs = 6 * 60 * 60 * 1000;
 
+    constructor(private readonly options: { home?: string } = {}) {
+        super();
+    }
+
+    private get cachesRoot(): string {
+        return join(this.options.home ?? homedir(), "Library", "Caches");
+    }
+
+    override allowRoots(): string[] {
+        return [this.cachesRoot];
+    }
+
+    // No `recheck` override: the base class re-runs the whole scan and keeps the ids it produced. A cache path is never
+    // read out of a `sys-cache-<name>` id.
+
     protected async *run(ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const cachesRoot = join(homedir(), "Library", "Caches");
+        const cachesRoot = this.cachesRoot;
 
         if (!existsSync(cachesRoot)) {
             return;
@@ -51,7 +67,7 @@ export class SystemCachesAnalyzer extends Analyzer {
             });
 
             const path = join(cachesRoot, name);
-            if (!isDirectory(path)) {
+            if (!isDirectory(path) || isAppBloatCacheName(name)) {
                 continue;
             }
 
@@ -119,7 +135,7 @@ export function buildSystemCacheFinding(entry: CacheEntry): Finding {
         blacklistReason: classification.reason,
         reclaimableBytes: blocked ? undefined : entry.bytes,
         actions: blocked ? [] : [deleteCacheAction(entry.path, entry.bytes)],
-        metadata: { path: entry.path, bytes: entry.bytes },
+        metadata: { path: entry.path, paths: [entry.path], bytes: entry.bytes, allocatedBytes: entry.bytes },
     };
 }
 
@@ -145,6 +161,8 @@ function deleteCacheAction(path: string, bytes: number): Action {
         id: "delete-cache",
         label: "Delete cache",
         confirm: "yesno",
+        kind: "remove-path",
+        method: "delete",
         execute: async (_ctx: ExecutorContext, finding) => {
             try {
                 await rm(path, { recursive: true, force: true });

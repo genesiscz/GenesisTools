@@ -33,7 +33,26 @@ export async function executeActions(opts: ExecuteOpts): Promise<ActionResult[]>
     return results;
 }
 
-async function runOne(ctx: ExecutorContext, finding: Finding, action: Action): Promise<ActionResult> {
+export async function runOne(ctx: ExecutorContext, finding: Finding, action: Action): Promise<ActionResult> {
+    if (finding.severity === "blocked") {
+        return {
+            findingId: finding.id,
+            actionId: action.id,
+            status: "skipped",
+            error: `blocked: ${finding.blacklistReason ?? "this finding must not be acted on"}`,
+            metadata: { blocked: true },
+        };
+    }
+
+    if (typeof action.execute !== "function") {
+        return {
+            findingId: finding.id,
+            actionId: action.id,
+            status: "failed",
+            error: "this finding came from the analyzer cache and cannot run; re-run doctor with --fresh",
+        };
+    }
+
     if (ctx.dryRun) {
         return {
             findingId: finding.id,

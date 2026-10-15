@@ -79,6 +79,42 @@ describe("executor", () => {
         expect(results[0]?.actualReclaimedBytes).toBe(100);
     });
 
+    it("never runs a blocked finding's action, from any caller", async () => {
+        const found = finding("vm", "blocked");
+        const guarded: Action = {
+            id: "delete",
+            label: "Delete",
+            confirm: "none",
+            execute: async () => {
+                throw new Error("a blocked finding reached execute");
+            },
+        };
+        const results = await executeActions({ runId, dryRun: false, items: [{ finding: found, action: guarded }] });
+
+        expect(results[0]?.status).toBe("skipped");
+        expect(results[0]?.error).toContain("blocked");
+    });
+
+    it("still runs a cautious finding's action (negative control)", async () => {
+        let ran = false;
+        const results = await executeActions({
+            runId,
+            dryRun: false,
+            items: [
+                {
+                    finding: finding("ok", "cautious"),
+                    action: action("delete", "Delete", async () => {
+                        ran = true;
+                        return {};
+                    }),
+                },
+            ],
+        });
+
+        expect(ran).toBe(true);
+        expect(results[0]?.status).toBe("ok");
+    });
+
     it("marks failures", async () => {
         const found = finding("f1");
         const selected: Action = {

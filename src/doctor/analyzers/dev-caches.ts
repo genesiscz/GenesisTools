@@ -1,33 +1,27 @@
 import type { Dirent } from "node:fs";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { devRoots } from "@app/doctor/lib/dev-roots";
 import {
     listGlobalPackages,
     type PackageManager,
     reinstallCommand,
     writeSnapshot,
 } from "@app/doctor/lib/global-packages";
+import { guardPaths } from "@app/doctor/lib/path-guard";
 import { run, runInherit } from "@app/doctor/lib/run";
+import { readScanGate, type ScanGateReader } from "@app/doctor/lib/scan-gate";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import pLimit from "p-limit";
 
 const DU_CONCURRENCY = 8;
 
-/**
- * Generic only. A private checkout root belongs in
- * `GENESIS_TOOLS_DEV_CACHE_ROOTS` (colon separated, `~` allowed), not in a
- * public source file. Scrub note, 2026-09-17: this list used to name one
- * developer's vault directory, so on that machine the sweep silently stops
- * covering it until the variable is set.
- */
-const ROOTS = ["~/Projects", "~/Developer", "~/dev", "~/code", "~/src"];
 const NODE_MODULES_MIN_BYTES = 500 * 1024 * 1024;
 const NODE_MODULES_SCAN_DEPTH = 6;
 
@@ -72,12 +66,68 @@ interface DockerDfJsonLine {
     Reclaimable?: string;
 }
 
+export interface DevCachesOptions {
+    home?: string;
+    /** Checkout roots for the `node_modules` search (default: the generic roots plus `GENESIS_TOOLS_DEV_CACHE_ROOTS`). */
+    roots?: string[];
+    gate?: ScanGateReader;
+    /** Smallest `node_modules` listed (default 500 MB; tests lower it). */
+    nodeModulesMinBytes?: number;
+}
+
 export class DevCachesAnalyzer extends Analyzer {
     readonly id = "dev-caches";
     readonly name = "Dev Caches";
     readonly icon = "D";
     readonly category: AnalyzerCategory = "disk";
     readonly cacheTtlMs = 24 * 60 * 60 * 1000;
+
+    constructor(private readonly options: DevCachesOptions = {}) {
+        super();
+    }
+
+    private get home(): string {
+        return this.options.home ?? homedir();
+    }
+
+    private roots(): string[] {
+        return (this.options.roots ?? devRoots(this.home)).filter(existsSync);
+    }
+
+    override allowRoots(): string[] {
+        return [...this.roots(), join(this.home, "Library", "Developer", "Xcode")];
+    }
+
+    override async recheck(ids: string[], ctx: AnalyzerContext): Promise<Finding[]> {
+        const wanted = new Set(ids);
+        const found: Finding[] = [];
+        const keep = (finding: Finding): void => {
+            if (wanted.has(finding.id)) {
+                found.push(finding);
+            }
+        };
+        // Each group re-runs the whole rule that produces its ids (the node_modules search runs its walk, sizes and
+        // top-20 cut again). A path is never read out of an id: before 2026-10-13 a crafted
+        // `dev-node-modules-<repo>` id deleted the repository itself.
+        const groups: Array<[(id: string) => boolean, () => AsyncIterable<Finding>]> = [
+            [(id) => id.startsWith("dev-node-modules-"), () => this.scanNodeModules(ctx)],
+            [(id) => id === "dev-xcode-derived", () => this.scanXcodeDerivedData()],
+            [(id) => id.startsWith("dev-sim-"), () => this.scanSimulators()],
+            [(id) => id.startsWith("dev-docker-unused-images"), () => this.scanDocker()],
+            [(id) => id.startsWith("dev-cache-"), () => this.scanGlobalPackageCaches(ctx)],
+            [(id) => id === "dev-brew-cache", () => this.scanBrewCache()],
+        ];
+
+        for (const [matches, generate] of groups) {
+            if (ids.some(matches)) {
+                for await (const finding of generate()) {
+                    keep(finding);
+                }
+            }
+        }
+
+        return found;
+    }
 
     protected async *run(ctx: AnalyzerContext): AsyncIterable<Finding> {
         yield* this.scanNodeModules(ctx);
@@ -109,12 +159,13 @@ export class DevCachesAnalyzer extends Analyzer {
     }
 
     private async *scanNodeModules(ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const home = homedir();
-        const expandedRoots = [...ROOTS, ...env.doctor.getDevCacheRoots()]
-            .map((root) => root.replace(/^~/, home))
-            .filter(existsSync);
+        const expandedRoots = this.roots();
 
         if (expandedRoots.length === 0) {
+            return;
+        }
+
+        if ((await (this.options.gate ?? readScanGate)()).gated) {
             return;
         }
 
@@ -139,7 +190,7 @@ export class DevCachesAnalyzer extends Analyzer {
                         findingsCount: sized.length,
                     });
 
-                    if (bytes >= NODE_MODULES_MIN_BYTES) {
+                    if (bytes >= (this.options.nodeModulesMinBytes ?? NODE_MODULES_MIN_BYTES)) {
                         sized.push({ path, bytes });
                     }
                 })
@@ -149,28 +200,32 @@ export class DevCachesAnalyzer extends Analyzer {
         sized.sort((left, right) => right.bytes - left.bytes);
 
         for (const item of sized.slice(0, 20)) {
-            yield {
-                id: `dev-node-modules-${item.path}`,
-                analyzerId: this.id,
-                title: item.path.replace(home, "~"),
-                detail: `node_modules · ${formatBytes(item.bytes)}`,
-                severity: "cautious",
-                reclaimableBytes: item.bytes,
-                actions: [
-                    deleteDirectoryAction(
-                        "delete-node-modules",
-                        "Delete (you can reinstall dependencies later)",
-                        item.path,
-                        item.bytes
-                    ),
-                ],
-                metadata: { path: item.path, bytes: item.bytes },
-            };
+            yield this.nodeModulesFinding(item.path, item.bytes);
         }
     }
 
+    private nodeModulesFinding(path: string, bytes: number): Finding {
+        return {
+            id: `dev-node-modules-${path}`,
+            analyzerId: this.id,
+            title: path.replace(this.home, "~"),
+            detail: `node_modules · ${formatBytes(bytes)}`,
+            severity: "cautious",
+            reclaimableBytes: bytes,
+            actions: [
+                deleteDirectoryAction(
+                    "delete-node-modules",
+                    "Delete (you can reinstall dependencies later)",
+                    path,
+                    bytes
+                ),
+            ],
+            metadata: { path, paths: [path], bytes, allocatedBytes: bytes },
+        };
+    }
+
     private async *scanXcodeDerivedData(): AsyncIterable<Finding> {
-        const path = join(homedir(), "Library", "Developer", "Xcode", "DerivedData");
+        const path = join(this.home, "Library", "Developer", "Xcode", "DerivedData");
 
         if (!existsSync(path)) {
             return;
@@ -189,7 +244,7 @@ export class DevCachesAnalyzer extends Analyzer {
             severity: "cautious",
             reclaimableBytes: bytes,
             actions: [deleteDirectoryAction("clear-derived-data", "Clear DerivedData", path, bytes)],
-            metadata: { path, bytes },
+            metadata: { path, paths: [path], bytes, allocatedBytes: bytes },
         };
     }
 
@@ -202,7 +257,7 @@ export class DevCachesAnalyzer extends Analyzer {
     }
 
     private async *scanGlobalPackageCaches(ctx: AnalyzerContext): AsyncIterable<Finding> {
-        yield* scanGlobalPackageCaches(ctx, this.id);
+        yield* scanGlobalPackageCaches(ctx, this.id, this.home);
     }
 
     private async *scanBrewCache(): AsyncIterable<Finding> {
@@ -234,14 +289,18 @@ export class DevCachesAnalyzer extends Analyzer {
                     id: "brew-cleanup",
                     label: "Run brew cleanup -s",
                     confirm: "none",
+                    kind: "command",
                     execute: async (_ctx, finding) => {
-                        const status = await runInherit("brew", ["cleanup", "-s"]);
+                        const result = await run("brew", ["cleanup", "-s"], { timeoutMs: 120_000 });
 
                         return {
                             findingId: finding.id,
                             actionId: "brew-cleanup",
-                            status: status === 0 ? "ok" : "failed",
-                            actualReclaimedBytes: bytes,
+                            status: result.status === 0 && !result.timedOut ? "ok" : "failed",
+                            ...(result.status !== 0 || result.timedOut
+                                ? { error: result.timedOut ? "brew cleanup timed out" : result.stderr }
+                                : {}),
+                            actualReclaimedBytes: result.status === 0 && !result.timedOut ? bytes : 0,
                         };
                     },
                 },
@@ -308,6 +367,8 @@ function deleteDirectoryAction(id: string, label: string, path: string, bytes: n
         id,
         label,
         confirm: "yesno",
+        kind: "remove-path",
+        method: "delete",
         execute: async (_ctx: ExecutorContext, finding) => {
             try {
                 await rm(path, { recursive: true, force: true });
@@ -332,7 +393,7 @@ function deleteDirectoryAction(id: string, label: string, path: string, bytes: n
     };
 }
 
-function findNodeModulesDirs(root: string, maxDepth: number): string[] {
+export function findNodeModulesDirs(root: string, maxDepth: number): string[] {
     const found: string[] = [];
     walkNodeModules({ dir: root, depth: 0, maxDepth, found });
     return found;
@@ -470,6 +531,7 @@ function deleteSimulatorsAction(id: string, label: string, devices: SimDevice[])
         id,
         label,
         confirm: "yesno",
+        kind: "command",
         execute: async (_ctx, finding) => {
             let failed = 0;
 
@@ -490,8 +552,31 @@ function deleteSimulatorsAction(id: string, label: string, devices: SimDevice[])
     };
 }
 
+/**
+ * The Docker context every call of this run is pinned to: the one `docker context show` names now. A bare `docker`
+ * follows whichever engine is current, which changed under a running cleanup on 2026-07-27, so two bare readings may
+ * describe two engines. Null when docker is missing.
+ */
+export async function currentDockerContext(): Promise<string | null> {
+    const res = await run("docker", ["context", "show"], { timeoutMs: 5_000 });
+    const name = res.stdout.trim();
+    return res.status === 0 && name.length > 0 ? name : null;
+}
+
+/** The id names the pinned context, so an act after the current context changed re-derives nothing instead of pruning
+ *  the other engine. */
+export function dockerFindingId(context: string): string {
+    return `dev-docker-unused-images:${context}`;
+}
+
 async function* scanDocker(): AsyncIterable<Finding> {
-    const res = await run("docker", ["system", "df", "--format", "json"], { timeoutMs: 5_000 });
+    const context = await currentDockerContext();
+
+    if (context === null) {
+        return;
+    }
+
+    const res = await run("docker", ["--context", context, "system", "df", "--format", "json"], { timeoutMs: 5_000 });
 
     if (res.status !== 0) {
         return;
@@ -502,38 +587,48 @@ async function* scanDocker(): AsyncIterable<Finding> {
 
     if (imageSummary && imageSummary.totalCount > imageSummary.active) {
         yield {
-            id: "dev-docker-unused-images",
+            id: dockerFindingId(context),
             analyzerId: "dev-caches",
-            title: `Docker: ${imageSummary.totalCount - imageSummary.active} unused image group(s)`,
-            detail: `Reclaimable: ${imageSummary.reclaimable}`,
+            title: `Docker (${context}): ${imageSummary.totalCount - imageSummary.active} unused image group(s)`,
+            detail: `Reclaimable: ${imageSummary.reclaimable} · the prune removes dangling images only; the VM disk shrinks on the host only after TRIM`,
             severity: "cautious",
             actions: [
                 {
                     id: "prune-images",
-                    label: "Run docker image prune -a",
+                    label: `Run docker --context ${context} image prune -f (dangling images)`,
                     confirm: "yesno",
+                    kind: "command",
                     execute: async (_ctx, finding) => {
-                        const status = await runInherit("docker", ["image", "prune", "-af"]);
+                        const result = await run("docker", ["--context", context, "image", "prune", "-f"], {
+                            timeoutMs: 120_000,
+                        });
 
                         return {
                             findingId: finding.id,
                             actionId: "prune-images",
-                            status: status === 0 ? "ok" : "failed",
+                            status: result.status === 0 && !result.timedOut ? "ok" : "failed",
+                            ...(result.status !== 0 || result.timedOut
+                                ? { error: result.timedOut ? "docker prune timed out" : result.stderr }
+                                : {}),
                         };
                     },
                 },
             ],
-            metadata: { summary: imageSummary },
+            metadata: { summary: imageSummary, context },
         };
     }
 }
 
-async function* scanGlobalPackageCaches(ctx: AnalyzerContext, analyzerId: string): AsyncIterable<Finding> {
+async function* scanGlobalPackageCaches(
+    ctx: AnalyzerContext,
+    analyzerId: string,
+    home: string
+): AsyncIterable<Finding> {
     const cases: Array<{ manager: PackageManager; path: string; minBytes: number }> = [
-        { manager: "bun", path: join(homedir(), ".bun", "install", "cache"), minBytes: 1024 * 1024 * 1024 },
-        { manager: "npm", path: join(homedir(), ".npm"), minBytes: 1024 * 1024 * 1024 },
-        { manager: "pnpm", path: join(homedir(), "Library", "pnpm", "store", "v10"), minBytes: 1024 * 1024 * 1024 },
-        { manager: "yarn", path: join(homedir(), ".yarn", "berry", "cache"), minBytes: 500 * 1024 * 1024 },
+        { manager: "bun", path: join(home, ".bun", "install", "cache"), minBytes: 1024 * 1024 * 1024 },
+        { manager: "npm", path: join(home, ".npm"), minBytes: 1024 * 1024 * 1024 },
+        { manager: "pnpm", path: join(home, "Library", "pnpm", "store", "v10"), minBytes: 1024 * 1024 * 1024 },
+        { manager: "yarn", path: join(home, ".yarn", "berry", "cache"), minBytes: 500 * 1024 * 1024 },
     ];
 
     const candidates = cases.filter((item) => existsSync(item.path));
@@ -569,14 +664,24 @@ async function* scanGlobalPackageCaches(ctx: AnalyzerContext, analyzerId: string
             detail: `${globals.length} global packages will be snapshotted before wipe.`,
             severity: "cautious",
             reclaimableBytes: bytes,
-            actions: [cleanPackageCacheAction({ ctx, manager: item.manager, path: item.path, bytes, globals, cmd })],
-            metadata: { manager: item.manager, path: item.path, bytes, globalsCount: globals.length },
+            actions: [
+                cleanPackageCacheAction({ ctx, home, manager: item.manager, path: item.path, bytes, globals, cmd }),
+            ],
+            metadata: {
+                manager: item.manager,
+                path: item.path,
+                paths: [item.path],
+                bytes,
+                allocatedBytes: bytes,
+                globalsCount: globals.length,
+            },
         };
     }
 }
 
-function cleanPackageCacheAction(args: {
+export function cleanPackageCacheAction(args: {
     ctx: AnalyzerContext;
+    home: string;
     manager: PackageManager;
     path: string;
     bytes: number;
@@ -587,12 +692,34 @@ function cleanPackageCacheAction(args: {
         id: `clean-${args.manager}-cache`,
         label: `Snapshot globals + clean ${args.manager} cache`,
         confirm: "yesno",
+        kind: "command",
         execute: async (ctx2, finding) => {
             await writeSnapshot(ctx2.runId || args.ctx.runId, {
                 manager: args.manager,
                 packages: args.globals,
                 capturedAt: new Date().toISOString(),
             });
+            // Globs retain the declared home paths: resolving a symlinked cache parent as an allow root would trust its target.
+            const home = realpathSync(args.home);
+            const guarded = guardPaths({
+                paths: [args.path],
+                allowRoots: [
+                    join(home, ".bun", "install", "*"),
+                    join(home, ".npm*"),
+                    join(home, "Library", "pnpm", "store", "*"),
+                    join(home, ".yarn", "berry", "*"),
+                ],
+                home,
+                analyzerId: "dev-caches",
+            });
+            if (!guarded.ok) {
+                return {
+                    findingId: finding.id,
+                    actionId: `clean-${args.manager}-cache`,
+                    status: "failed",
+                    error: guarded.error,
+                };
+            }
             await rm(args.path, { recursive: true, force: true });
 
             return {

@@ -1,9 +1,12 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { allocatedOf, isSparseOrCompressed } from "@app/doctor/lib/fs-measure";
+import { vmDataReason } from "@app/doctor/lib/path-guard";
 import { isCommandAvailable, run, runInherit } from "@app/doctor/lib/run";
+import { readScanGate, type ScanGateReader } from "@app/doctor/lib/scan-gate";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type {
     Action,
@@ -16,8 +19,108 @@ import type {
 
 interface SizedPath {
     path: string;
+    /** Allocated bytes (`st_blocks * 512`): what a delete can free. */
     size: number;
+    /** `st_size`. A sparse VM disk reads 926 GiB here while it holds 20 GiB. */
+    apparent: number;
     mtime: Date;
+    /** Set when the file must never be offered for removal (VM disk, sparse or compressed file). */
+    blockedReason: string | null;
+}
+
+export interface DiskSpaceOptions {
+    home?: string;
+    gate?: ScanGateReader;
+    /** Smallest allocated size the large-file rule lists (default 500 MB; tests lower it). */
+    largeFileMinBytes?: number;
+    /** Which candidate files a process holds open (default: one `lsof`; tests inject it). */
+    openFiles?: OpenFilesReader;
+}
+
+const LARGE_FILE_BYTES = 500 * 1024 * 1024;
+
+/** Why a large file must not be removed: a VM or container disk by path or name, or a file whose allocated size is far
+ *  below its apparent size (sparse or compressed, which is how VM disks look). Null when removal is fine. */
+export function largeFileBlockReason(
+    entry: { path: string; size: number; apparent: number },
+    home: string
+): string | null {
+    const byPath = vmDataReason(entry.path, home);
+
+    if (byPath) {
+        return byPath;
+    }
+
+    if (isSparseOrCompressed({ blocks: entry.size / 512, size: entry.apparent })) {
+        return "Allocated size is far below the apparent size (a sparse or compressed file, typically a VM disk): it is not what it looks like";
+    }
+
+    if (insideTresor(entry.path, home)) {
+        return "Inside a Tresorit synced folder: a delete reaches the server and every device. Use the Tresorit ignore filter instead";
+    }
+
+    return null;
+}
+
+/** True when a folder between `path` and the home folder holds `.tresorit` (the root of a synced tresor). */
+export function insideTresor(path: string, home: string): boolean {
+    let dir = dirname(path);
+
+    while (dir.length > home.length && dir.startsWith(home)) {
+        if (existsSync(join(dir, ".tresorit"))) {
+            return true;
+        }
+
+        dir = dirname(dir);
+    }
+
+    return false;
+}
+
+export type CloudSync = "icloud" | "cloudstorage";
+
+/** iCloud Drive and File Provider (Google Drive, Dropbox, OneDrive, Box) folders: a delete there reaches every device. */
+export function cloudSyncOf(path: string, home: string): CloudSync | null {
+    if (path.startsWith(`${home}/Library/Mobile Documents/`)) {
+        return "icloud";
+    }
+
+    if (path.startsWith(`${home}/Library/CloudStorage/`)) {
+        return "cloudstorage";
+    }
+
+    return null;
+}
+
+/** Which of the paths a process holds open; null when that could not be learned (every path then counts as open). */
+export type OpenFilesReader = (paths: string[]) => Promise<Map<string, number[]> | null>;
+
+/** One `lsof` for every candidate: which of these files a process holds open (deleting one frees nothing). */
+async function lsofOpenFiles(paths: string[]): Promise<Map<string, number[]> | null> {
+    const open = new Map<string, number[]>();
+
+    if (paths.length === 0) {
+        return open;
+    }
+
+    const res = await run("lsof", ["-F", "pn", "--", ...paths], { timeoutMs: 15_000 });
+
+    // lsof exits 1 when none of the files is open; a timeout or any other status means the answer is unknown.
+    if (res.timedOut || (res.status !== 0 && res.status !== 1)) {
+        return null;
+    }
+    let pid = 0;
+
+    for (const line of res.stdout.split("\n")) {
+        if (line.startsWith("p")) {
+            pid = Number.parseInt(line.slice(1), 10);
+        } else if (line.startsWith("n") && Number.isFinite(pid)) {
+            const file = line.slice(1);
+            open.set(file, [...(open.get(file) ?? []), pid]);
+        }
+    }
+
+    return open;
 }
 
 export function parseTmutilOutput(raw: string): string[] {
@@ -35,12 +138,16 @@ export async function isBrewAvailable(): Promise<boolean> {
     return isCommandAvailable("brew");
 }
 
+/** A large file is user data, never a cache: both removals need a typed phrase (the TUI and `doctor act` alike). */
 function stageTrashAction(path: string): Action {
     return {
         id: "stage-trash",
         label: "Move to Trash (staged - can be recovered)",
-        confirm: "none",
+        confirm: "typed",
+        confirmPhrase: "yes, trash",
         staged: true,
+        kind: "remove-path",
+        method: "trash",
         execute: async (_ctx: ExecutorContext, finding): Promise<ActionResult> => ({
             findingId: finding.id,
             actionId: "stage-trash",
@@ -57,6 +164,8 @@ function directDeleteAction(path: string): Action {
         label: "Delete directly (skip Trash)",
         confirm: "typed",
         confirmPhrase: "yes, delete",
+        kind: "remove-path",
+        method: "delete",
         execute: async (_ctx, finding): Promise<ActionResult> => {
             try {
                 await rm(path, { recursive: true, force: true });
@@ -116,11 +225,16 @@ function localSnapshotName(snapshot: string): string {
     return snapshot.replace(/^com\.apple\.TimeMachine\./, "").replace(/\.local$/, "");
 }
 
-function statSizedPath(path: string): SizedPath | null {
+function statSizedPath(path: string, home: string): SizedPath | null {
     try {
-        const stat = statSync(path);
+        const stat = lstatSync(path);
 
-        return { path, size: stat.size, mtime: stat.mtime };
+        if (!stat.isFile()) {
+            return null;
+        }
+
+        const entry = { path, size: allocatedOf(stat), apparent: stat.size, mtime: stat.mtime };
+        return { ...entry, blockedReason: largeFileBlockReason(entry, home) };
     } catch {
         return null;
     }
@@ -144,8 +258,58 @@ export class DiskSpaceAnalyzer extends Analyzer {
     readonly category: AnalyzerCategory = "disk";
     readonly cacheTtlMs = 60 * 60 * 1000;
 
+    constructor(private readonly options: DiskSpaceOptions = {}) {
+        super();
+    }
+
+    private get home(): string {
+        return this.options.home ?? homedir();
+    }
+
+    private get largeFileMinBytes(): number {
+        return this.options.largeFileMinBytes ?? LARGE_FILE_BYTES;
+    }
+
+    private get largeFileMinMb(): number {
+        return Math.max(0, Math.floor(this.largeFileMinBytes / (1024 * 1024)) - 1);
+    }
+
+    override allowRoots(): string[] {
+        return [this.home];
+    }
+
+    /**
+     * Re-derive by running the rule that produces each id, never by reading a path out of an id: a `disk-large-<path>`
+     * id is accepted only when the large-file scan (same depth, top 20 and scan gate) lists it now. `disk-find-*` ids
+     * come from the ad-hoc `doctor find` and are never produced here.
+     */
+    override async recheck(ids: string[], ctx: AnalyzerContext): Promise<Finding[]> {
+        const wanted = new Set(ids);
+        const found: Finding[] = [];
+        const generators: Array<[(id: string) => boolean, () => AsyncIterable<Finding>]> = [
+            [(id) => id.startsWith("disk-large-"), () => this.findLargeFiles(ctx, this.home)],
+            [(id) => id === "disk-downloads", () => this.findDownloads(ctx, this.home)],
+            [(id) => id === "disk-trash", () => this.findTrash(this.home)],
+            [(id) => id === "disk-tm-snapshots", () => this.findTimeMachineSnapshots()],
+        ];
+
+        for (const [matches, generate] of generators) {
+            if (!ids.some(matches)) {
+                continue;
+            }
+
+            for await (const finding of generate()) {
+                if (wanted.has(finding.id)) {
+                    found.push(finding);
+                }
+            }
+        }
+
+        return found;
+    }
+
     protected async *run(ctx: AnalyzerContext): AsyncIterable<Finding> {
-        const home = homedir();
+        const home = this.home;
 
         if (!(await isFdAvailable()) && (await isBrewAvailable())) {
             yield {
@@ -193,7 +357,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
         const findings: Finding[] = [];
 
         for (const path of splitPaths(res.stdout)) {
-            const entry = statSizedPath(path);
+            const entry = statSizedPath(path, this.home);
 
             if (!entry) {
                 continue;
@@ -264,6 +428,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
                     id: "empty-trash",
                     label: "Empty Trash permanently",
                     confirm: "yesno",
+                    kind: "command",
                     execute: async (_ctx, finding): Promise<ActionResult> => {
                         const res = await run("osascript", ["-e", 'tell application "Finder" to empty trash']);
 
@@ -299,6 +464,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
                     id: "delete-snapshots",
                     label: "Delete all local snapshots",
                     confirm: "yesno",
+                    kind: "command",
                     execute: async (_ctx, finding): Promise<ActionResult> => {
                         for (const snapshot of snapshots) {
                             await run("tmutil", ["deletelocalsnapshots", localSnapshotName(snapshot)]);
@@ -318,11 +484,31 @@ export class DiskSpaceAnalyzer extends Analyzer {
     }
 
     private async *findLargeFiles(ctx: AnalyzerContext, home: string): AsyncIterable<Finding> {
+        const gate = await (this.options.gate ?? readScanGate)();
+
+        if (gate.gated) {
+            return;
+        }
+
         const useFd = await isFdAvailable();
         const cmd = useFd ? "fd" : "find";
         const args = useFd
-            ? ["-H", "-t", "f", "-S", "+500m", "--max-depth", "6", "--", ".", home]
-            : [home, "-type", "f", "-size", "+500M", "-not", "-path", "*/node_modules/*", "-not", "-path", "*/.git/*"];
+            ? ["-H", "-t", "f", "-S", `+${this.largeFileMinMb}m`, "--max-depth", "6", "--", ".", home]
+            : [
+                  home,
+                  "-maxdepth",
+                  "6",
+                  "-type",
+                  "f",
+                  "-size",
+                  `+${this.largeFileMinMb}M`,
+                  "-not",
+                  "-path",
+                  "*/node_modules/*",
+                  "-not",
+                  "-path",
+                  "*/.git/*",
+              ];
 
         ctx.emit({
             type: "progress",
@@ -339,33 +525,53 @@ export class DiskSpaceAnalyzer extends Analyzer {
         }
 
         const sized = splitPaths(res.stdout)
-            .map((path) => statSizedPath(path))
+            .map((path) => statSizedPath(path, home))
             .filter((entry): entry is SizedPath => entry !== null)
+            .filter((entry) => entry.size >= this.largeFileMinBytes || entry.blockedReason !== null)
             .sort((a, b) => b.size - a.size)
             .slice(0, 20);
+        const open = await (this.options.openFiles ?? lsofOpenFiles)(
+            sized.filter((entry) => entry.blockedReason === null).map((entry) => entry.path)
+        );
 
         for (const entry of sized) {
-            yield this.buildFileFinding({ prefix: "disk-large", entry });
+            const pids = open?.get(entry.path) ?? [];
+            const blockers =
+                open === null && entry.blockedReason === null
+                    ? ["lsof could not tell whether a process holds it open: not offered until a scan can check"]
+                    : pids.length > 0
+                      ? [`open in a process (pid ${pids.slice(0, 3).join(", ")}): a delete would free nothing`]
+                      : [];
+            yield this.buildFileFinding({ prefix: "disk-large", entry, blockers });
         }
     }
 
-    private buildFileFinding(opts: { prefix: string; entry: SizedPath }): Finding {
+    private buildFileFinding(opts: { prefix: string; entry: SizedPath; blockers?: string[] }): Finding {
+        const entry = opts.entry;
+        const blocked = entry.blockedReason !== null;
+        const apparentNote = entry.apparent > entry.size * 2 ? ` (${formatBytes(entry.apparent)} apparent)` : "";
+        const cloud = cloudSyncOf(entry.path, this.home);
+        const cloudNote = cloud ? " · synced: a delete reaches every device" : "";
+
         return {
-            id: `${opts.prefix}-${opts.entry.path}`,
+            id: `${opts.prefix}-${entry.path}`,
             analyzerId: this.id,
-            title: opts.entry.path.replace(homedir(), "~"),
-            detail: `${formatBytes(opts.entry.size)} - modified ${daysSince(opts.entry.mtime)}d ago`,
-            severity: "cautious",
-            reclaimableBytes: opts.entry.size,
-            actions: [
-                stageTrashAction(opts.entry.path),
-                directDeleteAction(opts.entry.path),
-                revealInFinderAction(opts.entry.path),
-            ],
+            title: entry.path.replace(this.home, "~"),
+            detail: `${formatBytes(entry.size)} allocated${apparentNote} - modified ${daysSince(entry.mtime)}d ago${cloudNote}${blocked ? ` · ${entry.blockedReason}` : ""}`,
+            severity: blocked ? "blocked" : "cautious",
+            ...(blocked ? { blacklistReason: entry.blockedReason ?? undefined } : { reclaimableBytes: entry.size }),
+            actions: blocked
+                ? []
+                : [stageTrashAction(entry.path), directDeleteAction(entry.path), revealInFinderAction(entry.path)],
             metadata: {
-                path: opts.entry.path,
-                size: opts.entry.size,
-                mtime: opts.entry.mtime.toISOString(),
+                path: entry.path,
+                paths: [entry.path],
+                size: entry.size,
+                allocatedBytes: entry.size,
+                apparentBytes: entry.apparent,
+                mtime: entry.mtime.toISOString(),
+                ...(cloud ? { cloudSync: cloud } : {}),
+                ...(opts.blockers && opts.blockers.length > 0 ? { blockers: opts.blockers } : {}),
             },
         };
     }
