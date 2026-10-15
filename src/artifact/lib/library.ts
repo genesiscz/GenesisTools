@@ -6,7 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { artifactServePlugin, cachedScan } from "./catalog";
 import { createMountCache } from "./mount-cache";
-import { GALLERY_DIR } from "./paths";
+import { GALLERY_DIR, GALLERY_MOUNT } from "./paths";
 import { type DashboardEntry, loadRegistry } from "./registry";
 import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate } from "./templates";
 import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, fsAllowRoots } from "./vite";
@@ -44,7 +44,7 @@ function ageLabel(iso: string): string {
 
 /** Shipped folders the library always shows, even with an empty registry. A registered folder of the same name wins. */
 export const BUILTIN_ENTRIES: DashboardEntry[] = [
-    { name: "kit-gallery", dir: GALLERY_DIR, createdAt: "2026-10-15T00:00:00.000Z", entry: "index.tsx" },
+    { name: GALLERY_MOUNT, dir: GALLERY_DIR, createdAt: "2026-10-15T00:00:00.000Z", entry: "index.tsx" },
 ];
 
 /** The registered folder named `name`, else the built-in one. */

@@ -13,13 +13,14 @@ import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 import pc from "picocolors";
 import { DETACH_WAIT_MS, detachedLogPath, waitForServedUrl } from "./lib/detach";
-import { openArtifact } from "./lib/open";
+import { openArtifact, openLibrary } from "./lib/open";
 import { RUNTIME_DIR } from "./lib/paths";
 import { addEntry, entryUrlPath, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
 import {
     findRunning,
     holdServer,
     isSignalable,
+    LIBRARY_DIR,
     listRunning,
     removeRunning,
     runningOutsideRegistry,
@@ -273,6 +274,80 @@ program
     });
 
 program
+    .command("gallery")
+    .description(
+        "Open the kit component gallery in the browser, starting the library server when none runs. A name opens that page."
+    )
+    .argument("[component...]", "page or component name, fuzzy and case-insensitive: gantt, time series, datatable")
+    .option("--list", "print the pages grouped by family and exit")
+    .option("--no-open", "start the server when needed and print the URL instead of opening it")
+    .option("--port <port>", `library port (default: a running library, else ${DASHBOARDS["artifact-library"].port})`)
+    .option("--timeout <seconds>", "how long to wait for a starting server", "20")
+    .action(async (words: string[], opts: { list?: boolean; open: boolean; port?: string; timeout: string }) => {
+        const { galleryPath, loadGalleryEntries } = await import("./lib/gallery");
+        const { groupByFamily, matchGalleryEntry } = await import("./gallery/_entries");
+        const query = words.join(" ").trim();
+
+        if (opts.port !== undefined && !/^\d+$/.test(opts.port)) {
+            out.log.error(`--port must be a number (got "${opts.port}").`);
+            process.exitCode = 1;
+
+            return;
+        }
+
+        const entries = opts.list || query ? await loadGalleryEntries() : [];
+
+        if (opts.list) {
+            const width = Math.max(...entries.map((e) => e.id.length));
+
+            for (const group of groupByFamily(entries)) {
+                out.println(pc.bold(group.family));
+
+                for (const e of group.entries) {
+                    out.println(
+                        `  ${pc.cyan(e.id.padEnd(width))}  ${e.title}${e.summary ? pc.dim(`. ${e.summary}`) : ""}`
+                    );
+                }
+            }
+
+            out.println(pc.dim(`\nOpen one: ${toolCommand("artifact gallery")} <name>`));
+
+            return;
+        }
+
+        const match = query ? matchGalleryEntry(entries, query) : undefined;
+
+        if (query && !match) {
+            out.log.error(`No gallery page matches "${query}". See: ${toolCommand("artifact gallery")} --list`);
+            process.exitCode = 1;
+
+            return;
+        }
+
+        try {
+            const result = await openLibrary({
+                path: galleryPath(match?.id),
+                port: opts.port === undefined ? undefined : Number(opts.port),
+                defaultPort: DASHBOARDS["artifact-library"].port,
+                open: opts.open,
+                timeoutMs: Number(opts.timeout) * 1000,
+            });
+
+            if (!opts.open) {
+                out.print(`${result.url}\n`);
+
+                return;
+            }
+
+            const page = match ? ` (${match.title})` : "";
+            out.log.success(`${result.started ? "Started the library and opened" : "Opened"} ${result.url}${page}`);
+        } catch (error) {
+            out.log.error(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
     .command("stop")
     .description("Stop a running artifact server by name, directory, or port")
     .argument("<target>", "name, directory, or port")
@@ -405,7 +480,7 @@ library
 
         await holdServer({
             port: library.port,
-            dir: "(library)",
+            dir: LIBRARY_DIR,
             name: "library",
             close: () => library.close(),
             openUrl: opts.open ? url : undefined,

@@ -9,6 +9,9 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { DashboardEntry } from "./registry";
 import { runningPath } from "./storage";
 
+/** The `dir` the library server records: it serves every registered folder, not one. */
+export const LIBRARY_DIR = "(library)";
+
 export interface RunningServer {
     pid: number;
     port: number;

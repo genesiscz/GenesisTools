@@ -18,6 +18,14 @@ import { logger } from "@genesiscz/utils/logger";
 import * as storage from "@genesiscz/utils/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import {
+    filterGalleryEntries,
+    GALLERY_FAMILIES,
+    type GalleryEntry,
+    groupByFamily,
+    matchGalleryEntry,
+} from "../gallery/_entries";
+import * as kit from "../runtime/kit";
+import {
     buildSingleFile,
     collectEmbeddableFiles,
     collectReferencedFiles,
@@ -42,6 +50,7 @@ import {
     scanArtifacts,
 } from "./catalog";
 import { detachedLogPath, servedUrlFromLog, waitForServedUrl } from "./detach";
+import { galleryPageFiles, galleryPath, loadGalleryEntries } from "./gallery";
 import { renderMarkdown } from "./markdown";
 import {
     defaultPageForTarget,
@@ -52,6 +61,7 @@ import {
     runningArtifactPort,
 } from "./open";
 import { mdPageExtras } from "./page-extras";
+import { GALLERY_DIR } from "./paths";
 import { addEntry, type DashboardEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
 import {
     findRunning,
@@ -1419,5 +1429,76 @@ describe("serve --detach reports the port the child serves on", () => {
                 },
             })
         ).toEqual({ kind: "pending" });
+    });
+});
+
+describe("kit gallery", () => {
+    let entries: GalleryEntry[] = [];
+
+    beforeAll(async () => {
+        entries = await loadGalleryEntries();
+    }, 30_000);
+
+    test("every exported kit component appears on at least one gallery page", () => {
+        // Derived from the kit's exports, so a new component with no gallery page fails here.
+        const components = Object.entries(kit)
+            .filter(([name, value]) => {
+                const isComponent =
+                    typeof value === "function" || (typeof value === "object" && value !== null && "$$typeof" in value);
+
+                return /^[A-Z]/.test(name) && isComponent;
+            })
+            .map(([name]) => name);
+        const sources = galleryPageFiles().map((file) => readFileSync(join(GALLERY_DIR, file), "utf8"));
+        const missing = components.filter((name) => !sources.some((src) => new RegExp(`\\b${name}\\b`).test(src)));
+
+        expect(components.length).toBeGreaterThan(40);
+        expect(missing).toEqual([]);
+    });
+
+    test("every page names a known family and only real kit components", () => {
+        const known = new Set<string>(GALLERY_FAMILIES);
+        const exported = new Set(Object.keys(kit));
+
+        for (const entry of entries) {
+            expect({ id: entry.id, family: known.has(entry.family) }).toEqual({ id: entry.id, family: true });
+            expect(entry.components.filter((name) => !exported.has(name))).toEqual([]);
+        }
+    });
+
+    test("the nav groups pages by family in the declared order", () => {
+        const order = groupByFamily(entries).map((g) => g.family);
+
+        expect(order).toEqual(GALLERY_FAMILIES.filter((family) => order.includes(family)));
+        expect(new Set(order).size).toBe(order.length);
+    });
+
+    test("a page name matches fuzzily and case-insensitively", () => {
+        const id = (query: string): string | undefined => matchGalleryEntry(entries, query)?.id;
+
+        expect(id("gantt")).toBe("gantt");
+        expect(id("Gantt")).toBe("gantt");
+        expect(id("time series")).toBe("time-series");
+        expect(id("TimeSeries")).toBe("time-series");
+        expect(id("datatable")).toBe("data");
+        expect(id("mermaid")).toBe("diagrams");
+        expect(id("editable table")).toBe("editable-table");
+        expect(id("sortable")).toBe("sortable-list");
+        expect(id("router")).toBe("router");
+        expect(id("no such widget here")).toBeUndefined();
+        expect(id("")).toBeUndefined();
+    });
+
+    test("the nav search keeps every match and an empty query keeps all", () => {
+        const ids = filterGalleryEntries(entries, "table").map((e) => e.id);
+
+        expect(filterGalleryEntries(entries, "")).toHaveLength(entries.length);
+        expect(ids).toContain("editable-table");
+        expect(ids).toContain("data");
+    });
+
+    test("galleryPath points at the index, with the page in the query", () => {
+        expect(galleryPath()).toBe("a/kit-gallery/index");
+        expect(galleryPath("time-series")).toBe("a/kit-gallery/index?page=time-series");
     });
 });

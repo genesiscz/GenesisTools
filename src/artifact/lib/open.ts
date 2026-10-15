@@ -6,7 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { entryUrlPath, resolveTarget } from "./registry";
-import { findRunning } from "./running";
+import { findRunning, LIBRARY_DIR, listRunning } from "./running";
 
 const ARTIFACT_ENTRY = join(import.meta.dir, "..", "index.ts");
 
@@ -203,4 +203,57 @@ function defaultDeps(): OpenArtifactDeps {
 /** One lock per served folder, so a name and a path to the same folder share it. */
 function startLockPath(target: string): string {
     return join(tmpdir(), `artifact-open-${Bun.hash(resolveTarget(target).dir).toString(36)}.lock`);
+}
+
+/** The port of a running library server; with `port`, only a library on that port counts. */
+export function runningLibraryPort(port?: number): number | undefined {
+    return listRunning().find((s) => s.dir === LIBRARY_DIR && (port === undefined || s.port === port))?.port;
+}
+
+/** Argv for the detached `library up` that `openLibrary` starts when none runs. */
+export function libraryServeArgv(port: number): string[] {
+    return [ARTIFACT_ENTRY, "library", "up", "--no-open", "--port", String(port)];
+}
+
+export interface OpenLibraryOptions {
+    /** Path under the library root, e.g. `a/kit-gallery/index?page=gantt`. */
+    path?: string;
+    /** Use the library on this port, or start one there. Default: any running library, else `defaultPort`. */
+    port?: number;
+    defaultPort: number;
+    /** False starts the server when needed and returns the URL without opening a browser. */
+    open?: boolean;
+    timeoutMs?: number;
+}
+
+/**
+ * Open a page of the artifact library, starting `library up` first when none runs. The same lock, wait and
+ * open steps as `openArtifact`; only how the server is found and started differs.
+ */
+export function openLibrary(options: OpenLibraryOptions): Promise<OpenArtifactResult> {
+    const target = "library";
+    const startPort = options.port ?? options.defaultPort;
+    const base = defaultDeps();
+    const deps: OpenArtifactDeps = {
+        ...base,
+        defaultPage: () => undefined,
+        findPort: () => runningLibraryPort(options.port),
+        startServer: () => {
+            const log = serveLog(target);
+            // Detached (setsid), like `open`: the command that started it exits right after the page opens.
+            const child = Bun.spawn([process.execPath, ...libraryServeArgv(startPort)], {
+                stdin: "ignore",
+                stdout: Bun.file(log),
+                stderr: Bun.file(log),
+                detached: true,
+                env: env.getProcessEnv(),
+            });
+            child.unref();
+            logger.info({ pid: child.pid, port: startPort, log }, "artifact library started for open");
+        },
+        open: options.open === false ? async () => {} : base.open,
+        singleFlight: ({ waitMs, run }) => withFileLock(join(tmpdir(), "artifact-open-library.lock"), run, waitMs),
+    };
+
+    return openArtifact({ target, path: options.path, timeoutMs: options.timeoutMs, deps });
 }
