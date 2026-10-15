@@ -682,7 +682,24 @@ extension View {
     }
 }
 
+/// Only a row with a pulse carries the light, its state and its task. Every row scrolled into view started a task
+/// and drew two empty shapes before: 300 scroll steps took 612 and 790 main-thread passes, 351 and 347 without
+/// (2026-10-15, MarkdownTreeLagBenchTests with MARKDOWN_TREE_BENCH_SCROLLS=300).
 private struct FileTreePulseModifier: ViewModifier {
+    let pulse: FileTreePulse?
+    let color: Color
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        if pulse != nil {
+            content.modifier(FileTreePulseLight(pulse: pulse, color: color, cornerRadius: cornerRadius))
+        } else {
+            content
+        }
+    }
+}
+
+private struct FileTreePulseLight: ViewModifier {
     let pulse: FileTreePulse?
     let color: Color
     let cornerRadius: CGFloat

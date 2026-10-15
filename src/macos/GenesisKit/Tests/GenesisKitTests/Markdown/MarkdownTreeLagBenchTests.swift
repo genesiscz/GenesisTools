@@ -87,8 +87,10 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         start = RenderProbe.snapshot()
         let scrollMeter = MainBusy.Meter()
         scrollMeter.start()
-        for step in 1...40 {
-            let y = CGFloat(step) * 30
+        // MARKDOWN_TREE_BENCH_SCROLLS: steps of 30 pt (40), back to the top after every 60.
+        let scrolls = Int(env["MARKDOWN_TREE_BENCH_SCROLLS"] ?? "") ?? 40
+        for step in 1...scrolls {
+            let y = CGFloat(step % 60) * 30
             guard let tree else { break }
             tree.contentView.scroll(to: NSPoint(x: 0, y: y))
             tree.reflectScrolledClipView(tree.contentView)
@@ -157,7 +159,7 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         tree bench: \(notes.count) tabs, tree document height \(rows) pt
           \(sections) active-section changes: busy \(Int(section.busyMs)) ms, longest \(Int(section.longestMs)) ms, \(section.passes) passes
             bodies: \(sectionBodies)
-          40 tree scroll steps: busy \(Int(scrolling.busyMs)) ms, longest \(Int(scrolling.longestMs)) ms, \(scrolling.passes) passes
+          \(scrolls) tree scroll steps: busy \(Int(scrolling.busyMs)) ms, longest \(Int(scrolling.longestMs)) ms, \(scrolling.passes) passes
             bodies: \(scrollBodies)
           \(selections) tab selections: busy \(Int(selecting.busyMs)) ms, longest \(Int(selecting.longestMs)) ms, \(selecting.passes) passes
             bodies: \(selectBodies)
