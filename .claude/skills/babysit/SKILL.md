@@ -175,7 +175,8 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
 1. The lead's bus: `tools agents login --agent-main --agent-name lead --format monitor --hide-worker-steps
    --session <s>`. Worker mail, Codex turn and approval events.
 2. The workers: `bun .claude/skills/babysit/scripts/watch-workers.ts grok:<name> codex:<name> …`. One line per turn
-   start and end, tool call, question and stall (3 minutes silent while running).
+   start and end, shell command, question and stall (3 minutes silent while running); file reads and greps are only
+   counted at the turn end (`--tools all` prints them too).
 3. Codex approvals: `bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <name>`. The daemon
    itself accepts read-only commands (since 886b44308); this driver approves the brief's file edits, `git add` of
    scope files, the one commit with the brief's subject, and the brief's verify commands, including their one
