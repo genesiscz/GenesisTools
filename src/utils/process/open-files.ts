@@ -12,8 +12,8 @@ export interface OpenFileHandle {
 
 /**
  * `"unknown"` is not "nothing is open". It means the question could not be answered — no `lsof`
- * on the box, or `lsof` complained (never on Linux, where `/proc` answers). A caller deciding whether it is safe to
- * move a file must treat it exactly like a positive hit, never like a clear result.
+ * on the box, `lsof` complained, or on Linux `/proc` is not readable here (see {@link openFilesFromProc}). A caller
+ * deciding whether it is safe to move a file must treat it exactly like a positive hit, never like a clear result.
  */
 export type OpenFilesResult = OpenFileHandle[] | "unknown";
 
@@ -118,9 +118,12 @@ function fileId(path: string): string | null {
 /**
  * Linux with no `lsof` spawned: every readable process's held files ({@link procHeldFiles}). A file asked for matches by
  * device and inode, as `lsof` matches it, so a hard link or a renamed path is still found; a directory tree matches by
- * path, as `lsof +D` walks it. Like `lsof` run as this user, another user's process is not readable and is left out.
+ * path, as `lsof +D` walks it. Like `lsof` run as this user, a process whose descriptors are not readable is left out:
+ * another user's, one that has gone, and one of this user's that is not dumpable (`ssh-agent`, `gpg-agent`).
+ * A `/proc` that cannot answer at all is `"unknown"`, and this process is the proof it is always there: missing from
+ * the listing, or its own descriptors unreadable (a restricted `/proc`, a sandbox).
  */
-function openFilesFromProc(files: string[], directories: string[]): OpenFileHandle[] {
+function openFilesFromProc(files: string[], directories: string[]): OpenFilesResult {
     const wanted = new Map<string, string>();
 
     for (const path of files) {
@@ -134,10 +137,27 @@ function openFilesFromProc(files: string[], directories: string[]): OpenFileHand
     const trees = directories.map(realPath);
     const handles: OpenFileHandle[] = [];
 
-    for (const pid of listProcPids()) {
-        const seen = new Set<string>();
+    const pids = listProcPids();
 
-        for (const file of procHeldFiles(pid) ?? []) {
+    if (!pids.includes(process.pid)) {
+        logger.debug("/proc does not list this process; open-file inspection is unknown");
+        return "unknown";
+    }
+
+    for (const pid of pids) {
+        const seen = new Set<string>();
+        const held = procHeldFiles(pid);
+
+        if (held === null) {
+            if (pid === process.pid) {
+                logger.debug("this process's descriptors cannot be read; open-file inspection is unknown");
+                return "unknown";
+            }
+
+            continue;
+        }
+
+        for (const file of held) {
             // A deleted file is no longer in the tree `lsof +D` walks.
             const match =
                 (file.id !== null && wanted.has(file.id)) ||
