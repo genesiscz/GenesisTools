@@ -1,5 +1,7 @@
+import type { CSSProperties } from "react";
 import { TONE_COLOR } from "./charts";
 import { TONE_DOT, TONE_TEXT, type Tone } from "./primitives";
+import { useTooltip } from "./tooltip";
 
 /**
  * Small dependency-free visuals that sit INSIDE other components: a sparkline
@@ -208,8 +210,9 @@ export function heatShare(value: number, min: number, max: number): number {
     return Math.max(0, Math.min(1, (value - min) / (max - min)));
 }
 
-function cellBackground(color: string, share: number): string {
-    return `color-mix(in srgb, ${color} ${Math.round(8 + share * 92)}%, var(--panel))`;
+/** Cell fill for a 0..1 share: `color` mixed into the panel from 8% up to `maxPercent` (default 100). */
+export function heatCellBackground(color: string, share: number, maxPercent = 100): string {
+    return `color-mix(in srgb, ${color} ${Math.round(8 + share * (maxPercent - 8))}%, var(--panel))`;
 }
 
 /** Grid heatmap: rows x columns of numbers shaded on one tone (hour x weekday, service x day, …). */
@@ -272,7 +275,7 @@ export function Heatmap({
                                             title={`${row} / ${col}: ${fmt(value)}`}
                                             className="h-7 min-w-8 rounded px-1 text-center"
                                             style={{
-                                                background: cellBackground(color, share),
+                                                background: heatCellBackground(color, share),
                                                 color: share > 0.55 ? "var(--bg)" : "var(--text)",
                                             }}
                                         >
@@ -292,12 +295,240 @@ export function Heatmap({
                         aria-hidden="true"
                         className="h-2 w-24 rounded"
                         style={{
-                            background: `linear-gradient(to right, ${cellBackground(color, 0)}, ${cellBackground(color, 1)})`,
+                            background: `linear-gradient(to right, ${heatCellBackground(color, 0)}, ${heatCellBackground(color, 1)})`,
                         }}
                     />
                     <span>{fmt(hi)}</span>
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+// ─── CapacityGrid ───
+
+export interface CapacityRow {
+    label: string;
+    /** Any CSS color, drawn as a swatch before the label. */
+    color?: string;
+    /** Load per column. null means no data. */
+    load: Array<number | null>;
+    /** One number for every column, or one per column (holidays, part-time). */
+    capacity: number | Array<number | null>;
+}
+
+export type CapacityStatus = "idle" | "ok" | "full" | "over";
+
+export interface CapacityGridProps {
+    cols: Array<string | { label: string; title?: string }>;
+    rows: CapacityRow[];
+    /** Unit shown in the tooltip and the hidden text, for example "h". */
+    unit?: string;
+    /** Cell text. Default: one decimal, "·" for zero. */
+    format?: (load: number, capacity: number) => string;
+    /** Load share at or above which a cell counts as full. Default 1. */
+    fullAt?: number;
+    /** Shade cells by load share. Default true. */
+    heat?: boolean;
+    /** Add a total column and a total row. */
+    totals?: boolean;
+    title?: string;
+}
+
+/** Idle at zero load, over above the capacity, full at `fullAt` of it or more, ok otherwise. */
+export function capacityStatus(load: number, capacity: number, fullAt = 1): CapacityStatus {
+    if (load <= 0) {
+        return "idle";
+    }
+
+    if (capacity <= 0 || load > capacity) {
+        return "over";
+    }
+
+    return load / capacity >= fullAt ? "full" : "ok";
+}
+
+function capacityAt(row: CapacityRow, col: number): number | null {
+    return Array.isArray(row.capacity) ? (row.capacity[col] ?? null) : row.capacity;
+}
+
+function defaultCapacityFormat(load: number): string {
+    return load === 0 ? "·" : load.toFixed(1);
+}
+
+function trimNumber(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+interface CapacityCellProps {
+    row: CapacityRow;
+    colLabel: string;
+    load: number | null;
+    capacity: number | null;
+    unit: string;
+    format: (load: number, capacity: number) => string;
+    fullAt: number;
+    heat: boolean;
+}
+
+function CapacityCell({ row, colLabel, load, capacity, unit, format, fullAt, heat }: CapacityCellProps) {
+    const suffix = unit ? ` ${unit}` : "";
+    const tip = useTooltip(() => {
+        if (load === null) {
+            return `${row.label}, ${colLabel}: no data`;
+        }
+
+        const pct = capacity ? ` (${Math.round((load / capacity) * 100)}%)` : "";
+
+        return `${row.label}: ${load.toFixed(1)}${suffix} of ${capacity === null ? "?" : trimNumber(capacity)}${suffix}${pct}`;
+    });
+    const base = "rounded px-1.5 py-[3px] text-center tabular-nums";
+
+    if (load === null) {
+        return <td className={base} aria-label={`${colLabel}: no data`} {...tip} />;
+    }
+
+    const status: CapacityStatus =
+        capacity === null ? (load > 0 ? "ok" : "idle") : capacityStatus(load, capacity, fullAt);
+    const share = capacity ? Math.min(load / capacity, 1) : 0;
+    const style: CSSProperties =
+        status === "idle"
+            ? { background: "var(--wash)" }
+            : heat
+              ? { background: heatCellBackground("var(--info)", share, 68) }
+              : {};
+
+    if (status === "over") {
+        style.outline = "1.5px solid var(--err)";
+        style.outlineOffset = "-1.5px";
+    }
+
+    return (
+        <td
+            data-status={status}
+            className={`${base} ${status === "over" ? "font-bold text-err" : status === "full" ? "font-bold text-ink" : status === "idle" ? "text-dim" : "text-ink"}`}
+            style={style}
+            {...tip}
+        >
+            {format(load, capacity ?? 0)}
+            {status === "over" && capacity !== null ? (
+                <span className="sr-only">{` over capacity by ${trimNumber(load - capacity)}${suffix}`}</span>
+            ) : null}
+        </td>
+    );
+}
+
+/**
+ * Load against capacity per row (a person, a role) and column (a sprint).
+ * Over-capacity cells get an inset outline, bold err text and a hidden
+ * sentence, so colour is never the only cue and the grid never shifts.
+ */
+export function CapacityGrid({
+    cols,
+    rows,
+    unit = "",
+    format = defaultCapacityFormat,
+    fullAt = 1,
+    heat = true,
+    totals = false,
+    title,
+}: CapacityGridProps) {
+    const columns = cols.map((col) => (typeof col === "string" ? { label: col } : col));
+    const sum = (values: Array<number | null>): number =>
+        values.reduce<number>((acc, v) => acc + (typeof v === "number" ? v : 0), 0);
+    const colTotals = columns.map((_, c) => sum(rows.map((row) => row.load[c] ?? null)));
+    const totalCell = "px-1.5 py-[3px] text-center font-mono tabular-nums text-dim";
+
+    return (
+        <div className="my-3">
+            {title ? <div className="mb-1 text-xs text-dim">{title}</div> : null}
+            <div className="overflow-x-auto">
+                <table
+                    className="w-full table-fixed border-separate border-spacing-0.5 text-xs"
+                    style={{ minWidth: 130 + (columns.length + (totals ? 1 : 0)) * 36 }}
+                >
+                    <colgroup>
+                        <col style={{ width: 130 }} />
+                        {columns.map((col, c) => (
+                            <col key={`${c}-${col.label}`} />
+                        ))}
+                        {totals ? <col /> : null}
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th scope="col" className="sr-only">
+                                Row
+                            </th>
+                            {columns.map((col, c) => (
+                                <th
+                                    key={`${c}-${col.label}`}
+                                    scope="col"
+                                    title={col.title}
+                                    className="pb-1 text-center text-[11px] font-normal text-dim tabular-nums"
+                                >
+                                    {col.label}
+                                </th>
+                            ))}
+                            {totals ? (
+                                <th scope="col" className="pb-1 text-center text-[11px] font-normal text-dim">
+                                    Total
+                                </th>
+                            ) : null}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row, r) => (
+                            <tr key={`${r}-${row.label}`}>
+                                <th scope="row" className="truncate pr-2 text-left font-semibold text-ink">
+                                    <span className="inline-flex max-w-full items-center gap-1.5">
+                                        {row.color ? (
+                                            <span
+                                                aria-hidden="true"
+                                                className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                                                style={{ background: row.color }}
+                                            />
+                                        ) : null}
+                                        <span className="truncate">{row.label}</span>
+                                    </span>
+                                </th>
+                                {columns.map((col, c) => (
+                                    <CapacityCell
+                                        key={`${c}-${col.label}`}
+                                        row={row}
+                                        colLabel={col.label}
+                                        load={row.load[c] ?? null}
+                                        capacity={capacityAt(row, c)}
+                                        unit={unit}
+                                        format={format}
+                                        fullAt={fullAt}
+                                        heat={heat}
+                                    />
+                                ))}
+                                {totals ? (
+                                    <td data-total="row" className={totalCell}>
+                                        {trimNumber(sum(row.load))}
+                                    </td>
+                                ) : null}
+                            </tr>
+                        ))}
+                        {totals ? (
+                            <tr>
+                                <th scope="row" className="pr-2 text-left font-semibold text-dim">
+                                    Total
+                                </th>
+                                {colTotals.map((total, c) => (
+                                    <td key={`total-${c}`} data-total="col" className={totalCell}>
+                                        {trimNumber(total)}
+                                    </td>
+                                ))}
+                                <td data-total="all" className={`${totalCell} font-semibold text-ink`}>
+                                    {trimNumber(sum(colTotals))}
+                                </td>
+                            </tr>
+                        ) : null}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }

@@ -264,3 +264,11 @@ export {
     type TooltipTargetProps,
     useTooltip,
 } from "./tooltip";
+export {
+    CapacityGrid,
+    type CapacityGridProps,
+    type CapacityRow,
+    type CapacityStatus,
+    capacityStatus,
+    heatCellBackground,
+} from "./viz";

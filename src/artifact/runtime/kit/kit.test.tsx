@@ -14,7 +14,7 @@ import { matchRoute } from "./router";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
-import { Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
+import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
 
 const mermaidRendered: string[] = [];
 let mermaidFailNext = false;
@@ -906,5 +906,92 @@ describe("FilterChips", () => {
                 3
             );
         }
+    });
+});
+
+describe("CapacityGrid", () => {
+    const cols = ["S1", "S2", "S3"];
+
+    test("capacityStatus: idle, ok, full, over", () => {
+        expect(capacityStatus(0, 10)).toBe("idle");
+        expect(capacityStatus(5, 10)).toBe("ok");
+        expect(capacityStatus(10, 10)).toBe("full");
+        expect(capacityStatus(12, 10)).toBe("over");
+        expect(capacityStatus(9, 10, 0.9)).toBe("full");
+    });
+
+    test("an over cell has data-status over and the hidden sentence; null renders empty", async () => {
+        const dom = await mountDom(
+            <CapacityGrid cols={cols} unit="h" rows={[{ label: "Backend", load: [12, null, 0], capacity: 10 }]} />
+        );
+        const cells = [...dom.container.querySelectorAll("tbody td")];
+
+        expect(cells[0].getAttribute("data-status")).toBe("over");
+        expect(cells[0].querySelector(".sr-only")?.textContent).toBe(" over capacity by 2 h");
+        expect((cells[0] as HTMLElement).style.outlineOffset).toBe("-1.5px");
+        expect(cells[1].textContent).toBe("");
+        expect(cells[1].hasAttribute("data-status")).toBe(false);
+        expect(cells[2].getAttribute("data-status")).toBe("idle");
+        expect(cells[2].textContent).toBe("·");
+        expect(dom.container.querySelectorAll('th[scope="col"]').length).toBe(4);
+        await dom.unmount();
+    });
+
+    test("a per-column capacity changes only that column's status", async () => {
+        const status = async (capacity: number | number[]): Promise<Array<string | null>> => {
+            const dom = await mountDom(
+                <CapacityGrid cols={cols} rows={[{ label: "Design", load: [8, 8, 8], capacity }]} />
+            );
+            const result = [...dom.container.querySelectorAll("tbody td")].map((td) => td.getAttribute("data-status"));
+            await dom.unmount();
+
+            return result;
+        };
+
+        expect(await status(10)).toEqual(["ok", "ok", "ok"]);
+        expect(await status([10, 6, 10])).toEqual(["ok", "over", "ok"]);
+    });
+
+    test("totals sum rows, columns and the grand total, ignoring nulls", async () => {
+        const dom = await mountDom(
+            <CapacityGrid
+                cols={cols}
+                totals
+                rows={[
+                    { label: "A", load: [1, 2, null], capacity: 10 },
+                    { label: "B", load: [3, 4.5, 5], capacity: 10 },
+                ]}
+            />
+        );
+        const texts = (sel: string): string[] =>
+            [...dom.container.querySelectorAll(sel)].map((n) => n.textContent ?? "");
+
+        expect(texts('[data-total="row"]')).toEqual(["3", "12.5"]);
+        expect(texts('[data-total="col"]')).toEqual(["4", "6.5", "5"]);
+        expect(texts('[data-total="all"]')).toEqual(["15.5"]);
+        await dom.unmount();
+    });
+
+    test("turning a cell over changes no layout input: same classes for size, an inset outline only", async () => {
+        const render = async (load: number): Promise<HTMLElement | null> => {
+            const dom = await mountDom(
+                <CapacityGrid cols={["S1"]} rows={[{ label: "A", load: [load], capacity: 10 }]} />
+            );
+            const td = dom.container.querySelector<HTMLElement>("tbody td");
+            await dom.unmount();
+
+            return td;
+        };
+        const ok = await render(9);
+        const over = await render(11);
+        const sizing = (td: HTMLElement | null): string =>
+            (td?.className ?? "")
+                .split(" ")
+                .filter((c) => /^(p[xy]?|m|w|h|text-\[|rounded)/.test(c))
+                .join(" ");
+
+        expect(sizing(over)).toBe(sizing(ok));
+        expect(over?.style.outline).toContain("1.5px");
+        expect(over?.style.outlineOffset).toBe("-1.5px");
     });
 });
