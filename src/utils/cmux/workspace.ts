@@ -185,9 +185,18 @@ export async function pickAnchorSurface(workspaceId: string): Promise<{ paneId: 
     return anchorFromLayout(workspaceId, await paneList(workspaceId));
 }
 
-/** Create a right-hand terminal split from the target workspace's anchor and return the created UUIDs. */
-export async function openSplitInWorkspace(workspaceId: string): Promise<OpenSplitResult> {
-    return withFocusedWorkspace(workspaceId, async () => {
+/**
+ * Create a right-hand terminal split from the target workspace's anchor and return the created UUIDs.
+ *
+ * `background: true` skips the select-and-switch-back around the call: cmux 0.65 creates splits and tabs without
+ * focus by default and accepts input in a workspace that was never shown (probed 2026-10-15), so the switch only
+ * flickers the user's view. The default keeps the old guard for callers that never asked.
+ */
+export async function openSplitInWorkspace(
+    workspaceId: string,
+    options: { background?: boolean } = {}
+): Promise<OpenSplitResult> {
+    const split = async () => {
         const { surfaceId } = await pickAnchorSurface(workspaceId);
         const split = await runCmuxJSON<SurfaceSplitResult>([
             "new-split",
@@ -203,12 +212,21 @@ export async function openSplitInWorkspace(workspaceId: string): Promise<OpenSpl
             paneId: split.pane_id,
             surfaceId: split.surface_id,
         };
-    });
+    };
+
+    return options.background ? split() : withFocusedWorkspace(workspaceId, split);
 }
 
-/** Create a terminal tab inside an explicitly identified workspace and pane, returning its surface UUID. */
-export async function openSurfaceInPane(workspaceId: string, paneId: string): Promise<{ surfaceId: string }> {
-    return withFocusedWorkspace(workspaceId, async () => {
+/**
+ * Create a terminal tab inside an explicitly identified workspace and pane, returning its surface UUID.
+ * `background: true` skips the select-and-switch-back, as for {@link openSplitInWorkspace}.
+ */
+export async function openSurfaceInPane(
+    workspaceId: string,
+    paneId: string,
+    options: { background?: boolean } = {}
+): Promise<{ surfaceId: string }> {
+    const create = async () => {
         const created = await runCmuxJSON<Pick<SurfaceSplitResult, "surface_id">>([
             "new-surface",
             "--workspace",
@@ -220,7 +238,9 @@ export async function openSurfaceInPane(workspaceId: string, paneId: string): Pr
         ]);
 
         return { surfaceId: created.surface_id };
-    });
+    };
+
+    return options.background ? create() : withFocusedWorkspace(workspaceId, create);
 }
 
 async function sendShellCommand(workspaceId: string, surfaceId: string, command: string): Promise<void> {

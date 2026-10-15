@@ -261,6 +261,8 @@ export interface WorkspaceCreateResult {
     workspace_id: string;
     window_ref: string;
     window_id: string;
+    /** The new workspace's first terminal. cmux 0.65 answers with it; older versions may not. */
+    surface_id?: string;
 }
 
 export async function workspaceCreate(

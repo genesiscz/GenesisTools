@@ -41,6 +41,12 @@ export interface OpenCommandOptions {
     cwd?: string;
     /** Press Enter after typing. Default true. */
     enter?: boolean;
+    /**
+     * Open and type without touching the user's view: no workspace select, no window focus, no app raise.
+     * For probes, workers and anything the user did not ask to look at. Default false: `tools claude cmux
+     * open-session` and `tools cmux launch --open` exist to show the new session.
+     */
+    silent?: boolean;
 }
 
 /** Workspace and surface UUIDs of the terminal a command was opened in. */
@@ -51,8 +57,8 @@ export interface OpenedPlace {
 
 /**
  * Opens a terminal at `target` (a new workspace, split or tab, or an existing surface), names its
- * tab, types `command` and raises the window. Resuming a session and `tools cmux launch --open`
- * both go through here.
+ * tab, types `command` and raises the window, or with `silent` leaves the user's view alone. Resuming a
+ * session and `tools cmux launch --open` both go through here.
  */
 export async function openCommandAt(options: OpenCommandOptions): Promise<OpenedPlace> {
     const prof = profiler.scope("claude-cmux-open");
@@ -65,15 +71,21 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
                     cwd: options.cwd,
                     window: target.windowId,
                 });
-                const anchor = await showThenPickAnchor(created.workspace_id);
-                return { workspaceId: created.workspace_id, surfaceId: anchor.surfaceId };
+                // Silent: cmux 0.65 names the new terminal in its answer and lists a never-shown workspace's own
+                // panes, so nothing has to be selected first (probed 2026-10-15).
+                const surfaceId = options.silent
+                    ? (created.surface_id ?? (await pickAnchorSurface(created.workspace_id)).surfaceId)
+                    : (await showThenPickAnchor(created.workspace_id)).surfaceId;
+                return { workspaceId: created.workspace_id, surfaceId };
             }
             case "workspace": {
-                const split = await openSplitInWorkspace(target.workspaceId);
+                const split = await openSplitInWorkspace(target.workspaceId, { background: options.silent });
                 return { workspaceId: split.workspaceId, surfaceId: split.surfaceId };
             }
             case "pane": {
-                const created = await openSurfaceInPane(target.workspaceId, target.paneId);
+                const created = await openSurfaceInPane(target.workspaceId, target.paneId, {
+                    background: options.silent,
+                });
                 return { workspaceId: target.workspaceId, surfaceId: created.surfaceId };
             }
             case "surface":
@@ -93,6 +105,12 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
     }
 
     const payload = `${options.command}${(options.enter ?? true) ? "\n" : ""}`;
+
+    if (options.silent) {
+        await prof.measureAsync("send", () => livePlacementIO().send(placed.workspaceId, placed.surfaceId, payload));
+        return placed;
+    }
+
     await prof.measureAsync("raise-then-send", () =>
         raiseThenSend(
             {

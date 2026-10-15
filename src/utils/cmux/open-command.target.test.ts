@@ -29,7 +29,15 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     },
     runCmuxJSON: async (args: string[]) => {
         argv.push(args);
-        return { caller: { window_id: WINDOW, window_ref: "window:1" } };
+
+        if (args.includes("new-surface")) {
+            return { surface_id: SURFACE_UUID };
+        }
+
+        return {
+            caller: { window_id: WINDOW, window_ref: "window:1" },
+            focused: { workspace_id: "99999999-9999-4999-8999-999999999999" },
+        };
     },
     runCmux: async (args: string[]) => {
         argv.push(args);
@@ -37,7 +45,7 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     },
 }));
 
-const { livePlacementIO } = await import("./open-command");
+const { livePlacementIO, openCommandAt } = await import("./open-command");
 
 /** The argv of the one `send` invocation. */
 function sendArgs(): string[] {
@@ -90,6 +98,36 @@ describe("livePlacementIO().send target flags", () => {
         await livePlacementIO().selectWorkspace(WORKSPACE);
 
         expect(argv).toEqual([["select-workspace", "--workspace", WORKSPACE]]);
+    });
+});
+
+// Session 0eafc38e's probes went through openCommandAt and switched Martin's view three times (2026-10-15).
+describe("openCommandAt silent", () => {
+    const PANE = "33333333-3333-4333-8333-333333333303";
+    const changesView = (args: string[]) => ["select-workspace", "focus-window"].includes(args[0] ?? "");
+
+    test("a silent tab is created, named and typed into without selecting, focusing or raising anything", async () => {
+        const placed = await openCommandAt({
+            command: "echo probe",
+            target: { kind: "pane", workspaceId: WORKSPACE, paneId: PANE },
+            title: "probe",
+            silent: true,
+        });
+
+        expect(placed).toEqual({ workspaceId: WORKSPACE, surfaceId: SURFACE_UUID });
+        expect(argv.filter(changesView)).toEqual([]);
+        expect(sendArgs()).toContain("echo probe\n");
+    });
+
+    test("NEGATIVE CONTROL: without silent the same open selects the workspace and focuses the window", async () => {
+        await openCommandAt({
+            command: "echo probe",
+            target: { kind: "pane", workspaceId: WORKSPACE, paneId: PANE },
+            title: "probe",
+        });
+
+        expect(argv.filter(changesView).map((args) => args[0])).toContain("select-workspace");
+        expect(argv.filter(changesView).map((args) => args[0])).toContain("focus-window");
     });
 });
 
