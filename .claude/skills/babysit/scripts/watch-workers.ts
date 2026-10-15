@@ -48,6 +48,8 @@ const workers = args
             running: false,
             stallSaid: false,
             hiddenTools: 0,
+            seen: new Set<string>(),
+            seenTurn: -1,
         };
     });
 type Worker = (typeof workers)[number];
@@ -68,6 +70,20 @@ function currentTask(name: string): string {
 
 const say = (w: Worker, text: string) =>
     console.log(`[${w.label}${currentTask(w.name)}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
+
+/**
+ * A turn's line once. While a new Grok turn has no log yet, `tools grok tail` reads the finished turn before it
+ * (`latestTurn`), ends at once, and the next poll read it again: round 2 of #520 replayed round 1 four times
+ * (2026-10-15).
+ */
+function sayOnce(w: Worker, text: string): void {
+    if (w.seen.has(text)) {
+        return;
+    }
+
+    w.seen.add(text);
+    say(w, text);
+}
 const MARKERS = /^(▶|✔|✖|⏸|■|⚠|🛑|❓)/u;
 
 /** The count of the tool calls `--tools` kept quiet, once per turn end. */
@@ -120,14 +136,14 @@ export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Pro
                     const call = line.slice(2).trim();
 
                     if (TOOLS === "all" || (TOOLS === "commands" && SHELL_TOOL.test(call))) {
-                        say(w, `tool ${call}`);
+                        sayOnce(w, `tool ${call}`);
                     } else {
                         w.hiddenTools++;
                     }
                 } else if (line.startsWith("↩") && line.includes("FAILED")) {
-                    say(w, line);
+                    sayOnce(w, line);
                 } else if (MARKERS.test(line)) {
-                    say(w, line);
+                    sayOnce(w, line);
                 } else if (line.startsWith("💬") && /\?\s*$/.test(line)) {
                     say(w, `QUESTION ${line.slice(2).trim()}`);
                 }
@@ -167,7 +183,13 @@ async function watchGrok(w: Worker): Promise<void> {
 
         if (status?.running) {
             w.running = true;
-            say(w, `turn ${status.turns} RUNNING`);
+
+            if (status.turns !== w.seenTurn) {
+                w.seenTurn = status.turns;
+                w.seen.clear();
+            }
+
+            sayOnce(w, `turn ${status.turns} RUNNING`);
             await pump(w, [
                 process.execPath,
                 "run",
@@ -183,7 +205,10 @@ async function watchGrok(w: Worker): Promise<void> {
             ]);
             flushHidden(w);
             const end = await grokStatus(w);
-            say(w, `turn ${end?.turns ?? "?"} ENDED exit=${end?.exitCode ?? "?"}`);
+            if (!end?.running) {
+                say(w, `turn ${end?.turns ?? "?"} ENDED exit=${end?.exitCode ?? "?"}`);
+            }
+
             w.running = false;
         }
 
