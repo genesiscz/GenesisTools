@@ -412,6 +412,39 @@ final class KeymapDispatcherTests: XCTestCase {
         withExtendedLifetime((own, appWide)) {}
     }
 
+    /// A real key goes through the monitor. Calling `handle` would hide a monitor that always calls `shared`.
+    func testADispatchersMonitorRunsItsOwnHandlersAndEndsWhenTheDispatcherDoes() {
+        let keymap = Keymap(library: library, store: nil, layout: czech)
+        let main = window()
+        main.alphaValue = 0
+        main.orderBack(nil)
+        defer { main.orderOut(nil) }
+        XCTAssertGreaterThan(main.windowNumber, 0)
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: main.windowNumber,
+            context: nil, characters: "ú", charactersIgnoringModifiers: "ú", isARepeat: false, keyCode: 33)!
+
+        let others = monitorCalls { NSApp.sendEvent(event) }
+        var ran = 0
+        var dispatcher: KeymapDispatcher? = KeymapDispatcher()
+        let registration = dispatcher!.register("back", in: keymap, window: main) { ran += 1 }
+        NSApp.sendEvent(event)
+        XCTAssertEqual(ran, 1, "the monitor runs this dispatcher's registration")
+        registration.cancel()
+
+        let installed = monitorCalls { NSApp.sendEvent(event) }
+        XCTAssertEqual(installed, others + 1, "the registration's monitor is still installed after cancel")
+        dispatcher = nil
+        let released = monitorCalls { NSApp.sendEvent(event) }
+        XCTAssertEqual(released, others, "releasing the dispatcher removes its monitor")
+    }
+
+    private func monitorCalls(_ body: () -> Void) -> Int {
+        let before = KeymapDispatcher.monitorCallsForTests
+        body()
+        return KeymapDispatcher.monitorCallsForTests - before
+    }
+
     func testTextInputIsATextViewThatEditsOrAWebView() {
         let editable = NSTextView()
         XCTAssertTrue(KeymapDispatcher.isTextInput(editable))

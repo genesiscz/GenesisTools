@@ -255,12 +255,14 @@ public final class ImageViewerModel: ObservableObject {
         onDismiss?()
     }
 
-    /// One key, already mapped (`ImageViewerKeymap`). Esc steps back one layer: the picker, then the compare, then
-    /// the window.
+    /// One key, already mapped (`ImageViewerKeymap`). Close dismisses the window and leaves an open picker or
+    /// compare. Back steps one layer: the picker, then the compare, then the window.
     public func perform(_ action: ImageViewerAction) {
         let anchor = canvas.pointerAnchor
         switch action {
-        case .dismiss, .close:
+        case .close:
+            dismiss()
+        case .dismiss:
             if picking {
                 closePicker()
             } else if compare != nil {

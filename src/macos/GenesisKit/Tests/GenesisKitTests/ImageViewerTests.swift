@@ -244,6 +244,27 @@ final class ImageViewerKeysTests: XCTestCase {
         model.perform(.dismiss)
         XCTAssertEqual(closed, 1, "the next Esc closes the window")
     }
+
+    /// Close is the window. It does not step back through the picker or the compare, which is Back.
+    func testCloseDismissesTheWindowAndLeavesTheOpenLayer() {
+        let cache = MediaThumbnailCache(concurrency: 1, deadline: .seconds(1)) { _, _, _ in .failed("none") }
+        let model = ImageViewerModel(
+            items: [ImageViewerItem(id: "a", path: "/tmp/image-viewer-a.png"),
+                    ImageViewerItem(id: "b", path: "/tmp/image-viewer-b.png")],
+            selectedID: "a", cache: cache)
+        var closed = 0
+        model.onDismiss = { closed += 1 }
+
+        model.openPicker()
+        model.perform(.close)
+        XCTAssertTrue(model.picking, "Close leaves the picker open")
+        XCTAssertEqual(closed, 1, "Close dismisses the window")
+
+        model.compare(with: ImageViewerItem(id: "b", path: "/tmp/image-viewer-b.png"))
+        model.perform(.close)
+        XCTAssertNotNil(model.compare, "Close leaves the compare")
+        XCTAssertEqual(closed, 2)
+    }
 }
 
 final class ImageViewerPlacementTests: XCTestCase {

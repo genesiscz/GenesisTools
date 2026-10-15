@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// Runs commands from key presses. One per process, with one local key-down monitor: a key press is offered to the
-/// live handlers of the key window (its own first, then the app-wide ones, each newest first), before any view, the
-/// menu or SwiftUI's own shortcuts see it. A
+/// Runs commands from key presses. Each dispatcher installs one local key-down monitor when something registers, and
+/// that monitor offers the press to this dispatcher's handlers (the key window's own first, then the app-wide ones,
+/// each newest first), before any view, the menu or SwiftUI's own shortcuts see it. The monitor is removed when the
+/// dispatcher is released. A
 /// handler is live while its view is in a window (`.keymapAction`) or while its registration is held (AppKit code).
 ///
 /// A key with no ⌘ and no ⌃ (a bare letter, ⌥ alone, an arrow) never fires while text input has the focus, so typing
@@ -34,8 +35,10 @@ public final class KeymapDispatcher {
     }
 
     private(set) var registrations: [Registration] = []
-    private var monitor: Any?
+    private var keyMonitor: KeyDownMonitor?
     private var suspensions = 0
+    /// How many times a live monitor has seen a key. A test checks that releasing a dispatcher stops its monitor.
+    static var monitorCallsForTests = 0
 
     /// A dispatcher of its own, with no key monitor until something registers. Apps use `shared`; a test in another
     /// module makes one so its registrations cannot meet the app's.
@@ -99,10 +102,8 @@ public final class KeymapDispatcher {
     }
 
     private func installMonitor() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            MainActor.assumeIsolated { KeymapDispatcher.shared.handle(event) } ? nil : event
-        }
+        guard keyMonitor == nil else { return }
+        keyMonitor = KeyDownMonitor(dispatcher: self)
     }
 
     /// Text input: a text view or field editor that takes typing, or a web view (whose focused element may be a field).
@@ -111,6 +112,34 @@ public final class KeymapDispatcher {
         if let textView = responder as? NSTextView { return textView.isEditable }
         if responder is NSText { return true }
         return String(describing: type(of: responder)).hasPrefix("WK")
+    }
+}
+
+/// The local key-down monitor for one dispatcher. It calls that dispatcher, not the shared one, and removing this
+/// holder removes the monitor. A `@MainActor` dispatcher cannot read the monitor token from its own `deinit`.
+private final class KeyDownMonitor {
+    private var token: Any?
+
+    init(dispatcher: KeymapDispatcher) {
+        token = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak dispatcher] event in
+            MainActor.assumeIsolated {
+                KeymapDispatcher.monitorCallsForTests += 1
+                guard let dispatcher else { return event }
+                return dispatcher.handle(event) ? nil : event
+            }
+        }
+    }
+
+    deinit {
+        let token = token
+        let remove: @MainActor () -> Void = {
+            if let token { NSEvent.removeMonitor(token) }
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(remove)
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated(remove) }
+        }
     }
 }
 
