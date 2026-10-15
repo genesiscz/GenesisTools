@@ -283,7 +283,9 @@ only prepares and prints the squash; every git call is an argument array, becaus
 0. Optional, only when asked for a PR: a commit limit (for example "10 commits max" for a handed-over PR). It is not
    a rule for every PR. Regroup a longer history into thematic commits with exactly the same final tree
    (`git diff <old head> <new head>` prints nothing), reset to the PR's fork point (`git merge-base HEAD origin/master`),
-   never to a moved `origin/master`; then `land.ts … --max-commits <n>` refuses more than asked.
+   never to a moved `origin/master`; then `land.ts … --max-commits <n> --head <regrouped sha>` refuses more than
+   asked. Contiguous segments regroup without a conflict through `git commit-tree "<segment end>^{tree}" -p <prev>`;
+   `--head` refuses a regroup whose tree differs from the PR head's. Add `--squash` when the user asked to squash-merge.
 1. Squash the review commits (the `#<N> followup` ones on top of the feature commits) into one
    `fix(<scopes>): #<N> followup - address PR review (<k> commits)` whose body lists each squashed subject; prove the
    tree is identical (`git rev-parse HEAD^{tree}` before and after) and run `bun scripts/git/check-commits.ts
