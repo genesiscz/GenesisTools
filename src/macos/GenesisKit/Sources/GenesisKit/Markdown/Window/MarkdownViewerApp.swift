@@ -215,6 +215,11 @@ public enum MarkdownViewerMenu {
         menu.addItem(submenu(appMenu, title: appName))
 
         let file = NSMenu(title: "File")
+        // The files opened lately: an open one checked, a closed one with when it was closed (MarkdownRecents.swift).
+        let recent = NSMenu(title: "Open Recent")
+        recent.delegate = MarkdownRecentMenu.shared
+        file.addItem(submenu(recent, title: "Open Recent"))
+        file.addItem(.separator())
         file.addItem(
             withTitle: "Close Tab",
             action: #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)),

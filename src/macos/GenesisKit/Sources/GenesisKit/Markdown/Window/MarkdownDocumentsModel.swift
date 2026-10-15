@@ -16,6 +16,7 @@ private let markdownSplitKey = "markdownWindow.splitRatio"
 private let markdownOutlineKey = "markdownWindow.outline"
 private let markdownFilesKey = "markdownWindow.files"
 private let markdownGitKey = "markdownWindow.git"
+private let markdownRecentsKey = "markdownWindow.recents"
 private let markdownFilesRootKey = "markdownWindow.filesRoot"
 private let markdownFilesWidthKey = "markdownWindow.filesWidth"
 private let markdownZoomKey = "markdownWindow.zoom"
@@ -236,6 +237,10 @@ final class MarkdownDocumentsModel: ObservableObject {
         showOutline = defaults.bool(forKey: markdownOutlineKey)
         showFiles = defaults.bool(forKey: markdownFilesKey)
         showGit = defaults.bool(forKey: markdownGitKey)
+        if let data = defaults.data(forKey: markdownRecentsKey),
+           let entries = try? JSONDecoder().decode([MarkdownRecent].self, from: data) {
+            recents = MarkdownRecents(entries: entries)
+        }
         filesRoot = defaults.string(forKey: markdownFilesRootKey) ?? ""
         filesWidth = MarkdownSidebarWidth.clamped(defaults.double(forKey: markdownFilesWidthKey))
     }
@@ -344,6 +349,18 @@ final class MarkdownDocumentsModel: ObservableObject {
     }
     /// Closed tabs, newest last, so ⌘⇧T walks back through them.
     @Published private(set) var recentlyClosed: [URL] = []
+    /// File → Open Recent (MarkdownRecents.swift), kept in this window's defaults.
+    private(set) var recents = MarkdownRecents() {
+        didSet {
+            guard recents != oldValue, let data = try? JSONEncoder().encode(recents.entries) else { return }
+            defaults.set(data, forKey: markdownRecentsKey)
+        }
+    }
+
+    /// Open Recent's "Clear Closed": the files still open in a tab stay.
+    func clearRecents() {
+        recents.clear(keeping: Set(docs.map(\.id)))
+    }
     /// Palette for the chrome and the page, cycled from the status bar.
     @Published var themeRaw: String = UserDefaults.standard.string(forKey: markdownThemeKey)
         ?? MarkdownTheme.genesis.rawValue
@@ -590,6 +607,7 @@ final class MarkdownDocumentsModel: ObservableObject {
     func open(_ urls: [URL], asPreview: Bool = false) {
         for url in urls {
             let std = url.standardizedFileURL
+            recents.opened(std)
             if !docs.contains(where: { $0.url == std }) {
                 let doc = MarkdownDocument(url: std)
                 if asPreview, let id = previewTabId, let slot = docs.firstIndex(where: { $0.id == id && !$0.isDirty }) {
@@ -716,6 +734,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         recentlyClosed.removeAll { $0 == doc.url }
         if remember {
             recentlyClosed.append(doc.url)
+            recents.closed(doc.url)
         }
         if recentlyClosed.count > 20 {
             recentlyClosed.removeFirst()

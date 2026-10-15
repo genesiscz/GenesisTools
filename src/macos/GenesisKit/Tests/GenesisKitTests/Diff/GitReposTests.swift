@@ -51,6 +51,33 @@ final class GitReposTests: XCTestCase {
         XCTAssertNil(file.state)
     }
 
+    func testAnotherFileInTheSameFolderLoadsItsOwnStateAndHistory() async throws {
+        // The status bar and the git sidebar outlive a document switch: a sibling note must load with no git event.
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitsibling-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let plan = repo.appendingPathComponent("plan.md")
+        let todo = repo.appendingPathComponent("todo.md")
+        try git(["init", "-q", "-b", "main"], in: repo)
+        try "one\n".write(to: plan, atomically: true, encoding: .utf8)
+        try "one\n".write(to: todo, atomically: true, encoding: .utf8)
+        try git(["add", "."], in: repo)
+        try git(["commit", "-q", "-m", "First"], in: repo)
+        try "one\ntwo\n".write(to: plan, atomically: true, encoding: .utf8)
+        try "one\ntwo\nthree\n".write(to: todo, atomically: true, encoding: .utf8)
+
+        let file = GitFileStateModel()
+        let history = GitHistoryModel()
+        file.follow(plan)
+        history.follow(.file(plan))
+        await wait("the first file") { file.state?.unstagedAdditions == 1 && history.loaded }
+
+        file.follow(todo)
+        history.follow(.file(todo))
+        await wait("the sibling's state") { file.state?.unstagedAdditions == 2 }
+        await wait("the sibling's history") { history.loaded && history.commits.count == 1 }
+    }
+
     func testTheTreeMarksAreSpelledUnderTheTreesOwnRoot() async throws {
         // /tmp is a link to /private/tmp: git names the repository by the real path, the tree by the given one.
         let name = "gittree-\(UUID().uuidString)"

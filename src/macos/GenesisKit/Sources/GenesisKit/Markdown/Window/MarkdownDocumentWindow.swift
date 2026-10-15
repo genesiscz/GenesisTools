@@ -53,10 +53,12 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(MarkdownTheme.genesis.page)
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("genesis.markdown-window.v2")
         window.contentView = NSHostingView(rootView: Self.root(model: model))
         window.documents = model
         super.init(window: window)
+        // On the controller, after init: `init(window:)` gives the window the controller's own autosave name (empty),
+        // so a name set on the window before it was dropped and every launch opened at the default size.
+        windowFrameAutosaveName = "genesis.markdown-window.v2"
         window.delegate = self
         themeSink = model.$themeRaw
             .receive(on: DispatchQueue.main)

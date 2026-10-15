@@ -19,14 +19,10 @@ struct MarkdownGitSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Picker("Git", selection: $tab) {
-                Text("This file").tag("file")
-                Text("Repository").tag("repo")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(8)
-            .accessibilityIdentifier("markdown-git-tab")
+            GenSegmentedTabs("Git", items: [.init("file", "This file"), .init("repo", "Repository")], selection: $tab)
+                .frame(maxWidth: .infinity)
+                .padding(8)
+                .accessibilityIdentifier("markdown-git-tab")
             Rectangle().fill(model.theme.border).frame(height: 1)
             ScrollView {
                 Group {

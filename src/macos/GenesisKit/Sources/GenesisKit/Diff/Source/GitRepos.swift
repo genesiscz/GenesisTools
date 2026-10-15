@@ -134,7 +134,8 @@ public final class GitRepoModel: ObservableObject {
 }
 
 /// Calls `changed` whenever the repository holding a file refreshes its status, once at the start too unless
-/// `skipFirst`; finds the repository first when it is not known yet. One per model that follows a file.
+/// `skipFirst` (a start is also another file in the same folder, whose model cleared its state and waits for that
+/// call); finds the repository first when it is not known yet. One per model that follows a file.
 @MainActor
 public final class GitRepoFollower {
     private var folder: URL?
@@ -155,7 +156,10 @@ public final class GitRepoFollower {
 
     /// Follows the repository holding `folder` (nil: none).
     public func follow(folder: URL?) {
-        guard folder != self.folder else { return }
+        guard folder != self.folder else {
+            if !skipFirst, repo != nil { changed() }
+            return
+        }
         self.folder = folder
         repo = nil
         repos = nil

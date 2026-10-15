@@ -20,6 +20,7 @@ One target, folders by job. A file goes where its job is, not where its first ca
 | `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data) |
 | `Media/` | `MediaThumbnailView` (the picture of any image, video or document: off-main decode, file-identity cache, Retina pixel buckets, poster frame and length for a video, a named placeholder with Retry on failure, a click previews it) on `MediaThumbnailCache`; `.mediaPreviewHost()` + `MediaPreviewState` (an in-place Quick Look style preview over a surface, ← / → through the set) and `MediaPreviewKeyboard` (Esc / Space / arrows, for a window's key handler); `ImageViewer.present` (a window that grows from the picture's place: pinch / ⌘± / ⌘0 zoom anchored at the pointer, pan, ← / → through the source's pictures, "Compare with…" as a slider or side by side, same table row first; `ImageViewer.prefetch` on the first click; `ImageViewerSnapshot` renders any state off screen) and `MediaDataURL` (an embedded `data:image/` picture as a private temporary file) |
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`) |
+| `Diff/` | git and diffs for any host: `GenesisKitGTProvider` (the data source, swappable), `GitWorkingTreeSource` + `DiffScope`, `GitDiffView` + `GitScopePicker`, `GitFileDiffModel`, `GitRepos` (one status per repository, refreshed by git's own folder events), the file state badge and marks, the gutter (`GitGutterModel`, `GitHunks`, `GitHunkPopover`), history and commits (`GitHistoryModel`, `GitCommitList`, `GitRepoPanel`, `GitCommitView`), tree marks, agent blame |
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
 | `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
@@ -47,6 +48,7 @@ count of the section.
 - [Clicky](#clicky) (13)
 - [Cmux](#cmux) (6)
 - [Controls](#controls) (42)
+- [Diff](#diff) (11)
 - [Files](#files) (11)
 - [Flow](#flow) (39)
 - [Focus](#focus) (31)
@@ -1454,6 +1456,111 @@ ScrollViewReader { proxy in
 }
 ```
 
+### Diff
+
+Git and diffs for any host, in parts that work alone: the data comes through one provider, the views take values.
+The GenesisTools review window and the markdown viewer's Changes mode, gutter, git sidebar and commit sheet are
+built from these. Everything that runs `git` or `tools` goes through `GenesisKitGT.provider`, so a Swift-native
+provider can replace the CLI later without a view changing.
+
+#### `GenesisKitGTProvider` / `GenesisKitGT`
+
+The data source of every git and agent component: `git` and `tools` runs, a diff for a scope, a file's state, a
+version of a file, its history, a repository's status, an agent session's turn changes, agent blame, and opening
+the session that wrote a line. `GenesisKitGT.provider` is the one in use: the one set there, else the host's
+`GenesisKitHost.gtProvider`, else `GenesisKitGTCLIProvider` (`/usr/bin/git` and the `tools` binary). GenesisTools
+hands its `HubGTProvider`, which answers `tools` through the hub's resident server.
+
+```swift
+final class FakeProvider: GenesisKitGTCLIProvider {
+    override func agentBlame(repo: String, paths: [String]) throws -> AgentBlameResult { … }
+}
+GenesisKitGT.provider = FakeProvider()
+```
+
+#### `GitWorkingTreeSource` / `DiffScope`
+
+A repository's changes for a scope as `DiffFile`s with both sides in full: `.uncommitted`, `.unstaged`, `.staged`,
+`.commit(sha:title:)`, `.branch`, `.range`, `.compare` (two pushes, the older replayed onto the newer base) and
+`.lastTurns(n)` (an agent session's last turns). `load(scope:session:)` returns a `Snapshot` (branch, base, files,
+layout). Also `baseBranch()`, `commits(limit:)`, `worktrees()`.
+
+- `repo: URL`: a folder in the repository.
+- `preferredBase: String? = nil`: the branch the Branch scope compares against (a PR's target).
+
+#### `GitDiffView` / `GitScopePicker`
+
+`GitDiffView` draws files as the review window does (`PierreWebDiffRenderer`, the bundled @pierre/diffs page): split
+or unified, wrap, font size, and agent blame on hover. Without the page in the app (`PierreWebDiffRenderer.isBundled`)
+it says so. `GitScopePicker` is the Unstaged · Staged · Uncommitted · Last commit · Branch picker of one file's diff,
+with a commit menu for Last commit.
+
+- `files: [DiffFile]`, `options: DiffViewOptions = DiffViewOptions()`.
+- `blame: AgentBlamePayload? = nil`: which session wrote the new side's lines; nil shows none.
+- `onBlameOpen: ((Int) -> Void)? = nil`: "Open session" on a blame, with the index into `blame.sources`.
+- Picker: `scope: Binding<GitFileScope>`, `commit: Binding<String?>`, `history: [GitCommit]`, `shown: GitCommit?`.
+
+```swift
+GitDiffView(files: [file], options: DiffViewOptions(diffStyle: .unified, wrap: true))
+```
+
+#### `GitFileDiffModel`
+
+One file's diff for a `GitFileScope` (or two picked versions with `loadCompare`), with the working side taken from
+the text on screen, an unsaved draft included. Publishes `phase` (loading, empty with the reason, ready, failed),
+`file`, `oldText` (for a rendered diff), `history` and the `commit` Last commit shows.
+
+#### `GitRepos` / `GitRepoModel` / `GitRepoFollower`
+
+One `git status` per repository for every tab, status bar and tree: `GitRepos.shared.model(for: folder)` (nil while it
+is looked up, the answer bumps `revision`). A `GitRepoModel` publishes `status` and a `generation` that changes with
+it, and refreshes a quarter second after its git folder changes (a stage, a commit, a checkout) or a host calls
+`GitRepos.shared.noteSaved(file)`. No timer: idle costs nothing. `GitRepoFollower` is the piece a model uses to run a
+closure on every refresh of a file's repository.
+
+#### `GitFileStateModel` / `GitStateBadge` / `GitFileMark` / `GitChangeMark`
+
+A file's place in git (`GitFileState`: branch, staged and unstaged kinds and line counts, `summary` such as
+"M · 3 lines unstaged · 1 line staged") kept current, the status bar badge that shows it, and the one-letter mark a
+tab or a tree row carries (`GitFileMark` reads it from the repository's status). `GitChangeKind.color` and `.word`
+give the colors and words.
+
+```swift
+@StateObject private var git = GitFileStateModel()
+… .onAppear { git.follow(fileURL) }
+if let state = git.state { GitStateBadge(state: state) }
+```
+
+#### `GitGutterModel` / `GitHunks` / `GitHunkPopover`
+
+The hunks of the file on screen against HEAD (added, changed with the text they replaced, removed), recomputed a beat
+after the text stops changing and again after a commit. `GitHunks.between(old:new:)` and `GitHunks.revert(_:in:)` are
+the pure parts. `GitHunkPopover.show(_:source:at:in:revert:)` is the card a click on a bar shows: the lines, what
+HEAD had, the agent session that wrote them, Revert this hunk.
+
+#### `GitHistoryModel` / `GitCommitList` / `GitRepoPanel` / `GitCommitView`
+
+A commit list kept current (`.file(url)`: `git log --follow`; `.repository(folder)`: the newest commits), the list
+view (open on a click, compare from the context menu), the repository panel (branch with ahead and behind, staged
+and unstaged files, recent commits) and a commit's files with their diffs, where `rendered:` may draw a file its own
+way (the markdown viewer renders a note as a rendered diff).
+
+```swift
+GitRepoPanel(repo: repo, log: log, onOpenFile: { entry, staged in … }, onOpenCommit: { commit in … })
+GitCommitView(root: repo.root, commit: commit)
+```
+
+#### `GitTreeDecorationsModel`
+
+A file tree's git marks for the repository holding its root, spelled the way the tree spells its paths (git reports
+real paths: `/private/tmp` for `/tmp`). Pass `decorations` to `FileTreeView(git:)`.
+
+#### `AgentBlameModel` / `AgentBlame`
+
+Which agent session and turn wrote the lines of the file on screen (GenesisTools' `tools agents blame`, through the
+provider). `source(forLines:)` names the session that wrote most of a range; `AgentBlame.open(_:)` shows it (the
+GenesisTools hub, its transcript searched for the turn). The blame is of the file on disk.
+
 ### Files
 
 A folder tree for a sidebar, and Finder's file verbs. `FileTreeModel` holds the open folders and the visible rows, `FileTreeView` draws them in a lazy list, and the host passes a `FileTreeStyle` (colors, font and `FileTreeMetrics` sizes) and a `FileTreeActions` for what happens on open, re-root and change. Each row's context menu is `FileItemMenu` by default, or the host's own verbs through `FileTreeMenu`, and `FileTreePulse` lights one row up once. `FileOperations` runs the verbs: rename, duplicate, move to the Trash and create. A delete is always a move to the Trash, so Finder's "Put Back" undoes it, and creating never replaces anything.
@@ -1467,6 +1574,8 @@ The tree itself: one flat, lazily built list of rows. Wrap it in a `ScrollView`.
 - `style: FileTreeStyle`: the colors, font and sizes.
 - `actions: FileTreeActions`: what the host does with clicks and changes.
 - `pulse: FileTreePulse? = nil`: lights up the row whose `id` equals `pulse.id`, once for each new token. The other rows get no pulse.
+- `git: GitTreeDecorations? = nil`: git marks, a letter on each changed file (its name tinted) and a dot on each folder that holds changes (`GitTreeDecorationsModel`); nil shows none.
+- `changedOnly: Bool = false`: with `git`, only the changed files and the folders that hold them (`FileTreeView.changedRows`).
 - `icon: (FileTreeRow) -> String = FileTreeView.defaultIcon`: returns the SF Symbol name for a row.
 
 A `FileTreeRow` is one visible line: `id: String` (the absolute path), `name: String`, `isFolder: Bool`, `depth: Int`, `expanded: Bool`, `loading: Bool` and `url: URL`.
@@ -3343,6 +3452,13 @@ The features a reader sees in the Genesis Markdown window. Where a `GenesisKitMa
 - Wrapped tabs and preview tabs: with `wrapTabs`, tabs flow onto more rows instead of scrolling sideways. With `previewTabs`, a single click in the file tree opens an italic preview tab that the next single click replaces. A double-click, an edit or Keep Tab keeps it.
 - Hover preview: a floating, bordered, read-only preview of a note opens after the pointer rests on an unselected tab, a file row in the tree or a link in the web page. A click in the panel opens the note as a tab (`hoverPreview`, `hoverPreviewDelay`, `hoverPreviewSize`).
 - Heading anchors: a "#" beside a heading on hover. A click copies a wikilink to the heading, such as `[[plan#Setup]]` (`headingAnchors`).
+- Git state: the status bar shows the branch and the note's state ("M · 3 lines unstaged · 1 line staged"), a changed tab its letter. Both follow git's own folder events. Every git part is off with `git` and hidden outside a repository.
+- Change gutter: bars beside the lines that differ from HEAD in the source editor and beside the changed blocks on the page. A click shows what HEAD had there, the agent session that wrote the lines, and Revert this hunk (`gitGutter`).
+- Changes mode: a fourth mode beside Read, Split and Source with the file's diff per scope (Unstaged, Staged, Uncommitted, Last commit or any commit, Branch), as lines (split or unified) or, for a note, rendered: added blocks green, changed ones with their old version struck through above them, word marks in a changed paragraph (`gitDefaultScope`). An open with `diff=staged` or `--diff staged` lands there.
+- Git sidebar: This file lists the note's commits (a click reads that version with Compare with current and Restore, the context menu compares any two); Repository shows the branch, the staged and unstaged files (a click opens one in the Changes mode) and recent commits (a click opens the commit's files in a sheet, notes as rendered diffs).
+- Tree marks: the file tree marks changed files and folders that hold changes, with a Changed only filter (`gitTreeDecorations`).
+- Agent attribution: which agent session wrote a changed line, in the gutter card and on hover in the line diff, with Open session (`gitAgentAttribution`, one switch).
+- Open Recent: File, Open Recent lists the files opened lately; an open one is checked, a closed one says when it was closed ("closed 3h ago").
 - Code block bar: every fenced code block in the web page gets a bar with its language and a Copy button. Mermaid diagrams and a file shown as one numbered code block get none. `MarkdownPreviewView` adds the Copy button to its blocks (`codeBlockBar`).
 - Sticky section line: a line pinned to the top of the page shows the heading path of the section on screen. A click on a part scrolls to that heading. Reduce Transparency makes the line opaque (`stickySection`).
 - Live saved time: the status bar reads "saved 3m ago" and keeps itself current. The exact time is in its tooltip.

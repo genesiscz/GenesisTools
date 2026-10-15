@@ -20,6 +20,9 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     @Binding private var selection: ID
     private let label: String
     private let minSegmentWidth: CGFloat
+    /// Light text on the dark panels it was made for, dark text in a light window (the markdown viewer's light theme).
+    @Environment(\.colorScheme) private var scheme
+    private var ink: Color { scheme == .dark ? .white : .black }
 
     public init(_ label: String, items: [Item], selection: Binding<ID>, minSegmentWidth: CGFloat = 72) {
         self.label = label
@@ -38,7 +41,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                     Text(item.title)
                         .font(.system(size: 12, weight: selected ? .semibold : .medium))
                         .lineLimit(1)
-                        .foregroundStyle(selected ? Color.white : Color.white.opacity(0.68))
+                        .foregroundStyle(selected ? Color.white : ink.opacity(0.68))
                         .padding(.horizontal, 10)
                         .frame(minWidth: minSegmentWidth, minHeight: 24)
                         .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 6))
@@ -50,7 +53,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
             }
         }
         .padding(2)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
         .fixedSize()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)

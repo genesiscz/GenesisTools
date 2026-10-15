@@ -46,6 +46,35 @@ final class MarkdownDocumentWindowTests: XCTestCase {
             exists: files.contains))
     }
 
+    /// NSWindowController.init(window:) hands the window its own (empty) autosave name, so a name set on the window
+    /// first was dropped and every launch opened at the default size.
+    @MainActor
+    func testTheWindowKeepsItsFrameAutosaveName() {
+        let window = MarkdownDocumentWindowController.shared.window
+        XCTAssertEqual(window?.frameAutosaveName, "genesis.markdown-window.v2")
+    }
+
+    func testANoteNameWithADotStillFindsItsMarkdownFile() {
+        let folder = URL(fileURLWithPath: "/vault/Clients/Acme")
+        let present: Set<String> = ["/vault/Clients/Acme/ado/1234.analysis.md", "/vault/Clients/Acme/report.v2.pdf"]
+        let exists: (String) -> Bool = { present.contains($0) }
+
+        XCTAssertEqual(
+            MarkdownDocumentLinks.resolve("Clients/Acme/ado/1234.analysis", folder: folder, vaultRoot: "/vault", exists: exists)?.path,
+            "/vault/Clients/Acme/ado/1234.analysis.md"
+        )
+        XCTAssertEqual(
+            MarkdownDocumentLinks.locate("ado/1234.analysis#Scope", folder: folder, vaultRoot: "/vault", exists: exists)?.url.path,
+            "/vault/Clients/Acme/ado/1234.analysis.md"
+        )
+        XCTAssertEqual(
+            MarkdownDocumentLinks.resolve("report.v2.pdf", folder: folder, vaultRoot: "/vault", exists: exists)?.path,
+            "/vault/Clients/Acme/report.v2.pdf",
+            "a real file with a dotted name still wins"
+        )
+        XCTAssertNil(MarkdownDocumentLinks.resolve("ado/1234.md.md", folder: folder, vaultRoot: "/vault", exists: exists))
+    }
+
     func testObsidianLinkUsesTheVaultFormInsideTheVaultAndThePathFormOutside() {
         let inside = URL(fileURLWithPath: "/vault/Notes/Plan.md")
         XCTAssertEqual(

@@ -32,14 +32,19 @@ public struct GitHunkCard: View {
                 Text("HEAD had:")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                ScrollView {
-                    Text(verbatim: hunk.oldLines.joined(separator: "\n"))
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                let old = Text(verbatim: hunk.oldLines.joined(separator: "\n"))
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // A short hunk as it is; a long one scrolls in a fixed height (a scroll view sized to its content
+                // collapsed to nothing).
+                Group {
+                    if hunk.oldLines.count > 12 {
+                        ScrollView { old }.frame(height: 220)
+                    } else {
+                        old
+                    }
                 }
-                .frame(maxHeight: 220)
-                .fixedSize(horizontal: false, vertical: true)
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 6).fill(GitChangeKind.deleted.color.opacity(0.1)))
             }

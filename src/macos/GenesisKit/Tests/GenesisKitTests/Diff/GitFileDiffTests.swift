@@ -14,6 +14,38 @@ final class GitFileDiffTests: XCTestCase {
         return String(decoding: result.stdout, as: UTF8.self).trimmed
     }
 
+    func testUntrackedFilesFoldUnderTheShallowestFolderWithNoOtherChange() {
+        let entries = [
+            GitStatusEntry(path: "notes/plan.md", unstaged: .modified),
+            GitStatusEntry(path: "notes/new.md", unstaged: .untracked),
+            GitStatusEntry(path: "data/run1/a.json", unstaged: .untracked),
+            GitStatusEntry(path: "data/run1/b.json", unstaged: .untracked),
+            GitStatusEntry(path: "data/run2/c.json", unstaged: .untracked),
+            GitStatusEntry(path: "misc/deep/only.md", unstaged: .untracked),
+            GitStatusEntry(path: "loose.md", unstaged: .untracked),
+        ]
+        let fold = GitChangeList.foldUntracked(entries)
+        XCTAssertEqual(fold.groups.map(\.folder), ["data"])
+        XCTAssertEqual(fold.groups.first?.files.count, 3)
+        XCTAssertEqual(Set(fold.files.map(\.path)), ["notes/new.md", "misc/deep/only.md", "loose.md"], "a changed folder and a one-file folder stay as files")
+    }
+
+    func testTheSortButtonCyclesAndEachOrderSorts() {
+        XCTAssertEqual(GitChangeOrder.lastUpdate.next, .name)
+        XCTAssertEqual(GitChangeOrder.kind.next, .lastUpdate)
+        let entries = [
+            GitStatusEntry(path: "b/zeta.md", unstaged: .deleted),
+            GitStatusEntry(path: "a/alpha.md", unstaged: .modified),
+            GitStatusEntry(path: "c/beta.md", unstaged: .added),
+        ]
+        let now = Date()
+        let dates = ["b/zeta.md": now, "a/alpha.md": now.addingTimeInterval(-3600), "c/beta.md": now.addingTimeInterval(-60)]
+        XCTAssertEqual(GitChangeList.sorted(entries, by: .lastUpdate, dates: dates, staged: false).map(\.path), ["b/zeta.md", "c/beta.md", "a/alpha.md"])
+        XCTAssertEqual(GitChangeList.sorted(entries, by: .name, dates: dates, staged: false).map(\.path), ["a/alpha.md", "c/beta.md", "b/zeta.md"])
+        XCTAssertEqual(GitChangeList.sorted(entries, by: .folder, dates: dates, staged: false).map(\.path), ["a/alpha.md", "b/zeta.md", "c/beta.md"])
+        XCTAssertEqual(GitChangeList.sorted(entries, by: .kind, dates: dates, staged: false).map(\.path), ["a/alpha.md", "c/beta.md", "b/zeta.md"])
+    }
+
     func testADiffRequestReadsEveryScopeAndRefusesTheRest() {
         XCTAssertEqual(MarkdownDiffRequest.parse("staged"), MarkdownDiffRequest(scope: .staged))
         XCTAssertEqual(MarkdownDiffRequest.parse(" Uncommitted "), MarkdownDiffRequest(scope: .uncommitted))
