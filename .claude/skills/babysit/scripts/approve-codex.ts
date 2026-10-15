@@ -204,6 +204,8 @@ export function chainSegments(command: string): string[] | null {
     return segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0);
 }
 
+const SHELL_KEYWORDS = new Set(["if", "then", "else", "elif"]);
+
 /** A chain of commands that only read: each one a known reader with arguments it cannot write or execute with. */
 export function readOnlyChain(entry: RunEntry, command: string): boolean {
     const segments = chainSegments(command);
@@ -213,9 +215,21 @@ export function readOnlyChain(entry: RunEntry, command: string): boolean {
     }
 
     return segments.every((segment) => {
-        const words = strictShellWords(segment);
+        const parsed = strictShellWords(segment);
 
-        if (!words || words.length === 0) {
+        if (!parsed || parsed.length === 0) {
+            return false;
+        }
+
+        // `if test -f X; then cat X; fi` splits into `if test …`, `then cat …` and `fi`: the keywords run nothing
+        // themselves, so the reader after each one decides (a Sol reviewer's first command, 2026-10-15).
+        if (parsed[0] === "fi") {
+            return parsed.length === 1;
+        }
+
+        const words = SHELL_KEYWORDS.has(parsed[0]) ? parsed.slice(1) : parsed;
+
+        if (words.length === 0) {
             return false;
         }
 

@@ -39,6 +39,7 @@ describe("read-only chains", () => {
             "gh pr view 93 --json body --jq .body",
             "sed -n '40,80p' src/a.ts && git log --oneline -5",
             "cd sub && tools github review 93 --llm",
+            "git diff --stat origin/master...HEAD; if test -f /x/AGENTS.md; then cat /x/AGENTS.md; fi",
         ]) {
             expect(readOnlyChain(entry, command)).toBe(true);
             expect(allowedCommand(entry, command)).toBe(true);
@@ -63,6 +64,9 @@ describe("read-only chains", () => {
             "sleep 1 &",
             "cd /etc && cat passwd",
             "bun scripts/test.ts src/a.test.ts",
+            "if test -f a; then rm a; fi",
+            "then",
+            "fi x",
         ]) {
             expect(readOnlyChain(entry, command)).toBe(false);
         }
