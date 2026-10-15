@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { Writable } from "node:stream";
+import * as clack from "@clack/prompts";
+import { env } from "@genesiscz/utils/env";
 import { clackBackend } from "../clack-backend";
 
 describe("clack backend", () => {
@@ -12,5 +15,75 @@ describe("clack backend", () => {
         expect(typeof clackBackend.multiselect).toBe("function");
         expect(typeof clackBackend.spinner).toBe("function");
         expect(clackBackend.log.info).toBeDefined();
+    });
+});
+
+const ORIGINAL_CI = env.get("CI");
+const PROCESS_EVENTS = ["SIGINT", "SIGTERM", "exit", "unhandledRejection", "uncaughtExceptionMonitor"] as const;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matches terminal escape sequences on purpose
+const CURSOR_CONTROL = /\u001b\[[0-9;?]*[A-LN-Za-ln-z]/;
+
+function recordingStream() {
+    const chunks: string[] = [];
+    const output = new Writable({
+        write(chunk, _encoding, done) {
+            chunks.push(String(chunk));
+            done();
+        },
+    });
+
+    return { output, text: () => chunks.join("") };
+}
+
+async function until(condition: () => boolean, what: string, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (!condition()) {
+        if (Date.now() > deadline) {
+            throw new Error(`waited ${timeoutMs} ms for ${what}`);
+        }
+
+        await Bun.sleep(10);
+    }
+}
+
+// Regression test: the patch in patches/@clack%2Fprompts@1.7.0.patch makes the spinner treat an output stream that
+// is not a terminal like CI. Without it the spinner redraws with cursor escapes on every tick, and the patch can
+// apply cleanly yet stop changing the runtime path.
+describe("patched clack spinner on a stream that is not a terminal", () => {
+    afterEach(() => {
+        if (ORIGINAL_CI === undefined) {
+            env.testing.unset("CI");
+        } else {
+            env.testing.set("CI", ORIGINAL_CI);
+        }
+    });
+
+    it("keeps every message, stays quiet between messages, writes no cursor escapes and releases its listeners", async () => {
+        // CI mode would hide the patch's effect, so the test runs as a developer machine does
+        env.testing.set("CI", "false");
+        const listeners = () => PROCESS_EVENTS.map((name) => process.listenerCount(name));
+        const before = listeners();
+        const stream = recordingStream();
+        const spinner = clack.spinner({ output: stream.output, indicator: "dots" });
+
+        spinner.start("loading");
+        await until(() => stream.text().includes("loading"), "the first message");
+        const settled = stream.text().length;
+        await Bun.sleep(300);
+
+        expect(stream.text().length).toBe(settled);
+
+        spinner.message("parsing");
+        await until(() => stream.text().includes("parsing"), "the changed message");
+        spinner.stop("done");
+
+        const text = stream.text();
+        expect(text).toContain("loading");
+        expect(text).toContain("parsing");
+        expect(text).toContain("done");
+        expect(text).not.toMatch(CURSOR_CONTROL);
+        expect(listeners()).toEqual(before);
     });
 });
