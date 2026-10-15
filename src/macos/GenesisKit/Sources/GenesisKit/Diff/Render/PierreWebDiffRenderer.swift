@@ -7,8 +7,8 @@ import WebKit
 /// The page is bundled into Contents/Resources/diff-viewer by `tools macos permissions build`
 /// (web/diff-viewer/main.ts) and served through the `genesis-diff://` scheme, because its ES
 /// module chunks (one per Shiki grammar) do not load from file://.
-final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandler, WKNavigationDelegate {
-    static let scheme = "genesis-diff"
+public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandler, WKNavigationDelegate {
+    public static let scheme = "genesis-diff"
 
     /// One renderer made ahead, for the hub's next review. A new web view costs the main thread
     /// 140 ms (median) to 1.2 s while its web content process starts (130 times on 2026-10-08), and the
@@ -18,7 +18,7 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
     @MainActor private static var spareScheduled = false
 
     /// The spare when there is one, else a new renderer; another is prepared once interaction settles.
-    @MainActor static func make() -> PierreWebDiffRenderer {
+    @MainActor public static func make() -> PierreWebDiffRenderer {
         let made = spare ?? PierreWebDiffRenderer()
         spare = nil
         scheduleSpare()
@@ -53,14 +53,14 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
             if let monitor { NSEvent.removeMonitor(monitor) }
             spareScheduled = false
             guard quiet >= 3, spare == nil else { return }
-            spare = HubPerf.measure("review.renderer.spare") { PierreWebDiffRenderer() }
+            spare = PerfSpans.measure("review.renderer.spare") { PierreWebDiffRenderer() }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { check() } }
     }
 
-    let webView: WKWebView
-    var view: NSView { webView }
-    var onEvent: ((DiffRendererEvent) -> Void)?
+    public let webView: WKWebView
+    public var view: NSView { webView }
+    public var onEvent: ((DiffRendererEvent) -> Void)?
 
     private var ready = false
     /// The latest call per method, replayed on every `ready`: the first load, and the reload after the
@@ -79,7 +79,7 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
     /// JSON for a large diff is tens of MB: it is encoded here, never on the main thread.
     private let encodeQueue = DispatchQueue(label: "com.genesiscz.genesistools.diff-encode", qos: .userInitiated)
 
-    override init() {
+    public override init() {
         let configuration = WKWebViewConfiguration()
         // Tab stops on the page's links too (a thread author, a link in a comment), not only on fields.
         configuration.preferences.tabFocusesLinks = true
@@ -95,7 +95,7 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
         // ⌘F is the diff's find when the keyboard is in the diff: the last click landed in it, or
         // it holds the first responder (Hub/HubPanelFind.swift decides, for every panel at once).
         MainActor.assumeIsolated {
-            PanelFindRouter.shared.registerNative(webView, scope: "diff") { [weak self] in self?.find() }
+            GenesisKit.host?.registerNativeFind(webView, scope: "diff") { [weak self] in self?.find() }
         }
         keepContentStillWhenTopMoves()
     }
@@ -142,11 +142,11 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
         }
         guard let previous = topInset, let delta = DiffTopShift.scrollBy(previous: previous, now: inset, widthChanged: lastWidth.map { abs($0 - width) >= 1 } ?? false,
                                                                          windowResizing: window.inLiveResize) else { return }
-        HubPerf.log("review.diff top moved \(Int(delta)) pt: the page scrolls with it")
+        PerfSpans.log("review.diff top moved \(Int(delta)) pt: the page scrolls with it")
         webView.evaluateJavaScript("(() => { const host = document.getElementById('review'); if (host) host.scrollTop += \(delta); })()")
     }
 
-    func show(_ files: [DiffFile], fresh: Bool) {
+    public func show(_ files: [DiffFile], fresh: Bool) {
         self.files = files
         filesFresh = fresh
         filesGeneration += 1
@@ -163,11 +163,11 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
         let files = files
         let fresh = filesFresh
         let batches = DiffBatchPlan.ranges(sizes: files.map(DiffBatchPlan.size))
-        let span = HubPerf.begin("review.send", "\(files.count) files, \(batches.count) batches", awaits: true)
+        let span = PerfSpans.begin("review.send", "\(files.count) files, \(batches.count) batches", awaits: true)
         sendBatch(0, batches, files: files, fresh: fresh, generation: generation, span: span)
     }
 
-    private func sendBatch(_ index: Int, _ batches: [Range<Int>], files: [DiffFile], fresh: Bool, generation: Int, span: HubPerf.Span) {
+    private func sendBatch(_ index: Int, _ batches: [Range<Int>], files: [DiffFile], fresh: Bool, generation: Int, span: PerfSpans.Span) {
         encodeQueue.async { [weak self] in
             let batch = BridgeFilesBatch(
                 generation: generation,
@@ -205,7 +205,7 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
 
     /// Opens the page's find bar. Not replayed after a page reload: a find bar that opens on its own
     /// would take the keyboard.
-    func find() {
+    public func find() {
         guard ready else { return }
         if let window = webView.window, window.firstResponder !== webView {
             window.makeFirstResponder(webView)
@@ -213,40 +213,40 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
         webView.evaluateJavaScript("window.genesisDiff.find();", completionHandler: nil)
     }
 
-    func apply(_ options: DiffViewOptions) {
+    public func apply(_ options: DiffViewOptions) {
         call("setOptions", BridgeOptions(diffStyle: options.diffStyle.rawValue, wrap: options.wrap, fontSize: options.fontSize))
     }
 
-    func reveal(fileID: String) {
+    public func reveal(fileID: String) {
         call("reveal", fileID)
     }
 
-    func showComments(_ comments: [RenderedComment]) {
+    public func showComments(_ comments: [RenderedComment]) {
         call("setComments", comments)
     }
 
-    func threadActionFinished(id: String, ok: Bool) {
+    public func threadActionFinished(id: String, ok: Bool) {
         call("threadDone", BridgeThreadDone(id: id, ok: ok))
     }
 
-    func setThreadSelection(_ ids: [String]) {
+    public func setThreadSelection(_ ids: [String]) {
         call("setSelection", ids)
     }
 
     /// Not replayed after a page reload: the reloaded page would jump to a thread on its own.
-    func focusThread(cardID: String?, reply: Bool) {
+    public func focusThread(cardID: String?, reply: Bool) {
         evaluateOnce("focusThread", BridgeFocusThread(id: cardID, reply: reply))
     }
 
-    func showKeys(_ show: Bool) {
+    public func showKeys(_ show: Bool) {
         evaluateOnce("showKeys", show)
     }
 
-    func setBlame(_ payload: AgentBlamePayload) {
+    public func setBlame(_ payload: AgentBlamePayload) {
         call("setBlame", payload)
     }
 
-    func showBlame(fileID: String, line: Int) {
+    public func showBlame(fileID: String, line: Int) {
         evaluateOnce("showBlameAt", BridgeBlameAt(fileId: fileID, line: line))
     }
 
@@ -278,7 +278,7 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
         }
     }
 
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
         switch type {
         case "ready":
@@ -306,12 +306,12 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
             if let event = DiffRendererEvent(pageMessage: body) {
                 onEvent?(event)
             } else {
-                HubPerf.log("review.page message dropped: \(type) lacks a field its receiver needs")
+                PerfSpans.log("review.page message dropped: \(type) lacks a field its receiver needs")
             }
         }
     }
 
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         ready = false
         // If the replayed payload itself exhausts memory, each reload dies again: stop after 3 in a minute.
         let now = Date()
@@ -329,29 +329,29 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
 
     /// The page's links have an href for the keyboard and VoiceOver, but a click goes through the
     /// page's `link` message (the browser opens it); a link navigation never replaces the diff.
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         decisionHandler(navigationAction.navigationType == .linkActivated ? .cancel : .allow)
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         onEvent?(.failed("viewer navigation failed: \(error.localizedDescription)"))
     }
 
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         onEvent?(.failed("viewer did not load: \(error.localizedDescription)"))
     }
 }
 
 private struct BridgeFile: Encodable {
-    let id: String
-    let path: String
-    let oldPath: String?
-    let oldContents: String?
-    let newContents: String?
+    public let id: String
+    public let path: String
+    public let oldPath: String?
+    public let oldContents: String?
+    public let newContents: String?
     /// Changes when either side's text changes; the page keeps the parsed diff of a file whose key it has.
-    let key: String
+    public let key: String
 
-    init(_ file: DiffFile) {
+    public init(_ file: DiffFile) {
         id = file.id
         path = file.path
         oldPath = file.oldPath
@@ -368,30 +368,39 @@ private struct BridgeFile: Encodable {
 }
 
 private struct BridgeFilesBatch: Encodable {
-    let generation: Int
-    let fresh: Bool
-    let first: Bool
-    let last: Bool
-    let total: Int
-    let files: [BridgeFile]
+    public let generation: Int
+    public let fresh: Bool
+    public let first: Bool
+    public let last: Bool
+    public let total: Int
+    public let files: [BridgeFile]
+
+    public init(generation: Int, fresh: Bool, first: Bool, last: Bool, total: Int, files: [BridgeFile]) {
+        self.generation = generation
+        self.fresh = fresh
+        self.first = first
+        self.last = last
+        self.total = total
+        self.files = files
+    }
 }
 
 /// How a file set is cut into batches for the page: a small first batch so the first files paint
 /// at once, then batches of up to `batchBytes` or `batchFiles`. A file larger than a batch goes alone.
-enum DiffBatchPlan {
-    static let firstBytes = 256 * 1024
-    static let firstFiles = 16
-    static let batchBytes = 2 * 1024 * 1024
-    static let batchFiles = 120
+public enum DiffBatchPlan {
+    public static let firstBytes = 256 * 1024
+    public static let firstFiles = 16
+    public static let batchBytes = 2 * 1024 * 1024
+    public static let batchFiles = 120
 
     /// The text a file puts on the wire (both sides; a skipped file sends a one-line note).
-    static func size(_ file: DiffFile) -> Int {
+    public static func size(_ file: DiffFile) -> Int {
         file.skipped == nil ? (file.oldContents?.utf8.count ?? 0) + (file.newContents?.utf8.count ?? 0) : 64
     }
 
     /// Consecutive index ranges covering every size, in order. No files is one empty batch: the page
     /// still needs its first-and-last batch to show the empty set.
-    static func ranges(sizes: [Int]) -> [Range<Int>] {
+    public static func ranges(sizes: [Int]) -> [Range<Int>] {
         var ranges: [Range<Int>] = []
         var start = 0
         var bytes = 0
@@ -411,46 +420,67 @@ enum DiffBatchPlan {
     }
 }
 
-struct BridgeThreadDone: Encodable {
-    let id: String
-    let ok: Bool
+public struct BridgeThreadDone: Encodable {
+    public let id: String
+    public let ok: Bool
+
+    public init(id: String, ok: Bool) {
+        self.id = id
+        self.ok = ok
+    }
 }
 
-struct BridgeBlameAt: Encodable {
-    let fileId: String
-    let line: Int
+public struct BridgeBlameAt: Encodable {
+    public let fileId: String
+    public let line: Int
+
+    public init(fileId: String, line: Int) {
+        self.fileId = fileId
+        self.line = line
+    }
 }
 
 /// The page types `id` as `string | null` and clears its mark on null. The synthesized encoder
 /// leaves a nil key out, so the page got `undefined` instead: `id` is always written.
-struct BridgeFocusThread: Encodable {
-    let id: String?
-    let reply: Bool
+public struct BridgeFocusThread: Encodable {
+    public let id: String?
+    public let reply: Bool
 
     private enum CodingKeys: String, CodingKey { case id, reply }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(reply, forKey: .reply)
     }
+
+    public init(id: String?, reply: Bool) {
+        self.id = id
+        self.reply = reply
+    }
 }
 
-struct BridgeOptions: Encodable {
-    let diffStyle: String
-    let wrap: Bool
-    let fontSize: Double
+public struct BridgeOptions: Encodable {
+    public let diffStyle: String
+    public let wrap: Bool
+    public let fontSize: Double
+
+    public init(diffStyle: String, wrap: Bool, fontSize: Double) {
+        self.diffStyle = diffStyle
+        self.wrap = wrap
+        self.fontSize = fontSize
+    }
 }
 
 /// WKUserContentController retains its handlers; this breaks the renderer <-> web view cycle.
 private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
-    weak var target: WKScriptMessageHandler?
+    public weak var target: WKScriptMessageHandler?
 
-    init(_ target: WKScriptMessageHandler) {
+    public init(_ target: WKScriptMessageHandler) {
         self.target = target
     }
 
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(controller, didReceive: message)
     }
 }
@@ -465,7 +495,7 @@ private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
         return Bundle.main.resourceURL?.appendingPathComponent("diff-viewer", isDirectory: true)
     }()
 
-    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+    public func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url, let root else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
@@ -489,7 +519,7 @@ private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didFinish()
     }
 
-    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+    public func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 
     private static func mimeType(for ext: String) -> String {
         switch ext {
@@ -507,8 +537,8 @@ private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
 /// stays still on screen. Only when the diff also changed width (the header above re-wrapped at the new
 /// width): a notice or banner that appears above the diff keeps the page where it is, or the first lines
 /// would hide behind it. Not during a window resize, and not for a move under a point (rounding).
-enum DiffTopShift {
-    static func scrollBy(previous: CGFloat, now: CGFloat, widthChanged: Bool, windowResizing: Bool) -> CGFloat? {
+public enum DiffTopShift {
+    public static func scrollBy(previous: CGFloat, now: CGFloat, widthChanged: Bool, windowResizing: Bool) -> CGFloat? {
         let delta = now - previous
         guard widthChanged, !windowResizing, abs(delta) >= 1 else { return nil }
         return delta

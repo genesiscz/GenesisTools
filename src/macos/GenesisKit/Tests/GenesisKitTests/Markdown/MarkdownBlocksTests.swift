@@ -47,7 +47,7 @@ final class MarkdownBlocksTests: XCTestCase {
         // The Session Details window was showing raw `##`, `**`, `|---|` and
         // fences. Same MarkdownBlocks path chat/companion already use.
         let md = """
-        ## UAT col-mobile failed
+        ## UAT app-mobile failed
 
         **Root cause: the macOS build agent dropped mid-checkout.**
 
@@ -62,7 +62,7 @@ final class MarkdownBlocksTests: XCTestCase {
         """
         let blocks = MarkdownBlocks.parse(md)
         XCTAssertTrue(blocks.contains { if case .heading(let level, let text, _, _) = $0 {
-            return level == 2 && text.contains("UAT col-mobile failed")
+            return level == 2 && text.contains("UAT app-mobile failed")
         } else { return false } })
         XCTAssertTrue(blocks.contains { if case .code(_, let code, _) = $0 {
             return code.contains("Checkout failed")

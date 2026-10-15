@@ -57,8 +57,8 @@ final class MarkdownDocumentWindowTests: XCTestCase {
         XCTAssertNil(MarkdownDocumentActions.vaultRelativePath("/vaultarium/b.md", vaultRoot: "/vault"))
 
         XCTAssertEqual(MarkdownDocumentActions.vaultName(configured: "Brain", vaultRoot: "/vault"), "Brain")
-        XCTAssertEqual(MarkdownDocumentActions.vaultName(configured: nil, vaultRoot: "/x/GenesisBrain"), "GenesisBrain")
-        XCTAssertEqual(MarkdownDocumentActions.vaultName(configured: "", vaultRoot: "/x/GenesisBrain"), "GenesisBrain")
+        XCTAssertEqual(MarkdownDocumentActions.vaultName(configured: nil, vaultRoot: "/x/NotesVault"), "NotesVault")
+        XCTAssertEqual(MarkdownDocumentActions.vaultName(configured: "", vaultRoot: "/x/NotesVault"), "NotesVault")
         XCTAssertNil(MarkdownDocumentActions.vaultName(configured: nil, vaultRoot: nil))
     }
 

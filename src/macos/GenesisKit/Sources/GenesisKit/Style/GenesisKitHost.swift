@@ -38,6 +38,11 @@ public protocol GenesisKitHost: AnyObject {
     var markdownDefaultAppBundleID: String? { get }
     /// The `tools` binary the viewer runs (the dev-dashboard share); nil resolves it the usual way.
     var toolsBinaryPath: String? { get }
+    /// A view with its own find (the diff page): the host's panel find (⌘F in the hub) reaches it while it is on
+    /// screen. The default does nothing, and the view's own find keys still work.
+    @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void)
+    /// The git and `tools` data the git components read (`GenesisKitGT.provider`); nil uses the CLI provider.
+    var gtProvider: GenesisKitGTProvider? { get }
 }
 
 public extension GenesisKitHost {
@@ -54,6 +59,8 @@ public extension GenesisKitHost {
     func markdownPropertyVocabularyJSON() -> String? { nil }
     var markdownDefaultAppBundleID: String? { nil }
     var toolsBinaryPath: String? { nil }
+    @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void) {}
+    var gtProvider: GenesisKitGTProvider? { nil }
 }
 
 public enum GenesisKit {

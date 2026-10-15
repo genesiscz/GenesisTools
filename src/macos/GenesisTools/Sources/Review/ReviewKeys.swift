@@ -4,18 +4,6 @@ import Foundation
 // while the diff has the keyboard and no box, composer or find field is focused; ? and Esc stay on the
 // page (the key list). Swift keeps the state (which card j / k is on, the Fix selection) and acts.
 
-enum ReviewKey: String {
-    case nextThread = "j"
-    case previousThread = "k"
-    case reply = "r"
-    case resolve = "e"
-    case select = "x"
-    case fix = "f"
-    case nextFile = "n"
-    case previousFile = "p"
-    case submit = "s"
-}
-
 /// What a `--snapshot` run does before it captures, so the keys and the Fix selection can be checked
 /// without a screen: `--select-open <n>`, `--step-threads <n>` (j), `--reply` (r), `--keys` (?), `--fix-form`,
 /// `--loading`.

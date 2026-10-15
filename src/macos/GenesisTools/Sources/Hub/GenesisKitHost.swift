@@ -30,6 +30,10 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
         AnyView(FindText(text, field: field))
     }
 
+    @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void) {
+        PanelFindRouter.shared.registerNative(view, scope: scope, onFind: onFind)
+    }
+
     /// The transcript's replies and prompt parts in GenesisKit's `MarkdownContentView`. `[[x]]` stays
     /// text: this app has no vault to route a wikilink to.
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? {
@@ -68,5 +72,15 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
             alertBundlePrefix: "com.genesiscz.genesistools",
             spanPrefix: "hub"
         )
+    }
+
+    var gtProvider: GenesisKitGTProvider? { HubGTProvider() }
+}
+
+/// GenesisKit's git and agent data through the hub's resident `tools` server (`ToolsCLIRunner`), which answers
+/// an agents query without starting bun again.
+final class HubGTProvider: GenesisKitGTCLIProvider {
+    override func tools(_ arguments: [String]) throws -> Data {
+        try ToolsCLIRunner.run(arguments)
     }
 }

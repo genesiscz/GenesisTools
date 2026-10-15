@@ -8,7 +8,7 @@ final class MarkdownPropertiesTests: XCTestCase {
     ---
     ado: [302921, 302922]
     created: 2026-09-08 12:26
-    tags: [col-fe, tech-debt, cleanup]
+    tags: [web-app, tech-debt, cleanup]
     due: 2026-10-01
     at: 2026-10-01T09:30
     rating: 4.5
@@ -65,7 +65,7 @@ final class MarkdownPropertiesTests: XCTestCase {
         rows[7].value = "plain"
         rows[9].value = "2026-01-01"         // a text row whose value looks like a date is quoted
         let out = MarkdownFrontmatter.replacing(properties: rows, in: note)
-        XCTAssertTrue(out.contains("tags: [col-fe, tech-debt, cleanup, new]\n"))
+        XCTAssertTrue(out.contains("tags: [web-app, tech-debt, cleanup, new]\n"))
         XCTAssertTrue(out.contains("aliases:\n  - Cleanup\n  - Repo cleanup\n  - \"a: b\"\n  - 12\n"))
         XCTAssertTrue(out.contains("title: plain\n"))
         XCTAssertTrue(out.contains("empty: \"2026-01-01\"\n"))

@@ -42,7 +42,7 @@ final class MarkdownCompletionTests: XCTestCase {
     func testInsertionClosesTheBracketsOnlyOnce() {
         XCTAssertEqual(MarkdownCompletion.insertion("Note", kind: .wikilink, followedBy: ""), "Note]]")
         XCTAssertEqual(MarkdownCompletion.insertion("Note", kind: .wikilink, followedBy: "]]"), "Note")
-        XCTAssertEqual(MarkdownCompletion.insertion("col-fe", kind: .tag, followedBy: ""), "col-fe")
+        XCTAssertEqual(MarkdownCompletion.insertion("web-app", kind: .tag, followedBy: ""), "web-app")
     }
 
     /// The text view hands AppKit the typed part, so the chosen name replaces
@@ -86,7 +86,7 @@ final class MarkdownPropertyVocabularyTests: XCTestCase {
         let note = "---\nstatus: DRAFT\n---\n# Title\n"
         let (yaml, body) = MarkdownFrontmatter.split(note)
         let props = MarkdownFrontmatter.json(MarkdownFrontmatter.parse(yaml: yaml!))
-        let vocabulary = #"{"status":["DRAFT","done"],"owner":["martin","alice"],"tags":["col-fe"]}"#
+        let vocabulary = #"{"status":["DRAFT","done"],"owner":["martin","alice"],"tags":["web-app"]}"#
         _ = try await web.evaluateJavaScript(
             "window.gnRender(\(MarkdownWebView.jsString(body)),\(props),true,\(vocabulary))"
         )

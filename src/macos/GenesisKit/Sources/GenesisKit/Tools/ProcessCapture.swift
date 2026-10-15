@@ -1,19 +1,30 @@
 import Foundation
 
 /// A finished child process: its exit status and both streams.
-struct ProcessCapture {
-    var status: Int32
-    var stdout: Data
-    var stderr: Data
+public struct ProcessCapture: Sendable {
+    public var status: Int32
+    public var stdout: Data
+    public var stderr: Data
+
+    public init(status: Int32, stdout: Data, stderr: Data) {
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+    }
 }
 
 /// Thrown by `runCapturing` when the child outlived its timeout. The child was sent SIGTERM, then
 /// SIGKILL if it was still running 2 s later.
-struct ProcessTimeout: Error, CustomStringConvertible {
-    var command: String
-    var seconds: TimeInterval
+public struct ProcessTimeout: Error, CustomStringConvertible {
+    public var command: String
+    public var seconds: TimeInterval
 
-    var description: String { "\(command) did not exit within \(Int(seconds)) s and was killed" }
+    public init(command: String, seconds: TimeInterval) {
+        self.command = command
+        self.seconds = seconds
+    }
+
+    public var description: String { "\(command) did not exit within \(Int(seconds)) s and was killed" }
 }
 
 extension Process {
@@ -25,7 +36,7 @@ extension Process {
     /// process is running and before any output is read, e.g. to start feeding a stdin pipe.
     /// A child still running after `timeout` seconds is terminated and `ProcessTimeout` is thrown.
     /// The 60 s default is well above the slowest call the hub logged (`tools ai-spend session`, 25 s).
-    func runCapturing(
+    public func runCapturing(
         mergeStderr: Bool = false,
         timeout: TimeInterval = 60,
         afterStart: (() -> Void)? = nil

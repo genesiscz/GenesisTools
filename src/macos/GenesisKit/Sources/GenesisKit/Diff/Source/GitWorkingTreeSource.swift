@@ -1,8 +1,17 @@
+//
+//  GitWorkingTreeSource.swift
+//  GenesisKit
+//
+//  A repository's changes for one scope (uncommitted, unstaged, staged, a commit, the branch, a range, a compare of
+//  two pushes, an agent's last turns), as `DiffFile`s with both sides in full. Moved from the GenesisTools hub's
+//  review window, which still reads it the same way; every git call goes through `GenesisKitGT.provider`.
+//
+
 import Foundation
 
 /// What a diff compares, as in Codex's review menu. Every scope is a pair of sides: an "old"
 /// revision and a "new" one, where the new side may be the working tree on disk.
-enum DiffScope: Hashable {
+public enum DiffScope: Hashable {
     /// The files the session's last `n` turns changed (the per-session change log, `tools agents
     /// changes --last-turns`), from before the first of those turns to the working tree now.
     case lastTurns(Int)
@@ -26,7 +35,7 @@ enum DiffScope: Hashable {
 
     /// The commit the new side of the diff is pinned to: a commit, or a range whose head is not a
     /// name that moves (`HEAD`, a branch). nil for the working-tree scopes.
-    var pinnedHead: String? {
+    public var pinnedHead: String? {
         switch self {
         case .commit(let sha, _): return sha
         case .range(_, let head, _, _):
@@ -37,7 +46,7 @@ enum DiffScope: Hashable {
         }
     }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .lastTurns(let count): return count == 1 ? "Last Turn" : "Last \(count) Turns"
         case .uncommitted: return "Uncommitted"
@@ -54,7 +63,7 @@ enum DiffScope: Hashable {
     /// fixed: no file event moves it, so the window does not load it again for one (a PR's range was
     /// re-read about three times a minute all night while agents wrote in its repository, 2026-09-30).
     /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch.
-    var followsWorkingTree: Bool {
+    public var followsWorkingTree: Bool {
         switch self {
         case .commit, .compare: return false
         case .range(let base, let head, _, let fallbackBase):
@@ -64,11 +73,11 @@ enum DiffScope: Hashable {
     }
 
     /// A full or abbreviated commit id (7 to 64 hex digits), never a ref name.
-    static func isObjectID(_ revision: String) -> Bool {
+    public static func isObjectID(_ revision: String) -> Bool {
         (7...64).contains(revision.count) && revision.allSatisfy(\.isHexDigit)
     }
 
-    init?(argument: String) {
+    public init?(argument: String) {
         switch argument {
         case "uncommitted": self = .uncommitted
         case "unstaged": self = .unstaged
@@ -80,28 +89,41 @@ enum DiffScope: Hashable {
     }
 }
 
-struct RepoCommit: Identifiable, Hashable {
-    var id: String { sha }
-    var sha: String
-    var short: String
-    var subject: String
-    var when: String
+public struct RepoCommit: Identifiable, Hashable {
+    public var id: String { sha }
+    public var sha: String
+    public var short: String
+    public var subject: String
+    public var when: String
+
+    public init(sha: String, short: String, subject: String, when: String) {
+        self.sha = sha
+        self.short = short
+        self.subject = subject
+        self.when = when
+    }
 }
 
 /// One checkout of the repository (`git worktree list`): the main one and every linked worktree.
-struct RepoWorktree: Hashable {
-    var path: String
+public struct RepoWorktree: Hashable {
+    public var path: String
     /// nil for a detached HEAD.
-    var branch: String?
-    var head: String
+    public var branch: String?
+    public var head: String
+
+    public init(path: String, branch: String?, head: String) {
+        self.path = path
+        self.branch = branch
+        self.head = head
+    }
 
     /// "feat/x · checkout-folder", or the short head when detached.
-    var title: String {
+    public var title: String {
         "\(branch ?? "detached \(head.prefix(7))")  ·  \(URL(fileURLWithPath: path).lastPathComponent)"
     }
 
     /// `git worktree list --porcelain`: blocks of `worktree`, `HEAD`, `branch refs/heads/…` or `detached`.
-    static func parse(_ porcelain: String) -> [RepoWorktree] {
+    public static func parse(_ porcelain: String) -> [RepoWorktree] {
         porcelain.components(separatedBy: "\n\n").compactMap { block in
             var path: String?
             var head = ""
@@ -122,14 +144,20 @@ struct RepoWorktree: Hashable {
 }
 
 /// Where a reviewed repository lives: its root and Git directories, and which file events matter.
-struct ReviewRepositoryLayout: Equatable {
-    let root: URL
-    let gitDirectory: URL
-    let commonDirectory: URL
+public struct ReviewRepositoryLayout: Equatable {
+    public let root: URL
+    public let gitDirectory: URL
+    public let commonDirectory: URL
 
-    var watchPaths: [String] { Array(Set([root.path, gitDirectory.path, commonDirectory.path])).sorted() }
+    public init(root: URL, gitDirectory: URL, commonDirectory: URL) {
+        self.root = root
+        self.gitDirectory = gitDirectory
+        self.commonDirectory = commonDirectory
+    }
 
-    func matters(_ event: String) -> Bool {
+    public var watchPaths: [String] { Array(Set([root.path, gitDirectory.path, commonDirectory.path])).sorted() }
+
+    public func matters(_ event: String) -> Bool {
         let path = URL(fileURLWithPath: event).standardizedFileURL.path
         for directory in [gitDirectory.path, commonDirectory.path] {
             if path == directory { return true }
@@ -145,24 +173,38 @@ struct ReviewRepositoryLayout: Equatable {
 
 /// A repository's changes for one scope. Blob metadata is checked in batches before eligible
 /// immutable objects are read, so excluded large blobs never enter the captured output.
-struct GitWorkingTreeSource {
-    struct Snapshot {
-        var branch: String
-        var base: String?
-        var files: [DiffFile]
-        var repository: ReviewRepositoryLayout? = nil
-        var head: String? = nil
+public struct GitWorkingTreeSource {
+    public struct Snapshot {
+        public var branch: String
+        public var base: String?
+        public var files: [DiffFile]
+        public var repository: ReviewRepositoryLayout? = nil
+        public var head: String? = nil
         /// A compare diff: paths the change and the upstream both touched; they show the older head's copy.
-        var compareConflicts: [String] = []
+        public var compareConflicts: [String] = []
+
+        public init(branch: String, base: String?, files: [DiffFile], repository: ReviewRepositoryLayout? = nil, head: String? = nil, compareConflicts: [String] = []) {
+            self.branch = branch
+            self.base = base
+            self.files = files
+            self.repository = repository
+            self.head = head
+            self.compareConflicts = compareConflicts
+        }
     }
 
-    static let maxBytes = 1_000_000
-    static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    public static let maxBytes = 1_000_000
+    public static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-    let repo: URL
+    public let repo: URL
     /// The base the Branch scope compares against when it exists here: the PR's target branch
     /// (`origin/<target>`). Without it, a stacked PR's Branch diff ran against `origin/HEAD`.
-    var preferredBase: String? = nil
+    public var preferredBase: String? = nil
+
+    public init(repo: URL, preferredBase: String? = nil) {
+        self.repo = repo
+        self.preferredBase = preferredBase
+    }
 
     /// The old and new revisions of a scope. `nil` new side = the working tree on disk; `""` = the index.
     private func sides(_ scope: DiffScope) throws -> (old: String, new: String?, diffArgs: [String], untracked: Bool, base: String?) {
@@ -205,7 +247,7 @@ struct GitWorkingTreeSource {
         }
     }
 
-    func repositoryLayout() throws -> ReviewRepositoryLayout {
+    public func repositoryLayout() throws -> ReviewRepositoryLayout {
         let output: String
         do {
             output = try git(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"])
@@ -219,7 +261,7 @@ struct GitWorkingTreeSource {
         return ReviewRepositoryLayout(root: paths[0], gitDirectory: paths[1], commonDirectory: paths[2])
     }
 
-    func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
+    public func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
         let layout = try repositoryLayout()
         let source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
         var snapshot = try source.loadCanonical(scope: scope, session: session)
@@ -314,23 +356,29 @@ struct GitWorkingTreeSource {
     }
 
     /// `tools agents changes <session> --last-turns N --json` (src/agents/commands/changes.ts).
-    struct TurnChanges: Decodable {
-        struct File: Decodable {
-            let path: String
+    public struct TurnChanges: Decodable {
+        public struct File: Decodable {
+            public let path: String
             /// null for a file the turns created, and ALSO when nothing recorded the state before:
             /// then `skipped` is `no-before-state`.
-            let beforeOid: String?
-            let skipped: String?
+            public let beforeOid: String?
+            public let skipped: String?
+
+            public init(path: String, beforeOid: String?, skipped: String?) {
+                self.path = path
+                self.beforeOid = beforeOid
+                self.skipped = skipped
+            }
         }
 
-        let files: [File]
-        let objects: String
+        public let files: [File]
+        public let objects: String
     }
 
     /// What happened to a file the turns changed, with `exists` its presence in the working tree now.
     /// nil when there is nothing to show (created and removed again). A before-state nobody recorded
     /// is not a creation: that file existed, so it is modified (or deleted), never added.
-    static func turnStatus(_ file: TurnChanges.File, exists: Bool) -> DiffFile.Status? {
+    public static func turnStatus(_ file: TurnChanges.File, exists: Bool) -> DiffFile.Status? {
         let unknownBefore = file.beforeOid == nil && file.skipped == "no-before-state"
         guard exists || file.beforeOid != nil || unknownBefore else { return nil }
         guard exists else { return .deleted }
@@ -341,10 +389,7 @@ struct GitWorkingTreeSource {
     /// those turns (a blob in the change log's object store) to the working tree now. A file the turns
     /// changed and then put back is left out. No turn with changes yet is an empty, ready snapshot.
     private func loadTurns(session: String, count: Int, branch: String) throws -> Snapshot {
-        // `--store-blobs`: the before-states below come from the object store, and `changes` writes
-        // them only when asked.
-        let data = try ToolsCLIRunner.run(["agents", "changes", session, "--last-turns", String(count), "--json", "--store-blobs"])
-        let log = try JSONDecoder().decode(TurnChanges.self, from: data)
+        let log = try GenesisKitGT.provider.agentTurnChanges(session: session, lastTurns: count)
         // Both sides as real paths: the log can hold /private/var/… for a repo opened as /var/…, or
         // the other way round through a symlinked folder, and a plain prefix test then drops every file.
         let root = Self.realPath(repo.standardizedFileURL.path) + "/"
@@ -382,13 +427,13 @@ struct GitWorkingTreeSource {
             return file
         }
 
-        HubPerf.log("review.lastTurns session=\(session.prefix(8)) turns=\(count) logged=\(log.files.count) inRepo=\(files.count)")
+        PerfSpans.log("review.lastTurns session=\(session.prefix(8)) turns=\(count) logged=\(log.files.count) inRepo=\(files.count)")
         return Snapshot(branch: branch, base: nil, files: files.sorted { $0.path < $1.path })
     }
 
     /// `path` with every symlink resolved (`/var` is `/private/var`). A part that no longer exists (a
     /// deleted file, its deleted folder) is kept as written under its resolved parent.
-    static func realPath(_ path: String) -> String {
+    public static func realPath(_ path: String) -> String {
         if let real = realpath(path, nil) {
             defer { free(real) }
             return String(cString: real)
@@ -400,7 +445,7 @@ struct GitWorkingTreeSource {
     }
 
     /// Added and removed lines between two texts (a Myers difference over lines).
-    static func lineCounts(old: String, new: String) -> (additions: Int, deletions: Int) {
+    public static func lineCounts(old: String, new: String) -> (additions: Int, deletions: Int) {
         let before = old.split(separator: "\n", omittingEmptySubsequences: false)
         let after = new.split(separator: "\n", omittingEmptySubsequences: false)
         var additions = 0
@@ -415,7 +460,7 @@ struct GitWorkingTreeSource {
     }
 
     /// The branch this one will merge into: origin's default branch, else main/master.
-    func baseBranch() -> String {
+    public func baseBranch() -> String {
         if let preferredBase, (try? git(["rev-parse", "--verify", "--quiet", preferredBase])) != nil {
             return preferredBase
         }
@@ -431,12 +476,12 @@ struct GitWorkingTreeSource {
     }
 
     /// Every checkout of this repository, the main one first.
-    func worktrees() -> [RepoWorktree] {
+    public func worktrees() -> [RepoWorktree] {
         RepoWorktree.parse((try? git(["worktree", "list", "--porcelain"])) ?? "")
     }
 
     /// Branches a diff can be compared against, the most recently committed first: local and remote.
-    func baseCandidates(limit: Int = 30) -> [String] {
+    public func baseCandidates(limit: Int = 30) -> [String] {
         let raw = (try? git(["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "--count=\(limit + 5)", "refs/heads", "refs/remotes"])) ?? ""
         // `refs/remotes/origin/HEAD` prints as "origin": a pointer, not a branch.
         let remotes = Set(((try? git(["remote"])) ?? "").split(separator: "\n").map(String.init))
@@ -447,7 +492,7 @@ struct GitWorkingTreeSource {
 
     /// Commits on this branch that the base does not have (newest first), or the last `limit` commits.
     /// `range` replaces the checkout's `<base>..HEAD` (a PR whose head no checkout holds names its own).
-    func commits(limit: Int = 30, range explicit: [String]? = nil) -> [RepoCommit] {
+    public func commits(limit: Int = 30, range explicit: [String]? = nil) -> [RepoCommit] {
         let range = explicit ?? {
             let base = baseBranch()
             return base == "HEAD" ? ["HEAD"] : ["\(base)..HEAD"]
@@ -464,22 +509,7 @@ struct GitWorkingTreeSource {
 
     /// `gitDir` runs against another repository's objects (the change log's store) instead of this one.
     private func gitData(_ args: [String], input: Data? = nil, gitDir: String? = nil) throws -> Data {
-        let span = HubPerf.begin("git.\(args.first ?? "")", repo.lastPathComponent)
-        defer { span.end() }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        let location = gitDir.map { ["--git-dir", $0] } ?? ["-C", repo.path]
-        process.arguments = location + ["-c", "core.quotepath=off"] + args
-        let inPipe = Pipe()
-        process.standardInput = input == nil ? FileHandle.nullDevice : inPipe
-        let result = try process.runCapturing {
-            guard let input else { return }
-            // Feed stdin on its own queue: a large batch can fill the stdout pipe before stdin is drained.
-            DispatchQueue.global().async {
-                inPipe.fileHandleForWriting.write(input)
-                try? inPipe.fileHandleForWriting.close()
-            }
-        }
+        let result = try GenesisKitGT.provider.git(args, in: repo, input: input, gitDirectory: gitDir, environment: nil)
         if result.status != 0 {
             let message = String(decoding: result.stderr, as: UTF8.self)
             throw ReviewError.git("git \(args.joined(separator: " ")): \(message.trimmed)")
@@ -492,22 +522,13 @@ struct GitWorkingTreeSource {
         String(decoding: try gitData(args), as: UTF8.self)
     }
 
-    static func isFullObjectID(_ revision: String) -> Bool {
+    public static func isFullObjectID(_ revision: String) -> Bool {
         (40...64).contains(revision.count) && revision.allSatisfy(\.isHexDigit)
     }
 
     /// `git` that reports a non-zero exit instead of throwing on it (`allowFailure`), with extra environment.
     private func gitResult(_ args: [String], environment: [String: String]?, allowFailure: Bool) throws -> (status: Int32, stdout: String) {
-        let span = HubPerf.begin("git.\(args.first ?? "")", repo.lastPathComponent)
-        defer { span.end() }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-C", repo.path, "-c", "core.quotepath=off"] + args
-        if let environment {
-            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-        }
-        process.standardInput = FileHandle.nullDevice
-        let result = try process.runCapturing()
+        let result = try GenesisKitGT.provider.git(args, in: repo, input: nil, gitDirectory: nil, environment: environment)
         if result.status != 0 && !allowFailure {
             let message = String(decoding: result.stderr, as: UTF8.self)
             throw ReviewError.git("git \(args.joined(separator: " ")): \(message.trimmed)")
@@ -538,7 +559,7 @@ struct GitWorkingTreeSource {
     }
 
     /// `from`'s change on `to`'s base, cached per pair: the merge-tree runs once however often the diff loads.
-    func compareTree(from: CompareEnd, to: CompareEnd, targetRef: String?) throws -> (tree: String, conflicted: [String]) {
+    public func compareTree(from: CompareEnd, to: CompareEnd, targetRef: String?) throws -> (tree: String, conflicted: [String]) {
         let key = "\(repo.path)|\(from.base ?? "-")|\(from.head)|\(to.base ?? "-")|\(to.head)|\(targetRef ?? "-")"
         if let cached = CompareTreeCache.shared.value(key) { return cached }
         try ensureCommit(from.head)
@@ -549,7 +570,7 @@ struct GitWorkingTreeSource {
             try gitResult(args, environment: environment, allowFailure: allowFailure)
         }
         if !replayed.conflicted.isEmpty {
-            HubPerf.log("review.compare \(from.head.prefix(8))→\(to.head.prefix(8)): \(replayed.conflicted.count) paths changed upstream too; they show the older head")
+            PerfSpans.log("review.compare \(from.head.prefix(8))→\(to.head.prefix(8)): \(replayed.conflicted.count) paths changed upstream too; they show the older head")
         }
         CompareTreeCache.shared.store(key, replayed)
         return replayed
@@ -691,11 +712,11 @@ struct GitWorkingTreeSource {
     }
 }
 
-enum ReviewError: Error, CustomStringConvertible {
+public enum ReviewError: Error, CustomStringConvertible {
     case git(String)
     case notRepository(String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .git(let message): return message
         case .notRepository(let path):
@@ -705,7 +726,7 @@ enum ReviewError: Error, CustomStringConvertible {
 }
 
 extension String {
-    var trimmed: String {
+    public var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
