@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parsePatch } from "diff";
+import { act, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
 import { SERIES_COLOR } from "./charts";
 import { contrastRatio, parseCssColor, readableTextOn } from "./color";
@@ -19,6 +20,7 @@ import { mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
 import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
+import { Wizard, type WizardStep } from "./wizard";
 
 const mermaidRendered: string[] = [];
 let mermaidFailNext = false;
@@ -1172,6 +1174,120 @@ describe("SortableList", () => {
         await dom.press(grip("alpha"), "ArrowDown");
         await dom.press(grip("alpha"), " ");
         expect(calls.map((c) => c.moved)).toEqual([{ id: "alpha", from: 0, to: 1 }]);
+        await dom.unmount();
+    });
+});
+
+describe("Wizard", () => {
+    function NameStep() {
+        const [name, setName] = useState("");
+
+        return (
+            <Field label="Project name">
+                <TextInput value={name} onChange={setName} />
+            </Field>
+        );
+    }
+
+    const tick = (): Promise<void> => act(() => new Promise<void>((resolve) => setTimeout(resolve, 5)));
+    const buttonByText = (root: HTMLElement, text: string): HTMLButtonElement | undefined =>
+        [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
+    const stepButtons = (root: HTMLElement): HTMLButtonElement[] => [
+        ...root.querySelectorAll<HTMLButtonElement>("nav button"),
+    ];
+
+    function steps(extra: Partial<Record<string, Partial<WizardStep>>> = {}): WizardStep[] {
+        return [
+            { id: "source", label: "Source", content: <NameStep />, ...extra.source },
+            { id: "map", label: "Map fields", content: <p>map</p>, optional: true, ...extra.map },
+            { id: "review", label: "Review", content: <p>review</p>, ...extra.review },
+        ];
+    }
+
+    test("linear mode: step 3 is locked from step 1 and a click does nothing", async () => {
+        const dom = await mountDom(<Wizard steps={steps()} />);
+        const third = stepButtons(dom.container)[2];
+
+        expect(third.getAttribute("aria-disabled")).toBe("true");
+        await dom.click(third);
+        expect(stepButtons(dom.container)[0].getAttribute("aria-current")).toBe("step");
+        expect(dom.container.querySelector("nav")?.getAttribute("aria-label")).toBeTruthy();
+        await dom.unmount();
+    });
+
+    test("a validate message blocks Next and shows in an alert", async () => {
+        const dom = await mountDom(<Wizard steps={steps({ source: { validate: () => "Pick a file" } })} />);
+        await dom.click(buttonByText(dom.container, "Next"));
+        await tick();
+
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toBe("Pick a file");
+        expect(stepButtons(dom.container)[0].getAttribute("aria-current")).toBe("step");
+        await dom.unmount();
+    });
+
+    test("a typed value survives Next and Back, and the optional step offers Skip", async () => {
+        const dom = await mountDom(<Wizard steps={steps()} />);
+        await dom.type(dom.container.querySelector("input"), "Atlas");
+        await dom.click(buttonByText(dom.container, "Next"));
+        await tick();
+
+        expect(stepButtons(dom.container)[1].getAttribute("aria-current")).toBe("step");
+        await dom.click(buttonByText(dom.container, "Skip"));
+        await tick();
+        expect(stepButtons(dom.container)[1].getAttribute("data-status")).toBe("skipped");
+        expect(stepButtons(dom.container)[2].getAttribute("aria-current")).toBe("step");
+
+        await dom.click(buttonByText(dom.container, "Back"));
+        await dom.click(buttonByText(dom.container, "Back"));
+        expect(dom.container.querySelector("input")?.value).toBe("Atlas");
+        await dom.unmount();
+    });
+
+    test("onFinish runs once, only from the last step, even on a double click", async () => {
+        let finished = 0;
+        let release: () => void = () => {};
+        const onFinish = (): Promise<void> => {
+            finished += 1;
+
+            return new Promise((resolve) => {
+                release = resolve;
+            });
+        };
+        const dom = await mountDom(<Wizard steps={steps()} mode="free" onFinish={onFinish} />);
+        await dom.click(buttonByText(dom.container, "Next"));
+        await tick();
+        expect(finished).toBe(0);
+
+        await dom.click(stepButtons(dom.container)[2]);
+        const finish = buttonByText(dom.container, "Finish");
+        await dom.click(finish);
+        await tick();
+        await dom.click(finish);
+        await tick();
+        expect(finished).toBe(1);
+        release();
+        await tick();
+        await dom.unmount();
+    });
+
+    test("with hash, a reload opens a reachable step from the URL", async () => {
+        const free = await mountDom(<Wizard steps={steps()} mode="free" hash />, "http://localhost/setup#review");
+        expect(stepButtons(free.container)[2].getAttribute("aria-current")).toBe("step");
+        await free.click(stepButtons(free.container)[1]);
+        expect(free.window.location.hash).toBe("#map");
+        await free.unmount();
+
+        const linear = await mountDom(<Wizard steps={steps()} hash />, "http://localhost/setup#review");
+        expect(stepButtons(linear.container)[0].getAttribute("aria-current")).toBe("step");
+        await linear.unmount();
+    });
+
+    test("Enter in a single-line field runs Next", async () => {
+        const dom = await mountDom(<Wizard steps={steps()} />);
+        await dom.press(dom.container.querySelector("input"), "Enter");
+        await tick();
+
+        expect(stepButtons(dom.container)[1].getAttribute("aria-current")).toBe("step");
         await dom.unmount();
     });
 });

@@ -258,6 +258,7 @@ export {
     type SortableMove,
     sortableMoveBlocked,
 } from "./sortable";
+export { STEP_GLYPH } from "./structure";
 export {
     onColorSchemeChange,
     readThemeMode,
@@ -293,3 +294,4 @@ export {
     capacityStatus,
     heatCellBackground,
 } from "./viz";
+export { Wizard, type WizardProps, type WizardStep, wizardFrontier } from "./wizard";

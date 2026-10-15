@@ -173,7 +173,8 @@ export const STEP_TONE: Record<StepStatus, Tone> = {
     skipped: "neutral",
 };
 
-const STEP_GLYPH: Record<StepStatus, string> = {
+/** The marker glyph per step status, shared by Steps and Wizard. */
+export const STEP_GLYPH: Record<StepStatus, string> = {
     done: "✓",
     active: "●",
     pending: "○",
