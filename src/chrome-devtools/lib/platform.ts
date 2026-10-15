@@ -10,10 +10,8 @@ import { formatPsCpuTime, readProcessArgs } from "@genesiscz/utils/process/libpr
 import {
     findProcesses,
     listProcesses as processList,
-    readCpuPercents,
     readExecutablePath,
-    readProcess,
-    readProcessUsages,
+    readProcessesWithUsage,
     runningNames,
 } from "@genesiscz/utils/process/processes";
 import { listListeningTcp } from "@genesiscz/utils/process/sockets";
@@ -48,8 +46,10 @@ const defaultProcessReader: ProcessReader = {
     executable: readExecutablePath,
     listeners: () => listListeningTcp().map(({ pid, port }) => ({ pid, port })),
     sample: (pid) => {
-        const entry = readProcess(pid);
-        const usage = readProcessUsages([pid]).get(pid);
+        // One snapshot of the one process: on Windows each separate read is a PowerShell start, two of them over the
+        // whole CIM table.
+        const entry = readProcessesWithUsage([pid], { cpuPercent: true })[0];
+        const usage = entry?.usage;
         if (!entry || !usage) {
             return null;
         }
@@ -68,7 +68,7 @@ const defaultProcessReader: ProcessReader = {
         return {
             pid,
             // `ps`'s %cpu: recent usage, so the doctor's "recorder is hot" check sees a recorder that is busy now.
-            cpuPercent: readCpuPercents([pid]).get(pid) ?? 0,
+            cpuPercent: entry.cpuPercent ?? 0,
             rssKb: usage.rssBytes / 1024,
             cpuTime: formatPsCpuTime(usage.cpuTimeMs),
             elapsed,

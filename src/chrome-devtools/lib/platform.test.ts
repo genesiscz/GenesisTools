@@ -1,8 +1,16 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as processes from "@genesiscz/utils/process/processes";
 import { parseLsofListeners, processFixture } from "./__tests__/process-fixture";
-import { artifactPath, listListeningTcpPorts, processArguments, terminatePid, tmpRoot } from "./platform.ts";
+import {
+    artifactPath,
+    listListeningTcpPorts,
+    processArguments,
+    processReaderFor,
+    terminatePid,
+    tmpRoot,
+} from "./platform.ts";
 
 describe.skipIf(process.platform !== "darwin")("listListeningTcpPorts on live listeners", () => {
     test("answers one row per listening socket, as lsof lists them, IPv4 and IPv6 on one port included", async () => {
@@ -101,6 +109,67 @@ describe("processArguments", () => {
             await child.exited;
         }
         expect(processArguments(child.pid)).toBeNull();
+    });
+});
+
+describe("the default process sample", () => {
+    const exec = Object.assign(() => ({ stdout: "", stderr: "", exitCode: 0 }), {});
+
+    test("comes from one process-layer snapshot, because on Windows each call is a PowerShell start", () => {
+        const pid = 31337;
+        const one = spyOn(processes, "readProcessesWithUsage").mockReturnValue([
+            {
+                pid,
+                ppid: 1,
+                pgid: pid,
+                uid: null,
+                name: "recorder",
+                command: "recorder --capture",
+                tty: null,
+                startMs: Date.now() - 90_061_000,
+                zombie: false,
+                state: "R",
+                usage: { pid, rssBytes: 2048 * 1024, cpuTimeMs: 61_500, threads: 4, running: null },
+                cpuPercent: 12.5,
+            },
+        ]);
+        const alone = [
+            spyOn(processes, "readProcess"),
+            spyOn(processes, "readProcessUsages"),
+            spyOn(processes, "readCpuPercents"),
+        ];
+
+        try {
+            const sample = processReaderFor(exec, "darwin").sample(pid);
+
+            expect(sample).toMatchObject({
+                pid,
+                cpuPercent: 12.5,
+                rssKb: 2048,
+                state: "R",
+                command: "recorder --capture",
+            });
+            expect(sample?.elapsed).toMatch(/^1-01:/);
+            expect(one.mock.calls.length).toBe(1);
+            expect(one.mock.calls[0]?.[0]).toEqual([pid]);
+            expect(alone.map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
+        } finally {
+            one.mockRestore();
+
+            for (const spy of alone) {
+                spy.mockRestore();
+            }
+        }
+    });
+
+    test("a process that has gone gives no sample", () => {
+        const one = spyOn(processes, "readProcessesWithUsage").mockReturnValue([]);
+
+        try {
+            expect(processReaderFor(exec, "darwin").sample(31338)).toBeNull();
+        } finally {
+            one.mockRestore();
+        }
     });
 });
 
