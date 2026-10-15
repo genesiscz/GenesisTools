@@ -6,7 +6,13 @@
  * `tools github merge --rebase`. Every git call is an argument array: a hand-typed `--force-with-lease=$B:c1a…`
  * in zsh read `:c` as a modifier and pushed without the lease (2026-10-14, #502).
  *
- *   bun land.ts --run <dir> --pr <N> [--wt <dir>] [--merge] [--no-push-hooks] [--max-commits <n>]
+ *   bun land.ts --run <dir> --pr <N> [--wt <dir>] [--merge] [--no-push-hooks] [--max-commits <n>] [--head <sha>]
+ *               [--squash]
+ *
+ * --head: start from a prepared regroup (thematic commits made by hand, step 0 of the recipe) instead of the PR's
+ * remote head. Its tree must equal the remote head's tree, and the push lease is still the remote head. Without it
+ * the script checked out origin/<branch> and threw a regroup away (2026-10-15, #499). --squash merges with
+ * `tools github merge --squash` instead of `--rebase`, for a PR the user asked to squash.
  *
  * Without --merge it only prepares and prints the squash in the worktree (detached, nothing pushed). Either way it
  * moves the worktree's HEAD, so never run it on a worktree a worker is still using (2026-10-14: a dry run landed a
@@ -64,9 +70,15 @@ if (state !== "OPEN") {
 }
 
 must(git(["fetch", "-q", "origin", base, branch]), "fetch");
-must(git(["checkout", "-q", "--detach", `origin/${branch}`]), "checkout");
-const oldHead = must(git(["rev-parse", "HEAD"]), "rev-parse");
-const tree = must(git(["rev-parse", "HEAD^{tree}"]), "tree");
+const prepared = flag("--head");
+must(git(["checkout", "-q", "--detach", prepared ?? `origin/${branch}`]), "checkout");
+const oldHead = must(git(["rev-parse", `origin/${branch}`]), "rev-parse");
+const tree = must(git(["rev-parse", `origin/${branch}^{tree}`]), "tree");
+
+if (prepared && must(git(["rev-parse", "HEAD^{tree}"]), "tree") !== tree) {
+    console.error(`✖ --head ${prepared} has another tree than origin/${branch}; a regroup must keep the tree`);
+    process.exit(1);
+}
 
 // The review commits are the contiguous `#N followup` commits on top of the feature commits.
 const marker = new RegExp(`#${pr} followup\\b`);
@@ -130,7 +142,9 @@ if (maxCommits !== undefined) {
 const newHead = must(git(["rev-parse", "HEAD"]), "rev-parse");
 
 if (!has("--merge")) {
-    console.log(`dry: #${pr} would push ${newHead.slice(0, 9)} over ${oldHead.slice(0, 9)} and merge with --rebase`);
+    console.log(
+        `dry: #${pr} would push ${newHead.slice(0, 9)} over ${oldHead.slice(0, 9)} and merge with ${has("--squash") ? "--squash" : "--rebase"}`
+    );
     process.exit(0);
 }
 
@@ -176,7 +190,8 @@ while (true) {
     await Bun.sleep(5_000);
 }
 
-const merged = await execTool(["github", "merge", "--rebase", String(pr)], { cwd: run.main, timeout: 600_000 });
+const method = has("--squash") ? "--squash" : "--rebase";
+const merged = await execTool(["github", "merge", method, String(pr)], { cwd: run.main, timeout: 600_000 });
 console.log(merged.stdout.trim().split("\n").slice(-8).join("\n"));
 
 if (!merged.success) {
