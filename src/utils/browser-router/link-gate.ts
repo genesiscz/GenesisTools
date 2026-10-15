@@ -56,7 +56,8 @@ function isMissing(err: unknown): boolean {
 
 /** A failed gate read or write. Absent is normal; the logger loads only when there is something to say. */
 function gateDiag(reason: string, err: unknown): void {
-    const { logger } = require("@genesiscz/utils/logger") as typeof import("@genesiscz/utils/logger");
+    // lazy: saves 12.5 ms cold import (tools ts imports analyze src/utils/logger.ts, 2026-10-15) — every link reads the gate
+    const { logger }: typeof import("@genesiscz/utils/logger") = require("@genesiscz/utils/logger");
 
     logger.warn({ err, path: linkGatePath() }, reason);
 }
