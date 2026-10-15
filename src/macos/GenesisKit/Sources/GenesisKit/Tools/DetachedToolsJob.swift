@@ -67,18 +67,28 @@ public final class DetachedToolsJob: @unchecked Sendable {
         let argv = [subcommand] + args
         let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: argv)
         let process = Process()
-        priority.configure(process, plan: plan)
+        if priority == .background, FileManager.default.isExecutableFile(atPath: ToolsLineStream.taskPolicyPath) {
+            process.executableURL = URL(fileURLWithPath: ToolsLineStream.taskPolicyPath)
+            process.arguments = ["-b", plan.executable.path] + plan.arguments
+        } else {
+            process.executableURL = plan.executable
+            process.arguments = plan.arguments
+        }
+        process.currentDirectoryURL = plan.workingDirectory
         var environment = ToolsBridge.scrubbedEnvironment()
         // The `tools` wrapper stops its child within 2 s once its parent is gone (its orphan watchdog), which is
         // exactly what a detached job must survive; this marker (GenesisTools src/utils/cli/detached.ts) turns
         // that off for this run only. Without it a restart of the app cancelled the build (exit 130).
         environment[Self.detachedMarker] = "1"
         process.environment = environment
+        process.qualityOfService = priority == .background ? .background : .utility
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
         process.standardError = try FileHandle(forWritingTo: URL(fileURLWithPath: errorPath))
         try process.run()
-        priority.applyNice(to: process.processIdentifier)
+        if priority == .background {
+            _ = setpriority(PRIO_PROCESS, id_t(process.processIdentifier), 15)
+        }
         let record = Record(pid: process.processIdentifier, startedAt: Date(), outputPath: outputPath,
                             errorPath: errorPath, argv: argv)
         return (record, process)
@@ -86,33 +96,6 @@ public final class DetachedToolsJob: @unchecked Sendable {
 
     /// `DETACHED_ENV` in GenesisTools `src/utils/cli/detached.ts`.
     public static let detachedMarker = "GENESIS_TOOLS_DETACHED"
-
-    /// Where a tail read started. `count` is the bytes asked of the file, not the length of a buffer that was
-    /// filled by reading the whole file first.
-    struct StderrTailRead: Equatable, Sendable {
-        var fileBytes: UInt64
-        var offset: UInt64
-        var count: Int
-    }
-
-    /// The last `limit` bytes of `path`, read from that offset. A missing file is empty. `read` is nil when the
-    /// file could not be opened.
-    static func stderrTail(at path: String, limit: Int = ToolsLineStream.stderrLimit) -> (data: Data, read: StderrTailRead?) {
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else {
-            return (Data(), nil)
-        }
-        defer { try? handle.close() }
-        do {
-            let size = try handle.seekToEnd()
-            let count = min(limit, Int(size))
-            let offset = size - UInt64(count)
-            try handle.seek(toOffset: offset)
-            let data = try handle.read(upToCount: count) ?? Data()
-            return (data, StderrTailRead(fileBytes: size, offset: offset, count: count))
-        } catch {
-            return (Data(), nil)
-        }
-    }
 
     public let record: Record
     private let process: Process?
@@ -194,9 +177,9 @@ public final class DetachedToolsJob: @unchecked Sendable {
         fileSource?.cancel()
         exitSource?.cancel()
         let status: Int32? = process.map { $0.isRunning ? 0 : $0.terminationStatus }
-        let errorData = Self.stderrTail(at: record.errorPath).data
+        let errorData = (try? Data(contentsOf: URL(fileURLWithPath: record.errorPath))) ?? Data()
         let report = Exit(status: status, stopped: stopRequested,
-                          stderr: String(decoding: errorData, as: UTF8.self))
+                          stderr: String(decoding: errorData.suffix(ToolsLineStream.stderrLimit), as: UTF8.self))
         let onExit = onExit
         DispatchQueue.main.async {
             MainActor.assumeIsolated { onExit(report) }

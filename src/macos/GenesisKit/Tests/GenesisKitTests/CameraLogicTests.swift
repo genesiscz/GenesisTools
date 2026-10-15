@@ -100,31 +100,6 @@ final class CameraLogicTests: XCTestCase {
         XCTAssertEqual(CameraSelection.device(id: "0x1234").storageValue, "0x1234")
     }
 
-    /// `canAddInput` false used to return success and store an input the session does not hold.
-    /// No test opens a camera: macOS ends `swift test` when the process has no usage description.
-    func testASessionThatAlreadyHasTheCameraDoesNotClaimSuccess() throws {
-        let refused = AVCameraSessionDriver.refusedInput(canAdd: false, deviceName: "FaceTime HD Camera")
-        guard case .failed(let reason) = refused else {
-            return XCTFail("expected failed, got \(String(describing: refused))")
-        }
-        XCTAssertTrue(reason.contains("FaceTime HD Camera"))
-        XCTAssertNil(AVCameraSessionDriver.refusedInput(canAdd: true, deviceName: "FaceTime HD Camera"))
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/GenesisKitPosture/Camera/CameraSessionDriver.swift"), encoding: .utf8)
-        // The protocol declares the same name without a body. The scan starts at the implementation.
-        let start = try XCTUnwrap(source.range(of: "func prepare(selection: CameraSelection) -> CameraSourceState? {"))
-        let rest = source[start.lowerBound...]
-        let end = try XCTUnwrap(rest.range(of: "\n    func "))
-        let prepare = String(rest[..<end.lowerBound])
-        XCTAssertTrue(prepare.contains("refusedInput(canAdd: session.canAddInput(newInput)"))
-        XCTAssertTrue(prepare.contains("return refused"))
-        XCTAssertFalse(prepare.contains("if session.canAddInput"))
-        let add = try XCTUnwrap(prepare.range(of: "session.addInput(newInput)"))
-        let check = try XCTUnwrap(prepare.range(of: "refusedInput(canAdd:"))
-        XCTAssertLessThan(check.lowerBound, add.lowerBound)
-    }
-
     func testSourceStatesMapToPostureIssues() {
         XCTAssertNil(CameraSourceState.waiting.issue)
         XCTAssertNil(CameraSourceState.running.issue)

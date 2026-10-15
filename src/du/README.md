@@ -1,8 +1,9 @@
 # tools du
 
-Measurement only, and never writes. macOS/APFS: the engines map physical extents
-through `F_LOG2PHYS_EXT`, so every verb exits 2 with an explanation on other
-platforms rather than failing to compile.
+Measurement only: it never changes what it measures. The only things it writes
+are its own caches and the `index` database under `~/.genesis-tools/du/`.
+macOS/APFS: the engines map physical extents through `F_LOG2PHYS_EXT`, so every
+verb exits 2 with an explanation on other platforms rather than failing to compile.
 
 To *recover* the space this reports, see **`tools macos clones`** — `duplicates`,
 `optimize` and `reclaim plan|apply` re-share byte-identical files that lost their
@@ -23,7 +24,8 @@ On this machine that is not a corner case. `bun install` uses `clonefile(2)`, so
 |---------|-------------|
 | `clonesize <dir>` | Naive (du-style) versus real unique on-disk bytes for a tree, deduping APFS clones |
 | `volume [mount]` | Reconcile a whole volume: APFS used-bytes versus what a scan can actually see |
-| `clones <dir>` | Find where else a directory's blocks live, the concrete clone partners |
+| `partners <dir>` | Find where else a directory's blocks live, the concrete clone partners |
+| `index build\|update\|query\|diff\|schedule` | A persisted directory-size index (SQLite) behind the Disk Manager: space map, "what grew", prewarmed answers |
 | `bench [dir]` | Benchmark the C engine against the Bun engine and plain `du -sh`, with a byte-for-byte cross-check |
 
 ## Quick start
@@ -40,6 +42,11 @@ sudo tools du volume                            # including root-only subtrees
 
 tools du partners ~/.bun --against ~/Projects
 tools du partners ~/repo/.worktrees/feat-x --against ~/repo
+
+tools du index build                            # index $HOME into ~/.genesis-tools/du/index.db
+tools du index query --path ~/Library           # one folder, its stored children, its largest files
+tools du index update --paths ~/Downloads       # re-walk only what changed
+tools du index diff --from 7d                   # what grew in the last week
 ```
 
 ---
@@ -79,7 +86,7 @@ Answers "my disk says 97% full, where is it?". The scan is compared against `ATT
 
 Run it with `sudo` to include root-only subtrees. Without sudo, expect a large UNACCOUNTED figure.
 
-## `clones`
+## `partners`
 
 | Flag | Description |
 |------|-------------|
@@ -89,6 +96,62 @@ Run it with `sudo` to include root-only subtrees. Without sudo, expect a large U
 | `--top <n>` | Rows to show (default: 30) |
 
 `clonesize` tells you a directory shares N bytes with something. This tells you **with what**. That is the question that decides whether a package-manager cache is safe to delete: blocks a live `node_modules` still references are not freed by deleting the cache.
+
+## `index`
+
+A directory-size index that answers from SQLite in milliseconds instead of walking the disk. One
+parallel C walk (`clonesize --index`, a subprocess, listing only: no file is opened) stores every
+directory whose subtree is at least `--min-dir-bytes` (1 MiB). Smaller directories are folded into
+their nearest stored ancestor; on a developer tree that keeps about 10% of the directories. A
+denied, partly listed, skipped (cloud root, other volume) or blocked folder is always stored,
+flagged (`dirs.flags`: 1 denied, 2 incomplete, 4 cloud, 8 mount, 16 gone, 32 blocked).
+
+What a row holds, and how it relates to `clonesize`:
+
+| Column | Meaning |
+|---|---|
+| `alloc_bytes` | Σ allocated size of the subtree's files, `du` style. Equals `clonesize`'s `naive_bytes` for the same tree. |
+| `logical_bytes` | Σ datalength. Counts every listed file, including `alloc == 0` ones that `clonesize` leaves out of `apparent_bytes`. |
+| `private_bytes` | Σ `ATTR_CMNEXT_PRIVATESIZE`: what deleting would free at least. `alloc - private` is shared with clones or hard links. NULL with `--no-private`. |
+| `files`, `dirs` | Regular files and folders in the subtree (`dirs` excludes the row itself). |
+| `max_file_bytes`, `newest_mtime_s` | Maxima. Exact after a build; after an update they only grow until the next build. |
+
+Clone-aware "real" bytes are not stored: clones share blocks across sibling folders, so they do
+not add up and an update cannot keep them right. Ask `clonesize --depth 1` for one folder on demand.
+Hard links count once per entry (like `naive_bytes`), never deduplicated.
+
+| Command | Does |
+|---|---|
+| `build` | Full walk of `--root` (default `$HOME`). The rows go in through one transaction, so readers see the previous build until the commit. Records a snapshot for `diff`. |
+| `update --paths <p...>` | Re-walks only the region that holds each path: the owning stored folder's own files plus its folded subfolders. Stored children whose name and inode still match are not entered. The byte delta goes up the ancestor chain. `--shallow` treats the paths as entries (recheck the parent), `--recursive` re-walks whole subtrees (a path inside another recursive path is dropped, so nothing is counted twice), `--from-queue` drains paths queued while a build held the lock. Before the commit every written folder and its ancestors must cover their stored children; otherwise the update fails with `inconsistent` and writes nothing. |
+| `query` | `--path <dir>`: the row, its stored children (`--sort`, `--limit`, `--min-bytes`, `--changed-within`), `local` (files here plus the folded subfolders), `--top-files` and `blocked_below` (given-up folders at or under it). A flagged child (denied, incomplete, skipped, blocked) is always listed, after the others, whatever the filters and the limit. A folded path answers `found: false` with `folded_in`. `--largest dirs\|files` is a global list (dirs ranked by their own bytes), `--info` shows meta, counts (`blocked` included) and scans. |
+| `diff` | Folders that grew, shrank, appeared or went, between snapshots (`--from` id, ISO date or `7d`; `--to` id or `now`). Only folders of at least the snapshot floor (64 MiB) take part; a side below it is `null` and `approx: true`. `--attribute leaf` drops a folder whose change one subfolder already explains (80%). |
+| `schedule --on\|--off\|--status` | The nightly `du-index-refresh` build with `tools daemon` at 02:15. |
+
+- **Output:** `--format human` on a terminal, `json` otherwise; `build` and `update` also take
+  `ndjson` (`start`, `progress` at most twice a second, `blocked`, `phase` ingest/commit/checkpoint,
+  then `result` or `error`). `--stop-on-stdin` cancels on EOF, for `ToolsLineStream`. Every machine
+  shape has an example in GenesisKit's fixtures (`src/macos/GenesisKit/Sources/GenesisKitFixtures/Disk/contract-du-index-*`,
+  the one copy the Swift tests read too), and `index.test.ts` keeps real output's keys and nesting
+  equal to them. The SQLite schema is `contract-du-index-schema.sql` there.
+- **Exit codes:** 0 ok; 1 failure (`walk_failed`, `disk_low`, `not_built`, `no_snapshot`,
+  `root_changed`, `volume_changed`, `inconsistent`); 2 usage or not macOS; 3 `locked` (another build or update);
+  4 `schema_newer`; 130 `aborted`.
+- **Safety:** `build` and `update` refuse to start with less free space on the database's volume
+  than twice the database plus 256 MiB, and never below 1 GiB (about 1 GiB for a `$HOME` index of
+  20 MB). `--exclude` paths are made canonical (real path, no trailing slash), like the root. One writer at a time (`index.db.lock`); an `update` that finds a build running queues
+  its paths instead. A database written by a newer schema is refused, never migrated down.
+- **Blocked folders:** macOS can hold the `open()` of another app's data (under
+  `~/Library/Containers`) until someone answers a privacy prompt. A folder whose listing makes no
+  progress for `--stall-seconds` (10) is given up: flag 32, its own bytes missing, a `blocked`
+  event, and the walk goes on with a fresh worker. One prompt gates every folder behind it, so the
+  second given-up child of a folder (never the walk root) gives up all its other children at once,
+  at most 64 threads may be stuck, and at that cap the queue is given up so the walk always ends.
+  `meta.blocked_dirs`, `query --info` and `blocked_below` keep the count until a later build reads
+  the folders. Grant the calling app access (Full Disk Access) and build again.
+- **Readers (the Genesis app):** open read-only, `busy_timeout`, read `meta.schema_version` first,
+  one short statement per read, never DDL or a checkpoint. WAL keeps the last commit visible while
+  a build runs.
 
 ---
 

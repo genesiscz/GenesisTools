@@ -93,10 +93,10 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
         var face: PoseFace?
         switch faceDetection {
         case .always:
-            face = VisionPose.face(from: faceRequest.results ?? [], near: current)
+            face = VisionPose.face(from: faceRequest.results ?? [])
         case .fallback:
             if Self.needsFace(joints), (try? handler.perform([faceRequest])) != nil {
-                face = VisionPose.face(from: faceRequest.results ?? [], near: current)
+                face = VisionPose.face(from: faceRequest.results ?? [])
             }
         case .never:
             break
@@ -122,7 +122,7 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
         if due {
             last3DAttempt = time
             last3D = (try? handler.perform([body3DRequest])) != nil
-                ? VisionPose.shoulders3D(from: body3DRequest.results ?? [], matching: joints).map { (time, $0) }
+                ? VisionPose.shoulders3D(from: body3DRequest.results ?? []).map { (time, $0) }
                 : nil
         }
         guard let cached = last3D, abs(time - cached.time) <= body3DInterval * 2 else { return (head, false) }
@@ -230,91 +230,32 @@ enum VisionPose {
         return joints[.nose]?.confidence ?? 0
     }
 
-    /// One 3D body already projected into the image (top-left). Tests build these; Vision observations cannot.
-    struct Body3DCandidate: Equatable {
-        var confidence: Double
-        var left: PoseJointPoint
-        var right: PoseJointPoint
-        var neck: PoseJointPoint
-    }
-
-    /// The 3D body that belongs to the person `joints` already chose (widest confident 2D shoulders).
-    /// With no confident 2D shoulders, the most confident 3D body (the close-camera case that has no 2D body).
-    /// A body whose shoulder midpoint sits farther than the 2D shoulder span is someone else and is left out:
-    /// the same person's 3D shoulders are narrower, but they share the midpoint.
-    static func selectBody(_ bodies: [Body3DCandidate], matching joints: [PoseJoint: PoseJointPoint]) -> Body3DCandidate? {
-        let minimum = PoseSample.minimumConfidence
-        let eligible = bodies.filter { $0.confidence > minimum }
-        guard !eligible.isEmpty else { return nil }
-        guard let left = joints[.leftShoulder], let right = joints[.rightShoulder],
-              left.confidence > minimum, right.confidence > minimum else {
-            return eligible.max { $0.confidence < $1.confidence }
-        }
-        let anchorX = (left.x + right.x) / 2
-        let anchorY = (left.y + right.y) / 2
-        let span = hypot(left.x - right.x, left.y - right.y)
-        guard span > 0 else { return eligible.max { $0.confidence < $1.confidence } }
-        let ranked = eligible.map { body -> (body: Body3DCandidate, distance: Double) in
-            let midX = (body.left.x + body.right.x) / 2
-            let midY = (body.left.y + body.right.y) / 2
-            return (body, hypot(midX - anchorX, midY - anchorY))
-        }
-        guard let nearest = ranked.min(by: { lhs, rhs in
-            if lhs.distance == rhs.distance { return lhs.body.confidence > rhs.body.confidence }
-            return lhs.distance < rhs.distance
-        }) else { return nil }
-        guard nearest.distance <= span else { return nil }
-        return nearest.body
-    }
-
-    /// The face that belongs with `anchor` (the selected person's nose). Without an anchor, the largest face
-    /// (a face-only engine). A face whose centre is farther than its own size is a different person.
-    static func selectFace(_ faces: [PoseFace], near anchor: PoseJointPoint?) -> PoseFace? {
-        guard !faces.isEmpty else { return nil }
-        guard let anchor, anchor.confidence > PoseSample.minimumConfidence else {
-            return faces.max { $0.box.width < $1.box.width }
-        }
-        let ranked = faces.map { face -> (face: PoseFace, distance: Double) in
-            let centerX = face.box.midX
-            let centerY = face.box.midY
-            return (face, hypot(centerX - anchor.x, centerY - anchor.y))
-        }
-        guard let nearest = ranked.min(by: { $0.distance < $1.distance }) else { return nil }
-        let limit = max(nearest.face.box.width, nearest.face.box.height, 0.05)
-        guard nearest.distance <= limit else { return nil }
-        return nearest.face
-    }
-
-    /// The shoulders and the neck (centre shoulder) of the 3D body that matches `joints`, projected into the
+    /// The shoulders and the neck (centre shoulder) of the most confident 3D body, projected into the
     /// image and flipped to top-left. The 3D joints have no confidence of their own: each takes the body's.
-    static func shoulders3D(from observations: [VNHumanBodyPose3DObservation],
-                            matching joints: [PoseJoint: PoseJointPoint]) -> [PoseJoint: PoseJointPoint]? {
-        var bodies: [Body3DCandidate] = []
-        for body in observations {
-            guard let left = try? body.pointInImage(.leftShoulder),
-                  let right = try? body.pointInImage(.rightShoulder),
-                  let neck = try? body.pointInImage(.centerShoulder) else { continue }
-            let confidence = Double(body.confidence)
-            bodies.append(Body3DCandidate(
-                confidence: confidence,
-                left: PoseJointPoint(x: Double(left.location.x), y: 1 - Double(left.location.y), confidence: confidence),
-                right: PoseJointPoint(x: Double(right.location.x), y: 1 - Double(right.location.y), confidence: confidence),
-                neck: PoseJointPoint(x: Double(neck.location.x), y: 1 - Double(neck.location.y), confidence: confidence)))
+    static func shoulders3D(from observations: [VNHumanBodyPose3DObservation]) -> [PoseJoint: PoseJointPoint]? {
+        guard let body = observations.max(by: { $0.confidence < $1.confidence }),
+              Double(body.confidence) > PoseSample.minimumConfidence else { return nil }
+        let names: [(VNHumanBodyPose3DObservation.JointName, PoseJoint)] = [
+            (.leftShoulder, .leftShoulder), (.rightShoulder, .rightShoulder), (.centerShoulder, .neck),
+        ]
+        var joints: [PoseJoint: PoseJointPoint] = [:]
+        for (name, joint) in names {
+            guard let point = try? body.pointInImage(name) else { return nil }
+            joints[joint] = PoseJointPoint(x: Double(point.location.x), y: 1 - Double(point.location.y),
+                                           confidence: Double(body.confidence))
         }
-        guard let chosen = selectBody(bodies, matching: joints) else { return nil }
-        return [.leftShoulder: chosen.left, .rightShoulder: chosen.right, .neck: chosen.neck]
+        return joints
     }
 
-    /// A face from the observations, flipped to top-left, chosen for the person in `joints` when that person
-    /// has a nose. With no joints, the largest face.
-    static func face(from observations: [VNFaceObservation], near joints: [PoseJoint: PoseJointPoint] = [:]) -> PoseFace? {
-        let faces = observations.map { observation -> PoseFace in
-            let box = observation.boundingBox
-            return PoseFace(box: CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height),
-                            confidence: Double(observation.confidence),
-                            roll: observation.roll?.doubleValue, yaw: observation.yaw?.doubleValue,
-                            pitch: observation.pitch?.doubleValue)
+    /// The largest face, flipped to top-left.
+    static func face(from observations: [VNFaceObservation]) -> PoseFace? {
+        guard let observation = observations.max(by: { $0.boundingBox.width < $1.boundingBox.width }) else {
+            return nil
         }
-        return selectFace(faces, near: joints[.nose])
+        let box = observation.boundingBox
+        return PoseFace(box: CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height),
+                        confidence: Double(observation.confidence),
+                        roll: observation.roll?.doubleValue, yaw: observation.yaw?.doubleValue,
+                        pitch: observation.pitch?.doubleValue)
     }
 }

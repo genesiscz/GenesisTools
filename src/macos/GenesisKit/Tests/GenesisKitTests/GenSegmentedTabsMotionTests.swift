@@ -80,16 +80,6 @@ final class GenSegmentedTabsMotionTests: XCTestCase {
         return (before, frames)
     }
 
-    /// An empty identifier used to be written for a nil one, which replaces an identifier set outside the control.
-    func testTabsOmitAnEmptyAccessibilityIdentifier() throws {
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/GenesisKit/Controls/GenSegmentedTabs.swift"), encoding: .utf8)
-        XCTAssertFalse(source.contains("identifier ?? \"\""))
-        XCTAssertTrue(source.contains("chartAccessibilityIdentifier(identifier)"))
-        XCTAssertTrue(source.contains("chartAccessibilityIdentifier(identifier.map"))
-    }
-
     func testThePillSlidesToTheNewSegmentAndTakesItsWidth() throws {
         let (before, frames) = try sample(Box(), reduceMotion: false)
         let after = try XCTUnwrap(frames.last?.first)

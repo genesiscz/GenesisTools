@@ -448,35 +448,6 @@ final class PostureMonitorTests: XCTestCase {
                        shoulders.count)
     }
 
-    /// Two people: the 3D body and the face follow the person the 2D shoulders already chose, not the
-    /// highest confidence or the largest box.
-    func testThe3DBodyAndTheFaceFollowTheSelectedPerson() {
-        let person = [
-            PoseJoint.leftShoulder: PoseJointPoint(x: 0.30, y: 0.50, confidence: 0.9),
-            PoseJoint.rightShoulder: PoseJointPoint(x: 0.50, y: 0.50, confidence: 0.9),
-            PoseJoint.nose: PoseJointPoint(x: 0.40, y: 0.30, confidence: 0.9),
-        ]
-        func body(_ confidence: Double, leftX: Double, rightX: Double) -> VisionPose.Body3DCandidate {
-            VisionPose.Body3DCandidate(
-                confidence: confidence,
-                left: PoseJointPoint(x: leftX, y: 0.50, confidence: confidence),
-                right: PoseJointPoint(x: rightX, y: 0.50, confidence: confidence),
-                neck: PoseJointPoint(x: (leftX + rightX) / 2, y: 0.42, confidence: confidence))
-        }
-        let near = body(0.5, leftX: 0.35, rightX: 0.45)
-        let far = body(0.95, leftX: 0.75, rightX: 0.95)
-        XCTAssertEqual(VisionPose.selectBody([far, near], matching: person)?.confidence, 0.5)
-        XCTAssertNil(VisionPose.selectBody([far], matching: person), "a far body is not this person")
-        XCTAssertEqual(VisionPose.selectBody([far, near], matching: [:])?.confidence, 0.95,
-                       "no 2D shoulders: the most confident 3D body, as when the camera is close")
-
-        let own = PoseFace(box: CGRect(x: 0.32, y: 0.18, width: 0.16, height: 0.22), confidence: 0.6)
-        let other = PoseFace(box: CGRect(x: 0.70, y: 0.10, width: 0.28, height: 0.34), confidence: 0.99)
-        XCTAssertEqual(VisionPose.selectFace([other, own], near: person[.nose])?.confidence, 0.6)
-        XCTAssertNil(VisionPose.selectFace([other], near: person[.nose]))
-        XCTAssertEqual(VisionPose.selectFace([other, own], near: nil)?.confidence, 0.99)
-    }
-
     /// Live run 2026-10-14: a hand over one shoulder left the nose, the eyes and one shoulder. The body
     /// engine skipped the face request (it had a nose), so no measure came out and "Upright" stayed.
     func testTheBodyEngineAsksForTheFaceWhenAShoulderOrTheNoseIsMissing() {

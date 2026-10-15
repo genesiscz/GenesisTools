@@ -12,6 +12,7 @@ import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
 import { readVolumeInfo, scanPartners, scanWithC, scanWithCFfi } from "./lib/engine";
 import { diffScans, humanBytes, renderDiff, renderHuman, renderPartners, renderTree, renderVolume } from "./lib/format";
+import { registerIndexCommands } from "./lib/index/commands";
 import { durationToCutoff, intOpt } from "./lib/options";
 import type { ClonesizeResult, Engine, ScanOptions } from "./lib/types";
 import { detectWorktreeExcludes } from "./lib/worktrees";
@@ -523,5 +524,7 @@ program
             out.println(pc.dim(`    Re-run on a quiesced/static tree for an exact byte match.`));
         }
     });
+
+registerIndexCommands(program);
 
 await runTool(program, { tool: "du" });

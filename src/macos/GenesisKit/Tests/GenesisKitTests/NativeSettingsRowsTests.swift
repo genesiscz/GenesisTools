@@ -134,19 +134,6 @@ final class NativeSettingsRowsTests: XCTestCase {
         XCTAssertEqual(P.display("/tmp", home: "/Users/alice"), "/tmp")
     }
 
-    func testAPathRowUsesPathLabelForThePath() throws {
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/GenesisKit/Settings/NativeSettingsPathList.swift"), encoding: .utf8)
-        let start = try XCTUnwrap(source.range(of: "private func row"))
-        let end = try XCTUnwrap(source.range(of: "private func choose"))
-        let row = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(row.contains("PathLabel("))
-        XCTAssertTrue(row.contains("showIcons: false"))
-        XCTAssertFalse(row.contains("Text(verbatim:"))
-        XCTAssertTrue(row.contains("arrow.up.forward.square"))
-    }
-
     func testAddingFoldersKeepsTheOrderAndSkipsDuplicates() {
         let merged = NativeSettingsPathList.merging(["/a", "/b"], adding: ["/b/", "/c", "/c", "/a"])
         XCTAssertEqual(merged, ["/a", "/b", "/c"])

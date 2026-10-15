@@ -284,7 +284,7 @@ private struct MarkdownDocumentTab: View {
             .accessibilityLabel(accessibilityTitle)
             .accessibilityAddTraits(active ? .isSelected : [])
             Button {
-                MarkdownDocumentWindow.input.notice("\(MarkdownTabLog.note(action: "close", index: tabIndex), privacy: .public)")
+                MarkdownDocumentWindow.input.notice("tab action close \(doc.title, privacy: .public)")
                 model.close(doc)
             } label: {
                 Image(systemName: "xmark")
@@ -319,12 +319,8 @@ private struct MarkdownDocumentTab: View {
 
     /// A click selects. The second click of a double-click also keeps a preview tab, as in an editor;
     /// a separate double-tap gesture would hold every single click back by the double-click interval.
-    private var tabIndex: Int {
-        model.docs.firstIndex { $0.id == doc.id } ?? 0
-    }
-
     private func selectOrKeep(via gesture: String) {
-        MarkdownDocumentWindow.input.notice("\(MarkdownTabLog.note(action: "select", index: tabIndex, gesture: gesture), privacy: .public)")
+        MarkdownDocumentWindow.input.notice("tab action select \(doc.title, privacy: .public) via=\(gesture, privacy: .public)")
         model.select(doc.id)
         if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
             model.keep(doc)

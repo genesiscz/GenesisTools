@@ -1073,3 +1073,195 @@ the output silently disagreed with itself. A run with `--include`/`--exclude` no
 
 Raised by eve-bot-lovinka on PR #393; the perf half was its finding, the filter half fell out
 of checking it.
+
+## 2026-10-13 21:42 — `--index`: one listing walk per tree for the persisted index (`tools du index`)
+
+A new mode of `clonesize.c` for `tools du index build|update|query|diff`. It has its own
+`idx_process_dir` and attribute list; `g_al`, `process_dir`, `run_scan` and the `--bigfiles` walk
+are untouched (only `main` gained flags, and an `--exclude` past the 256 cap is now an error in
+`--index` mode instead of a silent drop). Each directory's direct files are summed in stack locals
+and written once into its own node (nodes live in fixed 64k chunks, so no lock and no per-file
+record), then one descending-id pass rolls up and folds every subtree under `--min-dir-bytes`
+(1 MiB) into its stored ancestor. No file is opened. `--region DIR --keep-file F` re-walks one
+stored directory for `update`, skipping its stored children whose name and inode match.
+
+**What it counts.** The root row's `alloc_bytes` is `clonesize`'s `naive_bytes`: equal in every
+round on GenesisPlayground (15,062,986,752) and, on the live GenesisTools checkout, in the rounds
+where both arms saw the same tree state (25,929,195,520 and 25,929,383,936). `files` counts every
+listed regular file (including `alloc == 0`), so it is `files_listed`, not `files_scanned`.
+
+**Method.** `bun src/du/native/bench-index.ts` (new): every sample a fresh process under
+`/usr/bin/time -l` (CPU = user + system, children included; peak RSS), arms interleaved (round r
+starts at arm r), 5 rounds, load average recorded per sample, free space checked per round.
+Targets: the GenesisTools main checkout and GenesisPlayground, each without its `.worktrees`.
+`du` and `--depth 6` run at their default thread count (16), `--bigfiles` too; `--index` defaults
+to `min(8, CPUs)`. The `before` arms ran with `clonesize.c` as of 041adfa93 (before this change), built into
+scratch; the `after` arms with this commit's binary. Raw output: session scratch
+`a1-du/before.{log,json}` and `a1-du/after.{log,json}`.
+
+- before: 21:03 to 21:08, `load averages: 17.80 25.45 27.08` → `29.85 26.15 26.72`.
+- after: 21:28 to 21:39, `load averages: 9.40 13.10 16.82` → `28.86 30.36 25.78` (peaked at 48
+  in round 3 while other sessions built Swift). Wall time in the after run is noisy; CPU less so.
+
+GenesisTools checkout (906,7xx files, 114,735 directories), medians of 5 (min to max):
+
+| arm | wall | CPU (user + sys) | peak RSS |
+|---|---|---|---|
+| before `du -sk` | 16.06 s (14.50-17.02) | 6.18 s | 4 MB |
+| before `clonesize --depth 6` | 29.81 s (20.71-33.81) | 320.4 s | 109 MB |
+| before `clonesize --bigfiles` | 3.90 s (3.16-5.22) | 39.4 s | 5 MB |
+| after `du -sk` | 21.23 s (17.86-50.07) | 8.88 s | 4 MB |
+| after `clonesize --depth 6` | 32.41 s (25.65-40.33) | 266.2 s | 103 MB |
+| after `clonesize --bigfiles` | 5.81 s (4.99-5.87) | 40.9 s | 4 MB |
+| after `clonesize --index` (private) | 11.00 s (6.24-16.14) | 43.9 s | 17 MB |
+| after `clonesize --index --no-private` | 6.51 s (2.78-8.06) | 19.7 s | 17 MB |
+| after `tools du index build` (private, SQLite included) | 10.05 s (5.44-26.38) | 35.2 s | 63 MB |
+| after `tools du index update --paths src/utils` | 0.68 s (0.17-1.49) | 0.11 s | 45 MB |
+
+GenesisPlayground (296,082 files, 26,513 directories):
+
+| arm | wall | CPU (user + sys) | peak RSS |
+|---|---|---|---|
+| before `du -sk` | 5.15 s (3.91-6.40) | 1.84 s | 4 MB |
+| before `clonesize --depth 6` | 6.37 s (5.11-6.65) | 59.6 s | 32 MB |
+| before `clonesize --bigfiles` | 1.29 s (1.16-1.42) | 12.2 s | 4 MB |
+| after `du -sk` | 8.10 s (5.71-9.17) | 2.79 s | 4 MB |
+| after `clonesize --depth 6` | 7.34 s (6.55-8.90) | 64.6 s | 33 MB |
+| after `clonesize --bigfiles` | 1.57 s (1.44-2.55) | 10.9 s | 4 MB |
+| after `clonesize --index` (private) | 5.64 s (5.33-6.74) | 19.1 s | 6 MB |
+| after `clonesize --index --no-private` | 1.34 s (1.18-2.01) | 5.70 s | 6 MB |
+| after `tools du index build` (private, SQLite included) | 6.37 s (3.43-11.14) | 17.5 s | 51 MB |
+| after `tools du index update --paths cs2d-web` | 0.21 s (0.16-0.35) | 0.12 s | 45 MB |
+
+What the numbers say:
+
+- **`--depth`, `--bigfiles` and `du` did not move** beyond the load: the after run was the noisier
+  one (wall up, CPU within each other's ranges), and the scan code is the same.
+- **PRIVATESIZE is the price of the "shared" figure.** `--index` with it against without it:
+  2.2× the CPU on GenesisTools (43.9 vs 19.7 s) and 3.4× on GenesisPlayground (19.1 vs 5.7 s,
+  ranges not overlapping), 1.7× and 4.2× the wall. The design guessed 1.3 to 2× wall. It stays on
+  by default (it is the delete-decision number); `--no-private` is the fast path.
+- **Against what it replaces:** a full index build costs 7.6× less CPU than `clonesize --depth 6`
+  on GenesisTools (35 vs 266 s) and 3.4× less on GenesisPlayground, at a third of the wall time,
+  and then every answer is a SQLite read. `du -sk` is single-threaded and spends less CPU but 2×
+  the wall, and keeps nothing.
+- **SQLite is not the cost:** ingest plus commit took 36 ms for 8,156 rows (GenesisTools) and
+  12 ms for 2,585 rows (GenesisPlayground). The databases are 1.1 MB and 0.45 MB. The stored share
+  is 7.1% and 9.8% of the directories, which matches the 1 MiB cutoff estimate (about 10%).
+- **An update is two orders of magnitude cheaper than a build:** 0.11 s of CPU against 35 s on
+  GenesisTools. Inside the tool it took 26 to 69 ms (10 to 39 ms of walk for 1,224 files) in three
+  runs at load 31, 0.10 to 0.20 s wall with Bun's start; the 0.68 s median above is load noise.
+- **Memory:** the C walk peaks at 17 MB on 115k directories (one 96-byte node per directory,
+  nothing per file), against 103 MB for `--depth 6`. The Bun side adds about 45 MB.
+
+Acceptance targets from the design (2026-10-13 explore note, section J):
+
+| target | measured | verdict |
+|---|---|---|
+| `--no-private` within 1.3× `--bigfiles` wall (GenesisTools) | 6.51 vs 5.81 s (1.12×) | met |
+| private within 2× `--bigfiles` wall | 11.00 vs 5.81 s (1.89×) | met, barely |
+| private under ⅓ of `--depth 6` wall | 11.00 vs 32.41 s (0.34×); the full build 10.05 s (0.31×) | met for the build, at the line for the walk |
+| peak RSS under 100 MB on GenesisTools | 63 MB (the C walk 17 MB) | met |
+| one-region update under 0.5 s median | 0.21 s (GP); 0.68 s (GT, noise; 0.10 to 0.20 s re-run) | met at normal load |
+
+**Identical totals, old binary against new, back to back** on GenesisPlayground (21:55):
+`--depth 2 --threads 8` byte-identical in every scalar and in all 197 nodes compared by path (the
+node ORDER differs between any two runs, because ids follow discovery order); `--bigfiles` output
+identical (296,100 files listed).
+
+**A finding the benchmark trees could not show: a `$HOME` walk hung.** The first `$HOME` run
+(21:40, `taskpolicy -b`) stopped at 11.4M files: all 8 workers sat in `open()` under
+`~/Library/Containers` at 0% CPU (`sample` showed eight `__open` frames). That is macOS holding the
+open of another app's data until a privacy prompt is answered. `--bigfiles` and `--depth` walk the
+same way and would hang the same way. `--index` now has a stall watchdog on its progress tick: a
+worker whose folder makes no progress for `--stall-seconds` (10) is given up, the folder is
+flagged blocked (32), its job counts as done and a replacement worker continues. Cost on a normal
+walk: one lock round-trip per listing batch per worker. Measured at 21:58 on GenesisPlayground,
+the walker before and after the watchdog interleaved, 7 rounds each, load 14 to 15 with the
+second `$HOME` build running at background priority: CPU median 10.84 s before, 9.21 s after
+(ranges 9.97-13.92 and 8.76-15.71), wall median 3.78 s and 4.23 s, the same root total
+(15,065,477,120) in all 14 runs. No cost visible above the noise. Test hook:
+`CLONESIZE_TEST_BLOCK_DIR` parks one folder's `open()` forever.
+
+Correctness is pinned by `src/du/lib/index/index.test.ts` (18 tests): every stored row equals a
+recursive `lstat` oracle, the root equals `clonesize` `naive_bytes`, and an update after add,
+grow, delete, rename, promote and demote equals a fresh build row for row (a negative control
+that drops the ancestor delta fails it).
+
+### 2026-10-13 22:13 — One `$HOME` data point (`tools du index build`, background priority)
+
+Run once, 21:56 to 22:12, with `taskpolicy -b` (the nightly task's priority), the database in
+session scratch, `fseventsd` calm (30 MB, 0.5% CPU), load `12.07` → `11.30` (1-minute; the
+15-minute average went 20.9 → 31.7 while other sessions built). From a terminal without the
+"data of other apps" permission, so the privacy gate was in the way.
+
+| result | value |
+|---|---|
+| files / directories | 14,157,311 / 1,972,357 |
+| stored rows | 129,905 (6.6%), 1,842,453 folded below 1 MiB |
+| allocated / logical / private | 782.6 GB / 1,784.6 GB (sparse VM images) / 598.6 GB |
+| big files (≥ 8 MiB) | 10,337 |
+| database | 20.0 MB (the design estimated about 24 MB) |
+| wall / CPU | 915.6 s (walk 912.8 s) / 706 s (7.4 user, 698.7 sys) |
+| ingest + commit | 1.85 s for 129,905 rows |
+| peak RSS | 242 MB (the largest process; the target was under 500 MB) |
+| blocked / read errors / denied | 57 / 199 / 1 |
+| skipped | `~/Library/CloudStorage`, `~/Library/Mobile Documents` |
+
+- **Background priority is slow:** 15.5k files/s against 250k to 280k in the foreground runs above.
+  At this rate the nightly build takes about 15 minutes, inside the 45-minute task timeout.
+- **The privacy gate:** 57 folders were given up after 10 s each (Parallels `.pvm` bundles and
+  Xcode bundles in `~/Documents`, `~/.claude.bkp/projects/*`, containers), all still parked in
+  `open()` minutes later. 199 read errors were `open` answering `EINTR` under
+  `~/Library/Containers` and `~/Library/Group Containers` (379 and 28 log lines over both runs),
+  plus 10 `ETIMEDOUT` from `getattrlistbulk`. The Disk Manager should run the build from an app
+  that holds Full Disk Access; the result names every blocked folder.
+- **Queries on this database** (in process, median of 5): a folder with its children and top 10
+  files 1.3 to 2.7 ms, the 50 largest files 0.9 ms, the 50 largest folders by own bytes 77 ms (a
+  correlated sum over 130k rows). Through the CLI, 0.06 to 0.25 s wall, mostly Bun's start.
+
+## 2026-10-13 22:51 — `--index` review fixes: blocked folders cannot exhaust the walker
+
+From the CLI review (vault `GenesisTools.native/DiskManager/2026-10-13-Review-CLI.opus.md`, M1):
+the watchdog replaced every given-up worker, up to 512, so a pending privacy prompt in front of
+`~/Library/Containers` (1,195 entries here) could still use up the pool and hang the walk. Now
+the second given-up child of a folder (never the walk root) gives up that folder's queued and
+later children without opening them, at most 64 threads may be stuck, and at that cap, once no
+live worker is left, the queue is given up so the walk ends with every folder listed. All of one
+tick's give-ups are gated before replacements start. The end row gains `workers`.
+
+- **Fake blocking opener** (`CLONESIZE_TEST_BLOCK_NAME_PREFIX`): 100 blocked siblings, 4 threads,
+  `--stall-seconds 1`: 100 blocked, 8 workers, 1 s (before: one replacement per blocked folder,
+  104 workers). Cap test (`CLONESIZE_TEST_MAX_STUCK=2`, 8 blocked folders in 8 parents): ends.
+- **Cost on a normal walk** (the gate check is one atomic load per pushed folder while nothing is
+  gated): GenesisPlayground, before and after interleaved, 7 rounds each, load 17 → 11. CPU median
+  10.54 s before, 10.07 s after (ranges 9.12-13.37 and 9.51-13.41); wall 2.85 s and 2.83 s; the
+  same root total (15,064,064,000) in all 14 runs. No cost visible.
+- **TypeScript side, no walk cost:** a recursive update drops paths inside another recursive path
+  and checks parent ≥ Σ children before committing (H3); excludes are canonical (L6); the
+  free-space floor is `max(1 GiB, 2 × database + 256 MiB)` instead of 8 GiB (M8); `query` reports
+  blocked folders (M7).
+
+## 2026-10-14 — PR #515: consistent index reads and deferred recursive updates
+
+This round changes TypeScript query/update logic, not the native walk. Query and diff responses now use one
+SQLite read transaction; queued paths retain recursive intent through an additive queue-only migration; leaf
+attribution searches the descendant prefix interval; historical diffs treat a missing snapshot side as unknown
+rather than borrowing a later tombstone. The v1 read schema fixture remains unchanged.
+
+`timeout 600 /usr/bin/time -l bun scripts/test.ts src/du/lib/index/index.test.ts` on the same worktree:
+
+| run | tests | wall | user CPU | system CPU | peak RSS |
+|---|---|---|---|---|---|
+| before | 27 passed | 9.02 s | 3.10 s | 0.49 s | 84,688,896 B |
+| after | 31 passed | 7.98 s | 2.70 s | 0.32 s | 78,282,752 B |
+
+Load averages were 30.99 / 18.24 / 13.74 before and 8.35 / 10.91 / 12.80 after. The test sets differ and load
+fell, so these are verification costs, not evidence of a speedup. Both runs ended with `[test] suite complete`.
+The native oracle and fresh-build comparisons pass, including a recursive queue drain that previously skipped
+stored descendants. A historical missing row is now approximate with `after: null`; native scan totals do not change.
+
+The benchmark launcher also ran three `index-c-noprivate` rounds on an isolated one-file fixture: every round
+reported `alloc=4096 files=1`, exit 0 and 2 MB peak RSS. CPU and wall values rounded to 0.00 s; this checks launcher
+and environment inheritance, not scan performance. Load was 10.41 / 11.77 / 13.24. The full native benchmark matrix
+was not repeated because no C walk code changed.

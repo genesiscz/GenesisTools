@@ -114,8 +114,6 @@ public struct RadarHit: Codable, Equatable, Identifiable, Sendable {
 ///   `growthStep` since the last report. Child processes' writes arrive too (`IgnoreSelf` does not hide them).
 /// - A file that is removed, moved away (or sits in a removed or moved folder), or shrinks below `threshold` leaves
 ///   `hits` and is reported to `onRemove`; a listed file that changed less than a step shows its current size.
-///   A path that cannot be statted (permission, I/O) stays: only "not there" (`ENOENT`, `ENOTDIR`) drops it, and
-///   the errno is kept in `statErrors` for the host.
 /// - `ignorePatterns` are `fnmatch` patterns in which `*` also crosses `/` (`*/node_modules/*`); `~` is the home. An
 ///   ignored folder's entries are not read.
 /// - Tracked paths are capped at `maxTracked` (the least recently seen go first).
@@ -158,7 +156,6 @@ public final class BigFileRadar: @unchecked Sendable {
     private var stats = 0
     private var listings = 0
     private var entryReads = 0
-    private var statError: [String: Int32] = [:]
 
     public init(configuration: Configuration = Configuration(), onHits: @escaping @Sendable ([RadarHit]) -> Void) {
         config = configuration
@@ -183,13 +180,8 @@ public final class BigFileRadar: @unchecked Sendable {
     }
 
     /// The latest hit per path that is still there at or above the threshold: the newest batch first, the biggest
-    /// first within a batch. A file that was removed, moved away or shrank below the threshold leaves it. A path
-    /// whose `lstat` failed for a reason other than "not there" stays.
+    /// first within a batch. A file that was removed, moved away or shrank below the threshold leaves it.
     public var hits: [RadarHit] { onQueue { recent } }
-
-    /// Paths whose last `lstat` failed, and the errno. Cleared when a later stat succeeds or the path is dropped
-    /// because it is gone. A host can show that a hit may be stale because the file could not be read.
-    public var statErrors: [String: Int32] { onQueue { statError } }
 
     /// Called on the radar's queue with the paths that left `hits` (removed, moved away, shrunk below the
     /// threshold, or inside a removed folder), so a host that keeps its own list can drop them.
@@ -216,7 +208,6 @@ public final class BigFileRadar: @unchecked Sendable {
         queue.async { [self] in
             tracked.removeValue(forKey: path)
             recent.removeAll { $0.path == path }
-            statError.removeValue(forKey: path)
         }
     }
 
@@ -224,7 +215,6 @@ public final class BigFileRadar: @unchecked Sendable {
         queue.async { [self] in
             tracked = [:]
             recent = []
-            statError = [:]
         }
     }
 
@@ -254,7 +244,6 @@ public final class BigFileRadar: @unchecked Sendable {
             let prefix = path == "/" ? "/" : path + "/"
             let inside: (String) -> Bool = { $0 == path || (subtree && $0.hasPrefix(prefix)) }
             for key in tracked.keys where inside(key) { tracked.removeValue(forKey: key) }
-            for key in statError.keys where inside(key) { statError.removeValue(forKey: key) }
             let leaving = recent.filter { inside($0.path) }.map(\.path)
             if !leaving.isEmpty {
                 recent.removeAll { inside($0.path) }
@@ -264,19 +253,10 @@ public final class BigFileRadar: @unchecked Sendable {
         for event in batch.events {
             let mayBeGone = !event.flags.contains(.itemIsFile) || event.flags.contains(.itemRemoved)
                 || event.flags.contains(.itemRenamed)
-            if mayBeGone {
-                switch Self.pathState(event.path) {
-                case .missing:
-                    // Removed, or moved away (a rename reports the old path): a folder takes its files along.
-                    drop(event.path, subtree: true)
-                    continue
-                case .unreadable(let code):
-                    stats += 1
-                    statError[event.path] = code
-                    continue
-                case .file, .other:
-                    statError[event.path] = nil
-                }
+            if mayBeGone, !Self.exists(event.path) {
+                // Removed, or moved away (a rename reports the old path): a folder takes its files along.
+                drop(event.path, subtree: true)
+                continue
             }
             if event.flags.contains(.itemIsDir) || (!event.flags.contains(.itemIsFile) && isDirectory(event.path)) {
                 guard !isIgnored(event.path), !isIgnored(event.path + "/") else { continue }
@@ -299,20 +279,14 @@ public final class BigFileRadar: @unchecked Sendable {
         var found: [RadarHit] = []
         for path in candidates where !isIgnored(path) {
             stats += 1
-            switch Self.pathState(path) {
-            case .unreadable(let code):
-                statError[path] = code
-                continue
-            case .missing, .other:
+            guard let size = Self.fileSize(path) else {
                 drop(path, subtree: false)
                 continue
-            case .file(let allocated, let logical):
-                statError[path] = nil
-                switch evaluate(path: path, allocated: allocated, logical: logical, now: now) {
-                case .hit(let hit): found.append(hit)
-                case .belowThreshold: drop(path, subtree: false)
-                case .unchanged: refresh(path: path, allocated: allocated, logical: logical, now: now)
-                }
+            }
+            switch evaluate(path: path, allocated: size.allocated, logical: size.logical, now: now) {
+            case .hit(let hit): found.append(hit)
+            case .belowThreshold: drop(path, subtree: false)
+            case .unchanged: refresh(path: path, allocated: size.allocated, logical: size.logical, now: now)
             }
         }
         if tracked.count > config.maxTracked {
@@ -371,28 +345,9 @@ public final class BigFileRadar: @unchecked Sendable {
         }
     }
 
-    /// What one `lstat` says. `missing` is only "not there" (`ENOENT`, `ENOTDIR`). Any other errno is
-    /// `unreadable`: the path may still be the file we are tracking, and dropping it would hide it.
-    enum RadarPathState: Equatable {
-        case file(allocated: Int64, logical: Int64)
-        case other
-        case missing
-        case unreadable(Int32)
-    }
-
-    static func isMissingErrno(_ code: Int32) -> Bool {
-        code == ENOENT || code == ENOTDIR
-    }
-
-    static func pathState(_ path: String) -> RadarPathState {
+    private static func exists(_ path: String) -> Bool {
         var info = stat()
-        if lstat(path, &info) != 0 {
-            return isMissingErrno(errno) ? .missing : .unreadable(errno)
-        }
-        if (info.st_mode & S_IFMT) == S_IFREG {
-            return .file(allocated: Int64(info.st_blocks) * 512, logical: Int64(info.st_size))
-        }
-        return .other
+        return lstat(path, &info) == 0
     }
 
     private func isIgnored(_ path: String) -> Bool {
@@ -427,10 +382,9 @@ public final class BigFileRadar: @unchecked Sendable {
 
     /// The allocated and logical size of a regular file (no symlinks followed); nil for anything else.
     static func fileSize(_ path: String) -> (allocated: Int64, logical: Int64)? {
-        if case .file(let allocated, let logical) = pathState(path) {
-            return (allocated, logical)
-        }
-        return nil
+        var info = stat()
+        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
+        return (Int64(info.st_blocks) * 512, Int64(info.st_size))
     }
 
     static func expandTilde(_ pattern: String) -> String {

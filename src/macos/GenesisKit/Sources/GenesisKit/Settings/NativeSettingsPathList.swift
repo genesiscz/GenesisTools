@@ -89,8 +89,11 @@ public struct NativeSettingsPathList: View {
                 .font(.system(size: 13))
                 .foregroundStyle(isMissing ? KitPalette.modified : Color.accentColor.opacity(0.85))
                 .frame(width: 18)
-            PathLabel(path: Self.expanded(path), font: .system(size: 12, design: .monospaced), showIcons: false,
-                      title: label?(path) ?? Self.display(path), color: isMissing ? .secondary : .primary)
+            Text(verbatim: label?(path) ?? Self.display(path))
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(isMissing ? .secondary : .primary)
+                .instantTooltip(path, monospaced: true)
             if isMissing {
                 Text("Missing").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(KitPalette.modified)

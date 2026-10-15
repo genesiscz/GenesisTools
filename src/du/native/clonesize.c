@@ -41,6 +41,7 @@
 #include <sys/param.h>
 #include <sys/vnode.h>
 #include <time.h>
+#include <mach/mach.h>
 
 // fcntl.h already provides `struct log2phys` and F_LOG2PHYS_EXT (=65).
 
@@ -2115,6 +2116,745 @@ char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Directory-size index (--index), the walk behind `tools du index`.
+//
+// One parallel getattrlistbulk pass that never opens a file. Each directory has
+// exactly one worker, so its direct files are summed in stack locals and written
+// into its own node once, at the end of the listing: no lock and no per-file
+// record, which is what lets memory grow with the DIRECTORY count instead of the
+// file count (--depth keeps a 40-byte record per file). After the walk one
+// descending-id pass rolls the totals up (a parent's id is always below its
+// child's), and every directory whose subtree is under --min-dir-bytes is folded
+// into its nearest stored ancestor. A flagged directory (denied, incomplete
+// listing, skipped cloud root or mount) is always stored, with its ancestors, so
+// the report can name it.
+//
+// Output is NDJSON on stdout, written after the roll-up, in ascending node id
+// (parents before children):
+//   {"t":"d",...}  one stored directory (the root has "p":-1 and its path as "n")
+//   {"t":"r",...}  --region only: the region root's totals over what was walked
+//   {"t":"b",...}  one file at or above --big-file-floor, owned by a stored node
+//   {"t":"k",...}  --region only: a direct child named in --keep-file, not entered
+//   {"t":"e",...}  the last line: counts, errors, timing
+// Progress goes to stderr as {"progress":true,...} every 500 ms while walking.
+//
+// --region DIR --keep-file F re-walks one stored directory for `index update`.
+// F holds "fileid<TAB>path" lines naming DIR's stored children; a child whose
+// name and fileid both match is reported as kept and not entered, so the walk
+// covers DIR's own files plus its folded (or new) subdirectories only.
+// Error classes: EACCES/EPERM count as denied, ENOENT/ENOTDIR as vanished (a
+// live tree changes under the walk), anything else as an error that flags the
+// directory incomplete. The caller decides what an error means.
+// ---------------------------------------------------------------------------
+typedef struct {
+    int      parent;            // node id, -1 for the root
+    uint32_t flags;             // IDX_F_* bits
+    char    *name;              // basename; the root holds its path
+    uint64_t fileid;
+    int64_t  dir_mtime_ms;
+    uint64_t alloc, dlen, priv, files, dirs;   // direct files, then the subtree after the roll-up
+    uint64_t max_file;          // largest datalength in the subtree
+    int64_t  newest_mtime_s;    // newest file mtime in the subtree
+    uint8_t  stored;
+} INode;
+
+#define IDX_F_DENIED     1u
+#define IDX_F_INCOMPLETE 2u
+#define IDX_F_CLOUD      4u
+#define IDX_F_MOUNT      8u
+#define IDX_F_BLOCKED    32u   // given up by the stall watchdog (see idx_watchdog)
+#define IDX_F_KEEP       (IDX_F_DENIED | IDX_F_INCOMPLETE | IDX_F_CLOUD | IDX_F_MOUNT | IDX_F_BLOCKED)
+
+// Nodes live in fixed chunks that never move, so a worker may write its own
+// node while another worker interns new ones (a realloc'd array would not allow
+// that). A chunk pointer is published under g_imtx before any id inside it is
+// handed out, and the id reaches a worker through the queue mutex.
+#define IDX_CHUNK_BITS 16
+#define IDX_CHUNK      (1 << IDX_CHUNK_BITS)
+#define IDX_MAX_CHUNKS 16384
+static INode *g_ichunks[IDX_MAX_CHUNKS];
+static int g_inn = 0;
+static pthread_mutex_t g_imtx = PTHREAD_MUTEX_INITIALIZER;
+
+static inline INode *inode(int id) { return &g_ichunks[id >> IDX_CHUNK_BITS][id & (IDX_CHUNK - 1)]; }
+
+typedef struct { char *path; int node; uint64_t dlen, alloc, fileid; int64_t mtime_ms; uint32_t nlink; } IdxBig;
+// One per worker. `mtx` guards the hand-over between the worker and the stall
+// watchdog: the worker touches shared state (the queue, nodes, its big-file list)
+// only while holding it with state 1, and the watchdog may flip a stalled worker
+// to state 2 (given up) while it sits outside the lock in open() or
+// getattrlistbulk(). A given-up worker then touches nothing shared ever again.
+typedef struct {
+    IdxBig *big; size_t nbig, capbig; uint64_t dirs;
+    pthread_mutex_t mtx;
+    int state;              // 0 idle, 1 working on `path`, 2 given up by the watchdog
+    double beat;            // now_s() of the worker's last progress
+    const char *path;       // the directory being listed (owned by the worker)
+    int node;
+    thread_act_t thread;    // the worker's Mach thread, for its CPU time (set before its first job)
+    uint64_t cpu_us;        // its CPU time at the watchdog's last look
+} IdxOut;
+typedef struct { char *name; uint64_t fileid; } IdxKeep;
+
+static struct attrlist g_idx_al;
+static uint64_t g_idx_alopt;
+static int      g_idx_private = 1;
+static uint64_t g_idx_min_dir = 1048576;
+static uint64_t g_idx_big_floor = 8388608;
+static uint64_t g_idx_big_limit = 50000;
+static int      g_idx_region = 0;
+static IdxKeep *g_idx_keep = NULL;
+static size_t   g_idx_nkeep = 0;
+static char   **g_idx_kept = NULL;      // names of kept children, filled by the region root's worker only
+static size_t   g_idx_nkept = 0, g_idx_capkept = 0;
+static uint64_t g_idx_files = 0, g_idx_dirs = 0, g_idx_bytes = 0;   // progress, atomic adds once per directory
+static uint64_t g_idx_denied = 0, g_idx_vanished = 0;
+static int      g_idx_root_errno = 0;
+static char     g_idx_lastdir[1024];
+static pthread_mutex_t g_idx_lastmtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_idx_progmtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_idx_progcv  = PTHREAD_COND_INITIALIZER;
+static int      g_idx_walking = 0;
+
+// Stall watchdog. macOS can hold an open() of another app's data (a container under
+// ~/Library/Containers) until the user answers a privacy prompt; measured 2026-10-13:
+// all 8 workers parked in open() at 0% CPU, and a $HOME walk that never ended. A
+// worker whose directory makes no progress for g_idx_stall_s is given up: its folder
+// is flagged blocked, the job counts as done, and a replacement worker carries on.
+// The stuck thread ends with the process.
+//
+// One pending prompt gates every folder behind it (~/Library/Containers alone has
+// over a thousand entries), so a thread per blocked folder would exhaust any pool.
+// Two bounds keep the walk finite: the second given-up child of the same folder
+// (never the walk root) gives up all that folder's other children at once, and at
+// most g_idx_max_stuck threads may be stuck; at that cap, once no live worker is
+// left, every queued folder is given up and the walk ends with them listed.
+#define IDX_MAX_WORKERS 1024
+static IdxOut   *g_idx_outs[IDX_MAX_WORKERS];
+static pthread_t g_idx_th[IDX_MAX_WORKERS];
+static int       g_idx_nworkers = 0;
+static pthread_mutex_t g_idx_wmtx = PTHREAD_MUTEX_INITIALIZER;
+static double    g_idx_stall_s = 10.0;   // --stall-seconds; 0 turns the watchdog off
+static uint64_t  g_idx_blocked = 0;
+static int       g_idx_max_stuck = 64;
+static int       g_idx_stuck = 0;        // the watchdog's own count
+#define IDX_MAX_GATES 4096
+static int       g_idx_gate_parent[IDX_MAX_GATES], g_idx_gate_hits[IDX_MAX_GATES], g_idx_ngates = 0;
+static int       g_idx_gated[IDX_MAX_GATES];   // folders whose children are given up on sight
+static int       g_idx_ngated = 0;              // published with release, read with acquire
+static pthread_mutex_t g_idx_gatemtx = PTHREAD_MUTEX_INITIALIZER;
+// Test hooks: a directory (exact path, or any whose name starts with a prefix) whose
+// open() "blocks" forever, as a privacy prompt does; and a lower stuck-thread cap.
+static const char *g_idx_test_block = NULL;
+static const char *g_idx_test_block_prefix = NULL;
+static const char *g_idx_test_busy = NULL;   // CLONESIZE_TEST_BUSY_DIR: list this folder after 2.5 s of pure CPU
+
+/** Flags a folder given up (watchdog or gate) and tells the caller on stderr. */
+static void idx_report_blocked(int node, const char *path, double waited_s) {
+    inode(node)->flags |= IDX_F_BLOCKED;
+    __atomic_add_fetch(&g_idx_blocked, 1, __ATOMIC_RELAXED);
+    char *pesc = json_escape(path);
+    fprintf(stderr, "{\"blocked\":true,\"path\":\"%s\",\"waited_ms\":%llu}\n", pesc,
+            (unsigned long long)(waited_s * 1000.0));
+    fflush(stderr);
+    free(pesc);
+}
+
+static int idx_is_gated(int node) {
+    int n = __atomic_load_n(&g_idx_ngated, __ATOMIC_ACQUIRE);
+    for (int i = 0; i < n; i++) if (g_idx_gated[i] == node) return 1;
+    return 0;
+}
+
+static int idx_intern(int parent, const char *name, uint64_t fileid, int64_t mtime_ms, uint32_t flags) {
+    char *nm = strdup(name);
+    if (!nm) { perror("strdup index node"); exit(1); }
+    pthread_mutex_lock(&g_imtx);
+    int id = g_inn;
+    int c = id >> IDX_CHUNK_BITS;
+    if (c >= IDX_MAX_CHUNKS) { fprintf(stderr, "index: more than %d directories\n", IDX_MAX_CHUNKS * IDX_CHUNK); exit(1); }
+    if (!g_ichunks[c]) {
+        g_ichunks[c] = calloc(IDX_CHUNK, sizeof(INode));
+        if (!g_ichunks[c]) { perror("calloc index chunk"); exit(1); }
+    }
+    g_inn++;
+    pthread_mutex_unlock(&g_imtx);
+    INode *n = inode(id);
+    n->parent = parent;
+    n->name = nm;
+    n->fileid = fileid;
+    n->dir_mtime_ms = mtime_ms;
+    n->flags = flags;
+    return id;
+}
+
+static int idx_in_list(const char *path, char *const *list, int n) {
+    for (int i = 0; i < n; i++) if (strcmp(list[i], path) == 0) return 1;
+    return 0;
+}
+
+static int idx_user_excluded(const char *path) {
+    for (int i = 0; i < g_nexcludes; i++) if (strcmp(g_excludes[i], path) == 0) return 1;
+    return 0;
+}
+
+static int cmp_keep_name(const void *a, const void *b) {
+    return strcmp(((const IdxKeep *)a)->name, ((const IdxKeep *)b)->name);
+}
+
+/** 1 when `name` is a stored child of the region root with the same fileid. A
+ *  different fileid means the directory was replaced, so it is walked again. */
+static int idx_keep_match(const char *name, uint64_t fileid) {
+    if (!g_idx_nkeep) return 0;
+    IdxKeep key = { (char *)name, 0 };
+    const IdxKeep *hit = bsearch(&key, g_idx_keep, g_idx_nkeep, sizeof(IdxKeep), cmp_keep_name);
+    return hit && hit->fileid == fileid;
+}
+
+static void idx_note_kept(const char *name) {
+    if (g_idx_nkept == g_idx_capkept) {
+        g_idx_capkept = g_idx_capkept ? g_idx_capkept * 2 : 64;
+        g_idx_kept = realloc(g_idx_kept, g_idx_capkept * sizeof(char *));
+        if (!g_idx_kept) { perror("realloc kept"); exit(1); }
+    }
+    g_idx_kept[g_idx_nkept] = strdup(name);
+    if (!g_idx_kept[g_idx_nkept]) { perror("strdup kept"); exit(1); }
+    g_idx_nkept++;
+}
+
+/** Reads "fileid<TAB>path" lines. Only the basename matters: every line names a
+ *  direct child of the region root. Returns -1 when the file cannot be read. */
+static int idx_load_keep(const char *file) {
+    FILE *f = fopen(file, "r");
+    if (!f) return -1;
+    size_t cap = 0;
+    char *line = NULL;
+    size_t lcap = 0;
+    ssize_t len;
+    while ((len = getline(&line, &lcap, f)) > 0) {
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) line[--len] = '\0';
+        char *tab = strchr(line, '\t');
+        if (!tab) continue;
+        *tab = '\0';
+        const char *path = tab + 1;
+        const char *slash = strrchr(path, '/');
+        const char *base = slash ? slash + 1 : path;
+        if (!*base) continue;
+        if (g_idx_nkeep == cap) {
+            cap = cap ? cap * 2 : 64;
+            g_idx_keep = realloc(g_idx_keep, cap * sizeof(IdxKeep));
+            if (!g_idx_keep) { perror("realloc keep"); exit(1); }
+        }
+        g_idx_keep[g_idx_nkeep].name = strdup(base);
+        if (!g_idx_keep[g_idx_nkeep].name) { perror("strdup keep"); exit(1); }
+        g_idx_keep[g_idx_nkeep].fileid = strtoull(line, NULL, 10);
+        g_idx_nkeep++;
+    }
+    free(line);
+    fclose(f);
+    qsort(g_idx_keep, g_idx_nkeep, sizeof(IdxKeep), cmp_keep_name);
+    return 0;
+}
+
+static void idx_setup_attrlist(void) {
+    memset(&g_idx_al, 0, sizeof g_idx_al);
+    g_idx_al.bitmapcount = ATTR_BIT_MAP_COUNT;
+    g_idx_al.commonattr  = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE |
+                           ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
+    g_idx_al.fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
+    g_idx_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_NOFOLLOW;
+    if (g_idx_private) {
+        // PRIVATESIZE doubles the kernel cost per entry (see --bigfiles), so it is opt-out.
+        g_idx_al.forkattr = ATTR_CMNEXT_PRIVATESIZE;
+        g_idx_alopt |= FSOPT_ATTR_CMN_EXTENDED;
+    }
+}
+
+static void idx_open_failed(INode *me, int node, const char *dirpath, int err) {
+    if (node == 0) g_idx_root_errno = err;
+    if (err == EACCES || err == EPERM) {
+        me->flags |= IDX_F_DENIED;
+        __atomic_add_fetch(&g_idx_denied, 1, __ATOMIC_RELAXED);
+    } else if (err == ENOENT || err == ENOTDIR) {
+        __atomic_add_fetch(&g_idx_vanished, 1, __ATOMIC_RELAXED);
+    } else {
+        me->flags |= IDX_F_INCOMPLETE;
+        note_read_error("open", dirpath, err);
+    }
+}
+
+/** Takes the worker's lock and records progress. Returns 0, without the lock, when
+ *  the watchdog has given this worker up: the caller must then touch nothing shared. */
+static int idx_claim(IdxOut *t) {
+    pthread_mutex_lock(&t->mtx);
+    if (t->state == 2) { pthread_mutex_unlock(&t->mtx); return 0; }
+    t->beat = now_s();
+    return 1;
+}
+
+// Entry layout: the --bigfiles layout, plus privatesize at offset 80 when private is on.
+// Returns 1 when the watchdog gave the directory up (the worker must then exit).
+static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
+    INode *me = inode(node);
+    if (g_idx_test_block && strcmp(dirpath, g_idx_test_block) == 0) for (;;) sleep(3600);
+    if (g_idx_test_busy && strcmp(dirpath, g_idx_test_busy) == 0) {
+        // A slow listing that works the whole time (as PRIVATESIZE over big fragmented files does).
+        volatile uint64_t spin = 0;
+        double until = now_s() + 2.5;
+        while (now_s() < until) spin++;
+    }
+    if (g_idx_test_block_prefix) {
+        const char *base = strrchr(dirpath, '/');
+        base = base ? base + 1 : dirpath;
+        if (strncmp(base, g_idx_test_block_prefix, strlen(g_idx_test_block_prefix)) == 0) for (;;) sleep(3600);
+    }
+    int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
+    int open_err = errno;
+    if (!idx_claim(t)) { if (dfd >= 0) close(dfd); return 1; }
+    if (dfd < 0) {
+        idx_open_failed(me, node, dirpath, open_err);
+        t->state = 0;
+        pthread_mutex_unlock(&t->mtx);
+        return 0;
+    }
+    pthread_mutex_unlock(&t->mtx);
+    uint64_t alloc_sum = 0, dlen_sum = 0, priv_sum = 0, files = 0, max_file = 0;
+    int64_t newest = 0;
+    char buf[64 * 1024];
+    for (;;) {
+        int n = getattrlistbulk(dfd, &g_idx_al, buf, sizeof buf, g_idx_alopt);
+        int list_err = errno;
+        if (!idx_claim(t)) { close(dfd); return 1; }
+        if (n < 0) {
+            if (list_err == ENOENT || list_err == ENOTDIR) __atomic_add_fetch(&g_idx_vanished, 1, __ATOMIC_RELAXED);
+            else { me->flags |= IDX_F_INCOMPLETE; note_read_error("getattrlistbulk", dirpath, list_err); }
+            pthread_mutex_unlock(&t->mtx);
+            break;
+        }
+        if (n == 0) { pthread_mutex_unlock(&t->mtx); break; }
+        char *p = buf;
+        for (int e = 0; e < n; e++) {
+            char *entry = p;
+            uint32_t len; memcpy(&len, entry, 4);
+            uint32_t off = 4 + 20;
+            int32_t nameoff; memcpy(&nameoff, entry + off, 4);
+            const char *name = entry + off + nameoff;
+            off += 8;
+            uint32_t objtype; memcpy(&objtype, entry + off, 4); off += 4;
+            int64_t mtime, mnsec;
+            memcpy(&mtime, entry + off, 8);
+            memcpy(&mnsec, entry + off + 8, 8);
+            off += 16;
+            uint64_t fileid; memcpy(&fileid, entry + off, 8); off += 8;
+            uint32_t nlink;  memcpy(&nlink,  entry + off, 4); off += 4;
+            off_t alloc; memcpy(&alloc, entry + off, 8); off += 8;
+            off_t dlen;  memcpy(&dlen,  entry + off, 8); off += 8;
+            off_t priv = 0;
+            if (g_idx_private) { memcpy(&priv, entry + off, 8); off += 8; }
+            p += len;
+
+            if (objtype == VDIR) {
+                if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+                if (g_idx_region && node == 0 && idx_keep_match(name, fileid)) { idx_note_kept(name); continue; }
+                size_t pl = strlen(dirpath), nl = strlen(name);
+                char *sub = malloc(pl + 1 + nl + 1);
+                if (!sub) { perror("malloc index dir"); exit(1); }
+                memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
+                if (g_nexcludes && idx_user_excluded(sub)) { free(sub); continue; }
+                uint32_t fl = 0;
+                if (g_nforeign && idx_in_list(sub, g_foreign_mounts, g_nforeign)) fl = IDX_F_MOUNT;
+                else if (is_cloud_root(dirpath, name)) { fl = IDX_F_CLOUD; note_cloud_root(sub); }
+                int64_t mms = mtime * 1000 + mnsec / 1000000;
+                int child = idx_intern(node, name, fileid, mms, fl);
+                if (fl) { free(sub); continue; }   // a skipped root keeps its node (zero bytes, flagged)
+                // A gated folder's children are given up without an open() that would block too.
+                if (__atomic_load_n(&g_idx_ngated, __ATOMIC_ACQUIRE) && idx_is_gated(node)) {
+                    idx_report_blocked(child, sub, 0);
+                    free(sub);
+                    continue;
+                }
+                q_push(sub, -1, child, 0);
+                continue;
+            }
+            if (objtype != VREG) continue;   // symlinks and others: not followed, not counted
+
+            files++;
+            alloc_sum += (uint64_t)alloc;
+            dlen_sum += (uint64_t)dlen;
+            priv_sum += (uint64_t)priv;
+            if ((uint64_t)dlen > max_file) max_file = (uint64_t)dlen;
+            if (mtime > newest) newest = mtime;
+            if ((uint64_t)dlen >= g_idx_big_floor) {
+                if (t->nbig == t->capbig) {
+                    t->capbig = t->capbig ? t->capbig * 2 : 64;
+                    t->big = realloc(t->big, t->capbig * sizeof(IdxBig));
+                    if (!t->big) { perror("realloc index big"); exit(1); }
+                }
+                size_t pl = strlen(dirpath), nl = strlen(name);
+                char *full = malloc(pl + 1 + nl + 1);
+                if (!full) { perror("malloc index bigpath"); exit(1); }
+                memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
+                IdxBig *b = &t->big[t->nbig++];
+                b->path = full; b->node = node; b->dlen = (uint64_t)dlen; b->alloc = (uint64_t)alloc;
+                b->fileid = fileid; b->mtime_ms = mtime * 1000 + mnsec / 1000000; b->nlink = nlink;
+            }
+        }
+        pthread_mutex_unlock(&t->mtx);
+    }
+    close(dfd);
+    if (!idx_claim(t)) return 1;
+    me->alloc = alloc_sum;
+    me->dlen = dlen_sum;
+    me->priv = priv_sum;
+    me->files = files;
+    me->max_file = max_file;
+    me->newest_mtime_s = newest;
+    t->dirs++;
+    __atomic_add_fetch(&g_idx_files, files, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_idx_dirs, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_idx_bytes, alloc_sum, __ATOMIC_RELAXED);
+    if ((t->dirs & 63) == 1) {
+        pthread_mutex_lock(&g_idx_lastmtx);
+        strncpy(g_idx_lastdir, dirpath, sizeof g_idx_lastdir - 1);
+        g_idx_lastdir[sizeof g_idx_lastdir - 1] = '\0';
+        pthread_mutex_unlock(&g_idx_lastmtx);
+    }
+    t->state = 0;
+    pthread_mutex_unlock(&t->mtx);
+    return 0;
+}
+
+static void *idx_worker(void *arg) {
+    IdxOut *t = arg;
+    pthread_mutex_lock(&t->mtx);
+    t->thread = pthread_mach_thread_np(pthread_self());
+    pthread_mutex_unlock(&t->mtx);
+    for (;;) {
+        pthread_mutex_lock(&g_qmtx);
+        while (g_qn == 0 && !g_done) pthread_cond_wait(&g_qcv, &g_qmtx);
+        if (g_qn == 0 && g_done) { pthread_mutex_unlock(&g_qmtx); break; }
+        DirJob job = g_q[--g_qn];
+        pthread_mutex_unlock(&g_qmtx);
+
+        pthread_mutex_lock(&t->mtx);
+        t->state = 1;
+        t->beat = now_s();
+        t->path = job.path;
+        t->node = job.node;
+        pthread_mutex_unlock(&t->mtx);
+        // Given up: the watchdog already counted this job as done. job.path stays
+        // allocated, because the watchdog may still be reading it.
+        if (idx_process_dir(t, job.path, job.node)) return NULL;
+        free(job.path);
+
+        pthread_mutex_lock(&g_qmtx);
+        if (--g_pending == 0) { g_done = 1; pthread_cond_broadcast(&g_qcv); }
+        pthread_mutex_unlock(&g_qmtx);
+    }
+    return NULL;
+}
+
+static void idx_spawn_worker(void) {
+    pthread_mutex_lock(&g_idx_wmtx);
+    if (g_idx_nworkers < IDX_MAX_WORKERS) {
+        IdxOut *t = calloc(1, sizeof(IdxOut));
+        if (!t) { perror("calloc index worker"); exit(1); }
+        pthread_mutex_init(&t->mtx, NULL);
+        g_idx_outs[g_idx_nworkers] = t;
+        if (pthread_create(&g_idx_th[g_idx_nworkers], NULL, idx_worker, t) != 0) { perror("pthread_create"); exit(1); }
+        g_idx_nworkers++;
+    }
+    pthread_mutex_unlock(&g_idx_wmtx);
+}
+
+/** Gives up queued folders: the children of `parent`, or every one when parent < 0. */
+static void idx_drain_queue(int parent) {
+    pthread_mutex_lock(&g_qmtx);
+    size_t keep = 0, removed = 0;
+    for (size_t i = 0; i < g_qn; i++) {
+        DirJob job = g_q[i];
+        if (parent < 0 || inode(job.node)->parent == parent) {
+            idx_report_blocked(job.node, job.path, 0);
+            free(job.path);
+            removed++;
+        } else {
+            g_q[keep++] = job;
+        }
+    }
+    g_qn = keep;
+    g_pending -= removed;
+    if (removed && g_pending == 0) { g_done = 1; pthread_cond_broadcast(&g_qcv); }
+    pthread_mutex_unlock(&g_qmtx);
+}
+
+/** Counts a given-up child of `parent`; the second one gates the folder. Returns 1 then. */
+static int idx_note_gate(int parent) {
+    if (parent <= 0) return 0;   // never the walk root: one bad top-level folder must not cost the tree
+    int gate = 0;
+    pthread_mutex_lock(&g_idx_gatemtx);
+    int i = 0;
+    while (i < g_idx_ngates && g_idx_gate_parent[i] != parent) i++;
+    if (i == g_idx_ngates && g_idx_ngates < IDX_MAX_GATES) { g_idx_gate_parent[i] = parent; g_idx_gate_hits[i] = 0; g_idx_ngates++; }
+    if (i < g_idx_ngates && ++g_idx_gate_hits[i] == 2) {
+        int n = g_idx_ngated;
+        if (n < IDX_MAX_GATES) { g_idx_gated[n] = parent; __atomic_store_n(&g_idx_ngated, n + 1, __ATOMIC_RELEASE); gate = 1; }
+    }
+    pthread_mutex_unlock(&g_idx_gatemtx);
+    return gate;
+}
+
+static int idx_live_workers(void) {
+    pthread_mutex_lock(&g_idx_wmtx);
+    int nw = g_idx_nworkers, live = 0;
+    for (int i = 0; i < nw; i++) {
+        pthread_mutex_lock(&g_idx_outs[i]->mtx);
+        live += g_idx_outs[i]->state != 2;
+        pthread_mutex_unlock(&g_idx_outs[i]->mtx);
+    }
+    pthread_mutex_unlock(&g_idx_wmtx);
+    return live;
+}
+
+/** CPU time (user + system) a worker thread has used, in microseconds; 0 when it cannot be read. */
+static uint64_t idx_thread_cpu_us(thread_act_t thread) {
+    if (thread == MACH_PORT_NULL) return 0;
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(thread, THREAD_BASIC_INFO, (thread_info_t)&info, &count) != KERN_SUCCESS) return 0;
+    return (uint64_t)(info.user_time.seconds + info.system_time.seconds) * 1000000ull
+         + (uint64_t)(info.user_time.microseconds + info.system_time.microseconds);
+}
+
+/** Gives up every worker whose directory has made no progress for g_idx_stall_s. All
+ *  of one tick's give-ups are gated and drained before any replacement starts, so a
+ *  replacement never picks up a sibling that is about to be given up anyway. */
+static void idx_watchdog(void) {
+    if (g_idx_stall_s <= 0) return;
+    double now = now_s();
+    pthread_mutex_lock(&g_idx_wmtx);
+    int nw = g_idx_nworkers;
+    pthread_mutex_unlock(&g_idx_wmtx);
+    int given_up = 0;
+    for (int i = 0; i < nw; i++) {
+        IdxOut *t = g_idx_outs[i];
+        char *path = NULL;
+        int node = -1;
+        double waited = 0;
+        pthread_mutex_lock(&t->mtx);
+        // A worker that keeps burning CPU is working, not parked: one getattrlistbulk call with
+        // PRIVATESIZE over big, fragmented files (a log folder) took over 10 s at background I/O
+        // priority on 2026-10-14 and was given up as "blocked", losing 3.9 GB. A privacy prompt
+        // parks the thread in open() at 0% CPU, so CPU time that still grows resets the clock.
+        uint64_t cpu = idx_thread_cpu_us(t->thread);
+        int busy = cpu > 0 && cpu - t->cpu_us >= 20000;   // 20 ms of CPU since the last tick
+        t->cpu_us = cpu;
+        if (t->state == 1 && busy) t->beat = now;
+        if (t->state == 1 && now - t->beat >= g_idx_stall_s) {
+            t->state = 2;
+            path = strdup(t->path);
+            node = t->node;
+            waited = now - t->beat;
+        }
+        pthread_mutex_unlock(&t->mtx);
+        if (!path) continue;
+        // The node's own worker can no longer write it.
+        idx_report_blocked(node, path, waited);
+        free(path);
+        g_idx_stuck++;
+        given_up++;
+        if (idx_note_gate(inode(node)->parent)) idx_drain_queue(inode(node)->parent);
+        pthread_mutex_lock(&g_qmtx);
+        if (--g_pending == 0) { g_done = 1; pthread_cond_broadcast(&g_qcv); }
+        pthread_mutex_unlock(&g_qmtx);
+    }
+    for (int i = 0; i < given_up; i++) {
+        // A replacement only while the stuck count stays under the cap.
+        if (g_idx_stuck - given_up + i + 1 >= g_idx_max_stuck) break;
+        idx_spawn_worker();
+    }
+    // At the cap with nobody left to run the queue: give it up, so the walk ends.
+    if (given_up && g_idx_stuck >= g_idx_max_stuck && idx_live_workers() == 0) idx_drain_queue(-1);
+}
+
+/** Prints progress every 500 ms until the walk ends; wakes at once when it does.
+ *  Also runs the stall watchdog on the same tick. */
+static void *idx_progress(void *arg) {
+    (void)arg;
+    double t0 = now_s();
+    pthread_mutex_lock(&g_idx_progmtx);
+    while (g_idx_walking) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += 500 * 1000 * 1000;
+        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec += 1; ts.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&g_idx_progcv, &g_idx_progmtx, &ts);
+        if (!g_idx_walking) break;
+        idx_watchdog();
+        char dir[sizeof g_idx_lastdir];
+        pthread_mutex_lock(&g_idx_lastmtx);
+        memcpy(dir, g_idx_lastdir, sizeof dir);
+        pthread_mutex_unlock(&g_idx_lastmtx);
+        char *desc = json_escape(dir);
+        fprintf(stderr, "{\"progress\":true,\"files\":%llu,\"dirs\":%llu,\"bytes\":%llu,\"elapsed_ms\":%llu,\"dir\":\"%s\"}\n",
+                (unsigned long long)__atomic_load_n(&g_idx_files, __ATOMIC_RELAXED),
+                (unsigned long long)__atomic_load_n(&g_idx_dirs, __ATOMIC_RELAXED),
+                (unsigned long long)__atomic_load_n(&g_idx_bytes, __ATOMIC_RELAXED),
+                (unsigned long long)((now_s() - t0) * 1000.0), desc);
+        fflush(stderr);
+        free(desc);
+    }
+    pthread_mutex_unlock(&g_idx_progmtx);
+    return NULL;
+}
+
+static int cmp_idxbig_alloc_desc(const void *a, const void *b) {
+    const IdxBig *x = a, *y = b;
+    if (x->alloc != y->alloc) return x->alloc > y->alloc ? -1 : 1;
+    return strcmp(x->path, y->path);
+}
+
+static int cmp_idxbig_path(const void *a, const void *b) {
+    return strcmp(((const IdxBig *)a)->path, ((const IdxBig *)b)->path);
+}
+
+static void idx_emit_node(FILE *out, int id, const INode *n) {
+    char *nm = json_escape(n->name);
+    fprintf(out,
+            "{\"t\":\"%s\",\"i\":%d,\"p\":%d,\"n\":\"%s\",\"f\":%llu,\"a\":%llu,\"l\":%llu,\"v\":%llu,\"c\":%llu,"
+            "\"d\":%llu,\"x\":%llu,\"m\":%lld,\"dm\":%lld,\"fl\":%u}\n",
+            (g_idx_region && id == 0) ? "r" : "d", id, n->parent, nm,
+            (unsigned long long)n->fileid, (unsigned long long)n->alloc, (unsigned long long)n->dlen,
+            (unsigned long long)n->priv, (unsigned long long)n->files, (unsigned long long)n->dirs,
+            (unsigned long long)n->max_file, (long long)n->newest_mtime_s, (long long)n->dir_mtime_ms, n->flags);
+    free(nm);
+}
+
+/** Runs the --index walk over `root` and prints the NDJSON rows. Returns the exit code. */
+static int run_index(const char *root, int nthreads) {
+    double t0 = now_s();
+    struct stat st;
+    int lst = lstat(root, &st);
+    if (lst != 0 || !S_ISDIR(st.st_mode)) {
+        int err = lst != 0 ? errno : ENOTDIR;
+        printf("{\"t\":\"e\",\"files\":0,\"dirs\":0,\"stored\":0,\"folded\":0,\"big\":0,\"big_total\":0,"
+               "\"denied\":0,\"vanished\":0,\"errors\":0,\"blocked\":0,\"walk_ms\":0,\"threads\":%d,\"workers\":0,\"private\":%d,"
+               "\"root_errno\":%d,\"fsid\":\"\"}\n", nthreads, g_idx_private, err);
+        return 3;
+    }
+
+    // The volume id, so `index update` can refuse a database built on another volume.
+    struct statfs sfs;
+    uint64_t fsid = 0;
+    if (statfs(root, &sfs) == 0) fsid = ((uint64_t)(uint32_t)sfs.f_fsid.val[0] << 32) | (uint32_t)sfs.f_fsid.val[1];
+
+    reset_state();
+    idx_setup_attrlist();
+    collect_foreign_mounts(root);
+    int64_t root_mtime_ms = (int64_t)st.st_mtimespec.tv_sec * 1000 + st.st_mtimespec.tv_nsec / 1000000;
+    int rootnode = idx_intern(-1, root, (uint64_t)st.st_ino, root_mtime_ms, 0);
+
+    g_idx_walking = 1;
+    pthread_t prog;
+    pthread_create(&prog, NULL, idx_progress, NULL);
+    q_push(strdup(root), -1, rootnode, 0);
+    for (int i = 0; i < nthreads; i++) idx_spawn_worker();
+    // Done means every job finished or was given up. A given-up worker never returns,
+    // so only the others are joined.
+    pthread_mutex_lock(&g_qmtx);
+    while (!g_done) pthread_cond_wait(&g_qcv, &g_qmtx);
+    pthread_mutex_unlock(&g_qmtx);
+    pthread_mutex_lock(&g_idx_wmtx);
+    int nw = g_idx_nworkers;
+    pthread_mutex_unlock(&g_idx_wmtx);
+    for (int i = 0; i < nw; i++) {
+        pthread_mutex_lock(&g_idx_outs[i]->mtx);
+        int given_up = g_idx_outs[i]->state == 2;
+        pthread_mutex_unlock(&g_idx_outs[i]->mtx);
+        if (!given_up) pthread_join(g_idx_th[i], NULL);
+    }
+    pthread_mutex_lock(&g_idx_progmtx);
+    g_idx_walking = 0;
+    pthread_cond_broadcast(&g_idx_progcv);
+    pthread_mutex_unlock(&g_idx_progmtx);
+    pthread_join(prog, NULL);
+    double walk_s = now_s() - t0;
+
+    // Roll-up: children carry higher ids than their parent, so a descending pass
+    // finishes every subtree before adding it to its parent.
+    int nn = g_inn;
+    for (int id = nn - 1; id > 0; id--) {
+        INode *c = inode(id), *pa = inode(c->parent);
+        pa->alloc += c->alloc;
+        pa->dlen += c->dlen;
+        pa->priv += c->priv;
+        pa->files += c->files;
+        pa->dirs += c->dirs + 1;
+        if (c->max_file > pa->max_file) pa->max_file = c->max_file;
+        if (c->newest_mtime_s > pa->newest_mtime_s) pa->newest_mtime_s = c->newest_mtime_s;
+    }
+    // Fold: a subtree never exceeds its parent's, so the stored set is the
+    // connected top of the tree; flagged nodes pull their ancestors in too.
+    uint64_t stored = 0;
+    for (int id = nn - 1; id >= 0; id--) {
+        INode *n = inode(id);
+        if (id == 0 || n->alloc >= g_idx_min_dir || (n->flags & IDX_F_KEEP)) n->stored = 1;
+        if (n->stored && id > 0) inode(n->parent)->stored = 1;
+    }
+    for (int id = 0; id < nn; id++) stored += inode(id)->stored;
+
+    // A given-up worker's list is complete up to its stall: it only appends under its lock.
+    size_t nbig = 0;
+    for (int i = 0; i < nw; i++) nbig += g_idx_outs[i]->nbig;
+    IdxBig *big = malloc((nbig ? nbig : 1) * sizeof(IdxBig));
+    if (!big) { perror("malloc index big"); exit(1); }
+    size_t k = 0;
+    for (int i = 0; i < nw; i++) {
+        for (size_t j = 0; j < g_idx_outs[i]->nbig; j++) big[k++] = g_idx_outs[i]->big[j];
+    }
+    size_t emit_big = nbig;
+    if (nbig > g_idx_big_limit) {
+        qsort(big, nbig, sizeof(IdxBig), cmp_idxbig_alloc_desc);
+        emit_big = (size_t)g_idx_big_limit;
+    }
+    qsort(big, emit_big, sizeof(IdxBig), cmp_idxbig_path);
+
+    static char obuf[1 << 20];
+    setvbuf(stdout, obuf, _IOFBF, sizeof obuf);
+    for (int id = 0; id < nn; id++) {
+        INode *n = inode(id);
+        if (n->stored) idx_emit_node(stdout, id, n);
+    }
+    for (size_t i = 0; i < emit_big; i++) {
+        int owner = big[i].node;
+        while (!inode(owner)->stored) owner = inode(owner)->parent;
+        char *pesc = json_escape(big[i].path);
+        printf("{\"t\":\"b\",\"o\":%d,\"p\":\"%s\",\"l\":%llu,\"a\":%llu,\"f\":%llu,\"m\":%lld,\"n\":%u}\n",
+               owner, pesc, (unsigned long long)big[i].dlen, (unsigned long long)big[i].alloc,
+               (unsigned long long)big[i].fileid, (long long)big[i].mtime_ms, big[i].nlink);
+        free(pesc);
+    }
+    for (size_t i = 0; i < g_idx_nkept; i++) {
+        char *nesc = json_escape(g_idx_kept[i]);
+        printf("{\"t\":\"k\",\"n\":\"%s\"}\n", nesc);
+        free(nesc);
+    }
+    INode *r = inode(0);
+    printf("{\"t\":\"e\",\"files\":%llu,\"dirs\":%llu,\"stored\":%llu,\"folded\":%llu,\"big\":%zu,\"big_total\":%zu,"
+           "\"denied\":%llu,\"vanished\":%llu,\"errors\":%llu,\"blocked\":%llu,\"walk_ms\":%llu,\"threads\":%d,"
+           "\"workers\":%d,\"private\":%d,\"root_errno\":%d,\"fsid\":\"%016llx\"}\n",
+           (unsigned long long)r->files, (unsigned long long)r->dirs, (unsigned long long)stored,
+           (unsigned long long)((uint64_t)nn - stored), emit_big, nbig,
+           (unsigned long long)g_idx_denied, (unsigned long long)g_idx_vanished, (unsigned long long)g_read_errors,
+           (unsigned long long)g_idx_blocked, (unsigned long long)(walk_s * 1000.0), nthreads, nw, g_idx_private,
+           g_idx_root_errno,
+           (unsigned long long)fsid);
+    fflush(stdout);
+    if (g_profile) fprintf(stderr, "[index] walk %.2fs nodes=%d stored=%llu big=%zu threads=%d\n",
+                           walk_s, nn, (unsigned long long)stored, nbig, nthreads);
+    return 0;
+}
+
 static void usage(const char *me) {
     fprintf(stderr,
         "usage: %s [options] <dir>\n"
@@ -2132,6 +2872,14 @@ static void usage(const char *me) {
         "  --cache-dir DIR      extent-cache directory (omit to disable the cache)\n"
         "  --no-cache           ignore the cache when reading (still writes it)\n"
         "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive (slow; may download)\n"
+        "  --index              per-directory NDJSON rows for `tools du index` (one dir)\n"
+        "  --min-dir-bytes N    with --index: fold directories whose subtree is < N (default 1 MiB)\n"
+        "  --big-file-floor N   with --index: report files with datalength >= N (default 8 MiB)\n"
+        "  --big-file-limit N   with --index: keep at most N big files, largest first (default 50000)\n"
+        "  --no-private         with --index: skip ATTR_CMNEXT_PRIVATESIZE (half the kernel cost)\n"
+        "  --region             with --index: the dir is one stored region (index update)\n"
+        "  --keep-file F        with --region: \"fileid<TAB>path\" lines of children not to enter\n"
+        "  --stall-seconds S    with --index: give up a folder with no progress for S s (default 10, 0 = never)\n"
         "  --quiet              omit the per-group table\n"
         "  (env PROFILE=1       print phase timings to stderr)\n", me);
 }
@@ -2139,6 +2887,8 @@ static void usage(const char *me) {
 int main(int argc, char **argv) {
     const char *target = NULL, *partners_of = NULL;
     int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0;
+    int index_mode = 0, dropped_excludes = 0;
+    const char *keep_file = NULL;
     // Grown on demand: a fixed 4096 cap dropped every root past it with no
     // diagnostic, so a large fleet got a silently incomplete listing.
     const char **roots = NULL;
@@ -2155,11 +2905,19 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--freeable-tree"))          { g_freeable_tree = 1; if (g_maxdepth < 0) g_maxdepth = 1; }
         else if (!strcmp(a, "--min-bytes") && i + 1 < argc) g_min_blocks = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--changed-since") && i + 1 < argc) g_mtime_min = strtoull(argv[++i], NULL, 10);
-        else if (!strcmp(a, "--exclude") && i + 1 < argc) { if (g_nexcludes < MAX_EXCLUDES) g_excludes[g_nexcludes++] = argv[++i]; else i++; }
+        else if (!strcmp(a, "--exclude") && i + 1 < argc) { if (g_nexcludes < MAX_EXCLUDES) g_excludes[g_nexcludes++] = argv[++i]; else { i++; dropped_excludes++; } }
         else if (!strcmp(a, "--partners-of") && i + 1 < argc) partners_of = argv[++i];
         else if (!strcmp(a, "--top") && i + 1 < argc)    topn = atoi(argv[++i]);
         else if (!strcmp(a, "--volume"))                 volume = 1;
         else if (!strcmp(a, "--bigfiles"))               bigfiles = 1;
+        else if (!strcmp(a, "--index"))                  index_mode = 1;
+        else if (!strcmp(a, "--region"))                 g_idx_region = 1;
+        else if (!strcmp(a, "--keep-file") && i + 1 < argc) keep_file = argv[++i];
+        else if (!strcmp(a, "--min-dir-bytes") && i + 1 < argc) g_idx_min_dir = strtoull(argv[++i], NULL, 10);
+        else if (!strcmp(a, "--big-file-floor") && i + 1 < argc) g_idx_big_floor = strtoull(argv[++i], NULL, 10);
+        else if (!strcmp(a, "--big-file-limit") && i + 1 < argc) g_idx_big_limit = strtoull(argv[++i], NULL, 10);
+        else if (!strcmp(a, "--no-private"))             g_idx_private = 0;
+        else if (!strcmp(a, "--stall-seconds") && i + 1 < argc) g_idx_stall_s = atof(argv[++i]);
         else if (!strcmp(a, "--prune-name") && i + 1 < argc) { if (nprune < MAX_PRUNE_NAMES) prune[nprune++] = argv[++i]; else i++; }
         else if (!strcmp(a, "--cache-dir") && i + 1 < argc) g_cache_dir = argv[++i];
         else if (!strcmp(a, "--no-cache"))               g_cache_read = 0;
@@ -2179,6 +2937,25 @@ int main(int argc, char **argv) {
         }
     }
     if (!target) { usage(argv[0]); free(roots); return 2; }
+
+    if (index_mode) {
+        // One root only: node ids, the fold and the region keep set are per tree.
+        if (nroots != 1) { fprintf(stderr, "--index takes exactly one directory\n"); free(roots); return 2; }
+        if (dropped_excludes) { fprintf(stderr, "--index: more than %d --exclude paths\n", MAX_EXCLUDES); free(roots); return 2; }
+        if (keep_file && idx_load_keep(keep_file) != 0) { perror(keep_file); free(roots); return 2; }
+        g_profile = getenv("PROFILE") ? 1 : 0;
+        g_idx_test_block = getenv("CLONESIZE_TEST_BLOCK_DIR");
+        g_idx_test_busy = getenv("CLONESIZE_TEST_BUSY_DIR");
+        g_idx_test_block_prefix = getenv("CLONESIZE_TEST_BLOCK_NAME_PREFIX");
+        if (getenv("CLONESIZE_TEST_MAX_STUCK") && atoi(getenv("CLONESIZE_TEST_MAX_STUCK")) > 0)
+            g_idx_max_stuck = atoi(getenv("CLONESIZE_TEST_MAX_STUCK"));
+        // The kernel stops scaling near 8 threads (benchmarks-du.md), so more only burns CPU.
+        long nc = sysconf(_SC_NPROCESSORS_ONLN);
+        int nt = g_nthreads > 0 ? g_nthreads : (nc > 0 && nc < 8 ? (int)nc : 8);
+        int rc = run_index(target, nt);
+        free(roots);
+        return rc;
+    }
 
     if (bigfiles) {
         char *b = clonesize_bigfiles_json(roots, nroots, g_nthreads, (unsigned long long)g_min_blocks, prune, nprune);

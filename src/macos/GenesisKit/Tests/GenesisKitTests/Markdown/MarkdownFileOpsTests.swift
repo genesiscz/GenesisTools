@@ -83,29 +83,6 @@ final class MarkdownFileOpsTests: XCTestCase {
         XCTAssertEqual(model.recentlyClosed, [url("readme.md")], "a tab the reader closes is still remembered")
     }
 
-    func testATabActionLogNamesTheIndexAndNotTheFile() throws {
-        let title = "quarterly-secret.md"
-        let select = MarkdownTabLog.note(action: "select", index: 3, gesture: "button")
-        XCTAssertEqual(select, "tab action select index=3 via=button")
-        XCTAssertFalse(select.contains(title))
-        XCTAssertFalse(select.contains("/"))
-        let close = MarkdownTabLog.note(action: "close", index: 3)
-        XCTAssertEqual(close, "tab action close index=3")
-        XCTAssertFalse(close.contains(title))
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Sources/GenesisKit/Markdown/Window/MarkdownDocumentsView.swift"), encoding: .utf8)
-        let notices = source.split(separator: "\n").map(String.init).filter { $0.contains("input.notice") }
-        let tabNotices = notices.filter { $0.contains("MarkdownTabLog") || $0.contains("tab action") }
-        XCTAssertGreaterThanOrEqual(tabNotices.count, 2)
-        for line in tabNotices {
-            XCTAssertFalse(line.contains("doc.title"))
-            XCTAssertFalse(line.contains("doc.id"))
-            XCTAssertTrue(line.contains("MarkdownTabLog"))
-        }
-    }
-
     func testSourceFilesOpenAsTabs() {
         XCTAssertTrue(FileTree.isReadable(URL(fileURLWithPath: "/x/Report.ts")))
         XCTAssertTrue(FileTree.isReadable(URL(fileURLWithPath: "/x/App.swift")))

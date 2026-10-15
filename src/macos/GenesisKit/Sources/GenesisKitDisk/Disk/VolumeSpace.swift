@@ -179,12 +179,8 @@ public final class VolumeSpaceMonitor: ObservableObject {
 
     @Published public private(set) var sample: VolumeSample?
     @Published public private(set) var settling: SpaceSettling?
-    /// Called on the main actor with every published sample (history, and alerts that should not repeat while
-    /// the figure is steady). A reading that moved less than `minimumChange` does not call this.
+    /// Called on the main actor with every published sample (alerts, history).
     public var onSample: ((VolumeSample) -> Void)?
-    /// Called on the main actor with every accepted reading, including one that did not move enough to publish.
-    /// Alert confirmation counts these, so a volume that stays under a tier can still arm.
-    public var onReading: ((VolumeSample) -> Void)?
 
     /// Applies at once, `watchesWorkspace` included.
     public var configuration: Configuration {
@@ -312,7 +308,6 @@ public final class VolumeSpaceMonitor: ObservableObject {
             // The last detailed read's purgeable part rides along, so Finder's figure stays shown between reads.
             next.importantUsage = next.available + max(0, important - sample.available)
         }
-        onReading?(next)
         if !force, let sample, !next.differs(from: sample, minimumChange: configuration.minimumChange) { return }
         if sample != next { sample = next }
         onSample?(next)

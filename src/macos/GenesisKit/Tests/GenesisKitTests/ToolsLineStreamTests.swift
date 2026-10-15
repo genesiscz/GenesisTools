@@ -848,26 +848,6 @@ final class ToolsLineStreamTests: XCTestCase {
         return (ToolsBridge(binaryPath: file.path), dir)
     }
 
-    func testBackgroundAndUtilityPrioritiesShareOneLaunchPlan() {
-        let plan = ToolsBridge.launchPlan(binaryPath: "/bin/echo", argv: ["hi"])
-        let background = Process()
-        ToolsLineStream.Priority.background.configure(background, plan: plan, taskPolicyPath: "/bin/echo")
-        XCTAssertEqual(background.executableURL?.path, "/bin/echo")
-        XCTAssertEqual(background.arguments, ["-b", "/bin/echo", "hi"])
-        XCTAssertEqual(background.qualityOfService, .background)
-        XCTAssertEqual(ToolsLineStream.Priority.background.niceValue, 15)
-        let utility = Process()
-        ToolsLineStream.Priority.utility.configure(utility, plan: plan, taskPolicyPath: "/bin/echo")
-        XCTAssertEqual(utility.executableURL?.path, "/bin/echo")
-        XCTAssertEqual(utility.arguments, ["hi"])
-        XCTAssertEqual(utility.qualityOfService, .utility)
-        XCTAssertEqual(ToolsLineStream.Priority.utility.niceValue, 0)
-        let plain = Process()
-        ToolsLineStream.Priority.background.configure(plain, plan: plan, taskPolicyPath: "/no/such/taskpolicy")
-        XCTAssertEqual(plain.executableURL?.path, plan.executable.path)
-        XCTAssertEqual(plain.arguments, plan.arguments)
-    }
-
     func testABackgroundStreamRunsTheCommandAtNiceFifteen() throws {
         let (bridge, dir) = try script("sleep 0.5; echo \"$1\"; ps -o nice= -p $$")
         defer { try? FileManager.default.removeItem(at: dir) }

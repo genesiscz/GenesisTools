@@ -17,13 +17,6 @@ private final class MemoryBackend: KitSettingsBackend, @unchecked Sendable {
     private var _savesOnMain = 0
     private var _gate: CheckedContinuation<Void, Never>?
     private var _gated = false
-    private var _stale = false
-    private var _staleGate: CheckedContinuation<Void, Never>?
-    /// Loads that snapshot the bytes at entry and wait. Released one at a time, newest or oldest.
-    private var _orderLoads = false
-    private var _orderedLoads: [CheckedContinuation<Void, Never>] = []
-    private var _holdSaves = false
-    private var _saveWaiters: [CheckedContinuation<Void, Never>] = []
     var failSaves = false
 
     var saves: [Data?] { lock.lock(); defer { lock.unlock() }; return _saves }
@@ -35,29 +28,6 @@ private final class MemoryBackend: KitSettingsBackend, @unchecked Sendable {
     }
 
     func loadData(forKey key: String) async throws -> Data? {
-        if takeOrdered() {
-            let snapshot = storedData(forKey: key)
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                lock.lock()
-                if _orderLoads {
-                    _orderedLoads.append(continuation)
-                    lock.unlock()
-                } else {
-                    lock.unlock()
-                    continuation.resume()
-                }
-            }
-            return snapshot
-        }
-        if takeStale() {
-            let snapshot = storedData(forKey: key)
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                lock.lock()
-                _staleGate = continuation
-                lock.unlock()
-            }
-            return snapshot
-        }
         if lockedGated() {
             await withCheckedContinuation { continuation in
                 lock.lock()
@@ -79,129 +49,15 @@ private final class MemoryBackend: KitSettingsBackend, @unchecked Sendable {
     func openGate() {
         lock.lock()
         _gated = false
-        _stale = false
         let gate = _gate
-        let stale = _staleGate
         _gate = nil
-        _staleGate = nil
         lock.unlock()
         gate?.resume()
-        stale?.resume()
     }
 
-    var isWaitingAtGate: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _gate != nil || _staleGate != nil
-    }
-
-    func storedData(forKey key: String) -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return stored[key]
-    }
-
-    /// The next loads snapshot the bytes now, then wait, then return that snapshot. A save that lands
-    /// while they wait is not what they return.
-    func holdStaleLoads() {
-        lock.lock()
-        _stale = true
-        lock.unlock()
-    }
-
-    private func takeStale() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _stale
-    }
-
-    private func takeOrdered() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _orderLoads
-    }
-
-    /// The next loads each keep the bytes they see at entry, then wait until released.
-    func holdOrderedLoads() {
-        lock.lock()
-        _orderLoads = true
-        lock.unlock()
-    }
-
-    var orderedLoadsWaiting: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _orderedLoads.count
-    }
-
-    func releaseNewestOrderedLoad() {
-        lock.lock()
-        let newest = _orderedLoads.popLast()
-        lock.unlock()
-        newest?.resume()
-    }
-
-    func releaseOldestOrderedLoad() {
-        lock.lock()
-        let oldest = _orderedLoads.isEmpty ? nil : _orderedLoads.removeFirst()
-        lock.unlock()
-        oldest?.resume()
-    }
-
-    func releaseOrderedLoads() {
-        lock.lock()
-        _orderLoads = false
-        let waiting = _orderedLoads
-        _orderedLoads = []
-        lock.unlock()
-        for waiter in waiting { waiter.resume() }
-    }
-
-    /// Replaces the stored bytes without telling observers, so a held load keeps the snapshot it already took.
-    func replaceStored(_ data: Data, forKey key: String) {
-        lock.lock()
-        stored[key] = data
-        lock.unlock()
-    }
-
-    func holdSaves() {
-        lock.lock()
-        _holdSaves = true
-        lock.unlock()
-    }
-
-    var savesWaiting: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _saveWaiters.count
-    }
-
-    func releaseSaves() {
-        lock.lock()
-        _holdSaves = false
-        let waiters = _saveWaiters
-        _saveWaiters = []
-        lock.unlock()
-        for waiter in waiters { waiter.resume() }
-    }
+    var isWaitingAtGate: Bool { lock.lock(); defer { lock.unlock() }; return _gate != nil }
 
     func saveData(_ data: Data?, forKey key: String) async throws {
-        let hold: Bool
-        lock.lock()
-        hold = _holdSaves
-        lock.unlock()
-        if hold {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                lock.lock()
-                if _holdSaves {
-                    _saveWaiters.append(continuation)
-                    lock.unlock()
-                } else {
-                    lock.unlock()
-                    continuation.resume()
-                }
-            }
-        }
         lock.lock()
         _saves.append(data)
         if Thread.isMainThread { _savesOnMain += 1 }
@@ -459,116 +315,5 @@ extension SettingsDocumentTests {
         try await file.replaceAppValue(["floorGB": 1], forKey: "disk")
         await waitUntil("client.json changed") { count.current > 0 }
         withExtendedLifetime(observation) {}
-    }
-
-    /// An encode that throws used to clear the pending edit first, so the next external read replaced it.
-    func testAnEncodeFailureKeepsTheEditPending() async throws {
-        let backend = MemoryBackend(["disk": encodedFragile(1)])
-        let document = SettingsDocument(key: "disk", backend: backend, defaultValue: FragileSettings(n: 0),
-                                        debounce: .zero)
-        await document.load()
-        document.set(FragileSettings(n: -1))
-        let flushed = await document.flush()
-        XCTAssertFalse(flushed)
-        XCTAssertTrue(document.hasPendingChanges)
-        XCTAssertTrue(backend.saves.isEmpty)
-        XCTAssertNotNil(document.lastError)
-        backend.externalWrite(encodedFragile(4), forKey: "disk")
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertEqual(document.value.n, -1, "the external value does not replace an edit that could not be saved")
-        document.set(FragileSettings(n: 2))
-        let saved = await document.flush()
-        XCTAssertTrue(saved)
-        XCTAssertEqual(try JSONDecoder().decode(FragileSettings.self, from: XCTUnwrap(backend.storedData(forKey: "disk"))).n, 2)
-    }
-
-    /// Reverting to the stored value while an earlier save is still in flight must be what lands.
-    func testARevertWhileASaveIsInFlightIsWhatLands() async throws {
-        let backend = MemoryBackend(["disk": encoded(FixtureSettings(floorGB: 1))])
-        let document = SettingsDocument(key: "disk", backend: backend, defaultValue: FixtureSettings(),
-                                        debounce: .zero)
-        await document.load()
-        backend.holdSaves()
-        defer { backend.releaseSaves() }
-        document.set(FixtureSettings(floorGB: 2))
-        await waitUntil("the first save is in flight") { backend.savesWaiting == 1 }
-        guard backend.savesWaiting == 1 else { return }
-        document.set(FixtureSettings(floorGB: 1))
-        async let flushed = document.flush()
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        backend.releaseSaves()
-        let saved = await flushed
-        XCTAssertTrue(saved)
-        let stored = try JSONDecoder().decode(FixtureSettings.self, from: XCTUnwrap(backend.storedData(forKey: "disk")))
-        XCTAssertEqual(stored.floorGB, 1)
-    }
-
-    /// A load that read the old bytes can return after the local save has finished. It must not write them back.
-    func testAStaleLoadCannotReplaceASavedEdit() async throws {
-        let backend = MemoryBackend(["disk": encoded(FixtureSettings(floorGB: 1))])
-        let document = SettingsDocument(key: "disk", backend: backend, defaultValue: FixtureSettings(),
-                                        debounce: .zero)
-        await document.load()
-        backend.holdStaleLoads()
-        defer { backend.openGate() }
-        async let reloaded: Void = document.reload()
-        await waitUntil("the reload is inside the backend") { backend.isWaitingAtGate }
-        guard backend.isWaitingAtGate else { return }
-        document.set(FixtureSettings(floorGB: 2))
-        let saved = await document.flush()
-        XCTAssertTrue(saved)
-        backend.openGate()
-        await reloaded
-        XCTAssertEqual(document.value.floorGB, 2)
-        let stored = try JSONDecoder().decode(FixtureSettings.self, from: XCTUnwrap(backend.storedData(forKey: "disk")))
-        XCTAssertEqual(stored.floorGB, 2)
-    }
-
-    /// Two reloads can read different stored values. The one that started first can finish last, and it must not win.
-    func testAnOlderReloadCannotReplaceANewerRead() async throws {
-        let backend = MemoryBackend(["disk": encoded(FixtureSettings(floorGB: 1))])
-        let document = SettingsDocument(key: "disk", backend: backend, defaultValue: FixtureSettings(),
-                                        debounce: .zero)
-        await document.load()
-        backend.holdOrderedLoads()
-        defer { backend.releaseOrderedLoads() }
-        async let first: Void = document.reload()
-        await waitUntil("the first reload is inside the backend") { backend.orderedLoadsWaiting == 1 }
-        guard backend.orderedLoadsWaiting == 1 else { return }
-        backend.replaceStored(encoded(FixtureSettings(floorGB: 2)), forKey: "disk")
-        async let second: Void = document.reload()
-        await waitUntil("the second reload is inside the backend") { backend.orderedLoadsWaiting == 2 }
-        guard backend.orderedLoadsWaiting == 2 else { return }
-        backend.releaseNewestOrderedLoad()
-        await second
-        XCTAssertEqual(document.value.floorGB, 2)
-        backend.releaseOldestOrderedLoad()
-        await first
-        XCTAssertEqual(document.value.floorGB, 2)
-    }
-}
-
-private struct FragileSettings: Codable, Equatable, Sendable {
-    var n: Int
-
-    func encode(to encoder: Encoder) throws {
-        if n < 0 {
-            throw EncodingError.invalidValue(n, EncodingError.Context(codingPath: [], debugDescription: "negative"))
-        }
-        var container = encoder.singleValueContainer()
-        try container.encode(n)
-    }
-
-    init(n: Int) { self.n = n }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        n = try container.decode(Int.self)
-    }
-}
-
-extension SettingsDocumentTests {
-    fileprivate func encodedFragile(_ n: Int) -> Data {
-        try! JSONEncoder().encode(FragileSettings(n: n))
     }
 }

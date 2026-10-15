@@ -75,7 +75,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .fixedSize()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
-        .chartAccessibilityIdentifier(identifier)
+        .accessibilityIdentifier(identifier ?? "")
     }
 
     private func segment(_ item: Item) -> some View {
@@ -89,7 +89,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .buttonStyle(GenSegmentStyle(selected: selected, ink: ink))
         .anchorPreference(key: GenSegmentFrames.self, value: .bounds) { [AnyHashable(item.id): $0] }
         .accessibilityLabel(item.title)
-        .chartAccessibilityIdentifier(identifier.map { "\($0).\(GenAccessibilityID.suffix(item.id))" })
+        .accessibilityIdentifier(identifier.map { "\($0).\(GenAccessibilityID.suffix(item.id))" } ?? "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

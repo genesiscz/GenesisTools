@@ -106,10 +106,8 @@ public struct SpaceForecaster: Codable, Equatable, Sendable {
         compute(points, now: nil)
     }
 
-    /// The forecast as of `now`. The window ends at `now` (or at the last reading, when that is later). Readings
-    /// stop while free space moves less than the monitor's `minimumChange`, so the quiet time after the last
-    /// reading counts as a flat stretch, but only the part that still sits inside the window. A cleanup older
-    /// than the window no longer counts.
+    /// The forecast as of `now`. Readings stop while free space moves less than the monitor's `minimumChange`, so
+    /// the time from the last reading to `now` counts as a flat stretch and an old pace fades instead of standing.
     public func forecast(_ points: [SpacePoint], now: Date) -> SpaceForecast {
         compute(points, now: now)
     }
@@ -120,9 +118,8 @@ public struct SpaceForecaster: Codable, Equatable, Sendable {
             return SpaceForecast(verdict: .notEnoughHistory, bytesPerSecond: 0, timeToFloor: nil, timeToZero: nil,
                                  confidence: 0, pairsUsed: 0, jumpsIgnored: 0, span: 0, asOf: now)
         }
-        let end = now.map { max($0, last.date) } ?? last.date
-        let start = end.addingTimeInterval(-max(0, window))
-        let recent = sorted.filter { $0.date >= start && $0.date <= end }
+        let start = last.date.addingTimeInterval(-max(0, window))
+        let recent = sorted.filter { $0.date >= start }
         var rate: Double?
         var variance = 0.0
         var pairs = 0
@@ -156,9 +153,8 @@ public struct SpaceForecaster: Codable, Equatable, Sendable {
             }
             add(step: Double(delta) / elapsed, elapsed: elapsed)
         }
-        if let now, now > last.date, rate != nil {
-            let quietStart = max(last.date, start)
-            let quiet = now.timeIntervalSince(quietStart)
+        if let now, rate != nil {
+            let quiet = now.timeIntervalSince(last.date)
             if quiet >= 1 { add(step: 0, elapsed: quiet) }
         }
 
