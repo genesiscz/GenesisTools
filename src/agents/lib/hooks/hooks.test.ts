@@ -27,6 +27,7 @@ import {
     DEFAULT_HOOKS_CONFIG,
     type DecisionsHookConfig,
     decisionHooksWanted,
+    defaultLogPath,
     diffFor,
     keepsCommand,
     lastConfigLoadError,
@@ -52,7 +53,8 @@ import {
     uninstallHooks,
     wiringStatus,
 } from "./install";
-import { logDecision, releaseRotationLock, setMaxLogBytes, takeRotationLock } from "./log";
+import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
+import { nativeDiffState } from "./native-diff";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
@@ -505,6 +507,50 @@ describe("installHooks", () => {
         }
     });
 
+    it("restores the native diff uninstall took over, and leaves one the user changed", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hooks-native-restore-"));
+        const configDir = join(home, ".genesis-tools", "agents");
+
+        mkdirSync(configDir, { recursive: true });
+        writeFileSync(join(configDir, "hooks.json"), SafeJSON.stringify({ shadow: false }));
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+                const turned = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+
+                installHooks({ dist: "/dist", settingsPath: turned, write: true });
+                expect(readSettings(turned).bashEditDiffEnabled).toBe(false);
+                uninstallHooks({ settingsPath: turned, write: true });
+                expect(readSettings(turned).bashEditDiffEnabled).toBe(true);
+
+                const absent = settingsFile({ hooks: {} });
+
+                installHooks({ dist: "/dist", settingsPath: absent, write: true });
+                expect(readSettings(absent).bashEditDiffEnabled).toBe(false);
+                uninstallHooks({ settingsPath: absent, write: true });
+                expect(readSettings(absent).bashEditDiffEnabled).toBeUndefined();
+
+                const owned = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+
+                installHooks({ dist: "/dist", settingsPath: owned, write: true });
+
+                const edited = readSettings(owned);
+                edited.bashEditDiffEnabled = true;
+                writeJsonFile(owned, edited);
+                uninstallHooks({ settingsPath: owned, write: true });
+                expect(readSettings(owned).bashEditDiffEnabled).toBe(true);
+
+                const already = settingsFile({ hooks: {}, bashEditDiffEnabled: false });
+
+                installHooks({ dist: "/dist", settingsPath: already, write: true });
+                uninstallHooks({ settingsPath: already, write: true });
+                expect(readSettings(already).bashEditDiffEnabled).toBe(false);
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+
     it("dry run reports what it would add and writes nothing", () => {
         const path = settingsFile({ hooks: {} });
         const result = installHooks({ dist: "/dist", settingsPath: path, write: false });
@@ -512,6 +558,31 @@ describe("installHooks", () => {
         expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(result.changed).toBe(true);
         expect(readSettings(path).hooks).toEqual({});
+    });
+});
+
+describe("nativeDiffState", () => {
+    it("reads a broken settings file as the default, and a real value as itself", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-native-diff-"));
+        const broken = join(dir, "broken.json");
+        const off = join(dir, "off.json");
+        const on = join(dir, "on.json");
+        const diag = join(dir, "diag.jsonl");
+
+        writeFileSync(broken, "{");
+        writeFileSync(off, SafeJSON.stringify({ bashEditDiffEnabled: false }));
+        writeFileSync(on, SafeJSON.stringify({ bashEditDiffEnabled: true }));
+        setDiagLogPath(diag);
+
+        try {
+            expect(nativeDiffState(broken)).toBe("default");
+            expect(nativeDiffState(off)).toBe("off");
+            expect(nativeDiffState(on)).toBe("on");
+            expect(readFileSync(diag, "utf8")).toContain("Could not read the native diff setting");
+        } finally {
+            setDiagLogPath(defaultLogPath());
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

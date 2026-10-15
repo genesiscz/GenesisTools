@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { claudeSettingsPath, readSettings } from "./install";
+import { hookDiag } from "./log";
 import { writeJsonFile } from "./write-json";
 
 /**
@@ -10,14 +11,23 @@ import { writeJsonFile } from "./write-json";
  * `diff.replaceNative` on and `shadow` off, the hook draws every Bash diff and this one is switched off.
  * While `shadow` is on the hook prints nothing, so this diff stays.
  *
- * `on` and `off` are what the settings file says; `default` is no key, which Claude Code reads as
- * on in auto and bypassPermissions mode. The `CLAUDE_CODE_BASH_EDIT_DIFF` variable wins over all of
- * them in a session that has it.
+ * `on` and `off` are what the settings file says; `default` is no key, or a file that does not parse,
+ * which Claude Code reads as on in auto and bypassPermissions mode. `tools claude start` reads this,
+ * so a half-written settings file must not abort the launch. The `CLAUDE_CODE_BASH_EDIT_DIFF`
+ * variable wins over all of them in a session that has it.
  */
 export type NativeDiffState = "on" | "off" | "default";
 
 export function nativeDiffState(settingsPath = claudeSettingsPath()): NativeDiffState {
-    const value = (readSettings(settingsPath) as { bashEditDiffEnabled?: unknown }).bashEditDiffEnabled;
+    let value: unknown;
+
+    try {
+        value = readSettings(settingsPath).bashEditDiffEnabled;
+    } catch (err) {
+        hookDiag("Could not read the native diff setting", { err, path: settingsPath });
+
+        return "default";
+    }
 
     return value === false ? "off" : value === true ? "on" : "default";
 }

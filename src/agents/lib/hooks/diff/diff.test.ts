@@ -3415,6 +3415,32 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         throw new Error("claude-dark has a palette");
     }
 
+    it("reads a legacy theme only when settings.json has no theme key", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-claude-theme-"));
+        const light = "\u001b[48;2;220;255;220m";
+
+        try {
+            await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, () => {
+                writeFileSync(join(dir, ".claude.json"), SafeJSON.stringify({ theme: "light" }));
+                expect(resolvePalette("claude")?.added).toBe(light);
+
+                writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ theme: "dark" }));
+                expect(resolvePalette("claude")).toEqual(palette);
+
+                writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ theme: 1 }));
+                expect(resolvePalette("claude")).toEqual(palette);
+
+                writeFileSync(join(dir, "settings.json"), "{");
+                expect(resolvePalette("claude")?.added).toBe(light);
+
+                writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ model: "keep" }));
+                expect(resolvePalette("claude")?.added).toBe(light);
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("follows Claude Code's theme setting, reads an unknown one as dark, and classic has none", () => {
         expect(resolvePalette("claude", () => "light")?.added).toBe("\u001b[48;2;220;255;220m");
         // Claude Code's diff rows, not its theme's `diffAdded`: near black in dark.
@@ -3572,6 +3598,38 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
 
         expect(rendered.body[1]?.text).toContain("\u001b[92m+");
         expect(rendered.body[1]?.text).not.toContain("\u001b[48;");
+    });
+
+    it("puts a file past maxFiles into the full diff, not only its path", () => {
+        const current = begin(
+            { command: "perl -pi -e 1 overflow-a.ts overflow-b.ts", toolUseId: `call-overflow-${calls}` },
+            quiet
+        );
+
+        writeFileSync(join(repo, "overflow-a.ts"), "alpha\n");
+        writeFileSync(join(repo, "overflow-b.ts"), "bravo\n");
+
+        const decision = runDiffPost({
+            payload: current,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...quiet, maxFiles: 1, fullDiff: "path" },
+            },
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            const text = readFileSync(path, "utf8");
+
+            expect(decision.files).toHaveLength(1);
+            expect(text).toContain("+alpha");
+            expect(text).toContain("+bravo");
+            expect(text).not.toContain("## Changed, past the file cap");
+        } finally {
+            rmSync(join(repo, "overflow-a.ts"), { force: true });
+            rmSync(join(repo, "overflow-b.ts"), { force: true });
+            rmSync(path, { force: true });
+        }
     });
 
     it("links the full diff when the budget cuts lines, and the file holds every line", () => {
@@ -3799,9 +3857,11 @@ describe("tools agents hooks diff log", () => {
                 );
 
                 const early: DiffLogEntry = { ...entry, session: long, toolUseId: "toolu_early" };
+                const earlyStats = extendFromTranscripts([early]);
 
-                extendFromTranscripts([early]);
                 expect(early.command).toContain("EARLY-COMMAND");
+                // Each read stays one 64 KiB chunk. Growing the window made the next read 256 KiB.
+                expect(earlyStats.widestRead).toBeLessThanOrEqual(64 * 1024);
             });
         } finally {
             rmSync(home, { recursive: true, force: true });

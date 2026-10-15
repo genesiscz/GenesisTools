@@ -50,6 +50,17 @@ function routerConfigMtime(): number {
     }
 }
 
+function isMissing(err: unknown): boolean {
+    return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT";
+}
+
+/** A failed gate read or write. Absent is normal; the logger loads only when there is something to say. */
+function gateDiag(reason: string, err: unknown): void {
+    const { logger } = require("@genesiscz/utils/logger") as typeof import("@genesiscz/utils/logger");
+
+    logger.warn({ err, path: linkGatePath() }, reason);
+}
+
 function isGate(value: unknown): value is LinkGate {
     return (
         typeof value === "object" &&
@@ -75,8 +86,11 @@ export function linkGate({ now = Date.now() }: { now?: number } = {}): LinkGate 
         if (isGate(cached) && now - cached.at < MAX_AGE_MS && cached.configMtimeMs === configMtimeMs) {
             return cached;
         }
-    } catch {
-        // No gate yet, or an unreadable one: recomputed below.
+    } catch (err) {
+        // No gate yet is normal. A gate that is there and cannot be read is why the next call is slow.
+        if (!isMissing(err)) {
+            gateDiag("Could not read the link gate", err);
+        }
     }
 
     // lazy: saves 32-70 ms of imports on every hook call (require of ./status, measured 2026-10-15) — only a stale gate needs them
@@ -102,8 +116,8 @@ export function linkGate({ now = Date.now() }: { now?: number } = {}): LinkGate 
     try {
         mkdirSync(dirname(linkGatePath()), { recursive: true });
         writeFileSync(linkGatePath(), SafeJSON.stringify(gate));
-    } catch {
-        // A gate that cannot be saved is recomputed next time; the answer itself is still right.
+    } catch (err) {
+        gateDiag("Could not save the link gate", err);
     }
 
     return gate;

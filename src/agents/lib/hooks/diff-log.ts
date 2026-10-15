@@ -1,8 +1,7 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { readSessionState } from "./diff/mentions";
@@ -239,11 +238,11 @@ function transcriptOf(session: string): string | null {
 }
 
 /**
- * The first window; each later one is four times larger. A transcript is read from the end until the
- * horizon or its start, never to a byte cap: a cap left the command of an older selected call empty
- * once more than that many bytes of newer turns followed it.
+ * One backward read. The next read is the preceding chunk, not a larger copy of the suffix: growing
+ * the window fourfold allocated the whole transcript once an older call sat behind it, and a byte
+ * cap then left that call's command empty.
  */
-const TAIL_START_BYTES = 64 * 1024;
+const TAIL_CHUNK_BYTES = 64 * 1024;
 /**
  * How far before the oldest selected call a command line may still belong to it. The call's own
  * log row is written when the command ends, and a command can run for hours, so a short slack
@@ -288,10 +287,56 @@ function oldestAt(calls: Map<string, DiffLogEntry>): number {
     return oldest;
 }
 
+/** A copy on a plain `Buffer`. A subarray's buffer type is wider, and the next chunk has to accept it. */
+function copyBytes(value: Uint8Array): Buffer {
+    const copy = Buffer.allocUnsafe(value.byteLength);
+
+    copy.set(value);
+
+    return copy;
+}
+
+/**
+ * One fixed-size read ending at `end`, plus the unfinished line the later chunk held back.
+ * `held` stays bytes, so a character split by the chunk edge is decoded only once the line is whole.
+ */
+function readChunk(
+    fd: number,
+    end: number,
+    held: Buffer
+): { lines: string[]; nextEnd: number; held: Buffer; read: number; done: boolean } {
+    const start = Math.max(0, end - TAIL_CHUNK_BYTES);
+    const length = end - start;
+    const buffer = Buffer.allocUnsafe(length);
+    const read = readSync(fd, buffer, 0, length, start);
+    const combined = held.length === 0 ? buffer.subarray(0, read) : Buffer.concat([buffer.subarray(0, read), held]);
+
+    if (start > 0) {
+        const newline = combined.indexOf(10);
+
+        if (newline === -1) {
+            return { lines: [], nextEnd: start, held: copyBytes(combined), read, done: false };
+        }
+
+        return {
+            lines: combined
+                .subarray(newline + 1)
+                .toString("utf8")
+                .split("\n"),
+            nextEnd: start,
+            held: copyBytes(combined.subarray(0, newline)),
+            read,
+            done: false,
+        };
+    }
+
+    return { lines: combined.toString("utf8").split("\n"), nextEnd: 0, held: Buffer.alloc(0), read, done: true };
+}
+
 /**
  * Reads `file` from the end until every selected call has its command, a line is older than
- * `floor`, or the window hits the cap. Only lines that name a still-wanted call are parsed.
- * A larger window's new lines are the older prefix; the lines already read stay a suffix.
+ * `floor`, or the start of the file. Each read is one fixed chunk. Only lines that name a
+ * still-wanted call are parsed.
  */
 function hydrateTail({
     file,
@@ -305,65 +350,75 @@ function hydrateTail({
     agent: string | undefined;
     wanted: Set<string>;
     floor: number;
-}): { parsed: number; linesSeen: number } {
-    let maxBytes = TAIL_START_BYTES;
-    let covered = 0;
+}): { parsed: number; linesSeen: number; widestRead: number } {
     let parsed = 0;
     let linesSeen = 0;
+    let widestRead = 0;
+    let fd: number;
 
-    while (wanted.size > 0) {
-        let edge: { lines: string[]; wholeFile: boolean };
-
-        try {
-            edge = readLastLines(file, { maxBytes });
-        } catch {
-            return { parsed, linesSeen };
-        }
-
-        const fresh = edge.lines.slice(0, Math.max(0, edge.lines.length - covered));
-        let aged = false;
-
-        for (let index = fresh.length - 1; index >= 0; index -= 1) {
-            const line = fresh[index] ?? "";
-            linesSeen += 1;
-            const stamp = lineStamp(line);
-
-            if (stamp !== null && stamp < floor) {
-                aged = true;
-                break;
-            }
-
-            if (!lineNamesCall(line, wanted)) {
-                continue;
-            }
-
-            parsed += 1;
-
-            try {
-                readRow({ row: SafeJSON.parse(line, { strict: true }), calls, agent });
-            } catch {
-                // The line names a selected call and is not one JSON value.
-            }
-
-            for (const id of [...wanted].filter((callId) => calls.get(callId)?.command !== undefined)) {
-                wanted.delete(id);
-            }
-
-            if (wanted.size === 0) {
-                break;
-            }
-        }
-
-        covered = edge.lines.length;
-
-        if (aged || edge.wholeFile || wanted.size === 0) {
-            break;
-        }
-
-        maxBytes *= 4;
+    try {
+        fd = openSync(file, "r");
+    } catch {
+        return { parsed, linesSeen, widestRead };
     }
 
-    return { parsed, linesSeen };
+    try {
+        let end = fstatSync(fd).size;
+        let held: Buffer = Buffer.alloc(0);
+
+        while (wanted.size > 0 && end > 0) {
+            const chunk = readChunk(fd, end, held);
+            held = chunk.held;
+            widestRead = Math.max(widestRead, chunk.read);
+            let aged = false;
+
+            for (let index = chunk.lines.length - 1; index >= 0; index -= 1) {
+                const line = chunk.lines[index] ?? "";
+
+                if (line.length === 0) {
+                    continue;
+                }
+
+                linesSeen += 1;
+                const stamp = lineStamp(line);
+
+                if (stamp !== null && stamp < floor) {
+                    aged = true;
+                    break;
+                }
+
+                if (!lineNamesCall(line, wanted)) {
+                    continue;
+                }
+
+                parsed += 1;
+
+                try {
+                    readRow({ row: SafeJSON.parse(line, { strict: true }), calls, agent });
+                } catch {
+                    // The line names a selected call and is not one JSON value.
+                }
+
+                for (const id of [...wanted].filter((callId) => calls.get(callId)?.command !== undefined)) {
+                    wanted.delete(id);
+                }
+
+                if (wanted.size === 0) {
+                    break;
+                }
+            }
+
+            if (aged || chunk.done || wanted.size === 0) {
+                break;
+            }
+
+            end = chunk.nextEnd;
+        }
+    } finally {
+        closeSync(fd);
+    }
+
+    return { parsed, linesSeen, widestRead };
 }
 
 /** Subagent transcripts modified within the horizon. An older file cannot hold a selected call. */
@@ -418,7 +473,13 @@ function field(value: unknown, key: string): unknown {
  * end, and a subagent file is opened only when a selected call still has no command and the file
  * was modified inside the horizon. Returns how much was opened, so a bound can be tested.
  */
-export function extendFromTranscripts(entries: DiffLogEntry[]): { files: number; parsed: number; linesSeen: number } {
+export function extendFromTranscripts(entries: DiffLogEntry[]): {
+    files: number;
+    parsed: number;
+    linesSeen: number;
+    /** The largest single read. A bound lives on the read, not on how far back the search may go. */
+    widestRead: number;
+} {
     const bySession = new Map<string, Map<string, DiffLogEntry>>();
 
     for (const entry of entries) {
@@ -434,6 +495,7 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): { files: number;
     let files = 0;
     let parsed = 0;
     let linesSeen = 0;
+    let widestRead = 0;
 
     for (const [session, calls] of bySession) {
         const main = transcriptOf(session);
@@ -448,6 +510,7 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): { files: number;
         files += 1;
         parsed += mainCounts.parsed;
         linesSeen += mainCounts.linesSeen;
+        widestRead = Math.max(widestRead, mainCounts.widestRead);
 
         if (wanted.size === 0) {
             continue;
@@ -458,6 +521,7 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): { files: number;
             files += 1;
             parsed += counts.parsed;
             linesSeen += counts.linesSeen;
+            widestRead = Math.max(widestRead, counts.widestRead);
 
             if (wanted.size === 0) {
                 break;
@@ -465,7 +529,7 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): { files: number;
         }
     }
 
-    return { files, parsed, linesSeen };
+    return { files, parsed, linesSeen, widestRead };
 }
 
 function readRow({

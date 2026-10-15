@@ -113,21 +113,45 @@ function isFixedTheme(name: string): name is FixedTheme {
     return Object.hasOwn(PALETTES, name);
 }
 
-/** Claude Code's `theme` setting (`dark`, `light-daltonized`, …), or `undefined` when unset or unreadable. */
-function claudeCodeTheme(): string | undefined {
-    const dir = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
-
+/**
+ * A `theme` string from one Claude config file. `found` is false when the file is missing, unreadable,
+ * or has no `theme` key. A key that is present but not a string is found and unset, so a later file
+ * cannot override it.
+ */
+function themeIn(path: string): { found: true; theme: string | undefined } | { found: false } {
     try {
-        const settings: unknown = SafeJSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
 
-        if (typeof settings === "object" && settings !== null && "theme" in settings) {
-            return typeof settings.theme === "string" ? settings.theme : undefined;
+        if (typeof parsed !== "object" || parsed === null || !("theme" in parsed)) {
+            return { found: false };
         }
+
+        const theme = parsed.theme;
+
+        return { found: true, theme: typeof theme === "string" ? theme : undefined };
     } catch {
-        // No settings file, or one being rewritten this instant: the dark palette is the default.
+        // Missing, or being rewritten this instant: the caller tries the next file.
+        return { found: false };
+    }
+}
+
+/**
+ * Claude Code's `theme` (`dark`, `light-daltonized`, …), or `undefined` when unset.
+ * `settings.json` wins. The legacy `~/.claude.json` (or `<CLAUDE_CONFIG_DIR>/.claude.json`) applies
+ * only when that file has no `theme` key or cannot be read, which is what 2.1.296 `resolveSetting`
+ * does for a user-intent key. A `theme` that is present but not a string does not fall through.
+ */
+function claudeCodeTheme(): string | undefined {
+    const configDir = env.paths.getClaudeConfigDir();
+    const settings = themeIn(join(configDir ?? join(homedir(), ".claude"), "settings.json"));
+
+    if (settings.found) {
+        return settings.theme;
     }
 
-    return undefined;
+    const legacy = themeIn(join(configDir ?? homedir(), ".claude.json"));
+
+    return legacy.found ? legacy.theme : undefined;
 }
 
 /** The palette a theme paints with, or `null` for `classic`. An unknown Claude theme reads as dark. */

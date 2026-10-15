@@ -51,7 +51,7 @@ import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
-import { fullDiffLine, writeFullDiff } from "./full";
+import { type FullDiffPart, fullDiffLine, writeFullDiff } from "./full";
 import { appendMentions, canonical, covers, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
@@ -1021,8 +1021,11 @@ export function runDiffPost({
     const historyNotes: string[] = [];
     const renameNotes: string[] = [];
     const unattributed: Array<{ path: string; root: string }> = [];
-    // Changed files the root pass reached after `maxFiles` blocks: named in a note, listed in the full diff.
+    // Changed files the root pass reached after `maxFiles` blocks: named in a note. Their patches
+    // go in the full diff; the message still stops at the cap. The capture directory is removed
+    // before that file is written, so the patch is taken while the before-state is still on disk.
     const notShown: string[] = [];
+    const overflow: FullDiffPart[] = [];
     const uncapturedFiles: Array<{ path: string; root: string }> = [];
     const touch = (path: string, kind: Attribution) =>
         touches.push({ session: actorOf(payload), start: since, end: attribution.now, kind, path });
@@ -1139,6 +1142,12 @@ export function runDiffPost({
 
             if (full()) {
                 notShown.push(file.path);
+                const patch = patchFor({ file, before, config: diff, base });
+
+                if (patch.trim().length > 0) {
+                    overflow.push({ label: file.path, patch });
+                }
+
                 continue;
             }
 
@@ -1228,10 +1237,6 @@ export function runDiffPost({
             touch(change.path, "named");
         }
 
-        if (full()) {
-            continue;
-        }
-
         if (native.has(change.path)) {
             covered += 1;
             continue;
@@ -1276,6 +1281,19 @@ export function runDiffPost({
             change.before ?? "/dev/null",
             change.deleted ? "/dev/null" : change.path,
         ]);
+
+        if (full()) {
+            if (patch.trim().length > 0 && !overflow.some((part) => part.label === change.path)) {
+                overflow.push({ label: change.path, patch });
+            }
+
+            if (!notShown.includes(change.path) && !files.includes(change.path)) {
+                notShown.push(change.path);
+            }
+
+            continue;
+        }
+
         const block = blockFrom({
             file,
             patch,
@@ -1361,8 +1379,8 @@ export function runDiffPost({
         const path = writeFullDiff({
             toolUseId: payload.toolUseId,
             command: payload.command,
-            parts: blocks.flatMap((block) => (block.source ? [block.source] : [])),
-            notShown,
+            parts: [...blocks.flatMap((block) => (block.source ? [block.source] : [])), ...overflow],
+            notShown: notShown.filter((path) => !overflow.some((part) => part.label === path)),
         });
         const line = path ? fullDiffLine(path, diff.fullDiff) : null;
 

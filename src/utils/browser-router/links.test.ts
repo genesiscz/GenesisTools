@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -405,20 +405,61 @@ describe("routerLink and the link gate", () => {
         ).toBe("genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234");
     });
 
-    test("answers from a fresh gate file, and recomputes a stale or old-format one", () => {
-        const cached = { ...routed, at: Date.now(), configMtimeMs: 0, linkHost: "cached.example" };
+    test("answers from a fresh gate file, and recomputes a stale or old-format one", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-link-gate-"));
 
-        mkdirSync(dirname(linkGatePath()), { recursive: true });
-        writeFileSync(linkGatePath(), SafeJSON.stringify(cached));
-        expect(linkGate().linkHost).toBe("cached.example");
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+                const configPath = join(dirname(linkGatePath()), "config.json");
 
-        writeFileSync(linkGatePath(), SafeJSON.stringify({ ...cached, at: Date.now() - 60 * 60_000 }));
-        expect(linkGate().linkHost).not.toBe("cached.example");
+                mkdirSync(dirname(configPath), { recursive: true });
+                writeFileSync(configPath, `${SafeJSON.stringify(defaultRouterConfig())}\n`);
 
-        writeFileSync(
-            linkGatePath(),
-            SafeJSON.stringify({ at: Date.now(), configMtimeMs: 0, linkHost: "old.example", enabledPresets: [] })
-        );
-        expect(linkGate().linkHost).not.toBe("old.example");
+                const configMtimeMs = statSync(configPath).mtimeMs;
+                const cached = { ...routed, at: Date.now(), configMtimeMs, linkHost: "cached.example" };
+
+                writeFileSync(linkGatePath(), SafeJSON.stringify(cached));
+                expect(linkGate().linkHost).toBe("cached.example");
+
+                writeFileSync(linkGatePath(), SafeJSON.stringify({ ...cached, at: Date.now() - 60 * 60_000 }));
+                expect(linkGate().linkHost).not.toBe("cached.example");
+
+                writeFileSync(
+                    linkGatePath(),
+                    SafeJSON.stringify({ at: Date.now(), configMtimeMs, linkHost: "old.example", enabledPresets: [] })
+                );
+                expect(linkGate().linkHost).not.toBe("old.example");
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+
+    test("logs a link gate that cannot be saved, and not one that is simply absent", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-link-gate-log-"));
+        const write = process.stderr.write.bind(process.stderr);
+        const lines: string[] = [];
+
+        process.stderr.write = ((chunk: string | Uint8Array) => {
+            lines.push(String(chunk));
+
+            return true;
+        }) as typeof process.stderr.write;
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+                expect(linkGate().version).toBe(2);
+                expect(lines.join("")).not.toContain("Could not read the link gate");
+
+                rmSync(linkGatePath(), { force: true });
+                mkdirSync(linkGatePath());
+                lines.length = 0;
+                expect(linkGate().version).toBe(2);
+                expect(lines.join("")).toContain("Could not save the link gate");
+            });
+        } finally {
+            process.stderr.write = write;
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 });
