@@ -92,7 +92,8 @@ describe("Gantt day maths", () => {
         }
 
         expect(cells.filter((c) => c.year !== undefined).map((c) => c.year)).toEqual([2026, 2027]);
-        expect(cells[0].range).toBe("17/09 to 30/09");
+        expect(cells[0].range).toBe("17/9 to 30/9");
+        expect(ganttCells(AXIS, "en-US")[0].range).toBe("9/17 to 9/30");
         expect(cells.length).toBe(14);
     });
 });

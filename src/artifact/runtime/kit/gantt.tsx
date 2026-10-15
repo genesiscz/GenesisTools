@@ -237,6 +237,14 @@ function utcDate(date: GanttDate): Date {
     return new Date(dayNumber(date) * DAY_MS);
 }
 
+/** Day and month in the locale's order, leading zeros dropped ("14/9", "9/14", "14. 9."), so a range fits 84 px. */
+function shortDay(format: Intl.DateTimeFormat, date: GanttDate): string {
+    return format
+        .formatToParts(utcDate(date))
+        .map((part) => (part.type === "day" || part.type === "month" ? String(Number(part.value)) : part.value))
+        .join("");
+}
+
 /** The header cells of an axis. The short range never carries a year, so it cannot clip at 84 px. */
 export function ganttCells(axis: GanttAxis, locale?: string): GanttCell[] {
     const cellDays = axis.cellDays ?? DEFAULT_CELL_DAYS;
@@ -256,7 +264,7 @@ export function ganttCells(axis: GanttAxis, locale?: string): GanttCell[] {
             number,
             start,
             end,
-            range: `${short.format(utcDate(start))} to ${short.format(utcDate(end))}`,
+            range: `${shortDay(short, start)} to ${shortDay(short, end)}`,
             year: year !== lastYear ? year : undefined,
             title: `${label(number)}: ${long.format(utcDate(start))} to ${long.format(utcDate(end))}`,
         });
@@ -614,7 +622,7 @@ export function Gantt({
                                         <span className="ml-1.5 font-normal text-dim">{cell.year}</span>
                                     ) : null}
                                 </div>
-                                <div className="text-dim tabular-nums" data-gantt-range="">
+                                <div className="text-[10px] text-dim tabular-nums" data-gantt-range="">
                                     {cell.range}
                                 </div>
                             </div>

@@ -79,6 +79,13 @@ export function useTheme(): { mode: ThemeMode; resolved: "light" | "dark"; setMo
     );
 
     useEffect(() => {
+        // A page without the pre-paint script (a custom chrome) still gets the stored choice, one frame late.
+        const stored = readThemeMode();
+
+        if (stored !== "system" && document.documentElement.getAttribute("data-theme") !== stored) {
+            document.documentElement.setAttribute("data-theme", stored);
+        }
+
         setResolved(resolvedColorScheme());
 
         return onColorSchemeChange(() => setResolved(resolvedColorScheme()));

@@ -1,4 +1,5 @@
 import {
+    type ButtonHTMLAttributes,
     type ChangeEvent,
     cloneElement,
     type DragEvent,
@@ -8,7 +9,13 @@ import {
     useRef,
     useState,
 } from "react";
-import { type BodyContent, renderBody } from "./primitives";
+import { MdInline } from "./md";
+import type { BodyContent } from "./primitives";
+
+/** A hint or note at the size of its container: markdown strings render inline, nodes pass through. */
+function inlineBody(body: BodyContent): ReactNode {
+    return typeof body === "string" ? <MdInline>{body}</MdInline> : body;
+}
 
 /**
  * Form controls for artifacts: buttons, a labelled Field and the inputs that
@@ -38,7 +45,13 @@ function controlClass(invalid: boolean | undefined, extra = ""): string {
 
 // ─── Button ───
 
-export interface ButtonProps {
+/** Handlers a wrapper such as Tooltip may attach; Button passes them to its element. */
+export type ButtonPassThrough = Pick<
+    ButtonHTMLAttributes<HTMLButtonElement>,
+    "onPointerMove" | "onPointerLeave" | "onPointerDown" | "onFocus" | "onBlur" | "onKeyDown" | "aria-describedby"
+>;
+
+export interface ButtonProps extends ButtonPassThrough {
     variant?: "primary" | "secondary" | "ghost" | "danger";
     size?: "sm" | "md";
     /** Disables the button and sets aria-busy. */
@@ -68,6 +81,7 @@ export function Button({
     onClick,
     ariaLabel,
     children,
+    ...passThrough
 }: ButtonProps) {
     const height = size === "sm" ? "h-7 px-2.5 text-xs" : "h-9 px-3.5 text-[13px]";
 
@@ -76,6 +90,7 @@ export function Button({
             type={type}
             disabled={disabled || busy}
             aria-busy={busy || undefined}
+            {...passThrough}
             aria-label={ariaLabel}
             onClick={onClick}
             className={`inline-flex items-center justify-center gap-2 rounded-[8px] border font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${height} ${BUTTON_VARIANT[variant]} ${FOCUS_RING}`}
@@ -128,7 +143,7 @@ export function Field({ label, hint, error, required = false, children }: FieldP
             })}
             {hint ? (
                 <div id={hintId} className="text-xs text-dim">
-                    {renderBody(hint)}
+                    {inlineBody(hint)}
                 </div>
             ) : null}
             {error ? (
@@ -473,7 +488,7 @@ export function FileInput({
                         {picked.map((f) => `${f.name} (${formatFileSize(f.size)})`).join(", ")}
                     </span>
                 ) : hint ? (
-                    <span className="text-xs text-dim">{renderBody(hint)}</span>
+                    <span className="text-xs text-dim">{inlineBody(hint)}</span>
                 ) : null}
                 <input
                     ref={inputRef}

@@ -13,7 +13,8 @@ import {
     useSyncExternalStore,
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { type BodyContent, renderBody, type Tone } from "./primitives";
+import { MdInline } from "./md";
+import type { BodyContent, Tone } from "./primitives";
 
 /**
  * One shared hover card for the whole page. Every target writes into a small
@@ -237,7 +238,7 @@ export function TooltipCard({ content }: { content: TooltipContent }) {
                         color: content.noteTone ? CARD_TONE[content.noteTone] : "var(--tooltip-dim)",
                     }}
                 >
-                    {renderBody(content.note)}
+                    {typeof content.note === "string" ? <MdInline>{content.note}</MdInline> : content.note}
                 </div>
             ) : null}
         </>
