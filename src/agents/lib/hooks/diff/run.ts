@@ -28,7 +28,7 @@ import {
 } from "../../changes/log";
 import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
-import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf } from "../git";
+import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import { type HookPayload, normalizeEvent } from "../payload";
@@ -193,8 +193,41 @@ function siblingNamed({ ownDir, since, actor }: { ownDir: string; since: number;
     return found;
 }
 
-/** More files than this in one root, and renames are not looked for: two git spawns cover them all. */
-const RENAME_SCAN_LIMIT = 400;
+/**
+ * More files than this in one root, and renames are not looked for. The git work is a few spawns of
+ * at most `RENAME_ARGS` paths each, whatever the count; the limit bounds the files hashed (a vault
+ * folder of 284 notes moved with one `mv` is 568 candidates).
+ */
+const RENAME_SCAN_LIMIT = 4_000;
+const RENAME_ARGS = 400;
+/** A file this large is not hashed for pairing: reading it costs more than a moved copy is worth. */
+const RENAME_MAX_BYTES = 4 * 1024 * 1024;
+
+function inChunks<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+
+    for (let at = 0; at < items.length; at += size) {
+        chunks.push(items.slice(at, at + size));
+    }
+
+    return chunks;
+}
+
+function commonSuffix(first: string, second: string): number {
+    const left = first.split("/");
+    const right = second.split("/");
+    let shared = 0;
+
+    while (
+        shared < left.length &&
+        shared < right.length &&
+        left[left.length - 1 - shared] === right[right.length - 1 - shared]
+    ) {
+        shared += 1;
+    }
+
+    return shared;
+}
 /**
  * Files past `maxFiles` whose patch still goes into the full diff, as a multiple of `maxFiles`
  * (45 at the default 15). Each costs one `git diff` process in the post hook (7.2 ms p50, 11.3 ms
@@ -224,32 +257,54 @@ function renamesIn({
     to: string;
 }> {
     const gone = files.filter((file) => file.deleted);
+
+    if (gone.length === 0) {
+        return [];
+    }
+
     // From `git status`, not from `files`: `git mv` and `mv` keep the file's old mtime, so the moved
     // copy is older than the call and the mtime filter behind `files` drops it (2026-10-15: the test
-    // passed only when the write and the move fell in one second).
+    // passed only when the write and the move fell in one second). A folder moved whole is one
+    // collapsed `? new-folder/` entry; it is expanded here, past `untrackedExpansionCap`, because the
+    // cap bounds what is shown and a rename costs no row.
+    const collapsed = entries
+        .filter((entry) => entry.kind === "untracked" && entry.path.endsWith("/"))
+        .flatMap((entry) =>
+            (untrackedFilesIn(root, entry.path, RENAME_SCAN_LIMIT) ?? []).map((name) => join(root, name))
+        );
     const fresh = [
         ...new Set([
             ...files.filter((file) => !file.deleted).map((file) => file.path),
             ...entries
                 .filter((entry) => (entry.kind === "untracked" && !entry.path.endsWith("/")) || entry.index === "A")
                 .map((entry) => join(root, entry.path)),
+            ...collapsed,
         ]),
-    ];
+    ].filter((path) => {
+        try {
+            return statSync(path).size <= RENAME_MAX_BYTES;
+        } catch {
+            return false;
+        }
+    });
 
-    if (gone.length === 0 || fresh.length === 0 || fresh.length + gone.length > RENAME_SCAN_LIMIT) {
+    if (fresh.length === 0 || fresh.length + gone.length > RENAME_SCAN_LIMIT) {
         return [];
     }
 
-    const blobs = new Map<string, string>();
-    const listing = gitOut(root, ["ls-tree", "-z", base, "--", ...gone.map((file) => relative(root, file.path))], {
-        quiet: true,
-    });
+    const blobs = new Map<string, string[]>();
 
-    for (const entry of listing.split("\0")) {
-        const match = /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(entry);
+    for (const chunk of inChunks(gone, RENAME_ARGS)) {
+        const listing = gitOut(root, ["ls-tree", "-z", base, "--", ...chunk.map((file) => relative(root, file.path))], {
+            quiet: true,
+        });
 
-        if (match?.[1] && match[2]) {
-            blobs.set(match[1], join(root, match[2]));
+        for (const entry of listing.split("\0")) {
+            const match = /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(entry);
+
+            if (match?.[1] && match[2]) {
+                blobs.set(match[1], [...(blobs.get(match[1]) ?? []), join(root, match[2])]);
+            }
         }
     }
 
@@ -257,17 +312,31 @@ function renamesIn({
         return [];
     }
 
-    const hashes = gitOut(root, ["hash-object", "--", ...fresh], { quiet: true }).split("\n");
+    const hashes: string[] = [];
+
+    for (const chunk of inChunks(fresh, RENAME_ARGS)) {
+        const out = gitOut(root, ["hash-object", "--", ...chunk], { quiet: true }).split("\n");
+
+        hashes.push(...chunk.map((_, index) => out[index]?.trim() ?? ""));
+    }
+
     const pairs: Array<{ from: string; to: string }> = [];
 
     fresh.forEach((path, index) => {
-        const hash = hashes[index]?.trim() ?? "";
-        const from = blobs.get(hash);
+        const candidates = blobs.get(hashes[index] ?? "");
 
-        if (from) {
-            pairs.push({ from, to: path });
-            blobs.delete(hash);
+        if (!candidates || candidates.length === 0) {
+            return;
         }
+
+        // Files with the same content (empty placeholders, copies) pair with the deletion that shares
+        // the most trailing path with the new name, so a folder move keeps each file in its own place.
+        const best = candidates.reduce((chosen, candidate) =>
+            commonSuffix(candidate, path) > commonSuffix(chosen, path) ? candidate : chosen
+        );
+
+        pairs.push({ from: best, to: path });
+        candidates.splice(candidates.indexOf(best), 1);
     });
 
     return pairs;
@@ -292,11 +361,51 @@ function ownedRename(
     return fromKind !== "others" && fromKind !== "ambiguous" && toKind !== "others" && toKind !== "ambiguous";
 }
 
+/**
+ * The note for files that moved unchanged. Two or more files that moved from one folder to one
+ * other with their names kept are one entry, `old/ → new/ (284 files)`; a lone file shows both paths.
+ */
 function renameLine(root: string, pairs: Array<{ from: string; to: string }>): string {
-    const shown = pairs.slice(0, 3).map((pair) => `${relative(root, pair.from)} → ${relative(root, pair.to)}`);
-    const more = pairs.length > 3 ? ` and ${pairs.length - 3} more` : "";
+    const prefix = (path: string, shared: number): string => {
+        const parts = path.split("/");
 
-    return `${pairs.length} file(s) moved unchanged in ${basename(root)}: ${shown.join(", ")}${more}`;
+        return parts.slice(0, parts.length - shared).join("/") || ".";
+    };
+    const moves = pairs.map((pair) => {
+        const from = relative(root, pair.from);
+        const to = relative(root, pair.to);
+        const shared = commonSuffix(from, to);
+
+        // A renamed file shares no trailing segment; a moved one shares at least its name.
+        return { from, to, key: shared >= 1 ? `${prefix(from, shared)}/ → ${prefix(to, shared)}/` : null };
+    });
+    const folders = new Map<string, number>();
+
+    for (const move of moves) {
+        if (move.key) {
+            folders.set(move.key, (folders.get(move.key) ?? 0) + 1);
+        }
+    }
+
+    const entries: string[] = [];
+    const named = new Set<string>();
+
+    for (const move of moves) {
+        const count = move.key ? (folders.get(move.key) ?? 0) : 0;
+
+        if (move.key && count >= 2) {
+            if (!named.has(move.key)) {
+                named.add(move.key);
+                entries.push(`${move.key} (${count} files)`);
+            }
+        } else {
+            entries.push(`${move.from} → ${move.to}`);
+        }
+    }
+
+    const more = entries.length > 3 ? ` and ${entries.length - 3} more` : "";
+
+    return `${pairs.length} file(s) moved unchanged in ${basename(root)}: ${entries.slice(0, 3).join(", ")}${more}`;
 }
 
 /**

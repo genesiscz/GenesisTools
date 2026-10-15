@@ -195,7 +195,9 @@ Every mode drops escape codes that change nothing (a reset before a new colour, 
 colour on blanks); that loses no colour, so there is no raw mode. A message that cuts lines links
 the call's full diff (`diff.fullDiff`: `genesis`, `path` or `off`). The `genesis` link is printed
 only while the browser router routes Markdown on this Mac; otherwise the message names the path.
-`tools agents hooks diff show <call>` prints it too.
+`tools agents hooks diff show <call>` prints it too. A file or a whole folder moved with `mv` or
+`git mv` is one line, `old/ → new/ (284 files)`, when the new copies match the old ones byte for byte
+(up to 4,000 files; a file over 4 MiB is not compared).
 
 `diff.fill` sets how far a changed row's band reaches. `block` (default) fills to the widest row of
 the file, but never past `diff.fillMax` columns (72; 0 lifts the limit): without that, one long line made

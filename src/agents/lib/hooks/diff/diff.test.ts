@@ -4,8 +4,10 @@ import {
     existsSync,
     mkdirSync,
     mkdtempSync,
+    readdirSync,
     readFileSync,
     realpathSync,
+    renameSync,
     rmSync,
     statSync,
     symlinkSync,
@@ -4333,6 +4335,77 @@ describe("the misfires of 2026-10-14", () => {
         expect(build).not.toContain("moved unchanged");
         expect(build).not.toContain("owned-src.ts → owned-dst.ts");
         git(["commit", "-qm", "owned done"]);
+    });
+
+    it("pairs a whole folder moved with one mv, past the expansion cap and the old scan limit", () => {
+        const names = Array.from({ length: 450 }, (_, index) => `note-${String(index).padStart(3, "0")}.md`);
+
+        mkdirSync(join(repo, "moved-src", "inner"), { recursive: true });
+
+        for (const [index, name] of names.entries()) {
+            writeFileSync(join(repo, "moved-src", index % 2 === 0 ? name : `inner/${name}`), `body of ${name}\n`);
+        }
+
+        git(["add", "moved-src"]);
+        git(["commit", "-qm", "folder to move"]);
+
+        const past = new Date(Date.now() - 3_600_000);
+
+        for (const dir of ["moved-src", "moved-src/inner"]) {
+            for (const entry of readdirSync(join(repo, dir), { withFileTypes: true })) {
+                if (entry.isFile()) {
+                    utimesSync(join(repo, dir, entry.name), past, past);
+                }
+            }
+        }
+
+        const current = begin({ command: "mv moved-src moved-dst" });
+
+        renameSync(join(repo, "moved-src"), join(repo, "moved-dst"));
+
+        const decision = runDiffPost({ payload: current, config: plain });
+        const message = decision.message ?? "";
+
+        try {
+            expect(message).toContain("450 file(s) moved unchanged");
+            expect(message).toContain("moved-src/ → moved-dst/ (450 files)");
+            expect(message).not.toContain("Deleted");
+            expect(decision.files).toEqual([]);
+        } finally {
+            git(["add", "-A", "moved-src", "moved-dst"]);
+            git(["commit", "-qm", "folder moved"]);
+        }
+    });
+
+    it("shows a single moved file with both paths, and a renamed one too", () => {
+        const text = "single\n";
+
+        writeFileSync(join(repo, "single-a.ts"), text);
+        writeFileSync(join(repo, "single-b.ts"), `${text}two\n`);
+        git(["add", "single-a.ts", "single-b.ts"]);
+        git(["commit", "-qm", "singles"]);
+        mkdirSync(join(repo, "single-dir"), { recursive: true });
+
+        const past = new Date(Date.now() - 3_600_000);
+
+        utimesSync(join(repo, "single-a.ts"), past, past);
+        utimesSync(join(repo, "single-b.ts"), past, past);
+
+        const current = begin({ command: "mv single-a.ts single-dir/single-a.ts && mv single-b.ts single-c.ts" });
+
+        renameSync(join(repo, "single-a.ts"), join(repo, "single-dir", "single-a.ts"));
+        renameSync(join(repo, "single-b.ts"), join(repo, "single-c.ts"));
+
+        const message = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        try {
+            expect(message).toContain("2 file(s) moved unchanged");
+            expect(message).toContain("single-a.ts → single-dir/single-a.ts");
+            expect(message).toContain("single-b.ts → single-c.ts");
+        } finally {
+            git(["add", "-A", "single-dir", "single-c.ts", "single-a.ts", "single-b.ts"]);
+            git(["commit", "-qm", "singles moved"]);
+        }
     });
 
     it("does not announce a rename another actor owns", () => {
