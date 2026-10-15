@@ -50,6 +50,23 @@ export function classifyPrompt(screen: string): PromptState {
     return { kind: "unknown" };
 }
 
+/**
+ * The command typed after a shell prompt that carries context, or undefined (an empty prompt, any other line).
+ * Scrollback capture reads old commands with it; bare-glyph prompts are left out, because an agent's input box
+ * draws the same glyphs and its chat text is not a shell command.
+ */
+export function promptCommand(line: string): string | undefined {
+    for (const pattern of CONTEXT_PROMPTS) {
+        const match = pattern.exec(line);
+
+        if (match) {
+            return match[1];
+        }
+    }
+
+    return undefined;
+}
+
 /** Accept only terminal text classified as an empty shell prompt for command replay. */
 export function isShellPromptReady(text: string): boolean {
     return classifyPrompt(text).kind === "empty";

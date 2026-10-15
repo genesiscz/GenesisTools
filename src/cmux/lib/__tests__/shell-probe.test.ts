@@ -43,6 +43,13 @@ describe("cwdFromTitle", () => {
 });
 
 describe("lastCommandFromCapture", () => {
+    it("reads macOS's default prompt (user@host dir %), which the restore's prompt check already knew", () => {
+        expect(lastCommandFromCapture("alice@mac ~ % ssh deploy@example.com\nWelcome")).toEqual({
+            value: "ssh deploy@example.com",
+            source: "scrollback",
+        });
+    });
+
     it("returns none for empty input", () => {
         expect(lastCommandFromCapture("")).toEqual({ value: undefined, source: "none" });
         expect(lastCommandFromCapture(null)).toEqual({ value: undefined, source: "none" });

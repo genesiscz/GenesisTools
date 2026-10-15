@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promptCommand } from "@app/cmux/lib/terminal-ready";
 import type { CommandSource, ScreenSnapshot } from "@app/cmux/lib/types";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger } from "@genesiscz/utils/logger";
@@ -50,28 +51,6 @@ function expandHome(path: string): string {
     return path;
 }
 
-/**
- * Patterns we recognise as shell prompts followed by a typed command. Each pattern's
- * capture group 1 is the command portion, or `undefined` if the prompt is empty.
- *
- * We deliberately only match prompts that include directory/git/host context. Bare-glyph
- * prompts (`❯ cmd`, `$ cmd`) are excluded because terminal TUIs (Claude Code, Codex
- * Forge, etc.) use the same glyphs for their chat input boxes — capturing the user's
- * typed chat text as a "shell command" and replaying it on restore would be wrong and
- * surprising. Users with bare-glyph shells lose command capture but can hand-edit the
- * profile JSON with `command_source: "manual"` if they want it back.
- */
-const PROMPT_PATTERNS: RegExp[] = [
-    // oh-my-zsh robbyrussell. Every part of the prompt prefix (git suffix, ✗ dirty-tree
-    // mark, trailing command) is optional so "➜  app git:(main) ✗" with no command
-    // yields capture-group 1 === undefined, which the parser skips as an empty prompt.
-    /^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?(?:\s+(.*?))?\s*$/u,
-    // [user@host dir]$ <command>
-    /^\[[^\]]+\]\s*[$#%]\s+(\S.*?)\s*$/u,
-    // user@host:dir$ <command>  (typical bash)
-    /^[\w.-]+@[\w.-]+:\S*[$#%]\s+(\S.*?)\s*$/u,
-];
-
 interface CommandHint {
     value: string | undefined;
     source: CommandSource;
@@ -89,11 +68,10 @@ export function lastCommandFromCapture(text: string | undefined | null): Command
         if (!line) {
             continue;
         }
-        for (const pattern of PROMPT_PATTERNS) {
-            const match = line.match(pattern);
-            if (match?.[1]) {
-                return { value: match[1], source: "scrollback" };
-            }
+        // The one prompt list (terminal-ready.ts): a second copy here had missed macOS's `user@host dir %`.
+        const command = promptCommand(line);
+        if (command) {
+            return { value: command, source: "scrollback" };
         }
     }
     return NO_COMMAND;
