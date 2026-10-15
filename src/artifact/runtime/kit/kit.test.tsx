@@ -9,6 +9,7 @@ import { contrastRatio, parseCssColor, readableTextOn } from "./color";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
+import { type EditableColumn, type EditableRow, EditableTable, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
@@ -1288,6 +1289,126 @@ describe("Wizard", () => {
         await tick();
 
         expect(stepButtons(dom.container)[1].getAttribute("aria-current")).toBe("step");
+        await dom.unmount();
+    });
+});
+
+describe("EditableTable", () => {
+    const COLUMNS: EditableColumn[] = [
+        { key: "task", label: "Task", required: true },
+        { key: "hours", label: "Hours", type: "number", total: "sum" },
+        { key: "start", label: "Start", type: "date", min: "2026-09-01" },
+    ];
+    const ROWS: EditableRow[] = [
+        { task: "Draft", hours: 4, start: "2026-09-10" },
+        { task: "Review", hours: null, start: "2026-09-12" },
+        { task: "Draft", hours: 2.5, start: "2026-09-14" },
+    ];
+
+    function Harness({ initial, log }: { initial: EditableRow[]; log: Array<{ rows: EditableRow[]; type: string }> }) {
+        const [rows, setRows] = useState(initial);
+
+        return (
+            <EditableTable
+                columns={COLUMNS}
+                rows={rows}
+                newRow={() => ({ task: "", hours: null, start: "" })}
+                onChange={(next, change) => {
+                    log.push({ rows: next, type: change.type });
+                    setRows(next);
+                }}
+            />
+        );
+    }
+
+    const cell = (root: HTMLElement, r: number, c: number): HTMLInputElement | null =>
+        root.querySelector<HTMLInputElement>(`[data-cell="${r}:${c}"]`);
+    const blur = async (dom: Awaited<ReturnType<typeof mountDom>>, el: Element | null): Promise<void> =>
+        dom.fire(el, new dom.window.FocusEvent("focusout", { bubbles: true }));
+
+    test("an edit hands over a new array and leaves the input rows untouched", async () => {
+        const input = ROWS.map((r) => ({ ...r }));
+        const frozen = ROWS.map((r) => ({ ...r }));
+        const log: Array<{ rows: EditableRow[]; type: string }> = [];
+        const dom = await mountDom(<Harness initial={input} log={log} />);
+        await dom.type(cell(dom.container, 0, 0), "Draft plan");
+        expect(log).toEqual([]);
+        await blur(dom, cell(dom.container, 0, 0));
+
+        expect(log.length).toBe(1);
+        expect(log[0].rows).not.toBe(input);
+        expect(log[0].rows[0].task).toBe("Draft plan");
+        expect(log[0].rows[1]).toBe(input[1]);
+        expect(input).toEqual(frozen);
+        await dom.unmount();
+    });
+
+    test("Add appends newRow() and focuses its first input; Remove drops the right row with repeated keys", async () => {
+        const log: Array<{ rows: EditableRow[]; type: string }> = [];
+        const dom = await mountDom(<Harness initial={ROWS} log={log} />);
+        await dom.click([...dom.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Add row")));
+
+        expect(log[0].rows.length).toBe(4);
+        expect(dom.window.document.activeElement).toBe(cell(dom.container, 3, 0));
+
+        await dom.click(dom.container.querySelector('[aria-label="Remove row 3"]'));
+        expect(log[1].type).toBe("remove");
+        expect(log[1].rows.map((r) => r.hours)).toEqual([4, null, null]);
+        await dom.unmount();
+    });
+
+    test("required and validate set aria-invalid and fill the problem line", async () => {
+        const columns: EditableColumn[] = [
+            { key: "task", label: "Task", required: true },
+            {
+                key: "hours",
+                label: "Hours",
+                type: "number",
+                validate: (v) => (typeof v === "number" && v > 40 ? "Too many" : undefined),
+            },
+        ];
+        const dom = await mountDom(
+            <EditableTable columns={columns} rows={[{ task: "", hours: 50 }]} onChange={() => {}} />
+        );
+
+        expect(cell(dom.container, 0, 0)?.getAttribute("aria-invalid")).toBe("true");
+        expect(cell(dom.container, 0, 1)?.getAttribute("aria-invalid")).toBe("true");
+        expect(cell(dom.container, 0, 1)?.title).toBe("Too many");
+        expect(dom.container.querySelector("[data-editable-problems]")?.textContent).toBe("2 cells need attention");
+        await dom.unmount();
+    });
+
+    test("a date below min is rejected, and committed dates stay YYYY-MM-DD", async () => {
+        const log: Array<{ rows: EditableRow[]; type: string }> = [];
+        const dom = await mountDom(<Harness initial={ROWS} log={log} />);
+        await dom.type(cell(dom.container, 0, 2), "2026-08-01");
+        await blur(dom, cell(dom.container, 0, 2));
+        expect(log).toEqual([]);
+        expect(dom.container.querySelector("[data-editable-live]")?.textContent).toContain("on or after 2026-09-01");
+
+        await dom.type(cell(dom.container, 0, 2), "2026-09-20");
+        await blur(dom, cell(dom.container, 0, 2));
+        expect(log[0].rows[0].start).toBe("2026-09-20");
+        await dom.unmount();
+    });
+
+    test("Escape restores the cell without calling onChange", async () => {
+        const log: Array<{ rows: EditableRow[]; type: string }> = [];
+        const dom = await mountDom(<Harness initial={ROWS} log={log} />);
+        const target = cell(dom.container, 1, 0);
+        await dom.type(target, "Something else");
+        await dom.press(target, "Escape");
+        await blur(dom, target);
+
+        expect(log).toEqual([]);
+        expect(target?.value).toBe("Review");
+        await dom.unmount();
+    });
+
+    test("total sum ignores nulls", async () => {
+        expect(editableTotal(COLUMNS[1], ROWS)).toBe(6.5);
+        const dom = await mountDom(<EditableTable columns={COLUMNS} rows={ROWS} onChange={() => {}} />);
+        expect(dom.container.querySelector('[data-total="hours"]')?.textContent).toBe("6.5");
         await dom.unmount();
     });
 });

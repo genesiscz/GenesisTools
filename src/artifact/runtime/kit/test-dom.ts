@@ -43,6 +43,11 @@ export async function mountDom(node: ReactNode, url = "http://localhost/"): Prom
         IS_REACT_ACT_ENVIRONMENT: true,
     });
 
+    // React's IE-era change polyfill (see `type` below) calls attachEvent and
+    // detachEvent on whatever element holds focus, including one a component
+    // focused by itself. No-ops on the prototype cover every element.
+    Object.assign(dom.window.HTMLElement.prototype, { attachEvent: () => undefined, detachEvent: () => undefined });
+
     const container = dom.window.document.getElementById("root") as unknown as HTMLElement;
     let root: Root | null = createRoot(container);
 

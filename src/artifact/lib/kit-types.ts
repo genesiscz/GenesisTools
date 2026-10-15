@@ -46,6 +46,7 @@ const KIT_FILES = [
     "theme.tsx",
     "sortable.tsx",
     "wizard.tsx",
+    "editable.tsx",
     "index.ts",
 ];
 

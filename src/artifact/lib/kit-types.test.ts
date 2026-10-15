@@ -26,6 +26,7 @@ describe("kit API declaration", () => {
             "ThemeToggle(",
             "SortableList(",
             "Wizard(",
+            "EditableTable(",
         ]) {
             expect(dts).toContain(name);
         }

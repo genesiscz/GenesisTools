@@ -194,6 +194,16 @@ export {
 export { SERIES_COLOR } from "./charts";
 export { contrastRatio, parseCssColor, type Rgb, readableTextOn, relativeLuminance } from "./color";
 export {
+    type EditableChange,
+    type EditableColumn,
+    type EditableRow,
+    EditableTable,
+    type EditableTableProps,
+    type EditableValue,
+    editableCellError,
+    editableTotal,
+} from "./editable";
+export {
     Button,
     type ButtonProps,
     DateInput,
