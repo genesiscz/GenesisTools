@@ -82,7 +82,7 @@ public final class GitRepos: ObservableObject {
 public final class GitRepoModel: ObservableObject {
     public let root: URL
     @Published public private(set) var status: GitRepoStatus?
-    /// Bumped on every refresh that changed the status: a file's own state follows it.
+    /// Every completed refresh invalidates followers, even when HEAD or index changes leave status equal.
     @Published public private(set) var generation = 0
     private var watch: DispatchSourceFileSystemObject?
     private var pending: DispatchWorkItem?
@@ -131,8 +131,8 @@ public final class GitRepoModel: ObservableObject {
                 self.loading = false
                 if self.status != status {
                     self.status = status
-                    self.generation += 1
                 }
+                self.generation += 1
                 if self.again {
                     self.again = false
                     self.load()
@@ -243,6 +243,7 @@ public final class GitFileStateModel: ObservableObject {
 @MainActor
 public final class GitTreeDecorationsModel: ObservableObject {
     @Published public private(set) var decorations = GitTreeDecorations.none
+    @Published private(set) var hasRepository = false
     private var root: URL?
     private lazy var follower = GitRepoFollower { [weak self] in self?.update() }
 
@@ -251,6 +252,9 @@ public final class GitTreeDecorationsModel: ObservableObject {
     public func follow(_ root: URL?) {
         guard root != self.root else { return }
         self.root = root
+        ticket += 1
+        counts = [:]
+        hasRepository = false
         decorations = .none
         follower.follow(folder: root)
     }
@@ -260,7 +264,9 @@ public final class GitTreeDecorationsModel: ObservableObject {
 
     /// The marks at once (with the last counts), then the line counts from one `git diff --numstat` off the main thread.
     private func update() {
-        guard let root, let repo = GitRepos.shared.model(for: root), let status = repo.status else { return }
+        guard let root, let repo = GitRepos.shared.model(for: root) else { return }
+        hasRepository = true
+        guard let status = repo.status else { return }
         let marked = status.decorations(under: root, numstat: counts)
         if marked != decorations { decorations = marked }
         ticket += 1

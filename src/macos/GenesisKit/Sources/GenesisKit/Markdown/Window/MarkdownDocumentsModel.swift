@@ -31,7 +31,9 @@ private let markdownSelectedKey = "markdownWindow.selected"
 @MainActor
 final class MarkdownDocumentsModel: ObservableObject {
     @Published private(set) var docs: [MarkdownDocument] = []
-    @Published var selectedId: String?
+    @Published var selectedId: String? {
+        didSet { if selectedId != oldValue { revisionRequest += 1 } }
+    }
     /// The preview tab (italic title): the file a single click in the file tree opened, which the next such
     /// click replaces in place. nil = every tab is kept. An edit, a double-click on the tab or `keep(_:)`
     /// keeps it (`MarkdownDocumentsModel+Tabs.swift`). Not remembered between launches.
@@ -396,6 +398,7 @@ final class MarkdownDocumentsModel: ObservableObject {
     @Published var changesScope: GitFileScope?
     @Published var changesCommit: String?
     /// A past version of a file, read-only in its tab.
+    var revisionRequest = 0
     @Published var revisionView: MarkdownRevision?
     /// Two versions of a file in the Changes mode.
     @Published var revisionCompare: MarkdownRevisionCompare?

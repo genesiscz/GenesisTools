@@ -23,6 +23,10 @@ public struct GitHunk: Equatable, Sendable, Identifiable {
     public var oldStart: Int
     /// The old text's lines this hunk replaced; empty for an addition.
     public var oldLines: [String]
+    /// Present only on the EOF hunk; reverting another region must leave the current EOF alone.
+    var oldTrailingNewline: Bool?
+    /// A synthetic terminator change has no old content to insert in a rendered diff.
+    var isTrailingNewlineOnly = false
 
     public init(kind: Kind, newStart: Int, newCount: Int, oldStart: Int, oldLines: [String]) {
         self.kind = kind
@@ -90,6 +94,20 @@ public enum GitHunks {
             }
         }
         flush()
+        let oldLines = TextMerge.Lines(old), newLines = TextMerge.Lines(new)
+        if let last = hunks.indices.last,
+           hunks[last].oldStart + hunks[last].oldLines.count == oldLines.lines.count,
+           hunks[last].newStart + hunks[last].newCount == newLines.lines.count {
+            hunks[last].oldTrailingNewline = oldLines.trailingNewline
+        } else if oldLines.trailingNewline != newLines.trailingNewline {
+            // The line diff ignores the terminator. Give a newline-only change its own last-line hunk.
+            var eof = GitHunk(kind: .modified, newStart: max(0, newLines.lines.count - 1),
+                              newCount: min(1, newLines.lines.count), oldStart: max(0, oldLines.lines.count - 1),
+                              oldLines: oldLines.lines.last.map { [String($0)] } ?? [])
+            eof.oldTrailingNewline = oldLines.trailingNewline
+            eof.isTrailingNewlineOnly = true
+            hunks.append(eof)
+        }
         return hunks
     }
 
@@ -99,8 +117,7 @@ public enum GitHunks {
         let start = min(hunk.newStart, lines.lines.count)
         let end = min(start + hunk.newCount, lines.lines.count)
         lines.lines.replaceSubrange(start ..< end, with: hunk.oldLines.map { Substring($0) })
-        // A revert that brings back lines into an empty file restores its last newline with them.
-        let trailing = lines.trailingNewline || (text.isEmpty && !hunk.oldLines.isEmpty)
+        let trailing = hunk.oldTrailingNewline ?? lines.trailingNewline
         return TextMerge.Lines.join(lines.lines, trailingNewline: trailing)
     }
 }

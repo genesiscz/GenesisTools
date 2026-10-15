@@ -16,7 +16,7 @@ extension GitChangeKind {
         case .added: return .genSuccess
         case .deleted, .conflicted: return .genError
         case .renamed: return Color(red: 0.45, green: 0.65, blue: 1.0)
-        case .untracked: return .white.opacity(0.45)
+        case .untracked: return .secondary
         }
     }
 

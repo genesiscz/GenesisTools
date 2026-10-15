@@ -152,20 +152,22 @@ struct MarkdownCommitSheetView: View {
             Rectangle().fill(model.theme.border).frame(height: 1)
             GitCommitView(root: sheet.root, commit: sheet.commit) { file in
                 guard file.path.lowercased().hasSuffix(".md"), let new = file.newContents else { return nil }
-                return AnyView(MarkdownWebView(
-                    markdown: new,
-                    scrollTarget: nil,
-                    highlightQuery: nil,
-                    highlightToken: 0,
-                    onWikilink: { _ in },
-                    onActiveSection: { _ in },
-                    zoom: model.zoom,
-                    cssVariables: model.theme.cssVariables,
-                    columnResizable: false,
-                    diffMarks: MarkdownWebView.DiffMark.between(old: file.oldContents ?? "", new: new),
-                    documentURL: sheet.root.appendingPathComponent(file.path),
-                    vaultRoot: GenesisKit.host?.markdownVaultRoot
-                ))
+                return AnyView(MarkdownRenderedDiff(old: file.oldContents ?? "", new: new) { marks in
+                    MarkdownWebView(
+                        markdown: new,
+                        scrollTarget: nil,
+                        highlightQuery: nil,
+                        highlightToken: 0,
+                        onWikilink: { _ in },
+                        onActiveSection: { _ in },
+                        zoom: model.zoom,
+                        cssVariables: model.theme.cssVariables,
+                        columnResizable: false,
+                        diffMarks: marks,
+                        documentURL: sheet.root.appendingPathComponent(file.path),
+                        vaultRoot: GenesisKit.host?.markdownVaultRoot
+                    )
+                })
             }
         }
         .frame(minWidth: 980, idealWidth: 1100, minHeight: 620, idealHeight: 720)

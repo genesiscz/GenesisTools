@@ -46,6 +46,12 @@ struct MarkdownFileTreeView: View {
     @State private var headerPulse: FileTreePulse?
     @GenReduceMotion private var reduceMotion
 
+    init(model: MarkdownDocumentsModel, gitTree: GitTreeDecorationsModel? = nil) {
+        self.model = model
+        _config = ObservedObject(wrappedValue: model.configuration)
+        _gitTree = StateObject(wrappedValue: gitTree ?? GitTreeDecorationsModel())
+    }
+
     private struct PendingRow: Equatable {
         let id: String
         let pulse: FileTreePulse?
@@ -72,7 +78,7 @@ struct MarkdownFileTreeView: View {
     private var showingResults: Bool { searchOpen && search.isActive }
 
     /// Git marks on the rows: the setting is on and the root is in a repository.
-    private var gitMarks: Bool { config.gitShows(\.gitTreeDecorations) && gitTree.decorations != .none }
+    private var gitMarks: Bool { config.gitShows(\.gitTreeDecorations) && gitTree.hasRepository }
 
     private func followGit() {
         gitTree.follow(config.gitShows(\.gitTreeDecorations) ? model.filesRootURL : nil)
@@ -134,7 +140,7 @@ struct MarkdownFileTreeView: View {
         .onAppear { followGit() }
         .onChange(of: config.git) { _, _ in followGit() }
         .onChange(of: config.gitTreeDecorations) { _, _ in followGit() }
-        .onChange(of: model.filesRoot) { _, _ in
+        .onChange(of: root) { _, _ in
             followGit()
             tree.setRoot(model.filesRootURL)
             revealSelected(model.filesRootURL)

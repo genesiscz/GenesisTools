@@ -36,6 +36,7 @@ public final class GitHistoryModel: ObservableObject {
 
     public func follow(_ subject: Subject?) {
         guard subject != self.subject else { return }
+        ticket += 1
         self.subject = subject
         commits = []
         loaded = false
@@ -61,7 +62,7 @@ public final class GitHistoryModel: ObservableObject {
                 commits = ((try? provider.repoStatus(folder, commits: limit)) ?? nil)?.commits ?? []
             }
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.ticket == ticket else { return }
+                guard let self, self.ticket == ticket, self.subject == subject else { return }
                 self.commits = commits
                 self.loaded = true
             }

@@ -20,6 +20,22 @@ final class GitReposTests: XCTestCase {
         XCTAssertTrue(done(), "timed out waiting for \(what)")
     }
 
+    func testAnEmptyCommitInvalidatesFollowersWithoutChangingStatus() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("git-generation-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try git(["init", "-q", "-b", "main"], in: root)
+        try git(["commit", "--allow-empty", "-q", "-m", "First"], in: root)
+        let model = GitRepoModel(root: root)
+        await wait("initial status") { model.status != nil }
+        let status = model.status
+        let generation = model.generation
+        try git(["commit", "--allow-empty", "-q", "-m", "Second"], in: root)
+        model.refresh()
+        await wait("refresh after identical porcelain status") { model.generation > generation }
+        XCTAssertEqual(model.status, status)
+    }
+
     func testTheFileStateFollowsAStageWithoutBeingAsked() async throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitrepos-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
@@ -104,8 +120,15 @@ final class GitReposTests: XCTestCase {
             FileTreeRow(id: "/tmp/\(name)/clean.md", name: "clean.md", isFolder: false, depth: 0),
         ]
         XCTAssertEqual(FileTreeView.changedRows(rows, tree.decorations).map(\.name), ["notes", "kept.md"])
+        try git(["add", "."], in: given)
+        try git(["commit", "-q", "-m", "Clean"], in: given)
+        GitRepos.shared.noteSaved(given.appendingPathComponent("loose.md"))
+        await wait("clean tree") { tree.hasRepository && tree.decorations == .none }
+        XCTAssertTrue(FileTreeView.changedRows(rows, tree.decorations).isEmpty)
+
         tree.follow(nil)
         XCTAssertEqual(tree.decorations, .none)
+        XCTAssertFalse(tree.hasRepository)
     }
 
     func testTheRevealButtonFindsTheOpenFileInItsListFolderAndPage() {

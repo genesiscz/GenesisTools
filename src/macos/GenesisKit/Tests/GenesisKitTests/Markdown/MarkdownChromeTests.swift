@@ -44,6 +44,38 @@ final class MarkdownChromeTests: XCTestCase {
         }
     }
 
+    func testAnUnpinnedTreeRetargetsGitWhenTheSelectedTabChangesRepository() async throws {
+        let first = try file("repo-a/first.md"), second = try file("repo-b/second.md")
+        for note in [first, second] {
+            let result = try GenesisKitGTCLIProvider().git(["init", "-q"], in: note.deletingLastPathComponent())
+            XCTAssertEqual(result.status, 0)
+        }
+        let model = model()
+        model.configuration.git = true
+        model.configuration.gitTreeDecorations = true
+        model.filesRoot = ""
+        model.open([first, second])
+        model.select(first.path)
+        let gitTree = GitTreeDecorationsModel()
+        let host = NSHostingView(rootView: MarkdownFileTreeView(model: model, gitTree: gitTree).frame(width: 300, height: 500))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil; gitTree.follow(nil) }
+        host.layoutSubtreeIfNeeded()
+        func waitForMark(_ note: URL) async {
+            let end = Date().addingTimeInterval(5)
+            while gitTree.decorations.change(for: note.path) == nil, Date() < end {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            XCTAssertEqual(gitTree.decorations.change(for: note.path), .untracked)
+        }
+        await waitForMark(first)
+        model.select(second.path)
+        host.layoutSubtreeIfNeeded()
+        await waitForMark(second)
+        XCTAssertNil(gitTree.decorations.change(for: first.path))
+    }
+
     // MARK: Preview tabs
 
     func testAPreviewTabIsReplacedInPlaceAndAKeptTabIsNot() throws {
@@ -349,7 +381,7 @@ final class MarkdownChromeTests: XCTestCase {
         XCTAssertTrue(dr > 0.8 && dg > 0.6 && db < 0.4, "its yellow disc, got \(dr) \(dg) \(db)")
 
         XCTAssertEqual(MarkdownHoverImage.caption(url: png, size: raster.sourceSize, bytes: nil), "PNG · 400 × 300 px")
-        XCTAssertTrue(MarkdownHoverImage.caption(url: svg, size: vector.sourceSize, bytes: 2048).hasPrefix("SVG · 240 × 160 px · "))
+        XCTAssertEqual(MarkdownHoverImage.caption(url: svg, size: vector.sourceSize, bytes: 2048), "SVG · 240 × 160 px · \(ByteFormat.file(2048))")
 
         // An SVG open as a tab with unsaved edits: the picture of the draft, as the tab shows it.
         let draft = try await picture(svg, draft: Self.svgFixture.replacingOccurrences(of: "#2563eb", with: "#16a34a"))

@@ -151,6 +151,19 @@ public enum GitChangeList {
 /// The modification dates of a status's files, read off the main thread once per status.
 @MainActor
 final class GitChangeDates: ObservableObject {
+    struct Key: Equatable {
+        let root: URL
+        let generation: Int
+    }
+    private var ticket = 0
+    var readDates: @Sendable (URL, [String]) -> [String: Date] = { root, paths in
+        var result: [String: Date] = [:]
+        for path in paths {
+            let values = try? root.appendingPathComponent(path).resourceValues(forKeys: [.contentModificationDateKey])
+            if let date = values?.contentModificationDate { result[path] = date }
+        }
+        return result
+    }
     @Published private(set) var dates: [String: Date] = [:]
     /// Bumped with every new set of dates, so the panel's derived lists know to sort again.
     private(set) var version = 0
@@ -159,21 +172,24 @@ final class GitChangeDates: ObservableObject {
 
     func load(root: URL, entries: [GitStatusEntry], generation: Int) {
         guard loadedRoot != root.path || loadedGeneration != generation else { return }
+        if loadedRoot != root.path {
+            version += 1
+            dates = [:]
+        }
         loadedRoot = root.path
         loadedGeneration = generation
+        ticket += 1
+        let ticket = ticket
         let paths = entries.map(\.path)
+        let readDates = readDates
         Task.detached(priority: .utility) { [weak self] in
-            var result: [String: Date] = [:]
-            for path in paths {
-                let values = try? root.appendingPathComponent(path).resourceValues(forKeys: [.contentModificationDateKey])
-                if let date = values?.contentModificationDate { result[path] = date }
-            }
-            await self?.apply(result, generation: generation)
+            let result = readDates(root, paths)
+            await self?.apply(result, root: root, generation: generation, ticket: ticket)
         }
     }
 
-    private func apply(_ result: [String: Date], generation: Int) {
-        guard generation == loadedGeneration else { return }
+    private func apply(_ result: [String: Date], root: URL, generation: Int, ticket: Int) {
+        guard root.path == loadedRoot, generation == loadedGeneration, ticket == self.ticket else { return }
         version += 1
         dates = result
     }
@@ -195,6 +211,7 @@ final class GitRepoPanelLists: ObservableObject {
     }
 
     struct Inputs: Equatable, Sendable {
+        var root: URL
         var generation: Int
         var datesVersion: Int
         var order: GitChangeOrder
@@ -206,8 +223,13 @@ final class GitRepoPanelLists: ObservableObject {
     private var inputs: Inputs?
     private var ticket = 0
 
+    func lists(for root: URL) -> Lists {
+        inputs?.root == root ? lists : Lists()
+    }
+
     func update(_ inputs: Inputs, entries: [GitStatusEntry], dates: [String: Date]) {
         guard inputs != self.inputs else { return }
+        if self.inputs?.root != inputs.root { lists = Lists() }
         self.inputs = inputs
         ticket += 1
         let ticket = ticket
@@ -282,7 +304,7 @@ public struct GitRepoPanel: View {
     private var order: GitChangeOrder { GitChangeOrder(rawValue: orderRaw) ?? .lastUpdate }
 
     private var inputs: GitRepoPanelLists.Inputs {
-        GitRepoPanelLists.Inputs(generation: repo.generation, datesVersion: dates.version, order: order, filter: filter, untracked: showUntracked)
+        GitRepoPanelLists.Inputs(root: repo.root, generation: repo.generation, datesVersion: dates.version, order: order, filter: filter, untracked: showUntracked)
     }
 
     public var body: some View {
@@ -298,7 +320,7 @@ public struct GitRepoPanel: View {
                 branch(status)
                 controls(proxy)
                     .padding(.vertical, 6)
-                let lists = derived.lists
+                let lists = derived.lists(for: repo.root)
                 list("Staged", lists.staged, key: "staged", staged: true)
                 list("Changes", lists.changed, key: "changes", staged: false)
                 if showUntracked {
@@ -317,7 +339,7 @@ public struct GitRepoPanel: View {
                 GitCommitList(commits: log.commits, onOpen: onOpenCommit)
             }
         }
-        .task(id: repo.generation) {
+        .task(id: GitChangeDates.Key(root: repo.root, generation: repo.generation)) {
             dates.load(root: repo.root, entries: repo.status?.entries ?? [], generation: repo.generation)
         }
         .task(id: inputs) {
@@ -372,7 +394,7 @@ public struct GitRepoPanel: View {
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .font(.system(size: 11))
-            let listed = revealTarget(in: derived.lists) != nil
+            let listed = revealTarget(in: derived.lists(for: repo.root)) != nil
             IconButton(systemName: "scope", tooltip: listed ? "Show the open file in the list" : "The open file has no changes here", size: 11) {
                 reveal(proxy)
             }
@@ -408,7 +430,7 @@ public struct GitRepoPanel: View {
 
     /// Opens the open file's folder and page when needed, scrolls its row to the middle and lights it for a moment.
     private func reveal(_ proxy: ScrollViewProxy) {
-        guard let path = revealPath, let target = revealTarget(in: derived.lists) else { return }
+        guard let path = revealPath, let target = revealTarget(in: derived.lists(for: repo.root)) else { return }
         if let folder = target.folder {
             openFolders.insert(folder)
         }

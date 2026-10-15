@@ -23,6 +23,7 @@ public final class AgentBlameModel: ObservableObject {
     /// Follows `url` (nil: nothing, as when attribution is off).
     public func follow(_ url: URL?) {
         guard url != self.url else { return }
+        ticket += 1
         self.url = url
         state = AgentBlameState()
         path = nil
@@ -43,7 +44,7 @@ public final class AgentBlameModel: ObservableObject {
             var state = AgentBlameState()
             state.merge(result, files: [file], asked: [path])
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.ticket == ticket else { return }
+                guard let self, self.ticket == ticket, self.url == url else { return }
                 self.path = path
                 self.state = state
             }

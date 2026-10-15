@@ -69,6 +69,23 @@ struct GitQueries {
         return Self.parseLog(output)
     }
 
+    /// An explicit SHA is independent of the chooser's newest 30 commits. Follow the path's
+    /// rename history too, and reject a commit that never changed this file.
+    func pickedCommit(_ pick: String, of file: URL, in root: URL) throws -> GitCommit {
+        guard pick.range(of: "^[0-9a-fA-F]{4,64}$", options: .regularExpression) != nil,
+              let path = Self.relative(file, to: root) else { throw ReviewError.git("Invalid commit: \(pick)") }
+        let sha = try run(["rev-parse", "--verify", "--end-of-options", "\(pick)^{commit}"], in: root).trimmed
+        let format = "--format=\u{1e}%H\u{1f}%h\u{1f}%s\u{1f}%an\u{1f}%ct"
+        let direct = try run(["log", "--follow", "-1", "--name-only", format, sha, "--", path], in: root)
+        if let commit = Self.parseLog(direct).first, commit.sha == sha { return commit }
+        // A commit before the file's rename needs the path mapping from its current history.
+        let output = try run(["log", "--follow", "--name-only", format, "--", path], in: root)
+        guard let commit = Self.parseLog(output).first(where: { $0.sha == sha }) else {
+            throw ReviewError.git("Commit \(pick) is not in this file's history.")
+        }
+        return commit
+    }
+
     func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? {
         guard let root = root(of: folder) else { return nil }
         let status = Self.parseStatus(try run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: root))

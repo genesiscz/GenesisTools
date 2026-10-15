@@ -9,6 +9,51 @@
 
 import SwiftUI
 
+/// Shared by Changes and the commit sheet. Full-note differences never run in a view body.
+@MainActor
+final class MarkdownDiffMarksModel: ObservableObject {
+    struct Input: Equatable, Sendable {
+        let old: String
+        let new: String
+    }
+    private struct Output {
+        let input: Input
+        let marks: [MarkdownWebView.DiffMark]
+    }
+    @Published private var output: Output?
+    private var ticket = 0
+    var compute: @Sendable (String, String) -> [MarkdownWebView.DiffMark] = {
+        MarkdownWebView.DiffMark.between(old: $0, new: $1)
+    }
+
+    func marks(for input: Input) -> [MarkdownWebView.DiffMark] {
+        output?.input == input ? output?.marks ?? [] : []
+    }
+
+    func load(_ input: Input) async {
+        ticket += 1
+        let ticket = ticket
+        guard output?.input != input else { return }
+        let compute = compute
+        let marks = await Task.detached(priority: .userInitiated) { compute(input.old, input.new) }.value
+        guard ticket == self.ticket, !Task.isCancelled else { return }
+        output = Output(input: input, marks: marks)
+    }
+}
+
+struct MarkdownRenderedDiff<Content: View>: View {
+    let old: String
+    let new: String
+    let content: ([MarkdownWebView.DiffMark]) -> Content
+    @StateObject private var marks = MarkdownDiffMarksModel()
+
+    var body: some View {
+        let input = MarkdownDiffMarksModel.Input(old: old, new: new)
+        content(marks.marks(for: input))
+            .task(id: input) { await marks.load(input) }
+    }
+}
+
 struct MarkdownChangesPane: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
@@ -56,15 +101,16 @@ struct MarkdownChangesPane: View {
         .onChange(of: model.changesCommit) { _, _ in load() }
         .onChange(of: model.revisionCompare) { _, _ in load() }
         .onChange(of: doc.displayText) { _, _ in load() }
+        .onChange(of: doc.missing) { _, _ in load() }
         .onChange(of: repos.revision) { _, _ in load() }
     }
 
     private func load() {
         blame.follow(blameShows ? doc.url : nil)
         if let compare {
-            diff.loadCompare(doc.url, text: doc.displayText, old: compare.old, new: compare.new)
+            diff.loadCompare(doc.url, workingText: model.workingText(for: doc), old: compare.old, new: compare.new)
         } else {
-            diff.load(doc.url, text: doc.displayText, scope: currentScope, commit: currentScope == .lastCommit ? model.changesCommit : nil)
+            diff.load(doc.url, workingText: model.workingText(for: doc), scope: currentScope, commit: currentScope == .lastCommit ? model.changesCommit : nil)
         }
     }
 
@@ -141,22 +187,24 @@ struct MarkdownChangesPane: View {
     /// The new side rendered, with the changes against the old side marked.
     private func renderedDiff(_ file: DiffFile) -> some View {
         let new = file.newContents ?? ""
-        return MarkdownWebView(
-            markdown: new,
-            scrollTarget: nil,
-            highlightQuery: nil,
-            highlightToken: 0,
-            onWikilink: { model.follow($0, from: doc) },
-            onActiveSection: { _ in },
-            onRelativeLink: { model.follow($0, from: doc) },
-            zoom: model.zoom,
-            cssVariables: model.theme.cssVariables,
-            articleWidth: model.articleWidth <= 0 ? nil : model.articleWidth,
-            columnResizable: false,
-            diffMarks: MarkdownWebView.DiffMark.between(old: diff.oldText ?? "", new: new),
-            documentURL: doc.url,
-            vaultRoot: GenesisKit.host?.markdownVaultRoot
-        )
+        return MarkdownRenderedDiff(old: file.oldContents ?? "", new: new) { marks in
+            MarkdownWebView(
+                markdown: new,
+                scrollTarget: nil,
+                highlightQuery: nil,
+                highlightToken: 0,
+                onWikilink: { model.follow($0, from: doc) },
+                onActiveSection: { _ in },
+                onRelativeLink: { model.follow($0, from: doc) },
+                zoom: model.zoom,
+                cssVariables: model.theme.cssVariables,
+                articleWidth: model.articleWidth <= 0 ? nil : model.articleWidth,
+                columnResizable: false,
+                diffMarks: marks,
+                documentURL: doc.url,
+                vaultRoot: GenesisKit.host?.markdownVaultRoot
+            )
+        }
     }
 
     private func message(_ text: String, systemImage: String) -> some View {

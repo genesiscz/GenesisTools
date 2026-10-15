@@ -22,6 +22,7 @@ public final class GitGutterModel: ObservableObject {
     /// One per kind of load, so a text change never drops a HEAD read in flight, nor the reverse.
     private var headTicket = 0
     private var hunkTicket = 0
+    var computeHunks: @Sendable (String, String) -> [GitHunk] = { GitHunks.between(old: $0, new: $1) }
 
     public init() {}
 
@@ -32,6 +33,9 @@ public final class GitGutterModel: ObservableObject {
             schedule()
             return
         }
+        headTicket += 1
+        hunkTicket += 1
+        pending?.cancel()
         self.url = url
         head = nil
         hunks = []
@@ -62,6 +66,7 @@ public final class GitGutterModel: ObservableObject {
     }
 
     private func schedule() {
+        hunkTicket += 1
         pending?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.compute() }
         pending = work
@@ -69,17 +74,20 @@ public final class GitGutterModel: ObservableObject {
     }
 
     private func compute() {
+        hunkTicket += 1
         guard let head else {
             if !hunks.isEmpty { hunks = [] }
             return
         }
         let text = self.text
-        hunkTicket += 1
+        let url = self.url
+        let computeHunks = self.computeHunks
         let ticket = hunkTicket
         DispatchQueue.global(qos: .userInitiated).async {
-            let hunks = GitHunks.between(old: head, new: text)
+            let hunks = computeHunks(head, text)
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.hunkTicket == ticket, self.hunks != hunks else { return }
+                guard let self, self.hunkTicket == ticket, self.url == url, self.text == text,
+                      self.head == head, self.hunks != hunks else { return }
                 self.hunks = hunks
             }
         }

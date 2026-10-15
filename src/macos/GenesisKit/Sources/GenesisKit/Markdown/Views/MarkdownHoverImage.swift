@@ -60,7 +60,7 @@ enum MarkdownHoverImage {
             parts.append("\(Int(size.width.rounded())) × \(Int(size.height.rounded())) px")
         }
         if let bytes {
-            parts.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+            parts.append(ByteFormat.file(bytes))
         }
         return parts.joined(separator: " · ")
     }

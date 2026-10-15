@@ -21,6 +21,49 @@ final class AgentBlameModelTests: XCTestCase {
         }
     }
 
+    func testDisablingAttributionDiscardsAnInFlightReply() async throws {
+        final class Delayed: GenesisKitGTCLIProvider {
+            let gate = DispatchSemaphore(value: 0)
+            let started: XCTestExpectation
+            let finished: XCTestExpectation
+            let root: URL
+            init(_ root: URL, _ started: XCTestExpectation, _ finished: XCTestExpectation) {
+                self.root = root; self.started = started; self.finished = finished
+            }
+            override func git(_ arguments: [String], in repo: URL, input: Data?, gitDirectory: String?, environment: [String: String]?) throws -> GitRunResult {
+                // The private folder has no repository follower; only the blame lookup resolves it.
+                if arguments == ["rev-parse", "--show-toplevel"] {
+                    return GitRunResult(status: 0, stdout: Data(root.path.utf8), stderr: Data())
+                }
+                return GitRunResult(status: 1, stdout: Data(), stderr: Data())
+            }
+            override func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? { nil }
+            override func agentBlame(repo: String, paths: [String]) throws -> AgentBlameResult {
+                started.fulfill()
+                _ = gate.wait(timeout: .now() + 5)
+                finished.fulfill()
+                return AgentBlameResult(sources: [], files: [], elapsedMs: 0)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("blame-cancel-\(UUID())")
+        let started = expectation(description: "blame started"), finished = expectation(description: "blame finished")
+        started.assertForOverFulfill = false
+        finished.assertForOverFulfill = false
+        let provider = Delayed(root, started, finished)
+        let previous = GenesisKitGT.provider
+        GenesisKitGT.provider = provider
+        defer { GenesisKitGT.provider = previous }
+        let model = AgentBlameModel()
+        model.follow(root.appendingPathComponent("note.md"))
+        await fulfillment(of: [started], timeout: 3)
+        model.follow(nil)
+        for _ in 0..<8 { provider.gate.signal() }
+        await fulfillment(of: [finished], timeout: 3)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(model.path, "the delayed reply must not resurrect even the file identity")
+        XCTAssertNil(model.source(forLines: 0...1))
+    }
+
     func testTheSessionThatWroteMostOfTheLinesIsNamed() async throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("blame-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)

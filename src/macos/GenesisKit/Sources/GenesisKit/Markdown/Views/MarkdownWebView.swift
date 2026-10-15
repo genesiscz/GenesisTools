@@ -64,7 +64,7 @@ struct MarkdownWebView: NSViewRepresentable {
     }
 
     /// A change for the rendered diff: the new text's 0-based body lines and the old text it replaced.
-    struct DiffMark: Equatable {
+    struct DiffMark: Equatable, Sendable {
         var first: Int
         var last: Int
         var kind: GitHunk.Kind
@@ -76,7 +76,7 @@ struct MarkdownWebView: NSViewRepresentable {
         static func between(old: String, new: String) -> [DiffMark] {
             let oldBody = MarkdownFrontmatter.split(old).1
             let newBody = MarkdownFrontmatter.split(new).1
-            return GitHunks.between(old: oldBody, new: newBody).map { hunk in
+            return GitHunks.between(old: oldBody, new: newBody).filter { !$0.isTrailingNewlineOnly }.map { hunk in
                 DiffMark(first: hunk.newStart, last: hunk.newStart + max(1, hunk.newCount) - 1, kind: hunk.kind,
                          old: hunk.oldLines.joined(separator: "\n"))
             }
@@ -974,7 +974,8 @@ mark.gn-find-current{background:rgba(250,204,21,.75);color:#0c0e10;}
 .gn-props-add{margin:4px 0 0 4px;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font:inherit;font-size:.92em;padding:3px 6px;border-radius:4px;}
 .gn-render-error{margin:24px 0;padding:12px 14px;border:1px solid rgba(248,113,113,.5);border-radius:8px;background:rgba(248,113,113,.08);color:var(--dd-text);font-size:.95em;}
 #gn-git-layer{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2;}
-.gn-git-bar{position:absolute;width:3px;border-radius:2px;pointer-events:auto;cursor:pointer;}
+.gn-git-bar{position:absolute;width:3px;border:0;padding:0;margin:0;border-radius:2px;pointer-events:auto;cursor:pointer;}
+.gn-git-bar:focus-visible{outline:2px solid var(--dd-text);outline-offset:4px;}
 .gn-git-bar::after{content:'';position:absolute;left:-5px;right:-5px;top:0;bottom:0;}
 .gn-git-bar[data-k="added"]{background:rgba(89,217,140,.9);}
 .gn-git-bar[data-k="modified"]{background:rgba(115,166,255,.95);}
@@ -2088,6 +2089,7 @@ function gnLayoutGit(){
     gnGitObserved=true;
     new ResizeObserver(function(){requestAnimationFrame(gnLayoutGit);}).observe(art);
   }
+  var focused=layer.contains(document.activeElement)?document.activeElement.getAttribute('data-i'):null;
   layer.textContent='';
   // Git marks (Swift's list, clickable) and the rendered diff's marks (index "d…", not clickable) share the column.
   var marked=art.querySelectorAll('[data-gn-git],[data-gn-diff]');if(!marked.length)return;
@@ -2102,17 +2104,26 @@ function gnLayoutGit(){
     else{g.t=Math.min(g.t,r.top);g.b=Math.max(g.b,r.bottom);}
   }
   for(var j=0;j<order.length;j++){
-    var gg=groups[order[j]],bar=document.createElement('div');
-    bar.className='gn-git-bar';bar.setAttribute('data-k',gg.k);bar.setAttribute('data-i',order[j]);
+    var idx=order[j],interactive=idx.charAt(0)!=='d',gg=groups[idx];
+    var bar=document.createElement(interactive?'button':'div');
+    bar.className='gn-git-bar';bar.setAttribute('data-k',gg.k);bar.setAttribute('data-i',idx);
+    if(interactive){
+      bar.type='button';
+      var mark=gnGit.find(function(m){return String(m.i)===idx;});
+      var range=mark?(mark.a===mark.b?'Body line '+(mark.a+1):'Body lines '+(mark.a+1)+'–'+(mark.b+1)):'Change';
+      bar.setAttribute('aria-label',range+' '+gg.k+'. Show previous content and revert options');
+    }else{bar.setAttribute('aria-hidden','true');}
     bar.style.left=x+'px';
     if(gg.k==='deleted'){bar.style.top=(gg.t-c.top-5)+'px';}
     else{bar.style.top=(gg.t-c.top+2)+'px';bar.style.height=Math.max(4,gg.b-gg.t-4)+'px';}
     layer.appendChild(bar);
+    if(interactive&&focused===idx)bar.focus({preventScroll:true});
   }
 }
 document.addEventListener('click',function(e){
   var bar=e.target&&e.target.closest?e.target.closest('.gn-git-bar'):null;
   if(bar){
+    if(bar.tagName!=='BUTTON')return;
     var br=bar.getBoundingClientRect();e.preventDefault();e.stopPropagation();
     gnPost({type:'gitMark',index:parseInt(bar.getAttribute('data-i'),10),rect:{x:br.left-2,y:br.top,w:8,h:Math.max(br.height,8)}});
     return;

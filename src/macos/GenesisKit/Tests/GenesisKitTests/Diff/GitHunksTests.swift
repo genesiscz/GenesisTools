@@ -5,6 +5,38 @@ import XCTest
 /// The gutter's hunks against HEAD, their revert, and the bars the page draws for them.
 @MainActor
 final class GitHunksTests: XCTestCase {
+    func testOldHunksCannotReturnAfterFollowingStops() async throws {
+        final class Head: GenesisKitGTCLIProvider {
+            override func contents(of file: URL, at revision: GitRevision) throws -> String? { "old\n" }
+        }
+        let previous = GenesisKitGT.provider
+        GenesisKitGT.provider = Head()
+        defer { GenesisKitGT.provider = previous }
+        let model = GitGutterModel()
+        let started = expectation(description: "hunks started"), finished = expectation(description: "hunks finished")
+        let gate = DispatchSemaphore(value: 0)
+        model.computeHunks = { old, new in
+            started.fulfill()
+            _ = gate.wait(timeout: .now() + 5)
+            finished.fulfill()
+            return GitHunks.between(old: old, new: new)
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("absent-gutter-\(UUID())/note.md")
+        model.follow(file, text: "new\n")
+        await fulfillment(of: [started], timeout: 3)
+        model.follow(nil, text: "")
+        gate.signal()
+        await fulfillment(of: [finished], timeout: 3)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.hunks.isEmpty)
+        model.computeHunks = { GitHunks.between(old: $0, new: $1) }
+        model.follow(file, text: "new\n")
+        let end = Date().addingTimeInterval(3)
+        while model.hunks.isEmpty, Date() < end { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(model.hunks.first?.kind, .modified)
+        model.follow(nil, text: "")
+    }
+
     func testAddedChangedAndRemovedLinesBecomeThreeHunks() {
         let old = "a\nb\nc\nd\ne\n"
         let new = "a\nB\nc\nnew\nd\n"
@@ -30,6 +62,23 @@ final class GitHunksTests: XCTestCase {
         }
         XCTAssertEqual(text, old)
         XCTAssertTrue(GitHunks.between(old: old, new: old).isEmpty)
+    }
+
+    func testRevertRestoresExactEOFBytes() {
+        let texts = ["", "only", "only\n", "other", "other\n", "a\nb", "a\nb\n", "a\nB", "a\nB\n", "\n", "\n\n"]
+        for old in texts {
+            for new in texts {
+                let hunks = GitHunks.between(old: old, new: new)
+                XCTAssertEqual(hunks.isEmpty, old == new)
+                let reverted = hunks.reversed().reduce(new) { GitHunks.revert($1, in: $0) }
+                XCTAssertEqual(reverted, old, "old=\(old.debugDescription), new=\(new.debugDescription)")
+            }
+        }
+        let old = "first\nkept\nlast", new = "FIRST\nkept\nlast\n"
+        let hunks = GitHunks.between(old: old, new: new)
+        XCTAssertEqual(hunks.count, 2)
+        XCTAssertEqual(GitHunks.revert(hunks[0], in: new), "first\nkept\nlast\n", "an earlier hunk leaves EOF alone")
+        XCTAssertEqual(GitHunks.revert(hunks[1], in: new), "FIRST\nkept\nlast", "the EOF hunk leaves earlier edits alone")
     }
 
     func testAFileThatWasEmptyGetsItsLinesAndNewlineBack() {
@@ -103,6 +152,27 @@ final class GitHunksTests: XCTestCase {
         _ = try await web.evaluateJavaScript("document.querySelector('.gn-git-bar[data-k=\"added\"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))")
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(bridge.clicks, [0, 1])
+        // Native buttons provide Tab, Return/Space and accessibility activation without custom key handlers.
+        let actions = try await web.evaluateJavaScript("""
+            Array.from(document.querySelectorAll('.gn-git-bar')).map(function(b){
+              return b.tagName+':'+b.tabIndex+':'+b.getAttribute('aria-label');})
+            """) as? [String]
+        XCTAssertEqual(actions, [
+            "BUTTON:0:Body line 3 modified. Show previous content and revert options",
+            "BUTTON:0:Body line 5 deleted. Show previous content and revert options",
+            "BUTTON:0:Body line 8 added. Show previous content and revert options",
+        ])
+        // Reapply through the public bridge: gnLayoutGit is private to the page's closure.
+        let focused = try await web.evaluateJavaScript("""
+            (function(){var b=document.querySelector('.gn-git-bar');b.focus();
+              window.gnGitMarks([\(marks.map(\.json).joined(separator: ","))]);
+              return !b.isConnected&&document.activeElement.className==='gn-git-bar'
+                &&document.activeElement.getAttribute('data-i')===b.getAttribute('data-i');})()
+            """) as? Bool
+        XCTAssertEqual(focused, true, "layout retains the focused hunk action")
+        _ = try await web.evaluateJavaScript("document.activeElement.click()")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(bridge.clicks, [0, 1, 0])
 
         // A changed table row gets a bar too (a row cannot hold a positioned ::before).
         let table = "Intro.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"

@@ -492,7 +492,7 @@ private struct MarkdownDocumentPane: View {
         // A deleted or renamed file with unsaved edits keeps its draft on
         // screen (with the banner above), so it can still be read, copied or
         // saved back. Only a clean document shows the empty state.
-        if doc.missing && !doc.isDirty {
+        if model.showsMissingFile(doc) {
             VStack(spacing: 8) {
                 Text("File is gone")
                     .font(.headline)
