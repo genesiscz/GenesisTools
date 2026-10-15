@@ -55,6 +55,54 @@ final class MarkdownSidebarFarRevealTests: XCTestCase {
         XCTAssertTrue(visible, "Show in Sidebar leaves the row off screen")
     }
 
+    /// "Find it, expand the folder, scroll to it": the note sits in a closed folder below 800 rows.
+    @MainActor
+    func testShowInSidebarOpensAClosedFolderAndBringsItsNoteOnScreen() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Čtení-\(UUID().uuidString)")
+        let big = root.appendingPathComponent("aaa-velká složka")
+        let closed = root.appendingPathComponent("zz-closed")
+        try FileManager.default.createDirectory(at: big, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: closed, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<800 {
+            try "x".write(to: big.appendingPathComponent(String(format: "Poznámka %03d.md", index)), atomically: false, encoding: .utf8)
+        }
+        let target = closed.appendingPathComponent("inside-target.md")
+        try "# inside".write(to: target, atomically: true, encoding: .utf8)
+
+        let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-reveal-closed-\(UUID().uuidString)")!)
+        model.filesRoot = root.path
+        model.showFiles = true
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 700),
+                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = MarkdownDocumentWindowController.contentView(model: model)
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+        // Opening a note in the big folder opens that folder; "zz-closed" stays closed.
+        model.open([big.appendingPathComponent("Poznámka 000.md")])
+        settle(window, until: Date().addingTimeInterval(1.5))
+        let tree = try XCTUnwrap(TreeDrawnText.treeScroll(in: window))
+        tree.contentView.scroll(to: .zero)
+        tree.reflectScrolledClipView(tree.contentView)
+        settle(window, until: Date().addingTimeInterval(0.3))
+        XCTAssertFalse(TreeDrawnText.lines(of: tree).contains { $0.contains("inside-target") }, "the note starts hidden")
+
+        model.revealInSidebar(target)
+        let deadline = Date().addingTimeInterval(2.5)
+        var visible = false
+        while Date() < deadline, !visible {
+            settle(window, until: Date().addingTimeInterval(0.2))
+            visible = TreeDrawnText.lines(of: tree).contains { $0.contains("inside-target") }
+        }
+        XCTAssertTrue(visible, "Show in Sidebar opens the closed folder and brings the note on screen")
+    }
+
     @MainActor
     private func settle(_ window: NSWindow, until: Date) {
         window.contentView?.layoutSubtreeIfNeeded()

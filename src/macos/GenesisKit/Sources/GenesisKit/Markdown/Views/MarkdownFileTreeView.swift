@@ -699,12 +699,17 @@ enum MarkdownTreeScroll {
     /// Scrolls the clip view to row `index` frame by frame, then calls `settle`.
     @MainActor
     static func glide(toRow index: Int, of count: Int, in scroll: NSScrollView, then settle: @escaping () -> Void) {
+        // Rows that just arrived (a folder the reveal opened) are not in the document's height until the next layout:
+        // a target from the old height left a last row just below the sidebar (2026-10-15). Lay out first, and
+        // follow the height on every frame, since the lazy list refines it as rows come into view.
+        scroll.window?.contentView?.layoutSubtreeIfNeeded()
         let clip = scroll.contentView
-        let documentHeight = scroll.documentView?.frame.height ?? 0
         let visible = clip.bounds.height
-        let target = centeredOrigin(index: index, count: count, documentHeight: documentHeight, visibleHeight: visible)
-        let start = glideStart(from: clip.bounds.origin.y, to: target, visibleHeight: visible)
-        GenesisKit.log("markdown: tree reveal row \(index) of \(count), document \(Int(documentHeight)) pt, glide \(Int(clip.bounds.origin.y)) -> \(Int(start)) -> \(Int(target))")
+        func target() -> CGFloat {
+            centeredOrigin(index: index, count: count, documentHeight: scroll.documentView?.frame.height ?? 0, visibleHeight: visible)
+        }
+        let start = glideStart(from: clip.bounds.origin.y, to: target(), visibleHeight: visible)
+        GenesisKit.log("markdown: tree reveal row \(index) of \(count), document \(Int(scroll.documentView?.frame.height ?? 0)) pt, glide \(Int(clip.bounds.origin.y)) -> \(Int(start)) -> \(Int(target()))")
         var last = start
         func place(_ y: CGFloat) {
             clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
@@ -723,7 +728,7 @@ enum MarkdownTreeScroll {
                     return
                 }
                 let progress = min(1, (CACurrentMediaTime() - began) / duration)
-                place(start + (target - start) * eased(progress))
+                place(start + (target() - start) * eased(progress))
                 if progress >= 1 {
                     timer.invalidate()
                     settle()
