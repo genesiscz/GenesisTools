@@ -404,6 +404,16 @@ select-phase mark file for `sample`).
 - **Measured** (100 tabs, outline open, a 164 KB note, debug, two rounds): 20 heading changes 1685 / 928 → 293 / 301
   ms busy, the longest pass 490 / 47 → 10 / 12 ms; tab switches 2372 / 1917 → 1176 / 1160 ms.
 
+### A SwiftUI animation costs the whole graph it lives in
+- Each frame of a SwiftUI animation re-renders the hosting view's graph, not just the view that moves. The viewer's
+  0.14 s opacity fade of the old page (`GenRenderSwap`) re-rendered the whole window each frame: about 130 ms of main
+  thread per tab switch, more than the switch itself.
+- For a fade over a big window, let Core Animation draw it: change the content at once and add a `CATransition`
+  (`.fade`) to the hosting view's layer in the same transaction (`GenRenderSwap(fade: .layer)`). Core Animation files
+  a transition under `kCATransition` whatever key it is given.
+- Measure at the user's pace: switches 0.1 s apart overlap their fades and hide the cost. **Measured** (100 tabs,
+  10 switches 0.5 s apart, debug, busy ms): SwiftUI fade 2238 / 2208, no fade 938 / 901, Core Animation fade 925 / 925.
+
 ### Check the build configuration first
 - The installed app at 04:01 was a DEBUG build (`start:debug`; same size as the worktree's debug product, no release
   product there). Before profiling a user's lag, compare the installed binary with the build products.
