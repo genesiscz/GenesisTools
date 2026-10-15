@@ -643,7 +643,7 @@ struct GlassToggle: View {
             systemName: glass ? "drop.fill" : "drop",
             tooltip: native
                 ? "Glass is for the Hub style. \(HubGlassSwitch.nativeNote) (Settings → General)."
-                : glass ? "Glass is on: click for solid (⌘⇧G)" : "Glass: let the desktop show through (⌘⇧G)"
+                : HubKeymap.hint(glass ? "Glass is on: click for solid" : "Glass: let the desktop show through", HubKeymap.glass)
         ) {
             withAnimation(.easeInOut(duration: 0.25)) { HubGlassSwitch.toggle() }
         }

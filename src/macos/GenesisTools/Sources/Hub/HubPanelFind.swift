@@ -917,6 +917,12 @@ final class PanelFindRouter {
         }
     }
 
+    /// ⇧⌘G steps to the previous match while a find bar in this window is open. Glass asks before it toggles.
+    func takesPreviousMatch(in window: NSWindow?) -> Bool {
+        guard let window else { return false }
+        return step(in: window, forward: false)
+    }
+
     private func step(in window: NSWindow, forward: Bool) -> Bool {
         guard let anchor = focusedPanel(in: window), case .panel(let find) = anchor.target, find.isOpen else { return false }
         if forward { find.next() } else { find.previous() }

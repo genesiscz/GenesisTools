@@ -201,19 +201,13 @@ final class PromptLibraryStore: ObservableObject {
     }
 }
 
-/// ⌘⇧P on the hub's root: a hidden button that opens the picker over the window.
+/// ⌘⇧P on the hub window toggles the picker (`HubKeymap`). This hosts it over the window.
 private struct HubPromptsModifier: ViewModifier {
     @ObservedObject var model: HubModel
     @ObservedObject private var store = PromptLibraryStore.shared
 
     func body(content: Content) -> some View {
         content
-            .background(
-                Button("") { store.pickerOpen.toggle() }
-                    .keyboardShortcut("p", modifiers: [.command, .shift])
-                    .opacity(0)
-                    .accessibilityHidden(true)
-            )
             .overlay {
                 if store.pickerOpen {
                     PromptPickerView(isPresented: $store.pickerOpen, context: model.promptContext) { model.notice = $0 }
@@ -447,9 +441,11 @@ struct PromptPickerView: View {
                 } label: {
                     Label(store.busy ? "Sending…" : "Send", systemImage: "paperplane")
                 }
-                .keyboardShortcut(.return, modifiers: [.command])
+                .keymapAction(HubKeymap.promptSend, in: HubKeymap.shared, enabled: context.sessionId != nil && missing.isEmpty && !store.busy) {
+                    send(prompt)
+                }
                 .disabled(context.sessionId == nil || !missing.isEmpty || store.busy)
-                .instantTooltip(context.sessionId == nil ? "Select a session first" : missing.isEmpty ? "Type it into the session's cmux pane (⌘↩)" : "Fill \(missing.joined(separator: ", ")) first")
+                .instantTooltip(context.sessionId == nil ? "Select a session first" : missing.isEmpty ? HubKeymap.hint("Type it into the session's cmux pane", HubKeymap.promptSend) : "Fill \(missing.joined(separator: ", ")) first")
             }
         }
         .padding(14)
