@@ -511,6 +511,35 @@ struct MarkdownFileTreeView: View {
         scroll.reflectScrolledClipView(clip)
     }
 
+    /// The + menu. One folder to offer (the root): "New File in <root>", "New Folder in <root>". Two (the folder the
+    /// tree last revealed or the open note's folder, and the root): "New File in…" and "New Folder in…", each listing
+    /// both by name, so the menu says where the file lands (Martin, 2026-10-15: "in Design or …" was unclear).
+    private func newItemEntries(_ root: URL) -> [PathMenuEntry] {
+        let near = newItemFolder.standardizedFileURL
+        let folders = near.path == root.standardizedFileURL.path ? [root] : [near, root]
+        func item(_ action: PathAction, in folder: URL, title: String) -> PathMenuItem? {
+            guard case .item(let base)? = PathMenu.entries(for: folder, kind: .folder, actions: [action],
+                                                          handlers: model.pathHandlers(for: folder, kind: .folder)).first
+            else { return nil }
+            return PathMenuItem(id: "\(action.rawValue)-\(folder.path)", title: title, systemImage: base.systemImage,
+                                action: action, run: base.run)
+        }
+        if folders.count == 1 {
+            return [PathAction.newFile, .newFolder].compactMap { action in
+                item(action, in: root, title: "\(action == .newFile ? "New File" : "New Folder") in \(root.lastPathComponent)…")
+                    .map(PathMenuEntry.item)
+            }
+        }
+        return [(PathAction.newFile, "New File in", "doc.badge.plus"), (.newFolder, "New Folder in", "folder.badge.plus")]
+            .map { action, title, symbol in
+                .submenu(id: "\(action.rawValue)-in", title: "\(title)…", systemImage: symbol,
+                         entries: folders.compactMap { folder in
+                             item(action, in: folder, title: folder.lastPathComponent.isEmpty ? "/" : folder.lastPathComponent)
+                                 .map(PathMenuEntry.item)
+                         })
+            }
+    }
+
     /// Where the header's New File… / New Folder… create.
     private var newItemFolder: URL {
         let revealedFolder = revealed.map { URL(fileURLWithPath: $0) }.flatMap { MarkdownLinkRoute.isFolder($0) ? $0 : nil }
@@ -553,11 +582,19 @@ struct MarkdownFileTreeView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(model.theme.accent)
                 if !root.deletingLastPathComponent().lastPathComponent.isEmpty, root.path != "/" {
-                    Text(root.deletingLastPathComponent().lastPathComponent + " /")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(model.theme.textMuted)
-                        .lineLimit(1)
-                        .layoutPriority(0)
+                    // The folder above: a click goes there, as the up arrow does (and Back returns).
+                    Button {
+                        model.filesRootUp()
+                    } label: {
+                        Text(root.deletingLastPathComponent().lastPathComponent + " /")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(model.theme.textMuted)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .layoutPriority(0)
+                    .accessibilityIdentifier("markdown-files-parent")
+                    .instantTooltip("Go to \(root.deletingLastPathComponent().lastPathComponent)")
                 }
                 Text(root.lastPathComponent.isEmpty ? "/" : root.lastPathComponent)
                     .font(.system(size: 11.5, weight: .semibold))
@@ -578,13 +615,7 @@ struct MarkdownFileTreeView: View {
 
             Spacer(minLength: 0)
 
-            PathMenuButton(entries: {
-                let folder = newItemFolder
-                return PathMenu.entries(
-                    for: folder, kind: .folder, actions: [.newFile, .newFolder],
-                    handlers: model.pathHandlers(for: folder, kind: .folder)
-                )
-            }) {
+            PathMenuButton(entries: { newItemEntries(root) }) {
                 Image(systemName: "plus")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(model.theme.textMuted)
@@ -594,7 +625,9 @@ struct MarkdownFileTreeView: View {
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("New file or folder")
             .accessibilityIdentifier("markdown-files-new")
-            .instantTooltip("New file or folder in \(newItemFolder.lastPathComponent)")
+            .instantTooltip(newItemFolder.path == root.path
+                ? "New file or folder in \(root.lastPathComponent)"
+                : "New file or folder in \(newItemFolder.lastPathComponent) or \(root.lastPathComponent)")
 
             if gitMarks {
                 Button {
