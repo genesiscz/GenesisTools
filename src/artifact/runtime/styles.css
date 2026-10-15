@@ -28,6 +28,28 @@
     --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", "Menlo", monospace;
 }
 
+/* Shared tokens derived once for every template. A template's theme.css may
+   override any of them. `light-dark()` resolves against the template's own
+   color-scheme, so a dark template gets the dark half and `auto` switches. */
+:root {
+    /* Faint stripe for alternating bands and row tints. */
+    --wash: color-mix(in srgb, var(--text) 3.5%, transparent);
+    /* The hover card stays dark on dark in every theme: text 15:1, dim 7:1 on the card. */
+    --tooltip-bg: #0f1115;
+    --tooltip-text: #e8eaee;
+    --tooltip-dim: #9aa3b2;
+    --tooltip-border: rgba(255, 255, 255, 0.14);
+    /* Categorical colours for lanes and series (SERIES_COLOR in the kit). */
+    --series-1: light-dark(#7c5ce6, #9b82f0);
+    --series-2: light-dark(#0f9b8e, #16b3a3);
+    --series-3: light-dark(#2a78d6, #3987e5);
+    --series-4: light-dark(#1baf7a, #199e70);
+    --series-5: light-dark(#eda100, #c98500);
+    --series-6: light-dark(#c0518a, #d472a0);
+    --series-7: light-dark(#898781, #77766f);
+    --series-8: light-dark(#7bb0ec, #9ec9fb);
+}
+
 /* Bridge template tokens into Tailwind utilities. `inline` makes utilities emit
    var(--bg) etc., so swapping the template retints every kit component live. */
 @theme inline {

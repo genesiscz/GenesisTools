@@ -31,6 +31,18 @@ export const TONE_COLOR: Record<Tone, string> = {
     neutral: "var(--dim)",
 };
 
+/** Categorical colours for lanes and series, light and dark pairs from the shared tokens. */
+export const SERIES_COLOR: string[] = [
+    "var(--series-1)",
+    "var(--series-2)",
+    "var(--series-3)",
+    "var(--series-4)",
+    "var(--series-5)",
+    "var(--series-6)",
+    "var(--series-7)",
+    "var(--series-8)",
+];
+
 /** Fixed fallback assignment order for slices/series without an explicit color. */
 const FALLBACK_ORDER: Tone[] = ["info", "warn", "ok", "err", "neutral"];
 

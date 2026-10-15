@@ -187,3 +187,8 @@ export {
     type SparklineProps,
     sparklinePath,
 } from "./viz";
+
+// Project roadmap kit: tokens, tooltip, forms, Gantt, capacity, theme, sorting, wizard, editable table, ledger.
+// Kept as one block after the older exports, so later additions merge without touching the lists above.
+
+export { SERIES_COLOR } from "./charts";
