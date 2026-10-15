@@ -75,11 +75,21 @@ export const DEFAULT_CMUX_KILL_GRACE_MS = 2000;
 /** Bounded unless the caller explicitly passes `timeoutMs: null`. */
 export type CmuxTimeoutOpt = { timeoutMs?: number | null; killGraceMs?: number };
 
+/**
+ * cmux 0.65 prints only `*_ref` fields unless asked, so `new-surface`, `new-split` and
+ * `workspace create` stopped returning the `*_id` UUIDs every caller reads. The handoff run link
+ * then renamed and typed into `surface: undefined` and the new tab stayed empty (2026-10-15).
+ * `both` keeps the refs too, so a caller that reads refs is unaffected.
+ */
+function idFormatArgs(args: string[]): string[] {
+    return args.includes("--id-format") ? [] : ["--id-format", "both"];
+}
+
 export async function runCmux(args: string[], opts: { json?: boolean } & CmuxTimeoutOpt = {}): Promise<CmuxRunResult> {
     // null is the explicit opt-out; undefined means "nobody thought about it",
     // which is exactly the case that must be bounded.
     const timeoutMs = opts.timeoutMs === null ? undefined : (opts.timeoutMs ?? DEFAULT_CMUX_TIMEOUT_MS);
-    const finalArgs = opts.json ? ["--json", ...args] : args;
+    const finalArgs = opts.json ? ["--json", ...idFormatArgs(args), ...args] : args;
     const cmuxPath = resolveCmuxPath();
     logger.debug({ args: finalArgs, cmuxPath }, "[cmux] spawn");
     const proc = Bun.spawn([cmuxPath, ...finalArgs], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
