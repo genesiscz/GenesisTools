@@ -68,13 +68,14 @@ worker isolation remains controlled by the worker launcher below.
 - **Two session stores.** `tools grok history` / `run --resume` list TUI dirs under `~/.grok/sessions` (and the worker-home copy of that layout). `tools grok sessions` lists headless workers under `~/.genesis-tools/grok/sessions/<name>.meta.json`. Those are not the same inventory.
 - **TUI resume is not the worker.** Bare `--resume` on `run` launches native `grok --resume` in your normal environment. A query selects an indexed session and launches `grok -r <id>` with that session's `GROK_HOME`, so a worker-home result is not looked up in a different personal home. Neither calls `runSession` or mutates the parent environment. Worker mode still needs `--name` and `--cwd` with `--resume` absent.
 - **Session bookkeeping.** The worker uuid and cwd are stored in `~/.genesis-tools/grok/sessions/<name>.meta.json`; `steer` resumes with the identical `--cwd` automatically (grok keys sessions by cwd).
-- **Sticky read-only.** The grok CLI forgets `--tools` on every `--resume`; the harness re-arms the read-only allowlist on each steer of a `--readonly` session. `steer --writable` switches the session back to the project jail deliberately.
+- **Sticky permission flags.** The grok CLI forgets `--tools` and `--always-approve` on every `--resume`; the harness re-arms the read-only allowlist on each steer of a `--readonly` session, and `--always-approve` on each writable turn. `steer --writable` switches the session back to writable mode deliberately.
 - **Honest exit codes.** The grok CLI exits 0 even when a turn dies. `tools grok` parses the stream and exits 1 when no terminal `end` event is present.
 - **One claim per name, one transcript per turn.** `run` reserves the session name with `O_EXCL`, and each turn reserves its own log file the same way, so two concurrent invocations cannot both start turn 1 or truncate each other's transcript.
 
-## Safety model (verified against grok CLI 1.0.3, 2026-08-26)
+## Safety model (re-verified against grok CLI 1.0.52, 2026-10-15)
 
-- Default headless mode is a **project jail**: edits and commands inside `--cwd` run without approval; writes outside are blocked with a denial the worker sees.
+- A writable turn runs with `--always-approve`. Nobody can answer a permission prompt in a headless turn: without the flag, grok sent a nested `sh -c` or a `;` chain through a 1-6 s gate, and a verdict other than "allow" came back as `cancelled` and ended the whole turn before the command ran. `--allow Bash` does not stop that gate.
+- There is **no project jail**. The jail verified on 1.0.3 is gone: on 1.0.52 a write to a path under $HOME was allowed in 0 ms with and without `--always-approve`. Give a writable worker a disposable worktree.
 - `--readonly` maps to the `--tools read_file,list_dir,grep` allowlist — the worker physically lacks edit and terminal tools.
 - Do not hand-roll bare `grok` flags for safety: `--permission-mode plan` does not restrict headless runs, and `--disallowed-tools` silently keeps `run_terminal_command`.
 

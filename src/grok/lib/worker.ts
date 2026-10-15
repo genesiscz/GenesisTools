@@ -42,6 +42,24 @@ const SIDE_EFFECT_ENV: Record<string, string> = {
 
 const READ_ONLY_TOOLS = "read_file,list_dir,grep";
 
+/**
+ * The tool and permission flags of one turn, re-armed on EVERY turn because the
+ * grok CLI forgets them on `--resume`.
+ *
+ * Read-only: the `--tools` allowlist, so the worker has no edit or terminal tool.
+ * Writable: `--always-approve`. A headless turn has nobody to answer a permission
+ * prompt. Without a mode, grok 1.0.52 sends some shell commands (a nested `sh -c`,
+ * a `;` chain) through a 1-6 s gate, and a verdict other than "allow" resolves as
+ * `cancelled`, which ends the whole turn before the command runs (2026-10-15,
+ * bs-521 and bs-94). `--allow Bash` does not help: the nested-shell floor still
+ * applies. Deny rules still apply under always-approve, and the default mode no
+ * longer jails edits to `--cwd` anyway (a write to a path under $HOME was allowed
+ * in 0 ms in both modes).
+ */
+function permissionArgs(readOnly: boolean): string[] {
+    return readOnly ? ["--tools", READ_ONLY_TOOLS] : ["--always-approve"];
+}
+
 export type GrokAuthMode = "subscription" | "api-key";
 
 /**
@@ -174,18 +192,15 @@ export function buildRunArgs(
         args.push("-m", session.model);
     }
 
-    if (session.readOnly) {
-        args.push("--tools", READ_ONLY_TOOLS);
-    }
-
-    args.push(...contractArgs(session.readOnly, session.surfaces));
+    args.push(...permissionArgs(session.readOnly), ...contractArgs(session.readOnly, session.surfaces));
     return args;
 }
 
 /**
- * Arguments for a resumed turn. `--tools` is re-armed every time because the
- * grok CLI drops safety flags on `--resume`; without this a session started
- * read-only silently gains write tools from turn 2 onward.
+ * Arguments for a resumed turn. `permissionArgs` is re-armed every time because
+ * the grok CLI drops safety flags on `--resume`; without this a session started
+ * read-only silently gains write tools from turn 2 onward, and a writable one
+ * loses always-approve.
  */
 export function buildSteerArgs(
     session: { sessionId: string; surfaces?: WorkerSurfaces },
@@ -193,11 +208,7 @@ export function buildSteerArgs(
     promptArguments: string[]
 ): string[] {
     const args = [...promptArguments, "--resume", session.sessionId];
-    if (readOnly) {
-        args.push("--tools", READ_ONLY_TOOLS);
-    }
-
-    args.push(...contractArgs(readOnly, session.surfaces));
+    args.push(...permissionArgs(readOnly), ...contractArgs(readOnly, session.surfaces));
     return args;
 }
 

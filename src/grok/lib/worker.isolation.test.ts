@@ -170,6 +170,35 @@ describe("read-only tool restriction", () => {
     });
 });
 
+/**
+ * Regression test: 2026-10-15, grok 1.0.52. Without a permission mode a headless
+ * worker sends some shell commands (a nested `sh -c`, a `;` chain) through a
+ * gate that takes 1-6 s. Nobody can answer it, and a verdict that is not
+ * "allow" came back as `permission_resolved: cancelled`, which ended the whole
+ * turn (`stopReason: cancelled`) before the command ran. `--always-approve`
+ * resolves the same calls in 0 ms; `--allow Bash` does not (the nested-shell
+ * floor still applies). The CLI forgets flags on `--resume`, so every writable
+ * turn must carry it.
+ */
+describe("headless permission mode", () => {
+    test("a writable run approves tool calls, because no one can answer a headless prompt", () => {
+        expect(buildRunArgs({ sessionId: "s-1", model: undefined, readOnly: false }, ["-p", "hi"])).toContain(
+            "--always-approve"
+        );
+    });
+
+    test("a resumed writable session is re-armed, because the CLI forgets the flag", () => {
+        expect(buildSteerArgs({ sessionId: "s-1" }, false, ["-p", "again"])).toContain("--always-approve");
+    });
+
+    test("a read-only session never gets always-approve", () => {
+        expect(buildRunArgs({ sessionId: "s-1", model: undefined, readOnly: true }, ["-p", "hi"])).not.toContain(
+            "--always-approve"
+        );
+        expect(buildSteerArgs({ sessionId: "s-1" }, true, ["-p", "again"])).not.toContain("--always-approve");
+    });
+});
+
 describe("interrupted initial launch", () => {
     test("retries session creation before using resume", () => {
         const meta = {

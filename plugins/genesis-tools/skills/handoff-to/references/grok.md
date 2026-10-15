@@ -60,8 +60,8 @@ tools grok sessions [--json]
 | Intent | How | Verified behavior |
 |---|---|---|
 | read-only (review, second opinion) | `--readonly` | Worker gets only `read_file,list_dir,grep` — it physically lacks edit and terminal tools; edit attempts are denied and files stay untouched |
-| implementation (default) | no flag | Headless default is **Auto mode — a project jail**: edits and commands inside `--cwd` run without approval; any write outside the project is blocked with a denial message the worker sees and reports |
-| full trust | not exposed | On purpose. For risky work, give the worker a disposable worktree and keep the default jail |
+| implementation (default) | no flag | The harness passes `--always-approve` on every writable turn: edits and commands run without approval. There is no project jail any more: on grok 1.0.52 a write to a path under $HOME was allowed in 0 ms with or without the flag (2026-10-15). Without the flag, a nested `sh -c` or a `;` chain could resolve as `cancelled` and end the whole turn |
+| full trust | same as the default | For risky work, give the worker a disposable worktree: nothing else bounds its writes |
 
 🛑 Never reach past the harness for safety flags — two raw-grok flags LOOK like safety dials and are not (both verified): `--permission-mode plan` does not restrict a headless run (the worker edited a file under it), and `--disallowed-tools` silently refuses to remove `run_terminal_command` (the worker appended via the shell instead).
 
