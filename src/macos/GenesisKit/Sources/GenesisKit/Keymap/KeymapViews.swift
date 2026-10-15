@@ -82,6 +82,9 @@ public struct KeymapListView: View {
                 }
                 .padding(.bottom, 12)
             }
+            // The lazy rows have estimated heights until they draw, and without an anchor a new window opened
+            // part way down the list.
+            .defaultScrollAnchor(.top)
         }
     }
 
