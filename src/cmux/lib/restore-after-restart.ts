@@ -1,8 +1,9 @@
 import { agentKindFromLauncher } from "@app/cmux/lib/launchers";
-import { mapTerminalSurfaces } from "@app/cmux/lib/profile-walk";
+import { mapTerminalSurfaces, profileSurfaces } from "@app/cmux/lib/profile-walk";
 import { cleanLaunchCommand } from "@app/cmux/lib/tty-capture";
 import type { Profile } from "@app/cmux/lib/types";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
+import { type CoverageTab, type JournalCoverage, journalCoverage } from "@genesiscz/utils/cmux/journal-coverage";
 
 export type RestoreRestartSource = "previous" | "live" | "profile";
 
@@ -47,6 +48,21 @@ export function parseAgentList(raw: string | undefined): AgentKind[] {
     }
 
     return kinds;
+}
+
+/**
+ * How many of the profile's terminal tabs the surface journal has a record for: the join every session lookup starts
+ * from. A tab saved without a surface UUID cannot be joined and counts as not found.
+ */
+export function profileJournalJoin(
+    profile: Profile,
+    options: { beforeMs?: number; refsPath?: string } = {}
+): JournalCoverage {
+    const tabs: CoverageTab[] = profileSurfaces(profile).flatMap(({ surface, path }) =>
+        surface.type === "terminal" ? [{ surfaceId: surface.surface_id ?? `no-surface-id:${path}` }] : []
+    );
+
+    return journalCoverage({ tabs, ...options });
 }
 
 /** Drop inferred resume commands for agents the user did not ask to restore. */

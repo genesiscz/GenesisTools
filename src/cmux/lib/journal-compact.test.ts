@@ -14,8 +14,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSurfaceSessions } from "@app/cmux/lib/command-capture";
 import { compactJournal, planJournalCompaction } from "@app/cmux/lib/journal-compact";
+import { loadSurfaceSessions } from "@app/cmux/lib/surface-sessions";
 import { loadAllSessionCmuxRefs, lookupSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 

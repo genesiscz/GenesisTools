@@ -353,6 +353,9 @@ async function populatePane(savedPane: Pane, paneId: string, workspaceId: string
         surfaceIds.push(created.surface_id);
     }
 
+    // A tab that stays in the wrong place or keeps the wrong title is a partial restore, so the outcome says so.
+    const layoutProblems: string[] = [];
+
     // cmux inserts each new tab immediately after the anchor, which reverses the tail
     // order for multi-tab panes. Put every surface back at its saved index, then land
     // the pane's selection on the saved active tab.
@@ -368,7 +371,10 @@ async function populatePane(savedPane: Pane, paneId: string, workspaceId: string
             "--focus",
             String(focus),
         ]).catch((error) => {
-            logger.debug({ error, surfaceId, index, focus }, "[restore] reorder-surface failed");
+            logger.warn({ error, surfaceId, index, focus }, "[restore] reorder-surface failed");
+            layoutProblems.push(
+                `reorder-surface failed for tab ${index + 1} (${surfaceId}): ${error instanceof Error ? error.message : String(error)}`
+            );
         });
     };
 
@@ -396,7 +402,10 @@ async function populatePane(savedPane: Pane, paneId: string, workspaceId: string
                     surfaceId,
                     savedSurface.title,
                 ]).catch((error) => {
-                    logger.debug({ error, surfaceId }, "[restore] rename-tab failed");
+                    logger.warn({ error, surfaceId }, "[restore] rename-tab failed");
+                    layoutProblems.push(
+                        `rename-tab failed for tab ${i + 1} (${surfaceId}): ${error instanceof Error ? error.message : String(error)}`
+                    );
                 });
             }
             if (savedSurface.type === "terminal") {
@@ -415,8 +424,10 @@ async function populatePane(savedPane: Pane, paneId: string, workspaceId: string
     // A refused pretype leaves the pane short of what was saved, so the outcome has
     // to say so instead of printing Done. Raised after the loop, not inside it, so
     // the pane's remaining tabs are still restored.
-    if (notReplayed.length > 0) {
-        throw new Error(notReplayed.join("; "));
+    const problems = [...notReplayed, ...layoutProblems];
+
+    if (problems.length > 0) {
+        throw new Error(problems.join("; "));
     }
 }
 

@@ -1,4 +1,5 @@
-import { agentsByTty, liveTree } from "@app/cmux/lib/session-close-live";
+import { liveTree } from "@app/cmux/lib/live-layout";
+import { agentsByTty } from "@app/cmux/lib/session-close-live";
 import { type CoverageTab, type JournalCoverage, journalCoverage } from "@genesiscz/utils/cmux/journal-coverage";
 
 /**

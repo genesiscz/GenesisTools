@@ -149,3 +149,63 @@ test("an ordinary single-line replay still converges", async () => {
     expect(result.converged).toBe(true);
     expect(send).toHaveBeenCalledWith({ surfaceRef: SURFACE_1, text: "tail -f app.log" });
 });
+
+// F22 of the restore-paths review: reorder-surface and rename-tab failures went to logger.debug only, so a
+// mis-ordered or wrongly named tab printed Done with exit 0.
+function failCmuxCommands(failing: string[]): void {
+    spyOn(cli, "runCmuxOk").mockImplementation(async (args: string[]) => {
+        if (failing.includes(args[0])) {
+            throw new Error(`cmux ${args[0]} refused (fixture)`);
+        }
+
+        return { code: 0, stdout: "", stderr: "" };
+    });
+}
+
+test("a failed reorder-surface is reported as a restore failure, not only logged", async () => {
+    mockLiveSurface();
+    failCmuxCommands(["reorder-surface"]);
+    const result = await materializeWorkspace(singleTerminalPane([{ type: "terminal", title: "" }]), WORKSPACE, {
+        prefix: "",
+        replay: true,
+        enter: false,
+        yes: true,
+        dryRun: false,
+    });
+    expect(result.converged).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.pane).toBe(PANE_1);
+    expect(result.failures[0]?.message).toContain(`reorder-surface failed for tab 1 (${SURFACE_1})`);
+    expect(result.failures[0]?.message).toContain("refused (fixture)");
+});
+
+test("a failed rename-tab is reported as a restore failure and the tab is still replayed", async () => {
+    mockLiveSurface();
+    failCmuxCommands(["rename-tab"]);
+    const send = spyOn(cli, "sendSurfaceText").mockResolvedValue({ code: 0, stdout: "", stderr: "" });
+    const result = await materializeWorkspace(
+        singleTerminalPane([
+            { type: "terminal", title: "logs", command: "tail -f app.log", command_source: "shell-journal" },
+        ]),
+        WORKSPACE,
+        { prefix: "", replay: true, enter: false, yes: true, dryRun: false }
+    );
+    expect(result.converged).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.message).toContain(`rename-tab failed for tab 1 (${SURFACE_1})`);
+    expect(send).toHaveBeenCalledWith({ surfaceRef: SURFACE_1, text: "tail -f app.log" });
+});
+
+test("order and rename failures of one pane are reported together", async () => {
+    mockLiveSurface();
+    failCmuxCommands(["rename-tab", "reorder-surface"]);
+    const result = await materializeWorkspace(singleTerminalPane([{ type: "terminal", title: "logs" }]), WORKSPACE, {
+        prefix: "",
+        replay: true,
+        enter: false,
+        yes: true,
+        dryRun: false,
+    });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.message).toMatch(/rename-tab failed.*; reorder-surface failed/);
+});

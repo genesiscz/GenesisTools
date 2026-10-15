@@ -16,6 +16,7 @@ import {
     isMissingEnumFlag,
     parseAgentList,
     parseRestoreSource,
+    profileJournalJoin,
     type RestoreRestartSource,
 } from "@app/cmux/lib/restore-after-restart";
 import { planInPlaceSettled, renderInPlaceStep, runInPlaceRestore } from "@app/cmux/lib/restore-in-place";
@@ -27,6 +28,7 @@ import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { describeJournalJoin } from "@genesiscz/utils/cmux/journal-coverage";
 import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -49,6 +51,12 @@ interface RestartFlags {
 }
 
 const SOURCES: RestoreRestartSource[] = ["previous", "live", "profile"];
+
+/** `beforeMs` is the time the surface journal was read as of (the previous autosave); absent when it was read now. */
+interface LoadedProfile {
+    profile: Profile;
+    beforeMs?: number;
+}
 
 async function captureLiveProfile(): Promise<Profile> {
     try {
@@ -77,9 +85,9 @@ async function captureLiveProfile(): Promise<Profile> {
     }
 }
 
-async function capturePreviousProfile(): Promise<Profile> {
+async function capturePreviousProfile(): Promise<LoadedProfile> {
     const session = readPreviousAutosaveSession();
-    return buildOfflineProfile(
+    const profile = buildOfflineProfile(
         session,
         {
             ttyCommands: new Map(),
@@ -92,6 +100,8 @@ async function capturePreviousProfile(): Promise<Profile> {
         },
         { name: "restart-previous", note: "previous autosave (pre-restart)" }
     );
+
+    return { profile, beforeMs: session.savedAtMs };
 }
 
 async function resolveSource(
@@ -165,18 +175,18 @@ async function resolveSource(
     return { source, profileName };
 }
 
-async function loadProfile(source: RestoreRestartSource, profileName?: string): Promise<Profile> {
+async function loadProfile(source: RestoreRestartSource, profileName?: string): Promise<LoadedProfile> {
     if (source === "previous") {
         return capturePreviousProfile();
     }
 
     if (source === "live") {
-        return captureLiveProfile();
+        return { profile: await captureLiveProfile() };
     }
 
     const store = new ProfileStore();
     try {
-        return store.read(profileName ?? "");
+        return { profile: store.read(profileName ?? "") };
     } catch (error) {
         if (error instanceof ProfileNotFoundError) {
             throw new Error(error.message);
@@ -268,14 +278,16 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         enter = await withCancel(p.confirm({ message: "Execute resume commands now (--enter)?", initialValue: false }));
     }
 
-    const raw = await loadProfile(source, profileName);
+    const { profile: raw, beforeMs } = await loadProfile(source, profileName);
     // `--list` and `--dry-run` report and stop, so they read the indexed catalog instead of
     // refreshing it, which would write to the shared history databases.
     const preview = Boolean(flags.list) || Boolean(flags.dryRun);
     const inferred = filterReplayByAgents(await prepareProfileForRestore(raw, { cached: preview }), agents);
+    // How many tabs the session lookup could even start from: with 0 found, every tab is guessed from titles.
+    const journalJoin = describeJournalJoin(profileJournalJoin(inferred, { beforeMs }));
 
     if (flags.inPlace) {
-        await runInPlace(inferred, { ...flags, enter });
+        await runInPlace(inferred, { ...flags, enter, journalJoin });
         return;
     }
 
@@ -285,6 +297,7 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         if (detail.length > 0) {
             p.note(detail.join("\n"), "Panes · commands · drift");
         }
+        p.log.info(journalJoin);
         p.outro(pc.dim("List only — nothing changed."));
         return;
     }
@@ -303,7 +316,7 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         (ws) => `  ${pc.cyan(ws.targetTitle)} ${pc.dim(`(${ws.paneCount} pane(s), ${ws.surfaceCount} surface(s))`)}`
     );
     p.note(
-        planLines.join("\n") || "(empty profile)",
+        [...(planLines.length > 0 ? planLines : ["(empty profile)"]), pc.dim(`  ${journalJoin}`)].join("\n"),
         `Restore plan (${source}${profileName ? `: ${profileName}` : ""})`
     );
     const detail = renderProfileCommandDetail(inferred);
@@ -369,7 +382,10 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
     }
 }
 
-async function runInPlace(inferred: Profile, flags: RestartFlags & { enter: boolean }): Promise<void> {
+async function runInPlace(
+    inferred: Profile,
+    flags: RestartFlags & { enter: boolean; journalJoin: string }
+): Promise<void> {
     const steps = await planInPlaceSettled(inferred);
     const planned = steps.filter((step) => !step.skip);
 
@@ -378,7 +394,12 @@ async function runInPlace(inferred: Profile, flags: RestartFlags & { enter: bool
         p.note(detail.join("\n"), "Panes · commands · drift");
     }
 
-    p.note(steps.map(renderInPlaceStep).join("\n") || "(no terminal tabs)", "In-place plan (live tabs)");
+    p.note(
+        [...(steps.length > 0 ? steps.map(renderInPlaceStep) : ["(no terminal tabs)"]), pc.dim(flags.journalJoin)].join(
+            "\n"
+        ),
+        "In-place plan (live tabs)"
+    );
 
     if (flags.list || flags.dryRun) {
         p.outro(pc.dim(`${flags.list ? "List" : "Dry run"} only — nothing changed.`));
