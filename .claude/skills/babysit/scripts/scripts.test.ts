@@ -5,7 +5,15 @@ import { join } from "node:path";
 import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { allowedCommand, decide, type RunEntry, watchApprovals } from "./approve-codex";
+import {
+    allowedCommand,
+    chainSegments,
+    decide,
+    innerCommand,
+    type RunEntry,
+    readOnlyChain,
+    watchApprovals,
+} from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
 import { summarize } from "./plant";
 import { hitsInAddedLines } from "./probe";
@@ -21,6 +29,62 @@ const entry: RunEntry = {
     subject: "fix(tools): #1 followup - subject",
     verify: ["bunx biome check src/a.ts"],
 };
+
+describe("read-only chains", () => {
+    test("a chain of readers is approved without the lead", () => {
+        for (const command of [
+            "pwd; git status --short; git rev-parse --path-format=absolute --git-common-dir; wc -l CLAUDE.md",
+            "git diff --stat origin/master...HEAD; rg --files .claude/rules",
+            "rg --files Genesis -g CLAUDE.md | rg 'rules/'",
+            "gh pr view 93 --json body --jq .body",
+            "sed -n '40,80p' src/a.ts && git log --oneline -5",
+            "cd sub && tools github review 93 --llm",
+        ]) {
+            expect(readOnlyChain(entry, command)).toBe(true);
+            expect(allowedCommand(entry, command)).toBe(true);
+        }
+    });
+
+    test("anything that can write or run code still asks the lead", () => {
+        for (const command of [
+            "git diff > out.patch",
+            "cat a.ts | tee b.ts",
+            "rg x --pre ./run.sh",
+            "find . -name '*.ts' -delete",
+            "sed -i 's/a/b/' src/a.ts",
+            "sed -n '1w out' src/a.ts",
+            "git diff --output=x.patch",
+            "git checkout -- src/a.ts",
+            "gh api repos/o/r/issues/1/comments -f body=hi",
+            "tools github review 93 respond t1 ok",
+            "echo $(rm -rf x)",
+            "sort -o a.txt b.txt",
+            "uniq in.txt out.txt",
+            "sleep 1 &",
+            "cd /etc && cat passwd",
+            "bun scripts/test.ts src/a.test.ts",
+        ]) {
+            expect(readOnlyChain(entry, command)).toBe(false);
+        }
+    });
+
+    test("a double-quoted shell wrapper with escapes unwraps when nothing in it expands", () => {
+        const wrapped = String.raw`/bin/zsh -lc "sed -n '530,580p' a.ts; rg --heading -n '\\.md|Markdown' areas.json | head -20"`;
+        expect(innerCommand(wrapped)).toBe(
+            String.raw`sed -n '530,580p' a.ts; rg --heading -n '\.md|Markdown' areas.json | head -20`
+        );
+        expect(readOnlyChain(entry, innerCommand(wrapped))).toBe(true);
+        expect(innerCommand(`/bin/zsh -lc "echo $HOME"`)).toBe(`/bin/zsh -lc "echo $HOME"`);
+        expect(innerCommand('/bin/zsh -lc "echo `id`"')).toBe('/bin/zsh -lc "echo `id`"');
+        expect(innerCommand(`/usr/local/bin/fish -c "ls"`)).toBe(`/usr/local/bin/fish -c "ls"`);
+    });
+
+    test("separators inside quotes do not split a command", () => {
+        expect(chainSegments("rg 'a;b|c' src && pwd")).toEqual(["rg 'a;b|c' src", "pwd"]);
+        expect(chainSegments("echo 'x > y'")).toEqual(["echo 'x > y'"]);
+        expect(chainSegments("cat a 2>&1")).toBeNull();
+    });
+});
 
 describe("brief approval boundary", () => {
     test("verification requires the entire configured command", () => {
