@@ -89,7 +89,7 @@ const MARKERS = /^(▶|✔|✖|⏸|■|⚠|🛑|❓)/u;
 /** The count of the tool calls `--tools` kept quiet, once per turn end. */
 function flushHidden(w: Worker): void {
     if (w.hiddenTools > 0) {
-        say(w, `${w.hiddenTools} more tool call(s) not printed (--tools ${TOOLS})`);
+        sayOnce(w, `${w.hiddenTools} more tool call(s) not printed (--tools ${TOOLS})`);
         w.hiddenTools = 0;
     }
 }
@@ -187,9 +187,13 @@ async function watchGrok(w: Worker): Promise<void> {
             // The set is never cleared: at a new turn's start the tail still reads the turn before it, and a cleared
             // set printed that whole turn again (#521 turn 2 and 3, 2026-10-15). A repeated line of a later turn is
             // the price, and the turn's own RUNNING and ENDED lines always print.
-            w.seenTurn = status.turns;
+            // While a new turn has no log yet the tail reads the finished turn and ends at once, so this branch runs
+            // on every poll: the RUNNING line prints once per turn, not once per poll.
+            if (status.turns !== w.seenTurn) {
+                w.seenTurn = status.turns;
+                say(w, `turn ${status.turns} RUNNING`);
+            }
 
-            say(w, `turn ${status.turns} RUNNING`);
             await pump(w, [
                 process.execPath,
                 "run",
