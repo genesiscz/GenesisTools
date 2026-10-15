@@ -52,7 +52,8 @@ public struct FileTreeRow: Identifiable, Equatable, Sendable {
 /// A path as a list identity, hashed once. SwiftUI hashes and compares a lazy list's ids on every scroll frame, and a
 /// non-ASCII `String` ("ČEZ") is normalized to NFC on each hash and each comparison: the profile of a tree scroll in
 /// the installed viewer had that normalization as its largest piece of app-side work (2026-10-15). Equal keys have
-/// equal bytes; the paths come from one directory listing, so one path never arrives in two normal forms.
+/// equal bytes. A listing path is already one form (`standardizedFileURL.path`, then `nativeUTF8`). A selected
+/// document path can be the other Unicode form of that file, so `init(selection:)` applies the listing's form first.
 public struct FileTreeRowKey: Hashable, Sendable {
     public let path: String
     private let hash: Int
@@ -64,6 +65,11 @@ public struct FileTreeRowKey: Hashable, Sendable {
         path.utf8.withContiguousStorageIfAvailable { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
         self.path = path
         self.hash = hasher.finalize()
+    }
+
+    /// The selected document's path, in the form a listing stores (`standardizedFileURL.path`, native).
+    public init(selection path: String) {
+        self.init(URL(fileURLWithPath: path).standardizedFileURL.path.nativeUTF8)
     }
 
     public static func == (left: FileTreeRowKey, right: FileTreeRowKey) -> Bool {
@@ -536,7 +542,7 @@ public struct FileTreeView: View {
 
     public var body: some View {
         let _ = RenderProbe.hit("tree.view")
-        let selectedKey = selected.map(FileTreeRowKey.init)
+        let selectedKey = selected.map { FileTreeRowKey(selection: $0) }
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(changedOnly && git != nil ? Self.changedRows(model.rows, git ?? .none) : model.rows, id: \.key) { row in
                 FileTreeRowView(

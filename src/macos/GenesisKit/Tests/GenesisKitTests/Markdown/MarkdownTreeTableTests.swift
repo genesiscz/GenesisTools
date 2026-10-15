@@ -40,6 +40,22 @@ final class MarkdownTreeTableTests: XCTestCase {
         XCTAssertEqual(Set([FileTreeRowKey("/v/ČEZ"), FileTreeRowKey("/v/ČEZ")]).count, 1)
     }
 
+    /// A note opened as a precomposed name ("Čtení.md", NFC) against a listing that stored the decomposed name (NFD).
+    /// `FileTreeRowKey` compares exact bytes, so the selection has to be put through the listing's form first.
+    func testADecomposedSelectionMatchesThePrecomposedListingName() {
+        let composed = "Čtení.md".precomposedStringWithCanonicalMapping
+        let decomposed = "Čtení.md".decomposedStringWithCanonicalMapping
+        XCTAssertFalse(composed.utf8.elementsEqual(decomposed.utf8))
+        let folder = "/vault/notes"
+        let composedPath = folder + "/" + composed
+        let listed = URL(fileURLWithPath: composedPath).standardizedFileURL.path.nativeUTF8
+        XCTAssertFalse(composedPath.utf8.elementsEqual(listed.utf8))
+        let row = FileTreeRowKey(listed)
+        XCTAssertNotEqual(FileTreeRowKey(composedPath), row, "the raw bytes of the two forms stay different keys")
+        XCTAssertEqual(FileTreeRowKey(selection: composedPath), row)
+        XCTAssertEqual(FileTreeRowKey(selection: folder + "/" + decomposed), row)
+    }
+
     @MainActor
     private final class Source: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         var rows: [FileTreeRow] = []

@@ -579,7 +579,7 @@ private struct MarkdownFileTreeRows: View, Equatable {
 
     var body: some View {
         let _ = RenderProbe.hit("md.fileTreeRows")
-        let selectedKey = selected.map(FileTreeRowKey.init)
+        let selectedKey = selected.map { FileTreeRowKey(selection: $0) }
         let (style, tree, actions, pulse, git, model) = (style, tree, actions, pulse, git, model)
         return MarkdownTreeTable(
             rows: rows,
