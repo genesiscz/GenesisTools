@@ -28,6 +28,8 @@ public final class FlowStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private var writeFailure: Error?
+    /// Files that failed to load and could not be moved aside; saves to them are refused.
+    private var keptInPlace: Set<String> = []
     private var committingHistory = false
     var beforeHistoryJournalRemoval: (() throws -> Void)?
     var beforeOwnedWrite: ((String) throws -> Void)?
@@ -194,6 +196,14 @@ public final class FlowStore {
     }
 
     private func finishHistoryMutation(_ pending: HistoryMutation) throws {
+        // A pending journal bypasses normal projection reads. Recheck a fenced projection so
+        // repairing it (or successfully preserving it) lets the same owner finish the journal.
+        if keptInPlace.contains(historyURL.lastPathComponent) {
+            let _: [FlowEntry]? = load(historyURL)
+        }
+        if keptInPlace.contains(statsURL.lastPathComponent) {
+            let _: FlowStats? = load(statsURL)
+        }
         let previousIDs = Set(pending.previousHistory.map(\.id))
         let retainedIDs = Set(pending.history.map(\.id))
         if pending.history.isEmpty || !previousIDs.isSubset(of: retainedIDs) {
@@ -213,7 +223,12 @@ public final class FlowStore {
     }
 
     public func loadScratchpad() -> String {
-        (try? String(contentsOf: scratchpadURL, encoding: .utf8)) ?? ""
+        read(scratchpadURL) { data in
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
+            return text
+        } ?? ""
     }
 
     public func saveScratchpad(_ text: String) {
@@ -268,9 +283,27 @@ public final class FlowStore {
     }
 
     private func load<T: Decodable>(_ url: URL) -> T? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        read(url) { try decoder.decode(T.self, from: $0) }
+    }
+
+    private func read<T>(_ url: URL, decode: (Data) throws -> T) -> T? {
+        let data: Data
         do {
-            return try decoder.decode(T.self, from: data)
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            keptInPlace.remove(url.lastPathComponent)
+            return nil
+        } catch {
+            // Unreadable is not missing (EACCES, EIO): the next save would write defaults over bytes that may
+            // be intact, so the file is moved aside like a corrupt one.
+            if writesEnabled { backupCorrupt(url) }
+            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) could not be read: \(error.localizedDescription)")
+            return nil
+        }
+        do {
+            let value = try decode(data)
+            keptInPlace.remove(url.lastPathComponent)
+            return value
         } catch {
             // A corrupt file is moved aside, never overwritten in place. The
             // user keeps a chance of recovering it by hand, and the next save
@@ -312,6 +345,9 @@ public final class FlowStore {
         guard writesEnabled else {
             throw FlowFocusMailbox.Failure.unavailable("Only the active Flow and Focus owner can save changes.")
         }
+        guard !keptInPlace.contains(url.lastPathComponent) else {
+            throw FlowFocusMailbox.Failure.unavailable("\(url.lastPathComponent) could not be read or moved aside, so it is not replaced.")
+        }
         try ensureDirectory()
         try beforeOwnedWrite?(url.lastPathComponent)
         let temp = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
@@ -341,13 +377,29 @@ public final class FlowStore {
         guard ["scratchpad.md"].contains(name), writesEnabled else {
             throw FlowFocusMailbox.Failure.unavailable("That Flow file is not writable through the client channel.")
         }
-        try writeOwned(data, to: directory.appendingPathComponent(name))
+        // A passive client cannot preserve unreadable bytes, and the owner may never have read this file.
+        // Recheck here so the original is backed up or fenced before a forwarded replacement reaches disk.
+        _ = loadScratchpad()
+        try writeOwned(data, to: scratchpadURL)
     }
 
     private func backupCorrupt(_ url: URL) {
         let stamp = Int(Date().timeIntervalSince1970)
         let target = url.deletingLastPathComponent()
             .appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)")
-        try? FileManager.default.moveItem(at: url, to: target)
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                // A directory is an obstruction, not unreadable file data. Leave it for the save to fail on.
+                keptInPlace.remove(url.lastPathComponent)
+                return
+            }
+            try FileManager.default.moveItem(at: url, to: target)
+            keptInPlace.remove(url.lastPathComponent)
+        } catch {
+            // Still in place, so no save may replace it: that would destroy the only copy.
+            keptInPlace.insert(url.lastPathComponent)
+            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) could not be moved aside: \(error.localizedDescription)")
+        }
     }
 }

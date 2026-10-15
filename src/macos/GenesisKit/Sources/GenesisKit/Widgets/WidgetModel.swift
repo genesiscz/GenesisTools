@@ -203,7 +203,11 @@ public final class WidgetModel: ObservableObject {
             do {
                 formAnswers = try JSONDecoder().decode(
                     [String: [String: WidgetFormAnswer]].self, from: data)
-            } catch { PerfLog.mark("widget.form draft restore \(error.localizedDescription)") }
+            } catch {
+                // The first edit rewrites this key with only that edit, so the typed drafts get a key of their own first.
+                defaults.set(data, forKey: "widget.formDrafts.undecodable.\(Int(Date().timeIntervalSince1970))")
+                PerfLog.mark("widget.form draft restore \(error.localizedDescription)")
+            }
         }
     }
 

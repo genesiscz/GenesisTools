@@ -57,16 +57,42 @@ final class ClickySoundLibrary: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private let storageKey = "clicky.libraries.v1"
 
-    init(defaults: UserDefaults, loader: any ClickyPackLoading = ClickyPackLoader()) {
+    /// The library the app ships (Contents/Resources/ClickyLibrary, unpacked at build time from the repository's
+    /// lossless FLAC): listed first, never stored in the defaults and never removed. Martin's generated sets lived
+    /// only in one preview app's defaults and were lost from the live app (2026-10-13).
+    static let bundledID = "bundled"
+    private let bundledURL: URL?
+
+    /// The shipped library in `bundle`, when it holds one.
+    nonisolated static func bundledLibraryURL(in bundle: Bundle = .main) -> URL? {
+        guard let url = bundle.resourceURL?.appendingPathComponent("ClickyLibrary", isDirectory: true),
+            FileManager.default.fileExists(atPath: url.appendingPathComponent("registry.json").path)
+        else { return nil }
+        return url
+    }
+
+    init(defaults: UserDefaults, loader: any ClickyPackLoading = ClickyPackLoader(), bundled: URL? = ClickySoundLibrary.bundledLibraryURL()) {
         self.defaults = defaults
         self.loader = loader
-        if let data = defaults.data(forKey: storageKey), data.count <= 1_048_576,
-            let saved = try? JSONDecoder().decode([ClickyLibraryRecord].self, from: data), saved.count <= 32,
-            Set(saved.map(\.id)).count == saved.count
-        {
-            records = saved
+        bundledURL = bundled
+        if let data = defaults.data(forKey: storageKey) {
+            if data.count <= 1_048_576,
+                let saved = try? JSONDecoder().decode([ClickyLibraryRecord].self, from: data), saved.count <= 32,
+                Set(saved.map(\.id)).count == saved.count
+            {
+                records = saved.filter { $0.id != Self.bundledID }
+            } else {
+                // Adding or removing a folder rewrites this key from `records`, so the stored list gets a key of its own first.
+                defaults.set(data, forKey: "\(storageKey).undecodable.\(Int(Date().timeIntervalSince1970))")
+            }
+        }
+        if bundled != nil {
+            records.insert(ClickyLibraryRecord(id: Self.bundledID, displayName: "GenesisTools sounds", bookmark: Data()), at: 0)
         }
     }
+
+    /// The folders the reader added; the shipped library does not count toward the limit.
+    private var addedCount: Int { records.filter { $0.id != Self.bundledID }.count }
 
     func restore(_ reference: ClickyPackReference?) {
         guard !stopped else { return }
@@ -108,7 +134,7 @@ final class ClickySoundLibrary: ObservableObject {
     func register(_ url: URL) async {
         guard !stopped else { return }
         let token = lifetime
-        guard records.count < 32 else {
+        guard addedCount < 32 else {
             error = "You can add up to 32 libraries. Remove one before adding another."
             return
         }
@@ -118,7 +144,7 @@ final class ClickySoundLibrary: ObservableObject {
             let entries = try await loader.catalogue(at: url)
             try Task.checkCancellation()
             guard !stopped, lifetime == token else { return }
-            guard records.count < 32 else {
+            guard addedCount < 32 else {
                 throw ClickyPackError.invalid("You can add up to 32 libraries. Remove one before adding another.")
             }
             let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -209,6 +235,7 @@ final class ClickySoundLibrary: ObservableObject {
     }
 
     func remove(_ id: String) {
+        guard id != Self.bundledID else { return }
         records.removeAll { $0.id == id }
         rows.removeAll { $0.reference.libraryID == id }
         if loading?.libraryID == id { cancelSelection() }
@@ -235,6 +262,7 @@ final class ClickySoundLibrary: ObservableObject {
     }
 
     private func resolve(_ record: ClickyLibraryRecord) throws -> URL {
+        if record.id == Self.bundledID, let bundledURL { return bundledURL }
         var stale = false
         return try URL(resolvingBookmarkData: record.bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
     }
@@ -244,7 +272,7 @@ final class ClickySoundLibrary: ObservableObject {
     }
 
     private func encodedRecords(_ records: [ClickyLibraryRecord]) throws -> Data {
-        let data = try JSONEncoder().encode(records)
+        let data = try JSONEncoder().encode(records.filter { $0.id != Self.bundledID })
         guard data.count <= 1_048_576 else { throw ClickyPackError.invalid("The library list exceeds its storage limit.") }
         return data
     }

@@ -447,6 +447,59 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testUndecodablePreferencesAreKeptBeforeTheFirstSaveReplacesThem() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stored = Data("{\"releaseSounds\": false, \"notifications\": tru".utf8)
+        defaults.set(stored, forKey: "clicky.preferences.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+        defer { model.shutdown() }
+        model.preferences.releaseSounds.toggle()
+        let recovery = defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix("clicky.preferences.v1.undecodable.")
+        }
+        XCTAssertEqual(recovery.count, 1)
+        XCTAssertEqual(defaults.data(forKey: try XCTUnwrap(recovery.first)), stored)
+        XCTAssertNotEqual(defaults.data(forKey: "clicky.preferences.v1"), stored)
+    }
+
+    @MainActor
+    func testUndecodableLibraryListIsKeptBeforeAnAddedFolderReplacesIt() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stored = Data("[{\"id\": \"work\", \"displayName\": \"Work sou".utf8)
+        defaults.set(stored, forKey: "clicky.libraries.v1")
+        let library = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { library.stop() }
+        XCTAssertTrue(library.records.isEmpty)
+        let recovery = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("clicky.libraries.v1.undecodable.") }
+        XCTAssertEqual(recovery.count, 1)
+        XCTAssertEqual(defaults.data(forKey: try XCTUnwrap(recovery.first)), stored)
+
+        defaults.removePersistentDomain(forName: suite)
+        let reopened = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { reopened.stop() }
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
+    }
+
+    @MainActor
+    func testDecodablePreferencesLeaveNoRecoveryCopy() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var saved = ClickyPreferences()
+        saved.releaseSounds = false
+        defaults.set(try JSONEncoder().encode(saved), forKey: "clicky.preferences.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+        defer { model.shutdown() }
+        XCTAssertFalse(model.preferences.releaseSounds)
+        model.preferences.releaseSounds.toggle()
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.contains(".undecodable.") })
+    }
+
+    @MainActor
     func testUnreadableHistoryIsNeverOverwrittenByActivationOrShutdown() throws {
         let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -1501,6 +1554,35 @@ extension ClickyPackTests {
         return records
     }
 
+    /// The shipped library is listed first, loads like a folder, is never stored and cannot be removed.
+    @MainActor
+    func testTheShippedLibraryIsBuiltInNeverStoredAndNeverRemoved() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = ClickySoundLibrary(defaults: defaults, bundled: fixture.root)
+        defer { library.stop() }
+        XCTAssertEqual(library.records.map(\.id), [ClickySoundLibrary.bundledID])
+        await library.refresh()
+        XCTAssertNil(library.error)
+        XCTAssertEqual(library.rows.map(\.reference.libraryID), [ClickySoundLibrary.bundledID])
+        XCTAssertEqual(library.rows.first?.entry.id, fixture.entry.id)
+
+        library.remove(ClickySoundLibrary.bundledID)
+        XCTAssertEqual(library.records.map(\.id), [ClickySoundLibrary.bundledID], "the shipped library cannot be removed")
+        await library.register(fixture.root)
+        let stored = try XCTUnwrap(defaults.data(forKey: "clicky.libraries.v1"))
+        let saved = try JSONDecoder().decode([ClickyLibraryRecord].self, from: stored)
+        XCTAssertEqual(saved.count, 1, "only the added folder is stored")
+        XCTAssertFalse(saved.contains { $0.id == ClickySoundLibrary.bundledID })
+
+        let reopened = ClickySoundLibrary(defaults: defaults, bundled: fixture.root)
+        defer { reopened.stop() }
+        XCTAssertEqual(reopened.records.first?.id, ClickySoundLibrary.bundledID)
+        XCTAssertEqual(reopened.records.count, 2)
+    }
+
     @MainActor
     func testIntegrationNewestSelectionWinsWhenCancelledPreparationReturnsLate() async throws {
         let fixture = try Fixture()
@@ -1930,6 +2012,45 @@ extension ClickyPackTests {
 }
 
 extension ClickyTests {
+    /// Clicky left on comes back on at the next launch, silently; turned off it stays off; a shutdown is not "off".
+    @MainActor
+    func testClickyLeftOnComesBackOnAfterARelaunch() {
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        model.activate()
+        XCTAssertTrue(model.enabled)
+        model.shutdown()
+        XCTAssertTrue(defaults.bool(forKey: ClickyModel.enabledKey), "a shutdown keeps the user's choice")
+
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
+        func relaunch() -> ClickyModel {
+            ClickyModel(
+                defaults: defaults, appearance: appearance, inputMonitor: monitor, observeSystemEvents: false,
+                presentPermission: { _ in monitor.permissionDialogs += 1 })
+        }
+        let again = relaunch()
+        again.restoreEnabled()
+        XCTAssertTrue(again.enabled, "left on, it comes back on")
+        again.deactivate()
+        again.shutdown()
+
+        let off = relaunch()
+        off.restoreEnabled()
+        XCTAssertFalse(off.enabled, "turned off, it stays off")
+        off.shutdown()
+
+        defaults.set(true, forKey: ClickyModel.enabledKey)
+        monitor.granted = false
+        let denied = relaunch()
+        denied.restoreEnabled()
+        XCTAssertFalse(denied.enabled)
+        XCTAssertEqual(monitor.permissionDialogs, 0, "a launch never asks for the permission")
+        XCTAssertEqual(denied.status, "Input Monitoring permission needed")
+        denied.shutdown()
+    }
+
     @MainActor
     func testIntegrationLegacyPreferencesRestoreEveryExistingFieldWithoutExternalSelection() throws {
         var original = ClickyPreferences()

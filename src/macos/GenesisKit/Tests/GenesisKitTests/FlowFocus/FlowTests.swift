@@ -40,6 +40,230 @@ final class FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testDirectoryAtAFlowFilePathIsKeptAndTheSaveFails() throws {
+        let fm = FileManager.default
+        for name in ["dictionary.json", "snippets.json", "scratchpad.md"] {
+            for nonempty in [false, true] {
+                let root = fm.temporaryDirectory.appendingPathComponent("flow-directory-\(UUID())")
+                defer { try? fm.removeItem(at: root) }
+                let obstruction = root.appendingPathComponent(name)
+                try fm.createDirectory(at: obstruction, withIntermediateDirectories: true)
+                let child = obstruction.appendingPathComponent("kept.txt")
+                if nonempty { try Data("keep".utf8).write(to: child) }
+                let store = FlowStore(directory: root)
+                var writes = 0
+                store.didWrite = { writes += 1 }
+                let save: () -> Void
+                switch name {
+                case "dictionary.json":
+                    XCTAssertTrue(store.loadDictionary().isEmpty)
+                    save = { store.saveDictionary([]) }
+                case "snippets.json":
+                    XCTAssertTrue(store.loadSnippets().isEmpty)
+                    save = { store.saveSnippets([]) }
+                default:
+                    XCTAssertEqual(store.loadScratchpad(), "")
+                    save = { store.saveScratchpad("new draft") }
+                }
+                XCTAssertEqual(try fm.contentsOfDirectory(atPath: root.path), [name], "no backup is made")
+                XCTAssertThrowsError(try store.verifyingWrites { save() }) { error in
+                    XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain, "the rename fails, not a read fence")
+                }
+                if name == "scratchpad.md" {
+                    XCTAssertThrowsError(try store.writeFromClient(name: name, data: Data("client draft".utf8))) { error in
+                        XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+                    }
+                }
+                XCTAssertEqual(writes, 0, "failed saves must not publish an acknowledgement")
+                XCTAssertEqual(try fm.contentsOfDirectory(atPath: root.path), [name])
+                XCTAssertEqual(try fm.contentsOfDirectory(atPath: obstruction.path), nonempty ? ["kept.txt"] : [])
+                if nonempty { XCTAssertEqual(try String(contentsOf: child, encoding: .utf8), "keep") }
+
+                try fm.removeItem(at: obstruction)
+                XCTAssertNoThrow(try store.verifyingWrites { save() }, "no stale fence remains after removing the obstruction")
+                XCTAssertEqual(writes, 1)
+                XCTAssertTrue(fm.fileExists(atPath: obstruction.path))
+            }
+        }
+    }
+
+    @MainActor
+    func testAnUnreadableFileIsMovedAsideBeforeASaveReplacesIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-unreadable-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("snippets.json")
+        let original = Data("[{\"user\": \"typed this by hand\"}]".utf8)
+        try original.write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        let store = FlowStore(directory: root)
+        XCTAssertTrue(store.loadSnippets().isEmpty)
+        store.saveSnippets([])
+        let aside = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix("snippets.json.corrupt-") }
+        XCTAssertEqual(aside.count, 1)
+        let asideURL = root.appendingPathComponent(try XCTUnwrap(aside.first))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: asideURL.path)
+        XCTAssertEqual(try Data(contentsOf: asideURL), original)
+
+        let fresh = FileManager.default.temporaryDirectory.appendingPathComponent("flow-missing-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: fresh) }
+        let missing = FlowStore(directory: fresh)
+        XCTAssertTrue(missing.loadSnippets().isEmpty)
+        missing.saveSnippets([])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: fresh.path), ["snippets.json"])
+    }
+
+    @MainActor
+    func testWriteFenceRecoversAfterReloadBackupOrRemoval() throws {
+        for recovery in ["reload", "backup", "removal"] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-fence-\(UUID())")
+            let fm = FileManager.default
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            defer {
+                try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+                try? fm.removeItem(at: root)
+            }
+            let file = root.appendingPathComponent("snippets.json")
+            let original = Data("broken JSON".utf8)
+            try original.write(to: file)
+            try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+            let store = FlowStore(directory: root)
+            XCTAssertTrue(store.loadSnippets().isEmpty)
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            XCTAssertThrowsError(try store.verifyingWrites { store.saveSnippets([]) })
+            XCTAssertEqual(try Data(contentsOf: file), original, "the only copy stays protected")
+            if recovery == "reload" { try Data("[]".utf8).write(to: file) }
+            if recovery == "removal" { try fm.removeItem(at: file) }
+            XCTAssertTrue(store.loadSnippets().isEmpty)
+            XCTAssertNoThrow(try store.verifyingWrites { store.saveSnippets([]) }, recovery)
+            XCTAssertNotEqual(try Data(contentsOf: file), original)
+            if recovery == "backup" {
+                let backup = try XCTUnwrap(fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                    .first { $0.lastPathComponent.hasPrefix("snippets.json.corrupt-") })
+                XCTAssertEqual(try Data(contentsOf: backup), original)
+            }
+        }
+    }
+
+    @MainActor
+    func testPendingHistoryCanRecoverAfterAFencedProjectionIsRepaired() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-pending-fence-\(UUID())")
+        let fm = FileManager.default
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            try? fm.removeItem(at: root)
+        }
+        let store = FlowStore(directory: root)
+        let intended = FlowStats(totalWords: 12, totalSeconds: 3, sessionCount: 1)
+        store.beforeOwnedWrite = { name in
+            if name == "stats.json" { throw CocoaError(.fileWriteNoPermission) }
+        }
+        XCTAssertFalse(store.saveHistoryAndStats(history: [], stats: intended))
+        store.beforeOwnedWrite = nil
+        let journal = root.appendingPathComponent("history-pending.json")
+        let heldJournal = root.appendingPathComponent("held-journal")
+        try fm.moveItem(at: journal, to: heldJournal)
+        let stats = root.appendingPathComponent("stats.json")
+        try Data("broken JSON".utf8).write(to: stats)
+        try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+        _ = store.loadStats()
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        try fm.moveItem(at: heldJournal, to: journal)
+        try JSONEncoder().encode(FlowStats()).write(to: stats)
+        XCTAssertTrue(store.recoverPendingHistory())
+        XCTAssertEqual(store.loadStats(), intended)
+        XCTAssertFalse(fm.fileExists(atPath: journal.path))
+    }
+
+    @MainActor
+    func testScratchpadPreservesUnreadableBytesAndRecoversItsFence() throws {
+        let fm = FileManager.default
+        for unreadable in [false, true] {
+            let root = fm.temporaryDirectory.appendingPathComponent("flow-scratchpad-\(UUID())")
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            defer {
+                try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+                try? fm.removeItem(at: root)
+            }
+            let file = root.appendingPathComponent("scratchpad.md")
+            let original = unreadable ? Data("private draft".utf8) : Data([0xff, 0xfe, 0xff])
+            try original.write(to: file)
+            if unreadable { try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path) }
+            let passive = FlowStore(directory: root, writesEnabled: false)
+            XCTAssertEqual(passive.loadScratchpad(), "")
+            XCTAssertTrue(fm.fileExists(atPath: file.path), "a passive reader cannot move the file")
+            try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+            let store = FlowStore(directory: root)
+            XCTAssertEqual(store.loadScratchpad(), "")
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            XCTAssertThrowsError(try store.verifyingWrites { store.saveScratchpad("replacement") })
+            XCTAssertEqual(store.loadScratchpad(), "", "retry safely moves the original aside")
+            XCTAssertNoThrow(try store.verifyingWrites { store.saveScratchpad("replacement") })
+            XCTAssertEqual(store.loadScratchpad(), "replacement")
+            let backup = try XCTUnwrap(fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                .first { $0.lastPathComponent.hasPrefix("scratchpad.md.corrupt-") })
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+            XCTAssertEqual(try Data(contentsOf: backup), original)
+        }
+        let missingRoot = fm.temporaryDirectory.appendingPathComponent("flow-scratchpad-missing-\(UUID())")
+        defer { try? fm.removeItem(at: missingRoot) }
+        let missing = FlowStore(directory: missingRoot)
+        XCTAssertEqual(missing.loadScratchpad(), "")
+        XCTAssertNoThrow(try missing.verifyingWrites { missing.saveScratchpad("new draft") })
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: missingRoot.path), ["scratchpad.md"])
+    }
+
+    @MainActor
+    func testClientScratchpadWritePreservesBytesWithoutAnOwnerRead() throws {
+        let fm = FileManager.default
+        for unreadable in [false, true] {
+            for backupBlocked in [false, true] {
+                let root = fm.temporaryDirectory.appendingPathComponent("flow-client-scratchpad-\(UUID())")
+                try fm.createDirectory(at: root, withIntermediateDirectories: true)
+                defer {
+                    try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+                    try? fm.removeItem(at: root)
+                }
+                let file = root.appendingPathComponent("scratchpad.md")
+                let original = unreadable ? Data("private draft".utf8) : Data([0xff, 0xfe, 0xff])
+                try original.write(to: file)
+                if unreadable { try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path) }
+                let owner = FlowStore(directory: root)
+                let client = FlowStore(directory: root, writesEnabled: false)
+                var failure: Error?
+                client.forwardWrite = { name, data in
+                    do { try owner.writeFromClient(name: name, data: data) }
+                    catch { failure = error }
+                }
+                let text = client.loadScratchpad()
+                XCTAssertEqual(text, "")
+                XCTAssertTrue(fm.fileExists(atPath: file.path))
+                if backupBlocked { try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path) }
+                client.saveScratchpad(text)
+                if backupBlocked {
+                    XCTAssertNotNil(failure)
+                    try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                    XCTAssertEqual(try Data(contentsOf: file), original)
+                    if unreadable { try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path) }
+                    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+                    failure = nil
+                    client.saveScratchpad(text)
+                }
+                XCTAssertNil(failure)
+                XCTAssertEqual(try Data(contentsOf: file), Data())
+                let backup = try XCTUnwrap(fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                    .first { $0.lastPathComponent.hasPrefix("scratchpad.md.corrupt-") })
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+                XCTAssertEqual(try Data(contentsOf: backup), original)
+                client.saveScratchpad("new draft")
+                XCTAssertNil(failure)
+                XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new draft")
+            }
+        }
+    }
+
+    @MainActor
     func testFailedEventRetentionKeepsHistoryRetryableAfterRepair() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-retention-retry-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

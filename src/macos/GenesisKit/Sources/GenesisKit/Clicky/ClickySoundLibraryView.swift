@@ -54,10 +54,14 @@ struct ClickySoundLibraryView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(library.records) { record in
                             HStack {
-                                Label(record.displayName, systemImage: "folder")
+                                Label(record.displayName, systemImage: record.id == ClickySoundLibrary.bundledID ? "shippingbox" : "folder")
                                 Spacer()
-                                Button("Remove") { model.removeSoundLibrary(record.id) }
-                                    .instantTooltip("Remove the library from Clicky. Its files stay on disk.")
+                                if record.id == ClickySoundLibrary.bundledID {
+                                    Text("Built in").foregroundStyle(.secondary)
+                                } else {
+                                    Button("Remove") { model.removeSoundLibrary(record.id) }
+                                        .instantTooltip("Remove the library from Clicky. Its files stay on disk.")
+                                }
                             }.font(.system(size: 11)).padding(.vertical, 4)
                         }
                     }

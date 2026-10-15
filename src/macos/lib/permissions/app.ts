@@ -31,6 +31,12 @@ import { executableInode } from "@genesiscz/utils/process/process-files";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
+import {
+    type ClickyLibraryPin,
+    ClickyLibraryUnavailableError,
+    ensureClickyLibrary,
+    unpackClickyLibrary,
+} from "../clicky-library";
 import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
@@ -46,11 +52,14 @@ const SOURCE_ROOTS = [
     "Sources",
     "scripts/AppIcon.icns",
     "web",
+    "ClickyLibrary.json",
     "../GenesisKit/Package.swift",
     "../GenesisKit/Sources",
 ];
 /** Browser half of the diff renderer (PierreWebDiffRenderer.swift): bundled into Contents/Resources/diff-viewer. */
 const DIFF_VIEWER_SOURCE = "web/diff-viewer";
+/** Which GitHub release asset holds Clicky's sound library (10 MB, kept out of the repository; clicky-library.ts). */
+const CLICKY_LIBRARY_PIN = "ClickyLibrary.json";
 const ICON_SOURCE = "scripts/AppIcon.icns";
 const ICON_GENERATOR = "scripts/build-icon.swift";
 /** Info.plist CFBundleIconFile value; the file lands at Contents/Resources/AppIcon.icns. */
@@ -563,6 +572,52 @@ export async function buildDiffViewer(contents: string, step: (message: string) 
     logger.debug({ out, outputs: result.outputs.length, worker }, "diff viewer bundled");
 }
 
+/**
+ * Clicky's sound library into Contents/Resources/ClickyLibrary: the pinned release asset (downloaded once, then
+ * cached), unpacked to verified WAVs. Without the network on a first build the app is built without it, as before,
+ * and says so; Clicky's own switches still work.
+ */
+export async function bundleClickyLibrary({
+    contents,
+    step,
+    pinPath = join(APP_SOURCE_DIR, CLICKY_LIBRARY_PIN),
+    ensure = ensureClickyLibrary,
+    unpack = unpackClickyLibrary,
+}: {
+    contents: string;
+    step: (message: string) => void;
+    pinPath?: string;
+    ensure?: typeof ensureClickyLibrary;
+    unpack?: typeof unpackClickyLibrary;
+}): Promise<void> {
+    step("bundle Clicky sound library");
+    const out = join(contents, "Resources", "ClickyLibrary");
+    const pin = SafeJSON.parse(readFileSync(pinPath, "utf8"), { strict: true }) as ClickyLibraryPin;
+    let source: string;
+    try {
+        source = await ensure(pin);
+    } catch (error) {
+        if (!(error instanceof ClickyLibraryUnavailableError)) {
+            throw error;
+        }
+
+        rmSync(out, { recursive: true, force: true });
+        logger.warn({ error }, "permissions app: Clicky sound library skipped");
+        step(`Clicky sound library skipped: ${error.message}`);
+        return;
+    }
+
+    const actual = await unpack(source, out);
+    if (actual.sets !== pin.sets || actual.samples !== pin.samples) {
+        rmSync(out, { recursive: true, force: true });
+        throw new Error(
+            `Clicky library count mismatch: unpacked ${actual.sets} sets and ${actual.samples} samples; ` +
+                `the pin says ${pin.sets} sets and ${pin.samples} samples. ` +
+                `Remove the cached library at ${source} and rebuild to download it again.`
+        );
+    }
+}
+
 interface StageAndInstallOptions {
     appDir: string;
     bundlePath: string;
@@ -592,6 +647,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     await buildDiffViewer(contents, step);
     step("copy markdown webview");
     cpSync(MARKDOWN_WEBVIEW_SOURCE, join(contents, "Resources", "webview"), { recursive: true });
+    await bundleClickyLibrary({ contents, step });
 
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
     const identity = pickCodesignIdentity(
