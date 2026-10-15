@@ -1,4 +1,3 @@
-import { replayCommandForSurface } from "@app/cmux/lib/agent-replay";
 import {
     type AutosavePanel,
     type AutosaveSession,
@@ -9,18 +8,11 @@ import {
     readAutosaveSession,
 } from "@app/cmux/lib/autosave";
 import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
-import { journalReplayCommand } from "@app/cmux/lib/command-capture";
-import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/launchers";
-import { deriveReplayCommand } from "@app/cmux/lib/render-resume";
 import { loadGrokCatalog, type ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
+import { resolveTabSession } from "@app/cmux/lib/resolve-tab";
 import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
-import {
-    loadSurfaceSessions,
-    pickSurfaceSession,
-    type SurfaceSessionInfo,
-    staleSessionNote,
-} from "@app/cmux/lib/surface-sessions";
+import { loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/surface-sessions";
 import { collectTtyLaunchCommands } from "@app/cmux/lib/tty-capture";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
@@ -29,7 +21,6 @@ import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-l
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { shellWord } from "@genesiscz/utils/shell/quote";
 
 /**
  * Offline profile capture: builds a restorable profile WITHOUT the cmux socket,
@@ -220,136 +211,53 @@ export function buildOfflinePanes(
             const text = preferredScreenText(panel.terminal?.scrollback, cachedScreen?.text);
             const screen =
                 deps.captureScreen !== false && !isCaller && text ? { text, rows: text.split("\n").length } : undefined;
-            // The tab's own agent among the journal's candidates, by what the tab last ran.
-            const recordedSession = deps.surfaceSessions.get(cmuxIdKey(panel.id));
-            const session = pickSurfaceSession(recordedSession, captured);
-            const capturedReplay = captured ? journalReplayCommand(captured, session) : undefined;
-            const capturedCommand = capturedReplay?.command;
-            const recorded =
-                captured?.command ??
-                (panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined) ??
-                panel.terminal?.tmuxStartCommand ??
-                lastCommandFromCapture(text).value;
-            const original = capturedCommand ?? recorded;
             const cwd = captured?.cwd ?? panelWorkingDirectory(panel) ?? workspace.currentDirectory;
-
-            if (captured && capturedCommand !== undefined && !isAgentLauncher(capturedCommand)) {
-                // A pane that ran an agent and then went back to a shell still
-                // carries its resume binding. The captured command wins, because it
-                // is what the pane last did, but the binding is named so a thread is
-                // never dropped in silence.
-                const bound = nativeResumeRecord(panel);
-                surfaces.push({
-                    type: "terminal",
-                    surface_id: panel.id,
-                    title: panel.title ?? "",
-                    screen,
-                    cwd,
-                    command: captured.command,
-                    command_source: "shell-journal",
-                    drift: [
-                        `exact command recovered from shell journal (${captured.phase}${captured.exitStatus !== undefined ? `, exit ${captured.exitStatus}` : ""})`,
-                        ...(bound
-                            ? [
-                                  `cmux also holds a ${bound.kind} resume binding here (${bound.sessionId}); the captured command won`,
-                              ]
-                            : []),
-                    ],
-                });
-                continue;
-            }
+            const record = nativeResumeRecord(panel);
             const agent = panel.terminal?.agent;
-            const binding = panel.terminal?.resumeBinding;
-            const native = nativeResumeRecord(panel);
-            const nativeKind = native?.kind;
-            const nativeSessionId = native?.sessionId;
-            const launchArgs = native?.launchArgs ?? [];
-            // Headless is a property of the PANE, so it is read from the agent record even when
-            // the id came from the binding: a `-p` run must never be restored as an interactive
-            // resume, whichever record names the session.
-            const headless = (agent?.launchCommand?.arguments ?? []).some((arg) =>
-                ["-p", "--prompt", "--prompt-file", "--output-format"].includes(arg)
-            );
-            if (
-                nativeKind &&
-                nativeSessionId &&
-                !headless &&
-                (!capturedCommand || agentKindFromLauncher(capturedCommand) === nativeKind)
-            ) {
-                const original = capturedCommand ?? [nativeKind, ...launchArgs.slice(1)].map(shellWord).join(" ");
-                const derived = deriveReplayCommand({
-                    original,
-                    sessionId: nativeSessionId,
-                    account: session?.account,
-                });
-                surfaces.push({
-                    type: "terminal",
-                    surface_id: panel.id,
-                    title: panel.title ?? "",
-                    screen,
-                    cwd: captured?.cwd ?? agent?.workingDirectory ?? binding?.cwd ?? cwd,
-                    command: derived.command,
-                    command_source: captured ? "shell-journal" : "offline",
-                    command_original: captured && derived.command !== captured.command ? captured.command : undefined,
-                    resume: { kind: nativeKind, sessionId: nativeSessionId },
-                    // Process-derived native metadata may be stale; the tab's own journal or binding must agree.
-                    resume_evidence:
-                        (session?.provider === nativeKind && session.sessionId === nativeSessionId) ||
-                        (binding?.kind === nativeKind && binding.checkpointId === nativeSessionId)
-                            ? "journal"
-                            : undefined,
-                    drift: [
-                        `resume target recovered from cmux autosave (${nativeKind})`,
-                        ...(capturedReplay?.drift ?? []),
-                        ...derived.drift,
-                    ],
-                });
-                continue;
-            }
-            // The kind comes from the journal RECORD, never the tab title: typing it from the
-            // title turned a claude uuid into a `grok -r` argument on any pane whose title
-            // ends in the word "grok". It is not always "claude" either — the SessionStart
-            // hook is shared, so Codex sessions are in this journal too.
-            const preferred: ReplayCatalogSession | undefined = session
-                ? {
-                      kind: session.provider,
-                      sessionId: session.sessionId,
-                      cwd: cwd ?? "",
-                      title: panel.title ?? "",
-                      account: session.account,
-                  }
-                : undefined;
-
-            const derived = replayCommandForSurface(
+            const resolved = resolveTabSession(
                 {
                     title: panel.title ?? "",
                     cwd,
-                    command: original,
-                    command_source: captured ? "shell-journal" : undefined,
+                    shellLine: captured,
+                    recorded: deps.surfaceSessions.get(cmuxIdKey(panel.id)),
+                    fallback: {
+                        command:
+                            (panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined) ??
+                            panel.terminal?.tmuxStartCommand ??
+                            lastCommandFromCapture(text).value,
+                        source: "offline",
+                        rewrittenSource: "offline",
+                    },
+                    native: record
+                        ? {
+                              ...record,
+                              // Headless is a property of the PANE, so it is read from the agent record even when the
+                              // id came from the binding: a `-p` run must never be restored as an interactive resume.
+                              headless: (agent?.launchCommand?.arguments ?? []).some((arg) =>
+                                  ["-p", "--prompt", "--prompt-file", "--output-format"].includes(arg)
+                              ),
+                              cwd: agent?.workingDirectory ?? panel.terminal?.resumeBinding?.cwd,
+                              bindingConfirms:
+                                  panel.terminal?.resumeBinding?.kind === record.kind &&
+                                  panel.terminal?.resumeBinding?.checkpointId === record.sessionId,
+                          }
+                        : undefined,
                 },
-                { sessions: deps.grokSessions ?? [] },
-                preferred
+                { sessions: deps.grokSessions ?? [] }
             );
-
-            const drift = derived.command
-                ? [
-                      ...staleSessionNote(recordedSession, session, captured),
-                      ...(capturedReplay?.drift ?? []),
-                      ...derived.drift,
-                  ]
-                : derived.drift;
 
             surfaces.push({
                 type: "terminal",
                 surface_id: panel.id,
                 title: panel.title ?? "",
                 screen,
-                cwd,
-                command: derived.command,
-                command_source: derived.command ? (captured ? "shell-journal" : "offline") : undefined,
-                command_original: derived.command && derived.command !== recorded ? recorded : undefined,
-                drift: drift.length > 0 ? drift : undefined,
-                resume_evidence: derived.command ? derived.evidence : undefined,
+                cwd: resolved.cwd ?? cwd,
+                command: resolved.command,
+                command_source: resolved.source,
+                command_original: resolved.original,
+                ...(resolved.resume ? { resume: resolved.resume } : {}),
+                drift: resolved.drift.length > 0 ? resolved.drift : undefined,
+                resume_evidence: resolved.evidence,
             });
         }
 

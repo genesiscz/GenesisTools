@@ -1,9 +1,7 @@
-import { replayCommandForSurface } from "@app/cmux/lib/agent-replay";
 import { type AutosaveSession, panelsById, panelWorkingDirectory, readAutosaveSession } from "@app/cmux/lib/autosave";
 import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
-import { journalReplayCommand } from "@app/cmux/lib/command-capture";
-import { isAgentLauncher } from "@app/cmux/lib/launchers";
-import { loadGrokCatalog, type ReplayCatalog, type ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
+import { loadGrokCatalog, type ReplayCatalog } from "@app/cmux/lib/replay-catalog";
+import { resolveTabSession } from "@app/cmux/lib/resolve-tab";
 import { loadSavedScreens, preferredScreenText } from "@app/cmux/lib/screen-cache";
 import {
     captureSurfaceState,
@@ -11,13 +9,7 @@ import {
     lastCommandFromCapture,
     type SurfaceCaptureResult,
 } from "@app/cmux/lib/shell-probe";
-import {
-    loadPinnedAccounts,
-    loadSurfaceSessions,
-    pickSurfaceSession,
-    type SurfaceSessionInfo,
-    staleSessionNote,
-} from "@app/cmux/lib/surface-sessions";
+import { loadPinnedAccounts, loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/surface-sessions";
 import { collectTtyCapture } from "@app/cmux/lib/tty-capture";
 import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
@@ -504,80 +496,38 @@ export function buildTerminalSurfaceSnapshot(input: {
         return { type: "terminal", title, cwd, screen };
     }
 
-    // The tab's own agent among the journal's candidates, by what the tab last ran.
-    const recordedSession = capture && entry.id ? capture.surfaceSessions.get(cmuxIdKey(entry.id)) : undefined;
-    const session = pickSurfaceSession(recordedSession, journal);
-    const journalReplay = journal ? journalReplayCommand(journal, session) : undefined;
-
-    if (journal && journalReplay && !isAgentLauncher(journalReplay.command)) {
-        return {
-            type: "terminal",
-            title,
-            cwd,
-            screen,
-            command: journal.command,
-            command_source: "shell-journal",
-            drift: [
-                `exact command recovered from shell journal (${journal.phase}${journal.exitStatus !== undefined ? `, exit ${journal.exitStatus}` : ""})`,
-            ],
-        };
-    }
-
-    // The foreground process on the pane's tty beats scrollback parsing: a pane
-    // running a fullscreen TUI (claude, grok, vim) shows no shell prompt to parse,
-    // but its launch command is right there in the process table.
+    // The foreground process on the pane's tty beats scrollback parsing: a pane running a fullscreen TUI (claude,
+    // grok, vim) shows no shell prompt to parse, but its launch command is right there in the process table.
     const tty = id ? capture?.panelTty.get(id) : undefined;
     const foreground = tty ? capture?.ttyCommands.get(tty) : undefined;
     const textCommand = captured.command.value ? captured.command : lastCommandFromCapture(fallbackScreen?.text);
-    const recorded = journal?.command ?? foreground ?? textCommand.value;
-    const original = journalReplay?.command ?? recorded;
-    // The kind comes from the journal RECORD, never from the tab title: typing it from the
-    // title made any pane whose title ends in the word "grok" (including a shell in a
-    // directory named grok) replay `grok -r <claude uuid>`, a session grok has never seen.
-    //
-    // 🛑 It is not always "claude" either. The SessionStart hook is shared, so Codex sessions
-    // write to this journal too; hardcoding the kind replayed a Codex thread id as
-    // `claude -r <codex uuid>` — the same defect from the other direction.
-    const preferred: ReplayCatalogSession | undefined = session
-        ? {
-              kind: session.provider,
-              sessionId: session.sessionId,
-              cwd: cwd ?? "",
-              title,
-              account: session.account,
-          }
-        : undefined;
-    const derived = replayCommandForSurface(
-        { title, cwd, command: original, command_source: journal ? "shell-journal" : undefined },
-        capture?.replayCatalog ?? { sessions: [] },
-        preferred
+    const resolved = resolveTabSession(
+        {
+            title,
+            cwd,
+            shellLine: journal,
+            recorded: capture && entry.id ? capture.surfaceSessions.get(cmuxIdKey(entry.id)) : undefined,
+            fallback: foreground
+                ? { command: foreground, source: "foreground", rewrittenSource: "foreground" }
+                : { command: textCommand.value, source: textCommand.source, rewrittenSource: "inferred" },
+        },
+        capture?.replayCatalog ?? { sessions: [] }
     );
-    if (!derived.command) {
+
+    if (!resolved.command) {
         return { type: "terminal", title, cwd, screen };
     }
-
-    const drift = [
-        ...staleSessionNote(recordedSession, session, journal),
-        ...(journalReplay?.drift ?? []),
-        ...derived.drift,
-    ];
 
     return {
         type: "terminal",
         title,
         cwd,
         screen,
-        command: derived.command,
-        command_source: journal
-            ? "shell-journal"
-            : foreground
-              ? "foreground"
-              : derived.command !== original
-                ? "inferred"
-                : textCommand.source,
-        command_original: derived.command !== recorded ? recorded : undefined,
-        drift: drift.length > 0 ? drift : undefined,
-        resume_evidence: derived.evidence,
+        command: resolved.command,
+        command_source: resolved.source,
+        command_original: resolved.original,
+        drift: resolved.drift.length > 0 ? resolved.drift : undefined,
+        resume_evidence: resolved.evidence,
     };
 }
 
