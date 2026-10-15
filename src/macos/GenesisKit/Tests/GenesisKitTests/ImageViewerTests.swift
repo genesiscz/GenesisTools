@@ -142,11 +142,17 @@ final class ImageViewerOrderingTests: XCTestCase {
     }
 }
 
+@MainActor
 final class ImageViewerKeysTests: XCTestCase {
+    private func viewerKeys() -> Keymap {
+        Keymap(library: ImageViewerKeymap.library, store: nil, layout: TableKeyLayout.us)
+    }
+
     private func action(_ code: UInt16, _ chars: String? = nil, _ flags: NSEvent.ModifierFlags = [], picking: Bool = false,
                         comparing: Bool = false) -> ImageViewerAction?
     {
-        ImageViewerKeys.action(keyCode: code, characters: chars, modifiers: flags, picking: picking, comparing: comparing)
+        ImageViewerKeys.action(keyCode: code, characters: chars, modifiers: flags, picking: picking, comparing: comparing,
+                               keymap: viewerKeys())
     }
 
     func testTheViewerKeys() {
@@ -173,6 +179,91 @@ final class ImageViewerKeysTests: XCTestCase {
         XCTAssertEqual(action(123, picking: true), .pickerMove(dx: -1, dy: 0))
         XCTAssertEqual(action(36, picking: true), .pickerChoose)
         XCTAssertEqual(action(53, picking: true), .dismiss)
+    }
+
+    func testTheViewerKeysHaveNoConflictOnACzechOrAUSKeyboard() {
+        let czech = TableKeyLayout(
+            [30: ")", 33: "ú", 18: "+", 19: "ě", 27: "=", 44: "-", 29: "é"],
+            shifted: [30: "(", 33: "/", 18: "1", 29: "0"])
+        XCTAssertEqual(Keymap(library: ImageViewerKeymap.library, store: nil, layout: czech).conflicts(), [])
+        XCTAssertEqual(Keymap(library: ImageViewerKeymap.library, store: nil, layout: TableKeyLayout.us).conflicts(), [])
+    }
+
+    /// Command on the Czech "+" key zooms in. Shift Command on that key types "1", which is 100 %.
+    func testCzechPlusZoomsInAndShiftedOneIsActualSize() {
+        let czech = TableKeyLayout(
+            [18: "+", 29: "é"],
+            shifted: [18: "1", 29: "0"])
+        let keys = Keymap(library: ImageViewerKeymap.library, store: nil, layout: czech)
+        let plus = KeyStroke(keyCode: 18, character: "+", modifiers: .command)
+        XCTAssertEqual(keys.commands(for: plus, in: [.window]).map(\.id), [ImageViewerKeymap.zoomIn])
+        let one = KeyStroke(keyCode: 18, character: "1", modifiers: [.command, .shift])
+        XCTAssertEqual(keys.commands(for: one, in: [.window]).map(\.id), [ImageViewerKeymap.actualSize])
+        XCTAssertEqual(action(18, "+", .command), .zoomIn)
+        XCTAssertEqual(action(18, "1", [.command, .shift]), .actualSize)
+    }
+
+    /// Shift on a picker key still moves it. Command stays on the window's keys. Shift on Escape still goes back.
+    func testShiftOnAPickerKeyStillMovesAndCommandDoesNot() {
+        XCTAssertEqual(action(123, nil, .shift, picking: true), .pickerMove(dx: -1, dy: 0))
+        XCTAssertEqual(action(125, nil, .shift, picking: true), .pickerMove(dx: 0, dy: 1))
+        XCTAssertNil(action(123, nil, .command, picking: true), "Command stays with the window keys")
+        XCTAssertEqual(action(53, nil, .shift, picking: true), .dismiss)
+    }
+
+    /// Copy is also the US position of C, so a layout that types something else there still copies.
+    func testCopyMatchesTheCKeyByPosition() {
+        XCTAssertEqual(action(8, "x", .command), .copy)
+    }
+
+    /// Shift does not count for a digit. Shift Command 1 is 100 %, Shift Command 0 is fit.
+    func testShiftCommandOnADigitIsTheSameAsCommand() {
+        XCTAssertEqual(action(18, "1", [.command, .shift]), .actualSize)
+        XCTAssertEqual(action(29, "0", [.command, .shift]), .fit)
+    }
+
+    func testEscStepsBackOneLayer() {
+        let cache = MediaThumbnailCache(concurrency: 1, deadline: .seconds(1)) { _, _, _ in .failed("none") }
+        let model = ImageViewerModel(
+            items: [ImageViewerItem(id: "a", path: "/tmp/image-viewer-a.png"),
+                    ImageViewerItem(id: "b", path: "/tmp/image-viewer-b.png")],
+            selectedID: "a", cache: cache)
+        var closed = 0
+        model.onDismiss = { closed += 1 }
+
+        model.openPicker()
+        model.perform(.dismiss)
+        XCTAssertFalse(model.picking, "Esc closes the picker first")
+        XCTAssertEqual(closed, 0)
+
+        model.compare(with: ImageViewerItem(id: "b", path: "/tmp/image-viewer-b.png"))
+        model.perform(.dismiss)
+        XCTAssertNil(model.compare, "the next Esc ends the compare")
+        XCTAssertEqual(closed, 0)
+
+        model.perform(.dismiss)
+        XCTAssertEqual(closed, 1, "the next Esc closes the window")
+    }
+
+    /// Close is the window. It does not step back through the picker or the compare, which is Back.
+    func testCloseDismissesTheWindowAndLeavesTheOpenLayer() {
+        let cache = MediaThumbnailCache(concurrency: 1, deadline: .seconds(1)) { _, _, _ in .failed("none") }
+        let model = ImageViewerModel(
+            items: [ImageViewerItem(id: "a", path: "/tmp/image-viewer-a.png"),
+                    ImageViewerItem(id: "b", path: "/tmp/image-viewer-b.png")],
+            selectedID: "a", cache: cache)
+        var closed = 0
+        model.onDismiss = { closed += 1 }
+
+        model.openPicker()
+        model.perform(.close)
+        XCTAssertTrue(model.picking, "Close leaves the picker open")
+        XCTAssertEqual(closed, 1, "Close dismisses the window")
+
+        model.compare(with: ImageViewerItem(id: "b", path: "/tmp/image-viewer-b.png"))
+        model.perform(.close)
+        XCTAssertNotNil(model.compare, "Close leaves the compare")
+        XCTAssertEqual(closed, 2)
     }
 }
 

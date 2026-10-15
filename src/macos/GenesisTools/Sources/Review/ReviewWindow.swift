@@ -151,6 +151,9 @@ func runReview(_ args: [String]) -> Never {
         window.setFrameAutosaveName("GenesisToolsReview")
     }
     delegate.window = window
+    MainActor.assumeIsolated {
+        delegate.keymapRegistrations = [HubKeymap.registerCloseWindow(window)]
+    }
 
     if let snapshotPath {
         model.onFirstRender = {
@@ -186,6 +189,8 @@ func runReview(_ args: [String]) -> Never {
 
 private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
+    /// ⌘W for this window only. Held for as long as the process lives.
+    var keymapRegistrations: [KeymapRegistration] = []
 
     /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -2346,7 +2351,7 @@ private struct ReviewHeader: View {
     }
 
     private var findButton: some View {
-        IconButton(systemName: "magnifyingglass", tooltip: "Find in every file of the diff (⌘F)") { model.find() }
+        IconButton(systemName: "magnifyingglass", tooltip: HubKeymap.hint("Find in every file of the diff", HubKeymap.findOpen)) { model.find() }
     }
 
     private var sendButton: some View {

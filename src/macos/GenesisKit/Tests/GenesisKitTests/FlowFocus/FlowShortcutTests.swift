@@ -39,6 +39,18 @@ final class FlowShortcutTests: XCTestCase {
         #endif
     }
 
+    /// Key 33 sits where US prints "[" and a Czech keyboard prints "ú".
+    func testAPositionLabelFollowsTheKeyboardTable() {
+        let modifiers = HotkeyChord.control | HotkeyChord.option | HotkeyChord.command
+        let czech = TableKeyLayout([33: "ú"])
+        XCTAssertEqual(FlowKeyNames.describe(keyCode: 33, modifiers: modifiers, layout: czech), "⌃⌥⌘Ú")
+        XCTAssertEqual(FlowKeyNames.describe(keyCode: 33, modifiers: modifiers, layout: TableKeyLayout.us), "⌃⌥⌘[")
+        let chord = HotkeyChord(keyCode: 33, modifiers: modifiers)
+        XCTAssertEqual(chord.label(layout: czech), "⌃⌥⌘Ú")
+        XCTAssertEqual(chord.label(layout: TableKeyLayout.us), "⌃⌥⌘[")
+        XCTAssertEqual(chord.label, KeyChord.code(33, KeyModifiers(carbonMask: modifiers)).label)
+    }
+
     func testSavedLegacyChordMovesToTheNewDefault() throws {
         var legacy = FlowConfig()
         legacy.modifiers = FlowConfig.legacyModifiers

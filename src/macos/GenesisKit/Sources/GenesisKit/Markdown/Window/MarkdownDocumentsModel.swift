@@ -32,8 +32,16 @@ private let markdownSelectedKey = "markdownWindow.selected"
 final class MarkdownDocumentsModel: ObservableObject {
     @Published private(set) var docs: [MarkdownDocument] = []
     @Published var selectedId: String? {
-        didSet { if selectedId != oldValue { revisionRequest += 1 } }
+        didSet {
+            guard selectedId != oldValue else { return }
+            revisionRequest += 1
+            if let selectedId, !navigatingHistory { history.visit(selectedId) }
+        }
     }
+    /// The notes shown, for Back and Forward (`MarkdownDocumentsModel+History.swift`). Every selection is a visit,
+    /// except the one Back or Forward makes (`navigatingHistory`).
+    var history = MarkdownNavigationHistory()
+    var navigatingHistory = false
     /// The preview tab (italic title): the file a single click in the file tree opened, which the next such
     /// click replaces in place. nil = every tab is kept. An edit, a double-click on the tab or `keep(_:)`
     /// keeps it (`MarkdownDocumentsModel+Tabs.swift`). Not remembered between launches.
@@ -658,7 +666,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         persistTabs()
     }
 
-    /// ⌘⇧] / ⌘⇧[ (`MarkdownTabShortcut`): the next or previous tab, wrapping at the ends.
+    /// Next Tab / Previous Tab (`MarkdownKeymap`, ⇧⌘ with the two keys right of P): wrapping at the ends.
     func selectTab(offset: Int) {
         guard docs.count > 1, let current = docs.firstIndex(where: { $0.id == selected?.id }) else { return }
         let next = ((current + offset) % docs.count + docs.count) % docs.count
@@ -704,6 +712,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     @discardableResult
     func resolveUnsavedForClose(confirm: @MainActor (MarkdownDocument) -> UnsavedChoice = MarkdownDocumentsModel.askUnsaved) -> Bool {
         let original = selectedId
+        // Selecting each dirty tab to show the prompt is not a visit. Cancel would otherwise leave Back on a
+        // tab the reader only saw in the alert.
+        navigatingHistory = true
+        defer { navigatingHistory = false }
         for doc in docs where doc.isDirty {
             select(doc.id)
             switch confirm(doc) {

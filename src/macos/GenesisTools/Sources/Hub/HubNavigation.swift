@@ -105,11 +105,13 @@ struct HubNavButtons: View {
         let history = model.history
         HStack(spacing: 4) {
             arrow("chevron.left", enabled: history.canGoBack,
-                  tooltip: history.back.last.map { "Back to \(model.navTitle($0)) (⌘[)" } ?? "Back (⌘[): nothing earlier") {
+                  tooltip: history.back.last.map { "Back to \(model.navTitle($0)) (\(HubKeymap.label("hub.go.back")))" }
+                      ?? "\(HubKeymap.hint("Back", "hub.go.back")): nothing earlier") {
                 model.goBack()
             }
             arrow("chevron.right", enabled: history.canGoForward,
-                  tooltip: history.forward.last.map { "Forward to \(model.navTitle($0)) (⌘])" } ?? "Forward (⌘]): nothing later") {
+                  tooltip: history.forward.last.map { "Forward to \(model.navTitle($0)) (\(HubKeymap.label("hub.go.forward")))" }
+                      ?? "\(HubKeymap.hint("Forward", "hub.go.forward")): nothing later") {
                 model.goForward()
             }
         }

@@ -38,11 +38,13 @@ final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let item = NSMenuItem()
         let app = NSMenu()
-        app.addItem(withTitle: "Widget sessions…", action: #selector(showSettings), keyEquivalent: ",")
-            .target = self
-        app.addItem(
+        let sessions = app.addItem(withTitle: "Widget sessions…", action: #selector(showSettings), keyEquivalent: "")
+        sessions.target = self
+        WidgetKeymap.shared.bind(sessions, to: WidgetKeymap.settings)
+        let quit = app.addItem(
             withTitle: "Quit GenesisTools Preview", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q")
+            keyEquivalent: "")
+        WidgetKeymap.shared.bind(quit, to: WidgetKeymap.quit)
         item.submenu = app
         menu.addItem(item)
         NSApp.mainMenu = menu

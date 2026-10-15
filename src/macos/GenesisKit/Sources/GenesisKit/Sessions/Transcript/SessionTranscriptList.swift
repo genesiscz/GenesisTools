@@ -203,6 +203,8 @@ public struct SessionTranscriptList: View {
 
     private var toolFilter: String? { filters.tool(for: services.sessionId) }
     @FocusState private var searchFocused: Bool
+    /// The host takes Command on the keys right of P. The prompt buttons then have no key.
+    @Environment(\.sessionHostOwnsCommandKeys) private var hostOwnsCommandKeys
 
     private struct ScrollRequest: Equatable {
         let id: String
@@ -338,13 +340,8 @@ public struct SessionTranscriptList: View {
         .frame(minWidth: 150, maxWidth: 300)
         .layoutPriority(1)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(SessionPalette.hairline))
-        .background(
-            // ⌘F focuses the search field from anywhere in the window.
-            Button("") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-                .accessibilityHidden(true)
-        )
+        // Command F focuses the search field. A panel find that owns the key runs first and keeps it.
+        .keymapAction(SessionsKeymap.find, in: SessionsKeymap.shared) { searchFocused = true }
     }
 
     @ViewBuilder
@@ -513,9 +510,9 @@ public struct SessionTranscriptList: View {
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 22))
-            .keyboardShortcut("[", modifiers: .command)
+            .sessionCommand(SessionsKeymap.previousPrompt, enabled: !promptIds.isEmpty, hostOwns: hostOwnsCommandKeys) { jump(-1) }
             .disabled(promptIds.isEmpty)
-            .instantTooltip("Previous prompt (⌘[)")
+            .instantTooltip(SessionsKeymap.tooltip("Previous prompt", SessionsKeymap.previousPrompt, hostOwns: hostOwnsCommandKeys))
             .accessibilityIdentifier("session-transcript-prev-prompt")
 
             // One width for "0 prompts" up to "999 / 999": a count that changes per session must not
@@ -532,9 +529,9 @@ public struct SessionTranscriptList: View {
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 22))
-            .keyboardShortcut("]", modifiers: .command)
+            .sessionCommand(SessionsKeymap.nextPrompt, enabled: !promptIds.isEmpty, hostOwns: hostOwnsCommandKeys) { jump(1) }
             .disabled(promptIds.isEmpty)
-            .instantTooltip("Next prompt (⌘])")
+            .instantTooltip(SessionsKeymap.tooltip("Next prompt", SessionsKeymap.nextPrompt, hostOwns: hostOwnsCommandKeys))
             .accessibilityIdentifier("session-transcript-next-prompt")
         }
         .foregroundStyle(SessionPalette.secondary)

@@ -30,6 +30,11 @@ extension MarkdownDocumentsModel {
             let old = from.standardizedFileURL.path
             let selectedBefore = selected?.id
             var reselect: String?
+            // The moved tabs reopen at their new paths; that is no note the user went to, so Back and Forward keep
+            // their places and follow the move instead.
+            history.rename(old, to: to.standardizedFileURL.path)
+            navigatingHistory = true
+            defer { navigatingHistory = false }
             for doc in docs where doc.url.path == old || doc.url.path.hasPrefix(old + "/") {
                 let moved = URL(fileURLWithPath: to.standardizedFileURL.path + doc.url.path.dropFirst(old.count))
                 if doc.id == selectedBefore {

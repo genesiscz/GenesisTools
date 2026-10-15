@@ -288,8 +288,9 @@ private final class PreviewDelegate: NSObject, NSApplicationDelegate {
         guard let expanded = store.expanded, let panel = panels[expanded]?.panel,
             event.window === panel, panel.isKeyWindow
         else { return event }
-        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
-        if event.keyCode == 53 {
+        guard let stroke = KeyStroke(event) else { return event }
+        let ids = WidgetKeymap.commandIDs(for: stroke, in: [.window], keymap: WidgetKeymap.shared)
+        if ids.contains(WidgetKeymap.collapse) {
             store.collapse()
             return nil
         }
@@ -299,16 +300,15 @@ private final class PreviewDelegate: NSObject, NSApplicationDelegate {
         if let control = panel.firstResponder as? NSControl, control.currentEditor() != nil {
             return event
         }
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        if key == "j" {
+        if ids.contains(WidgetKeymap.previous) {
             store.next(-1)
             return nil
         }
-        if key == "k" {
+        if ids.contains(WidgetKeymap.next) {
             store.next()
             return nil
         }
-        if let number = AgentWidgetKeyboard.choiceNumber(keyCode: event.keyCode, characters: key),
+        if let number = WidgetKeymap.choiceNumber(in: ids),
             let choices = store.current?.choices, number <= choices.count
         {
             store.answer(choice: choices[number - 1].id)
@@ -340,8 +340,9 @@ private final class PreviewDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         menu.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(
-            withTitle: "Quit GenesisTools Preview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = appMenu.addItem(
+            withTitle: "Quit GenesisTools Preview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        WidgetKeymap.shared.bind(quit, to: WidgetKeymap.quit)
         appItem.submenu = appMenu
         NSApp.mainMenu = menu
     }

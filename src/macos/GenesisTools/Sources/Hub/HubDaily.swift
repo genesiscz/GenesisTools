@@ -109,18 +109,6 @@ private struct HubDailyOverlays: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(
-                Button("") { daily.toggleSearch() }
-                    .keyboardShortcut("f", modifiers: [.command, .option])
-                    .opacity(0)
-                    .accessibilityHidden(true)
-            )
-            .background(
-                Button("") { daily.toggleDigest() }
-                    .keyboardShortcut("d", modifiers: [.command, .option])
-                    .opacity(0)
-                    .accessibilityHidden(true)
-            )
             .overlay {
                 if let query = daily.searchQuery {
                     HubTranscriptSearchPanel(hub: model, seed: query) { daily.searchQuery = nil }

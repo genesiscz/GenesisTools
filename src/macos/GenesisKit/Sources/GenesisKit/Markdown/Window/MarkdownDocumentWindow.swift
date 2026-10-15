@@ -36,6 +36,8 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
     private var titleSink: AnyCancellable?
     private var floatSink: AnyCancellable?
     private var themeSink: AnyCancellable?
+    /// The window's keys (`MarkdownKeymap.registerWindowCommands`), for as long as the window lives.
+    private var keyRegistrations: [KeymapRegistration] = []
 
     private init() {
         let window = MarkdownDocumentWindow(
@@ -54,8 +56,10 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         window.backgroundColor = NSColor(MarkdownTheme.genesis.page)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: Self.root(model: model))
-        window.documents = model
         super.init(window: window)
+        keyRegistrations = MarkdownKeymap.registerWindowCommands(model: model, window: window) { [weak self] in
+            self?.closeSelectedTabOrWindow()
+        }
         // On the controller, after init: `init(window:)` gives the window the controller's own autosave name (empty),
         // so a name set on the window before it was dropped and every launch opened at the default size.
         windowFrameAutosaveName = "genesis.markdown-window.v2"
@@ -131,6 +135,15 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         model.goToOpen = true
     }
 
+    /// Go → Back / Forward / Next Tab / Previous Tab / Reopen Closed Tab, and Help → Keyboard Shortcuts. The keys
+    /// run the same commands through `MarkdownKeymap`; these are the menu's clicks.
+    @objc public func goBack(_ sender: Any?) { model.goBack() }
+    @objc public func goForward(_ sender: Any?) { model.goForward() }
+    @objc public func nextTab(_ sender: Any?) { model.selectTab(offset: 1) }
+    @objc public func previousTab(_ sender: Any?) { model.selectTab(offset: -1) }
+    @objc public func reopenClosedTab(_ sender: Any?) { model.reopenLastClosed() }
+    @objc public func showKeyboardShortcuts(_ sender: Any?) { KeymapHelpWindow.show(MarkdownKeymap.shared) }
+
     /// Green-button zoom / title-bar double-click fill the visible screen,
     /// then restore. Without this, AppKit fits the WKWebView and the window
     /// barely moves.
@@ -204,3 +217,15 @@ struct MarkdownFileLinkMenu {
     }
 }
 
+extension MarkdownDocumentWindowController: NSMenuItemValidation {
+    /// Back and Forward are dimmed when there is no note to go to; Next and Previous Tab with one tab.
+    public func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(goBack(_:)): return model.canGoBack
+        case #selector(goForward(_:)): return model.canGoForward
+        case #selector(nextTab(_:)), #selector(previousTab(_:)): return model.docs.count > 1
+        case #selector(reopenClosedTab(_:)): return model.canReopenClosedTab
+        default: return true
+        }
+    }
+}

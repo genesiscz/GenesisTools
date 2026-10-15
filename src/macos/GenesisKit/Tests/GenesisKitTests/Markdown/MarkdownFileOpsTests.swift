@@ -35,6 +35,21 @@ final class MarkdownFileOpsTests: XCTestCase {
         XCTAssertNil(model.unsavedReason(url("notes/a.md")))
     }
 
+    func testAFolderRenameMovesBackAndForwardWithItAndIsNoVisit() throws {
+        model.open([url("readme.md")])
+        model.open([url("notes/a.md")])
+        model.open([url("notes/sub/deep.md")])
+        model.goBack()
+        try FileManager.default.moveItem(at: url("notes"), to: url("renamed"))
+
+        model.applyFileChange(.renamed(from: url("notes"), to: url("renamed")))
+
+        XCTAssertEqual(model.history.entries, [url("readme.md").path, url("renamed/a.md").path, url("renamed/sub/deep.md").path])
+        XCTAssertEqual(model.history.current, url("renamed/a.md").path)
+        model.goForward()
+        XCTAssertEqual(model.selected?.url, url("renamed/sub/deep.md"))
+    }
+
     func testAFolderRenameMovesEveryTabUnderItAndKeepsAnUnrelatedSelection() throws {
         model.open([url("notes/a.md"), url("notes/sub/deep.md"), url("readme.md")])
         try FileManager.default.moveItem(at: url("notes"), to: url("renamed"))

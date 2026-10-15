@@ -150,6 +150,9 @@ struct HubSessionDetailHost: View {
         }
         // A click in the transcript keeps ⌘F on its own search (Hub/HubPanelFind.swift).
         .panelFindNative("transcript")
+        // In the hub, Command on the keys right of P is Back and Forward. Command-R reloads this transcript.
+        // The review process has no hub menu, so the session there keeps those keys.
+        .environment(\.sessionHostOwnsCommandKeys, AppMainMenu.installedWithHub)
         .background(HostWindowReader(host: host))
         // The follow process lives exactly as long as the detail is on screen.
         .onAppear {

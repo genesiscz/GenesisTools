@@ -645,23 +645,21 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let active = WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)
         let moduleID = selectedModule(for: active)?.id
         let isAgent = moduleID == "agents"
-        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "v" {
+        guard let stroke = KeyStroke(event) else { return event }
+        if WidgetKeymap.shared.commands(for: stroke, in: [.window]).contains(where: { $0.id == WidgetKeymap.paste }) {
             if isAgent { return model.pasteMedia() ? nil : event }
             if ["capture", "shelf"].contains(moduleID ?? ""), !(panel.firstResponder is NSTextView) {
                 shelf?.paste(asImages: moduleID == "capture")
                 return nil
             }
         }
-        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
-            return event
-        }
         let editingText = panel.firstResponder is NSTextView
             || (panel.firstResponder as? NSControl)?.currentEditor() != nil
-        if MediaPreviewKeyboard.handle(keyCode: event.keyCode, editingText: editingText) {
+        if MediaPreviewKeyboard.handle(stroke, editingText: editingText) {
             return nil
         }
         switch Self.panelKey(
-            keyCode: event.keyCode, characters: event.charactersIgnoringModifiers?.lowercased() ?? "",
+            stroke: stroke,
             context: .init(previewOpen: MediaPreviewKeyboard.isOpen, agents: isAgent, editingText: editingText,
                            answering: model.answerCard))
         {
@@ -684,16 +682,32 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let answering: WidgetCard?
     }
 
-    /// What an unmodified key the media preview did not take does on the panel. While the preview is open, nothing:
+    /// What a key the media preview did not take does on the panel. While the preview is open, nothing:
     /// it is modal, so the key goes on to its own controls (a video's) and never to the inbox under it, where a
     /// number would answer the decision behind the picture and j/k would change the session.
     static func panelKey(keyCode: UInt16, characters: String, context: PanelKeyContext) -> PanelKey {
+        panelKey(keyCode: keyCode, characters: characters, context: context, keymap: WidgetKeymap.shared)
+    }
+
+    static func panelKey(keyCode: UInt16, characters: String, context: PanelKeyContext, keymap: Keymap) -> PanelKey {
+        let stroke = WidgetKeymap.plainStroke(keyCode: keyCode, characters: characters)
+        return panelKey(stroke: stroke, context: context, keymap: keymap)
+    }
+
+    static func panelKey(stroke: KeyStroke, context: PanelKeyContext) -> PanelKey {
+        panelKey(stroke: stroke, context: context, keymap: WidgetKeymap.shared)
+    }
+
+    /// What `stroke` does. The real modifiers are tried first, so a saved ⌘J runs. Shift alone still reaches
+    /// the unshifted panel key. An open preview and a text field keep their gates.
+    static func panelKey(stroke: KeyStroke, context: PanelKeyContext, keymap: Keymap) -> PanelKey {
         guard !context.previewOpen else { return .pass }
-        if keyCode == 53 { return .collapse }
+        let ids = WidgetKeymap.commandIDs(for: stroke, in: [.window], keymap: keymap)
+        if ids.contains(WidgetKeymap.collapse) { return .collapse }
         guard context.agents, !context.editingText else { return .pass }
-        if characters == "j" { return .previous }
-        if characters == "k" { return .next }
-        if let number = AgentWidgetKeyboard.choiceNumber(keyCode: keyCode, characters: characters),
+        if ids.contains(WidgetKeymap.previous) { return .previous }
+        if ids.contains(WidgetKeymap.next) { return .next }
+        if let number = WidgetKeymap.choiceNumber(in: ids),
            let card = context.answering, number <= card.choices.count
         {
             return .choose(card.choices[number - 1].id)

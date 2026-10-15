@@ -84,16 +84,3 @@ public struct AgentWidgetActions {
     }
 }
 
-public enum AgentWidgetKeyboard {
-    public static func choiceNumber(keyCode: UInt16, characters: String) -> Int? {
-        // The physical number row also works on layouts where its unshifted glyph is not a digit.
-        let physical: [UInt16: Int] = [
-            0x12: 1, 0x13: 2, 0x14: 3, 0x15: 4, 0x17: 5, 0x16: 6, 0x1a: 7, 0x1c: 8, 0x19: 9,
-        ]
-        if let number = physical[keyCode] {
-            return number
-        }
-        guard let number = Int(characters), (1...9).contains(number) else { return nil }
-        return number
-    }
-}

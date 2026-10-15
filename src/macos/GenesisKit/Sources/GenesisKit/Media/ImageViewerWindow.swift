@@ -148,20 +148,20 @@ final class ImageViewerWindow: NSWindow {
     weak var model: ImageViewerModel?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.type == .keyDown, let model else { return super.performKeyEquivalent(with: event) }
-        let flags = event.modifierFlags.intersection([.command, .option, .shift, .control])
-        if flags == .command, event.charactersIgnoringModifiers == "w" {
+        guard event.type == .keyDown, let model, event.modifierFlags.contains(.command) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        guard let action = ImageViewerKeys.action(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
+                                                  modifiers: event.modifierFlags, picking: model.picking,
+                                                  comparing: model.compare != nil) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        if case .close = action {
             performClose(nil)
             return true
         }
-        if let action = ImageViewerKeys.action(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
-                                               modifiers: event.modifierFlags, picking: model.picking,
-                                               comparing: model.compare != nil), flags.contains(.command)
-        {
-            model.perform(action)
-            return true
-        }
-        return super.performKeyEquivalent(with: event)
+        model.perform(action)
+        return true
     }
 
     override func sendEvent(_ event: NSEvent) {

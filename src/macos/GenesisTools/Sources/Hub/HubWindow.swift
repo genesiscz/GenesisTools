@@ -351,6 +351,7 @@ func runHub(_ args: [String]) -> Never {
         HangWatch.start()
         FrameWatch.start()
         HubStallTest.scheduleIfRequested()
+        delegate.keymapRegistrations = HubKeymap.registerWindowCommands(model: model, window: window)
         if !request.isScripted {
             HubNavInput.install(window: window, model: model)
         }
@@ -381,6 +382,8 @@ func runHub(_ args: [String]) -> Never {
 
 private final class HubAppDelegate: NSObject, NSApplicationDelegate {
     weak var window: NSWindow?
+    /// The hub window's key handlers. Held here so they last as long as the app does.
+    var keymapRegistrations: [KeymapRegistration] = []
 
     /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -716,6 +719,11 @@ final class HubModel: ObservableObject {
 
     /// The selection of a mode entry that shows its whole list (Inbox, Today).
     static let wholeList = "*"
+
+    /// Seeds the back stack. A mode switch would load a list; the keymap test does not.
+    func replaceHistory(_ history: HubNavHistory) {
+        self.history = history
+    }
 
     @MainActor
     func goBack() {
@@ -1811,40 +1819,11 @@ struct HubRootView: View {
                 window.contentMinSize = NSSize(width: windowMinWidth, height: 520)
             }
         })
-        .background(
-            Button("") { HubGlassSwitch.toggle() }
-                .keyboardShortcut("g", modifiers: [.command, .shift])
-                .opacity(0)
-                .accessibilityHidden(true)
-        )
-        .background(
-            Button("") {
-                paletteSeed = ""
-                paletteOpen.toggle()
-            }
-                .keyboardShortcut("k", modifiers: [.command])
-                .opacity(0)
-                .accessibilityHidden(true)
-        )
-        .background(
-            Button("") { model.findQuery = model.findQuery == nil ? "" : nil }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-                .opacity(0)
-                .accessibilityHidden(true)
-        )
-        // Here, not on the arrows: the keys still work while the sidebar is folded to its rail.
-        .background(
-            Button("") { model.goBack() }
-                .keyboardShortcut("[", modifiers: [.command])
-                .opacity(0)
-                .accessibilityHidden(true)
-        )
-        .background(
-            Button("") { model.goForward() }
-                .keyboardShortcut("]", modifiers: [.command])
-                .opacity(0)
-                .accessibilityHidden(true)
-        )
+        // The menu opens the palette. The key toggles it, which is what the hidden button did.
+        .keymapAction(HubKeymap.commandPalette, in: HubKeymap.shared) {
+            paletteSeed = ""
+            paletteOpen.toggle()
+        }
         .overlay {
             if model.findQuery != nil {
                 HubFindPanel(hub: model, roots: model.findRoots)
@@ -2111,12 +2090,12 @@ private struct SessionListView: View {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
                 // The palette had only a key (⌘K) and a menu item; this is the one-click way in.
-                IconButton(systemName: "command", tooltip: "Command palette (⌘K)") {
+                IconButton(systemName: "command", tooltip: HubKeymap.hint("Command palette", HubKeymap.commandPalette)) {
                     model.paletteRequest = ""
                 }
                 .foregroundColor(ReviewPalette.dim)
                 // A gear is the settings glyph; the shield read as a security warning (H19).
-                IconButton(systemName: "gearshape", tooltip: "Settings (⌘,)") {
+                IconButton(systemName: "gearshape", tooltip: HubKeymap.hint("Settings", "hub.app.settings")) {
                     AppMenuTarget.shared.openSettings(nil)
                 }
                 .foregroundColor(ReviewPalette.dim)

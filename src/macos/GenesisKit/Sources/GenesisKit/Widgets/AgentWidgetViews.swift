@@ -412,7 +412,7 @@ public struct AgentWidgetView: View {
                         Image(systemName: receipt == nil ? "keyboard" : "checkmark.circle.fill")
                             .foregroundStyle(receipt == nil ? WidgetInk.muted : Color.green)
                     }
-                    Text(receipt ?? "1–3 answer · J/K switch · Esc close")
+                    Text(receipt ?? WidgetKeymap.agentFooter)
                         .font(.system(size: 10)).foregroundStyle(WidgetInk.muted)
                         .lineLimit(2)
                     Spacer(minLength: 0)

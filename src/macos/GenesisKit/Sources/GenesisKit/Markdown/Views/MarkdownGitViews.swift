@@ -94,6 +94,8 @@ struct MarkdownRevisionBanner: View {
     let revision: MarkdownRevision
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
+    /// Observed so a key changed in Keyboard Shortcuts redraws the restore tooltip.
+    @ObservedObject private var keymap = MarkdownKeymap.shared
 
     var body: some View {
         HStack(spacing: 10) {
@@ -109,7 +111,9 @@ struct MarkdownRevisionBanner: View {
             Button("Compare with current") { model.compareRevision(revision.commit, with: nil, of: doc) }
                 .accessibilityIdentifier("markdown-revision-compare")
             Button("Restore") { model.restoreRevision(revision, in: doc) }
-                .instantTooltip("This version becomes the unsaved text: ⌘Z takes it back, ⌘S saves it")
+                .instantTooltip(
+                    "This version becomes the unsaved text: \(keymap.label(for: "markdown.edit.undo") ?? "") takes it back, "
+                        + "\(keymap.label(for: "markdown.file.save") ?? "") saves it")
                 .accessibilityIdentifier("markdown-revision-restore")
             Button("Close") { model.revisionView = nil }
                 .accessibilityIdentifier("markdown-revision-close")

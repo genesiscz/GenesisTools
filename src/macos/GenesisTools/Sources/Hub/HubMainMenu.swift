@@ -8,75 +8,88 @@ import AppKit
 /// The hub adds File, View, Go, Window and Help with every hub command (`HubMenuCommands`). Their
 /// actions run through the palette's executor (`HubModel.runPalette`) or the `--hub` flags a later
 /// launch hands over (`HubModel.applyOverlays`), so a menu item, a palette row and `tools hub --…`
-/// do the same thing. A key the hub's views already handle (⌘K, ⌘⇧F, ⌘[) reaches the view first;
-/// the menu shows it and runs the same action on a click.
+/// do the same thing. The keys come from `HubKeymap`: the hub window's handler takes the key, and
+/// the menu item shows it and runs the action on a click.
 @MainActor
 enum AppMainMenu {
-    static func install(hub: HubModel? = nil) {
+    /// True after this process installed the hub menu. The review process installs with no hub, so a session
+    /// hosted there keeps Command-R and Command on the keys right of P. Set only here: the session view is
+    /// built from call sites this package does not own.
+    private(set) static var installedWithHub = false
+
+    static func install(hub: HubModel? = nil, keymap: Keymap = HubKeymap.shared) {
+        installedWithHub = hub != nil
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
         let bar = NSMenu()
 
         let app = NSMenu(title: name)
         app.addItem(withTitle: "About \(name)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         app.addItem(.separator())
-        let settings = app.addItem(withTitle: "Settings…", action: #selector(AppMenuTarget.openSettings(_:)), keyEquivalent: ",")
+        let settings = app.addItem(withTitle: "Settings…", action: #selector(AppMenuTarget.openSettings(_:)), keyEquivalent: "")
         settings.target = AppMenuTarget.shared
+        HubKeymap.bind(settings, to: "hub.app.settings", keymap: keymap)
         let permissions = app.addItem(withTitle: "Permissions…", action: #selector(AppMenuTarget.openPermissions(_:)), keyEquivalent: "")
         permissions.target = AppMenuTarget.shared
         app.addItem(.separator())
-        app.addItem(withTitle: "Hide \(name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        app.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
-            .keyEquivalentModifierMask = [.command, .option]
+        bind(app, "Hide \(name)", #selector(NSApplication.hide(_:)), "hub.app.hide", keymap: keymap)
+        bind(app, "Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "hub.app.hideOthers", keymap: keymap)
         app.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         app.addItem(.separator())
-        app.addItem(withTitle: "Quit \(name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        bind(app, "Quit \(name)", #selector(NSApplication.terminate(_:)), "hub.app.quit", keymap: keymap)
         bar.addItem(withTitle: name, action: nil, keyEquivalent: "").submenu = app
 
+        let close = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "")
+        HubKeymap.bind(close, to: "hub.window.close", keymap: keymap)
         if let hub {
-            bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("File", HubMenuCommands.file, hub: hub, tail: [
+            bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("File", HubMenuCommands.file, hub: hub, keymap: keymap, tail: [
                 NSMenuItem.separator(),
-                NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"),
+                close,
             ])
+        } else {
+            // The review window has no hub commands. It still closes with ⌘W.
+            let file = NSMenu(title: "File")
+            file.addItem(close)
+            bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = file
         }
 
         let edit = NSMenu(title: "Edit")
-        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
-            .keyEquivalentModifierMask = [.command, .shift]
+        bind(edit, "Undo", Selector(("undo:")), "hub.edit.undo", keymap: keymap)
+        bind(edit, "Redo", Selector(("redo:")), "hub.edit.redo", keymap: keymap)
         edit.addItem(.separator())
-        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        let copy = edit.addItem(withTitle: "Copy", action: #selector(CopyWithFeedback.copyWithFeedback(_:)), keyEquivalent: "c")
+        bind(edit, "Cut", #selector(NSText.cut(_:)), "hub.edit.cut", keymap: keymap)
+        let copy = bind(edit, "Copy", #selector(CopyWithFeedback.copyWithFeedback(_:)), "hub.edit.copy", keymap: keymap)
         copy.target = CopyWithFeedback.shared
-        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "Paste and Match Style", action: #selector(NSTextView.pasteAsPlainText(_:)), keyEquivalent: "v")
-            .keyEquivalentModifierMask = [.command, .option, .shift]
+        bind(edit, "Paste", #selector(NSText.paste(_:)), "hub.edit.paste", keymap: keymap)
+        bind(edit, "Paste and Match Style", #selector(NSTextView.pasteAsPlainText(_:)), "hub.edit.pastePlain", keymap: keymap)
         edit.addItem(withTitle: "Delete", action: #selector(NSText.delete(_:)), keyEquivalent: "")
-        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        bind(edit, "Select All", #selector(NSText.selectAll(_:)), "hub.edit.selectAll", keymap: keymap)
         if let hub {
             edit.addItem(.separator())
-            for item in HubMenuCommands.items(HubMenuCommands.find, hub: hub) {
+            for item in HubMenuCommands.items(HubMenuCommands.find, hub: hub, keymap: keymap) {
                 edit.addItem(item)
             }
         }
         bar.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
 
         if let hub {
-            let view = HubMenuCommands.menu("View", HubMenuCommands.view, hub: hub, tail: [
+            let fullScreen = NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "")
+            HubKeymap.bind(fullScreen, to: "hub.window.fullScreen", keymap: keymap)
+            let view = HubMenuCommands.menu("View", HubMenuCommands.view, hub: hub, keymap: keymap, tail: [
                 NSMenuItem.separator(),
-                NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f").withModifiers([.command, .control]),
+                fullScreen,
             ])
             // View → Look sits under Glass, the other half of how the hub looks.
             let look = view.items.firstIndex { $0.title == "Glass" }.map { $0 + 1 } ?? view.items.count
-            view.insertItem(HubMenuCommands.lookItem(hub: hub), at: look)
+            view.insertItem(HubMenuCommands.lookItem(hub: hub, keymap: keymap), at: look)
             bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
-            bar.addItem(withTitle: "Go", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("Go", HubMenuCommands.go, hub: hub, tail: [
+            bar.addItem(withTitle: "Go", action: nil, keyEquivalent: "").submenu = HubMenuCommands.menu("Go", HubMenuCommands.go, hub: hub, keymap: keymap, tail: [
                 NSMenuItem.separator(),
-                HubMenuCommands.paletteCommandsItem(hub: hub),
+                HubMenuCommands.paletteCommandsItem(hub: hub, keymap: keymap),
             ])
         }
 
         let window = NSMenu(title: "Window")
-        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        bind(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "hub.window.minimize", keymap: keymap)
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         window.addItem(.separator())
         window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
@@ -85,13 +98,29 @@ enum AppMainMenu {
         NSApp.windowsMenu = window
 
         if let hub {
-            let help = HubMenuCommands.menu("Help", HubMenuCommands.help, hub: hub)
+            let help = HubMenuCommands.menu("Help", HubMenuCommands.help, hub: hub, keymap: keymap)
             bar.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
             // The Help menu's search field finds any menu item by name.
+            NSApp.helpMenu = help
+        } else {
+            let help = NSMenu(title: "Help")
+            let shortcuts = help.addItem(
+                withTitle: "Keyboard Shortcuts", action: #selector(AppMenuTarget.showKeyboardShortcuts(_:)), keyEquivalent: ""
+            )
+            shortcuts.target = AppMenuTarget.shared
+            HubKeymap.bind(shortcuts, to: "hub.help.shortcuts", keymap: keymap)
+            bar.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
             NSApp.helpMenu = help
         }
 
         NSApp.mainMenu = bar
+    }
+
+    @discardableResult
+    private static func bind(_ menu: NSMenu, _ title: String, _ action: Selector, _ id: String, keymap: Keymap) -> NSMenuItem {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        HubKeymap.bind(item, to: id, keymap: keymap)
+        return item
     }
 
     /// Runs the item at `"<Menu>/<Item>"` (a submenu adds a level: "Go/Palette Command/…") as a click
@@ -125,6 +154,11 @@ final class AppMenuTarget: NSObject {
         ClickyLaunch.openSettings()
     }
 
+    /// The review window's keys live in the hub library: the shared menu, Close Window, and panel find.
+    @objc func showKeyboardShortcuts(_ sender: Any?) {
+        KeymapHelpWindow.show(HubKeymap.shortcutPages(review: true))
+    }
+
     /// The privacy grants window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
     @objc func openPermissions(_ sender: Any?) {
         guard let executable = Bundle.main.executablePath else { return }
@@ -139,22 +173,15 @@ final class AppMenuTarget: NSObject {
     }
 }
 
-private extension NSMenuItem {
-    func withModifiers(_ modifiers: NSEvent.ModifierFlags) -> NSMenuItem {
-        keyEquivalentModifierMask = modifiers
-        return self
-    }
-}
-
 // MARK: - Hub commands
 
-/// One hub command in the menu bar: its title, key, what it runs, and when it shows a check mark or
-/// is greyed out. Read when the menu opens (`validateMenuItem`), never on a timer.
+/// One hub command in the menu bar: its title, the keymap command it shows, what it runs, and when
+/// it shows a check mark or is greyed out. Read when the menu opens (`validateMenuItem`), never on a timer.
 @MainActor
 struct HubMenuCommand {
     var title: String
-    var key: String = ""
-    var modifiers: NSEvent.ModifierFlags = [.command]
+    /// A `HubKeymap` command id. Nil for a row that is not in the library (a look, a palette keyword).
+    var id: String?
     var run: (HubModel) -> Void
     var checked: ((HubModel) -> Bool)?
     var enabled: ((HubModel) -> Bool)?
@@ -165,86 +192,92 @@ struct HubMenuCommand {
 @MainActor
 enum HubMenuCommands {
     static let file: [HubMenuCommand] = [
-        HubMenuCommand(title: "New Agent Session", key: "n", run: { hub in
+        HubMenuCommand(title: "New Agent Session", id: "hub.file.newSession", run: { hub in
             if let path = hub.paletteContext.currentPath { hub.runPalette(.newSession(path), toggleGlass: toggleGlass) }
         }, enabled: { $0.paletteContext.currentPath != nil }),
-        HubMenuCommand(title: "New Handoff…", key: "h", modifiers: [.command, .shift], run: { overlay($0, "--handoff") },
+        HubMenuCommand(title: "New Handoff…", id: "hub.file.handoff", run: { overlay($0, "--handoff") },
                        enabled: { $0.selectedID != nil }),
-        HubMenuCommand(title: "Prompt Library…", key: "p", modifiers: [.command, .shift], run: { overlay($0, "--prompts") }),
-        HubMenuCommand(title: "Open Project in Cursor", run: { hub in
+        HubMenuCommand(title: "Prompt Library…", id: HubKeymap.promptLibrary, run: { overlay($0, "--prompts") }),
+        HubMenuCommand(title: "Open Project in Cursor", id: "hub.file.cursor", run: { hub in
             if let path = hub.paletteContext.currentPath { hub.runPalette(.openCursor(path), toggleGlass: toggleGlass) }
         }, enabled: { $0.paletteContext.currentPath != nil }, separated: true),
-        HubMenuCommand(title: "Open Project in cmux", run: { hub in
+        HubMenuCommand(title: "Open Project in cmux", id: "hub.file.terminal", run: { hub in
             if let path = hub.paletteContext.currentPath { hub.runPalette(.openTerminal(path), toggleGlass: toggleGlass) }
         }, enabled: { $0.paletteContext.currentPath != nil }),
     ]
 
     static let find: [HubMenuCommand] = [
-        HubMenuCommand(title: "Command Palette…", key: "k", run: { overlay($0, "--palette") }),
-        HubMenuCommand(title: "Find in Files…", key: "f", modifiers: [.command, .shift], run: { $0.findQuery = $0.findQuery == nil ? "" : nil }),
-        HubMenuCommand(title: "Search All Transcripts…", key: "f", modifiers: [.command, .option], run: { _ in HubDailyModel.shared.toggleSearch() }),
-        HubMenuCommand(title: "Search Session History…", run: { palette($0, "history ") }),
+        HubMenuCommand(title: "Command Palette…", id: HubKeymap.commandPalette, run: { overlay($0, "--palette") }),
+        HubMenuCommand(title: "Find in Files…", id: "hub.find.files", run: { $0.findQuery = $0.findQuery == nil ? "" : nil }),
+        HubMenuCommand(title: "Search All Transcripts…", id: "hub.find.transcripts", run: { _ in HubDailyModel.shared.toggleSearch() }),
+        HubMenuCommand(title: "Search Session History…", id: "hub.find.history", run: { palette($0, "history ") }),
     ]
 
-    static let view: [HubMenuCommand] = HubMode.allCases.enumerated().map { index, mode in
-        HubMenuCommand(title: mode.title, key: "\(index + 1)", run: { $0.runPalette(.setMode(mode), toggleGlass: toggleGlass) },
+    static let view: [HubMenuCommand] = HubMode.allCases.map { mode in
+        HubMenuCommand(title: mode.title, id: "hub.view.mode.\(mode.rawValue)", run: { $0.runPalette(.setMode(mode), toggleGlass: toggleGlass) },
                        checked: { $0.mode == mode })
     } + HubTab.allCases.enumerated().map { index, pane in
-        HubMenuCommand(title: "\(pane.title) Pane", key: "\(index + 1)", modifiers: [.command, .option],
+        HubMenuCommand(title: "\(pane.title) Pane", id: "hub.view.pane.\(pane.rawValue)",
                        run: { $0.runPalette(.togglePane(pane), toggleGlass: toggleGlass) },
                        checked: { $0.panes.contains(pane) }, separated: index == 0)
     } + [
-        HubMenuCommand(title: "Glass", key: "g", modifiers: [.command, .shift], run: { $0.runPalette(.toggleGlass, toggleGlass: toggleGlass) },
+        HubMenuCommand(title: "Glass", id: HubKeymap.glass, run: { $0.runPalette(.toggleGlass, toggleGlass: toggleGlass) },
                        checked: { _ in HubDefaults.preferences.glass && HubGlassSwitch.available },
                        enabled: { _ in HubGlassSwitch.available }, separated: true),
-        HubMenuCommand(title: "Hub Settings…", run: { _ in ClickyLaunch.openSettings(pageID: HubSettingsPages.appearancePageID) }),
-        HubMenuCommand(title: "Split Diff", run: { review(of: $0)?.setStyle(.split) },
+        HubMenuCommand(title: "Hub Settings…", id: "hub.view.settings", run: { _ in ClickyLaunch.openSettings(pageID: HubSettingsPages.appearancePageID) }),
+        HubMenuCommand(title: "Split Diff", id: "hub.view.diff.split", run: { review(of: $0)?.setStyle(.split) },
                        checked: { review(of: $0)?.options.diffStyle == .split }, enabled: { review(of: $0) != nil }, separated: true),
-        HubMenuCommand(title: "Unified Diff", run: { review(of: $0)?.setStyle(.unified) },
+        HubMenuCommand(title: "Unified Diff", id: "hub.view.diff.unified", run: { review(of: $0)?.setStyle(.unified) },
                        checked: { review(of: $0)?.options.diffStyle == .unified }, enabled: { review(of: $0) != nil }),
-        HubMenuCommand(title: "Wrap Diff Lines", run: { review(of: $0)?.toggleWrap() },
+        HubMenuCommand(title: "Wrap Diff Lines", id: "hub.view.diff.wrap", run: { review(of: $0)?.toggleWrap() },
                        checked: { review(of: $0)?.options.wrap == true }, enabled: { review(of: $0) != nil }),
-        HubMenuCommand(title: "Bigger Diff Text", key: "+", run: { review(of: $0)?.stepFont(1) }, enabled: { review(of: $0) != nil }),
-        HubMenuCommand(title: "Smaller Diff Text", key: "-", run: { review(of: $0)?.stepFont(-1) }, enabled: { review(of: $0) != nil }),
-        HubMenuCommand(title: "Actual Diff Text Size", key: "0", run: { hub in
+        HubMenuCommand(title: "Bigger Diff Text", id: "hub.view.diff.bigger", run: { review(of: $0)?.stepFont(1) }, enabled: { review(of: $0) != nil }),
+        HubMenuCommand(title: "Smaller Diff Text", id: "hub.view.diff.smaller", run: { review(of: $0)?.stepFont(-1) }, enabled: { review(of: $0) != nil }),
+        HubMenuCommand(title: "Actual Diff Text Size", id: "hub.view.diff.actual", run: { hub in
             if let review = review(of: hub) { review.stepFont(DiffViewOptions().fontSize - review.options.fontSize) }
         }, enabled: { review(of: $0) != nil }),
-        HubMenuCommand(title: "Today Digest", key: "d", modifiers: [.command, .option], run: { _ in HubDailyModel.shared.toggleDigest() },
+        HubMenuCommand(title: "Today Digest", id: "hub.view.digest", run: { _ in HubDailyModel.shared.toggleDigest() },
                        separated: true),
-        HubMenuCommand(title: "Rules", run: { overlay($0, "--rules") }),
-        HubMenuCommand(title: "Reload", key: "r", run: reload, enabled: { $0.mode != .worktrees }, separated: true),
+        HubMenuCommand(title: "Rules", id: "hub.view.rules", run: { overlay($0, "--rules") }),
+        HubMenuCommand(title: "Reload", id: "hub.view.reload", run: reload, enabled: { $0.mode != .worktrees }, separated: true),
     ]
 
     static let go: [HubMenuCommand] = [
-        HubMenuCommand(title: "Back", key: "[", run: { $0.goBack() }, enabled: { $0.history.canGoBack }),
-        HubMenuCommand(title: "Forward", key: "]", run: { $0.goForward() }, enabled: { $0.history.canGoForward }),
-        HubMenuCommand(title: "Session…", run: { palette($0, "session ") }, separated: true),
-        HubMenuCommand(title: "Worktree…", run: { palette($0, "worktree ") }),
-        HubMenuCommand(title: "Pull Request…", run: { palette($0, "pr ") }),
-        HubMenuCommand(title: "Changed File…", run: { palette($0, "file ") }),
-        HubMenuCommand(title: "Review Selected PR with Agent", run: { $0.runPalette(.reviewWithAgent, toggleGlass: toggleGlass) },
+        HubMenuCommand(title: "Back", id: "hub.go.back", run: { $0.goBack() }, enabled: { $0.history.canGoBack }),
+        HubMenuCommand(title: "Forward", id: "hub.go.forward", run: { $0.goForward() }, enabled: { $0.history.canGoForward }),
+        HubMenuCommand(title: "Session…", id: "hub.go.session", run: { palette($0, "session ") }, separated: true),
+        HubMenuCommand(title: "Worktree…", id: "hub.go.worktree", run: { palette($0, "worktree ") }),
+        HubMenuCommand(title: "Pull Request…", id: "hub.go.pr", run: { palette($0, "pr ") }),
+        HubMenuCommand(title: "Changed File…", id: "hub.go.file", run: { palette($0, "file ") }),
+        HubMenuCommand(title: "Review Selected PR with Agent", id: "hub.go.review", run: { $0.runPalette(.reviewWithAgent, toggleGlass: toggleGlass) },
                        enabled: { $0.prs.selected != nil }, separated: true),
     ]
 
     static let help: [HubMenuCommand] = [
-        HubMenuCommand(title: "Command Palette Commands", run: { palette($0, "") }),
-        HubMenuCommand(title: "Open Logs Folder", run: { _ in reveal(".genesis-tools/logs") }, separated: true),
-        HubMenuCommand(title: "Open Performance Log", run: { _ in reveal(".genesis-tools/logs/app-perf.log") }),
+        HubMenuCommand(title: "Keyboard Shortcuts", id: "hub.help.shortcuts", run: { _ in
+            KeymapHelpWindow.show(HubKeymap.shortcutPages(review: false))
+        }),
+        HubMenuCommand(title: "Command Palette Commands", id: "hub.help.commands", run: { palette($0, "") }),
+        HubMenuCommand(title: "Open Logs Folder", id: "hub.help.logs", run: { _ in reveal(".genesis-tools/logs") }, separated: true),
+        HubMenuCommand(title: "Open Performance Log", id: "hub.help.perf", run: { _ in reveal(".genesis-tools/logs/app-perf.log") }),
     ]
 
-    static func menu(_ title: String, _ commands: [HubMenuCommand], hub: HubModel, tail: [NSMenuItem] = []) -> NSMenu {
+    /// File, Find, View, Go and Help: the commands the hub window registers, besides the app menu.
+    static var windowCommands: [HubMenuCommand] { file + find + view + go + help }
+
+    static func menu(_ title: String, _ commands: [HubMenuCommand], hub: HubModel, keymap: Keymap = HubKeymap.shared, tail: [NSMenuItem] = []) -> NSMenu {
         let menu = NSMenu(title: title)
-        for item in items(commands, hub: hub) + tail {
+        for item in items(commands, hub: hub, keymap: keymap) + tail {
             menu.addItem(item)
         }
         return menu
     }
 
-    static func items(_ commands: [HubMenuCommand], hub: HubModel) -> [NSMenuItem] {
+    static func items(_ commands: [HubMenuCommand], hub: HubModel, keymap: Keymap = HubKeymap.shared) -> [NSMenuItem] {
         HubMenuTarget.shared.hub = hub
         return commands.flatMap { command -> [NSMenuItem] in
-            let item = NSMenuItem(title: command.title, action: #selector(HubMenuTarget.runCommand(_:)), keyEquivalent: command.key)
-            item.keyEquivalentModifierMask = command.modifiers
+            let item = NSMenuItem(title: command.title, action: #selector(HubMenuTarget.runCommand(_:)), keyEquivalent: "")
+            if let id = command.id { HubKeymap.bind(item, to: id, keymap: keymap) }
             item.target = HubMenuTarget.shared
             item.representedObject = HubMenuCommandBox(command)
             return command.separated ? [.separator(), item] : [item]
@@ -253,14 +286,14 @@ enum HubMenuCommands {
 
     /// View → Look: the Hub look and one Native look per General theme, the current one checked. A Native look
     /// also sets General → Theme, and its item's tooltip says so.
-    static func lookItem(hub: HubModel) -> NSMenuItem {
+    static func lookItem(hub: HubModel, keymap: Keymap = HubKeymap.shared) -> NSMenuItem {
         let item = NSMenuItem(title: "Look", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Look")
         for choice in HubLookChoice.allCases {
             let command = HubMenuCommand(title: choice.title, run: { $0.runPalette(.setLook(choice), toggleGlass: toggleGlass) },
                                          checked: { _ in HubLookChoice.currentInHub == choice },
                                          separated: choice == HubLookChoice.allCases.dropFirst().first)
-            for entry in items([command], hub: hub) {
+            for entry in items([command], hub: hub, keymap: keymap) {
                 if choice.theme != nil, !entry.isSeparatorItem { entry.toolTip = HubLookChoice.generalNote + "." }
                 submenu.addItem(entry)
             }
@@ -271,12 +304,12 @@ enum HubMenuCommands {
 
     /// Every palette keyword as a menu item: it opens the palette with the keyword typed, so this
     /// list is the palette's own (`HubPaletteEngine.keywords`) and cannot drift from it.
-    static func paletteCommandsItem(hub: HubModel) -> NSMenuItem {
+    static func paletteCommandsItem(hub: HubModel, keymap: Keymap = HubKeymap.shared) -> NSMenuItem {
         let item = NSMenuItem(title: "Palette Command", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Palette Command")
         for keyword in HubPaletteEngine.keywords {
-            let command = HubMenuCommand(title: keyword.summary, run: { palette($0, "\(keyword.word) ") })
-            items([command], hub: hub).forEach(submenu.addItem)
+            let command = HubMenuCommand(title: keyword.liveSummary, run: { palette($0, "\(keyword.word) ") })
+            items([command], hub: hub, keymap: keymap).forEach(submenu.addItem)
         }
         item.submenu = submenu
         return item

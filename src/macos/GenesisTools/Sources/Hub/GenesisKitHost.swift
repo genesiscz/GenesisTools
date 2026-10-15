@@ -75,6 +75,11 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
     }
 
     var gtProvider: GenesisKitGTProvider? { HubGTProvider() }
+
+    /// The user's own keys, one file per library (`hub.json`, `markdown.json`).
+    var keymapDirectory: URL? {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/keymaps", isDirectory: true)
+    }
 }
 
 /// GenesisKit's git and agent data through the hub's resident `tools` server (`ToolsCLIRunner`), which answers

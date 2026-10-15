@@ -27,8 +27,13 @@ public struct HotkeyChord: Equatable, Sendable {
         return mask
     }
 
-    /// "⌃⌥⌘D".
+    /// "⌃⌥⌘D" on the current layout. Key 33 is "[" on US and "Ú" on Czech.
+    @MainActor
     public var label: String { FlowKeyNames.describe(keyCode: keyCode, modifiers: modifiers) }
+
+    public func label(layout: KeyLayout) -> String {
+        FlowKeyNames.describe(keyCode: keyCode, modifiers: modifiers, layout: layout)
+    }
 
     private static let functionKeys: Set<UInt32> = [
         0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F, 0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A,
@@ -47,6 +52,7 @@ public struct HotkeyChord: Equatable, Sendable {
 
     /// Why this chord cannot be a global shortcut, or nil when it can. A chord needs ⌃, ⌥ or ⌘ (a letter with no
     /// modifier or with ⇧ alone would type text in every app); a function key may stand alone.
+    @MainActor
     public var problem: String? {
         let required = Self.command | Self.option | Self.control
         if modifiers & required == 0 && !Self.functionKeys.contains(keyCode) {

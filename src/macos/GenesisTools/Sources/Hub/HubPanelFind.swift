@@ -633,6 +633,14 @@ private struct PanelFindHost<Revision: Equatable>: ViewModifier {
     }
 }
 
+/// "Previous match (⇧⌘G or ⇧Enter)". The chord comes from the keymap. The field key stays beside it.
+@MainActor
+private func findKeyHint(_ title: String, _ id: String, also field: String) -> String {
+    let key = HubKeymap.label(id)
+    if key.isEmpty { return "\(title) (\(field))" }
+    return "\(title) (\(key) or \(field))"
+}
+
 // MARK: - Bar
 
 /// The find bar: put it under the panel's header. It draws nothing while the find is closed.
@@ -663,9 +671,9 @@ struct PanelFindBar: View {
                     .foregroundColor(find.countLabel == "No matches" ? ReviewPalette.removed : ReviewPalette.dim)
                     .fixedSize()
                     .accessibilityIdentifier("panel-find-count-\(find.scope)")
-                IconButton(systemName: "chevron.up", tooltip: "Previous match (⇧⌘G or ⇧Enter)", size: 11) { find.previous() }
+                IconButton(systemName: "chevron.up", tooltip: findKeyHint("Previous match", HubKeymap.findPrevious, also: "⇧Enter"), size: 11) { find.previous() }
                     .disabled(find.matches.isEmpty)
-                IconButton(systemName: "chevron.down", tooltip: "Next match (⌘G or Enter)", size: 11) { find.next() }
+                IconButton(systemName: "chevron.down", tooltip: findKeyHint("Next match", HubKeymap.findNext, also: "Enter"), size: 11) { find.next() }
                     .disabled(find.matches.isEmpty)
                 Button {
                     find.caseSensitive.toggle()
@@ -681,7 +689,7 @@ struct PanelFindBar: View {
                 .instantTooltip(find.caseSensitive ? "Matching case and accents exactly. Click to ignore them" : "Ignoring case and accents (\"cafe\" finds \"Café\"). Click to match them exactly")
                 .accessibilityLabel(Text("Match case"))
                 .accessibilityValue(Text(find.caseSensitive ? "on" : "off"))
-                IconButton(systemName: "xmark", tooltip: "Close the find (Esc)", size: 10) { find.close() }
+                IconButton(systemName: "xmark", tooltip: HubKeymap.hint("Close the find", HubKeymap.findClose), size: 10) { find.close() }
             }
             .padding(.horizontal, 12)
             .frame(height: 32)
@@ -761,9 +769,10 @@ final class PanelFindAnchorView: NSView {
     override func isAccessibilityElement() -> Bool { false }
 }
 
-/// One key monitor for every panel find in the process. ⌘F opens the find of the panel the keyboard
-/// is in; ⌘G and ⇧⌘G step its matches while its bar is open (else ⇧⌘G stays glass); Esc closes it
-/// unless another text field has the keyboard. A key the panels do not take goes on untouched.
+/// One key monitor for every panel find in the process. The keys are `HubKeymap`'s find commands.
+/// Find opens the bar of the panel the keyboard is in; Next and Previous step while a bar is open
+/// (else Previous stays Glass); Close Find closes it unless another text field has the keyboard.
+/// A key the panels do not take goes on untouched.
 @MainActor
 final class PanelFindRouter {
     static let shared = PanelFindRouter()
@@ -884,22 +893,14 @@ final class PanelFindRouter {
     }
 
     private func consumes(_ event: NSEvent) -> Bool {
-        guard modals == 0, let window = event.window else { return false }
-        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        let key = event.charactersIgnoringModifiers?.lowercased()
-        if flags == .command, key == "f" {
-            return find(in: window)
+        guard modals == 0, let window = event.window, let stroke = KeyStroke(event) else { return false }
+        switch HubKeymap.shared.commands(for: stroke, in: [HubKeymap.findScope]).first?.id {
+        case HubKeymap.findOpen: return find(in: window)
+        case HubKeymap.findNext: return step(in: window, forward: true)
+        case HubKeymap.findPrevious: return step(in: window, forward: false)
+        case HubKeymap.findClose: return escape(in: window)
+        default: return false
         }
-
-        if key == "g", flags == .command || flags == [.command, .shift] {
-            return step(in: window, forward: flags == .command)
-        }
-
-        if flags.isEmpty, event.keyCode == 53 {
-            return escape(in: window)
-        }
-
-        return false
     }
 
     private func find(in window: NSWindow) -> Bool {
@@ -915,6 +916,12 @@ final class PanelFindRouter {
             onFind()
             return true
         }
+    }
+
+    /// ⇧⌘G steps to the previous match while a find bar in this window is open. Glass asks before it toggles.
+    func takesPreviousMatch(in window: NSWindow?) -> Bool {
+        guard let window else { return false }
+        return step(in: window, forward: false)
     }
 
     private func step(in window: NSWindow, forward: Bool) -> Bool {

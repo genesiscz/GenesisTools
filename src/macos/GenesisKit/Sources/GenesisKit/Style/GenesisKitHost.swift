@@ -43,6 +43,9 @@ public protocol GenesisKitHost: AnyObject {
     @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void)
     /// The git and `tools` data the git components read (`GenesisKitGT.provider`); nil uses the CLI provider.
     var gtProvider: GenesisKitGTProvider? { get }
+    /// Where the user's keyboard shortcuts are saved, one `<library>.json` per keymap (`KeymapStore.standard`); nil
+    /// keeps them in `~/Library/Application Support/GenesisKit/Keymaps`.
+    var keymapDirectory: URL? { get }
 }
 
 public extension GenesisKitHost {
@@ -61,6 +64,7 @@ public extension GenesisKitHost {
     var toolsBinaryPath: String? { nil }
     @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void) {}
     var gtProvider: GenesisKitGTProvider? { nil }
+    var keymapDirectory: URL? { nil }
 }
 
 public enum GenesisKit {

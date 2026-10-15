@@ -294,7 +294,9 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(HotkeyChord.carbonModifiers([.shift, .command, .capsLock, .function]), 0x0200 | 0x0100,
                        "Caps Lock and Fn are not part of a chord")
         XCTAssertEqual(HotkeyChord(keyCode: 0x02, modifiers: FlowConfig.defaultModifiers).label, "⌃⌥⌘D")
-        XCTAssertEqual(HotkeyChord(keyCode: 0x12, modifiers: HotkeyChord.control | HotkeyChord.shift).label, "⌃⇧1")
+        XCTAssertEqual(
+            HotkeyChord(keyCode: 0x12, modifiers: HotkeyChord.control | HotkeyChord.shift).label(layout: TableKeyLayout.us),
+            "⌃⇧1")
         XCTAssertEqual(HotkeyChord(keyCode: 0x7A, modifiers: 0).label, "F1")
     }
 

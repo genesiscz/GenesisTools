@@ -82,11 +82,15 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let root = NSMenuItem()
         let application = NSMenu()
-        application.addItem(withTitle: "Widget sessions…", action: #selector(showWidgetSettings), keyEquivalent: ",")
-            .target = self
-        application.addItem(withTitle: "Open Hub", action: #selector(showHub), keyEquivalent: "h").target = self
-        application.addItem(
-            withTitle: "Quit Widget", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let sessions = application.addItem(withTitle: "Widget sessions…", action: #selector(showWidgetSettings), keyEquivalent: "")
+        sessions.target = self
+        WidgetKeymap.shared.bind(sessions, to: WidgetKeymap.settings)
+        let hub = application.addItem(withTitle: "Open Hub", action: #selector(showHub), keyEquivalent: "")
+        hub.target = self
+        WidgetKeymap.shared.bind(hub, to: WidgetKeymap.hub)
+        let quit = application.addItem(
+            withTitle: "Quit Widget", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        WidgetKeymap.shared.bind(quit, to: WidgetKeymap.quit)
         root.submenu = application
         menu.addItem(root)
         NSApp.mainMenu = menu

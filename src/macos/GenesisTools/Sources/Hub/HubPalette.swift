@@ -77,6 +77,18 @@ enum HubPaletteEngine {
         let symbol: String
         /// Needs a project (typed, or the current one) to act on.
         let usesProject: Bool
+
+        /// The row and the Go menu: the shortcut is the one in force.
+        @MainActor var liveSummary: String {
+            switch word {
+            case "grep":
+                return "Find in files (\(HubKeymap.label("hub.find.files"))): grep <text>"
+            case "glass":
+                return "Turn the glass look on or off (\(HubKeymap.label(HubKeymap.glass)))"
+            default:
+                return summary
+            }
+        }
     }
 
     /// The commands, in the order an empty palette lists them.
@@ -84,7 +96,7 @@ enum HubPaletteEngine {
         Keyword(word: "pr", aliases: ["mr"], summary: "Open a pull or merge request: <project> pr <number>", symbol: "arrow.triangle.pull", usesProject: true),
         Keyword(word: "session", aliases: ["s"], summary: "Open a session: <project> session <words>", symbol: "bubble.left.and.text.bubble.right", usesProject: true),
         Keyword(word: "worktree", aliases: ["branch", "wt"], summary: "Open a worktree: <project> worktree <branch>", symbol: "arrow.triangle.branch", usesProject: true),
-        Keyword(word: "grep", aliases: ["find"], summary: "Find in files (⌘⇧F): grep <text>", symbol: "text.magnifyingglass", usesProject: true),
+        Keyword(word: "grep", aliases: ["find"], summary: "Find in files: grep <text>", symbol: "text.magnifyingglass", usesProject: true),
         Keyword(word: "history", aliases: ["h"], summary: "Search every session's history: history <words>", symbol: "clock.arrow.circlepath", usesProject: false),
         Keyword(word: "file", aliases: ["open"], summary: "Show a changed file: file <path>", symbol: "doc.text", usesProject: true),
         Keyword(word: "cursor", aliases: ["code"], summary: "Open the project in Cursor", symbol: "chevron.left.forwardslash.chevron.right", usesProject: true),
@@ -93,7 +105,7 @@ enum HubPaletteEngine {
         Keyword(word: "review", aliases: [], summary: "Review the selected PR with an agent", symbol: "checklist", usesProject: false),
         Keyword(word: "pane", aliases: ["tab"], summary: "Show or hide a pane: pane transcript|changes|files|decisions", symbol: "rectangle.split.3x1", usesProject: false),
         Keyword(word: "mode", aliases: [], summary: "Switch the list: mode sessions|worktrees|prs", symbol: "sidebar.left", usesProject: false),
-        Keyword(word: "glass", aliases: [], summary: "Turn the glass look on or off (⌘⇧G)", symbol: "drop", usesProject: false),
+        Keyword(word: "glass", aliases: [], summary: "Turn the glass look on or off", symbol: "drop", usesProject: false),
         Keyword(word: "look", aliases: ["theme", "style"], summary: "Switch the look: look hub, or a theme such as glass, graphite, midnight, dusk", symbol: "paintpalette", usesProject: false),
     ]
 
@@ -314,7 +326,8 @@ enum HubPaletteEngine {
     }
 
     private static func keywordRow(_ keyword: Keyword, project: HubPaletteProject?, completion: String?) -> HubPaletteSuggestion {
-        HubPaletteSuggestion(id: "kw-\(keyword.word)", title: project.map { "\($0.name) \(keyword.word)" } ?? keyword.word, subtitle: keyword.summary,
+        HubPaletteSuggestion(id: "kw-\(keyword.word)", title: project.map { "\($0.name) \(keyword.word)" } ?? keyword.word,
+                             subtitle: Thread.isMainThread ? MainActor.assumeIsolated { keyword.liveSummary } : keyword.summary,
                              symbol: keyword.symbol, completion: completion)
     }
 
@@ -362,7 +375,7 @@ struct HubPaletteView: View {
                 .accessibilityHidden(true)
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    Text(verbatim: "⌘K")
+                    Text(verbatim: HubKeymap.label(HubKeymap.commandPalette))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Color.jarvisTeal.opacity(0.85))
                     // Short enough to fit beside the key hint: the long example ran under it ("history re").
@@ -374,7 +387,7 @@ struct HubPaletteView: View {
                         .onSubmit { runActive() }
                         .accessibilityIdentifier("hub-palette-input")
                         .layoutPriority(-1)
-                    Text(verbatim: "tab completes · esc closes")
+                    Text(verbatim: "\(HubKeymap.label(HubKeymap.paletteComplete)) completes · \(HubKeymap.label(HubKeymap.paletteClose)) closes")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.settingsTextMuted)
                         .fixedSize()
@@ -503,6 +516,8 @@ struct HubPaletteView: View {
 }
 
 /// Arrow keys, Tab and Escape while the palette's field has focus (a TextField keeps them otherwise).
+/// The dispatcher leaves a key with no ⌘ alone while a field has the focus, so this monitor runs
+/// `hub.palette.up`, `.down`, `.complete` and `.close` itself.
 private struct HubPaletteKeys: NSViewRepresentable {
     var onUp: () -> Void
     var onDown: () -> Void
@@ -533,13 +548,17 @@ private struct HubPaletteKeys: NSViewRepresentable {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let handlers = self?.handlers else { return event }
-                switch event.keyCode {
-                case 126: handlers.onUp(); return nil
-                case 125: handlers.onDown(); return nil
-                case 48: handlers.onTab(); return nil
-                case 53: handlers.onEscape(); return nil
-                default: return event
+                let consumed = MainActor.assumeIsolated { () -> Bool in
+                    switch HubKeymap.paletteMove(forKeyCode: event.keyCode) {
+                    case HubKeymap.paletteUp: handlers.onUp()
+                    case HubKeymap.paletteDown: handlers.onDown()
+                    case HubKeymap.paletteComplete: handlers.onTab()
+                    case HubKeymap.paletteClose: handlers.onEscape()
+                    default: return false
+                    }
+                    return true
                 }
+                return consumed ? nil : event
             }
         }
 

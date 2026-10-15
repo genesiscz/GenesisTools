@@ -67,7 +67,8 @@ public enum MarkdownViewerApp {
         self.delegate = delegate
         app.delegate = delegate
         app.mainMenu = PerfLog.span("viewer.init.menu") { MarkdownViewerMenu.build(appName: configuration.appName) }
-        app.windowsMenu = app.mainMenu?.items.last?.submenu
+        app.windowsMenu = app.mainMenu.flatMap { MarkdownViewerMenu.submenu("Window", in: $0) }
+        app.helpMenu = app.mainMenu.flatMap { MarkdownViewerMenu.submenu("Help", in: $0) }
         PerfLog.span("viewer.init.controller") { _ = MarkdownDocumentWindowController.shared }
         PerfLog.phase("viewer.init.done")
         app.run()
@@ -188,12 +189,12 @@ public final class MarkdownViewerDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The menu bar of the viewer process. Only what the window needs; the
-/// document shortcuts (⌘S, ⌘F, ⌘E, zoom…) already live on the SwiftUI
-/// buttons inside the window and win over the menu when it is key.
+/// The menu bar of the viewer process. Its keys come from `MarkdownKeymap` (`Keymap.bind`), so a key the user changes
+/// shows here too; the window's own commands take the key press first, so the menu only shows the key and runs on a
+/// click.
 @MainActor
 public enum MarkdownViewerMenu {
-    public static func build(appName: String) -> NSMenu {
+    public static func build(appName: String, keymap: Keymap = MarkdownKeymap.shared) -> NSMenu {
         let menu = NSMenu()
 
         let appMenu = NSMenu()
@@ -220,24 +221,12 @@ public enum MarkdownViewerMenu {
         recent.delegate = MarkdownRecentMenu.shared
         file.addItem(submenu(recent, title: "Open Recent"))
         file.addItem(.separator())
-        file.addItem(
-            withTitle: "Close Tab",
-            action: #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)),
-            keyEquivalent: "w"
-        )
-        let closeWindow = file.addItem(
-            withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"
-        )
-        closeWindow.keyEquivalentModifierMask = [.command, .shift]
+        keyed(file, "Close Tab", #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)), "markdown.tab.close", keymap: keymap)
+        keyed(file, "Close Window", #selector(NSWindow.performClose(_:)), "markdown.window.close", keymap: keymap)
         file.addItem(.separator())
-        let goTo = file.addItem(
-            withTitle: "Go to Location…", action: #selector(MarkdownDocumentWindowController.goToLocation(_:)), keyEquivalent: "g"
-        )
-        goTo.keyEquivalentModifierMask = [.command, .shift]
+        keyed(file, "Go to Location…", #selector(MarkdownDocumentWindowController.goToLocation(_:)), "markdown.file.goto", keymap: keymap)
         file.addItem(.separator())
-        file.addItem(
-            withTitle: "Save", action: #selector(MarkdownDocumentWindowController.saveSelected(_:)), keyEquivalent: "s"
-        )
+        keyed(file, "Save", #selector(MarkdownDocumentWindowController.saveSelected(_:)), "markdown.file.save", keymap: keymap)
         menu.addItem(submenu(file, title: "File"))
 
         let edit = NSMenu(title: "Edit")
@@ -251,12 +240,40 @@ public enum MarkdownViewerMenu {
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         menu.addItem(submenu(edit, title: "Edit"))
 
+        let go = NSMenu(title: "Go")
+        keyed(go, "Back", #selector(MarkdownDocumentWindowController.goBack(_:)), "markdown.history.back", keymap: keymap)
+        keyed(go, "Forward", #selector(MarkdownDocumentWindowController.goForward(_:)), "markdown.history.forward", keymap: keymap)
+        go.addItem(.separator())
+        keyed(go, "Next Tab", #selector(MarkdownDocumentWindowController.nextTab(_:)), "markdown.tab.next", keymap: keymap)
+        keyed(go, "Previous Tab", #selector(MarkdownDocumentWindowController.previousTab(_:)), "markdown.tab.previous", keymap: keymap)
+        keyed(go, "Reopen Closed Tab", #selector(MarkdownDocumentWindowController.reopenClosedTab(_:)), "markdown.tab.reopen", keymap: keymap)
+        menu.addItem(submenu(go, title: "Go"))
+
         let window = NSMenu(title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         menu.addItem(submenu(window, title: "Window"))
 
+        let help = NSMenu(title: "Help")
+        keyed(help, "Keyboard Shortcuts", #selector(MarkdownDocumentWindowController.showKeyboardShortcuts(_:)),
+              "markdown.help.shortcuts", keymap: keymap)
+        menu.addItem(submenu(help, title: "Help"))
+
         return menu
+    }
+
+    /// An item whose key is the command's key in force.
+    @discardableResult
+    private static func keyed(_ menu: NSMenu, _ title: String, _ action: Selector, _ command: String, keymap: Keymap) -> NSMenuItem {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        keymap.bind(item, to: command)
+        return item
+    }
+
+    /// A top-level menu by title. macOS adds its window items to the app's `windowsMenu` and its search field to
+    /// `helpMenu`, so each is named, not taken by position (Help comes after Window).
+    static func submenu(_ title: String, in menu: NSMenu) -> NSMenu? {
+        menu.items.first { $0.submenu?.title == title }?.submenu
     }
 
     private static func submenu(_ menu: NSMenu, title: String) -> NSMenuItem {

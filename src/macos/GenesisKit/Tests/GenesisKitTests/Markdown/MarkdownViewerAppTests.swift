@@ -5,7 +5,8 @@ import XCTest
 @MainActor
 final class MarkdownViewerAppTests: XCTestCase {
     func testTheViewerMenuCarriesCloseTabOnCommandWAndCloseWindowOnShiftCommandW() {
-        let menu = MarkdownViewerMenu.build(appName: "Viewer")
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let menu = MarkdownViewerMenu.build(appName: "Viewer", keymap: keys)
         let file = menu.items.first { $0.title == "File" }?.submenu
         let closeTab = file?.items.first { $0.title == "Close Tab" }
         XCTAssertEqual(closeTab?.keyEquivalent, "w")
