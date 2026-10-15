@@ -76,6 +76,26 @@ function spawnedPrograms(run: () => void): string[] {
     return spawnedCommands(run).map((argv) => argv[0] ?? "undefined");
 }
 
+/**
+ * Waits until a Linux child has run its exec. The spawn forks first, and until the exec the child shows this runner's
+ * executable and name in `/proc`, so a test that reads either would describe the runner. CI failed once on each of two
+ * such tests. No wait elsewhere: macOS starts children with posix_spawn, which has no such window.
+ */
+async function waitForExec(pid: number): Promise<void> {
+    if (process.platform !== "linux") {
+        return;
+    }
+
+    const runner = linux.readProcExe(process.pid);
+    const deadline = Date.now() + 5_000;
+
+    while (linux.readProcExe(pid) === runner && Date.now() < deadline) {
+        await Bun.sleep(10);
+    }
+
+    expect(linux.readProcExe(pid)).not.toBe(runner);
+}
+
 /** Like {@link spawnedPrograms}, with each program's arguments. */
 function spawnedCommands(run: () => void): string[][] {
     const spawn = spyOn(Bun, "spawn");
@@ -747,18 +767,7 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             });
 
             try {
-                if (!darwin) {
-                    // Linux forks and then execs: until the exec, /proc/<pid>/exe is this test's own executable, and the
-                    // inode read below would be the runner's.
-                    const deadline = Date.now() + 5_000;
-
-                    while (linux.readProcExe(child.pid) !== exe && Date.now() < deadline) {
-                        await Bun.sleep(10);
-                    }
-
-                    expect(linux.readProcExe(child.pid)).toBe(exe);
-                }
-
+                await waitForExec(child.pid);
                 const inode = statSync(exe).ino;
                 renameSync(exe, join(dir, "moved-name"));
                 expect(executableInode(child.pid)).toBe(inode);
@@ -1004,6 +1013,7 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             const child = Bun.spawn([link, "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
 
             try {
+                await waitForExec(child.pid);
                 const listed = listProcesses({ commands: false }).find((entry) => entry.pid === child.pid);
                 // The kernel names it after the link, `ps` prints that, and the command line holds it.
                 expect(listed?.name).toBe("sle");
@@ -1025,6 +1035,7 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             const child = Bun.spawn([exe, "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
 
             try {
+                await waitForExec(child.pid);
                 // An upgrade renames the new file over the old one.
                 writeFileSync(join(dir, "replacement"), "");
                 renameSync(join(dir, "replacement"), exe);
@@ -1190,6 +1201,7 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         });
 
         try {
+            await waitForExec(child.pid);
             // The kernel keeps 16 bytes on macOS and 15 on Linux; neither cut is the process's name.
             expect(findProcesses({ name: "genesis-long-pro" }).map((entry) => entry.pid)).not.toContain(child.pid);
             expect(findProcesses({ name: "genesis-long-pr" }).map((entry) => entry.pid)).not.toContain(child.pid);
