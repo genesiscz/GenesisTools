@@ -12,9 +12,10 @@
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 
 const LOCK = join(tmpdir(), "genesis-swift-slot.lock");
-const SWIFT = /\/(swift-build|swift-test|swift-package|swift-frontend|xctest)$/;
+const SWIFT = new Set(["swift-build", "swift-test", "swift-package", "swift-frontend", "xctest"]);
 
 const args = process.argv.slice(2);
 // `bun swift-slot.ts -- swift …` reaches here without the `--`: bun takes a separator that directly follows the
@@ -56,12 +57,9 @@ function tryLock(): boolean {
     }
 }
 
+/** A Swift build of any session, read from the kernel's process table (the process layer, no `ps`). */
 function swiftRunning(): boolean {
-    const ps = Bun.spawnSync(["ps", "-axo", "comm="]);
-    return ps.stdout
-        .toString()
-        .split("\n")
-        .some((name) => SWIFT.test(name.trim()));
+    return listProcesses().some((entry) => SWIFT.has(entry.name));
 }
 
 function release(): void {
