@@ -28,6 +28,15 @@ import { describeShippedTemplates, resolveTemplateDir } from "./lib/templates";
 
 const DEFAULT_PORT = DASHBOARDS.artifact.port;
 
+/** `init --starter <name>`: the shipped starter files under runtime/starters. */
+const STARTERS = { dashboard: "dashboard.tsx", report: "report.html", roadmap: "roadmap.tsx" } as const;
+type StarterName = keyof typeof STARTERS;
+const STARTER_NAMES: StarterName[] = ["dashboard", "report", "roadmap"];
+
+function isStarterName(value: string): value is StarterName {
+    return Object.hasOwn(STARTERS, value);
+}
+
 const program = new Command();
 
 program
@@ -305,7 +314,8 @@ program
         "Scaffold a starter artifact at the given path — any <name>.html (report shape, with data.json) or <name>.tsx (kit dashboard shape)"
     )
     .argument("<file>", "target file to create (any name ending .html or .tsx)")
-    .action(async (file: string) => {
+    .option("--starter [name]", `starter page: ${STARTER_NAMES.join(", ")} (default: by file extension)`)
+    .action(async (file: string, opts: { starter?: string | boolean }) => {
         const target = resolve(file);
 
         if (existsSync(target)) {
@@ -316,10 +326,37 @@ program
         }
 
         const ext = extname(target);
-        const starter = ext === ".tsx" ? "dashboard.tsx" : ext === ".html" ? "report.html" : null;
+        const named = typeof opts.starter === "string" ? opts.starter : undefined;
+
+        if (opts.starter !== undefined && (!named || !isStarterName(named))) {
+            out.log.error(
+                `--starter ${named ? `does not accept "${named}"` : "requires a value"}. Possible: ${STARTER_NAMES.join(", ")}. Example: ${toolCommand("artifact init")} plan.tsx --starter roadmap`
+            );
+            process.exitCode = 1;
+
+            return;
+        }
+
+        const starter =
+            named && isStarterName(named)
+                ? STARTERS[named]
+                : ext === ".tsx"
+                  ? "dashboard.tsx"
+                  : ext === ".html"
+                    ? "report.html"
+                    : null;
 
         if (!starter) {
             out.log.error(`init supports .html and .tsx targets (got "${ext}").`);
+            process.exitCode = 1;
+
+            return;
+        }
+
+        if (extname(starter) !== ext) {
+            out.log.error(
+                `The ${named} starter is a ${extname(starter)} page; name the target <name>${extname(starter)}.`
+            );
             process.exitCode = 1;
 
             return;
