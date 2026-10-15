@@ -195,6 +195,13 @@ function siblingNamed({ ownDir, since, actor }: { ownDir: string; since: number;
 
 /** More files than this in one root, and renames are not looked for: two git spawns cover them all. */
 const RENAME_SCAN_LIMIT = 400;
+/**
+ * Files past `maxFiles` whose patch still goes into the full diff, as a multiple of `maxFiles`
+ * (45 at the default 15). Each costs one `git diff` process in the post hook (7.2 ms p50, 11.3 ms
+ * p90 over 60 runs, 2026-10-15), so a `sed -i` over 200 files waited about 1.3 s more. A file past
+ * this count is named in the full diff, without its patch.
+ */
+const OVERFLOW_PATCHES_PER_FILE = 3;
 
 /**
  * Files moved without a change (`git mv`, `mv`): a deleted path whose blob at `base` equals a
@@ -1026,6 +1033,7 @@ export function runDiffPost({
     // before that file is written, so the patch is taken while the before-state is still on disk.
     const notShown: string[] = [];
     const overflow: FullDiffPart[] = [];
+    const overflowRoom = () => overflow.length < diff.maxFiles * OVERFLOW_PATCHES_PER_FILE;
     const uncapturedFiles: Array<{ path: string; root: string }> = [];
     const touch = (path: string, kind: Attribution) =>
         touches.push({ session: actorOf(payload), start: since, end: attribution.now, kind, path });
@@ -1142,10 +1150,13 @@ export function runDiffPost({
 
             if (full()) {
                 notShown.push(file.path);
-                const patch = patchFor({ file, before, config: diff, base });
 
-                if (patch.trim().length > 0) {
-                    overflow.push({ label: file.path, patch });
+                if (overflowRoom()) {
+                    const patch = patchFor({ file, before, config: diff, base });
+
+                    if (patch.trim().length > 0) {
+                        overflow.push({ label: file.path, patch });
+                    }
                 }
 
                 continue;
@@ -1270,6 +1281,14 @@ export function runDiffPost({
             untracked: change.before === null,
             deleted: change.deleted,
         };
+        if (full() && !overflowRoom()) {
+            if (!notShown.includes(change.path)) {
+                notShown.push(change.path);
+            }
+
+            continue;
+        }
+
         // Always `--no-index`, in both directions: a named path may live outside every
         // repository, so `git diff HEAD` is not available to it. A deletion is the copy
         // against `/dev/null`, which is what gives the removed lines.

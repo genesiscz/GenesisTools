@@ -3632,6 +3632,43 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         }
     });
 
+    it("stops taking overflow patches at three times maxFiles, and names the files past that", () => {
+        const names = ["a", "b", "c", "d", "e"].map((letter) => `bound-${letter}.ts`);
+        const current = begin(
+            { command: `perl -pi -e 1 ${names.join(" ")}`, toolUseId: `call-overflow-bound-${calls}` },
+            quiet
+        );
+
+        for (const name of names) {
+            writeFileSync(join(repo, name), `body of ${name}\n`);
+        }
+
+        const decision = runDiffPost({
+            payload: current,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...quiet, maxFiles: 1, fullDiff: "path" },
+            },
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            const text = readFileSync(path, "utf8");
+            const patched = names.filter((name) => text.includes(`+body of ${name}`));
+
+            expect(decision.files).toHaveLength(1);
+            // One rendered block plus three overflow patches; the fifth file is named only.
+            expect(patched).toHaveLength(4);
+            expect(text).toContain("## Changed, past the file cap");
+        } finally {
+            for (const name of names) {
+                rmSync(join(repo, name), { force: true });
+            }
+
+            rmSync(path, { force: true });
+        }
+    });
+
     it("links the full diff when the budget cuts lines, and the file holds every line", () => {
         const long = Array.from({ length: 80 }, (_, index) => `line ${index}`).join("\n");
         const current = begin({ command: "perl -pi -e 1 big.ts", toolUseId: `call-full-${calls}` }, quiet);
