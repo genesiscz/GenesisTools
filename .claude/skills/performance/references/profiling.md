@@ -112,3 +112,24 @@ Research notes: `<notes vault>/Dev/Bun/2026-10-12-BunCpuProfiling/`.
 - Price parts with an environment switch, not with rebuilds: one binary reads `EXP_*` flags that turn single
   modifiers off, so every variant runs interleaved from the same build (2026-10-15: four row modifiers priced in
   12 runs, one build). Remove the switch before committing.
+
+## 8. The SwiftUI instrument from a script (2026-10-15)
+
+- Record with Instruments launching the app, so it has full access:
+  `xcrun xctrace record --template SwiftUI --time-limit 40s --output out.trace --env KEY=VALUE --launch -- <binary>`.
+  Drive the input (for example `tools control scroll`) while it records. `--attach <pid>` also works.
+- After "ending recording", xctrace keeps writing the trace for a minute or more: a 52 KB bundle that grows to 180 MB.
+  Wait until no `xctrace record` process is left, or the export fails with "Document Missing Template Error".
+- `xcrun xctrace export --input out.trace --toc` lists the tables (`swiftui-updates`, `swiftui-causes`,
+  `hitches`, `time-profile`, ...). Export one with
+  `--xpath '/trace-toc/run[@number="1"]/data/table[@schema="swiftui-updates"]'`. It can be 400 MB of XML: stream it
+  (`xml.etree.ElementTree.iterparse`), and resolve `ref="N"` attributes to the element that carried `id="N"` earlier.
+- Each update row has start, duration, view name, description, view hierarchy and root causes. Group by view and by
+  root cause inside the time window of the input.
+- What it showed on the markdown viewer's file tree:
+  - Every view-body run belonged to a row that came into view; nothing outside the tree re-rendered during the scroll.
+  - About a fifth of the SwiftUI update time was position bookkeeping: every hosted cell moves in the window on every
+    frame, so its root transform, its hover regions (`.onHover`, a hover button style) and its focus region (a
+    `Button`) recomputed per cell per frame. Fewer hover and focus regions per row means less of it.
+  - "External: Time" as a root cause on a scrolling list is the frame clock, not a stray animation: turning
+    animations off on cell reuse changed neither the count nor the CPU.
