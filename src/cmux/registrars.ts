@@ -18,5 +18,4 @@ export const CMUX_REGISTRARS: LazyRegistrar[] = [
     { names: ["agents"], load: async () => (await import("./commands/agents")).registerAgentsCommand },
     { names: ["rescue"], load: async () => (await import("./commands/rescue")).registerRescueCommand },
     { names: ["tree"], load: async () => (await import("./commands/tree")).registerTreeCommand },
-    { names: ["journal"], load: async () => (await import("./commands/journal")).registerJournalCommand },
 ];

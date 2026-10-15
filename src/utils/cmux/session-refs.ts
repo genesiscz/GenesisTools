@@ -71,8 +71,8 @@ export function appendSessionCmuxRef(
 }
 
 /**
- * Entries older than this are treated as gone — the pane is long closed. `tools cmux journal compact` drops the
- * same lines, so a compacted journal answers every reader as before.
+ * Entries older than this are treated as gone — the pane is long closed. The journal itself keeps them; the
+ * readers stop reading the file there (`readJournalSince`).
  */
 export const CMUX_REFS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
