@@ -37,7 +37,9 @@ public final class KeymapDispatcher {
     private var monitor: Any?
     private var suspensions = 0
 
-    init() {}
+    /// A dispatcher of its own, with no key monitor until something registers. Apps use `shared`; a test in another
+    /// module makes one so its registrations cannot meet the app's.
+    public init() {}
 
     /// Runs `perform` when the command's key is pressed in `window` (nil: in any window of the app). The newest
     /// registration for a key wins; one whose `isEnabled` says false lets the press go to the next. Hold the returned

@@ -150,8 +150,7 @@ final class HubKeymapTests: XCTestCase {
         let dispatcher = KeymapDispatcher()
         let held = HubKeymap.registerWindowCommands(model: model, window: window, keymap: keys, dispatcher: dispatcher)
         defer { held.forEach { $0.cancel() } }
-        let stroke = KeyStroke(keyCode: 1, character: "s", modifiers: [.option, .command])
-        XCTAssertTrue(dispatcher.handle(stroke, in: window, typing: false))
+        XCTAssertTrue(press(dispatcher, window, 1, "s", [.option, .command]))
         XCTAssertEqual(model.paletteRequest, "session ")
     }
 
@@ -166,12 +165,11 @@ final class HubKeymapTests: XCTestCase {
         let list = dispatcher.register("hub.view.reload", in: hub, window: window) { ran.append("list") }
         let transcript = dispatcher.register("sessions.reload", in: sessions, window: window) { ran.append("transcript") }
         defer { list.cancel() }
-        let stroke = KeyStroke(keyCode: 15, character: "r", modifiers: .command)
-        XCTAssertTrue(dispatcher.handle(stroke, in: window, typing: false))
+        XCTAssertTrue(press(dispatcher, window, 15, "r", .command))
         XCTAssertEqual(ran, ["transcript"])
         transcript.cancel()
         ran = []
-        XCTAssertTrue(dispatcher.handle(stroke, in: window, typing: false))
+        XCTAssertTrue(press(dispatcher, window, 15, "r", .command))
         XCTAssertEqual(ran, ["list"])
     }
 
@@ -240,14 +238,12 @@ final class HubKeymapTests: XCTestCase {
         let held = HubKeymap.registerWindowCommands(model: model, window: window, keymap: keys, dispatcher: dispatcher)
         defer { held.forEach { $0.cancel() } }
 
-        let sharedChord = KeyStroke(keyCode: 5, character: "g", modifiers: [.shift, .command])
-        XCTAssertTrue(dispatcher.handle(sharedChord, in: window, typing: false))
+        XCTAssertTrue(press(dispatcher, window, 5, "g", [.shift, .command]))
         XCTAssertEqual(stepped, 1, "Shift-Command G is Previous Match, so Glass steps the open find bar")
 
         keys.setChords([.character("g", [.option, .command])], for: HubKeymap.glass)
         stepped = 0
-        let glassOnly = KeyStroke(keyCode: 5, character: "g", modifiers: [.option, .command])
-        XCTAssertTrue(dispatcher.handle(glassOnly, in: window, typing: false))
+        XCTAssertTrue(press(dispatcher, window, 5, "g", [.option, .command]))
         XCTAssertEqual(stepped, 0, "Option-Command G is only Glass, so it does not step the find bar")
     }
 
@@ -260,10 +256,18 @@ final class HubKeymapTests: XCTestCase {
     }
 
     private func press(_ window: NSWindow, _ code: UInt16, _ character: String) -> Bool {
+        press(.shared, window, code, character, .command)
+    }
+
+    /// The public event handler. `typing` follows the window's first responder, which these windows leave empty.
+    private func press(
+        _ dispatcher: KeymapDispatcher, _ window: NSWindow, _ code: UInt16, _ character: String,
+        _ flags: NSEvent.ModifierFlags
+    ) -> Bool {
         let event = NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+            with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber,
             context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: code)
-        return KeymapDispatcher.shared.handle(event!)
+        return dispatcher.handle(event!)
     }
 }
 
