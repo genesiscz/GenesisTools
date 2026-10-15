@@ -111,6 +111,12 @@
   worker started its build beside it. Match the executable path, which the waiting shell never has:
   `while ps -axo comm= | grep -Eq '/(swift-build|swift-test|swift-package|swift-frontend|xctest)$'; do sleep 20; done`.
   `swift-frontend` also catches an Xcode build of another session, which uses the same CPU.
+  Two waiters that poll the process list can still start together in the same second (two judge runs on
+  2026-10-15). Run the command through `bun .claude/skills/babysit/scripts/swift-slot.ts -- swift test …`: it takes
+  an O_EXCL lock file, takes over a lock whose pid is dead, then waits for other sessions' Swift processes.
+- **Display-driven tests fail while the screen is locked.** After the display sleeps or the screen locks, tests that
+  wait for a display frame (edge panels, transcript scroll) fail with no code change, and `screencapture -l` cannot
+  read a window (2026-10-15 07:05). Rerun them after the screen wakes before you call a change broken.
 
 ## Animated panel verification
 
