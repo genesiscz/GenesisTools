@@ -157,10 +157,16 @@ final class MarkdownOverlaySlot: NSView {
         place()
     }
 
-    /// Inside the window's content view the overlay takes the clicks where it lies; the rest of the slot is the root's.
+    /// Inside the window's content view the overlay takes the clicks where it lies (it is above the root); the rest of
+    /// the slot is the slot's own. The slot has no menu, so AppKit hands a right-click there up its superviews to the
+    /// SwiftUI host, which opens the sidebar's context menu, the same way a click under the table's rows reached it
+    /// when the table was inside the root. Returning nil instead gave SwiftUI a point over its placeholder for this
+    /// view, and it showed no menu (check app, 2026-10-15).
     override func hitTest(_ point: NSPoint) -> NSView? {
-        overlay.superview === self ? super.hitTest(point) : nil
+        overlay.superview === self ? super.hitTest(point) : (frame.contains(point) ? self : nil)
     }
+
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
 
     /// The content height changed (rows came or went): the overlay is laid again.
     func contentChanged() {

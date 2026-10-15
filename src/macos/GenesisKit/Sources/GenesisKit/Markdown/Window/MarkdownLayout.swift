@@ -94,8 +94,6 @@ enum MarkdownSidebarWidth {
     static let standard: Double = 230
     /// The git sidebar starts wider: a file row carries its folder and its age.
     static let gitStandard: Double = 280
-    /// The outline sidebar's fixed width.
-    static let outline: Double = 220
     static let minimum: Double = 160
     static let maximum: Double = 560
     /// One arrow-key or VoiceOver step.
@@ -104,38 +102,6 @@ enum MarkdownSidebarWidth {
     static func clamped(_ width: Double, fallback: Double = standard) -> Double {
         guard width > 0 else { return fallback }
         return min(max(width, minimum), maximum)
-    }
-}
-
-/// The narrowest window content: the toolbar's row, or the sidebars' fixed widths with their dividers and a sliver of
-/// page, whichever is wider. The hosting view imposed this by itself until `contentView(model:)` turned its sizing off;
-/// `MarkdownWindowPublishCostTests` compares it with that measurement (603 points, 743 with all three sidebars at their
-/// standard widths, 2026-10-14).
-enum MarkdownWindowMinimum {
-    static let toolbarRow: Double = 603
-    static let pane: Double = 10
-    static let height: Double = 400
-
-    @MainActor
-    static func size(for model: MarkdownDocumentsModel) -> NSSize {
-        var sidebars = 0.0
-        if model.showFiles { sidebars += model.filesWidth + 1 }
-        if model.showOutline { sidebars += MarkdownSidebarWidth.outline + 1 }
-        if model.showGit && model.configuration.git { sidebars += model.gitWidth + 1 }
-        return NSSize(width: max(toolbarRow, sidebars + pane), height: height)
-    }
-
-    /// Sets the minimum for the sidebars shown. A window narrower than that (a sidebar just opened) grows to it, as it
-    /// did when the content's own constraints held it.
-    @MainActor
-    static func apply(to window: NSWindow, model: MarkdownDocumentsModel) {
-        let minimum = size(for: model)
-        guard window.contentMinSize != minimum else { return }
-        window.contentMinSize = minimum
-        guard window.frame.width < minimum.width else { return }
-        var frame = window.frame
-        frame.size.width = minimum.width
-        window.setFrame(frame, display: true)
     }
 }
 

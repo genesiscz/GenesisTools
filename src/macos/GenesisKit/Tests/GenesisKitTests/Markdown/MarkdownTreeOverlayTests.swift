@@ -48,6 +48,8 @@ final class MarkdownTreeOverlayTests: XCTestCase {
         let blank = NSPoint(x: scroll.frame.midX, y: scroll.frame.minY - 40)
         let hit = try XCTUnwrap(content.hitTest(blank), "something under the rows")
         XCTAssertTrue(hit.isDescendant(of: content.root), "the space under the rows is the root's, not the table's")
+        // The slot takes it and has no menu, so AppKit walks up to the SwiftUI host, which opens the sidebar menu.
+        XCTAssertTrue(hit is MarkdownOverlaySlot, "hit: \(type(of: hit))")
     }
 
     private static func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
