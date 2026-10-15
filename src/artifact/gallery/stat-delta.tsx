@@ -2,8 +2,10 @@ import { StatGrid } from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Data",
     title: "KPI cards with a delta",
     summary: "StatGrid with a change against a baseline, an edge accent and auto-fit columns.",
+    components: ["StatGrid"],
 };
 
 export default function StatDeltaPage() {

@@ -3,8 +3,10 @@ import { useState } from "react";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Forms",
     title: "Form controls",
     summary: "Button, Field and the inputs that go in it. Dates are YYYY-MM-DD strings, numbers keep a draft.",
+    components: ["Button", "Field", "TextInput", "NumberInput", "DateInput", "Select", "Textarea", "FileInput"],
 };
 
 export default function FormsPage() {

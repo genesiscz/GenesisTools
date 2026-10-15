@@ -3,11 +3,7 @@
 import { Hero, Note, Page, Section } from "@artifact/kit";
 import { createContext, type ReactNode, useContext } from "react";
 
-/** What index.tsx reads from a page module besides its default export. */
-export interface GalleryMeta {
-    title: string;
-    summary?: string;
-}
+export type { GalleryMeta } from "./_entries";
 
 /** True inside index.tsx, which already draws the page chrome. */
 export const InGallery = createContext(false);

@@ -2,9 +2,11 @@ import { CapacityGrid, SERIES_COLOR } from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Planning",
     title: "Capacity grid",
     summary:
         "Load against capacity per role and sprint. Over-capacity cells get an inset outline and a hidden sentence.",
+    components: ["CapacityGrid"],
 };
 
 const COLS = Array.from({ length: 8 }, (_, i) => ({ label: `S${i + 1}`, title: `Sprint ${i + 1}` }));

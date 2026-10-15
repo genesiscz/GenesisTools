@@ -13,8 +13,10 @@ import { useState } from "react";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Planning",
     title: "Gantt",
     summary: "Sprint axis, tinted lanes, baseline ghosts with a shift label, milestones, a today line, drag editing.",
+    components: ["Gantt", "GanttTable"],
 };
 
 const AXIS = { start: "2026-09-14", end: "2027-03-28" };

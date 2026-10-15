@@ -2,9 +2,11 @@ import { ChartJs, Mermaid, SERIES_COLOR, ThemeToggle, useTheme } from "@artifact
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Layout",
     title: "Light and dark",
     summary:
         "The auto template follows the system. ThemeToggle is the opt-in override; charts and diagrams recolour on a flip.",
+    components: ["ThemeToggle"],
 };
 
 const MONTHS = ["Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];

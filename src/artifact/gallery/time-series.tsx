@@ -4,7 +4,9 @@ import { Callout, TimeSeries, type TsMarker, type TsSeries, type TsSpan } from "
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Charts",
     title: "Time series",
+    components: ["TimeSeries"],
     summary:
         "Canvas chart for dense time data: zoom, pan, brush, markers, Gantt-like span lanes and synced charts. One focused chart per question, plus an explorer.",
 };

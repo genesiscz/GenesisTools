@@ -3,8 +3,10 @@ import { useState } from "react";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Forms",
     title: "Wizard",
     summary: "A multi-step setup: validation blocks Next, optional steps offer Skip, typed values survive Back.",
+    components: ["Wizard"],
 };
 
 export default function WizardPage() {

@@ -3,8 +3,10 @@ import { useState } from "react";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Interactive",
     title: "Filter chips",
     summary: "Toggle chips with aria-pressed, a colour swatch, counts, and All and None.",
+    components: ["FilterChips"],
 };
 
 const LANES = ["Discovery", "Platform", "Client apps", "Data", "Quality", "Operations", "Design", "Support"];

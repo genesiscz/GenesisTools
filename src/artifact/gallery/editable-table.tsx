@@ -3,8 +3,10 @@ import { useState } from "react";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Data",
     title: "Editable table",
     summary: "Input cells with drafts, add and remove, validation, totals and row moves.",
+    components: ["EditableTable"],
 };
 
 const DAY = 86_400_000;

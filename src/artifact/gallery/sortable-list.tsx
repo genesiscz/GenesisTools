@@ -3,8 +3,10 @@ import { useState } from "react";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Interactive",
     title: "Sortable list",
     summary: "Reorder by dragging the grip or with the keyboard. Plain pointer events, no drag library.",
+    components: ["SortableList"],
 };
 
 const PRIORITIES = ["Checkout flow", "Search filters", "Saved carts", "Order history", "Gift cards"];

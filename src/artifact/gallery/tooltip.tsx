@@ -1,9 +1,11 @@
-import { Button, Tooltip, useTooltip } from "@artifact/kit";
+import { Button, Tooltip, TooltipCard, useTooltip } from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Interactive",
     title: "Tooltip",
     summary: "One shared dark hover card: title, subtitle, key and value rows, sections and a note.",
+    components: ["Tooltip", "TooltipCard"],
 };
 
 function Cell({ day, load }: { day: number; load: number }) {
@@ -59,6 +61,27 @@ export default function TooltipPage() {
                 >
                     <Button>Hover or focus me</Button>
                 </Tooltip>
+            </Demo>
+            <Demo title="TooltipCard on its own" note="the card body, for a legend or a pinned detail">
+                <div
+                    className="max-w-[400px] rounded-card border px-3 py-2.5 text-[12.5px] leading-snug"
+                    style={{
+                        background: "var(--tooltip-bg)",
+                        color: "var(--tooltip-text)",
+                        borderColor: "var(--tooltip-border)",
+                    }}
+                >
+                    <TooltipCard
+                        content={{
+                            title: "Sprint 4",
+                            rows: [
+                                { k: "Planned", v: "38 d" },
+                                { k: "Done", v: "41 d", tone: "ok" },
+                            ],
+                            note: "Pinned copy of the hover card.",
+                        }}
+                    />
+                </div>
             </Demo>
             <Demo title="Edge case: 120 targets, one card" note="useTooltip spreads handlers; the card node is shared">
                 <div className="flex max-w-xl flex-wrap gap-1">

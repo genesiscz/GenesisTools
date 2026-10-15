@@ -2,8 +2,10 @@ import { ChangeLedger, diffFields, type FieldChange, type LedgerEntry } from "@a
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
+    family: "Data",
     title: "Change ledger",
     summary: "A history of sync runs, each opening to its added, removed and changed fields.",
+    components: ["ChangeLedger"],
 };
 
 const BULK: FieldChange[] = Array.from({ length: 34 }, (_, i) => ({
