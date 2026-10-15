@@ -154,8 +154,10 @@ export interface LinuxProcess {
     pgid: number;
     uid: number | null;
     comm: string;
-    /** The argv; empty for a kernel thread or a zombie. */
+    /** The argv; empty for a kernel thread or a zombie, and when `argvUnreadable`. */
     argv: string[];
+    /** Set when the `cmdline` read failed: an unknown command line, not an empty one. */
+    argvUnreadable?: boolean;
     state: string;
     tty: string | null;
     startMs: number | null;
@@ -183,7 +185,7 @@ export function readProcProcess(
     }
 
     const status = readText(join(dir, "status")) ?? "";
-    const cmdline = withArgv ? (readText(join(dir, "cmdline")) ?? "") : "";
+    const cmdline = withArgv ? readText(join(dir, "cmdline")) : "";
 
     return {
         pid,
@@ -191,7 +193,8 @@ export function readProcProcess(
         pgid: stat.pgid,
         uid: parseProcUid(status),
         comm: stat.comm,
-        argv: parseNulList(cmdline),
+        argv: parseNulList(cmdline ?? ""),
+        ...(cmdline === null ? { argvUnreadable: true } : {}),
         state: stat.state,
         tty: ttyName(stat.ttyNr),
         startMs: bootMs === null ? null : bootMs + (stat.startTicks * 1000) / LINUX_USER_HZ,

@@ -123,7 +123,12 @@ function fromDarwinRow(row: ProcessTableRow, command: string | null): ProcessEnt
 }
 
 /** `ps` prints a kernel thread or a process with an empty argv as `[comm]`. */
-function linuxCommand(process: LinuxProcess): string {
+/** The command line `ps` prints; `[comm]` for a kernel thread or zombie, null when the read failed (unknown). */
+function linuxCommand(process: LinuxProcess): string | null {
+    if (process.argvUnreadable) {
+        return null;
+    }
+
     return process.argv.length > 0 ? process.argv.join(" ") : `[${process.comm}]`;
 }
 
@@ -632,6 +637,10 @@ export function readCpuPercents(
     const percents = new Map<number, number>();
     const now = Date.now();
 
+    if (pids.length === 0) {
+        return percents;
+    }
+
     switch (processPlatform()) {
         case "linux":
             for (const pid of pids) {
@@ -707,6 +716,11 @@ export function readProcessUsages(
     options: Pick<ListProcessesOptions, "otherUsers"> = {}
 ): Map<number, ProcessUsageEntry> {
     const usages = new Map<number, ProcessUsageEntry>();
+
+    // No process asked for: nothing to read, and on Windows every read is a PowerShell start.
+    if (pids.length === 0) {
+        return usages;
+    }
 
     switch (processPlatform()) {
         case "linux":

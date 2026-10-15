@@ -7,6 +7,7 @@ import {
     mkdtempSync,
     realpathSync,
     renameSync,
+    rmSync,
     statSync,
     symlinkSync,
     writeFileSync,
@@ -61,6 +62,7 @@ import {
     parseLsofSockets,
     scanSockets,
 } from "./sockets";
+import * as cim from "./windows-cim";
 import { parseCimDate, parseCimProcessJson, parseNetstatTcp } from "./windows-cim";
 
 const PROCESS_TOOLS = /(^|\/)(ps|lsof|pgrep)$/;
@@ -354,6 +356,25 @@ describe("linux /proc parsers", () => {
             symlinkSync("socket:[777]", join(pid, "fd", "4"));
             mkdirSync(join(root, "43", "fd"), { recursive: true });
             symlinkSync("socket:[777]", join(root, "43", "fd", "3"));
+        });
+
+        test("a cmdline that cannot be read is flagged, not turned into an empty command line", () => {
+            const bad = join(root, "44");
+            mkdirSync(join(bad, "cmdline"), { recursive: true });
+            writeFileSync(join(bad, "stat"), "44 (node) S 7 44 44 0 44 0 0 0 0 0 1 1 0 0 20 0 1 0 500 0 0 1");
+            writeFileSync(join(bad, "status"), fixtureStatus);
+
+            try {
+                const rows = listProcProcesses(root);
+                expect(rows.find((row) => row.pid === 44)).toMatchObject({ argv: [], argvUnreadable: true });
+                expect(rows.find((row) => row.pid === 42)?.argvUnreadable).toBeUndefined();
+                // Asked for none, a missing command line is not a failed read.
+                expect(listProcProcesses(root, { argv: false }).find((row) => row.pid === 44)?.argvUnreadable).toBe(
+                    undefined
+                );
+            } finally {
+                rmSync(bad, { recursive: true, force: true });
+            }
         });
 
         test("a table without command lines never opens a cmdline file", () => {
@@ -1186,6 +1207,54 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         }
     });
 });
+test("asking for the usage or CPU of no process starts no Windows CIM query", () => {
+    const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+    const query = spyOn(cim, "listCimProcesses").mockReturnValue([]);
+
+    try {
+        expect(readProcessUsages([]).size).toBe(0);
+        expect(readCpuPercents([]).size).toBe(0);
+        expect(query.mock.calls.length).toBe(0);
+        // A real request still asks once.
+        readProcessUsages([1]);
+        expect(query.mock.calls.length).toBe(1);
+    } finally {
+        platform.mockRestore();
+        query.mockRestore();
+    }
+});
+
+test("a Linux process whose cmdline cannot be read has no command, not [comm]", () => {
+    const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+    const row = {
+        pid: 51002,
+        ppid: 1,
+        pgid: 51002,
+        uid: 1000,
+        comm: "node",
+        argv: [],
+        state: "S",
+        tty: null,
+        startMs: 1000,
+        cpuTimeMs: 0,
+        rssBytes: 1,
+        threads: 1,
+    };
+    const list = spyOn(linux, "listProcProcesses").mockReturnValue([
+        row,
+        { ...row, pid: 51003, argvUnreadable: true },
+        { ...row, pid: 51004, state: "Z" },
+    ]);
+
+    try {
+        // An empty command line that was read (a kernel thread, a zombie) is `[comm]`; a failed read is unknown.
+        expect(listProcesses().map((entry) => entry.command)).toEqual(["[node]", null, "[node]"]);
+    } finally {
+        platform.mockRestore();
+        list.mockRestore();
+    }
+});
+
 test("commands: false asks the Linux reader to skip every cmdline, and commands: true does not", () => {
     const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
     const list = spyOn(linux, "listProcProcesses").mockReturnValue([]);

@@ -1,6 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as linux from "@genesiscz/utils/process/linux-proc";
+import * as os from "@genesiscz/utils/process/os";
 import {
     joinTmuxPanes,
     liveAgentSurfaces,
@@ -11,6 +13,7 @@ import {
     ttyProcessesShowAgent,
     ttyRunsAgent,
 } from "./session-adopt";
+import { adoptedAgentRunning } from "./session-close-live";
 
 /** An invented surface UUID per ref, so a journal entry and the tree agree unless a test says otherwise. */
 function uuidOf(ref: string): string {
@@ -270,4 +273,37 @@ test("only this user's processes on the tty decide; root's withheld login does n
     expect(ttyProcessesShowAgent([login, shell, { uid: 501, command: null, zombie: true }], "codex", 501)).toBe(false);
     // One of this user's processes unreadable: unknown, so running.
     expect(ttyProcessesShowAgent([shell, { uid: 501, command: null, zombie: false }], "codex", 501)).toBe(true);
+});
+
+test("a Linux process whose command line cannot be read keeps the agent counted as running", async () => {
+    const own = process.getuid?.() ?? 1000;
+    const row = {
+        pid: 51001,
+        ppid: 1,
+        pgid: 51001,
+        uid: own,
+        comm: "bash",
+        argv: [],
+        state: "S",
+        tty: "pts/9",
+        startMs: 1000,
+        cpuTimeMs: 0,
+        rssBytes: 1,
+        threads: 1,
+    };
+    const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+    const list = spyOn(linux, "listProcProcesses").mockReturnValue([row]);
+    // The listing read it, then the cmdline read failed (the file is gone or unreadable): not an empty command line.
+    const read = spyOn(linux, "readProcProcess").mockReturnValue({ ...row, argvUnreadable: true });
+
+    try {
+        expect(await adoptedAgentRunning({ agent: "codex", tty: "/dev/pts/9" })).toBe(true);
+        // The same process with a command line that was read, and is not the agent, is not running it.
+        read.mockReturnValue({ ...row, argv: ["bash", "-l"] });
+        expect(await adoptedAgentRunning({ agent: "codex", tty: "/dev/pts/9" })).toBe(false);
+    } finally {
+        platform.mockRestore();
+        list.mockRestore();
+        read.mockRestore();
+    }
 });
