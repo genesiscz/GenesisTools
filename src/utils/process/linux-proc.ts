@@ -164,8 +164,16 @@ export interface LinuxProcess {
     threads: number;
 }
 
-/** One process from `stat`, `status` and `cmdline`; null when its directory is gone. */
-export function readProcProcess(pid: number, root = PROC_ROOT, bootMs = bootTimeMs(root)): LinuxProcess | null {
+/**
+ * One process from `stat`, `status` and `cmdline`; null when its directory is gone. With `withArgv` false the
+ * `cmdline` file is not opened and `argv` is empty: a caller that discards the command lines pays for none.
+ */
+export function readProcProcess(
+    pid: number,
+    root = PROC_ROOT,
+    bootMs = bootTimeMs(root),
+    withArgv = true
+): LinuxProcess | null {
     const dir = join(root, String(pid));
     const statText = readText(join(dir, "stat"));
     const stat = statText === null ? null : parseProcStat(statText);
@@ -175,7 +183,7 @@ export function readProcProcess(pid: number, root = PROC_ROOT, bootMs = bootTime
     }
 
     const status = readText(join(dir, "status")) ?? "";
-    const cmdline = readText(join(dir, "cmdline")) ?? "";
+    const cmdline = withArgv ? (readText(join(dir, "cmdline")) ?? "") : "";
 
     return {
         pid,
@@ -193,10 +201,10 @@ export function readProcProcess(pid: number, root = PROC_ROOT, bootMs = bootTime
     };
 }
 
-/** Every readable process. */
-export function listProcProcesses(root = PROC_ROOT): LinuxProcess[] {
+/** Every readable process. `argv: false` skips every `cmdline` read (see {@link readProcProcess}). */
+export function listProcProcesses(root = PROC_ROOT, options: { argv?: boolean } = {}): LinuxProcess[] {
     const bootMs = bootTimeMs(root);
-    return listProcPids(root).flatMap((pid) => readProcProcess(pid, root, bootMs) ?? []);
+    return listProcPids(root).flatMap((pid) => readProcProcess(pid, root, bootMs, options.argv !== false) ?? []);
 }
 
 /** `KEY=value` strings of the process environment; null for another user's process. */

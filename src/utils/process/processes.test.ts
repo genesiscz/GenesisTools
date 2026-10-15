@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import {
     constants,
     copyFileSync,
@@ -353,6 +354,28 @@ describe("linux /proc parsers", () => {
             symlinkSync("socket:[777]", join(pid, "fd", "4"));
             mkdirSync(join(root, "43", "fd"), { recursive: true });
             symlinkSync("socket:[777]", join(root, "43", "fd", "3"));
+        });
+
+        test("a table without command lines never opens a cmdline file", () => {
+            const reads = spyOn(fs, "readFileSync");
+            let withArgv: string[] = [];
+            let without: string[] = [];
+            let rows: ReturnType<typeof listProcProcesses> = [];
+
+            try {
+                listProcProcesses(root);
+                withArgv = reads.mock.calls.map(([path]) => String(path)).filter((path) => path.endsWith("/cmdline"));
+                reads.mockClear();
+                rows = listProcProcesses(root, { argv: false });
+                without = reads.mock.calls.map(([path]) => String(path)).filter((path) => path.endsWith("/cmdline"));
+            } finally {
+                reads.mockRestore();
+            }
+
+            expect(withArgv).toHaveLength(1);
+            expect(without).toEqual([]);
+            // The rest of the row is the same: usage and identity do not depend on the command line.
+            expect(rows[0]).toMatchObject({ pid: 42, ppid: 7, comm: "node", argv: [], rssBytes: 1000 * 4096 });
         });
 
         test("reads a process, its environment, executable and socket inodes", () => {
@@ -1151,6 +1174,22 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         }
     });
 });
+test("commands: false asks the Linux reader to skip every cmdline, and commands: true does not", () => {
+    const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+    const list = spyOn(linux, "listProcProcesses").mockReturnValue([]);
+
+    try {
+        listProcesses({ commands: false });
+        listProcessesWithUsage({ commands: false });
+        listProcesses();
+        listProcessesWithUsage();
+        expect(list.mock.calls.map(([, options]) => options?.argv)).toEqual([false, false, true, true]);
+    } finally {
+        platform.mockRestore();
+        list.mockRestore();
+    }
+});
+
 test("Linux open files read no network table for a process that holds no socket", () => {
     const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
     const fds = spyOn(linux, "listProcFds").mockReturnValue([{ fd: 3, target: "pipe:[77]", mode: "r" }]);

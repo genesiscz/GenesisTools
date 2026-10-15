@@ -277,7 +277,7 @@ export function listProcesses(options: ListProcessesOptions = {}): ProcessEntry[
 
     switch (processPlatform()) {
         case "linux":
-            return listProcProcesses().map((process) => fromLinux(process, commands));
+            return listProcProcesses(undefined, { argv: commands }).map((process) => fromLinux(process, commands));
         case "win32":
             return listCimProcesses().map((process) => fromCim(process, commands));
         default:
@@ -866,7 +866,7 @@ export function listProcessesWithUsage(options: ProcessesWithUsageOptions = {}):
 
     if (processPlatform() === "linux") {
         // One /proc read per process already holds the usage; readProcessUsages would read every process again.
-        return listProcProcesses().map((process) => {
+        return listProcProcesses(undefined, { argv: commands }).map((process) => {
             const entry = fromLinux(process, commands);
             const percent = options.cpuPercent ? lifetimePercent(process.cpuTimeMs, process.startMs, now) : null;
             return {
