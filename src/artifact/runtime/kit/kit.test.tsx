@@ -9,7 +9,7 @@ import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
-import { CodeBlock, Collapse, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
+import { CodeBlock, Collapse, FilterChips, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
 import { matchRoute } from "./router";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
@@ -844,5 +844,67 @@ describe("StatGrid delta", () => {
         expect(dom.container.querySelector(".sr-only")?.textContent).toBe("up 8 d versus baseline 27 Jan 2027");
         expect(dom.container.querySelector('[aria-hidden="true"]')?.textContent).toContain("▲");
         await dom.unmount();
+    });
+});
+
+/** One token from a shipped template's theme.css (the first value; `light-dark()` gives its light half). */
+function templateToken(template: string, name: string, scheme: "light" | "dark" = "light"): string {
+    const css = readFileSync(join(import.meta.dir, "..", "templates", template, "theme.css"), "utf8");
+    const raw = css.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim() ?? "";
+    const pair = raw.match(/^light-dark\(\s*([^,]+),\s*([^)]+)\)$/);
+
+    if (pair) {
+        return (scheme === "light" ? pair[1] : pair[2]).trim();
+    }
+
+    return raw;
+}
+
+describe("FilterChips", () => {
+    const items = [
+        { id: "design", label: "Design", color: "#7c5ce6", count: 4 },
+        { id: "build", label: "Build", count: 7 },
+        { id: "test", label: "Test", disabled: true },
+    ];
+
+    test("uncontrolled: all pressed by default, a click flips one and updates the live region", async () => {
+        const seen: string[][] = [];
+        const dom = await mountDom(<FilterChips items={items} label="Disciplines" onChange={(v) => seen.push(v)} />);
+        const chips = dom.container.querySelectorAll('[role="group"] button');
+
+        expect([...chips].map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "true", "true"]);
+        expect(dom.container.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe("Disciplines");
+        await dom.click(chips[1]);
+
+        expect(chips[1].getAttribute("aria-pressed")).toBe("false");
+        expect(chips[1].className).toContain("border-dashed");
+        expect(seen).toEqual([["design", "test"]]);
+        expect(dom.container.querySelector('[aria-live="polite"]')?.textContent).toBe("2 of 3 shown");
+        await dom.unmount();
+    });
+
+    test("controlled: the value prop decides, and All and None skip disabled chips", async () => {
+        const seen: string[][] = [];
+        const dom = await mountDom(
+            <FilterChips items={items} value={["test"]} bulk label="Disciplines" onChange={(v) => seen.push(v)} />
+        );
+        const buttons = [...dom.container.querySelectorAll("button")];
+        const all = buttons.find((b) => b.textContent === "All");
+        const none = buttons.find((b) => b.textContent === "None");
+        await dom.click(buttons[0]);
+        expect(buttons[0].getAttribute("aria-pressed")).toBe("false");
+
+        await dom.click(all);
+        await dom.click(none);
+        expect(seen).toEqual([["test", "design"], ["design", "build", "test"], ["test"]]);
+        await dom.unmount();
+    });
+
+    test("the off state text keeps at least 3:1 in every shipped template", () => {
+        for (const template of ["default", "cobalt", "bone", "forest", "steel", "tan"]) {
+            expect(contrastRatio(templateToken(template, "--dim"), templateToken(template, "--panel"))).toBeGreaterThan(
+                3
+            );
+        }
     });
 });

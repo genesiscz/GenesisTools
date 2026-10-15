@@ -115,6 +115,116 @@ export function Chips({ items, className }: ChipsProps) {
     );
 }
 
+export interface FilterChipItem {
+    id: string;
+    label: string;
+    /** Any CSS color, drawn as a small swatch (a lane colour). */
+    color?: string;
+    count?: number;
+    disabled?: boolean;
+}
+
+export interface FilterChipsProps {
+    items: FilterChipItem[];
+    /** Pressed ids. Controlled. */
+    value?: string[];
+    /** Pressed ids when uncontrolled. Default: all. */
+    initial?: string[];
+    onChange?: (value: string[]) => void;
+    /** Show All and None buttons. */
+    bulk?: boolean;
+    /** Accessible name of the group. */
+    label: string;
+}
+
+const CHIP_BASE =
+    "inline-flex items-center gap-2 rounded-full border bg-panel px-3 py-[5px] text-[13px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info disabled:cursor-not-allowed";
+
+/**
+ * Row of toggle chips that filter lanes, tags or disciplines. A chip that is
+ * off keeps readable `--dim` text and gets a dashed border, so its state never
+ * rests on a faded colour alone. For pick-one use SegmentedControl.
+ */
+export function FilterChips({ items, value, initial, onChange, bulk = false, label }: FilterChipsProps) {
+    const [own, setOwn] = useState<string[]>(() => initial ?? items.map((item) => item.id));
+    const pressed = value ?? own;
+    const shown = items.filter((item) => pressed.includes(item.id)).length;
+
+    const set = (next: string[]): void => {
+        if (value === undefined) {
+            setOwn(next);
+        }
+
+        onChange?.(next);
+    };
+
+    const toggle = (id: string): void => {
+        set(pressed.includes(id) ? pressed.filter((p) => p !== id) : [...pressed, id]);
+    };
+
+    /** All or None, leaving disabled chips as they are. */
+    const setAll = (on: boolean): void => {
+        set(items.filter((item) => (item.disabled ? pressed.includes(item.id) : on)).map((item) => item.id));
+    };
+
+    return (
+        <div className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label={label} className="flex flex-wrap items-center gap-2">
+                {items.map((item) => {
+                    const on = pressed.includes(item.id);
+
+                    return (
+                        <button
+                            key={item.id}
+                            type="button"
+                            aria-pressed={on}
+                            disabled={item.disabled}
+                            onClick={() => toggle(item.id)}
+                            className={`${CHIP_BASE} ${on ? "border-dim text-ink" : "border-dashed border-line text-dim"} ${item.disabled ? "opacity-60" : "hover:border-ink/60"}`}
+                        >
+                            {item.color ? (
+                                <span
+                                    aria-hidden="true"
+                                    className="inline-block h-2 w-3.5 rounded-[3px]"
+                                    style={{
+                                        background: on ? item.color : "transparent",
+                                        boxShadow: `inset 0 0 0 1.5px ${item.color}`,
+                                    }}
+                                />
+                            ) : null}
+                            {item.label}
+                            {item.count !== undefined ? (
+                                <span className="font-mono text-xs text-dim">{item.count}</span>
+                            ) : null}
+                        </button>
+                    );
+                })}
+            </div>
+            {bulk ? (
+                <span className="inline-flex gap-1 text-xs">
+                    <button
+                        type="button"
+                        onClick={() => setAll(true)}
+                        className="rounded px-2 py-1 text-dim hover:text-ink focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-info"
+                    >
+                        All
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setAll(false)}
+                        className="rounded px-2 py-1 text-dim hover:text-ink focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-info"
+                    >
+                        None
+                    </button>
+                </span>
+            ) : null}
+            <span aria-live="polite" className="sr-only">
+                {`${shown} of ${items.length} shown`}
+            </span>
+        </div>
+    );
+}
+
 export interface BadgeProps {
     tone?: Tone;
     /** Saturated rounded pill (deep tone fill, no border) — the status-chip look. */
