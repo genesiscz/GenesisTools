@@ -9,6 +9,7 @@ GenesisTools.
 tools artifact init dashboard.tsx && tools artifact serve dashboard.tsx   # live + HMR at /dashboard
 tools artifact build dashboard.tsx                                        # dist/dashboard.html (file://)
 tools artifact library up                                                 # ONE server for everything registered
+tools artifact gallery gantt                                              # the kit gallery, at the Gantt page
 ```
 
 ## Commands
@@ -17,6 +18,7 @@ tools artifact library up                                                 # ONE 
 |---|---|
 | `serve [target]` | Vite dev server (registered name, folder, or a single file). HMR on edit. Folders auto-register; ports auto-bump from 3076, so several serves run side by side. `--template <name>` swaps the theme. |
 | `library up` | ONE server: `/` lists every registered artifact folder (counts, age, click to open); each mounts at `/a/<name>/` via a lazily-started sub-server. At most 8 mounts stay live at once; the least recently used one is closed on overflow, because every mount holds compiled modules and file watchers. Clean URLs work under every mount. |
+| `gallery [name]` | Open the built-in kit gallery (every kit component, grouped by family, with a search box), starting the library server first when none runs. A name opens one page, fuzzy and case-insensitive: `gantt`, `time series`, `datatable`. `--list` prints the pages by family and exits; `--no-open` prints the URL only; `--port` uses or starts the library on that port. |
 | `build [target]` | Self-contained single-file HTML into `<dir>/dist/` (override with `-o/--out`; pick the entry with `-e/--entry`). `.html` entries bundle local refs (scripts, stylesheets and media alike); `.tsx` entries bundle via a generated wrapper; `.md` entries render into the template's themed page chrome (`-t/--template` picks the theme). Sibling text-data files embed behind a `fetch()` shim so `file://` works (`--max-embed` caps one file, `--max-embed-total` caps them together). Any explicitly named entry (file target, `--entry`, or a registry entry) embeds ONLY referenced files (never the surrounding vault); a bare directory embeds every sibling data file (`--embed referenced\|tree` overrides). `--watch` rebuilds on change. Idempotent. |
 | `templates` | List the shipped themes: graphite (default), bone, forest, steel, tan, cobalt. |
 | `kit` | Print the kit's generated `.d.ts` API — author against it without reading component source. |
@@ -89,9 +91,12 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
 - Theme: `ThemeToggle`/`useTheme` (opt-in override for the `auto` template), `SERIES_COLOR`
   (8 lane colours from the shared `--series-*` tokens), `contrastRatio`/`readableTextOn`
 
-The kit gallery (`src/artifact/gallery/`) has one page per component and is the built-in
-`kit-gallery` entry of `tools artifact library`. Its index finds pages with a glob, so a new
-`.tsx` file there shows up with no other edit. `tools artifact init <file>.tsx --starter roadmap`
+The kit gallery (`src/artifact/gallery/`) demos every kit component, one page per family or
+per larger component, and is the built-in `kit-gallery` entry of `tools artifact library`
+(`tools artifact gallery` opens it). Its index finds pages with a glob, so a new `.tsx` file
+there shows up with no other edit; its `meta` names the family and the components it shows.
+The page opened is `?page=<id>`, because Tabs and TimeSeries own the hash. A test derives the
+component list from the kit's exports, so a new component without a gallery page fails it. `tools artifact init <file>.tsx --starter roadmap`
 scaffolds a project roadmap page built from these pieces.
 
 ### Mermaid is not installed

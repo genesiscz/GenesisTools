@@ -1,6 +1,6 @@
 ---
 name: artifact
-description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 60+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, Gantt, CapacityGrid, Tooltip, FilterChips, Wizard, EditableTable, ChangeLedger, form controls, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
+description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 60+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, Gantt, CapacityGrid, Tooltip, FilterChips, Wizard, EditableTable, ChangeLedger, form controls, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "show me the kit components", "open the component gallery", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
 ---
 
 # tools artifact — dashboards from a single file
@@ -29,7 +29,12 @@ tools artifact build dashboard.tsx     # → dist/dashboard.html, opens from fil
   opened a 404 there on 2026-10-16). A plain `serve` ties up the shell and dies with it.
 - **`tools artifact library up`** = ONE server for every registered folder: `/` is the library
   page (meta + click to open), each folder mounts at `/a/<name>/`. The built-in `kit-gallery`
-  shows one page per kit component (defaults, an edge case, keyboard use) in light and dark.
+  demos every kit component (defaults, an edge case, keyboard use) in light and dark, grouped
+  by family with a search box.
+- **`tools artifact gallery [name]`** opens that gallery, starting the library first when none
+  runs. A name opens one page, fuzzy and case-insensitive (`gantt`, `time series`, `datatable`).
+  `--list` prints the pages by family, `--no-open` prints the URL only, `--port` picks the
+  library. Use it when the user asks "show me the kit components" or what a component looks like.
 - `build --watch` keeps the single-file output fresh on every edit. Single-file builds embed
   ONLY data the entry references — never the surrounding folder.
 
