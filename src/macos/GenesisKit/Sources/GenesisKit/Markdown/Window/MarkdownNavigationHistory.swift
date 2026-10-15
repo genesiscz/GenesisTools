@@ -39,9 +39,13 @@ struct MarkdownNavigationHistory: Equatable {
         index + 1 < entries.count && entries[(index + 1)...].contains(where: exists)
     }
 
-    /// A file renamed or moved: its entries follow it.
+    /// A file or a folder renamed or moved: the entries of it, and of every file under the folder, follow it.
     mutating func rename(_ old: String, to new: String) {
-        entries = entries.map { $0 == old ? new : $0 }
+        entries = entries.map { entry in
+            if entry == old { return new }
+            guard entry.hasPrefix(old + "/") else { return entry }
+            return new + entry.dropFirst(old.count)
+        }
     }
 
     private mutating func step(by delta: Int, where exists: (String) -> Bool) -> String? {
