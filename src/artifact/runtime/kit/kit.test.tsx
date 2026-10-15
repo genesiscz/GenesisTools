@@ -9,7 +9,7 @@ import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
-import { CodeBlock, Collapse, SegmentedControl } from "./primitives";
+import { CodeBlock, Collapse, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
 import { matchRoute } from "./router";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
@@ -799,6 +799,50 @@ describe("form controls", () => {
         expect(dom.container.querySelector('[role="alert"]')).toBeNull();
         expect(picked).toEqual(["a,b"]);
         expect(dom.container.textContent).toContain("small.csv (3 B)");
+        await dom.unmount();
+    });
+});
+
+describe("StatGrid delta", () => {
+    test("only the old props render exactly the old markup", async () => {
+        const dom = await mountDom(<StatGrid stats={[{ label: "Open", value: "12", tone: "warn" }]} />);
+
+        expect(dom.html()).toBe(
+            '<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"><div class="rounded-card border border-line bg-panel/60 p-4"><div class="font-mono text-2xl tracking-tight text-warn">12</div><div class="mt-0.5 text-xs text-dim">Open</div></div></div>'
+        );
+        await dom.unmount();
+    });
+
+    test("delta tone follows the good direction, flat is neutral", () => {
+        expect(statDeltaTone({ value: "+8 d", direction: "up", good: "down" })).toBe("err");
+        expect(statDeltaTone({ value: "+8 d", direction: "up", good: "up" })).toBe("ok");
+        expect(statDeltaTone({ value: "0 d", direction: "flat", good: "up" })).toBe("neutral");
+        expect(statDeltaTone({ value: "+1", direction: "up" })).toBe("neutral");
+    });
+
+    test("the card renders the err class, a hidden sentence, a hidden glyph, the edge and auto-fit columns", async () => {
+        const dom = await mountDom(
+            <StatGrid
+                min={170}
+                stats={[
+                    {
+                        label: "Launch",
+                        value: "4 Feb 2027",
+                        edge: "err",
+                        delta: { value: "+8 d", direction: "up", good: "down", baseline: "27 Jan 2027" },
+                    },
+                ]}
+            />
+        );
+        const grid = dom.container.firstElementChild as HTMLElement;
+        const card = grid.firstElementChild as HTMLElement;
+
+        expect(grid.style.gridTemplateColumns).toBe("repeat(auto-fit, minmax(170px, 1fr))");
+        expect(card.style.borderLeftWidth).toBe("3px");
+        expect(card.style.borderLeftColor).toBe("var(--err)");
+        expect(dom.container.querySelector(".text-err")).not.toBeNull();
+        expect(dom.container.querySelector(".sr-only")?.textContent).toBe("up 8 d versus baseline 27 Jan 2027");
+        expect(dom.container.querySelector('[aria-hidden="true"]')?.textContent).toContain("▲");
         await dom.unmount();
     });
 });

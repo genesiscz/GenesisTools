@@ -217,6 +217,7 @@ export {
     TextInput,
     type TextInputProps,
 } from "./forms";
+export { type StatDelta, statDeltaSentence, statDeltaTone, TONE_VAR } from "./primitives";
 export {
     placeTooltip,
     TOOLTIP_ID,

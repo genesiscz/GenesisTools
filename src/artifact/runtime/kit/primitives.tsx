@@ -214,20 +214,122 @@ export function Section({ title, note, children }: SectionProps) {
     );
 }
 
+/** A KPI's change against a baseline, the second line of a stat card. */
+export interface StatDelta {
+    /** Signed change as text: "+8 d", "-1.5 h". */
+    value: string;
+    direction: "up" | "down" | "flat";
+    /** Which direction is good. Colours the line: ok when it matches, err when it does not. Omit for a neutral line. */
+    good?: "up" | "down";
+    /** Text after the change. Default "vs baseline". */
+    label?: string;
+    /** The baseline value, printed in parentheses. */
+    baseline?: string;
+    /** Overrides the colour derived from `good`. */
+    tone?: Tone;
+}
+
 export interface StatItem {
     label: string;
     value: string;
     tone?: Tone;
     /** Optional one-line detail under the label (markdown string or nodes). */
     hint?: BodyContent;
+    /** Change against a baseline, drawn under the value. */
+    delta?: StatDelta;
+    /** 3 px left edge in this tone (marks a critical card). */
+    edge?: Tone;
 }
 
 export interface StatGridProps {
     stats: StatItem[];
+    /** Minimum card width in px. When set, columns are `repeat(auto-fit, minmax(min, 1fr))`. Default: 2, 3 and 4 column steps. */
+    min?: number;
 }
 
-/** Row of headline numbers. */
-export function StatGrid({ stats }: StatGridProps) {
+/** Tone of a delta line: an explicit tone, else ok when the direction is the good one, err when not, neutral when flat or unrated. */
+export function statDeltaTone(delta: StatDelta): Tone {
+    if (delta.tone) {
+        return delta.tone;
+    }
+
+    if (!delta.good || delta.direction === "flat") {
+        return "neutral";
+    }
+
+    return delta.direction === delta.good ? "ok" : "err";
+}
+
+const DELTA_GLYPH: Record<StatDelta["direction"], string> = { up: "▲", down: "▼", flat: "▬" };
+
+/** Tone as a CSS colour, for borders drawn with inline styles. */
+export const TONE_VAR: Record<Tone, string> = {
+    ok: "var(--ok)",
+    warn: "var(--warn)",
+    err: "var(--err)",
+    info: "var(--info)",
+    neutral: "var(--dim)",
+};
+
+/** The sentence a screen reader hears for a delta: "up 8 d versus baseline 27 Jan 2027". */
+export function statDeltaSentence(delta: StatDelta): string {
+    const amount = delta.value.replace(/^[+\-−]\s*/, "");
+    const against = (delta.label ?? "vs baseline").replace(/^vs\.?\s+/, "versus ");
+
+    return [delta.direction === "flat" ? "no change" : `${delta.direction} ${amount}`, against, delta.baseline]
+        .filter(Boolean)
+        .join(" ");
+}
+
+function StatDeltaLine({ delta }: { delta: StatDelta }) {
+    return (
+        <div className={`mt-0.5 text-xs leading-snug ${TONE_TEXT[statDeltaTone(delta)]}`}>
+            <span aria-hidden="true">
+                {DELTA_GLYPH[delta.direction]} {delta.value} {delta.label ?? "vs baseline"}
+                {delta.baseline ? ` (${delta.baseline})` : ""}
+            </span>
+            <span className="sr-only">{statDeltaSentence(delta)}</span>
+        </div>
+    );
+}
+
+/**
+ * Row of headline numbers. With `min`, a delta or an edge the cards switch to
+ * the compact KPI layout (label, value, delta), so seven fit one row at 1280 px.
+ */
+export function StatGrid({ stats, min }: StatGridProps) {
+    const compact = min !== undefined || stats.some((s) => s.delta || s.edge);
+
+    if (compact) {
+        return (
+            <div
+                className="grid gap-[10px]"
+                style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${min ?? 170}px, 1fr))` }}
+            >
+                {stats.map((s) => (
+                    <div
+                        key={s.label}
+                        className="min-w-0 rounded-[8px] border border-line bg-panel/60 px-[14px] py-3"
+                        style={
+                            s.edge
+                                ? { borderLeftWidth: 3, borderLeftStyle: "solid", borderLeftColor: TONE_VAR[s.edge] }
+                                : undefined
+                        }
+                    >
+                        <div className="text-[11px] text-dim">{s.label}</div>
+                        <div
+                            className={`text-[23px] font-[650] tracking-tight tabular-nums ${s.tone ? TONE_TEXT[s.tone] : "text-ink"}`}
+                        >
+                            {s.value}
+                        </div>
+                        {s.delta ? <StatDeltaLine delta={s.delta} /> : null}
+                        {s.hint ? <div className="mt-1 text-[0.7rem] text-dim">{renderBody(s.hint)}</div> : null}
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
     return (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {stats.map((s) => (
