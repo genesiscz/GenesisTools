@@ -67,6 +67,7 @@ final class HubKeymapTests: XCTestCase {
         let back = try XCTUnwrap(rows.first { $0.identifier?.rawValue == "hub.go.back" })
         XCTAssertEqual(back.keyEquivalentModifierMask, .command)
         XCTAssertFalse(back.keyEquivalent.isEmpty)
+        XCTAssertTrue(AppMainMenu.installedWithHub, "the hub menu is what gives a hosted session the host flag")
     }
 
     /// ⌘ on the key right of P is Back, whatever that key types. US types "[", Czech types "ú".
@@ -109,6 +110,7 @@ final class HubKeymapTests: XCTestCase {
         _ = NSApplication.shared
         let keys = keymap(TableKeyLayout.us)
         AppMainMenu.install(keymap: keys)
+        XCTAssertFalse(AppMainMenu.installedWithHub, "the review menu has no hub, so a session there keeps its own Command keys")
         let menu = try XCTUnwrap(NSApp.mainMenu)
         let rows = items(in: menu)
         let close = try XCTUnwrap(rows.first { $0.identifier?.rawValue == "hub.window.close" })
@@ -137,6 +139,124 @@ final class HubKeymapTests: XCTestCase {
         other.orderBack(nil)
         XCTAssertFalse(press(other, 13, "w"), "⌘W in another window is not the review window's handler")
         XCTAssertFalse(probe.closed)
+    }
+
+    /// A command with no library key is still registered, so a key the user adds runs it.
+    func testACommandWithNoDefaultKeyRunsOnceTheUserBindsOne() {
+        let model = model()
+        let window = quietWindow()
+        let keys = keymap(TableKeyLayout.us)
+        keys.setChords([.character("s", [.option, .command])], for: "hub.go.session")
+        let dispatcher = KeymapDispatcher()
+        let held = HubKeymap.registerWindowCommands(model: model, window: window, keymap: keys, dispatcher: dispatcher)
+        defer { held.forEach { $0.cancel() } }
+        let stroke = KeyStroke(keyCode: 1, character: "s", modifiers: [.option, .command])
+        XCTAssertTrue(dispatcher.handle(stroke, in: window, typing: false))
+        XCTAssertEqual(model.paletteRequest, "session ")
+    }
+
+    /// The session view registers after the hub. Command R then reloads the transcript, and the list again once
+    /// that registration ends.
+    func testAnOpenSessionsReloadBeatsTheHubsReload() {
+        let window = quietWindow()
+        let hub = keymap(TableKeyLayout.us)
+        let sessions = Keymap(library: SessionsKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let dispatcher = KeymapDispatcher()
+        var ran: [String] = []
+        let list = dispatcher.register("hub.view.reload", in: hub, window: window) { ran.append("list") }
+        let transcript = dispatcher.register("sessions.reload", in: sessions, window: window) { ran.append("transcript") }
+        defer { list.cancel() }
+        let stroke = KeyStroke(keyCode: 15, character: "r", modifiers: .command)
+        XCTAssertTrue(dispatcher.handle(stroke, in: window, typing: false))
+        XCTAssertEqual(ran, ["transcript"])
+        transcript.cancel()
+        ran = []
+        XCTAssertTrue(dispatcher.handle(stroke, in: window, typing: false))
+        XCTAssertEqual(ran, ["list"])
+    }
+
+    /// Back rebound onto the session's Option-Command key is a conflict the shortcut list can see.
+    func testRebindingHubBackOntoTheSessionAltIsAConflict() {
+        let hub = keymap(czech)
+        let chord = KeyChord.code(33, [.option, .command])
+        hub.setChords([chord], for: "hub.go.back")
+        let sessions = Keymap(library: SessionsKeymap.library, store: nil, layout: czech)
+        let shown = SessionsKeymap.shownCommandIDs(hostOwns: true)
+        XCTAssertEqual(
+            sessions.commands(meeting: .window, using: chord, ids: shown).map(\.id),
+            [SessionsKeymap.previousPromptAlt])
+        let reload = KeyChord.character("r", .command)
+        XCTAssertEqual(hub.commands(meeting: .window, using: reload).map(\.id), ["hub.view.reload"])
+        XCTAssertEqual(
+            sessions.commands(meeting: .window, using: reload, ids: shown).map(\.id),
+            [SessionsKeymap.reload])
+    }
+
+    /// The review list is Close Window, panel find and the session keys that window runs. The hub list adds the
+    /// Option-Command prompts and keeps Reload.
+    func testReviewAndHubShortcutPagesListTheKeysEachWindowRuns() {
+        let review = HubKeymap.reviewCommandIDs
+        XCTAssertTrue(review.contains("hub.window.close"))
+        XCTAssertTrue(review.contains(HubKeymap.findOpen))
+        XCTAssertTrue(review.contains(HubKeymap.findNext))
+        XCTAssertTrue(review.contains(HubKeymap.findPrevious))
+        XCTAssertTrue(review.contains(HubKeymap.findClose))
+        XCTAssertFalse(review.contains("hub.go.back"))
+        XCTAssertFalse(review.contains(HubKeymap.commandPalette))
+        XCTAssertFalse(review.contains("hub.find.files"))
+
+        let hubPages = HubKeymap.shortcutPages(review: false)
+        XCTAssertNil(hubPages[0].commandIDs, "the hub lists its whole library")
+        XCTAssertEqual(hubPages[1].commandIDs, SessionsKeymap.shownCommandIDs(hostOwns: true))
+        XCTAssertTrue(hubPages[1].commandIDs?.contains(SessionsKeymap.reload) == true)
+        XCTAssertTrue(hubPages[1].commandIDs?.contains(SessionsKeymap.previousPromptAlt) == true)
+        XCTAssertFalse(hubPages[1].commandIDs?.contains(SessionsKeymap.previousPrompt) == true)
+
+        let reviewPages = HubKeymap.shortcutPages(review: true)
+        XCTAssertEqual(reviewPages[0].commandIDs, review)
+        XCTAssertEqual(reviewPages[1].commandIDs, SessionsKeymap.shownCommandIDs(hostOwns: false))
+        XCTAssertTrue(reviewPages[1].commandIDs?.contains(SessionsKeymap.previousPrompt) == true)
+        XCTAssertFalse(reviewPages[1].commandIDs?.contains(SessionsKeymap.previousPromptAlt) == true)
+        XCTAssertTrue(reviewPages[1].commandIDs?.contains(SessionsKeymap.reload) == true)
+    }
+
+    /// Glass steps an open find bar only when the pressed chord is also Previous Match.
+    func testGlassStepsFindOnlyWhenThePressedKeyIsPreviousMatch() {
+        let model = model()
+        let window = quietWindow()
+        let keys = keymap(TableKeyLayout.us)
+        let dispatcher = KeymapDispatcher()
+        var stepped = 0
+        let previous = HubKeymap.redirectGlassToPreviousMatch
+        HubKeymap.redirectGlassToPreviousMatch = { _ in
+            stepped += 1
+            return true
+        }
+        let glass = HubDefaults.preferences.glass
+        defer {
+            HubKeymap.redirectGlassToPreviousMatch = previous
+            HubDefaults.preferences.glass = glass
+        }
+        let held = HubKeymap.registerWindowCommands(model: model, window: window, keymap: keys, dispatcher: dispatcher)
+        defer { held.forEach { $0.cancel() } }
+
+        let sharedChord = KeyStroke(keyCode: 5, character: "g", modifiers: [.shift, .command])
+        XCTAssertTrue(dispatcher.handle(sharedChord, in: window, typing: false))
+        XCTAssertEqual(stepped, 1, "Shift-Command G is Previous Match, so Glass steps the open find bar")
+
+        keys.setChords([.character("g", [.option, .command])], for: HubKeymap.glass)
+        stepped = 0
+        let glassOnly = KeyStroke(keyCode: 5, character: "g", modifiers: [.option, .command])
+        XCTAssertTrue(dispatcher.handle(glassOnly, in: window, typing: false))
+        XCTAssertEqual(stepped, 0, "Option-Command G is only Glass, so it does not step the find bar")
+    }
+
+    private func quietWindow() -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled],
+                              backing: .buffered, defer: true)
+        window.alphaValue = 0
+        window.orderBack(nil)
+        return window
     }
 
     private func press(_ window: NSWindow, _ code: UInt16, _ character: String) -> Bool {

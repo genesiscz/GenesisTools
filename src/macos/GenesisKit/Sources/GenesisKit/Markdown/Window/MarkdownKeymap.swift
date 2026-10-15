@@ -156,6 +156,23 @@ public enum MarkdownKeymap {
         return keymap.commands(for: stroke, in: [sourceScope]).first { $0.configurable }?.id
     }
 
+    /// Bold, italic, link and task, while `textView` is the window's first responder. Newer than the window's
+    /// commands, so a window key the user binds onto one of these (Show Files on ⌘B) yields while the editor
+    /// is focused and works again when it is not. Indent and outdent stay on the text view: they have no ⌘ or ⌃.
+    static func registerSourceCommands(
+        textView: NSTextView, window: NSWindow, keymap: Keymap = shared, dispatcher: KeymapDispatcher = .shared,
+        perform: @escaping (String) -> Void
+    ) -> [KeymapRegistration] {
+        ["markdown.edit.bold", "markdown.edit.italic", "markdown.edit.link", "markdown.edit.task"].map { id in
+            dispatcher.register(id, in: keymap, window: window, isEnabled: { [weak textView] in
+                guard let textView, let window = textView.window else { return false }
+                return window.firstResponder === textView
+            }) {
+                perform(id)
+            }
+        }
+    }
+
     /// "Save (⌘S)" with the key in force.
     static func hint(_ title: String, _ id: String) -> String { shared.hint(title, id) }
 

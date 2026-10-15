@@ -33,12 +33,12 @@ enum MarkdownViewMode: String, CaseIterable {
         }
     }
 
-    /// The mode's tooltip, with the key in force (`MarkdownKeymap`).
-    @MainActor var label: String {
+    /// The mode's tooltip, with the key in force. The toolbar passes the keymap it observes, so a change redraws it.
+    @MainActor func label(in keymap: Keymap) -> String {
         switch self {
-        case .preview: return MarkdownKeymap.hint("Reading view", "markdown.view.source")
-        case .split: return MarkdownKeymap.hint("Edit and preview side by side", "markdown.view.split")
-        case .source: return MarkdownKeymap.hint("Source", "markdown.view.source")
+        case .preview: return keymap.hint("Reading view", "markdown.view.source")
+        case .split: return keymap.hint("Edit and preview side by side", "markdown.view.split")
+        case .source: return keymap.hint("Source", "markdown.view.source")
         case .changes: return "The file's git changes: unstaged, staged, a commit, the branch"
         }
     }

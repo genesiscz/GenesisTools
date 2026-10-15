@@ -24,6 +24,9 @@ struct MarkdownSourceSelection: Equatable {
 /// a link before AppKit inserts it as text.
 final class SourceTextView: NSTextView {
     var onKeyEquivalent: ((NSEvent) -> Bool)?
+    /// Bold, italic, link and task, run by the dispatcher while this view is first responder.
+    var onSourceCommand: ((String) -> Void)?
+    private var sourceKeys: [KeymapRegistration] = []
     /// The lines that differ from HEAD, drawn as bars in the left inset (green added, blue changed, a red mark where
     /// lines were removed). A click on a bar calls `onHunk` with the bar's rect.
     var gitHunks: [GitHunk] = [] {
@@ -169,6 +172,18 @@ final class SourceTextView: NSTextView {
         super.cursorUpdate(with: event)
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        sourceKeys.forEach { $0.cancel() }
+        sourceKeys = []
+        guard let window else { return }
+        sourceKeys = MarkdownKeymap.registerSourceCommands(textView: self, window: window) { [weak self] id in
+            self?.onSourceCommand?(id)
+        }
+    }
+
+    deinit { sourceKeys.forEach { $0.cancel() } }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if window?.firstResponder === self, onKeyEquivalent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)
@@ -237,6 +252,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         scroll.documentView = view
         view.onKeyEquivalent = { [weak coordinator = context.coordinator] event in
             coordinator?.handle(event) ?? false
+        }
+        view.onSourceCommand = { [weak coordinator = context.coordinator] id in
+            _ = coordinator?.applySourceCommand(id)
         }
         view.onOpenLink = { [weak coordinator = context.coordinator] target in
             coordinator?.parent.onOpenLink?(target)
@@ -478,9 +496,14 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         /// these are AppKit commands in a plain text view, so they arrive as key equivalents rather than through
         /// `doCommandBy`.
         func handle(_ event: NSEvent) -> Bool {
-            // Key equivalents arrive on the main thread.
-            guard let view, let command = MainActor.assumeIsolated({ MarkdownKeymap.sourceCommand(for: event) })
-            else { return false }
+            // Key equivalents arrive on the main thread. The dispatcher takes the same keys first while this
+            // view is first responder; this path remains for a press the dispatcher did not take.
+            guard let command = MainActor.assumeIsolated({ MarkdownKeymap.sourceCommand(for: event) }) else { return false }
+            return applySourceCommand(command)
+        }
+
+        func applySourceCommand(_ command: String) -> Bool {
+            guard let view else { return false }
             let text = view.string
             let sel = view.selectedRange()
             let edit: SourceEditing.Edit

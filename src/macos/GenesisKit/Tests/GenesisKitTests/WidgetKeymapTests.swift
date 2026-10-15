@@ -19,9 +19,13 @@ final class WidgetKeymapTests: XCTestCase {
                    attachments: [], refs: [], read: false)
     }
 
+    private func keys() -> Keymap {
+        Keymap(library: WidgetKeymap.library, store: nil, layout: czech)
+    }
+
     private func press(_ keyCode: UInt16, _ characters: String, editingText: Bool = false, answering: WidgetCard? = nil) -> WidgetCoordinator.PanelKey {
         WidgetCoordinator.panelKey(keyCode: keyCode, characters: characters, context: .init(
-            previewOpen: false, agents: true, editingText: editingText, answering: answering))
+            previewOpen: false, agents: true, editingText: editingText, answering: answering), keymap: keys())
     }
 
     func testTheWidgetsKeysHaveNoConflictOnACzechOrAUSKeyboard() {
@@ -56,5 +60,52 @@ final class WidgetKeymapTests: XCTestCase {
         XCTAssertEqual(press(38, "j"), .previous)
         XCTAssertEqual(press(40, "k"), .next)
         XCTAssertEqual(press(53, "", editingText: true), .collapse, "Esc still collapses while a field has the focus")
+    }
+
+    /// Paste is every Command chord on V, including Shift and Option. A panel stroke drops Shift, so Shift J is J.
+    func testPasteKeepsShiftAndOptionAndAPanelStrokeDropsShift() {
+        let keys = keys()
+        let sets: [KeyModifiers] = [.command, [.shift, .command], [.option, .command], [.option, .shift, .command]]
+        for modifiers in sets {
+            let stroke = KeyStroke(keyCode: 9, character: "v", modifiers: modifiers)
+            XCTAssertEqual(keys.commands(for: stroke, in: [.window]).map(\.id), [WidgetKeymap.paste], "\(modifiers)")
+        }
+        let shifted = WidgetKeymap.plainStroke(keyCode: 38, characters: "J")
+        XCTAssertEqual(shifted.modifiers, [])
+        XCTAssertEqual(shifted.character, "j")
+        XCTAssertEqual(press(38, "J"), .previous, "Shift J is still the previous message")
+    }
+
+    /// A saved Command chord runs. Shift alone still reaches the plain key. Command on the default key does not.
+    func testACommandChordRunsPreviousAndShiftStillFallsBackToThePlainKey() {
+        let agents = WidgetCoordinator.PanelKeyContext(previewOpen: false, agents: true, editingText: false, answering: nil)
+        let rebound = keys()
+        rebound.setChords([.character("j", .command)], for: WidgetKeymap.previous)
+        let commandJ = KeyStroke(keyCode: 38, character: "j", modifiers: .command)
+        XCTAssertEqual(WidgetCoordinator.panelKey(stroke: commandJ, context: agents, keymap: rebound), .previous)
+        XCTAssertEqual(WidgetCoordinator.panelKey(stroke: commandJ, context: agents, keymap: keys()), .pass,
+                       "Command J is not Previous until the user binds it")
+        let shiftJ = KeyStroke(keyCode: 38, character: "J", modifiers: .shift)
+        XCTAssertEqual(WidgetCoordinator.panelKey(stroke: shiftJ, context: agents, keymap: keys()), .previous)
+
+        let state = MediaPreviewState()
+        state.present([
+            MediaPreviewItem(id: "a", path: "/tmp/a.png"),
+            MediaPreviewItem(id: "b", path: "/tmp/b.png"),
+        ], selectedID: "a")
+        defer { state.dismiss() }
+        let preview = keys()
+        preview.setChords([.code(123, .command)], for: WidgetKeymap.previewPrevious)
+        let commandLeft = KeyStroke(keyCode: 123, character: "", modifiers: .command)
+        XCTAssertTrue(MediaPreviewKeyboard.handle(commandLeft, editingText: false, keymap: preview))
+        XCTAssertEqual(state.current?.id, "b", "Command Left is the saved Previous Item")
+        state.dismiss()
+        state.present([
+            MediaPreviewItem(id: "a", path: "/tmp/a.png"),
+            MediaPreviewItem(id: "b", path: "/tmp/b.png"),
+        ], selectedID: "a")
+        let shiftLeft = KeyStroke(keyCode: 123, character: "", modifiers: .shift)
+        XCTAssertTrue(MediaPreviewKeyboard.handle(shiftLeft, editingText: false, keymap: keys()))
+        XCTAssertEqual(state.current?.id, "b", "Shift Left is still the plain arrow")
     }
 }

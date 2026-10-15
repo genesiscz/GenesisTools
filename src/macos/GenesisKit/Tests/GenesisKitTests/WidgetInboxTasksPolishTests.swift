@@ -749,7 +749,8 @@ final class WidgetAnswerTargetTests: XCTestCase {
         func key(_ characters: String, keyCode: UInt16, previewOpen: Bool = false,
                  answering: WidgetCard?) -> WidgetCoordinator.PanelKey {
             WidgetCoordinator.panelKey(keyCode: keyCode, characters: characters, context: .init(
-                previewOpen: previewOpen, agents: true, editingText: false, answering: answering))
+                previewOpen: previewOpen, agents: true, editingText: false, answering: answering),
+                keymap: Keymap(library: WidgetKeymap.library, store: nil, layout: TableKeyLayout.us))
         }
         XCTAssertEqual(key("1", keyCode: 0x12, answering: card), .choose("keep"))
         XCTAssertEqual(key("2", keyCode: 0x13, answering: card), .choose("drop"))

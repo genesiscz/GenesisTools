@@ -39,7 +39,12 @@ public enum WidgetKeymap {
         KeymapCommand(settings, "Widget Sessions", group: "App", keys: [.character(",", .command)], scope: .app),
         KeymapCommand(hub, "Open Hub", group: "App", keys: [.character("h", .command)], scope: .app),
         KeymapCommand(quit, "Quit", group: "App", keys: [.character("q", .command)], scope: .app, configurable: false),
-        KeymapCommand(paste, "Paste Media", group: "Composer", keys: [.character("v", .command)]),
+        KeymapCommand(paste, "Paste Media", group: "Composer", keys: [
+            .character("v", .command),
+            .character("v", [.shift, .command]),
+            .character("v", [.option, .command]),
+            .character("v", [.option, .shift, .command]),
+        ]),
         KeymapCommand(collapse, "Collapse", group: "Panel",
                       detail: "Also while a text field has the focus. An open preview takes Esc first.",
                       keys: [.code(53)]),
@@ -56,6 +61,28 @@ public enum WidgetKeymap {
         KeymapCommand(previewPrevious, "Previous Item", group: "Preview", keys: [.code(123)], scope: previewScope),
         KeymapCommand(previewNext, "Next Item", group: "Preview", keys: [.code(124)], scope: previewScope),
     ])
+
+    /// The same key with Shift removed. Command, Control and Option stay on the real stroke: they are a
+    /// different shortcut. Shift J still reaches J.
+    public static func plainStroke(keyCode: UInt16, characters: String?) -> KeyStroke {
+        KeyStroke(keyCode: keyCode, character: characters?.lowercased() ?? "", modifiers: [])
+    }
+
+    /// The press that matches in `scopes`, or nil. A press that holds only Shift also tries the key with Shift
+    /// removed. Command, Control and Option do not fall back, so a saved ⌘J runs and a plain J does not become it.
+    public static func resolvedStroke(_ stroke: KeyStroke, in scopes: Set<KeymapScope>, keymap: Keymap) -> KeyStroke? {
+        if !keymap.commands(for: stroke, in: scopes).isEmpty { return stroke }
+        guard stroke.modifiers.isDisjoint(with: [.command, .control, .option]) else { return nil }
+        let plain = plainStroke(keyCode: stroke.keyCode, characters: stroke.character)
+        guard plain != stroke, !keymap.commands(for: plain, in: scopes).isEmpty else { return nil }
+        return plain
+    }
+
+    /// The command ids `resolvedStroke` matched.
+    public static func commandIDs(for stroke: KeyStroke, in scopes: Set<KeymapScope>, keymap: Keymap) -> [String] {
+        guard let resolved = resolvedStroke(stroke, in: scopes, keymap: keymap) else { return [] }
+        return keymap.commands(for: resolved, in: scopes).map(\.id)
+    }
 
     /// The answer number this press is, 1 to 9, if the panel's keys say so.
     public static func choiceNumber(in ids: [String]) -> Int? {

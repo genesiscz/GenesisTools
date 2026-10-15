@@ -288,9 +288,8 @@ private final class PreviewDelegate: NSObject, NSApplicationDelegate {
         guard let expanded = store.expanded, let panel = panels[expanded]?.panel,
             event.window === panel, panel.isKeyWindow
         else { return event }
-        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-              let stroke = KeyStroke(event) else { return event }
-        let ids = WidgetKeymap.shared.commands(for: stroke, in: [.window]).map(\.id)
+        guard let stroke = KeyStroke(event) else { return event }
+        let ids = WidgetKeymap.commandIDs(for: stroke, in: [.window], keymap: WidgetKeymap.shared)
         if ids.contains(WidgetKeymap.collapse) {
             store.collapse()
             return nil

@@ -34,7 +34,7 @@ final class ClickyAndSessionsKeymapTests: XCTestCase {
     }
 
     /// Without the host flag the transcript registers Command for the prompts, and Reload.
-    /// With the flag it registers Option-Command for the prompts, and not the Command pair or Reload.
+    /// With the flag it registers Option-Command for the prompts. Reload stays registered either way.
     func testTheHostFlagRegistersTheAltPromptKeys() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 80), styleMask: [.titled],
                               backing: .buffered, defer: true)
@@ -66,7 +66,7 @@ final class ClickyAndSessionsKeymapTests: XCTestCase {
         XCTAssertTrue(owned.contains(SessionsKeymap.nextPromptAlt))
         XCTAssertFalse(owned.contains(SessionsKeymap.previousPrompt))
         XCTAssertFalse(owned.contains(SessionsKeymap.nextPrompt))
-        XCTAssertFalse(owned.contains(SessionsKeymap.reload))
+        XCTAssertTrue(owned.contains(SessionsKeymap.reload), "an open session keeps Command R")
     }
 
     func testTheHostFlagTooltipUsesTheAltKey() {
@@ -81,7 +81,7 @@ final class ClickyAndSessionsKeymapTests: XCTestCase {
             SessionsKeymap.hint("Previous prompt", SessionsKeymap.previousPrompt))
         XCTAssertEqual(
             SessionsKeymap.tooltip("Reload the session and its transcript", SessionsKeymap.reload, hostOwns: true),
-            "Reload the session and its transcript")
+            SessionsKeymap.hint("Reload the session and its transcript", SessionsKeymap.reload))
     }
 }
 

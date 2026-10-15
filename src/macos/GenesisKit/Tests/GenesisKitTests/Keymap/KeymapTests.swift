@@ -116,6 +116,53 @@ final class KeyChordTests: XCTestCase {
         XCTAssertFalse(model.recording)
         XCTAssertEqual(recorded.count, 1)
     }
+
+    private func window() -> NSWindow {
+        NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: [.titled], backing: .buffered,
+                 defer: true)
+    }
+
+    func testAPressInAnotherWindowStopsRecordingAndIsNotTaken() {
+        let mine = window()
+        let other = window()
+        let model = KeyChordRecorderModel()
+        var recorded: [KeyChord] = []
+        model.start(onRecord: { recorded.append($0) }, window: mine)
+        XCTAssertFalse(model.take(press(1, "s", .command), in: other) { recorded.append($0) })
+        XCTAssertFalse(model.recording)
+        XCTAssertTrue(recorded.isEmpty)
+        XCTAssertFalse(KeymapDispatcher.shared.suspendedForTests)
+    }
+
+    func testResigningTheKeyWindowStopsRecording() {
+        let mine = window()
+        let model = KeyChordRecorderModel()
+        model.start(onRecord: { _ in }, window: mine)
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: mine)
+        XCTAssertFalse(model.recording)
+        XCTAssertFalse(KeymapDispatcher.shared.suspendedForTests)
+    }
+
+    func testStartingASecondRecorderStopsTheFirst() {
+        let mine = window()
+        let first = KeyChordRecorderModel()
+        let second = KeyChordRecorderModel()
+        first.start(onRecord: { _ in }, window: mine)
+        second.start(onRecord: { _ in }, window: mine)
+        XCTAssertFalse(first.recording)
+        XCTAssertTrue(second.recording)
+        second.stop()
+        XCTAssertFalse(KeymapDispatcher.shared.suspendedForTests)
+    }
+
+    func testReleasingARecorderResumesTheDispatcher() {
+        var model: KeyChordRecorderModel? = KeyChordRecorderModel()
+        let mine = window()
+        model?.start(onRecord: { _ in }, window: mine)
+        XCTAssertTrue(KeymapDispatcher.shared.suspendedForTests)
+        model = nil
+        XCTAssertFalse(KeymapDispatcher.shared.suspendedForTests)
+    }
 }
 
 @MainActor
@@ -190,6 +237,26 @@ final class KeymapTests: XCTestCase {
         let keymap = Keymap(library: library, store: store, layout: czech)
         XCTAssertEqual(keymap.configuration, KeymapConfiguration())
         XCTAssertEqual(keymap.label(for: "tab.next"), "⇧⌘)")
+    }
+
+    /// One chord this version cannot read, or a file with no version, does not drop the other keys. The unknown
+    /// text is written back on the next change.
+    func testOneUnreadableChordDoesNotDropTheRestAndIsWrittenBack() throws {
+        let store = temporaryStore()
+        try FileManager.default.createDirectory(at: store.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let raw = #"{"overrides":{"history.back":["cmd+code:123","fn+char:x"],"zoom.in":[]}}"#
+        try Data(raw.utf8).write(to: store.fileURL)
+        let keymap = Keymap(library: library, store: store, layout: czech)
+        XCTAssertEqual(keymap.chords(for: "history.back"), [.code(123, .command)])
+        XCTAssertEqual(keymap.chords(for: "zoom.in"), [], "an empty list still turns the key off")
+        XCTAssertEqual(keymap.chords(for: "tab.next"), [.code(30, [.command, .shift])])
+        keymap.setChords([.character("n", .command)], for: "tab.next")
+        let again = Keymap(library: library, store: store, layout: czech)
+        XCTAssertEqual(again.chords(for: "history.back"), [.code(123, .command)])
+        XCTAssertEqual(again.chords(for: "zoom.in"), [])
+        XCTAssertEqual(again.chords(for: "tab.next"), [.character("n", .command)])
+        let text = try String(contentsOf: store.fileURL, encoding: .utf8)
+        XCTAssertTrue(text.contains("fn+char:x"), text)
     }
 
     func testExactMatchesWinOverTheUSPositionFallback() {

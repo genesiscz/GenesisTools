@@ -98,13 +98,14 @@ final class MarkdownDefaultAppTests: XCTestCase {
         }
         defer { GenesisKit.install(nil) }
         GenesisKit.install(nil)
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
         XCTAssertNil(
-            MarkdownViewerMenu.build(appName: "Viewer").items.first?.submenu?.items.first { $0.title == "Set as Default App…" },
+            MarkdownViewerMenu.build(appName: "Viewer", keymap: keys).items.first?.submenu?.items.first { $0.title == "Set as Default App…" },
             "an app that does not offer itself as the default shows no such item"
         )
 
         GenesisKit.install(OfferingHost())
-        let appMenu = MarkdownViewerMenu.build(appName: "Viewer").items.first?.submenu
+        let appMenu = MarkdownViewerMenu.build(appName: "Viewer", keymap: keys).items.first?.submenu
         let item = appMenu?.items.first { $0.title == "Set as Default App…" }
         XCTAssertNotNil(item)
         XCTAssertEqual(item?.action, #selector(MarkdownDefaultAppDialog.showChooser(_:)))

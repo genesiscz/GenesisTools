@@ -224,6 +224,7 @@ extension MarkdownDocumentWindowController: NSMenuItemValidation {
         case #selector(goBack(_:)): return model.canGoBack
         case #selector(goForward(_:)): return model.canGoForward
         case #selector(nextTab(_:)), #selector(previousTab(_:)): return model.docs.count > 1
+        case #selector(reopenClosedTab(_:)): return model.canReopenClosedTab
         default: return true
         }
     }

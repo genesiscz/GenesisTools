@@ -712,6 +712,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     @discardableResult
     func resolveUnsavedForClose(confirm: @MainActor (MarkdownDocument) -> UnsavedChoice = MarkdownDocumentsModel.askUnsaved) -> Bool {
         let original = selectedId
+        // Selecting each dirty tab to show the prompt is not a visit. Cancel would otherwise leave Back on a
+        // tab the reader only saw in the alert.
+        navigatingHistory = true
+        defer { navigatingHistory = false }
         for doc in docs where doc.isDirty {
             select(doc.id)
             switch confirm(doc) {

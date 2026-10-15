@@ -14,6 +14,11 @@ extension MarkdownDocumentsModel {
     var canGoBack: Bool { history.canGoBack(where: isReachable) }
     var canGoForward: Bool { history.canGoForward(where: isReachable) }
 
+    /// A closed file that is not open again. Reopen Closed Tab is dimmed without one.
+    var canReopenClosedTab: Bool {
+        recentlyClosed.contains { url in !docs.contains { $0.url == url } }
+    }
+
     private func navigate(_ step: (inout MarkdownNavigationHistory) -> String?) {
         guard let id = step(&history) else { return }
         navigatingHistory = true

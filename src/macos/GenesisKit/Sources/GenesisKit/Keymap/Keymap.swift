@@ -117,8 +117,15 @@ public final class Keymap: ObservableObject {
     /// The other commands that already use `chord` where `id` works: what a recorder warns about.
     public func commands(using chord: KeyChord, besides id: String) -> [KeymapCommand] {
         guard let command = library.command(id) else { return [] }
-        return library.commands.filter { other in
-            other.id != id && other.scope.meets(command.scope) && chords(for: other.id).contains { same($0, chord) }
+        return commands(meeting: command.scope, using: chord, ids: nil).filter { $0.id != id }
+    }
+
+    /// Commands here whose scope meets `scope` and that use `chord`. `ids` limits the list (a help page that shows
+    /// only some of this library).
+    public func commands(meeting scope: KeymapScope, using chord: KeyChord, ids: Set<String>? = nil) -> [KeymapCommand] {
+        library.commands.filter { other in
+            (ids?.contains(other.id) ?? true) && other.scope.meets(scope)
+                && chords(for: other.id).contains { same($0, chord) }
         }
     }
 
@@ -151,6 +158,7 @@ public final class Keymap: ObservableObject {
     /// Saves the user's keys for a command. The defaults again clear the override; an empty list turns the key off.
     public func setChords(_ chords: [KeyChord], for id: String) {
         guard library.command(id)?.configurable == true else { return }
+        configuration.retained.removeValue(forKey: id)
         if chords == library.command(id)?.defaults {
             configuration.overrides.removeValue(forKey: id)
         } else {
@@ -160,13 +168,16 @@ public final class Keymap: ObservableObject {
     }
 
     public func reset(_ id: String) {
-        guard configuration.overrides.removeValue(forKey: id) != nil else { return }
+        let hadOverride = configuration.overrides.removeValue(forKey: id) != nil
+        let hadRetained = configuration.retained.removeValue(forKey: id) != nil
+        guard hadOverride || hadRetained else { return }
         changed()
     }
 
     public func resetAll() {
-        guard !configuration.overrides.isEmpty else { return }
+        guard !configuration.overrides.isEmpty || !configuration.retained.isEmpty else { return }
         configuration.overrides = [:]
+        configuration.retained = [:]
         changed()
     }
 

@@ -79,6 +79,8 @@ struct MarkdownDocumentToolbar: View {
     @StateObject private var share = MarkdownShareModel()
     @ObservedObject private var gitConfiguration = GenesisKitMarkdownConfiguration.shared
     @ObservedObject private var repos = GitRepos.shared
+    /// Observed so a key changed in Keyboard Shortcuts redraws these tooltips.
+    @ObservedObject private var keymap = MarkdownKeymap.shared
 
     /// Read, Split, Source, and Changes while git is on and the file is in a repository (or Changes is open).
     private var modes: [MarkdownViewMode] {
@@ -148,14 +150,14 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "sidebar.left", label: "Files",
                     tint: model.showFiles ? model.theme.accent : nil,
-                    tooltip: MarkdownKeymap.hint("Files", "markdown.view.files"), id: "markdown-files-toggle", labels: labels,
+                    tooltip: keymap.hint("Files", "markdown.view.files"), id: "markdown-files-toggle", labels: labels,
                     action: toggleFiles
                 )
                 groupDivider
                 toolButton(
                     "list.bullet.indent", label: "Outline",
                     tint: model.showOutline ? model.theme.accent : nil,
-                    tooltip: MarkdownKeymap.hint("Outline", "markdown.view.outline"), id: "markdown-outline-toggle", labels: labels,
+                    tooltip: keymap.hint("Outline", "markdown.view.outline"), id: "markdown-outline-toggle", labels: labels,
                     action: toggleOutline
                 )
                 if modes.contains(.changes) {
@@ -179,7 +181,7 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "square.and.arrow.down", label: "Save",
                     tint: doc.isDirty ? model.theme.accent : model.theme.textMuted,
-                    tooltip: MarkdownKeymap.hint("Save", "markdown.file.save")
+                    tooltip: keymap.hint("Save", "markdown.file.save")
                         + (doc.hasDiskChange ? " — resolve the change on disk first" : ""),
                     id: "markdown-save", labels: labels
                 ) {
@@ -203,12 +205,12 @@ struct MarkdownDocumentToolbar: View {
             MarkdownToolbarGroup(theme: model.theme) {
                 toolButton(
                     "arrow.triangle.2.circlepath", label: "Reload",
-                    tooltip: MarkdownKeymap.hint("Reload from disk", "markdown.file.reload"), id: "markdown-reload", labels: labels
+                    tooltip: keymap.hint("Reload from disk", "markdown.file.reload"), id: "markdown-reload", labels: labels
                 ) {
                     doc.reload()
                 }
                 groupDivider
-                toolButton("folder", label: "Finder", tooltip: MarkdownKeymap.hint("Reveal in Finder", "markdown.file.reveal"), id: "markdown-reveal", labels: labels, action: revealInFinder)
+                toolButton("folder", label: "Finder", tooltip: keymap.hint("Reveal in Finder", "markdown.file.reveal"), id: "markdown-reveal", labels: labels, action: revealInFinder)
                 groupDivider
                 toolButton("square.and.pencil", label: "Editor", tooltip: "Open in the default editor", id: "markdown-open-external", labels: labels) {
                     NSWorkspace.shared.open(doc.url)
@@ -227,7 +229,7 @@ struct MarkdownDocumentToolbar: View {
             // Smaller, the size, bigger: one control, so the percentage reads as the size it sets rather
             // than as a third button.
             MarkdownToolbarGroup(theme: model.theme) {
-                toolButton("textformat.size.smaller", label: "Smaller", tooltip: MarkdownKeymap.hint("Smaller", "markdown.view.smaller"), id: "markdown-zoom-out", labels: false) {
+                toolButton("textformat.size.smaller", label: "Smaller", tooltip: keymap.hint("Smaller", "markdown.view.smaller"), id: "markdown-zoom-out", labels: false) {
                     model.zoomStep(-1)
                 }
                 groupDivider
@@ -241,12 +243,12 @@ struct MarkdownDocumentToolbar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
-                .instantTooltip(MarkdownKeymap.hint("Reset the reading size", "markdown.view.actualSize"))
+                .instantTooltip(keymap.hint("Reset the reading size", "markdown.view.actualSize"))
                 .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
                 .accessibilityLabel("Reading size \(MarkdownZoom.percent(model.zoom)), reset")
                 .accessibilityIdentifier("markdown-zoom-reset")
                 groupDivider
-                toolButton("textformat.size.larger", label: "Bigger", tooltip: MarkdownKeymap.hint("Bigger", "markdown.view.bigger"), id: "markdown-zoom-in", labels: false) {
+                toolButton("textformat.size.larger", label: "Bigger", tooltip: keymap.hint("Bigger", "markdown.view.bigger"), id: "markdown-zoom-in", labels: false) {
                     model.zoomStep(1)
                 }
             }
@@ -255,14 +257,14 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "arrow.down.doc", label: "PDF",
                     tint: model.canExport ? nil : model.theme.textMuted,
-                    tooltip: MarkdownKeymap.hint("Save as PDF", "markdown.file.pdf"), id: "markdown-export-pdf", labels: labels,
+                    tooltip: keymap.hint("Save as PDF", "markdown.file.pdf"), id: "markdown-export-pdf", labels: labels,
                     action: exportPDF
                 )
                 groupDivider
                 toolButton(
                     "printer", label: "Print",
                     tint: model.canExport ? nil : model.theme.textMuted,
-                    tooltip: MarkdownKeymap.hint("Print", "markdown.file.print"), id: "markdown-print", labels: labels,
+                    tooltip: keymap.hint("Print", "markdown.file.print"), id: "markdown-print", labels: labels,
                     action: printDocument
                 )
                 if share.available {
@@ -358,8 +360,8 @@ struct MarkdownDocumentToolbar: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
-                .instantTooltip(mode.label)
-                .accessibilityLabel(MarkdownDocumentActions.spokenLabel(mode.label))
+                .instantTooltip(mode.label(in: keymap))
+                .accessibilityLabel(MarkdownDocumentActions.spokenLabel(mode.label(in: keymap)))
                 .accessibilityAddTraits(active ? .isSelected : [])
                 .accessibilityIdentifier("markdown-mode-\(mode.rawValue)")
             }

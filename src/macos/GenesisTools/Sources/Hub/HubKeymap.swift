@@ -172,14 +172,15 @@ enum HubKeymap {
         model: HubModel, window: NSWindow, keymap: Keymap = shared, dispatcher: KeymapDispatcher = .shared
     ) -> [KeymapRegistration] {
         HubMenuCommands.windowCommands.compactMap { command in
-            guard let id = command.id, id != commandPalette, library.command(id)?.scope == .window,
-                  library.command(id)?.defaults.isEmpty == false
+            // A command with no default key is still registered: the user may bind one later, and a press
+            // with no chord matches nothing.
+            guard let id = command.id, id != commandPalette, library.command(id)?.scope == .window
             else { return nil }
             return dispatcher.register(id, in: keymap, window: window, isEnabled: {
                 liveWhenGreyed.contains(id) || (command.enabled?(model) ?? true)
-            }) {
-                // ⇧⌘G is Previous Match while a find bar is open, and Glass the rest of the time.
-                if id == glass, PanelFindRouter.shared.takesPreviousMatch(in: window) { return }
+            }) { press in
+                // Glass and Previous Match share ⇧⌘G. Only that chord steps an open find bar.
+                if id == glass, glassPressStepsFind(press, in: keymap, window: window) { return }
                 // The menu opens the picker. The key toggles it, which is what the hidden button did.
                 if id == promptLibrary {
                     PromptLibraryStore.shared.pickerOpen.toggle()
@@ -211,4 +212,38 @@ enum HubKeymap {
 
     /// "⌘K", or "" when the command has no key.
     static func label(_ id: String) -> String { shared.label(for: id) ?? "" }
+
+    /// Tests replace this. Production steps an open find bar.
+    static var redirectGlassToPreviousMatch: (NSWindow?) -> Bool = { window in
+        PanelFindRouter.shared.takesPreviousMatch(in: window)
+    }
+
+    /// True when this press is Previous Match and an open find bar took it. A Glass chord the user moved
+    /// off that key returns false, so Glass still runs.
+    static func glassPressStepsFind(_ press: KeyStroke, in keymap: Keymap, window: NSWindow?) -> Bool {
+        guard keymap.commands(for: press, in: [findScope]).contains(where: { $0.id == findPrevious }) else { return false }
+        return redirectGlassToPreviousMatch(window)
+    }
+
+    /// Close Window and the panel find keys: what the review window's shortcut list shows of this library.
+    static var reviewCommandIDs: Set<String> {
+        var ids: Set<String> = ["hub.window.close"]
+        for command in library.commands where command.scope == findScope { ids.insert(command.id) }
+        return ids
+    }
+
+    /// The hub lists its own keys and the session keys that window actually runs. The review window lists only
+    /// the keys it runs: Close Window, panel find, and the session keys with Command on the prompts.
+    static func shortcutPages(review: Bool) -> [KeymapPage] {
+        if review {
+            return [
+                KeymapPage(shared, commandIDs: reviewCommandIDs),
+                KeymapPage(SessionsKeymap.shared, commandIDs: SessionsKeymap.shownCommandIDs(hostOwns: false)),
+            ]
+        }
+        return [
+            KeymapPage(shared),
+            KeymapPage(SessionsKeymap.shared, commandIDs: SessionsKeymap.shownCommandIDs(hostOwns: true)),
+        ]
+    }
 }

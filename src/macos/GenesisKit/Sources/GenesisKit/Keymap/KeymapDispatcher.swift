@@ -20,10 +20,10 @@ public final class KeymapDispatcher {
         let anyWindow: Bool
         weak var window: NSWindow?
         let isEnabled: () -> Bool
-        let perform: () -> Void
+        let perform: (KeyStroke) -> Void
 
         init(keymap: Keymap, command: String, window: NSWindow?, isEnabled: @escaping () -> Bool,
-             perform: @escaping () -> Void) {
+             perform: @escaping (KeyStroke) -> Void) {
             self.keymap = keymap
             self.command = command
             anyWindow = window == nil
@@ -45,6 +45,15 @@ public final class KeymapDispatcher {
     public func register(
         _ command: String, in keymap: Keymap, window: NSWindow?, isEnabled: @escaping () -> Bool = { true },
         perform: @escaping () -> Void
+    ) -> KeymapRegistration {
+        return register(command, in: keymap, window: window, isEnabled: isEnabled, perform: { (_: KeyStroke) in perform() })
+    }
+
+    /// Same as `register`, and `perform` receives the press. A handler that shares a key with another command
+    /// (Glass and Previous Match) can tell which chord was pressed.
+    public func register(
+        _ command: String, in keymap: Keymap, window: NSWindow?, isEnabled: @escaping () -> Bool = { true },
+        perform: @escaping (KeyStroke) -> Void
     ) -> KeymapRegistration {
         let registration = Registration(
             keymap: keymap, command: command, window: window, isEnabled: isEnabled, perform: perform)
@@ -80,7 +89,7 @@ public final class KeymapDispatcher {
                       let chord = keymap.matchingChord(registration.command, press, pass: pass),
                       !(typing && chord.typesText), registration.isEnabled()
                 else { continue }
-                registration.perform()
+                registration.perform(press)
                 return true
             }
         }

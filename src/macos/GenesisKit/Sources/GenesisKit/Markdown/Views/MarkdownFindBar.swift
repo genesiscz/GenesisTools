@@ -52,6 +52,8 @@ struct MarkdownFindOverlay: View {
 
 struct MarkdownFindBar: View {
     @ObservedObject var model: MarkdownDocumentsModel
+    /// Observed so a key changed in Keyboard Shortcuts redraws these tooltips.
+    @ObservedObject var keymap = MarkdownKeymap.shared
     @FocusState private var focused: Bool
     @State private var allTabsOpen = false
 
@@ -94,7 +96,7 @@ struct MarkdownFindBar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
-                .instantTooltip(MarkdownKeymap.hint("Replace", "markdown.find.replace"))
+                .instantTooltip(keymap.hint("Replace", "markdown.find.replace"))
                 .accessibilityLabel(model.replaceOpen ? "Hide replace" : "Show replace")
                 .keymapAction("markdown.find.replace", in: MarkdownKeymap.shared) { model.replaceOpen.toggle() }
                 .accessibilityIdentifier("markdown-replace-toggle")
@@ -111,13 +113,13 @@ struct MarkdownFindBar: View {
                     .frame(minWidth: 46, alignment: .center)
                     .accessibilityIdentifier("markdown-find-counter")
 
-                stepButton("chevron.up", tooltip: Self.stepTooltip("Previous match", "⇧↩", "markdown.find.previous"),
+                stepButton("chevron.up", tooltip: stepTooltip("Previous match", "⇧↩", "markdown.find.previous"),
                            id: "markdown-find-prev") {
                     model.stepFind(-1)
                 }
                 .keymapAction("markdown.find.previous", in: MarkdownKeymap.shared) { model.stepFind(-1) }
 
-                stepButton("chevron.down", tooltip: Self.stepTooltip("Next match", "↩", "markdown.find.next"),
+                stepButton("chevron.down", tooltip: stepTooltip("Next match", "↩", "markdown.find.next"),
                            id: "markdown-find-next") {
                     model.stepFind(1)
                 }
@@ -126,7 +128,7 @@ struct MarkdownFindBar: View {
                 iconToggle(
                     "selection.pin.in.out",
                     isOn: model.findInSelection,
-                    tooltip: MarkdownKeymap.hint(model.findInSelection
+                    tooltip: keymap.hint(model.findInSelection
                         ? "Finding in the selection. Click to search everything"
                         : "Find in selection: only inside the text selected now", "markdown.find.inSelection"),
                     name: "Find in selection",
@@ -179,7 +181,7 @@ struct MarkdownFindBar: View {
             optionToggle(
                 Text("Aa"),
                 isOn: model.findOptions.matchCase,
-                tooltip: MarkdownKeymap.hint("Match case", "markdown.find.matchCase"),
+                tooltip: keymap.hint("Match case", "markdown.find.matchCase"),
                 name: "Match case",
                 id: "markdown-find-match-case"
             ) { model.findOptions.matchCase.toggle() }
@@ -188,7 +190,7 @@ struct MarkdownFindBar: View {
             optionToggle(
                 Text("ab").underline(),
                 isOn: model.findOptions.wholeWord,
-                tooltip: MarkdownKeymap.hint("Whole word", "markdown.find.wholeWord"),
+                tooltip: keymap.hint("Whole word", "markdown.find.wholeWord"),
                 name: "Whole word",
                 id: "markdown-find-whole-word"
             ) { model.findOptions.wholeWord.toggle() }
@@ -197,7 +199,7 @@ struct MarkdownFindBar: View {
             optionToggle(
                 Text(".*"),
                 isOn: model.findOptions.regex,
-                tooltip: MarkdownKeymap.hint("Regular expression", "markdown.find.regex"),
+                tooltip: keymap.hint("Regular expression", "markdown.find.regex"),
                 name: "Regular expression",
                 id: "markdown-find-regex"
             ) { model.findOptions.regex.toggle() }
@@ -259,7 +261,7 @@ struct MarkdownFindBar: View {
         }
         .buttonStyle(.genHoverPlain())
         .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
-        .instantTooltip(MarkdownKeymap.hint("Find in all open tabs", "markdown.find.allTabs"))
+        .instantTooltip(keymap.hint("Find in all open tabs", "markdown.find.allTabs"))
         .keymapAction("markdown.find.allTabs", in: MarkdownKeymap.shared) { allTabsOpen.toggle() }
         .accessibilityLabel("Find in all open tabs")
         .accessibilityIdentifier("markdown-find-all-tabs")
@@ -293,8 +295,8 @@ struct MarkdownFindBar: View {
     }
 
     /// "Next match (↩ or ⌘G)": the field's key, then the command's key in force.
-    static func stepTooltip(_ title: String, _ fieldKey: String, _ id: String) -> String {
-        let label = MarkdownKeymap.label(id)
+    func stepTooltip(_ title: String, _ fieldKey: String, _ id: String) -> String {
+        let label = keymap.label(for: id) ?? ""
         return label.isEmpty ? "\(title) (\(fieldKey))" : "\(title) (\(fieldKey) or \(label))"
     }
 

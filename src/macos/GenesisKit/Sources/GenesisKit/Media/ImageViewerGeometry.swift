@@ -262,13 +262,21 @@ public enum ImageViewerAction: Equatable, Sendable {
 /// The viewer's keys, read from `ImageViewerKeymap`. The window asks this before a control sees the press.
 public enum ImageViewerKeys {
     public static func action(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, picking: Bool,
-                              comparing: Bool) -> ImageViewerAction?
+                              comparing: Bool, keymap: Keymap? = nil) -> ImageViewerAction?
     {
         let stroke = KeyStroke(keyCode: keyCode, character: characters ?? "", modifiers: KeyModifiers(modifiers))
         return MainActor.assumeIsolated {
-            let keymap = ImageViewerKeymap.shared
-            if picking, let id = keymap.commands(for: stroke, in: [ImageViewerKeymap.pickerScope]).first?.id {
-                return pickerAction(id)
+            let keymap = keymap ?? ImageViewerKeymap.shared
+            // While the picker is open, Shift on an arrow or Return still moves it. Command stays on the
+            // window's keys (Copy, zoom), as it did before the picker switch.
+            if picking, !stroke.modifiers.contains(.command) {
+                let bare = KeyStroke(keyCode: stroke.keyCode, character: stroke.character, modifiers: [])
+                if let id = keymap.commands(for: bare, in: [ImageViewerKeymap.pickerScope]).first?.id {
+                    return pickerAction(id)
+                }
+                if keymap.commands(for: bare, in: [.window]).first?.id == ImageViewerKeymap.back {
+                    return .dismiss
+                }
             }
             guard let id = keymap.commands(for: stroke, in: [.window]).first?.id else { return nil }
             return windowAction(id, stroke, comparing: comparing)

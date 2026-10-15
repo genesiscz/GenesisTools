@@ -144,10 +144,15 @@ final class ImageViewerOrderingTests: XCTestCase {
 
 @MainActor
 final class ImageViewerKeysTests: XCTestCase {
+    private func viewerKeys() -> Keymap {
+        Keymap(library: ImageViewerKeymap.library, store: nil, layout: TableKeyLayout.us)
+    }
+
     private func action(_ code: UInt16, _ chars: String? = nil, _ flags: NSEvent.ModifierFlags = [], picking: Bool = false,
                         comparing: Bool = false) -> ImageViewerAction?
     {
-        ImageViewerKeys.action(keyCode: code, characters: chars, modifiers: flags, picking: picking, comparing: comparing)
+        ImageViewerKeys.action(keyCode: code, characters: chars, modifiers: flags, picking: picking, comparing: comparing,
+                               keymap: viewerKeys())
     }
 
     func testTheViewerKeys() {
@@ -196,6 +201,25 @@ final class ImageViewerKeysTests: XCTestCase {
         XCTAssertEqual(keys.commands(for: one, in: [.window]).map(\.id), [ImageViewerKeymap.actualSize])
         XCTAssertEqual(action(18, "+", .command), .zoomIn)
         XCTAssertEqual(action(18, "1", [.command, .shift]), .actualSize)
+    }
+
+    /// Shift on a picker key still moves it. Command stays on the window's keys. Shift on Escape still goes back.
+    func testShiftOnAPickerKeyStillMovesAndCommandDoesNot() {
+        XCTAssertEqual(action(123, nil, .shift, picking: true), .pickerMove(dx: -1, dy: 0))
+        XCTAssertEqual(action(125, nil, .shift, picking: true), .pickerMove(dx: 0, dy: 1))
+        XCTAssertNil(action(123, nil, .command, picking: true), "Command stays with the window keys")
+        XCTAssertEqual(action(53, nil, .shift, picking: true), .dismiss)
+    }
+
+    /// Copy is also the US position of C, so a layout that types something else there still copies.
+    func testCopyMatchesTheCKeyByPosition() {
+        XCTAssertEqual(action(8, "x", .command), .copy)
+    }
+
+    /// Shift does not count for a digit. Shift Command 1 is 100 %, Shift Command 0 is fit.
+    func testShiftCommandOnADigitIsTheSameAsCommand() {
+        XCTAssertEqual(action(18, "1", [.command, .shift]), .actualSize)
+        XCTAssertEqual(action(29, "0", [.command, .shift]), .fit)
     }
 
     func testEscStepsBackOneLayer() {

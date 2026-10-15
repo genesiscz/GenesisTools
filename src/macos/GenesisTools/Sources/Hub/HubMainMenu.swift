@@ -12,7 +12,13 @@ import AppKit
 /// the menu item shows it and runs the action on a click.
 @MainActor
 enum AppMainMenu {
+    /// True after this process installed the hub menu. The review process installs with no hub, so a session
+    /// hosted there keeps Command-R and Command on the keys right of P. Set only here: the session view is
+    /// built from call sites this package does not own.
+    private(set) static var installedWithHub = false
+
     static func install(hub: HubModel? = nil, keymap: Keymap = HubKeymap.shared) {
+        installedWithHub = hub != nil
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
         let bar = NSMenu()
 
@@ -150,7 +156,7 @@ final class AppMenuTarget: NSObject {
 
     /// The review window's keys live in the hub library: the shared menu, Close Window, and panel find.
     @objc func showKeyboardShortcuts(_ sender: Any?) {
-        KeymapHelpWindow.show(HubKeymap.shared)
+        KeymapHelpWindow.show(HubKeymap.shortcutPages(review: true))
     }
 
     /// The privacy grants window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
@@ -248,7 +254,9 @@ enum HubMenuCommands {
     ]
 
     static let help: [HubMenuCommand] = [
-        HubMenuCommand(title: "Keyboard Shortcuts", id: "hub.help.shortcuts", run: { _ in KeymapHelpWindow.show(HubKeymap.shared) }),
+        HubMenuCommand(title: "Keyboard Shortcuts", id: "hub.help.shortcuts", run: { _ in
+            KeymapHelpWindow.show(HubKeymap.shortcutPages(review: false))
+        }),
         HubMenuCommand(title: "Command Palette Commands", id: "hub.help.commands", run: { palette($0, "") }),
         HubMenuCommand(title: "Open Logs Folder", id: "hub.help.logs", run: { _ in reveal(".genesis-tools/logs") }, separated: true),
         HubMenuCommand(title: "Open Performance Log", id: "hub.help.perf", run: { _ in reveal(".genesis-tools/logs/app-perf.log") }),

@@ -55,27 +55,65 @@ public extension KeyChordRecorder {
     @MainActor static func problem(_ chord: KeyChord) -> String? { KeyChordRecorderModel.problem(chord) }
 }
 
-/// Holds the key monitor while a recorder listens. The monitor swallows every key press it sees.
-@MainActor
+/// Holds the key monitor while a recorder listens. A press in its window is swallowed. A press anywhere else, or
+/// the window resigning key, stops the recorder and the press is delivered. The class is not itself on the main
+/// actor: `deinit` has to remove the monitor, and a main-actor class cannot read its properties there.
 final class KeyChordRecorderModel: ObservableObject {
     @Published private(set) var recording = false
     @Published private(set) var problem: String?
     private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+    private var recordingWindow: NSWindow?
+    /// The recorder that is listening. Starting another stops this one.
+    private static weak var current: KeyChordRecorderModel?
 
-    func start(onRecord: @escaping (KeyChord) -> Void) {
+    /// `window` nil is the key window now. A test passes the window so it does not have to make one key.
+    @MainActor
+    func start(onRecord: @escaping (KeyChord) -> Void, window: NSWindow? = nil) {
         stop()
+        if let current = Self.current, current !== self { current.stop() }
+        Self.current = self
         problem = nil
         recording = true
+        let window = window ?? NSApp.keyWindow
+        recordingWindow = window
         KeymapDispatcher.shared.suspend()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             MainActor.assumeIsolated {
-                if let press = KeyStroke(event) { self?.receive(press, onRecord: onRecord) }
+                guard let self else { return event }
+                return self.handle(event, onRecord: onRecord)
             }
-            return nil
+        }
+        if let window {
+            resignObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.stop() }
+            }
         }
     }
 
+    /// A press in the recording window is taken (nil). Any other press stops recording and is returned.
+    @MainActor
+    func handle(_ event: NSEvent, onRecord: (KeyChord) -> Void) -> NSEvent? {
+        guard take(KeyStroke(event), in: event.window, onRecord: onRecord) else { return event }
+        return nil
+    }
+
+    /// True when `window` is the one being recorded and `press` was offered to it. False stops the recorder.
+    @MainActor
+    @discardableResult
+    func take(_ press: KeyStroke?, in window: NSWindow?, onRecord: (KeyChord) -> Void) -> Bool {
+        guard recording, let recordingWindow, window === recordingWindow else {
+            stop()
+            return false
+        }
+        if let press { receive(press, onRecord: onRecord) }
+        return true
+    }
+
     /// One key press while recording. Escape with no modifier cancels.
+    @MainActor
     func receive(_ press: KeyStroke, onRecord: (KeyChord) -> Void) {
         if press.keyCode == 53, press.modifiers.isEmpty {
             stop()
@@ -91,12 +129,33 @@ final class KeyChordRecorderModel: ObservableObject {
         stop()
     }
 
+    @MainActor
     func stop() {
+        if Self.current === self { Self.current = nil }
         if let monitor { NSEvent.removeMonitor(monitor) }
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
         if recording { KeymapDispatcher.shared.resume() }
         monitor = nil
+        resignObserver = nil
+        recordingWindow = nil
         recording = false
         problem = nil
+    }
+
+    deinit {
+        let monitor = monitor
+        let resignObserver = resignObserver
+        let wasRecording = recording
+        let cleanup: @MainActor () -> Void = {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+            if wasRecording { KeymapDispatcher.shared.resume() }
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(cleanup)
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated(cleanup) }
+        }
     }
 
     /// Keys macOS keeps for itself: ⌘Tab, ⌘Space, ⌃Space, ⌃⌘Space, ⌘` and the screenshot keys ⇧⌘3, ⇧⌘4, ⇧⌘5.
@@ -108,6 +167,7 @@ final class KeyChordRecorderModel: ObservableObject {
 
     /// Why the chord cannot be an app's shortcut, or nil. It needs ⌘, ⌃ or ⌥, unless it is a function key: a key
     /// with Shift alone or nothing would only type.
+    @MainActor
     static func problem(_ chord: KeyChord) -> String? {
         let label = chord.label(layout: SystemKeyLayout.shared)
         if chord.modifiers.isDisjoint(with: [.command, .control, .option]) && !chord.isFunctionKey {

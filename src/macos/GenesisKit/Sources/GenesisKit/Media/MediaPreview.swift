@@ -171,16 +171,26 @@ public enum MediaPreviewKeyboard {
 
     @MainActor
     public static func handle(keyCode: UInt16, editingText: Bool) -> Bool {
+        handle(KeyStroke(keyCode: keyCode, character: "", modifiers: []), editingText: editingText)
+    }
+
+    @MainActor
+    public static func handle(_ stroke: KeyStroke, editingText: Bool) -> Bool {
+        handle(stroke, editingText: editingText, keymap: WidgetKeymap.shared)
+    }
+
+    /// The preview command for `stroke`, if one is open. The real modifiers count, and Shift alone still reaches
+    /// the unshifted arrow, Space and Esc. Space stays with a text field. Esc closes the preview even then.
+    @MainActor
+    public static func handle(_ stroke: KeyStroke, editingText: Bool, keymap: Keymap) -> Bool {
         guard let state = MediaPreviewState.active, state.isOpen else { return false }
-        let stroke = KeyStroke(keyCode: keyCode, character: "", modifiers: [])
-        guard let id = WidgetKeymap.shared.commands(for: stroke, in: [WidgetKeymap.previewScope]).first?.id else {
-            return false
-        }
+        guard let resolved = WidgetKeymap.resolvedStroke(stroke, in: [WidgetKeymap.previewScope], keymap: keymap),
+              let id = keymap.commands(for: resolved, in: [WidgetKeymap.previewScope]).first?.id
+        else { return false }
         switch id {
         case WidgetKeymap.previewClose:
-            // Space stays with a text field. Esc closes the preview even then.
             if editingText,
-               WidgetKeymap.shared.matchingChord(WidgetKeymap.previewClose, stroke, pass: .position)?.key == .code(49) {
+               keymap.matchingChord(WidgetKeymap.previewClose, resolved, pass: .position)?.key == .code(49) {
                 return false
             }
             state.dismiss()

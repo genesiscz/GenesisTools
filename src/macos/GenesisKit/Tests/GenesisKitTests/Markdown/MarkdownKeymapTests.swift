@@ -157,11 +157,13 @@ final class MarkdownKeymapTests: XCTestCase {
     }
 
     func testTheMenuShowsTheKeysInForceAndOffersBackForwardAndTheShortcutList() throws {
-        let menu = MarkdownViewerMenu.build(appName: "Viewer")
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let menu = MarkdownViewerMenu.build(appName: "Viewer", keymap: keys)
         let go = try XCTUnwrap(menu.items.first { $0.title == "Go" }?.submenu)
         let back = try XCTUnwrap(go.items.first { $0.title == "Back" })
-        XCTAssertEqual(back.keyEquivalentModifierMask, [.command])
-        XCTAssertEqual(back.keyEquivalent, MarkdownKeymap.shared.chord(for: "markdown.history.back")?.menuKeyEquivalent)
+        let backChord = try XCTUnwrap(keys.chord(for: "markdown.history.back"))
+        XCTAssertEqual(back.keyEquivalentModifierMask, backChord.modifiers.eventFlags)
+        XCTAssertEqual(back.keyEquivalent, backChord.menuKeyEquivalent)
         XCTAssertFalse(back.keyEquivalent.isEmpty, "the key right of P types a character on every layout")
         XCTAssertEqual(go.items.first { $0.title == "Next Tab" }?.keyEquivalentModifierMask, [.command, .shift])
         let help = try XCTUnwrap(menu.items.first { $0.title == "Help" }?.submenu)
@@ -172,10 +174,73 @@ final class MarkdownKeymapTests: XCTestCase {
     }
 
     func testTheWindowAndHelpMenusAreFoundByTitleNotByPlace() throws {
-        let menu = MarkdownViewerMenu.build(appName: "Viewer")
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let menu = MarkdownViewerMenu.build(appName: "Viewer", keymap: keys)
         let window = try XCTUnwrap(MarkdownViewerMenu.submenu("Window", in: menu))
         XCTAssertTrue(window.items.contains { $0.title == "Minimize" })
         XCTAssertTrue(menu.items.last?.submenu !== window, "Help is the last menu, so the place cannot name the Window menu")
         XCTAssertTrue(MarkdownViewerMenu.submenu("Help", in: menu)?.items.contains { $0.title == "Keyboard Shortcuts" } == true)
+    }
+
+    /// Show Files bound to ⌘B loses while the editor is first responder, and runs when it is not.
+    func testBoldTakesCommandBFromShowFilesWhileTheEditorIsFirstResponder() throws {
+        let keymap = Keymap(library: MarkdownKeymap.library, store: nil, layout: czech)
+        keymap.setChords([.character("b", .command)], for: "markdown.view.files")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 80), styleMask: [.titled],
+                              backing: .buffered, defer: true)
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 80))
+        window.contentView = text
+        let dispatcher = KeymapDispatcher()
+        var ran: [String] = []
+        let files = dispatcher.register("markdown.view.files", in: keymap, window: window) { ran.append("files") }
+        let source = MarkdownKeymap.registerSourceCommands(
+            textView: text, window: window, keymap: keymap, dispatcher: dispatcher) { ran.append($0) }
+        defer {
+            files.cancel()
+            source.forEach { $0.cancel() }
+        }
+        let bold = stroke(11, "b", .command)
+        XCTAssertTrue(dispatcher.handle(bold, in: window, typing: true))
+        XCTAssertEqual(ran, ["files"])
+        XCTAssertTrue(window.makeFirstResponder(text))
+        ran = []
+        XCTAssertTrue(dispatcher.handle(bold, in: window, typing: true))
+        XCTAssertEqual(ran, ["markdown.edit.bold"])
+    }
+
+    func testAnUnsavedPromptDoesNotBecomeBackHistory() throws {
+        let dir = try folder()
+        let model = model()
+        let urls = try notes(["a", "b"], in: dir)
+        model.open(urls)
+        let first = try XCTUnwrap(model.docs.first { $0.title == "a" })
+        let second = try XCTUnwrap(model.docs.first { $0.title == "b" })
+        first.edit(first.displayText + "\nchanged")
+        second.edit(second.displayText + "\nchanged")
+        let history = model.history.entries
+        XCTAssertFalse(model.resolveUnsavedForClose { _ in .cancel })
+        XCTAssertEqual(model.history.entries, history)
+        XCTAssertEqual(model.selectedId, first.id, "Cancel leaves the tab the prompt was about")
+    }
+
+    func testReopenClosedTabIsOffWhenNothingClosedRemains() throws {
+        let dir = try folder()
+        let model = model()
+        model.open(try notes(["a"], in: dir))
+        XCTAssertFalse(model.canReopenClosedTab)
+        let doc = try XCTUnwrap(model.docs.first)
+        XCTAssertTrue(model.close(doc))
+        XCTAssertTrue(model.canReopenClosedTab)
+        model.reopenLastClosed()
+        XCTAssertFalse(model.canReopenClosedTab)
+    }
+
+    func testAFindTooltipFollowsTheKeymapTheBarObserves() {
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
+        keys.setChords([.character("n", .command)], for: "markdown.find.next")
+        keys.setChords([.character("e", .command)], for: "markdown.view.split")
+        let bar = MarkdownFindBar(model: model(), keymap: keys)
+        XCTAssertEqual(bar.stepTooltip("Next match", "Return", "markdown.find.next"), "Next match (Return or ⌘N)")
+        XCTAssertTrue(MarkdownViewMode.split.label(in: keys).contains("⌘E"))
     }
 }

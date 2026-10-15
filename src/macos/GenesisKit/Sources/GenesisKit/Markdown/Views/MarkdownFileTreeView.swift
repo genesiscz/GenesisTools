@@ -24,6 +24,8 @@ import SwiftUI
 struct MarkdownFileTreeView: View {
     @ObservedObject var model: MarkdownDocumentsModel
     @ObservedObject private var config = GenesisKitMarkdownConfiguration.shared
+    /// Observed so a key changed in Keyboard Shortcuts redraws the search tooltip.
+    @ObservedObject private var keymap = MarkdownKeymap.shared
     /// The shared tree (GenesisKit Files/FileTree.swift): one flat row list, folders read off the main thread.
     @StateObject private var tree = FileTreeModel(root: FileManager.default.homeDirectoryForCurrentUser)
     @StateObject private var search = FileTreeSearchModel()
@@ -502,7 +504,7 @@ struct MarkdownFileTreeView: View {
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityIdentifier("markdown-files-search-toggle")
-            .instantTooltip(MarkdownKeymap.hint("Find a file by name, or text in files", "markdown.find.files"))
+            .instantTooltip(keymap.hint("Find a file by name, or text in files", "markdown.find.files"))
 
             Button {
                 tree.reload()

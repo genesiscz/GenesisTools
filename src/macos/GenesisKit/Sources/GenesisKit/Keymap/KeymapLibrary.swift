@@ -86,16 +86,55 @@ public struct KeymapLibrary: Sendable {
 
 /// The user's own keys for one library. Only what differs from the defaults is kept, so a default the app changes
 /// later reaches every user who never touched that command.
-public struct KeymapConfiguration: Codable, Equatable, Sendable {
+public struct KeymapConfiguration: Equatable, Sendable {
     public var version = 1
     /// By command id. An empty list turns the command's key off.
     public var overrides: [String: [KeyChord]] = [:]
+    /// Chord text this version could not read, kept so the next save writes it back instead of dropping it.
+    var retained: [String: [String]] = [:]
 
     public init(overrides: [String: [KeyChord]] = [:]) { self.overrides = overrides }
 }
 
-/// Reads and writes a configuration as JSON. A missing file is an empty configuration; a file that cannot be read is
-/// logged and treated as empty, and left in place until the next save replaces it.
+extension KeymapConfiguration: Codable {
+    private enum CodingKeys: String, CodingKey { case version, overrides }
+
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        version = try box.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        let raw = try box.decodeIfPresent([String: [String]].self, forKey: .overrides) ?? [:]
+        var parsed: [String: [KeyChord]] = [:]
+        var kept: [String: [String]] = [:]
+        for (id, texts) in raw {
+            var chords: [KeyChord] = []
+            var unknown: [String] = []
+            for text in texts {
+                if let chord = KeyChord(text) { chords.append(chord) } else { unknown.append(text) }
+            }
+            // An empty list is a key the user turned off. A list of only unknown text is not: the command keeps
+            // its default, and the text is written back.
+            if !chords.isEmpty || unknown.isEmpty { parsed[id] = chords }
+            if !unknown.isEmpty { kept[id] = unknown }
+        }
+        overrides = parsed
+        retained = kept
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(version, forKey: .version)
+        var raw: [String: [String]] = [:]
+        let ids = Set(overrides.keys).union(retained.keys)
+        for id in ids {
+            raw[id] = (overrides[id] ?? []).map(\.description) + (retained[id] ?? [])
+        }
+        try box.encode(raw, forKey: .overrides)
+    }
+}
+
+/// Reads and writes a configuration as JSON. A missing file is an empty configuration. A file that is not JSON is
+/// logged and treated as empty, and left in place until the next save replaces it. One chord this version cannot
+/// read does not drop the rest: it is kept and written back.
 public struct KeymapStore: Sendable {
     public let fileURL: URL
 

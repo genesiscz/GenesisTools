@@ -194,7 +194,7 @@ public final class MarkdownViewerDelegate: NSObject, NSApplicationDelegate {
 /// click.
 @MainActor
 public enum MarkdownViewerMenu {
-    public static func build(appName: String) -> NSMenu {
+    public static func build(appName: String, keymap: Keymap = MarkdownKeymap.shared) -> NSMenu {
         let menu = NSMenu()
 
         let appMenu = NSMenu()
@@ -221,12 +221,12 @@ public enum MarkdownViewerMenu {
         recent.delegate = MarkdownRecentMenu.shared
         file.addItem(submenu(recent, title: "Open Recent"))
         file.addItem(.separator())
-        keyed(file, "Close Tab", #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)), "markdown.tab.close")
-        keyed(file, "Close Window", #selector(NSWindow.performClose(_:)), "markdown.window.close")
+        keyed(file, "Close Tab", #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)), "markdown.tab.close", keymap: keymap)
+        keyed(file, "Close Window", #selector(NSWindow.performClose(_:)), "markdown.window.close", keymap: keymap)
         file.addItem(.separator())
-        keyed(file, "Go to Location…", #selector(MarkdownDocumentWindowController.goToLocation(_:)), "markdown.file.goto")
+        keyed(file, "Go to Location…", #selector(MarkdownDocumentWindowController.goToLocation(_:)), "markdown.file.goto", keymap: keymap)
         file.addItem(.separator())
-        keyed(file, "Save", #selector(MarkdownDocumentWindowController.saveSelected(_:)), "markdown.file.save")
+        keyed(file, "Save", #selector(MarkdownDocumentWindowController.saveSelected(_:)), "markdown.file.save", keymap: keymap)
         menu.addItem(submenu(file, title: "File"))
 
         let edit = NSMenu(title: "Edit")
@@ -241,12 +241,12 @@ public enum MarkdownViewerMenu {
         menu.addItem(submenu(edit, title: "Edit"))
 
         let go = NSMenu(title: "Go")
-        keyed(go, "Back", #selector(MarkdownDocumentWindowController.goBack(_:)), "markdown.history.back")
-        keyed(go, "Forward", #selector(MarkdownDocumentWindowController.goForward(_:)), "markdown.history.forward")
+        keyed(go, "Back", #selector(MarkdownDocumentWindowController.goBack(_:)), "markdown.history.back", keymap: keymap)
+        keyed(go, "Forward", #selector(MarkdownDocumentWindowController.goForward(_:)), "markdown.history.forward", keymap: keymap)
         go.addItem(.separator())
-        keyed(go, "Next Tab", #selector(MarkdownDocumentWindowController.nextTab(_:)), "markdown.tab.next")
-        keyed(go, "Previous Tab", #selector(MarkdownDocumentWindowController.previousTab(_:)), "markdown.tab.previous")
-        keyed(go, "Reopen Closed Tab", #selector(MarkdownDocumentWindowController.reopenClosedTab(_:)), "markdown.tab.reopen")
+        keyed(go, "Next Tab", #selector(MarkdownDocumentWindowController.nextTab(_:)), "markdown.tab.next", keymap: keymap)
+        keyed(go, "Previous Tab", #selector(MarkdownDocumentWindowController.previousTab(_:)), "markdown.tab.previous", keymap: keymap)
+        keyed(go, "Reopen Closed Tab", #selector(MarkdownDocumentWindowController.reopenClosedTab(_:)), "markdown.tab.reopen", keymap: keymap)
         menu.addItem(submenu(go, title: "Go"))
 
         let window = NSMenu(title: "Window")
@@ -256,7 +256,7 @@ public enum MarkdownViewerMenu {
 
         let help = NSMenu(title: "Help")
         keyed(help, "Keyboard Shortcuts", #selector(MarkdownDocumentWindowController.showKeyboardShortcuts(_:)),
-              "markdown.help.shortcuts")
+              "markdown.help.shortcuts", keymap: keymap)
         menu.addItem(submenu(help, title: "Help"))
 
         return menu
@@ -264,9 +264,9 @@ public enum MarkdownViewerMenu {
 
     /// An item whose key is the command's key in force.
     @discardableResult
-    private static func keyed(_ menu: NSMenu, _ title: String, _ action: Selector, _ command: String) -> NSMenuItem {
+    private static func keyed(_ menu: NSMenu, _ title: String, _ action: Selector, _ command: String, keymap: Keymap) -> NSMenuItem {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
-        MarkdownKeymap.shared.bind(item, to: command)
+        keymap.bind(item, to: command)
         return item
     }
 

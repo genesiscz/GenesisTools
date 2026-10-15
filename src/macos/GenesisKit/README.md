@@ -3522,8 +3522,9 @@ window key, because its handler is newer and takes the key only while it is on s
 
 Only what differs from the defaults is saved, by command id; an empty list turns the key off.
 `KeymapStore.standard(library:)` is `<GenesisKitHost.keymapDirectory>/<library id>.json`, else
-`~/Library/Application Support/GenesisKit/Keymaps`. A missing file is no override; an unreadable one is logged and
-ignored until the next save.
+`~/Library/Application Support/GenesisKit/Keymaps`. A missing file is no override. A file that is not JSON is
+logged and ignored until the next save. One chord this version cannot read is kept and written back; the other
+keys still load. A missing `version` is version 1.
 
 #### In force: `Keymap`
 
@@ -3551,17 +3552,21 @@ editor, a web view) has the focus.
   A SwiftUI menu (`Commands`, `MenuBarExtra`) shows it with `.keymapShortcut(id, in: keymap)`
   (`KeyChord.keyboardShortcut`); SwiftUI then runs it by character, so register it with the dispatcher as well when
   it must work by position or on another layout.
-- A text view that handles its own keys asks `keymap.commands(for: KeyStroke(event)!, in: [scope])`
-  (`MarkdownKeymap.sourceCommand(for:)`).
+- Bold, italic, link and task register with the dispatcher while the source editor is the first responder
+  (`MarkdownKeymap.registerSourceCommands`), so they take a window key only then. Indent and outdent stay on
+  the text view. `MarkdownKeymap.sourceCommand(for:)` is the same lookup.
 
 #### Showing and changing keys: `KeymapHelpWindow`, `KeymapHelpView`, `KeymapListView`, `KeyChordRecorder`, `KeyCaps`
 
-`KeymapHelpWindow.show(keymap)` opens one window per library: a search field, the commands by group with their keys
-as `KeyCaps`, "Changed" on a user key, an orange line on a key two commands share, and "Change Keys…", which turns each
+`KeymapHelpWindow.show(keymap)` opens one window. `show(_:)` also takes several `KeymapPage`s, each a keymap and an
+optional set of command ids, and a key two of those pages share is marked on both. The window has a search field,
+the commands by group with their keys as `KeyCaps`, "Changed" on a user key, and "Change Keys…", which turns each
 row into a `KeyChordRecorder` with buttons for no key and for the default. `KeymapListView(keymap:editing:)` is the
-same list for a settings page. The recorder needs ⌘, ⌃ or ⌥ (a function key may stand alone), refuses macOS's own
-keys (⌘Tab, ⌘Space, ⌘`, ⇧⌘3/4/5), and suspends the dispatcher while it listens. Ids: `keymap-search`, `keymap-edit`,
-`keymap-restore-all`, `keymap-row-<id>`, `keymap-recorder-<id>`, `keymap-conflict-<id>`.
+same list for a settings page. The recorder listens only while its window is key: a press in another window, or the
+window resigning key, stops it and the press is delivered. Starting a second recorder stops the first. It needs ⌘,
+⌃ or ⌥ (a function key may stand alone), refuses macOS's own keys (⌘Tab, ⌘Space, ⌘`, ⇧⌘3/4/5), and suspends the
+dispatcher while it listens. Ids: `keymap-search`, `keymap-edit`, `keymap-restore-all`, `keymap-row-<id>`,
+`keymap-recorder-<id>`, `keymap-conflict-<id>`.
 
 The markdown viewer is the first library (`Markdown/Window/MarkdownKeymap.swift`).
 
@@ -9232,17 +9237,26 @@ let item = AgentWidgetItem(
     choices: [AgentWidgetChoice(id: "oauth", title: "OAuth", recommended: true)])
 ```
 
-#### `AgentWidgetKeyboard`
+#### `WidgetKeymap`
 
-Maps a key press to a choice number for number-key answers.
-
-- `static func choiceNumber(keyCode: UInt16, characters: String) -> Int?`: returns 1 through 9 for the number row key or a digit character. The number row works on layouts where the unshifted key is not a digit. Returns nil for any other key.
+The agent widget's keys (`widget.json`). `choiceNumber(in:)` returns 1 through 9 when the press matched an answer command. The number row is a position, so it works where the unshifted key is not a digit. A saved chord keeps its Command, Control and Option. `plainStroke` drops Shift, so Shift J still reaches J, and the same for k, Escape and the number row. Paste Media is ⌘V with Shift and Option too.
 
 ```swift
-let row = AgentWidgetKeyboard.choiceNumber(keyCode: 0x12, characters: "!")  // 1
-let typed = AgentWidgetKeyboard.choiceNumber(keyCode: 0, characters: "3")  // 3
-let other = AgentWidgetKeyboard.choiceNumber(keyCode: 0, characters: "x")  // nil
+let number = WidgetKeymap.choiceNumber(in: ["widget.choice.1"])  // 1
+let other = WidgetKeymap.choiceNumber(in: ["widget.message.next"])  // nil
 ```
+
+#### `SessionsKeymap`
+
+The session screen's keys. `EnvironmentValues.sessionHostOwnsCommandKeys` (default false) is set by a host that uses Command on the two keys right of P for itself, such as the hub's Back and Forward. The prompts then register Option-Command. Reload stays the transcript's in either case.
+
+#### `ClickyKeymap`
+
+Clicky's keys, in the same library shape.
+
+#### `ImageViewerKeymap` and `ImageViewerAction`
+
+The image viewer's keys. `ImageViewerAction.close` closes the window. `ImageViewerAction.dismiss` steps back one layer: the picker, then the compare, then the window (`ImageViewerKeymap.back`, Escape). Copy is ⌘C by character and by the C key's position.
 
 #### `GenesisWidgetMark`
 
