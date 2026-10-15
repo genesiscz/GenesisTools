@@ -138,6 +138,7 @@ struct MarkdownFileTreeView: View {
             search.setRoot(root)
             applySearchRequest()
         }
+        .onDisappear { scrollBox.cancelGlide() }
         .onChange(of: model.selectedId) { _, _ in
             revealed = nil
             revealSelected(model.filesRootURL)
@@ -337,6 +338,8 @@ struct MarkdownFileTreeView: View {
     /// opens itself too). A new root: the tree scrolls to its top and the header pulses; a file in it
     /// still scrolls into view, without a second light. The search closes, so the tree is on screen.
     private func handleReveal(_ proxy: ScrollViewProxy) {
+        // A new root, a header reveal or another row: the glide already running would keep writing the old target.
+        scrollBox.cancelGlide()
         guard let pulse = model.revealPulse else { return }
         if searchOpen {
             closeSearch()
@@ -380,7 +383,7 @@ struct MarkdownFileTreeView: View {
             // above the sidebar. So the tree's own scroll view glides there frame by frame and places the row itself.
             let rows = displayedRows
             if animation != nil, let index = rows.firstIndex(where: { $0.id == pending.id }), let scroll = scrollBox.scrollView {
-                MarkdownTreeScroll.glide(toRow: index, of: rows.count, in: scroll)
+                MarkdownTreeScroll.glide(toRow: index, of: rows.count, in: scroll, box: scrollBox)
             } else {
                 withAnimation(animation) { proxy.scrollTo(pending.id, anchor: .center) }
             }
@@ -390,6 +393,7 @@ struct MarkdownFileTreeView: View {
     }
 
     private func revealSelected(_ root: URL) {
+        scrollBox.cancelGlide()
         tree.setRoot(root)
         search.setRoot(root)
         guard let doc = model.selected else { return }
@@ -631,9 +635,65 @@ private struct MarkdownFileTreeResultRow: View {
 }
 
 /// The tree's scroll view, found from inside its content (`MarkdownTreeScrollFinder`). A class, so finding it does
-/// not re-render the tree.
+/// not re-render the tree. It owns the one glide that may write that scroll view's origin.
 final class MarkdownTreeScrollBox {
     weak var scrollView: NSScrollView?
+    /// The glide writing this scroll view, when one is running.
+    private(set) var glide: MarkdownTreeGlide?
+
+    /// Stops the running glide and starts a new one. A second reveal replaces the first.
+    func beginGlide() -> MarkdownTreeGlide {
+        cancelGlide()
+        let next = MarkdownTreeGlide()
+        glide = next
+        return next
+    }
+
+    /// Stops the glide. A new reveal, a re-root, a header reveal and the tree leaving the window call it.
+    func cancelGlide() {
+        glide?.cancel()
+        glide = nil
+    }
+
+    /// The glide finished on its own. A glide that a newer one already replaced is left alone.
+    func endGlide(_ flight: MarkdownTreeGlide) {
+        flight.cancel()
+        if glide === flight { glide = nil }
+    }
+}
+
+/// One running glide: its timer and the scroll-wheel monitor. Cancelling stops both, so an older reveal cannot
+/// keep writing the clip origin.
+final class MarkdownTreeGlide {
+    private(set) var cancelled = false
+    /// Timer callbacks that ran. A cancelled glide stays at however many ran before `cancel`.
+    private(set) var frames = 0
+    private var timer: Timer?
+    private var monitor: Any?
+
+    func noteFrame() { frames += 1 }
+
+    func arm(timer: Timer, monitor: Any?) {
+        if cancelled {
+            timer.invalidate()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            return
+        }
+        self.timer = timer
+        self.monitor = monitor
+    }
+
+    func cancel() {
+        guard !cancelled else { return }
+        cancelled = true
+        let timer = self.timer
+        self.timer = nil
+        timer?.invalidate()
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
 }
 
 /// A zero-size AppKit view in the tree's scroll content that hands its enclosing scroll view to the box.
@@ -656,6 +716,7 @@ private struct MarkdownTreeScrollFinder: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            if window == nil { box?.cancelGlide() }
             capture()
         }
 
@@ -703,9 +764,10 @@ enum MarkdownTreeScroll {
     /// later (5721 → 5915 → 6192 pt in the 2026-10-15 recording). After the motion the glide holds the row in the
     /// middle until that height has stopped changing. Only the reader's own scroll stops it early: a change of the
     /// clip origin alone is also what the list does while it grows, and stopping on it left the row three rows above
-    /// the sidebar.
+    /// the sidebar. A glide already running on `box` is cancelled first: two timers would write two origins.
     @MainActor
-    static func glide(toRow index: Int, of count: Int, in scroll: NSScrollView) {
+    static func glide(toRow index: Int, of count: Int, in scroll: NSScrollView, box: MarkdownTreeScrollBox) {
+        let flight = box.beginGlide()
         scroll.window?.contentView?.layoutSubtreeIfNeeded()
         let clip = scroll.contentView
         let visible = clip.bounds.height
@@ -732,6 +794,11 @@ enum MarkdownTreeScroll {
         var steadySince = began + duration
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
             MainActor.assumeIsolated {
+                guard !flight.cancelled else {
+                    timer.invalidate()
+                    return
+                }
+                flight.noteFrame()
                 let now = CACurrentMediaTime()
                 var done: String?
                 if readerScrolled {
@@ -749,14 +816,15 @@ enum MarkdownTreeScroll {
                     }
                 }
                 if let done {
-                    timer.invalidate()
-                    if let monitor { NSEvent.removeMonitor(monitor) }
+                    box.endGlide(flight)
                     let origin = Int(clip.bounds.origin.y)
                     let document = Int(height())
                     GenesisKit.log("markdown: tree glide \(done) at \(origin), document \(document) pt")
                 }
             }
         }
+        flight.arm(timer: timer, monitor: monitor)
+        guard !flight.cancelled else { return }
         RunLoop.main.add(timer, forMode: .common)
     }
 }

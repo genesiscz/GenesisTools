@@ -1,3 +1,4 @@
+import os
 import XCTest
 @testable import GenesisKit
 
@@ -57,6 +58,45 @@ final class FileTreeLiveListingTests: XCTestCase {
         try FileManager.default.removeItem(at: root.appendingPathComponent("Návrhy/old.md"))
         await settle(until: { !model.rows.contains { $0.name == "old.md" } }, seconds: 5)
         XCTAssertFalse(model.rows.contains { $0.name == "old.md" }, "a deleted note leaves the tree too")
+    }
+
+    /// The first read's snapshot is already taken when the folder changes. The event has to mark that read stale,
+    /// or the tree publishes the snapshot and never lists the new file.
+    func testADiskEventDuringTheFirstReadIsKept() async {
+        let model = FileTreeModel(root: root)
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let started = OSAllocatedUnfairLock(initialState: false)
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        let folder = root.standardizedFileURL
+        let old = FileTreeEntry(path: folder.appendingPathComponent("old.md").path, name: "old.md", isFolder: false)
+        let arrived = FileTreeEntry(path: folder.appendingPathComponent("arrived.md").path, name: "arrived.md", isFolder: false)
+        model.listing = { _ in
+            let call = calls.withLock { state -> Int in
+                state += 1
+                return state
+            }
+            if call == 1 {
+                started.withLock { $0 = true }
+                // The test signals as soon as it sees `started`. A missed signal must not hold the worker.
+                if gate.wait(timeout: .now() + 5) == .timedOut {
+                    return [old]
+                }
+                return [old]
+            }
+            return [old, arrived]
+        }
+        model.setRoot(root)
+        let deadline = Date().addingTimeInterval(2)
+        while !started.withLock({ $0 }), Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(started.withLock { $0 }, "the first read started")
+        model.diskChanged([model.root.path.nativeUTF8 + "/"])
+        gate.signal()
+        await settle { model.rows.contains { $0.name == "arrived.md" } }
+        XCTAssertTrue(model.rows.contains { $0.name == "arrived.md" }, "a disk event during the first read is read again")
+        XCTAssertGreaterThanOrEqual(calls.withLock { $0 }, 2, "the load retries instead of publishing the stale snapshot")
     }
 
     func testANoteSavedInPlaceChangesNoRows() async throws {

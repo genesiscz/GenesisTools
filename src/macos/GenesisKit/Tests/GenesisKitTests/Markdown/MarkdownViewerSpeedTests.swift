@@ -57,6 +57,41 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertGreaterThan(MarkdownTreeScroll.eased(0.9), 0.9, "slow at the end")
     }
 
+    /// Two reveals in one glide: the first timer must stop, or it keeps pulling the list toward the old row.
+    func testASecondGlideCancelsTheOneStillRunning() {
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 400))
+        let document = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 4_000))
+        scroll.documentView = document
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 400),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = scroll
+        let box = MarkdownTreeScrollBox()
+        defer {
+            box.cancelGlide()
+            window.close()
+        }
+        MarkdownTreeScroll.glide(toRow: 80, of: 100, in: scroll, box: box)
+        let first = box.glide
+        MarkdownTreeScroll.glide(toRow: 1, of: 100, in: scroll, box: box)
+        XCTAssertEqual(first?.cancelled, true, "the glide already running stops")
+        let second = box.glide
+        XCTAssertFalse(second === first)
+        XCTAssertEqual(second?.cancelled, false)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.12))
+        XCTAssertEqual(first?.frames, 0, "the cancelled timer writes no further origin")
+        XCTAssertGreaterThan(second?.frames ?? 0, 0)
+        let frames = second?.frames ?? 0
+        box.cancelGlide()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.12))
+        XCTAssertEqual(second?.frames, frames, "cancel stops the timer, as a re-root or the tree leaving the window does")
+        XCTAssertNil(box.glide)
+    }
+
     func testTheOutlineParsesANoteOnlyWhenItsTextChanged() {
         let cache = MarkdownOutlineCache()
         let text = "# One\n\ntext\n\n## Two\n"

@@ -125,9 +125,14 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         let selections = Int(env["MARKDOWN_TREE_BENCH_SELECTS"] ?? "") ?? 10
         // MARKDOWN_TREE_BENCH_SELECT_GAP: seconds between switches (0.1); 0.5 lets each switch's fade finish, as a reader's.
         let gap = Double(env["MARKDOWN_TREE_BENCH_SELECT_GAP"] ?? "") ?? 0.1
-        for step in 0..<selections {
-            model.select(ids[step % 2])
-            Self.settle(window, seconds: gap)
+        // One open document used to crash here: `ids[step % 2]` on the second step. Alternate only with two.
+        if let plan = Self.alternatingSelection(ids: ids, selections: selections) {
+            for id in plan {
+                model.select(id)
+                Self.settle(window, seconds: gap)
+            }
+        } else {
+            print("tree bench: selection skipped, \(ids.count) open document(s)")
         }
         let selecting = selectMeter.stop()
         let selectBodies = RenderProbe.summary(since: start)
@@ -188,17 +193,59 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
             .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
     }
 
+    /// The ids the bench alternates, or nil when fewer than two distinct documents are open.
+    static func alternatingSelection(ids: [String], selections: Int) -> [String]? {
+        var distinct: [String] = []
+        for id in ids where !distinct.contains(id) {
+            distinct.append(id)
+            if distinct.count == 2 { break }
+        }
+        guard distinct.count == 2, selections > 0 else { return nil }
+        return (0..<selections).map { distinct[$0 % 2] }
+    }
+
+    func testAlternatingSelectionNeedsTwoDocuments() {
+        XCTAssertNil(Self.alternatingSelection(ids: ["only"], selections: 10))
+        XCTAssertNil(Self.alternatingSelection(ids: ["same", "same"], selections: 4))
+        XCTAssertNil(Self.alternatingSelection(ids: ["a", "b"], selections: 0))
+        XCTAssertEqual(Self.alternatingSelection(ids: ["a", "b"], selections: 4), ["a", "b", "a", "b"])
+    }
+
     /// Up to `limit` markdown notes under `root`, the named one last so it is the selected tab.
+    /// The walk collects `limit` notes. It used to stop at `limit - 1` to leave a slot for `last`, and it did that
+    /// even when `last` was absent, so `MARKDOWN_TREE_BENCH_TABS=2` opened one document.
     private static func notes(in root: URL, limit: Int, last: String?) throws -> [URL] {
         var found: [URL] = []
         let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        while let url = walker?.nextObject() as? URL, found.count < limit - 1 {
+        while let url = walker?.nextObject() as? URL, found.count < max(limit, 0) {
             if url.pathExtension == "md" { found.append(url) }
         }
         if let last {
-            found.append(URL(fileURLWithPath: last))
+            let url = URL(fileURLWithPath: last).standardizedFileURL
+            found.removeAll { $0.standardizedFileURL.path == url.path }
+            found.append(url)
+            if limit > 0, found.count > limit {
+                found.removeFirst(found.count - limit)
+            }
         }
         if found.isEmpty { throw XCTSkip("no markdown notes under \(root.path)") }
         return found
+    }
+
+    func testNotesCollectsTheLimitWhenNoLastNoteIsNamed() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tree-bench-notes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for name in ["a.md", "b.md", "c.md"] {
+            try Data("x".utf8).write(to: dir.appendingPathComponent(name))
+        }
+        let two = try Self.notes(in: dir, limit: 2, last: nil)
+        XCTAssertEqual(two.count, 2, "a tab count of 2 opens two notes when no last note is named")
+        let named = dir.appendingPathComponent("named.md")
+        let withLast = try Self.notes(in: dir, limit: 2, last: named.path)
+        XCTAssertEqual(withLast.count, 2)
+        XCTAssertEqual(withLast.last?.standardizedFileURL.path, named.standardizedFileURL.path)
+        let one = try Self.notes(in: dir, limit: 24, last: nil)
+        XCTAssertEqual(one.count, 3, "the folder has three notes, so a higher limit returns each of them")
     }
 }

@@ -58,6 +58,8 @@ public final class FileTreeModel: ObservableObject {
     /// Reduce Motion as the last clicked row saw it (system, app and widget settings), so a listing that lands later
     /// opens its folder the same way the click did.
     var reduceMotion = false
+    /// The directory read. A test holds the first snapshot so a disk event can land before that snapshot is published.
+    var listing: @Sendable (String) -> [FileTreeEntry] = { FileTreeListing.entries(of: $0) }
 
     /// Reads nothing yet: the host names the real root with `setRoot`.
     public init(root: URL) {
@@ -159,12 +161,21 @@ public final class FileTreeModel: ObservableObject {
     }
 
     /// One FSEvents batch of changed folders: each one the tree has read is read again. Most are a note saved in
-    /// place; its folder's listing comes back equal and the rows stay as they are.
-    private func diskChanged(_ folders: [String]) {
-        // Folder events name the folder with a trailing "/".
-        let paths = Set(folders.map { $0.count > 1 && $0.hasSuffix("/") ? String($0.dropLast()) : $0 })
-        for folder in paths where children[folder] != nil {
-            relist(folder)
+    /// place; its folder's listing comes back equal and the rows stay as they are. A folder whose first read is
+    /// still in flight is marked stale: that read's snapshot may predate the event, and dropping it leaves the
+    /// tree on the old listing (`refresh` already does this).
+    func diskChanged(_ folders: [String]) {
+        // Folder events name the folder with a trailing "/". Keys in `children` and `loading` are native strings.
+        let paths = Set(folders.map { raw -> String in
+            let trimmed = raw.count > 1 && raw.hasSuffix("/") ? String(raw.dropLast()) : raw
+            return trimmed.nativeUTF8
+        })
+        for folder in paths {
+            if loading.contains(folder) {
+                stale.insert(folder)
+            } else if children[folder] != nil {
+                relist(folder)
+            }
         }
     }
 
@@ -178,8 +189,9 @@ public final class FileTreeModel: ObservableObject {
             return
         }
         let generation = generation
+        let read = listing
         Task { [weak self] in
-            let listed = await Task.detached(priority: .utility) { FileTreeListing.entries(of: path) }.value
+            let listed = await Task.detached(priority: .utility) { read(path) }.value
             guard let self else { return }
             self.relisting.remove(path)
             guard generation == self.generation else { return }
@@ -199,8 +211,9 @@ public final class FileTreeModel: ObservableObject {
         loading.insert(path)
         rebuild()
         let generation = generation
+        let read = listing
         Task { [weak self] in
-            let listed = await Task.detached(priority: .userInitiated) { FileTreeListing.entries(of: path) }.value
+            let listed = await Task.detached(priority: .userInitiated) { read(path) }.value
             guard let self, generation == self.generation else { return }
             self.loading.remove(path)
             if self.stale.remove(path) != nil {

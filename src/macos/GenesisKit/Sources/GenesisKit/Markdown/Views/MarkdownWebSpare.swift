@@ -5,8 +5,9 @@
 //  One markdown page made in a quiet moment, so a pane that opens (a tab switch, Read or Source → Split) takes a page
 //  whose scripts (markdown-it, highlight.js, mermaid) are already loaded instead of creating a web view on the click.
 //  Creating one runs on the main thread (140 ms median, up to 1.2 s measured in the hub) and the new page stays blank
-//  until the template has loaded. A page is never reused after a pane had it: pages keep state. The next spare is made
-//  1.5 s after one is taken.
+//  until the template has loaded. A page that leaves a pane can become the spare again (`recycle`): the pane's own
+//  state (marks, line highlight, column width, scroll, magnification, drop handler) is cleared first, because a page
+//  keeps that state until something clears it. The next spare is made 1.5 s after one is taken, when none is waiting.
 //
 
 import AppKit
