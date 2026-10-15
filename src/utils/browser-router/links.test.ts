@@ -366,48 +366,32 @@ describe("routerLink and the link gate", () => {
         expect(result.error?.code).toBe("app-missing");
     });
 
-    test("the hub link defaults to the app scheme, because the router has no hub preset", () => {
-        const reported = routerStatus({
-            check: () => true,
-            config: { ...defaultRouterConfig(), linkHost: "links.example.test" },
-            handler: "com.genesiscz.genesistools",
-        });
-
-        expect(reported.presets.some((row) => row.id === "genesis-hub")).toBe(false);
-
-        const gate: LinkGate = {
-            version: 2,
-            at: 0,
-            configMtimeMs: 0,
-            installed: reported.installed,
-            defaultHandler: reported.defaultHandler,
-            httpsHandler: reported.httpsHandler,
-            configured: reported.configured,
-            linkHost: reported.linkHost,
-            presets: Object.fromEntries(
-                reported.presets.map((row) => [
-                    row.id,
-                    { available: row.available, enabled: row.enabled, routed: row.routed, missing: row.missing },
-                ])
-            ),
+    test("the hub link takes the router where its preset routes, and the app scheme where none does", () => {
+        const data = { pr: "acme/app#7" };
+        const hub = (gate: LinkGate) =>
+            routerLink({ preset: "genesis-hub", action: "open", data, gate, fallback: () => "none" });
+        const hubRouted: LinkGate = {
+            ...routed,
+            presets: {
+                ...routed.presets,
+                "genesis-hub": { available: true, enabled: true, routed: true, missing: [] },
+            },
         };
-        const opened = routerLink({
-            preset: "genesis-hub",
-            action: "open",
-            data: { pr: "acme/app#7" },
-            gate,
-            fallback: () => "none",
-        });
+        const noHubPreset: LinkGate = {
+            ...routed,
+            presets: Object.fromEntries(Object.entries(routed.presets).filter(([id]) => id !== "genesis-hub")),
+        };
 
-        expect(opened.via).toBe("scheme");
-        expect(opened.link).toBe("genesis-tools://hub?pr=acme%2Fapp%237");
+        expect(hub(hubRouted)).toMatchObject({ via: "router", link: "https://genesis.tools/hub?pr=acme%2Fapp%237" });
+        expect(hub(routed)).toMatchObject({ via: "scheme", link: "genesis-tools://hub?pr=acme%2Fapp%237" });
+        expect(hub(noHubPreset)).toMatchObject({ via: "scheme", link: "genesis-tools://hub?pr=acme%2Fapp%237" });
 
         const forced = routerLink({
             preset: "genesis-hub",
             action: "open",
-            data: { pr: "acme/app#7" },
+            data,
             via: ["router"],
-            gate,
+            gate: noHubPreset,
             fallback: () => "none",
         });
 

@@ -133,8 +133,9 @@ const TARGETS: TargetTable = {
                     { keepSlash: false }
                 )}`,
             appInstalled: (gate) => gate.installed,
-            // No catalog preset routes the hub. Advertising a router link would always fall back.
-            transports: ["scheme"],
+            // The router where the `genesis-hub` preset routes `/hub`, since every terminal makes an
+            // https link clickable; else the app scheme. A version without that preset falls through.
+            transports: ["router", "scheme"],
         },
     },
 };
