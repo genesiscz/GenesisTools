@@ -408,6 +408,22 @@ final class MarkdownLivePreview: ObservableObject {
     }
 }
 
+/// What a document pane shows, apart from the view: a binary tab has no web page, and a draft or a past
+/// revision stays on screen when the file on disk is no longer text.
+@MainActor
+enum MarkdownPaneContent {
+    static func waitsForPage(_ doc: MarkdownDocument, model: MarkdownDocumentsModel) -> Bool {
+        guard model.renderer == .web, !(doc.missing && !doc.isDirty), !doc.binary,
+              model.revisionView?.docID != doc.id else { return false }
+        return model.mode == .preview || model.mode == .split
+    }
+
+    /// A picture replaces the editor only for the clean current file. A draft, Changes, and a past revision stay.
+    static func showsBinary(_ doc: MarkdownDocument, model: MarkdownDocumentsModel) -> Bool {
+        doc.binary && !doc.isDirty && model.mode != .changes && model.revisionView?.docID != doc.id
+    }
+}
+
 private struct MarkdownDocumentPane: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
@@ -429,8 +445,7 @@ private struct MarkdownDocumentPane: View {
 
     /// Whether this tab shows a rendered page, so a tab switch waits for its render before it swaps.
     static func waitsForPage(_ doc: MarkdownDocument, model: MarkdownDocumentsModel) -> Bool {
-        guard model.renderer == .web, !(doc.missing && !doc.isDirty), model.revisionView?.docID != doc.id else { return false }
-        return model.mode == .preview || model.mode == .split
+        MarkdownPaneContent.waitsForPage(doc, model: model)
     }
     /// The ratio when the drag started, so the pointer stays on the divider.
     @State private var dragStartRatio: Double?
@@ -540,7 +555,7 @@ private struct MarkdownDocumentPane: View {
                 pathButton
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if doc.binary {
+        } else if MarkdownPaneContent.showsBinary(doc, model: model) {
             binaryView
         } else if let revision = model.revisionView, revision.docID == doc.id {
             VStack(spacing: 0) {

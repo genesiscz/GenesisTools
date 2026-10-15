@@ -146,16 +146,23 @@ struct MarkdownFileTreeView: View {
             revealSelected(root)
             search.setRoot(root)
             applySearchRequest()
-            let model = model, tree = tree, scrollBox = scrollBox
-            model.treePlace = {
-                MarkdownTreePlace(root: model.filesRoot, expanded: tree.expandedFolders,
-                                  scrollY: Double(scrollBox.scrollView?.contentView.bounds.origin.y ?? 0))
+            model.treePlace = { [weak model, weak tree, weak scrollBox] in
+                guard let model, let tree else {
+                    return MarkdownTreePlace(root: "", expanded: [], scrollY: 0)
+                }
+                return MarkdownTreePlace(
+                    root: model.filesRoot, expanded: tree.expandedFolders,
+                    scrollY: Double(scrollBox?.scrollView?.contentView.bounds.origin.y ?? 0)
+                )
             }
         }
         .onChange(of: model.pendingTreePlace) { _, place in
             if let place { restore(place) }
         }
-        .onDisappear { scrollBox.cancelGlide() }
+        .onDisappear {
+            scrollBox.cancelGlide()
+            model.treePlace = nil
+        }
         .onChange(of: model.selectedId) { _, _ in
             revealed = nil
             revealSelected(model.filesRootURL)
@@ -457,6 +464,15 @@ struct MarkdownFileTreeView: View {
         )
     }
 
+    /// The folder above `root`, for the header's muted prefix. `/` and a folder directly under it have no name to show.
+    static func parentFolderName(_ root: URL) -> String? {
+        let parent = root.deletingLastPathComponent()
+        guard root.path != "/", parent.path != "/" else { return nil }
+        let name = parent.lastPathComponent
+        guard !name.isEmpty else { return nil }
+        return name
+    }
+
     /// A saved place's name for the back and forward tooltips.
     static func placeName(_ place: MarkdownTreePlace) -> String {
         place.root.isEmpty ? "the open document's folder" : (place.root as NSString).lastPathComponent
@@ -561,6 +577,7 @@ struct MarkdownFileTreeView: View {
         .buttonStyle(.genHoverPlain())
         .disabled(!enabled)
         .accessibilityIdentifier(id)
+        .accessibilityLabel(tip)
         .instantTooltip(tip)
     }
 
@@ -572,7 +589,7 @@ struct MarkdownFileTreeView: View {
                 headerButton("chevron.right", enabled: history.canGoForward, id: "markdown-files-forward",
                              tip: history.forward.last.map { "Forward to \(Self.placeName($0))" } ?? "Forward") { model.treeForward() }
                 headerButton("arrow.up", id: "markdown-files-up",
-                             tip: "Up to \(root.deletingLastPathComponent().lastPathComponent)") { model.filesRootUp() }
+                             tip: "Up to \(Self.parentFolderName(root) ?? "/")") { model.filesRootUp() }
             }
 
             // The folder the tree shows: a folder glyph in the accent and its name, with the folder above it muted,
@@ -581,12 +598,12 @@ struct MarkdownFileTreeView: View {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(model.theme.accent)
-                if !root.deletingLastPathComponent().lastPathComponent.isEmpty, root.path != "/" {
+                if let parentName = Self.parentFolderName(root) {
                     // The folder above: a click goes there, as the up arrow does (and Back returns).
                     Button {
                         model.filesRootUp()
                     } label: {
-                        Text(root.deletingLastPathComponent().lastPathComponent + " /")
+                        Text(parentName + " /")
                             .font(.system(size: 10.5))
                             .foregroundColor(model.theme.textMuted)
                             .lineLimit(1)
@@ -594,7 +611,7 @@ struct MarkdownFileTreeView: View {
                     .buttonStyle(.genHoverPlain())
                     .layoutPriority(0)
                     .accessibilityIdentifier("markdown-files-parent")
-                    .instantTooltip("Go to \(root.deletingLastPathComponent().lastPathComponent)")
+                    .instantTooltip("Go to \(parentName)")
                 }
                 Text(root.lastPathComponent.isEmpty ? "/" : root.lastPathComponent)
                     .font(.system(size: 11.5, weight: .semibold))

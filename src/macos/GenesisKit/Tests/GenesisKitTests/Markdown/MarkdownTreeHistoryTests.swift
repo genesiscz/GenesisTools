@@ -83,4 +83,85 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertTrue(gone.missing)
         XCTAssertFalse(gone.binary)
     }
+
+    @MainActor
+    func testABinaryPaneDoesNotWaitForAWebPage() throws {
+        let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-binary-wait-\(UUID().uuidString)")!)
+        model.rendererRaw = MarkdownRenderer.web.rawValue
+        model.setMode(.preview)
+        let picture = try pictureFile()
+        let binary = MarkdownDocument(url: picture)
+        XCTAssertFalse(MarkdownPaneContent.waitsForPage(binary, model: model), "a picture has no page to wait for")
+        let note = picture.deletingLastPathComponent().appendingPathComponent("note.md")
+        try "hello".write(to: note, atomically: true, encoding: .utf8)
+        let text = MarkdownDocument(url: note)
+        XCTAssertTrue(MarkdownPaneContent.waitsForPage(text, model: model), "a note in the web preview still waits")
+        model.setMode(.source)
+        XCTAssertFalse(MarkdownPaneContent.waitsForPage(text, model: model))
+    }
+
+    @MainActor
+    func testADirtyDraftAndARevisionStayAheadOfTheBinaryFallback() throws {
+        let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-binary-draft-\(UUID().uuidString)")!)
+        model.setMode(.preview)
+        let note = FileManager.default.temporaryDirectory.appendingPathComponent("md-draft-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: note) }
+        try "hello".write(to: note, atomically: true, encoding: .utf8)
+        let doc = MarkdownDocument(url: note)
+        doc.edit("unsaved")
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x00]).write(to: note)
+        doc.reload()
+        XCTAssertTrue(doc.binary)
+        XCTAssertTrue(doc.isDirty)
+        XCTAssertFalse(MarkdownPaneContent.showsBinary(doc, model: model), "an unsaved draft stays on screen")
+
+        let picture = MarkdownDocument(url: try pictureFile())
+        XCTAssertTrue(MarkdownPaneContent.showsBinary(picture, model: model))
+        model.setMode(.changes)
+        XCTAssertFalse(MarkdownPaneContent.showsBinary(picture, model: model), "Changes stays reachable")
+        model.setMode(.preview)
+        model.revisionView = MarkdownRevision(
+            docID: picture.id,
+            commit: GitCommit(sha: "abc", short: "abc", subject: "Old", author: "Ada", date: .distantPast),
+            text: "was text"
+        )
+        XCTAssertFalse(MarkdownPaneContent.showsBinary(picture, model: model), "a past revision stays reachable")
+    }
+
+    @MainActor
+    func testARootUnderSlashShowsNoParentPrefix() {
+        XCTAssertNil(MarkdownFileTreeView.parentFolderName(URL(fileURLWithPath: "/")))
+        XCTAssertNil(MarkdownFileTreeView.parentFolderName(URL(fileURLWithPath: "/Users")))
+        XCTAssertEqual(MarkdownFileTreeView.parentFolderName(URL(fileURLWithPath: "/Users/Martin")), "Users")
+    }
+
+    @MainActor
+    func testTheSidebarDropsItsPlaceProviderWhenItLeaves() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("md-place-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        weak var alive: MarkdownDocumentsModel?
+        autoreleasepool {
+            var model: MarkdownDocumentsModel? = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-place-\(UUID().uuidString)")!)
+            alive = model
+            model?.filesRoot = root.path
+            let (window, _) = HostedShot.host(MarkdownFileTreeView(model: model!), size: CGSize(width: 280, height: 360))
+            let appeared = Date().addingTimeInterval(2)
+            while model?.treePlace == nil, Date() < appeared {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            XCTAssertNotNil(model?.treePlace, "the sidebar publishes its place")
+            window.contentView = nil
+            window.close()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            model = nil
+        }
+        XCTAssertNil(alive, "leaving the sidebar releases the window model")
+    }
+
+    private func pictureFile() throws -> URL {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("md-picture-\(UUID().uuidString).png")
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).write(to: file)
+        return file
+    }
 }
