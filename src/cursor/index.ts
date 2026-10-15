@@ -4,33 +4,25 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import pc from "picocolors";
+import { parseCursorArgs } from "./lib/args";
 import { streamCursorAgent } from "./lib/stream-agent";
 
 handleReadmeFlag(import.meta.url);
 
 // ─── CLI argument parsing ──────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
+const parsed = parseCursorArgs(process.argv.slice(2), process.cwd());
 
-let mode = "ask";
-let model: string | undefined;
-let workspace = process.cwd();
-let raw = false;
-const positional: string[] = [];
+if (!parsed.ok) {
+    out.error(pc.red(parsed.message));
+    out.error(pc.dim(`Run ${toolCommand("cursor")} --help for the options.`));
+    process.exit(1);
+}
 
-for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+const { mode, model, workspace, raw, help, question } = parsed.args;
 
-    if (arg === "--mode" && args[i + 1]) {
-        mode = args[++i];
-    } else if (arg === "--model" && args[i + 1]) {
-        model = args[++i];
-    } else if (arg === "--workspace" && args[i + 1]) {
-        workspace = args[++i];
-    } else if (arg === "--raw") {
-        raw = true;
-    } else if (arg === "--help" || arg === "-h") {
-        out.println(`Usage: ${toolCommand("cursor")} [options] <question>
+if (help) {
+    out.println(`Usage: ${toolCommand("cursor")} [options] <question>
 
 Ask Cursor Agent a question about the codebase and stream the answer.
 
@@ -42,21 +34,11 @@ Options:
   --model <model>   Model override (e.g. gpt-5, sonnet-4)
   --workspace <dir> Workspace directory (default: cwd)
   --raw             Print only the final answer text, no tool calls
-  -h, --help        Show this help`);
-        process.exit(0);
-    } else if (!arg.startsWith("--")) {
-        positional.push(arg);
-    }
+  -h, --help        Show this help
+
+Each option also takes its value as --option=value.`);
+    process.exit(0);
 }
-
-const MODES = ["ask", "plan"];
-
-if (!MODES.includes(mode)) {
-    out.error(pc.red(`Unknown --mode '${mode}'. The Cursor CLI accepts: ${MODES.join(", ")}.`));
-    process.exit(1);
-}
-
-const question = positional.join(" ").trim();
 
 if (!question) {
     out.error(pc.red("No question provided."));
