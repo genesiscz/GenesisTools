@@ -67,7 +67,8 @@ public enum MarkdownViewerApp {
         self.delegate = delegate
         app.delegate = delegate
         app.mainMenu = PerfLog.span("viewer.init.menu") { MarkdownViewerMenu.build(appName: configuration.appName) }
-        app.windowsMenu = app.mainMenu?.items.last?.submenu
+        app.windowsMenu = app.mainMenu.flatMap { MarkdownViewerMenu.submenu("Window", in: $0) }
+        app.helpMenu = app.mainMenu.flatMap { MarkdownViewerMenu.submenu("Help", in: $0) }
         PerfLog.span("viewer.init.controller") { _ = MarkdownDocumentWindowController.shared }
         PerfLog.phase("viewer.init.done")
         app.run()
@@ -267,6 +268,12 @@ public enum MarkdownViewerMenu {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
         MarkdownKeymap.shared.bind(item, to: command)
         return item
+    }
+
+    /// A top-level menu by title. macOS adds its window items to the app's `windowsMenu` and its search field to
+    /// `helpMenu`, so each is named, not taken by position (Help comes after Window).
+    static func submenu(_ title: String, in menu: NSMenu) -> NSMenu? {
+        menu.items.first { $0.submenu?.title == title }?.submenu
     }
 
     private static func submenu(_ menu: NSMenu, title: String) -> NSMenuItem {

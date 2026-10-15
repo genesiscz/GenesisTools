@@ -170,4 +170,12 @@ final class MarkdownKeymapTests: XCTestCase {
         XCTAssertEqual(shortcuts.keyEquivalent, "k")
         XCTAssertEqual(shortcuts.keyEquivalentModifierMask, [.command, .shift])
     }
+
+    func testTheWindowAndHelpMenusAreFoundByTitleNotByPlace() throws {
+        let menu = MarkdownViewerMenu.build(appName: "Viewer")
+        let window = try XCTUnwrap(MarkdownViewerMenu.submenu("Window", in: menu))
+        XCTAssertTrue(window.items.contains { $0.title == "Minimize" })
+        XCTAssertTrue(menu.items.last?.submenu !== window, "Help is the last menu, so the place cannot name the Window menu")
+        XCTAssertTrue(MarkdownViewerMenu.submenu("Help", in: menu)?.items.contains { $0.title == "Keyboard Shortcuts" } == true)
+    }
 }
