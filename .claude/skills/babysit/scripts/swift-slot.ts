@@ -17,10 +17,12 @@ const LOCK = join(tmpdir(), "genesis-swift-slot.lock");
 const SWIFT = /\/(swift-build|swift-test|swift-package|swift-frontend|xctest)$/;
 
 const args = process.argv.slice(2);
-const split = args.indexOf("--");
-const command = split === -1 ? [] : args.slice(split + 1);
+// `bun swift-slot.ts -- swift …` reaches here without the `--`: bun takes a separator that directly follows the
+// script as its own. So the command is everything after `--` when one is left, else everything after the options.
 const waitFlag = args.indexOf("--wait-minutes");
 const waitMinutes = waitFlag === -1 ? 40 : Number(args[waitFlag + 1]);
+const split = args.indexOf("--");
+const command = split !== -1 ? args.slice(split + 1) : args.slice(waitFlag === 0 ? 2 : 0);
 
 if (command.length === 0) {
     console.error("usage: bun swift-slot.ts [--wait-minutes N] -- <command…>");
