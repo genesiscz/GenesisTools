@@ -61,6 +61,18 @@ final class MarkdownWindowContentView: NSView {
         placeOverlays()
     }
 
+    /// Where an overlay lies: over its slot, from the slot's top down to the overlay's content height. The slot's empty
+    /// rest stays the root's, so a right-click there opens the root's menu (AppKit sends an unhandled right-click up
+    /// the overlay's own superviews, which are not SwiftUI's).
+    func overlayFrame(over slot: NSView) -> NSRect {
+        var frame = slot.convert(slot.bounds, to: self).integral
+        if let height = (slot as? MarkdownOverlaySlot)?.contentHeight?(), height < frame.height {
+            frame.origin.y = isFlipped ? frame.minY : frame.maxY - height
+            frame.size.height = height
+        }
+        return frame
+    }
+
     /// Each overlay over its slot. Runs after this view's layout and after each of the root's: the root moves a slot
     /// (a tab bar appearing) without the slot's own frame changing.
     func placeOverlays() {
@@ -70,7 +82,7 @@ final class MarkdownWindowContentView: NSView {
                 view.isHidden = true
                 continue
             }
-            let frame = slot.convert(slot.bounds, to: self).integral
+            let frame = overlayFrame(over: slot)
             if view.frame != frame { view.frame = frame }
             view.isHidden = frame.isEmpty
         }
@@ -83,7 +95,7 @@ extension MarkdownWindowContentView {
     func overlayDrift() -> CGFloat {
         overlays.reduce(0) { drift, overlay in
             guard let slot = overlay.slot.view, slot.window === window else { return drift }
-            let want = slot.convert(slot.bounds, to: self).integral
+            let want = overlayFrame(over: slot)
             let have = overlay.view.frame
             return max(drift, abs(want.minX - have.minX), abs(want.maxX - have.maxX), abs(want.minY - have.minY),
                        abs(want.maxY - have.maxY))
@@ -103,6 +115,8 @@ final class MarkdownRootHostingView<Content: View>: NSHostingView<Content> {
 /// view is laid over this slot; anywhere else (a test that hosts the root alone) it is the slot's own subview.
 final class MarkdownOverlaySlot: NSView {
     let overlay: NSView
+    /// The overlay's content height (the table's rows); the overlay covers no more of the slot than that.
+    var contentHeight: (() -> CGFloat)?
     private weak var content: MarkdownWindowContentView?
 
     init(overlay: NSView) {
@@ -143,9 +157,14 @@ final class MarkdownOverlaySlot: NSView {
         place()
     }
 
-    /// The overlay takes the clicks over the slot.
+    /// Inside the window's content view the overlay takes the clicks where it lies; the rest of the slot is the root's.
     override func hitTest(_ point: NSPoint) -> NSView? {
         overlay.superview === self ? super.hitTest(point) : nil
+    }
+
+    /// The content height changed (rows came or went): the overlay is laid again.
+    func contentChanged() {
+        content?.placeOverlays()
     }
 
     /// Leaves the window: the overlay goes with it.

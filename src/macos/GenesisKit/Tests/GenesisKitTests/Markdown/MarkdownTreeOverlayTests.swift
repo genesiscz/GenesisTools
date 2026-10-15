@@ -3,7 +3,7 @@ import AppKit
 import XCTest
 
 /// The file tree's table lies over the window's SwiftUI root (`MarkdownWindowContentView`): it sits on its slot, and a
-/// right-click under its rows still shows the sidebar's menu.
+/// right-click under its rows lands in the root, where the sidebar's menu is.
 final class MarkdownTreeOverlayTests: XCTestCase {
     @MainActor
     func testTheTableSitsOnItsSlotAndTheSpaceUnderTheRowsHasTheSidebarMenu() throws {
@@ -42,13 +42,12 @@ final class MarkdownTreeOverlayTests: XCTestCase {
         XCTAssertEqual(content.overlayDrift(), 0, "the table sits on its slot")
         XCTAssertFalse(tree.isDescendant(of: content.root), "the table is outside the SwiftUI root")
 
-        let below = tree.convert(NSPoint(x: tree.bounds.midX, y: tree.rect(ofRow: 1).maxY + 40), to: nil)
-        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: below, modifierFlags: [], timestamp: 0,
-                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0,
-                                                     clickCount: 1, pressure: 1))
-        // The menu itself opens modally, so the test checks the hand-off: a view of the SwiftUI root under the pointer.
-        let target = try XCTUnwrap((tree as? MarkdownTreeTableView)?.sidebarTarget(for: event), "a sidebar view under the rows")
-        XCTAssertTrue(target.isDescendant(of: content.root))
+        // Two rows: the table ends under them, and a click below lands in the SwiftUI root (its sidebar menu).
+        let scroll = try XCTUnwrap(tree.enclosingScrollView)
+        XCTAssertLessThan(scroll.frame.height, 200, "the table covers its rows only")
+        let blank = NSPoint(x: scroll.frame.midX, y: scroll.frame.minY - 40)
+        let hit = try XCTUnwrap(content.hitTest(blank), "something under the rows")
+        XCTAssertTrue(hit.isDescendant(of: content.root), "the space under the rows is the root's, not the table's")
     }
 
     private static func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {

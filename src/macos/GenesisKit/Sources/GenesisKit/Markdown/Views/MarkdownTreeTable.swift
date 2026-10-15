@@ -53,13 +53,19 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         context.coordinator.table = table
         box.scrollView = scroll
         apply(to: context.coordinator, table: table, force: true)
-        return MarkdownOverlaySlot(overlay: scroll)
+        let slot = MarkdownOverlaySlot(overlay: scroll)
+        slot.contentHeight = { [weak table, weak scroll] in
+            guard let table, let scroll else { return .greatestFiniteMagnitude }
+            return CGFloat(table.numberOfRows) * table.rowHeight + scroll.contentInsets.top + scroll.contentInsets.bottom
+        }
+        return slot
     }
 
     func updateNSView(_ slot: MarkdownOverlaySlot, context: Context) {
         box.scrollView = slot.overlay as? NSScrollView
         guard let table = context.coordinator.table else { return }
         apply(to: context.coordinator, table: table, force: false)
+        slot.contentChanged()
     }
 
     static func dismantleNSView(_ slot: MarkdownOverlaySlot, coordinator: Coordinator) {
@@ -170,26 +176,9 @@ final class MarkdownTreeTableView: NSTableView {
         return NSAccessibility.unignoredChildren(from: cells)
     }
 
-    /// The empty space under the rows has no menu of its own; its right-click goes to the sidebar (`rightMouseDown`).
+    /// The empty space under the rows is the window root's, not the table's (`MarkdownOverlaySlot.contentHeight`), so
+    /// a right-click there opens the sidebar's own menu.
     override func menu(for event: NSEvent) -> NSMenu? { nil }
-
-    /// The empty space under the rows shows the sidebar's own menu (New File…, New Folder…). The table lies over the
-    /// window's SwiftUI root, outside it (`MarkdownWindowContentView`), so the click is handed to the root's view
-    /// under the pointer, which shows SwiftUI's context menu; a row's own menu comes from the row's cell.
-    override func rightMouseDown(with event: NSEvent) {
-        guard row(at: convert(event.locationInWindow, from: nil)) < 0, let target = sidebarTarget(for: event) else {
-            super.rightMouseDown(with: event)
-            return
-        }
-        target.rightMouseDown(with: event)
-    }
-
-    /// The view inside the window's SwiftUI root under the pointer: the slot's host, which carries the sidebar menu.
-    func sidebarTarget(for event: NSEvent) -> NSView? {
-        let content = sequence(first: superview, next: { $0?.superview }).compactMap { $0 as? MarkdownWindowContentView }.first
-        guard let root = content?.root, let parent = root.superview else { return nil }
-        return root.hitTest(parent.convert(event.locationInWindow, from: nil))
-    }
 }
 
 /// One reused cell: a hosting view whose root view is swapped when the cell shows another row.
