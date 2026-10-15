@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { cloudflaredHome } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { getStorage, loadTelegramConfig, notConfiguredMessage, saveWebhookUrl } from "@app/telegram-bot/lib/config";
 import { createTelegramApi, describeApiError } from "@app/telegram-bot/lib/webhook/api";
-import { ensureWebhookSecret, hasWebhookSecret, rotateWebhookSecret } from "@app/telegram-bot/lib/webhook/secret";
+import { hasWebhookSecret, registerWithStoredSecret, rotateWebhookSecret } from "@app/telegram-bot/lib/webhook/secret";
 import {
     resolveWebhookSettings,
     WEBHOOK_ALLOWED_UPDATES,
@@ -153,7 +153,7 @@ function registerSet(webhook: Command): void {
                 if (opts.rotateSecret) {
                     await rotateWebhookSecret({ register });
                 } else {
-                    await register(await ensureWebhookSecret());
+                    await registerWithStoredSecret({ register });
                 }
             } catch (err) {
                 p.log.error(describeApiError(err, config.botToken));

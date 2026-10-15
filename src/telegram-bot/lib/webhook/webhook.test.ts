@@ -22,6 +22,7 @@ import {
     ensureWebhookSecret,
     generateWebhookSecret,
     hasWebhookSecret,
+    registerWithStoredSecret,
     rotateWebhookSecret,
     WEBHOOK_SECRET_PATH,
 } from "./secret";
@@ -670,6 +671,48 @@ describe("webhook secret rotation", () => {
         expect(seen[0].stored).toBe(old);
         expect(seen[1].stored).toBe(seen[0].registered);
         expect(await store.get(WEBHOOK_SECRET_PATH)).toBe(seen[1].registered);
+    });
+
+    // Regression test: an ordinary `webhook set` resolved the secret, released the lock, and only then registered
+    // it, so a rotation that landed in between left Telegram with the old secret and the vault with the new one
+    it("registers the stored secret with the lock held, so an ordinary set cannot undo a rotation", async () => {
+        const { store, old } = await rotationSetup();
+        const registered: string[] = [];
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const waitFor = async (condition: () => boolean) => {
+            const deadline = Date.now() + 2000;
+
+            while (!condition()) {
+                if (Date.now() > deadline) {
+                    throw new Error("waited 2000 ms for the registration");
+                }
+
+                await Bun.sleep(5);
+            }
+        };
+
+        const ordinary = registerWithStoredSecret({
+            store,
+            register: async (secret) => {
+                registered.push(secret);
+                await gate;
+            },
+        });
+        await waitFor(() => registered.length === 1);
+        const rotation = rotateWebhookSecret({ store, register: async (secret) => void registered.push(secret) });
+        await Bun.sleep(LOCK_POLL_MS * 2 + 20);
+
+        expect(registered).toEqual([old]);
+
+        release();
+        await Promise.all([ordinary, rotation]);
+
+        expect(registered).toHaveLength(2);
+        expect(registered[0]).toBe(old);
+        expect(await store.get(WEBHOOK_SECRET_PATH)).toBe(registered[1]);
     });
 });
 

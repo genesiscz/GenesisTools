@@ -22,6 +22,33 @@ export async function hasWebhookSecret(store?: SecretStore): Promise<boolean> {
     return (store ?? (await secrets())).has(WEBHOOK_SECRET_PATH);
 }
 
+/** Reads the secret, minting it on first use. The caller holds the config lock, which is not reentrant. */
+async function resolveSecret(store: SecretStore): Promise<string> {
+    const config = await loadTelegramConfig();
+    if (!config) {
+        throw new Error(notConfiguredMessage());
+    }
+
+    const existing = await store.get(WEBHOOK_SECRET_PATH);
+    if (existing) {
+        if (config.webhook?.secret?.path !== WEBHOOK_SECRET_PATH) {
+            await saveTelegramConfig({
+                ...config,
+                webhook: { ...config.webhook, secret: secureRef(WEBHOOK_SECRET_PATH) },
+            });
+        }
+
+        return existing;
+    }
+
+    const secret = generateWebhookSecret();
+    const ref = await store.set(WEBHOOK_SECRET_PATH, secret);
+    await saveTelegramConfig({ ...config, webhook: { ...config.webhook, secret: ref } });
+    logger.info({ path: WEBHOOK_SECRET_PATH }, "telegram-bot: minted the webhook secret");
+
+    return secret;
+}
+
 /**
  * The shared secret, minted on first use. It lives in the vault and the config keeps only a pointer to it,
  * the way every other credential does. The mint runs under the config lock, so two commands started together
@@ -30,31 +57,27 @@ export async function hasWebhookSecret(store?: SecretStore): Promise<boolean> {
 export async function ensureWebhookSecret(options: { store?: SecretStore } = {}): Promise<string> {
     const store = options.store ?? (await secrets());
 
+    return withTelegramConfigLock(() => resolveSecret(store));
+}
+
+/**
+ * Hands the stored secret (minted on first use) to `register`, with the config lock held across that call. A
+ * rotation takes the same lock, so it cannot land between reading the secret and Telegram accepting it, and
+ * Telegram and the vault cannot end on different values. `register` is a network call, hence
+ * `NETWORKED_LOCK_WAIT_MS`, and the caller bounds it with a deadline that fits inside that wait.
+ */
+export async function registerWithStoredSecret(options: {
+    register: (secret: string) => Promise<unknown>;
+    store?: SecretStore;
+}): Promise<string> {
+    const store = options.store ?? (await secrets());
+
     return withTelegramConfigLock(async () => {
-        const config = await loadTelegramConfig();
-        if (!config) {
-            throw new Error(notConfiguredMessage());
-        }
-
-        const existing = await store.get(WEBHOOK_SECRET_PATH);
-        if (existing) {
-            if (config.webhook?.secret?.path !== WEBHOOK_SECRET_PATH) {
-                await saveTelegramConfig({
-                    ...config,
-                    webhook: { ...config.webhook, secret: secureRef(WEBHOOK_SECRET_PATH) },
-                });
-            }
-
-            return existing;
-        }
-
-        const secret = generateWebhookSecret();
-        const ref = await store.set(WEBHOOK_SECRET_PATH, secret);
-        await saveTelegramConfig({ ...config, webhook: { ...config.webhook, secret: ref } });
-        logger.info({ path: WEBHOOK_SECRET_PATH }, "telegram-bot: minted the webhook secret");
+        const secret = await resolveSecret(store);
+        await options.register(secret);
 
         return secret;
-    });
+    }, NETWORKED_LOCK_WAIT_MS);
 }
 
 /**
