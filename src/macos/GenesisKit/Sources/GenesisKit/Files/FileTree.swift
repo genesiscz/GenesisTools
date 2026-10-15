@@ -60,6 +60,9 @@ public final class FileTreeModel: ObservableObject {
     var reduceMotion = false
     /// The directory read. A test holds the first snapshot so a disk event can land before that snapshot is published.
     var listing: @Sendable (String) -> [FileTreeEntry] = { FileTreeListing.entries(of: $0) }
+    /// Off in a test that drives `diskChanged` itself: the real stream's own events would re-read the folder and hide
+    /// whether the call under test did.
+    var watchesDisk = true
 
     /// Reads nothing yet: the host names the real root with `setRoot`.
     public init(root: URL) {
@@ -154,6 +157,8 @@ public final class FileTreeModel: ObservableObject {
 
     private func watch(_ rootPath: String) {
         watcher?.stop()
+        watcher = nil
+        guard watchesDisk else { return }
         // Folder events: one path per changed folder and batch, so a build inside the root stays cheap here.
         watcher = DirectoryWatcher(paths: [rootPath], latency: 0.4, fileEvents: false) { [weak self] folders in
             MainActor.assumeIsolated { self?.diskChanged(folders) }

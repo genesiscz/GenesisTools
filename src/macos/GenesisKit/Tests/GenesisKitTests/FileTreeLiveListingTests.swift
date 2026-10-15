@@ -71,6 +71,7 @@ final class FileTreeLiveListingTests: XCTestCase {
         let folder = root.standardizedFileURL
         let old = FileTreeEntry(path: folder.appendingPathComponent("old.md").path, name: "old.md", isFolder: false)
         let arrived = FileTreeEntry(path: folder.appendingPathComponent("arrived.md").path, name: "arrived.md", isFolder: false)
+        model.watchesDisk = false
         model.listing = { _ in
             let call = calls.withLock { state -> Int in
                 state += 1
