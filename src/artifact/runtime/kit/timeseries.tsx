@@ -27,7 +27,9 @@ import {
     formatForUnit,
     formatTime,
     HOUR,
+    laneGutterWidth,
     layoutLanes,
+    layoutLanesIn,
     logScale,
     MINUTE,
     NO_UNIT,
@@ -211,7 +213,7 @@ function syncPublish(syncId: string, message: SyncMessage): void {
 
 // ─── Layout ───
 
-const GUTTER_LEFT = 76;
+const GUTTER_MIN = 76;
 const GUTTER_RIGHT_AXIS = 60;
 const GUTTER_RIGHT = 14;
 const MARKER_BAND = 26;
@@ -279,6 +281,7 @@ interface LaneFrame {
 
 interface Frame {
     width: number;
+    gutterLeft: number;
     plotLeft: number;
     plotRight: number;
     plotWidth: number;
@@ -1116,6 +1119,32 @@ export function TimeSeries({
         [markers]
     );
     const laneLayout = useMemo(() => layoutLanes(spans), [spans]);
+    const laneOrder = useMemo(() => laneLayout.map((l) => l.name), [laneLayout]);
+    // Brush gesture start view; the pointer drag keeps its own in `drag`.
+    const [brushGesture, setBrushGesture] = useState<TsRange | null>(null);
+    const gutterLeft = useMemo(
+        () =>
+            spans.length && saved.lanesOpen
+                ? laneGutterWidth(
+                      laneOrder.filter((n) => !hiddenLanes.has(n)),
+                      GUTTER_MIN
+                  )
+                : GUTTER_MIN,
+        [spans.length, saved.lanesOpen, laneOrder, hiddenLanes]
+    );
+    // Rows are packed from the spans in view. During a pan gesture the packing window is frozen to the
+    // gesture's start view widened by one view on each side, so rows do not reshuffle under the pointer.
+    const gestureView = drag?.mode === "pan" ? drag.startView : brushGesture;
+    const packRange = useMemo<TsRange>(() => {
+        if (!gestureView) {
+            return view;
+        }
+
+        const w = gestureView[1] - gestureView[0];
+
+        return [gestureView[0] - w, gestureView[1] + w];
+    }, [gestureView, view]);
+    const visibleLanes = useMemo(() => layoutLanesIn(spans, packRange, laneOrder), [spans, packRange, laneOrder]);
 
     // Stacked sources, recomputed when the visible set changes so a hidden layer drops out of the stack.
     const sources = useMemo(() => {
@@ -1163,7 +1192,7 @@ export function TimeSeries({
             layout
         );
         const hasRight = specs.some((p) => p.axes.length > 1);
-        const plotLeft = GUTTER_LEFT;
+        const plotLeft = gutterLeft;
         const plotRight = width - (hasRight ? GUTTER_RIGHT_AXIS : GUTTER_RIGHT);
         const plotWidth = Math.max(10, plotRight - plotLeft);
         const visibleMarkers = sortedMarkerIdx.filter((i) => !hiddenMarkerKinds.has(markers[i].kind));
@@ -1276,7 +1305,7 @@ export function TimeSeries({
         let lanesH = 0;
 
         if (spans.length && saved.lanesOpen) {
-            const shown = laneLayout.filter((l) => !hiddenLanes.has(l.name));
+            const shown = visibleLanes.filter((l) => !hiddenLanes.has(l.name));
             const totalRows = shown.reduce((n, l) => n + l.rows, 0);
             const rowHeight = Math.max(
                 4,
@@ -1312,6 +1341,7 @@ export function TimeSeries({
 
         return {
             width,
+            gutterLeft,
             plotLeft,
             plotRight,
             plotWidth,
@@ -1347,7 +1377,8 @@ export function TimeSeries({
         view,
         seriesColor,
         spans.length,
-        laneLayout,
+        visibleLanes,
+        gutterLeft,
         hiddenLanes,
         lanesHeight,
         timeZone,
@@ -2100,7 +2131,7 @@ export function TimeSeries({
             return null;
         }
 
-        const plotWidth = Math.max(10, (frame?.plotRight ?? width - GUTTER_RIGHT) - GUTTER_LEFT);
+        const plotWidth = Math.max(10, (frame?.plotRight ?? width - GUTTER_RIGHT) - gutterLeft);
 
         return series
             .filter((s) => visibleIds.has(s.id))
@@ -2128,10 +2159,10 @@ export function TimeSeries({
         }
 
         const theme = readTheme(root);
-        const plotWidth = overview[0]?.plotWidth ?? width - GUTTER_LEFT - GUTTER_RIGHT;
-        const bx = (t: number) => GUTTER_LEFT + ((t - bounds[0]) / (bounds[1] - bounds[0])) * plotWidth;
+        const plotWidth = overview[0]?.plotWidth ?? width - gutterLeft - GUTTER_RIGHT;
+        const bx = (t: number) => gutterLeft + ((t - bounds[0]) / (bounds[1] - bounds[0])) * plotWidth;
         ctx.fillStyle = theme.panel;
-        ctx.fillRect(GUTTER_LEFT, 0, plotWidth, BRUSH_HEIGHT);
+        ctx.fillRect(gutterLeft, 0, plotWidth, BRUSH_HEIGHT);
 
         for (const o of overview) {
             const [lo, hi] = o.ext;
@@ -2176,9 +2207,9 @@ export function TimeSeries({
     }, [overview, width, bounds, themeTick, markers, markerColor, hiddenMarkerKinds]);
 
     const brushDrag = useRef<{ mode: "move" | "left" | "right"; startX: number; startView: TsRange } | null>(null);
-    const brushPlotWidth = overview?.[0]?.plotWidth ?? Math.max(10, width - GUTTER_LEFT - GUTTER_RIGHT);
-    const brushX = (t: number) => GUTTER_LEFT + ((t - bounds[0]) / (bounds[1] - bounds[0])) * brushPlotWidth;
-    const brushT = (x: number) => bounds[0] + ((x - GUTTER_LEFT) / brushPlotWidth) * (bounds[1] - bounds[0]);
+    const brushPlotWidth = overview?.[0]?.plotWidth ?? Math.max(10, width - gutterLeft - GUTTER_RIGHT);
+    const brushX = (t: number) => gutterLeft + ((t - bounds[0]) / (bounds[1] - bounds[0])) * brushPlotWidth;
+    const brushT = (x: number) => bounds[0] + ((x - gutterLeft) / brushPlotWidth) * (bounds[1] - bounds[0]);
 
     const onBrushDown = (e: ReactPointerEvent<HTMLDivElement>) => {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -2199,6 +2230,10 @@ export function TimeSeries({
 
         e.currentTarget.setPointerCapture?.(e.pointerId);
         brushDrag.current = { mode, startX: x, startView };
+
+        if (mode === "move") {
+            setBrushGesture(startView);
+        }
     };
 
     const onBrushMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -2445,7 +2480,11 @@ export function TimeSeries({
                     <div
                         key={lane.name}
                         className="absolute left-0 truncate pr-2 text-right text-[0.68rem] text-dim"
-                        style={{ top: lane.top, width: GUTTER_LEFT, lineHeight: `${Math.min(lane.height, 16)}px` }}
+                        style={{
+                            top: lane.top,
+                            width: frame.gutterLeft,
+                            lineHeight: `${Math.min(lane.height, 16)}px`,
+                        }}
                         title={lane.name}
                     >
                         {lane.name}
@@ -2476,6 +2515,7 @@ export function TimeSeries({
                     onPointerMove={onBrushMove}
                     onPointerUp={() => {
                         brushDrag.current = null;
+                        setBrushGesture(null);
                     }}
                     aria-label="Overview: drag the window to move the view"
                 >
@@ -2484,13 +2524,13 @@ export function TimeSeries({
                         <>
                             <div
                                 className="pointer-events-none absolute inset-y-0 bg-canvas/60"
-                                style={{ left: GUTTER_LEFT, width: Math.max(0, brushX(view[0]) - GUTTER_LEFT) }}
+                                style={{ left: gutterLeft, width: Math.max(0, brushX(view[0]) - gutterLeft) }}
                             />
                             <div
                                 className="pointer-events-none absolute inset-y-0 bg-canvas/60"
                                 style={{
                                     left: brushX(view[1]),
-                                    width: Math.max(0, GUTTER_LEFT + brushPlotWidth - brushX(view[1])),
+                                    width: Math.max(0, gutterLeft + brushPlotWidth - brushX(view[1])),
                                 }}
                             />
                             <div
@@ -2548,7 +2588,7 @@ function AxisLabels({ frame }: { frame: Frame }) {
                                         style={{
                                             top: y - 5,
                                             left: left ? 0 : frame.plotRight + 6,
-                                            width: left ? GUTTER_LEFT - 6 : GUTTER_RIGHT_AXIS - 6,
+                                            width: left ? frame.gutterLeft - 6 : GUTTER_RIGHT_AXIS - 6,
                                             textAlign: left ? "right" : "left",
                                         }}
                                     >

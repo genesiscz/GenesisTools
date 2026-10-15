@@ -754,6 +754,40 @@ export function layoutLanes(spans: readonly LaneInput[]): LaneLayout[] {
     });
 }
 
+/**
+ * Lanes packed from only the spans that overlap `range`, so the lanes area
+ * shrinks to what is on screen. `order` fixes the lane order (and keeps lanes
+ * with nothing visible as one empty row, so the labels do not jump).
+ */
+export function layoutLanesIn(spans: readonly LaneInput[], range: TsRange, order: readonly string[]): LaneLayout[] {
+    const inView: number[] = [];
+
+    for (const [i, s] of spans.entries()) {
+        if (s.end >= range[0] && s.start <= range[1]) {
+            inView.push(i);
+        }
+    }
+
+    const packed = new Map(layoutLanes(inView.map((i) => spans[i])).map((l) => [l.name, l]));
+
+    return order.map((name) => {
+        const lane = packed.get(name);
+
+        if (!lane) {
+            return { name, rows: 1, items: [], itemRows: [] };
+        }
+
+        return { ...lane, items: lane.items.map((k) => inView[k]) };
+    });
+}
+
+/** Left gutter (px) wide enough for the longest lane name at the label font, within [min, max]. */
+export function laneGutterWidth(names: readonly string[], min = 76, max = 180): number {
+    const longest = names.reduce((n, name) => Math.max(n, name.length), 0);
+
+    return Math.round(Math.min(max, Math.max(min, longest * 6.2 + 18)));
+}
+
 // ─── Markers ───
 
 export interface MarkerCluster {

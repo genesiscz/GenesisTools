@@ -14,7 +14,9 @@ import {
     encodeViewState,
     formatDurationShort,
     HOUR,
+    laneGutterWidth,
     layoutLanes,
+    layoutLanesIn,
     MINUTE,
     nearestIndex,
     niceScale,
@@ -156,6 +158,30 @@ describe("lanes, markers, stacks, panels", () => {
             ["agents", 2],
             ["Other", 1],
         ]);
+    });
+
+    test("layoutLanesIn packs only the spans in view and keeps every lane in order", () => {
+        const spans = [
+            { start: 0, end: 10, lane: "a" },
+            { start: 1, end: 10, lane: "a" },
+            { start: 2, end: 10, lane: "a" },
+            { start: 50, end: 60, lane: "a" },
+            { start: 0, end: 5, lane: "b" },
+        ];
+        const all = layoutLanesIn(spans, [0, 100], ["a", "b"]);
+        const late = layoutLanesIn(spans, [40, 100], ["a", "b"]);
+
+        expect(all.map((l) => l.rows)).toEqual([3, 1]);
+        expect(late.map((l) => [l.name, l.rows, l.items])).toEqual([
+            ["a", 1, [3]],
+            ["b", 1, []],
+        ]);
+    });
+
+    test("laneGutterWidth fits the longest name within its bounds", () => {
+        expect(laneGutterWidth(["a"])).toBe(76);
+        expect(laneGutterWidth(["subagents: opus"])).toBeGreaterThan(76);
+        expect(laneGutterWidth(["x".repeat(200)])).toBe(180);
     });
 
     test("clusterMarkers merges markers closer than the gap", () => {
