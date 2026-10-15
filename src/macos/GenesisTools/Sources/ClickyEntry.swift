@@ -103,10 +103,12 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let root = NSMenuItem()
         let application = NSMenu()
-        application.addItem(withTitle: "Feature settings…", action: #selector(showSettings), keyEquivalent: ",")
-            .target = self
-        application.addItem(
-            withTitle: "Quit Clicky", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let settings = application.addItem(withTitle: "Feature settings…", action: #selector(showSettings), keyEquivalent: "")
+        settings.target = self
+        ClickyKeymap.shared.bind(settings, to: ClickyKeymap.settings)
+        let quit = application.addItem(
+            withTitle: "Quit Clicky", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        ClickyKeymap.shared.bind(quit, to: ClickyKeymap.quit)
         root.submenu = application
         menu.addItem(root)
         NSApp.mainMenu = menu

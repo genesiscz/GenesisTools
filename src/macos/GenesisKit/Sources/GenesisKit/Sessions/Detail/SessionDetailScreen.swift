@@ -334,6 +334,8 @@ public struct SessionDetailHeader: View {
     public let actions: SessionDetailActions
     public var leadingInset: CGFloat = SessionDetailScreenChrome.leadingInset
     @Binding public var showSidebar: Bool
+    /// The host takes Command-R and Command on the keys right of P. This button then has no key.
+    @Environment(\.sessionHostOwnsCommandKeys) private var hostOwnsCommandKeys
 
     public init(
         info: SessionDetailInfo,
@@ -594,8 +596,10 @@ public struct SessionDetailHeader: View {
             }
             .buttonStyle(.genHoverIcon(accent: SessionPalette.blue, diameter: 26))
             .disabled(actions.refreshing)
-            .keyboardShortcut("r", modifiers: .command)
-            .instantTooltip("Reload the session and its transcript (⌘R)")
+            .sessionCommand(SessionsKeymap.reload, enabled: !actions.refreshing, hostOwns: hostOwnsCommandKeys) {
+                actions.refresh()
+            }
+            .instantTooltip(SessionsKeymap.tooltip("Reload the session and its transcript", SessionsKeymap.reload, hostOwns: hostOwnsCommandKeys))
             .accessibilityIdentifier("session-details-refresh")
 
             Button {

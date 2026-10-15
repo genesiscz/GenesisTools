@@ -150,6 +150,8 @@ struct HubSessionDetailHost: View {
         }
         // A click in the transcript keeps ⌘F on its own search (Hub/HubPanelFind.swift).
         .panelFindNative("transcript")
+        // Command-R reloads the hub list. Command on the keys right of P is Back and Forward.
+        .environment(\.sessionHostOwnsCommandKeys, true)
         .background(HostWindowReader(host: host))
         // The follow process lives exactly as long as the detail is on screen.
         .onAppear {

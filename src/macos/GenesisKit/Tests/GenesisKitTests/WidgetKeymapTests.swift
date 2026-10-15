@@ -14,7 +14,8 @@ final class WidgetKeymapTests: XCTestCase {
         WidgetCard(id: "decision:d_1_fixture", kind: "decision", sessionKey: "local:codex:fixture:", sourceId: "d_1_fixture",
                    at: 1, title: "Keep it?", body: "", status: "open", revision: 1, number: 1,
                    choices: [WidgetChoice(id: "keep", title: "Keep", recommended: true),
-                             WidgetChoice(id: "drop", title: "Drop", recommended: false)],
+                             WidgetChoice(id: "drop", title: "Drop", recommended: false),
+                             WidgetChoice(id: "ask", title: "Ask", recommended: false)],
                    attachments: [], refs: [], read: false)
     }
 
@@ -36,11 +37,17 @@ final class WidgetKeymapTests: XCTestCase {
         let two = keys.commands(for: KeyStroke(keyCode: 19, character: "ě", modifiers: []), in: [.window])
         XCTAssertEqual(two.map(\.id), [WidgetKeymap.choiceID(2)])
 
+        let three = keys.commands(for: KeyStroke(keyCode: 0x14, character: "š", modifiers: []), in: [.window])
+        XCTAssertEqual(three.map(\.id), [WidgetKeymap.choiceID(3)])
+        XCTAssertEqual(keys.commands(for: KeyStroke(keyCode: 0, character: "0", modifiers: []), in: [.window]), [])
+
         let answering = card()
         XCTAssertEqual(press(18, "+", answering: answering), .choose("keep"))
         XCTAssertEqual(press(19, "ě", answering: answering), .choose("drop"))
         XCTAssertEqual(press(0x54, "2", answering: answering), .choose("drop"), "a key that types 2, such as the keypad")
         XCTAssertEqual(press(0, "a", answering: answering), .pass)
+        XCTAssertEqual(press(0, "0", answering: answering), .pass, "0 is not a choice")
+        XCTAssertEqual(press(0x14, "š", answering: answering), .choose("ask"))
     }
 
     func testJAndKDoNothingWhileTyping() {
