@@ -177,6 +177,10 @@ final class MarkdownTreeTableCell: NSView {
         self.identifier = identifier
         host.translatesAutoresizingMaskIntoConstraints = false
         host.sizingOptions = []
+        // A cell needs no safe area. With it, every cell that moved during a scroll recomputed its insets, marked its
+        // constraints dirty, and that mark reached the table's SwiftUI host, which laid out the whole window again
+        // (lldb on the check app, 2026-10-15).
+        host.safeAreaRegions = []
         addSubview(host)
         NSLayoutConstraint.activate([
             host.leadingAnchor.constraint(equalTo: leadingAnchor),
