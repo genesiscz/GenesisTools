@@ -140,6 +140,70 @@ describe("port owner hydration", () => {
     });
 });
 
+describe("Linux port scan network tables", () => {
+    it("reads each network table once however many socket owners there are", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+        const rows = [42, 43].map(
+            (pid): sockets.SocketEntry => ({
+                pid,
+                protocol: "TCP",
+                family: "IPv4",
+                address: "127.0.0.1",
+                port: 3000,
+                remoteAddress: "",
+                remotePort: 0,
+                state: "LISTEN",
+            })
+        );
+        const socketRead = spyOn(sockets, "listSockets").mockReturnValue(rows);
+        const read = spyOn(linux, "readProcProcess").mockImplementation((pid) => ({
+            pid,
+            ppid: 1,
+            pgid: pid,
+            uid: 1000,
+            comm: "node",
+            argv: ["node", "server.js"],
+            state: "S",
+            tty: null,
+            startMs: 1000,
+            cpuTimeMs: 50,
+            rssBytes: 10485760,
+            threads: 2,
+        }));
+        const fds = spyOn(linux, "listProcFds").mockImplementation((pid) => [
+            { fd: 3, target: `socket:[${1000 + pid}]`, mode: "u" },
+        ]);
+        const tcp = spyOn(linux, "readProcTcp").mockReturnValue(
+            [42, 43].map((pid) => ({
+                localAddress: "127.0.0.1",
+                localPort: 3000,
+                remoteAddress: "0.0.0.0",
+                remotePort: 0,
+                state: linux.TCP_LISTEN,
+                inode: 1000 + pid,
+            }))
+        );
+        const udp = spyOn(linux, "readProcUdp").mockReturnValue([]);
+        const cwdRead = spyOn(linux, "readProcCwd").mockReturnValue(null);
+        const exeRead = spyOn(linux, "readProcExe").mockReturnValue(null);
+        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
+        const user = spyOn(processes, "userName").mockReturnValue("fixture-user");
+
+        try {
+            const found = getPortDetails(3000);
+
+            expect(found.map((row) => row.fd)).toEqual(["3u", "3u"]);
+            // Each owner's descriptors are named from the same tables; reading them again per owner is O(owners x sockets).
+            expect(tcp.mock.calls.length).toBe(1);
+            expect(udp.mock.calls.length).toBe(1);
+        } finally {
+            for (const spy of [platform, socketRead, read, fds, tcp, udp, cwdRead, exeRead, cwd, user]) {
+                spy.mockRestore();
+            }
+        }
+    });
+});
+
 describe("Windows port scan batching", () => {
     it("queries CIM once per scan even with multiple sockets for each owner", () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");

@@ -45,19 +45,46 @@ function linuxFileType(path: string): string {
     }
 }
 
-function linuxOpenFiles(pid: number): OpenFile[] | null {
+interface NetworkSocket {
+    row: ReturnType<typeof readProcTcp>[number];
+    protocol: "TCP" | "UDP";
+}
+
+/**
+ * Linux's sockets by inode: one read of the machine-wide TCP and UDP tables. A caller that names the descriptors of
+ * many processes (a port scan) reads it once and passes it to each {@link listOpenFiles}; without it every call
+ * would parse the whole table again. Null where the descriptors do not come from `/proc`.
+ */
+export type NetworkSnapshot = Map<number, NetworkSocket>;
+
+export function readNetworkSnapshot(): NetworkSnapshot | null {
+    if (processPlatform() !== "linux") {
+        return null;
+    }
+
+    const snapshot: NetworkSnapshot = new Map();
+
+    for (const row of readProcTcp()) {
+        snapshot.set(row.inode, { row, protocol: "TCP" });
+    }
+
+    for (const row of readProcUdp()) {
+        snapshot.set(row.inode, { row, protocol: "UDP" });
+    }
+
+    return snapshot;
+}
+
+function linuxOpenFiles(pid: number, shared?: NetworkSnapshot | null): OpenFile[] | null {
     const fds = listProcFds(pid);
 
     if (fds === null) {
         return null;
     }
 
-    const inet = new Map(
-        [
-            ...readProcTcp().map((row) => ({ row, protocol: "TCP" })),
-            ...readProcUdp().map((row) => ({ row, protocol: "UDP" })),
-        ].map(({ row, protocol }) => [row.inode, { row, protocol }])
-    );
+    // Read the tables only when a descriptor is a socket, and not at all when the caller passed them.
+    let own: NetworkSnapshot | null = shared ?? null;
+    const network = (): NetworkSnapshot => (own ??= readNetworkSnapshot() ?? new Map());
     const files: OpenFile[] = [];
     const cwd = readProcCwd(pid);
     const exe = readProcExe(pid);
@@ -75,7 +102,7 @@ function linuxOpenFiles(pid: number): OpenFile[] | null {
         const label = `${fd}${mode}`;
 
         if (socket) {
-            const found = inet.get(Number(socket[1]));
+            const found = network().get(Number(socket[1]));
 
             if (found) {
                 const { row, protocol } = found;
@@ -112,9 +139,9 @@ function linuxOpenFiles(pid: number): OpenFile[] | null {
  * The open files of a process as `lsof -p <pid>` lists them: the working directory, the executable, then every
  * descriptor (not lsof's `mem` rows). Null when the process is gone, belongs to another user, or on Windows.
  */
-export function listOpenFiles(pid: number): OpenFile[] | null {
+export function listOpenFiles(pid: number, options: { network?: NetworkSnapshot | null } = {}): OpenFile[] | null {
     if (processPlatform() === "linux") {
-        return linuxOpenFiles(pid);
+        return linuxOpenFiles(pid, options.network);
     }
 
     return darwinKernel() ? listOpenFileEntries(pid, readProcessCwd(pid)) : null;

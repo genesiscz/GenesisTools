@@ -1151,6 +1151,24 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         }
     });
 });
+test("Linux open files read no network table for a process that holds no socket", () => {
+    const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
+    const fds = spyOn(linux, "listProcFds").mockReturnValue([{ fd: 3, target: "pipe:[77]", mode: "r" }]);
+    const tcp = spyOn(linux, "readProcTcp").mockReturnValue([]);
+    const udp = spyOn(linux, "readProcUdp").mockReturnValue([]);
+    const cwd = spyOn(linux, "readProcCwd").mockReturnValue(null);
+    const exe = spyOn(linux, "readProcExe").mockReturnValue(null);
+
+    try {
+        expect(listOpenFiles(81002)).toEqual([{ fd: "3r", type: "FIFO", name: "pipe" }]);
+        expect(tcp.mock.calls.length + udp.mock.calls.length).toBe(0);
+    } finally {
+        for (const spy of [platform, fds, tcp, udp, cwd, exe]) {
+            spy.mockRestore();
+        }
+    }
+});
+
 test("Linux open socket names normalize wildcard addresses for port descriptor matching", () => {
     const platform = spyOn(os, "processPlatform").mockReturnValue("linux");
     const fds = spyOn(linux, "listProcFds").mockReturnValue([

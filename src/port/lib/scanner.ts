@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { listOpenFiles } from "@genesiscz/utils/process/process-files";
+import { listOpenFiles, type NetworkSnapshot, readNetworkSnapshot } from "@genesiscz/utils/process/process-files";
 import {
     listProcessesWithUsage,
     type ProcessWithUsage,
@@ -412,6 +412,8 @@ function socketProcesses(
 ): PortProcess[] {
     const byPid = new Map<number, PortProcess>();
     const files = new Map<number, ReturnType<typeof listOpenFiles>>();
+    // The descriptors of every owner are named from the same network tables, read once for the scan.
+    let network: NetworkSnapshot | null | undefined;
     for (const socket of sockets) {
         if (socket.pid === options.ownPid) {
             continue;
@@ -421,7 +423,8 @@ function socketProcesses(
         const remote = socket.remotePort ? `->${socket.remoteAddress}:${socket.remotePort}` : "";
         const name = local + remote + (socket.state ? ` (${socket.state})` : "");
         if (!files.has(socket.pid)) {
-            files.set(socket.pid, listOpenFiles(socket.pid));
+            network = network === undefined ? readNetworkSnapshot() : network;
+            files.set(socket.pid, listOpenFiles(socket.pid, { network }));
         }
         const fd =
             files
