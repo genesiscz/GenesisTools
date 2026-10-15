@@ -726,6 +726,18 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
             });
 
             try {
+                if (!darwin) {
+                    // Linux forks and then execs: until the exec, /proc/<pid>/exe is this test's own executable, and the
+                    // inode read below would be the runner's.
+                    const deadline = Date.now() + 5_000;
+
+                    while (linux.readProcExe(child.pid) !== exe && Date.now() < deadline) {
+                        await Bun.sleep(10);
+                    }
+
+                    expect(linux.readProcExe(child.pid)).toBe(exe);
+                }
+
                 const inode = statSync(exe).ino;
                 renameSync(exe, join(dir, "moved-name"));
                 expect(executableInode(child.pid)).toBe(inode);
