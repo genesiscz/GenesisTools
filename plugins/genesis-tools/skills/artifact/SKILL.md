@@ -59,6 +59,7 @@ body renders as markdown. Full API: `tools artifact kit`.
 | Diagrams | `Mermaid` (`chart` = mermaid source: flowchart, sequence, state, class, ER, gantt, gitGraph, mindmap, timeline; zoom toolbar, copy source, download SVG) `ZoomPane` |
 | Diff | `DiffView` (`before`/`after` or a unified `patch`; `mode="split"`; `labels`) |
 | Structure | `TreeView` + `treeFromPaths(paths)` (file trees) `Steps` (done/active/pending/failed/skipped) `Compare` (A vs B columns) `KeyValue` `JsonView` `Figure` (captioned image, click = full size) |
+| Time series | `TimeSeries` (canvas chart for dense time data: wheel/pinch zoom, drag pan, Shift-drag select, brush strip, presets, keyboard; viewer toggles series, combined/split layout, log, % of max, table, CSV/PNG; `markers` in a clustered band, `spans` as Gantt lanes; `syncId` links charts; `id` persists the view) |
 | Viz | `Sparkline` (inline trend for a cell or stat) `Meter` (bar with `thresholds`) `Heatmap` (rows × cols, one tone) |
 | Interactive | `Simulator` (step player) `ParametricSimulator` (sliders/segments/toggles + pure `generate(params)` + presets) `SegmentedControl` |
 
@@ -90,7 +91,9 @@ code retints completely. A custom template dir may override just `theme.css`.
 - Density with breathing room: stats in `StatGrid`, long lists in filterable `DataTable` or
   `QA`/`Bullets`, evidence in `CodeBlock` with the load-bearing lines highlighted.
 - Charts: read the `dataviz` skill before writing any chart code. `DayChart` (bars/lines/
-  stacks, log scales, markers) and `DonutChart` cover the common shapes and follow the theme
+  stacks, log scales, markers) and `DonutChart` cover the common shapes; for timestamped data
+  (per-call or per-minute samples, more than a few hundred points) use `TimeSeries` instead of
+  hour buckets and follow the theme
   tones; `ChartJs` takes a raw Chart.js v4 config when you need something they don't cover;
   `SeriesTable` renders any series as a plain table.
 
