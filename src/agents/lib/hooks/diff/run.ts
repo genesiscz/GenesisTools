@@ -531,6 +531,30 @@ function fitDecision(decision: DiffDecision, room: number | undefined): DiffDeci
     return { ...decision, message, ...(stats ? { stats } : {}) };
 }
 
+/** The most characters of a command that `commandLine` shows, the "…" included. */
+const COMMAND_CHARS = 60;
+
+/**
+ * The dim line above a call's own message: the first line of its command, cut to `COMMAND_CHARS`.
+ * Claude Code folds a finished call into "ran N shell commands" and leaves only the hook message
+ * under the fold, so without this line nothing says which command changed the files.
+ */
+export function commandLine(command: string): string {
+    const lines = command.trim().split("\n");
+    const first = [...(lines[0] ?? "").replace(/\p{Cc}/gu, " ").trimEnd()];
+
+    if (first.length === 0) {
+        return "";
+    }
+
+    const shown =
+        first.length > COMMAND_CHARS
+            ? `${first.slice(0, COMMAND_CHARS - 1).join("")}…`
+            : `${first.join("")}${lines.length > 1 ? " …" : ""}`;
+
+    return `\u001b[2m$ ${shown}\u001b[0m`;
+}
+
 /** Headings plus messages, in the order `composePostDiff` joins them after the call's own diff. */
 export function deferredMessageParts(flushed: DiffDecision[]): string[] {
     return flushed.flatMap((item) =>
@@ -558,11 +582,11 @@ export function composePostDiff({
     const flushedParts = deferredMessageParts(flushed);
     // `+ 2` per part is the `\n\n` between parts, including the one after this call's own diff.
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
-    const decision = fitDecision(
-        runDiffPost({ payload, config, record, maxChars: Math.max(0, maxChars - flushedChars) }),
-        Math.max(0, maxChars - flushedChars)
-    );
-    const message = [...(decision.message ? [decision.message] : []), ...flushedParts].join("\n\n");
+    const heading = commandLine(payload.command);
+    const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
+    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room }), room);
+    const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];
+    const message = [...own, ...flushedParts].join("\n\n");
 
     return { flushed, decision, message };
 }

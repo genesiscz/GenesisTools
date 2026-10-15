@@ -202,7 +202,9 @@ Every mode drops escape codes that change nothing (a reset before a new colour, 
 colour on blanks); that loses no colour, so there is no raw mode. A message that cuts lines links
 the call's full diff (`diff.fullDiff`: `genesis`, `path` or `off`). The `genesis` link is printed
 only while the browser router routes Markdown on this Mac; otherwise the message names the path.
-`tools agents hooks diff show <call>` prints it too. A file or a whole folder moved with `mv` or
+`tools agents hooks diff show <call>` prints it too. The message starts with a dim line that names
+the call's command (its first line, at most 60 characters): Claude Code folds a finished call into
+"ran N shell commands" and leaves only the hook message under the fold. A file or a whole folder moved with `mv` or
 `git mv` is one line, `old/ → new/ (284 files)`, when the new copies match the old ones byte for byte
 (up to 4,000 files; a file over 4 MiB is not compared).
 

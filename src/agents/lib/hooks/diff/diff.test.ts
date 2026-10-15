@@ -58,6 +58,7 @@ import {
     captureChunks,
     capturedBefore,
     capturedBefores,
+    commandLine,
     composePostDiff,
     type DiffDecision,
     flushDeferred,
@@ -4300,6 +4301,36 @@ describe("the misfires of 2026-10-14", () => {
         } finally {
             git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
             rmSync(other, { recursive: true, force: true });
+        }
+    });
+
+    it("names the call's command in a dim first line, cut to 60 characters, and only above its own message", () => {
+        const target = join(repo, "command-line-probe.ts");
+        const long = `sed -i s/a/b/ ${target} # ${"x".repeat(80)}`;
+
+        try {
+            const quiet = composePostDiff({ payload: begin({ command: "true" }), config: plain });
+
+            expect(quiet.message).toBe("");
+
+            const call = begin({ command: `${long}\nsecond line` });
+
+            writeFileSync(target, "COMMAND-LINE\n");
+
+            const { message } = composePostDiff({ payload: call, config: plain });
+            const [first, second] = stripAnsi(message).split("\n");
+
+            expect(message.startsWith("\u001b[2m$ ")).toBe(true);
+            expect(first).toBe(`$ ${long.slice(0, 59)}…`);
+            expect(second).toMatch(/^Added .*command-line-probe\.ts \(\+1 -0\)$/);
+            expect(
+                readMessage(message)
+                    .blocks.map((block) => block.path)
+                    .join(" ")
+            ).toContain("command-line-probe.ts");
+            expect(stripAnsi(commandLine("bun x.ts <<'EOF'\nbody\nEOF"))).toBe("$ bun x.ts <<'EOF' …");
+        } finally {
+            rmSync(target, { force: true });
         }
     });
 
