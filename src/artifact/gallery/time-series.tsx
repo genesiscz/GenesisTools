@@ -1,6 +1,13 @@
 // Kit gallery: TimeSeries. Serve with `tools artifact serve src/artifact/gallery/time-series.tsx`.
 // Every number below is invented by a seeded generator; nothing comes from a real session.
-import { Callout, Hero, Page, Tabs, TimeSeries, type TsMarker, type TsSeries, type TsSpan } from "@artifact/kit";
+import { Callout, TimeSeries, type TsMarker, type TsSeries, type TsSpan } from "@artifact/kit";
+import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
+
+export const meta: GalleryMeta = {
+    title: "Time series",
+    summary:
+        "Canvas chart for dense time data: zoom, pan, brush, markers, Gantt-like span lanes and synced charts. One focused chart per question, plus an explorer.",
+};
 
 const MINUTE = 60_000;
 const DAYS = 10;
@@ -19,13 +26,13 @@ function rng(seed: number): () => number {
     };
 }
 
-interface Demo {
+interface DemoData {
     series: TsSeries[];
     markers: TsMarker[];
     spans: TsSpan[];
 }
 
-function buildDemo(): Demo {
+function buildDemo(): DemoData {
     const rand = rng(42);
     const context: Array<[number, number | null]> = [];
     const cost: Array<[number, number | null]> = [];
@@ -62,7 +69,8 @@ function buildDemo(): Demo {
                 t,
                 label: "Morning wake",
                 kind: "wake",
-                detail: "Session resumed after the **night pause**.",
+                // Raw XML like a real wake event carries; the chart strips the tags.
+                detail: "<task-notification>\n  <status>resumed</status>\n  <summary>Session resumed after the night pause.</summary>\n</task-notification>",
             });
         }
 
@@ -172,67 +180,97 @@ const DEMO = buildDemo();
 const UNITS = { tokens: { label: "tokens" }, usd: { label: "USD" }, "%": { label: "%" } };
 const POINTS = DEMO.series.reduce((n, s) => n + s.points.length, 0);
 
+const pick = (...ids: string[]) =>
+    DEMO.series.filter((x) => ids.includes(x.id)).map((x) => ({ ...x, hidden: false, dashed: false }));
+
 export default function TimeSeriesGallery() {
     return (
-        <Page>
-            <Hero
-                kicker="Kit gallery"
-                title="TimeSeries"
-                subtitle={`Canvas chart for dense time data: ${POINTS.toLocaleString("en-US")} invented points, ${DEMO.markers.length} markers and ${DEMO.spans.length} spans over ${DAYS} days.`}
-            />
-            <Tabs
-                tabs={[
-                    {
-                        id: "overview",
-                        label: "Overview",
-                        content: (
-                            <>
-                                <TimeSeries
-                                    id="gallery-session"
-                                    title="Context and cost"
-                                    syncId="gallery"
-                                    series={DEMO.series}
-                                    markers={DEMO.markers}
-                                    spans={DEMO.spans}
-                                    units={UNITS}
-                                />
-                                <TimeSeries
-                                    id="gallery-usage"
-                                    title="Usage bar (synced viewport and crosshair)"
-                                    syncId="gallery"
-                                    height={140}
-                                    brush={false}
-                                    series={DEMO.series
-                                        .filter((s) => s.id === "usage")
-                                        .map((s) => ({ ...s, dashed: false }))}
-                                />
-                            </>
-                        ),
-                    },
-                    {
-                        id: "cache",
-                        label: "Cache",
-                        content: (
-                            <TimeSeries
-                                id="gallery-cache"
-                                title="Cache reads and writes (stacked)"
-                                layout="split"
-                                series={DEMO.series
-                                    .filter((s) => s.id === "reads" || s.id === "writes" || s.id === "hit")
-                                    .map((s) => ({ ...s, hidden: false }))}
-                                markers={DEMO.markers.filter((m) => m.kind === "compaction")}
-                                units={UNITS}
-                            />
-                        ),
-                    },
-                ]}
-            />
+        <GalleryPage
+            title={meta.title}
+            summary={`${POINTS.toLocaleString("en-US")} invented points, ${DEMO.markers.length} markers and ${DEMO.spans.length} spans over ${DAYS} days.`}
+            keyboard="Focus a chart, then + and - zoom, the arrow keys pan, 0 resets and Esc unpins the tooltip."
+        >
+            <Demo
+                title="Dashboard: one chart per question, synced"
+                note="Zoom or pan any chart and the others follow; hovering one shows the crosshair in all of them."
+            >
+                <TimeSeries
+                    id="gallery-context"
+                    title="How full is the context?"
+                    syncId="gallery"
+                    height={150}
+                    brush={false}
+                    series={pick("context")}
+                    markers={DEMO.markers}
+                    markerKinds={["compaction", "prompt"]}
+                    units={UNITS}
+                />
+                <TimeSeries
+                    id="gallery-cache"
+                    title="What does each call read from and write to the cache?"
+                    syncId="gallery"
+                    height={150}
+                    brush={false}
+                    series={pick("reads", "writes")}
+                    markers={DEMO.markers}
+                    markerKinds={["compaction"]}
+                    units={UNITS}
+                />
+                <TimeSeries
+                    id="gallery-cost"
+                    title="What has it cost so far?"
+                    syncId="gallery"
+                    height={130}
+                    brush={false}
+                    series={pick("cost")}
+                    units={UNITS}
+                />
+                <TimeSeries
+                    id="gallery-usage"
+                    title="Usage bar and cache hit"
+                    syncId="gallery"
+                    height={130}
+                    brush={false}
+                    series={pick("usage", "hit")}
+                    markers={DEMO.markers}
+                    markerKinds={[]}
+                    units={UNITS}
+                />
+                <TimeSeries
+                    id="gallery-activity"
+                    title="Who was working when?"
+                    syncId="gallery"
+                    series={[]}
+                    markers={DEMO.markers}
+                    markerKinds={["prompt"]}
+                    spans={DEMO.spans}
+                    lanesHeight={160}
+                />
+            </Demo>
+            <Demo
+                title="Explorer"
+                note="Every series starts off: pick the chips you need. Split puts each group in its own titled panel."
+            >
+                <TimeSeries
+                    id="gallery-explorer"
+                    title="Explore every series"
+                    layout="split"
+                    series={DEMO.series.map((x) => ({ ...x, hidden: true }))}
+                    markers={DEMO.markers}
+                    groups={[
+                        { id: "tokens", label: "Context" },
+                        { id: "cache", label: "Cache tokens" },
+                        { id: "usd", label: "Cost", height: 120 },
+                        { id: "%", label: "Percentages", height: 120 },
+                    ]}
+                    units={UNITS}
+                />
+            </Demo>
             <Callout tone="info" title="Try it">
-                Scroll over the plot to zoom around the cursor, drag to pan, Shift-drag to select a range, drag the
-                window in the overview strip, or press + - and the arrow keys after focusing the chart. Alt-click a
-                series chip to show only that series. Click a marker count to list its markers. The tab and every
-                chart's view share the URL hash, so a reload or a copied link keeps both.
+                Scroll over a plot to zoom around the cursor, drag to pan, Shift-drag to select a range, and drag the
+                window in the overview strip. Alt-click a series chip to show only that series. The tooltip lists the
+                panel under the pointer; turn on All values to list every panel.
             </Callout>
-        </Page>
+        </GalleryPage>
     );
 }
