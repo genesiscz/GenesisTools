@@ -45,6 +45,8 @@ struct MarkdownFileTreeView: View {
     @AppStorage("markdown.config.treeChangedOnly") private var changedOnly = false
     @State private var hitFit = MarkdownTreeFit<FileTreeSearch.Hit>()
     @State private var rowPulse: FileTreePulse?
+    /// The tree's AppKit scroll view, so a reveal can glide to a row SwiftUI has not laid out yet.
+    @State private var scrollBox = MarkdownTreeScrollBox()
     @State private var headerPulse: FileTreePulse?
     @GenReduceMotion private var reduceMotion
 
@@ -107,6 +109,7 @@ struct MarkdownFileTreeView: View {
                     }
                     .padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(MarkdownTreeScrollFinder(box: scrollBox))
                 }
                 // The empty space under the rows: the root's own verbs (New File…, New Folder…). A row's
                 // own menu wins over it.
@@ -155,6 +158,12 @@ struct MarkdownFileTreeView: View {
         .onChange(of: model.treeSearchToken) { _, _ in applySearchRequest() }
         .onChange(of: search.query) { _, _ in scheduleSearch() }
         .onChange(of: search.mode) { _, _ in scheduleSearch() }
+    }
+
+    /// The rows on screen, in order: every row, or only the changed ones when the git filter is on.
+    private var displayedRows: [FileTreeRow] {
+        let git: GitTreeDecorations? = gitMarks ? gitTree.decorations : nil
+        return git.map { changedOnly ? FileTreeView.changedRows(tree.rows, $0) : tree.rows } ?? tree.rows
     }
 
     /// Every file row carries the hover preview; a single click opens through `openFromTree`.
@@ -366,7 +375,17 @@ struct MarkdownFileTreeView: View {
         let animation = scrollAnimation
         // One turn later: rows that just appeared are laid out first, so the scroll lands on them.
         DispatchQueue.main.async {
-            withAnimation(animation) { proxy.scrollTo(pending.id, anchor: .center) }
+            // A lazy list knows only the rows it laid out: an animated `scrollTo` to a far row lands on an estimate,
+            // waits, then jumps (recorded 2026-10-15). So the tree's own scroll view glides there frame by frame (the
+            // list lays out rows as they come into view), and SwiftUI then settles the row in the middle.
+            let rows = displayedRows
+            if animation != nil, let index = rows.firstIndex(where: { $0.id == pending.id }), let scroll = scrollBox.scrollView {
+                MarkdownTreeScroll.glide(toRow: index, of: rows.count, in: scroll) {
+                    withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(pending.id, anchor: .center) }
+                }
+            } else {
+                withAnimation(animation) { proxy.scrollTo(pending.id, anchor: .center) }
+            }
             // Stamped now: a slow folder read must not let the pulse expire before it shows.
             rowPulse = pending.pulse.map { FileTreePulse(id: $0.id, token: $0.token) }
         }
@@ -610,5 +629,107 @@ private struct MarkdownFileTreeResultRow: View {
         .buttonStyle(.genHoverPlain())
         .instantTooltip(hit.path)
         .accessibilityIdentifier("markdown-files-result")
+    }
+}
+
+/// The tree's scroll view, found from inside its content (`MarkdownTreeScrollFinder`). A class, so finding it does
+/// not re-render the tree.
+final class MarkdownTreeScrollBox {
+    weak var scrollView: NSScrollView?
+}
+
+/// A zero-size AppKit view in the tree's scroll content that hands its enclosing scroll view to the box.
+private struct MarkdownTreeScrollFinder: NSViewRepresentable {
+    let box: MarkdownTreeScrollBox
+
+    func makeNSView(context: Context) -> Finder {
+        let view = Finder()
+        view.box = box
+        return view
+    }
+
+    func updateNSView(_ view: Finder, context: Context) {
+        view.box = box
+        view.capture()
+    }
+
+    final class Finder: NSView {
+        weak var box: MarkdownTreeScrollBox?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            capture()
+        }
+
+        func capture() {
+            if let scroll = enclosingScrollView { box?.scrollView = scroll }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
+/// The reveal's glide. The rows are one height, so the document's height over the row count places a row before the
+/// lazy list has laid it out; SwiftUI corrects the small rest once the row is on screen.
+enum MarkdownTreeScroll {
+    /// The rows' vertical padding inside the scroll content (`MarkdownFileTreeView`).
+    static let padding: CGFloat = 4
+    static let duration: TimeInterval = 0.32
+
+    /// The clip origin that centres row `index` of `count`, clamped to the document.
+    static func centeredOrigin(index: Int, count: Int, documentHeight: CGFloat, visibleHeight: CGFloat) -> CGFloat {
+        let rowHeight = max(documentHeight - 2 * padding, 0) / CGFloat(max(count, 1))
+        let middle = padding + (CGFloat(index) + 0.5) * rowHeight
+        let bottom = max(documentHeight - visibleHeight, 0)
+        return min(max(middle - visibleHeight / 2, 0), bottom)
+    }
+
+    /// Where a glide starts: a target more than a screen and a half away is approached from one screen short of it,
+    /// so the eye follows the last screen and the list does not lay out every row in between.
+    static func glideStart(from current: CGFloat, to target: CGFloat, visibleHeight: CGFloat) -> CGFloat {
+        guard abs(target - current) > visibleHeight * 1.5 else { return current }
+        return target > current ? target - visibleHeight : target + visibleHeight
+    }
+
+    /// Ease in and out over `progress` 0...1.
+    static func eased(_ progress: Double) -> Double {
+        progress < 0.5 ? 2 * progress * progress : 1 - pow(-2 * progress + 2, 2) / 2
+    }
+
+    /// Scrolls the clip view to row `index` frame by frame, then calls `settle`.
+    @MainActor
+    static func glide(toRow index: Int, of count: Int, in scroll: NSScrollView, then settle: @escaping () -> Void) {
+        let clip = scroll.contentView
+        let documentHeight = scroll.documentView?.frame.height ?? 0
+        let visible = clip.bounds.height
+        let target = centeredOrigin(index: index, count: count, documentHeight: documentHeight, visibleHeight: visible)
+        let start = glideStart(from: clip.bounds.origin.y, to: target, visibleHeight: visible)
+        GenesisKit.log("markdown: tree reveal row \(index) of \(count), document \(Int(documentHeight)) pt, glide \(Int(clip.bounds.origin.y)) -> \(Int(start)) -> \(Int(target))")
+        var last = start
+        func place(_ y: CGFloat) {
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+            scroll.reflectScrolledClipView(clip)
+            last = y
+        }
+        place(start)
+        let began = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                // Moved by someone else (the reader's scroll, or the list resizing its estimate): stop here and let
+                // SwiftUI place the row.
+                guard abs(clip.bounds.origin.y - last) < 1 else {
+                    timer.invalidate()
+                    settle()
+                    return
+                }
+                let progress = min(1, (CACurrentMediaTime() - began) / duration)
+                place(start + (target - start) * eased(progress))
+                if progress >= 1 {
+                    timer.invalidate()
+                    settle()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
     }
 }

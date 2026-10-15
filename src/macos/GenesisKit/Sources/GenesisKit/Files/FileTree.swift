@@ -49,6 +49,12 @@ public final class FileTreeModel: ObservableObject {
     private var stale = Set<String>()
     /// Bumped by `reload` and `setRoot`: a listing that started before belongs to the old tree.
     private var generation = 0
+    /// Folders being read again quietly (`relist`), and those that changed again while that read ran.
+    private var relisting = Set<String>()
+    private var relistAgain = Set<String>()
+    /// One FSEvents stream over the root. A folder another app writes into (an agent session saving its notes) is
+    /// read again, so the tree lists what is on disk without the header's reload.
+    private var watcher: DirectoryWatcher?
     /// Reduce Motion as the last clicked row saw it (system, app and widget settings), so a listing that lands later
     /// opens its folder the same way the click did.
     var reduceMotion = false
@@ -69,6 +75,7 @@ public final class FileTreeModel: ObservableObject {
         generation += 1
         loading.removeAll()
         stale.removeAll()
+        watch(next.path)
         rebuild()
         load(next.path)
         // An open folder whose read the new generation dropped would stay open and empty: read it again.
@@ -94,17 +101,32 @@ public final class FileTreeModel: ObservableObject {
         var folder = file.standardizedFileURL.deletingLastPathComponent()
         var chain: [String] = []
         while folder.path.hasPrefix(rootPath), folder.path != rootPath {
-            chain.append(folder.path)
+            chain.append(folder.path.nativeUTF8)
             folder = folder.deletingLastPathComponent()
         }
         guard folder.path == rootPath else { return }
+        // Every tab selection reveals its note, and a rebuild walks every open folder's rows: only a folder that
+        // opens now changes the tree (a read that lands rebuilds by itself).
+        var opened = false
         for path in chain.reversed() {
-            expanded.insert(path)
+            if expanded.insert(path).inserted { opened = true }
             if children[path] == nil {
                 load(path)
             }
         }
-        rebuild()
+        if opened {
+            rebuild()
+        }
+        // A note another app wrote after its folder was read is not in that listing, so the reveal found no row and
+        // did nothing (2026-10-15: notes saved at 05:30:49, "Show in Sidebar" on one at 05:33:14). Such a folder is
+        // read again; the row arrives with the new listing.
+        let path = file.standardizedFileURL.path
+        for (parent, child) in zip([rootPath] + chain.reversed(), chain.reversed() + [path]) {
+            if let listed = children[parent], !listed.contains(where: { $0.path == child }),
+               FileManager.default.fileExists(atPath: child) {
+                relist(parent)
+            }
+        }
     }
 
     /// Forgets every listing and reads the open folders again (the header's reload, after a rename).
@@ -128,7 +150,53 @@ public final class FileTreeModel: ObservableObject {
         load(folder)
     }
 
+    private func watch(_ rootPath: String) {
+        watcher?.stop()
+        watcher = DirectoryWatcher(paths: [rootPath], latency: 0.4) { [weak self] paths in
+            MainActor.assumeIsolated { self?.diskChanged(paths) }
+        }
+    }
+
+    /// One FSEvents batch: every read folder that holds a changed path is read again. Most events are a note saved
+    /// in place; its folder's listing comes back equal and the rows stay as they are.
+    private func diskChanged(_ paths: [String]) {
+        var folders = Set<String>()
+        for path in paths {
+            let parent = (path as NSString).deletingLastPathComponent
+            if children[parent] != nil {
+                folders.insert(parent)
+            }
+        }
+        folders.forEach(relist)
+    }
+
+    /// Reads a folder the tree already lists again, without the loading spinner, and rebuilds only when the listing
+    /// changed.
+    private func relist(_ path: String) {
+        let path = path.nativeUTF8
+        guard children[path] != nil, !loading.contains(path) else { return }
+        guard relisting.insert(path).inserted else {
+            relistAgain.insert(path)
+            return
+        }
+        let generation = generation
+        Task { [weak self] in
+            let listed = await Task.detached(priority: .utility) { FileTreeListing.entries(of: path) }.value
+            guard let self else { return }
+            self.relisting.remove(path)
+            guard generation == self.generation else { return }
+            if let old = self.children[path], old != listed {
+                self.children[path] = listed
+                self.rebuild()
+            }
+            if self.relistAgain.remove(path) != nil {
+                self.relist(path)
+            }
+        }
+    }
+
     private func load(_ path: String) {
+        let path = path.nativeUTF8
         guard !loading.contains(path) else { return }
         loading.insert(path)
         rebuild()
@@ -169,7 +237,7 @@ public final class FileTreeModel: ObservableObject {
                 }
             }
         }
-        walk(root.path, depth: 0)
+        walk(root.path.nativeUTF8, depth: 0)
         if out != rows {
             rows = out
         }
@@ -189,7 +257,10 @@ public enum FileTreeListing {
             let values = try? item.resourceValues(forKeys: Set(keys))
             // A package (an .app, a .bundle) is one item, as in Finder.
             let folder = (values?.isDirectory ?? false) && !(values?.isPackage ?? false)
-            return FileTreeEntry(path: item.standardizedFileURL.path, name: item.lastPathComponent, isFolder: folder)
+            // Native strings: every row, the open-folder set and the git marks compare and hash these (`nativeUTF8`).
+            return FileTreeEntry(
+                path: item.standardizedFileURL.path.nativeUTF8, name: item.lastPathComponent.nativeUTF8, isFolder: folder
+            )
         }
         return entries.sorted { left, right in
             if left.isFolder != right.isFolder {
