@@ -218,9 +218,14 @@ async function watchGrok(w: Worker): Promise<void> {
                 "--thoughts",
                 "none",
             ]);
-            flushHidden(w);
             const end = await grokStatus(w);
-            if (!end?.running) {
+
+            // A tail that ended while the turn still runs read a partial or older log: its count is not the turn's.
+            // The count prints once, with the turn's end.
+            if (end?.running) {
+                w.hiddenTools = 0;
+            } else {
+                flushHidden(w);
                 say(w, `turn ${end?.turns ?? "?"} ENDED exit=${end?.exitCode ?? "?"}`);
             }
 
