@@ -81,6 +81,10 @@ Post NOTHING to GitHub: no `gh pr comment`, no `gh api` writes, no `tools github
 ## Stop and report
 
 - Do steps 1 to 3, then STOP with your final report. Do not start another PR.
+- A failing test, a compile error or a lint hit that your own change caused is part of the work, not a reason to
+  stop: fix it and rerun until the checks pass. Stop early only for something you cannot fix inside the PR's scope,
+  and say what it is. (On 2026-10-15 three Grok workers ended their turns at the first compile error with the fix
+  already named in their OPEN line, and each needed a second steer.)
 - A finding whose fix needs a file outside the PR, a new dependency, or a change to a public interface that code
   outside the PR uses: do NOT fix that one, and do NOT stop the round for it. Fix every in-scope finding, commit,
   write the reply file (that finding's verdict `no-change`, with "needs <file>: out of the PR's scope" in its reply),
