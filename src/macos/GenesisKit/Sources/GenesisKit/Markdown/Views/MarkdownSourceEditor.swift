@@ -200,6 +200,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             view.setSelectedRange(NSRange(location: min(sel.location, end), length: 0))
             context.coordinator.programmaticSelection = false
         }
+        if selection == nil { context.coordinator.lastSelection = nil }
         if let wanted = selection, context.coordinator.lastSelection != wanted {
             context.coordinator.lastSelection = wanted
             let end = (view.string as NSString).length

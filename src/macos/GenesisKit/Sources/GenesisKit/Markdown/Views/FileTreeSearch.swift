@@ -443,6 +443,6 @@ extension FileTreeSearch {
     }
     private static func readableExtension(of path: String) -> Bool {
         guard let dot = path.lastIndex(of: "."), !path[dot...].contains("/") else { return false }
-        return FileTree.readableExtensions.contains(path[path.index(after: dot)...].lowercased())
+        return FileTree.isReadable(URL(fileURLWithPath: path))
     }
 }

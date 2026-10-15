@@ -7,6 +7,73 @@ import XCTest
 /// closes, the units a host's find marks, and the style each caller starts from.
 @MainActor
 final class MarkdownContentViewTests: XCTestCase {
+    func testNativePreviewRoutesRelativeLinksAndFragmentsWithoutOpeningUnsupportedSchemes() async throws {
+        for rich in [false, true] {
+            var followed: [String] = []
+            let preview = MarkdownPreviewView(markdown: "", scrollTarget: nil, onWikilink: { followed.append($0) },
+                                              highlightQuery: nil, rich: rich)
+            for reference in ["./Other.md", "../Other%20Note.md#section", "#heading", "file:///fixture/note.md"] {
+                let handled = expectation(description: "handled local reference")
+                preview.linkAction(try XCTUnwrap(URL(string: reference))) { accepted in
+                    XCTAssertTrue(accepted)
+                    handled.fulfill()
+                }
+                await fulfillment(of: [handled], timeout: 1)
+                XCTAssertEqual(followed.last, reference)
+            }
+            let count = followed.count
+            for reference in ["ssh:host", "javascript:alert(1)", "custom-app:open"] {
+                let discarded = expectation(description: "discarded unsupported scheme")
+                preview.linkAction(try XCTUnwrap(URL(string: reference))) { accepted in
+                    XCTAssertFalse(accepted)
+                    discarded.fulfill()
+                }
+                await fulfillment(of: [discarded], timeout: 1)
+            }
+            XCTAssertEqual(followed.count, count)
+        }
+    }
+
+    func testOlderDiagramCannotOverwriteTheLatestResult() async {
+        let model = MermaidImageModel()
+        let started = expectation(description: "old renderer started")
+        let release = DispatchSemaphore(value: 0)
+        let old = Task {
+            await model.render(source: "old") { _ in
+                started.fulfill()
+                guard release.wait(timeout: .now() + 5) == .success else { return nil }
+                return NSImage(size: NSSize(width: 10, height: 10))
+            }
+        }
+        await fulfillment(of: [started], timeout: 3)
+        await model.render(source: "new") { _ in NSImage(size: NSSize(width: 20, height: 20)) }
+        release.signal()
+        await old.value
+        XCTAssertEqual(model.image?.size.width, 20)
+        XCTAssertFalse(model.failed)
+    }
+
+    func testCancelledDiagramDoesNotPublishEvenWithoutAReplacement() async {
+        let model = MermaidImageModel()
+        let started = expectation(description: "renderer started")
+        let release = DispatchSemaphore(value: 0)
+        let task = Task {
+            await model.render(source: "gone") { _ in
+                started.fulfill()
+                _ = release.wait(timeout: .now() + 5)
+                return nil
+            }
+        }
+        await fulfillment(of: [started], timeout: 3)
+        task.cancel()
+        release.signal()
+        await task.value
+        XCTAssertNil(model.image)
+        XCTAssertFalse(model.failed, "cancelled failure must not publish either")
+        await model.render(source: "unsupported") { _ in nil }
+        XCTAssertTrue(model.failed, "a current render failure still shows the source fallback")
+    }
+
     // MARK: Parsing (moved from GenesisTools' MarkdownShimTests with its renderer)
 
     func testReviewBotHTMLBecomesTextAndListItemsAreTheirOwnBlocks() {

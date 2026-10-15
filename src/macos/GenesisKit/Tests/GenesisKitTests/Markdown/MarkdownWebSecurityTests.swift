@@ -410,11 +410,15 @@ final class MarkdownWebSecurityTests: XCTestCase {
             "/\(v.outside.appendingPathComponent("secret.png").path)",
             "\(v.outside.path)/../outside/secret.png",
         ]
+        let index = VaultMediaIndex(root: v.vault)
+        let indexed = expectation(description: "vault indexed")
+        index.refreshIfNeeded { indexed.fulfill() }
+        await fulfillment(of: [indexed], timeout: 5)
         for ref in escapes {
-            XCTAssertNil(MarkdownMedia.resolve(MarkdownMedia.key(ref), in: context, index: VaultMediaIndex(root: v.vault)), ref)
+            XCTAssertNil(MarkdownMedia.resolve(MarkdownMedia.key(ref), in: context, index: index), ref)
         }
         // Positive control: the same resolver admits a file inside the vault.
-        XCTAssertNotNil(MarkdownMedia.resolve("by-name.png", in: context, index: VaultMediaIndex(root: v.vault)))
+        XCTAssertNotNil(MarkdownMedia.resolve("by-name.png", in: context, index: index))
 
         let markdown = escapes.map { "![x](\($0))" }.joined(separator: "\n\n") + "\n\n![[link.png]]\n\n![[by-name.png]]\n"
         let (page, coordinator) = try await mediaPage(v, markdown)
@@ -436,6 +440,58 @@ final class MarkdownWebSecurityTests: XCTestCase {
     /// A token serves only while its document references it, a JSON file over the limit is never
     /// read, a file swapped for a symlink after the render stops serving, and a destination may
     /// hold balanced parentheses.
+    func testMediaIndexLoadsOffMainAndOnlyNotifiesTheLatestDocument() async throws {
+        let v = try makeMediaVault()
+        let started = expectation(description: "scan started")
+        let release = DispatchSemaphore(value: 0)
+        let index = VaultMediaIndex(root: v.vault) { _ in
+            XCTAssertFalse(Thread.isMainThread, "the filesystem walk must not block a render")
+            started.fulfill()
+            _ = release.wait(timeout: .now() + 5)
+            return .init(paths: ["attachments/by-name.png"], attachmentFolder: "attachments")
+        }
+        let registry = MarkdownMediaRegistry(indexForVault: { _ in index })
+        let context = MarkdownMedia.Context(folder: v.note.deletingLastPathComponent(), vaultRoot: v.vault)
+        var staleCalls = 0
+        let first = registry.update(markdown: "![[by-name.png]]", context: context) { staleCalls += 1 }
+        XCTAssertTrue(first.isEmpty, "the first render returns while the walk is blocked")
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(index.lookup("by-name.png").isEmpty, "lookup reads only the available cache")
+        let ready = expectation(description: "latest document notified")
+        _ = registry.update(markdown: "![[missing.png]]", context: context) { ready.fulfill() }
+        release.signal()
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertEqual(staleCalls, 0)
+        XCTAssertEqual(index.lookup("by-name.png"), ["attachments/by-name.png"])
+        XCTAssertEqual(index.attachmentFolder, "attachments")
+        var refreshedAgain = false
+        index.refreshIfNeeded { refreshedAgain = true }
+        XCTAssertFalse(refreshedAgain, "a fresh cache does not schedule another render")
+    }
+
+    func testMediaIndexRefreshPublishesNewFilesAndRevokedContextStaysRevoked() async throws {
+        let v = try makeMediaVault()
+        let index = VaultMediaIndex(root: v.vault)
+        let oldTime = Date().addingTimeInterval(-31)
+        let first = expectation(description: "initial scan")
+        index.refreshIfNeeded(now: oldTime) { first.fulfill() }
+        await fulfillment(of: [first], timeout: 5)
+        XCTAssertTrue(index.lookup("new.png").isEmpty)
+        let file = v.vault.appendingPathComponent("Notes/new.png")
+        try Data().write(to: file)
+        let registry = MarkdownMediaRegistry(indexForVault: { _ in index })
+        let context = MarkdownMedia.Context(folder: v.note.deletingLastPathComponent(), vaultRoot: v.vault)
+        var staleCalls = 0
+        _ = registry.update(markdown: "![[new.png]]", context: context) { staleCalls += 1 }
+        _ = registry.update(markdown: "", context: nil)
+        let refreshed = expectation(description: "refresh finished")
+        index.refreshIfNeeded { refreshed.fulfill() }
+        await fulfillment(of: [refreshed], timeout: 5)
+        XCTAssertEqual(index.lookup("new.png"), ["Notes/new.png"])
+        XCTAssertEqual(staleCalls, 0)
+        XCTAssertTrue(registry.entries.isEmpty)
+    }
+
     func testARegistryTokenIsRevokedAndBounded() throws {
         let v = try makeMediaVault()
         let context = MarkdownMedia.Context(folder: v.note.deletingLastPathComponent(), vaultRoot: v.vault)

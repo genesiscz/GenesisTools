@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -26,6 +27,31 @@ final class FileTreeTests: XCTestCase {
         for _ in 0..<200 where !done() {
             try? await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    func testRowEqualityIncludesEveryPaletteColorAndTheResolvedFont() {
+        let row = FileTreeRow(id: root.appendingPathComponent("note.md").path, name: "note.md", isFolder: false, depth: 0)
+        let model = FileTreeModel(root: root)
+        let actions = FileTreeActions(open: { _ in }, setRoot: { _ in }, changed: { _ in })
+        var size: CGFloat = 12
+        let style = FileTreeStyle(text: .white, secondary: .gray, muted: .gray, accent: .blue,
+                                  selection: .blue.opacity(0.2), font: { .system(size: size, weight: $0 ? .semibold : .regular) })
+        func view(_ style: FileTreeStyle) -> FileTreeRowView {
+            FileTreeRowView(row: row, selected: true, icon: "doc", style: style, model: model, actions: actions)
+        }
+        let original = view(style)
+        XCTAssertTrue(original == view(style), "unchanged rows still skip a render")
+        let colors: [WritableKeyPath<FileTreeStyle, Color>] = [\.text, \.secondary, \.muted, \.accent, \.selection]
+        for key in colors {
+            var changed = style
+            changed[keyPath: key] = .red
+            XCTAssertFalse(original == view(changed), "a changed palette must redraw the row")
+        }
+        size = 18
+        XCTAssertFalse(original == view(style), "a captured font setting must compare against the old resolved value")
+        var sameFont = style
+        sameFont.font = { .system(size: 18, weight: $0 ? .semibold : .regular) }
+        XCTAssertTrue(view(style) == view(sameFont), "font values, not closure identities, decide equality")
     }
 
     func testListingPutsFoldersFirstInFinderOrderAndSkipsHiddenFiles() {
@@ -71,6 +97,37 @@ final class FileTreeTests: XCTestCase {
         await settle(model) { model.rows.contains { $0.name == "renamed.md" } }
 
         XCTAssertEqual(model.rows.map(\.name), ["Alpha", "beta", "note 10.md", "renamed.md"])
+    }
+
+    func testRenameRechecksEditsMadeWhileThePromptIsOpen() throws {
+        let note = root.appendingPathComponent("note 2.md")
+        let target = root.appendingPathComponent("renamed.md")
+        var dirty = false
+        var changes: [FileChange] = []
+        var reports: [String] = []
+        var checks = 0
+        let guardChange: (URL) -> String? = { _ in
+            checks += 1
+            return dirty ? "Unsaved edits" : nil
+        }
+        FileOperations.runRename(note, guardChange: guardChange, changed: { changes.append($0) },
+                                 prompt: { _ in dirty = true; return "renamed.md" },
+                                 report: { reports.append($0) })
+        XCTAssertEqual(checks, 2)
+        XCTAssertEqual(reports, ["Unsaved edits"])
+        XCTAssertTrue(changes.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: note.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertEqual(try String(contentsOf: note, encoding: .utf8), "x")
+
+        dirty = false
+        reports = []
+        FileOperations.runRename(note, guardChange: guardChange, changed: { changes.append($0) },
+                                 prompt: { _ in "renamed.md" }, report: { reports.append($0) })
+        XCTAssertEqual(checks, 4)
+        XCTAssertTrue(reports.isEmpty)
+        XCTAssertEqual(changes, [.renamed(from: note, to: target)])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
     }
 
     func testDuplicateFollowsFinderNamingAndRenameRefusesBadNames() throws {

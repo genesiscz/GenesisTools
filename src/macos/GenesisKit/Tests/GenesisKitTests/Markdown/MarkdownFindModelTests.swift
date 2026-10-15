@@ -170,6 +170,31 @@ final class MarkdownFindModelTests: XCTestCase {
         XCTAssertEqual(m.findCount, 2)
     }
 
+    func testDeletingTheLastSelectedMatchKeepsAnEmptyScope() throws {
+        for replaceAllFirst in [false, true] {
+            let m = try sourceModel("alpha alpha alpha")
+            let doc = try XCTUnwrap(m.selected)
+            m.editorSelectionChanged(NSRange(location: 6, length: 5), byUser: true, in: doc.id)
+            m.findQuery = "alpha"
+            m.setFindInSelection(true)
+            XCTAssertEqual(m.findCount, 1)
+            m.replaceText = ""
+            if replaceAllFirst { m.replaceAll() } else { m.replaceCurrent() }
+            XCTAssertEqual(doc.displayText, "alpha  alpha")
+            XCTAssertTrue(m.findInSelection)
+            XCTAssertEqual(m.activeSourceScope, NSRange(location: 6, length: 0))
+            m.search()
+            XCTAssertEqual(m.findCount, 0)
+            m.replaceText = "outside must stay"
+            m.replaceCurrent()
+            m.replaceAll()
+            XCTAssertEqual(doc.displayText, "alpha  alpha")
+            m.setFindInSelection(false)
+            XCTAssertNil(m.activeSourceScope)
+            XCTAssertEqual(m.findCount, 2, "turning selection mode off restores whole-file search")
+        }
+    }
+
     /// Split view: the preview marks too, but its tally must not replace the
     /// editor's (it counts the whole page, the editor counts the selection).
     func testInSplitViewTheEditorOwnsTheCounter() throws {

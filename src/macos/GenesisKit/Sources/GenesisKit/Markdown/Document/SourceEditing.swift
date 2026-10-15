@@ -270,7 +270,7 @@ enum SourceEditing {
 
     private static func nextMarker(_ marker: String) -> String {
         var m = marker.replacingOccurrences(of: "[x] ", with: "[ ] ").replacingOccurrences(of: "[X] ", with: "[ ] ")
-        if let r = m.range(of: #"\d+"#, options: .regularExpression), let n = Int(m[r]) {
+        if let r = m.range(of: #"\d+"#, options: .regularExpression), let n = Int(m[r]), n < Int.max {
             m.replaceSubrange(r, with: String(n + 1))
         }
         return m

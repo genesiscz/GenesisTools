@@ -30,6 +30,21 @@ final class MarkdownDocumentEditingTests: XCTestCase {
         try text.write(to: file, atomically: true, encoding: .utf8)
     }
 
+    func testOutlineTracksDraftHeadingsBeforeSave() {
+        let doc = MarkdownDocument(url: file)
+        let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "outline-\(UUID().uuidString)")!)
+        let outline = MarkdownOutlineView(doc: doc, model: model)
+        XCTAssertEqual(outline.items.map(\.text), ["Title"])
+        doc.edit("# Renamed\n\n## Added\n")
+        XCTAssertEqual(outline.items.map(\.text), ["Renamed", "Added"])
+        XCTAssertEqual(outline.items.map(\.slug), ["renamed", "added"])
+        XCTAssertTrue(doc.text.hasPrefix("# Title"), "the saved text has not changed")
+        doc.edit("no headings")
+        XCTAssertTrue(outline.items.isEmpty)
+        doc.edit(doc.text)
+        XCTAssertEqual(outline.items.map(\.text), ["Title"])
+    }
+
     func testEditingMarksDirtyAndSaveWritesTheFile() throws {
         let doc = MarkdownDocument(url: file)
         XCTAssertFalse(doc.isDirty)

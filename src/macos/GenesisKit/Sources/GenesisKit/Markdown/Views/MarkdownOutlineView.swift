@@ -38,8 +38,9 @@ struct MarkdownOutlineView: View {
     @ObservedObject var model: MarkdownDocumentsModel
     @Namespace private var barNS
 
+    var items: [MarkdownOutline.Item] { MarkdownOutline.items(of: doc.displayText) }
+
     var body: some View {
-        let items = MarkdownOutline.items(of: doc.text)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text("OUTLINE")

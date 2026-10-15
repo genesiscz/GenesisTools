@@ -22,6 +22,36 @@ final class MarkdownSourceEditorCostTests: XCTestCase {
         return (coordinator, view)
     }
 
+    func testClearedFindSelectionCanBeRequestedAgainWithTheSameToken() throws {
+        let match = MarkdownSourceSelection(range: NSRange(location: 6, length: 4), token: 1)
+        func editor(_ selection: MarkdownSourceSelection?) -> MarkdownSourceEditor {
+            MarkdownSourceEditor(text: .constant("alpha beta gamma"),
+                                 font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                                 textColor: .white, background: .black, selection: selection)
+        }
+        let host = NSHostingView(rootView: editor(match))
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        func settle() {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            host.layoutSubtreeIfNeeded()
+        }
+        func textView(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { textView(in: $0) }.first
+        }
+        settle()
+        let view = try XCTUnwrap(textView(in: host))
+        XCTAssertEqual(view.selectedRange(), match.range)
+        host.rootView = editor(nil)
+        settle()
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        host.rootView = editor(match)
+        settle()
+        XCTAssertTrue(view === textView(in: host), "the editor is updated, not recreated")
+        XCTAssertEqual(view.selectedRange(), match.range)
+    }
+
     func testTheLineIndexIsBuiltOncePerEditNotOncePerScrollTick() {
         let body = (0..<2000).map { "line \($0) with some text on it" }.joined(separator: "\n")
         let (coordinator, view) = coordinator(text: body)

@@ -95,7 +95,7 @@ extension MarkdownDocumentsModel {
     /// The range the source search is limited to, or nil for the whole text:
     /// find in selection is off, it took no selection, or it belongs to another tab.
     var activeSourceScope: NSRange? {
-        guard findInSelection, let scope = findScope, scope.docId == selected?.id, scope.range.length > 0 else {
+        guard findInSelection, let scope = findScope, scope.docId == selected?.id else {
             return nil
         }
         return scope.range

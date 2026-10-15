@@ -48,7 +48,6 @@ public enum MarkdownDocumentLinks {
             return exists(path) ? URL(fileURLWithPath: path) : nil
         }
 
-        let hasExtension = !(target as NSString).pathExtension.isEmpty
         var roots = [folder]
         if let vaultRoot, !vaultRoot.isEmpty {
             roots.append(URL(fileURLWithPath: vaultRoot))
@@ -56,7 +55,7 @@ public enum MarkdownDocumentLinks {
         for root in roots {
             let direct = root.appendingPathComponent(target).standardizedFileURL
             if exists(direct.path) { return direct }
-            if !hasExtension {
+            if direct.pathExtension.lowercased() != "md" {
                 let md = root.appendingPathComponent("\(target).md").standardizedFileURL
                 if exists(md.path) { return md }
             }

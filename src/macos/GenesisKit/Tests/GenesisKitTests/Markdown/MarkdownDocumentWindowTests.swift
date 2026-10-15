@@ -29,6 +29,23 @@ final class MarkdownDocumentWindowTests: XCTestCase {
         XCTAssertNil(MarkdownDocumentLinks.resolve("", folder: folder, vaultRoot: nil, exists: exists))
     }
 
+    func testDottedNoteNamesFallBackToMarkdownAndKeepTheirHeading() throws {
+        let folder = URL(fileURLWithPath: "/vault/notes")
+        let files: Set<String> = ["/vault/notes/1234.analysis.md", "/vault/5678.analysis.md",
+                                  "/vault/notes/report.pdf", "/vault/notes/report.pdf.md"]
+        for (ref, path) in [("1234.analysis#Findings", "/vault/notes/1234.analysis.md"),
+                            ("5678.analysis#Findings", "/vault/5678.analysis.md")] {
+            let result = try XCTUnwrap(MarkdownDocumentLinks.locate(
+                ref, folder: folder, vaultRoot: "/vault", exists: files.contains))
+            XCTAssertEqual(result.url.path, path)
+            XCTAssertEqual(result.fragment, "Findings")
+        }
+        XCTAssertEqual(MarkdownDocumentLinks.resolve("report.pdf", folder: folder, vaultRoot: nil,
+            exists: files.contains)?.path, "/vault/notes/report.pdf", "an existing direct file wins")
+        XCTAssertNil(MarkdownDocumentLinks.resolve("absent.analysis", folder: folder, vaultRoot: "/vault",
+            exists: files.contains))
+    }
+
     func testObsidianLinkUsesTheVaultFormInsideTheVaultAndThePathFormOutside() {
         let inside = URL(fileURLWithPath: "/vault/Notes/Plan.md")
         XCTAssertEqual(

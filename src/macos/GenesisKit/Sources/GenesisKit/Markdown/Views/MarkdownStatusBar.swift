@@ -103,15 +103,9 @@ struct MarkdownStatusBar: View {
         Text("·").foregroundColor(model.theme.textMuted.opacity(0.6))
     }
 
-    private var byteText: String {
-        Self.bytes.string(fromByteCount: Int64(doc.byteSize))
+    var byteText: String {
+        ByteFormat.file(Int64(doc.byteSize))
     }
-
-    private static let bytes: ByteCountFormatter = {
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        return f
-    }()
 
     private static let stamp: DateFormatter = {
         let f = DateFormatter()

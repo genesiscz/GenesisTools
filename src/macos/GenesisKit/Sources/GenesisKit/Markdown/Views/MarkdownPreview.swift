@@ -432,7 +432,12 @@ public struct MarkdownPreviewView: View {
             .onChange(of: markdown) { _, _ in tryHighlightJump(proxy: proxy, blocks: blocks) }
         }
         .background(Color.vaultReadingBg)
-        .environment(\.openURL, OpenURLAction { url in
+        .environment(\.openURL, linkAction)
+        .axMarker("knowledge-preview")
+    }
+
+    var linkAction: OpenURLAction {
+        OpenURLAction { url in
             if url.scheme == "genesiswiki" {
                 let raw = url.absoluteString.replacingOccurrences(of: "genesiswiki:", with: "")
                 onWikilink(raw.removingPercentEncoding ?? raw)
@@ -442,13 +447,12 @@ public struct MarkdownPreviewView: View {
             // schemes, and a `file:` link goes to the caller's link handler,
             // which opens documents only. Anything else (`ssh:`, app handlers) is dropped.
             if MarkdownWebView.externalURL(url.absoluteString) != nil { return .systemAction }
-            if url.isFileURL {
+            if url.isFileURL || url.scheme == nil {
                 onWikilink(url.absoluteString)
                 return .handled
             }
             return .discarded
-        })
-        .axMarker("knowledge-preview")
+        }
     }
 
     private var blockStyle: MarkdownStyle {

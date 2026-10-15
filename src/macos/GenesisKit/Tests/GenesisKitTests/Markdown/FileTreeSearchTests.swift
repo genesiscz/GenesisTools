@@ -88,6 +88,21 @@ final class FileTreeSearchTests: XCTestCase {
         XCTAssertEqual(FileTreeSearch.ripgrepPath(exists: { $0 == "/usr/local/bin/rg" }), "/usr/local/bin/rg")
     }
 
+    func testFallbackTextSearchIncludesEverySupportedSourceExtension() {
+        for ext in DocumentPreview.codeLanguages.keys {
+            let relative = "nested/source.\(ext.uppercased())"
+            XCTAssertTrue(FileTree.isReadable(URL(fileURLWithPath: relative)))
+            XCTAssertTrue(FileTreeSearch.readable(relative), relative)
+            let hits = FileTreeSearch.readable(relative)
+                ? FileTreeSearch.textHits(in: "first\nneedle here", query: "needle",
+                                          path: "/fixture/" + relative, root: "/fixture") : []
+            XCTAssertEqual(hits.map(\.line), [2], relative)
+        }
+        XCTAssertTrue(FileTreeSearch.readable("nested/note.md"))
+        XCTAssertFalse(FileTreeSearch.readable("nested/image.png"))
+        XCTAssertFalse(FileTreeSearch.readable("folder.swift/no-extension"))
+    }
+
     func testSkippedFoldersAndTheSwiftFallbackScan() {
         XCTAssertTrue(FileTreeSearch.skips(directoryNamed: "node_modules"))
         XCTAssertTrue(FileTreeSearch.skips(directoryNamed: ".git"))

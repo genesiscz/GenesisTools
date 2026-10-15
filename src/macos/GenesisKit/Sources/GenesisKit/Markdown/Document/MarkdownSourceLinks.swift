@@ -34,7 +34,7 @@ enum MarkdownSourceLinks {
     /// Ordered: the outer form wins, so the `[label](target)` around a bare URL
     /// is what a click reports.
     private static let patterns: [(String, Int)] = [
-        (#"!?\[\[([^\]\|#]+)(?:#[^\]\|]+)?(?:\|[^\]]+)?\]\]"#, 1),
+        (#"!?\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]"#, 1),
         (#"\[[^\]]*\]\(([^)]+)\)"#, 1),
         (#"\[[^\]]*\]\[([^\]]+)\]"#, 1),
         (#"(?:https?|obsidian|genesis)://[^\s<>\)\]]+"#, 0),

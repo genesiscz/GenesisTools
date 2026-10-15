@@ -107,12 +107,11 @@ private struct MermaidBlockView: View {
     let source: String
     var style: MarkdownStyle
 
-    @State private var image: NSImage?
-    @State private var failed = false
+    @StateObject private var renderer = MermaidImageModel()
 
     var body: some View {
         Group {
-            if let image {
+            if let image = renderer.image {
                 // Full-size + horizontally scrollable (Obsidian parity) — never
                 // shrink the diagram to the column width. Vertical extent flows
                 // in the outer reading ScrollView (no nested-scroll conflict).
@@ -130,7 +129,7 @@ private struct MermaidBlockView: View {
                 .padding(12)
                 .background(style.codeBackground)
                 .clipShape(RoundedRectangle(cornerRadius: GenRadius.sm))
-            } else if failed {
+            } else if renderer.failed {
                 // Unsupported diagram type / parse error — show the source.
                 MarkdownBlockView(block: .code(language: "mermaid", code: source, index: 0), style: style)
             } else {
@@ -143,14 +142,29 @@ private struct MermaidBlockView: View {
                 .padding(12)
             }
         }
-        .task(id: source) { await renderImage() }
+        .task(id: source) { await renderer.render(source: source) }
     }
+}
 
-    private func renderImage() async {
-        let src = source
-        let rendered: NSImage? = await Task.detached(priority: .userInitiated) {
-            try? MermaidRenderer.renderImage(source: src, theme: .genesisVault, scale: 2.0)
-        }.value
+/// Only the current, still-visible diagram may publish its background result.
+@MainActor
+final class MermaidImageModel: ObservableObject {
+    @Published private(set) var image: NSImage?
+    @Published private(set) var failed = false
+    private var generation = 0
+
+    func render(
+        source: String,
+        renderer: @escaping @Sendable (String) -> NSImage? = {
+            try? MermaidRenderer.renderImage(source: $0, theme: .genesisVault, scale: 2.0)
+        }
+    ) async {
+        generation += 1
+        let ticket = generation
+        image = nil
+        failed = false
+        let rendered = await Task.detached(priority: .userInitiated) { renderer(source) }.value
+        guard !Task.isCancelled, generation == ticket else { return }
         if let rendered {
             image = rendered
             failed = false

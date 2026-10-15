@@ -208,16 +208,23 @@ public enum FileOperations {
     /// Rename…: refused first by `guardChange` (unsaved edits), then a name prompt.
     @MainActor
     public static func runRename(_ url: URL, guardChange: ((URL) -> String?)?, changed: (FileChange) -> Void) {
+        runRename(url, guardChange: guardChange, changed: changed, prompt: promptRename, report: report)
+    }
+
+    @MainActor
+    static func runRename(_ url: URL, guardChange: ((URL) -> String?)?, changed: (FileChange) -> Void,
+                          prompt: (URL) -> String?, report: (String) -> Void) {
         if let reason = guardChange?(url) {
             report(reason)
             return
         }
-        guard let name = promptRename(url), name != url.lastPathComponent else { return }
+        guard let name = prompt(url), name != url.lastPathComponent else { return }
         if let problem = problem(renaming: url, to: name) {
             report(problem)
             return
         }
         do {
+            if let reason = guardChange?(url) { report(reason); return }
             let renamed = try rename(url, to: name)
             changed(.renamed(from: url, to: renamed))
         } catch {

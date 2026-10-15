@@ -39,6 +39,19 @@ final class MarkdownSourceLinksTests: XCTestCase {
         XCTAssertNil(MarkdownSourceLinks.target(in: note, at: 0))
     }
 
+    func testWikilinkHeadingsSurviveClicksOnTargetsAndAliases() {
+        for (link, target) in [
+            ("[[Other Note#Part two|alias]]", "Other Note#Part two"),
+            ("![[Other Note#Part two]]", "Other Note#Part two"),
+            ("[[#Local heading|here]]", "#Local heading"),
+        ] {
+            let text = "See \(link) now"
+            for offset in 4..<(4 + (link as NSString).length) {
+                XCTAssertEqual(MarkdownSourceLinks.target(in: text, at: offset), target)
+            }
+        }
+    }
+
     func testAReferenceLabelResolvesThroughItsDefinition() {
         XCTAssertEqual(MarkdownSourceLinks.reference("spec", in: note), "./Spec.md")
         XCTAssertNil(MarkdownSourceLinks.reference("missing", in: note))

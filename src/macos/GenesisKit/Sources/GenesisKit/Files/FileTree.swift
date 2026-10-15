@@ -396,8 +396,7 @@ public struct FileTreeView: View {
     }
 }
 
-/// One row. Equal while its row value, selection, icon, sizes, pulse and actions' revision are: nothing
-/// else re-renders it.
+/// One row. Equal while its row value, selection, icon, visual style, pulse and actions' revision are.
 struct FileTreeRowView: View, Equatable {
     let row: FileTreeRow
     let selected: Bool
@@ -408,10 +407,28 @@ struct FileTreeRowView: View, Equatable {
     /// Only the row it names gets one; every other row gets nil, so a pulse re-renders one row.
     var pulse: FileTreePulse?
     @GenReduceMotion private var reduceMotion
+    /// Resolve when the row is made: a font closure may capture mutable host settings, so
+    /// asking both old and new closures during equality would lose the previous font.
+    private let resolvedFont: Font
+
+    init(row: FileTreeRow, selected: Bool, icon: String, style: FileTreeStyle,
+         model: FileTreeModel, actions: FileTreeActions, pulse: FileTreePulse? = nil) {
+        self.row = row
+        self.selected = selected
+        self.icon = icon
+        self.style = style
+        self.model = model
+        self.actions = actions
+        self.pulse = pulse
+        resolvedFont = style.font(selected)
+    }
 
     static func == (left: FileTreeRowView, right: FileTreeRowView) -> Bool {
         left.row == right.row && left.selected == right.selected && left.icon == right.icon
             && left.style.metrics == right.style.metrics && left.pulse == right.pulse
+            && left.style.text == right.style.text && left.style.secondary == right.style.secondary
+            && left.style.muted == right.style.muted && left.style.accent == right.style.accent
+            && left.style.selection == right.style.selection && left.resolvedFont == right.resolvedFont
             && left.actions.revision == right.actions.revision
     }
 
@@ -439,7 +456,7 @@ struct FileTreeRowView: View, Equatable {
                     .foregroundColor(row.isFolder ? style.accent : style.muted)
                     .frame(width: metrics.iconWidth)
                 Text(row.name)
-                    .font(style.font(selected))
+                    .font(resolvedFont)
                     .foregroundColor(selected ? style.accent : style.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)

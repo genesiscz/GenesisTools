@@ -27,6 +27,8 @@ enum DocumentPreview {
     /// Rows beyond this are dropped with a note. A 50,000-row table is not a document, and
     /// building one blocks the web view for as long as it takes to lay out.
     static let maximumTableRows = 1000
+    /// Wider input uses the source fence instead of multiplying its width across every displayed row.
+    static let maximumTableColumns = 100
 
     static func presentation(for url: URL) -> Presentation {
         switch url.pathExtension.lowercased() {
@@ -269,7 +271,7 @@ enum DocumentPreview {
         guard let rows = csvRows(text), let header = rows.first else { return nil }
 
         let width = rows.reduce(0) { max($0, $1.count) }
-        guard width > 1 else { return nil }
+        guard width > 1, width <= maximumTableColumns else { return nil }
 
         func line(_ cells: [String]) -> String {
             let padded = (0..<width).map { $0 < cells.count ? tableCell(cells[$0]) : "" }

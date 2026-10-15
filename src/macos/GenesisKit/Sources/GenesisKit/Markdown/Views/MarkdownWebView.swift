@@ -427,7 +427,10 @@ struct MarkdownWebView: NSViewRepresentable {
             let props = MarkdownFrontmatter.json(yaml.map(MarkdownFrontmatter.parse(yaml:)) ?? [])
             let editable = parent.onProperties != nil ? "true" : "false"
             let vocabulary = parent.propertyVocabulary?() ?? "null"
-            let map = media.update(markdown: body, context: parent.mediaContext)
+            let map = media.update(markdown: body, context: parent.mediaContext) { [weak self] in
+                guard let self, self.renderTag == tag else { return }
+                self.render(md)
+            }
             let mediaJSON = (try? JSONSerialization.data(withJSONObject: map)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
             web?.evaluateJavaScript(
                 "window.gnRender(\(MarkdownWebView.jsString(body)),\(props),\(editable),\(vocabulary),\(mediaJSON),\(parent.lineNumbers),\(tag))"

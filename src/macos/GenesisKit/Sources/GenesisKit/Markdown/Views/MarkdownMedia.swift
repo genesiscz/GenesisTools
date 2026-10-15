@@ -191,11 +191,19 @@ enum MarkdownMedia {
 
 /// Vault-relative paths of every image and JSON file, for Obsidian's
 /// "just the file name" references, plus the configured attachment folder.
-/// Built on first need and rebuilt at most every 30 s when a lookup misses.
+/// A main-queue cache, refreshed in the background at most every 30 s while used.
 final class VaultMediaIndex {
     let root: URL
-    private var paths: [String] = []
+    struct Snapshot: Sendable {
+        var paths: [String]
+        var attachmentFolder: String?
+    }
+
+    private var snapshot = Snapshot(paths: [], attachmentFolder: nil)
     private var builtAt: Date?
+    private var loading = false
+    private var completions: [() -> Void] = []
+    private let scan: @Sendable (URL) -> Snapshot
 
     private static var shared: [String: VaultMediaIndex] = [:]
 
@@ -207,46 +215,50 @@ final class VaultMediaIndex {
         return index
     }
 
-    init(root: URL) {
+    init(root: URL, scan: @escaping @Sendable (URL) -> Snapshot = VaultMediaIndex.scan) {
         self.root = root
+        self.scan = scan
     }
 
-    private var attachmentFolderRead: (value: String?, at: Date)?
+    var attachmentFolder: String? { snapshot.attachmentFolder }
 
-    /// Re-read at most every 30 s, so a settings change reaches the next render.
-    var attachmentFolder: String? {
-        if let read = attachmentFolderRead, Date().timeIntervalSince(read.at) < 30 { return read.value }
-        let value = Self.readAttachmentFolder(root)
-        attachmentFolderRead = (value, Date())
-        return value
-    }
-
-    /// Vault-relative paths whose tail matches `key`: `x.png` finds
-    /// `a/b/x.png`, `assets/x.png` finds `Notes/assets/x.png`. Shortest first.
-    func lookup(_ key: String) -> [String] {
-        if builtAt == nil { build() }
-        var hits = match(key)
-        if hits.isEmpty, let builtAt, Date().timeIntervalSince(builtAt) > 30 {
-            build()
-            hits = match(key)
+    /// Never reads the filesystem on the caller's queue. Concurrent requests share one scan;
+    /// callbacks run on the main queue after the complete snapshot has been published.
+    func refreshIfNeeded(now: Date = Date(), completion: @escaping () -> Void) {
+        if let builtAt, now.timeIntervalSince(builtAt) < 30 { return }
+        completions.append(completion)
+        guard !loading else { return }
+        loading = true
+        let root = root, scan = scan
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = scan(root)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.snapshot = result
+                self.builtAt = now
+                self.loading = false
+                let callbacks = self.completions
+                self.completions = []
+                callbacks.forEach { $0() }
+            }
         }
-        return hits
     }
 
-    private func match(_ key: String) -> [String] {
+    /// Vault-relative paths whose tail matches `key`, shortest first. A lookup only reads
+    /// the cache; the page requests a refresh and renders again when it is ready.
+    func lookup(_ key: String) -> [String] {
         let needle = key.lowercased()
-        return paths.filter { $0.lowercased() == needle || $0.lowercased().hasSuffix("/" + needle) }
+        return snapshot.paths.filter { $0.lowercased() == needle || $0.lowercased().hasSuffix("/" + needle) }
             .sorted { $0.count < $1.count }
     }
 
-    func build() {
-        builtAt = Date()
+    private static func scan(_ root: URL) -> Snapshot {
         var found: [String] = []
+        let attachmentFolder = readAttachmentFolder(root)
         let fm = FileManager.default
         guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
                                      options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
-            paths = []
-            return
+            return Snapshot(paths: [], attachmentFolder: attachmentFolder)
         }
         let base = root.standardizedFileURL.path
         for case let url as URL in en {
@@ -259,7 +271,7 @@ final class VaultMediaIndex {
             guard path.hasPrefix(base + "/") else { continue }
             found.append(String(path.dropFirst(base.count + 1)))
         }
-        paths = found
+        return Snapshot(paths: found, attachmentFolder: attachmentFolder)
     }
 
     /// `.obsidian/app.json` `attachmentFolderPath`: "/" (vault root, the
@@ -293,20 +305,37 @@ final class MarkdownMediaRegistry {
 
     private(set) var entries: [String: Entry] = [:]
     private var tokenByPath: [String: String] = [:]
+    private var generation = 0
+    private let indexForVault: (URL) -> VaultMediaIndex
+
+    init(indexForVault: @escaping (URL) -> VaultMediaIndex = VaultMediaIndex.forVault) {
+        self.indexForVault = indexForVault
+    }
 
     /// Resolves the document's own references and returns the page's map:
     /// key → `{kind, src|token, name}`. Tokens no longer referenced are dropped.
-    func update(markdown: String, context: MarkdownMedia.Context?) -> [String: [String: String]] {
+    func update(
+        markdown: String, context: MarkdownMedia.Context?, onIndexReady: (() -> Void)? = nil
+    ) -> [String: [String: String]] {
+        generation += 1
+        let ticket = generation
         guard let context else {
             entries = [:]
             tokenByPath = [:]
             return [:]
         }
-        let index = context.vaultRoot.map(VaultMediaIndex.forVault)
+        let references = MarkdownMedia.references(in: markdown)
+        let index = context.vaultRoot.map(indexForVault)
+        if !references.isEmpty, let onIndexReady {
+            index?.refreshIfNeeded { [weak self] in
+                guard let self, self.generation == ticket else { return }
+                onIndexReady()
+            }
+        }
         var next: [String: Entry] = [:]
         var nextTokens: [String: String] = [:]
         var map: [String: [String: String]] = [:]
-        for ref in MarkdownMedia.references(in: markdown) where map[ref.key] == nil {
+        for ref in references where map[ref.key] == nil {
             guard let url = MarkdownMedia.resolve(ref.key, in: context, index: index),
                   let kind = MarkdownMedia.kind(ofExtension: url.pathExtension) else { continue }
             let token = nextTokens[url.path] ?? tokenByPath[url.path] ?? UUID().uuidString.lowercased()

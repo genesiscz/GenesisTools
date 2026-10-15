@@ -72,6 +72,25 @@ final class SourceEditingTests: XCTestCase {
         XCTAssertNil(next("-not a list"))
     }
 
+    func testEnterAtTheLargestNumberedListMarkerDoesNotOverflow() throws {
+        for (marker, next) in [
+            ("9", "10"),
+            (String(Int.max - 1), String(Int.max)),
+            (String(Int.max), String(Int.max)),
+            (String(Int.max) + "0", String(Int.max) + "0"),
+        ] {
+            for delimiter in [".", ")"] {
+                let text = "  \(marker)\(delimiter) item"
+                let edit = try XCTUnwrap(SourceEditing.newline(
+                    text, selection: NSRange(location: (text as NSString).length, length: 0)
+                ))
+                let (out, selection) = run(edit, on: text)
+                XCTAssertEqual(out, text + "\n  \(next)\(delimiter) ")
+                XCTAssertEqual(selection, NSRange(location: (out as NSString).length, length: 0))
+            }
+        }
+    }
+
     func testEnterOnAnEmptyItemEndsTheList() {
         let text = "- a\n  - "
         let edit = SourceEditing.newline(text, selection: NSRange(location: 8, length: 0))!

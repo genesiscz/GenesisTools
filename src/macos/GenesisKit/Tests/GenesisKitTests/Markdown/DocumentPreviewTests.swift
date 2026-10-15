@@ -137,6 +137,19 @@ final class DocumentPreviewTests: XCTestCase {
         XCTAssertEqual(DocumentPreview.markdown(for: url("list.csv"), text: text), "```\n\(text.dropLast())\n```\n")
     }
 
+    func testAnOverwideCSVRowBeyondTheRowCutoffUsesTheSourceFence() throws {
+        let ordinary = "a,b\n" + String(repeating: "1,2\n", count: DocumentPreview.maximumTableRows)
+        let text = ordinary + String(repeating: ",", count: 100_000) + "\n"
+        XCTAssertNil(DocumentPreview.table(fromCSV: text))
+        let out = DocumentPreview.markdown(for: url("wide.csv"), text: text)
+        XCTAssertEqual(out, "```\n\(text.dropLast())\n```\n", "wide input stays source text without padded cells")
+
+        let atLimit = Array(repeating: "x", count: DocumentPreview.maximumTableColumns).joined(separator: ",")
+        XCTAssertNotNil(DocumentPreview.table(fromCSV: atLimit + "\n1,2\n"))
+        XCTAssertNil(DocumentPreview.table(fromCSV: atLimit + ",x\n1,2\n"))
+        XCTAssertEqual(DocumentPreview.table(fromCSV: "a,b\n1,2,3\n"), "| a | b |  |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n")
+    }
+
     func testALongTableIsCutAndSaysSo() {
         let rows = (1...(DocumentPreview.maximumTableRows + 5)).map { "\($0),row\($0)" }.joined(separator: "\n")
         let out = DocumentPreview.markdown(for: url("big.csv"), text: "n,label\n\(rows)\n")

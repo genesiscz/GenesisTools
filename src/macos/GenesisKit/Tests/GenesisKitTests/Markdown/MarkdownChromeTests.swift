@@ -30,6 +30,19 @@ final class MarkdownChromeTests: XCTestCase {
         return model
     }
 
+    func testStatusBarUsesTheSharedEnglishFileSizeFormat() throws {
+        let model = model()
+        for size in [0, 1_000, 1_234_567] {
+            let note = try file("size-\(size).md", String(repeating: "a", count: size))
+            model.open([note])
+            let doc = try XCTUnwrap(model.selected)
+            XCTAssertEqual(doc.byteSize, size)
+            let bar = MarkdownStatusBar(doc: doc, model: model)
+            XCTAssertEqual(bar.byteText, ByteFormat.file(Int64(size)))
+            XCTAssertFalse(bar.byteText.contains(","), "file sizes keep English decimal punctuation")
+        }
+    }
+
     // MARK: Preview tabs
 
     func testAPreviewTabIsReplacedInPlaceAndAKeptTabIsNot() throws {
