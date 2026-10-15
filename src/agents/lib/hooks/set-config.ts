@@ -4,6 +4,7 @@ import {
     FILL_MODES,
     type HarnessName,
     HIGHLIGHT_MODES,
+    HIGHLIGHTERS,
     type HookOutcome,
     type HooksConfig,
     hooksConfigPath,
@@ -43,6 +44,7 @@ export const SETTABLE_KEYS = [
     "diff.othersSummary",
     "diff.theme",
     "diff.highlight",
+    "diff.highlighter",
     "diff.fill",
     "diff.fillMax",
     "diff.columns",
@@ -313,6 +315,17 @@ export function applySetting(
         throw new Error(
             `unknown key: ${key}. Settable: unpushed.enabled, maxCommits, maxAgeMinutes, remindEveryMinutes`
         );
+    }
+
+    if (key === "diff.highlighter") {
+        const name = HIGHLIGHTERS.find((candidate) => candidate === value);
+
+        if (!name) {
+            throw new Error(`${key} takes ${HIGHLIGHTERS.join(", ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.highlighter = name;
+        return next;
     }
 
     if (key === "diff.fill") {

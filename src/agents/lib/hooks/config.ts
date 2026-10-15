@@ -59,6 +59,13 @@ export interface DiffConfig {
      */
     highlight: HighlightMode;
     /**
+     * What paints the syntax colour. `hljs` (default): highlight.js in process, in Claude Code's own dark
+     * palette (`diff/syntax.ts`): 7.4 ms to load once, then 0.3 ms a call. `bat`: one `bat` process per
+     * syntax in a message (24.8 ms median) in `bat`'s own theme. A file type `syntax.ts` does not know, and
+     * every light theme, fall back to `bat`.
+     */
+    highlighter: Highlighter;
+    /**
      * How far a changed row's band reaches. `block` (default): the widest row of the file, so a pane
      * made narrower after the message was printed wraps only the rows that are long anyway. `terminal`:
      * the pane's width, like Claude Code's own diff; a hook message is fixed text, so once the pane gets
@@ -353,6 +360,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxCaptureMB: 8,
         maxCaptureFileMB: 0.256,
         highlight: "256",
+        highlighter: "hljs",
         fill: "block",
         fillMax: 72,
         theme: "claude",
@@ -568,6 +576,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             fallback: base.maxCaptureFileMB,
         }),
         highlight: highlightOr(stored?.highlight, base.highlight),
+        highlighter: HIGHLIGHTERS.find((name) => name === stored?.highlighter) ?? base.highlighter,
         fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
         fillMax: countOr({ field: "diff.fillMax", value: stored?.fillMax, fallback: base.fillMax, min: 0 }),
         theme: themeOr(stored?.theme, base.theme),
@@ -609,6 +618,9 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         harnesses: mergedHarnesses(stored?.harnesses),
     };
 }
+
+export const HIGHLIGHTERS = ["hljs", "bat"] as const;
+export type Highlighter = (typeof HIGHLIGHTERS)[number];
 
 export const FILL_MODES = ["block", "terminal", "none"] as const;
 export type FillMode = (typeof FILL_MODES)[number];

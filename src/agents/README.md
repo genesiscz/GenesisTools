@@ -183,7 +183,14 @@ Every row carries its syntax colour and is wrapped at the terminal width before 
 rows are bought first, together with the context row right above and below each change, then the
 other context, nearest first. The full-width fill is bought last, from what is left.
 
-`diff.highlight` sets the syntax colour, through `bat` (one run per syntax in a message):
+`diff.highlighter` picks what paints the syntax colour. `hljs` (default) is highlight.js in process,
+in Claude Code's own dark palette (Monokai Extended, 24 scopes): it loads in about 7 ms once, then 0.3 ms a
+call, and on three samples of this repository wrote about half the characters of `bat` (5,539 against
+10,934 for 90 lines of TypeScript; 146 colour switches against 387). `bat` is one process per syntax in a
+message (25 ms median) in `bat`'s own theme. A file type the painter does not know (`.txt`, `.env`), a text
+none of whose scopes has a colour in that palette (Markdown), and every light theme go to `bat`.
+
+`diff.highlight` sets how much colour is written, for either painter (`bat` is spawned once per syntax in a message):
 
 | Mode | Characters | Risk |
 |---|---|---|

@@ -4,6 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import type { DiffConfig, FillMode } from "../config";
 import type { DiffCategory } from "./classify";
 import type { ChangedFile } from "./collect";
+import { syntaxRows } from "./syntax";
 import type { Palette } from "./theme";
 
 const DIM = "\u001b[2m";
@@ -597,6 +598,19 @@ function paintThemed(blocks: DiffBlock[], config: DiffConfig): void {
         // theme, or the default Monokai foregrounds would sit on near-white bands.
         const theme = first.palette.light ? ["--theme=GitHub"] : [];
         const input = group.flatMap((block) => block.body.map((line) => line.content ?? ""));
+
+        // highlight.js paints a dark theme in Claude Code's own colours, in process. A language it does
+        // not have, or a light theme, goes to `bat` below.
+        const own =
+            config.highlighter === "hljs" && !first.palette.light
+                ? syntaxRows({ text: input.join("\n"), path: first.path, mode: config.highlight })
+                : null;
+
+        if (own && own.length === input.length) {
+            assignPainted(group, own);
+            continue;
+        }
+
         const run = spawnSync(
             "bat",
             [
@@ -620,19 +634,23 @@ function paintThemed(blocks: DiffBlock[], config: DiffConfig): void {
             continue;
         }
 
-        const rows = run.stdout.split("\n");
-        let at = 0;
+        assignPainted(group, run.stdout.split("\n"));
+    }
+}
 
-        for (const block of group) {
-            if (block.dress) {
-                block.dress.painted = block.body.map((line, index) => {
-                    const row = rows[at + index];
-                    return line.kind && row !== undefined ? compactColour(row) : undefined;
-                });
-            }
+/** Gives each block of a group its rows of the one painted listing, compacted (`dress.painted`). */
+function assignPainted(group: DiffBlock[], rows: string[]): void {
+    let at = 0;
 
-            at += block.body.length;
+    for (const block of group) {
+        if (block.dress) {
+            block.dress.painted = block.body.map((line, index) => {
+                const row = rows[at + index];
+                return line.kind && row !== undefined ? compactColour(row) : undefined;
+            });
         }
+
+        at += block.body.length;
     }
 }
 

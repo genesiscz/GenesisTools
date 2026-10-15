@@ -65,6 +65,7 @@ import {
     runDiffPost,
     silentReason,
 } from "./run";
+import { languageOf, syntaxRows } from "./syntax";
 import { resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
 
@@ -3801,6 +3802,81 @@ describe("files the harness writes during every call", () => {
         expect(harnessOwnFile(join(claude, "projects", "-repo", "session.jsonl"))).toBe(true);
         expect(harnessOwnFile(join(claude, "projects", "-repo", "memory", "note.md"))).toBe(false);
         expect(harnessOwnFile(join(repo, "kept.ts"))).toBe(false);
+    });
+});
+
+describe("syntax colour from highlight.js", () => {
+    const palette = resolvePalette("claude-dark");
+
+    if (!palette) {
+        throw new Error("claude-dark has a palette");
+    }
+
+    it("colours a TypeScript row in Claude Code's own palette", () => {
+        const rows = syntaxRows({
+            text: 'const label = "a"; // note\nreturn 42;',
+            path: "x.ts",
+            mode: "truecolor",
+        });
+
+        expect(rows).toHaveLength(2);
+        // const is a storage word, a string and a comment have their own colours.
+        expect(rows?.[0]).toContain("\u001b[38;2;102;217;239mconst");
+        expect(rows?.[0]).toContain('\u001b[38;2;230;219;116m"a"');
+        expect(rows?.[0]).toContain("\u001b[38;2;117;113;94m// note");
+        // return is a control keyword, 42 a number.
+        expect(rows?.[1]).toContain("\u001b[38;2;249;38;114mreturn");
+        expect(rows?.[1]).toContain("\u001b[38;2;190;132;255m42");
+    });
+
+    it("writes 256-colour codes in the 256 mode, and no truecolor code", () => {
+        const rows = syntaxRows({ text: "let n = 1;", path: "x.ts", mode: "256" });
+
+        expect(rows?.[0]).toContain("\u001b[38;5;");
+        expect(rows?.[0]).not.toContain("\u001b[38;2;");
+    });
+
+    it("closes a token that spans lines at each line end and opens it again on the next", () => {
+        const rows = syntaxRows({ text: "/* one\n two */\nlet a = 1;", path: "x.ts", mode: "256" });
+
+        expect(rows).toHaveLength(3);
+        expect(stripAnsi(rows?.[1] ?? "")).toBe(" two */");
+        // The comment colour (117,113,94) is index 102 in the 256 palette, on both of its lines.
+        expect(rows?.[0]).toContain("\u001b[38;5;102m");
+        expect(rows?.[1]).toContain("\u001b[38;5;102m");
+        expect(rows?.[2]).not.toContain("\u001b[38;5;102m");
+    });
+
+    it("keeps the text exactly, markup characters included", () => {
+        const text = 'if (a < b && c > "d\'s") { return `x${1}`; }';
+        const rows = syntaxRows({ text, path: "x.ts", mode: "256" });
+
+        expect(stripAnsi(rows?.join("\n") ?? "")).toBe(text);
+    });
+
+    it("leaves a text to bat when none of its scopes has a colour in the palette", () => {
+        expect(syntaxRows({ text: "# Title\n\n- a bullet", path: "note.md", mode: "256" })).toBeNull();
+    });
+
+    it("knows its languages by extension or name, and nothing else", () => {
+        expect(languageOf("a/b.TSX")).toBe("typescript");
+        expect(languageOf("Makefile")).toBe("makefile");
+        expect(languageOf("notes.txt")).toBeNull();
+        expect(syntaxRows({ text: "x", path: "notes.txt", mode: "256" })).toBeNull();
+    });
+
+    it("hands a file type it does not know to bat, and the whole themed block still carries colour", () => {
+        const rendered = renderPatch(["@@ -1,1 +1,1 @@", "-alpha", "+beta"].join("\n"), palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "notes.unknownext", width: 0 }),
+        };
+        const message = assembleMessage([block], { ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: 100_000 });
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.highlighter).toBe("hljs");
+        expect(stripAnsi(message)).toContain("-alpha");
+        expect(stripAnsi(message)).toContain("+beta");
     });
 });
 
