@@ -280,6 +280,9 @@ test("monitor drains large stderr, preserves its label, and returns failures", a
             lastAt: 0,
             running: true,
             stallSaid: false,
+            hiddenTools: 0,
+            seen: new Set<string>(),
+            seenTurn: -1,
         };
         const code = await pump(
             worker,
