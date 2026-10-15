@@ -63,9 +63,11 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
         page.navigationDelegate = self
         page.onDropFiles = nil
         page.magnification = 1
-        // What a pane sets only when it has one (a column width, marks, a line highlight) must not carry over.
+        // What a pane sets only when it has one (a column width, marks, a line highlight, theme variables) must not
+        // carry over. `gnTheme` only sets properties, and a host with no theme of its own never replaces them.
         page.evaluateJavaScript(
             "window.gnDiff([]);window.gnGitMarks([]);window.gnHighlightLines(null);window.gnWidth(null);window.scrollTo(0,0);"
+                + "document.documentElement.removeAttribute('style');"
         )
         web = page
         self.media = media

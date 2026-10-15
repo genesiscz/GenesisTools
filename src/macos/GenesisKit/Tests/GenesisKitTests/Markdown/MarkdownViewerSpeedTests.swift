@@ -124,4 +124,28 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         spare.recycle(MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration()), media: MarkdownMediaRegistry())
         XCTAssertEqual(spare.recycled, 2)
     }
+
+    /// A page recycled from a themed pane must not keep that pane's inline theme. A host with no theme of its own
+    /// never calls `gnTheme`, so the stylesheet's own palette only shows once those properties are gone.
+    func testARecycledPageDropsThePreviousTheme() async throws {
+        let spare = MarkdownWebSpare()
+        let page = MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        _ = try await page.evaluateJavaScript("""
+        window.gnTheme=function(vars){var s=document.documentElement.style;for(var k in vars){s.setProperty(k,vars[k]);}};
+        window.gnDiff=function(){};window.gnGitMarks=function(){};window.gnHighlightLines=function(){};
+        window.gnWidth=function(){};
+        window.gnTheme({'--dd-bg':'#ffffff','color-scheme':'light'});
+        """)
+        spare.recycle(page, media: MarkdownMediaRegistry())
+        let deadline = Date().addingTimeInterval(2)
+        var background = "#ffffff"
+        while Date() < deadline {
+            background = (try? await page.evaluateJavaScript(
+                "document.documentElement.style.getPropertyValue('--dd-bg')"
+            )) as? String ?? ""
+            if background.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(background, "", "the previous pane's theme does not stay on the spare")
+    }
 }

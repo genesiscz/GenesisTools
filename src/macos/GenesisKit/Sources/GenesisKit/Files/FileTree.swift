@@ -105,6 +105,8 @@ public final class FileTreeModel: ObservableObject {
     /// Folders being read again quietly (`relist`), and those that changed again while that read ran.
     private var relisting = Set<String>()
     private var relistAgain = Set<String>()
+    /// Bumped by `refresh`. A quiet read applies its snapshot only when this is still the count it started with.
+    private var relistEpoch: [String: Int] = [:]
     /// One FSEvents stream over the root. A folder another app writes into (an agent session saving its notes) is
     /// read again, so the tree lists what is on disk without the header's reload.
     private var watcher: DirectoryWatcher?
@@ -199,9 +201,12 @@ public final class FileTreeModel: ObservableObject {
         }
     }
 
-    /// Reads one folder again (after a rename, duplicate or move to trash inside it).
+    /// Reads one folder again (after a rename, duplicate or move to trash inside it). A quiet read already
+    /// running is dropped: its snapshot predates this, and it must not replace the listing this read returns.
     public func refresh(_ folder: String) {
         children[folder] = nil
+        relistEpoch[folder.nativeUTF8, default: 0] += 1
+        relistAgain.remove(folder.nativeUTF8)
         if loading.contains(folder) {
             stale.insert(folder)
         }
@@ -247,12 +252,13 @@ public final class FileTreeModel: ObservableObject {
             return
         }
         let generation = generation
+        let epoch = relistEpoch[path, default: 0]
         let read = listing
         Task { [weak self] in
             let listed = await Task.detached(priority: .utility) { read(path) }.value
             guard let self else { return }
             self.relisting.remove(path)
-            guard generation == self.generation else { return }
+            guard generation == self.generation, self.relistEpoch[path, default: 0] == epoch else { return }
             if let old = self.children[path], old != listed {
                 self.children[path] = listed
                 self.rebuild()
