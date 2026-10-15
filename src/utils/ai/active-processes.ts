@@ -2,7 +2,12 @@ import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-l
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { formatPsCpuTime } from "@genesiscz/utils/process/libproc-table";
-import { listProcessesWithUsage, readProcessEnvironment } from "@genesiscz/utils/process/processes";
+import {
+    listProcesses,
+    type ProcessEntry,
+    readProcessEnvironment,
+    readProcessUsages,
+} from "@genesiscz/utils/process/processes";
 import { accountFromEnv } from "./account-env";
 
 /**
@@ -126,14 +131,30 @@ export function parseLsofCwd(output: string): Map<number, string> {
  */
 function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
     const euid = process.geteuid?.() ?? -1;
-    const found: ActiveAgentProcess[] = [];
-    for (const row of listProcessesWithUsage()) {
-        if (row.pid <= 0 || row.zombie || (row.uid !== euid && euid !== 0) || !row.usage || row.startMs === null) {
+    const candidates: { row: ProcessEntry; args: string; kind: string }[] = [];
+    for (const row of listProcesses()) {
+        // A row with no owner (the platform names none, as a Windows CIM row) is kept: nothing says it is another user's.
+        if (
+            row.pid <= 0 ||
+            row.zombie ||
+            (row.uid !== null && row.uid !== euid && euid !== 0) ||
+            row.startMs === null
+        ) {
             continue;
         }
         const args = row.command?.split(/\s+/).join(" ") ?? "";
         const kind = args ? scan.classify(args) : null;
         if (!kind) {
+            continue;
+        }
+        candidates.push({ row, args, kind });
+    }
+    // Task usage is read for the agents only: one kernel call per process on the machine would be a thousand reads.
+    const usages = readProcessUsages(candidates.map((candidate) => candidate.row.pid));
+    const found: ActiveAgentProcess[] = [];
+    for (const { row, args, kind } of candidates) {
+        const usage = usages.get(row.pid);
+        if (!usage || row.startMs === null) {
             continue;
         }
         const environment = readProcessEnvironment(row.pid);
@@ -145,7 +166,7 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
             ppid: row.ppid,
             tty: row.tty ?? "??",
             startedAt: Math.floor(row.startMs / 1000) * 1000,
-            cpuTime: formatPsCpuTime(row.usage.cpuTimeMs),
+            cpuTime: formatPsCpuTime(usage.cpuTimeMs),
             args,
             kind,
             account,
