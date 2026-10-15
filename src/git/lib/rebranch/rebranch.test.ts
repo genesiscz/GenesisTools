@@ -900,6 +900,38 @@ describe("rebranch against a real repository", () => {
         expect(await groupBranches()).toBe("feat/messy-api\nfeat/messy-docs\nfeat/messy-web");
     });
 
+    // Regression test: the checkout and the original HEAD were read before the prompt and used after it, so a
+    // branch switch or a staged edit made while the prompt was open was acted on as if it had not happened
+    it("refuses when the checkout changed while the confirmation prompt was open", async () => {
+        const r = await messyRepo();
+        const planPath = join(r.root, "plan.json");
+        await Bun.write(planPath, SafeJSON.stringify((await plannedSplit(r, happy)).doc, null, 2));
+        const groupBranches = () => r.git(["branch", "--list", "--format=%(refname:short)", "feat/messy-*"]);
+
+        const switched = recordingIo(async () => {
+            await r.git(["switch", "-q", "-c", "elsewhere"]);
+
+            return true;
+        });
+        expect(await runApplyFlow({ plan: planPath, cwd: r.dir }, switched.io)).toBe(1);
+        expect(switched.lines.join("\n")).toContain("changed while the prompt was open");
+        expect(await groupBranches()).toBe("");
+        expect(loadApplyState(join(r.dir, ".git"))).toBeNull();
+        expect(await r.git(["rev-parse", "--abbrev-ref", "HEAD"])).toBe("elsewhere");
+
+        await r.git(["switch", "-q", "feat/messy"]);
+        const staged = recordingIo(async () => {
+            await Bun.write(join(r.dir, "staged-during-prompt.txt"), "x\n");
+            await r.git(["add", "staged-during-prompt.txt"]);
+
+            return true;
+        });
+        expect(await runApplyFlow({ plan: planPath, cwd: r.dir }, staged.io)).toBe(1);
+        expect(staged.lines.join("\n")).toContain("changed while the prompt was open");
+        expect(await groupBranches()).toBe("");
+        expect(loadApplyState(join(r.dir, ".git"))).toBeNull();
+    });
+
     it("sees a rebase and a cherry-pick in progress inside a linked worktree", async () => {
         const r = await messyRepo();
         const wt = await r.worktreeAdd({ name: "wt", ref: "master" });

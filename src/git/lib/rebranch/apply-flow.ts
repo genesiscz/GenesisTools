@@ -296,6 +296,18 @@ async function applyLocked({
             io.info("Cancelled. Nothing created.");
             return 1;
         }
+
+        // The prompt can stay open for a long time. An editor or another Git command may have moved HEAD or staged
+        // an edit meanwhile, and the operation state below would then record a stale return point.
+        const now = { branch: await getCurrentBranch(repoRoot), sha: await git.getSha("HEAD") };
+        const problems = await checkoutProblems(git);
+
+        if (now.sha !== original.sha || now.branch !== original.branch || problems.length > 0) {
+            io.error(
+                `nothing created: the checkout changed while the prompt was open${problems.length > 0 ? ` (${problems.join("; ")})` : ""}. Run the command again.`
+            );
+            return 1;
+        }
     }
 
     const state: RebranchState = {
