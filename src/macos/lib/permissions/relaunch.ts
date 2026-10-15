@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath, genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
+import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 /**
@@ -110,38 +111,35 @@ export function argvFromPs(rest: string): string[] {
 
 /** The pids the reap is about to kill, each with the `ps` text after the launcher path. */
 function staleLauncherLines(options: {
-    psStdout: string;
+    processes: Pick<ProcessEntry, "pid" | "command">[];
     launcherPath: string;
     stalePids: Set<string>;
 }): Array<{ pid: number; rest: string }> {
-    const { psStdout, launcherPath, stalePids } = options;
-    const lines: Array<{ pid: number; rest: string }> = [];
-
-    for (const line of psStdout.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(.*)$/);
-
-        if (!match || !stalePids.has(match[1]) || !match[2].startsWith(launcherPath)) {
-            continue;
+    const { processes, launcherPath, stalePids } = options;
+    return processes.flatMap((entry) => {
+        if (!stalePids.has(String(entry.pid)) || !entry.command?.startsWith(launcherPath)) {
+            return [];
         }
-
-        lines.push({ pid: Number(match[1]), rest: match[2].slice(launcherPath.length).trim() });
-    }
-
-    return lines;
+        return [{ pid: entry.pid, rest: entry.command.slice(launcherPath.length).trim() }];
+    });
 }
 
 /** Whether the reap is about to kill a link relay (`GenesisTools --link-relay`). */
-export function linkRelayAmong(options: { psStdout: string; launcherPath: string; stalePids: Set<string> }): boolean {
+export function linkRelayAmong(options: {
+    processes: Pick<ProcessEntry, "pid" | "command">[];
+    launcherPath: string;
+    stalePids: Set<string>;
+}): boolean {
     return staleLauncherLines(options).some((line) => line.rest === "--link-relay");
 }
 
 /**
- * The window faces among the pids the reap is about to kill. `psStdout` is `ps -Ao pid=,args=`; a record
- * is trusted only while its argv still spells the `ps` line, so a reused pid never borrows another
+ * The window faces among the pids the reap is about to kill. A record is trusted only while
+ * its argv still matches the process entry, so a reused pid never borrows another
  * face's arguments.
  */
 export function windowFacesFromPs(options: {
-    psStdout: string;
+    processes: Pick<ProcessEntry, "pid" | "command">[];
     launcherPath: string;
     stalePids: Set<string>;
     records: Map<number, string[]>;
@@ -386,7 +384,7 @@ export interface RelaunchCapture {
  * starts one first itself), so a reap of nothing but short-lived faces starts nothing.
  */
 export function planRelaunch(options: {
-    psStdout: string;
+    processes: Pick<ProcessEntry, "pid" | "command">[];
     launcherPath: string;
     stalePids: Set<string>;
     records: Map<number, string[]>;
@@ -399,12 +397,12 @@ export function planRelaunch(options: {
 
 /** The faces of `stalePids` with their argv, and which of them is in front. Call before the reap. */
 export function captureRelaunch(options: {
-    psStdout: string;
+    processes: Pick<ProcessEntry, "pid" | "command">[];
     launcherPath: string;
     stalePids: string[];
 }): RelaunchCapture {
     const capture = planRelaunch({
-        psStdout: options.psStdout,
+        processes: options.processes,
         launcherPath: options.launcherPath,
         stalePids: new Set(options.stalePids),
         records: readFaceRecords(),

@@ -17,6 +17,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readProcessBasics } from "../lib/process-basics";
 
 const SafeJSON = JSON;
 
@@ -105,15 +106,8 @@ function readText(path: string): string | null {
     }
 }
 
-function commandOf(pid: number): string | null {
-    // A session start waits on this, so a stuck `ps` gives up after 2 s and the lock reads as not live.
-    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 2000,
-    });
-    const command = result.exitCode === 0 ? result.stdout.toString().trim() : "";
-    return command || null;
+export function commandOf(pid: number): string | null {
+    return readProcessBasics(pid)?.command?.trim() || null;
 }
 
 export function readRecord(path = stateFilePath()): InboxStateRecord | null {

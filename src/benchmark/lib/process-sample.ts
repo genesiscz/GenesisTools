@@ -1,16 +1,9 @@
-import { readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
-import { capture, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { parseProcRssBytes, parseProcStatCpuMs, parseProcThreads } from "@genesiscz/utils/process/linux-proc";
+import { readProcessUsages } from "@genesiscz/utils/process/processes";
+import { parseCpuTime } from "@genesiscz/utils/process/ps";
 
 const { log } = logger.scoped("benchmark-sample");
-
-/**
- * Linux reports per-process CPU time in clock ticks. USER_HZ is 100 on every
- * mainstream build, and there is no cheap userspace way to read the real value,
- * so the Linux path assumes it. A wrong assumption here scales cpuTimeMs by a
- * constant factor, which a baseline diff (same host, same kernel) cancels out.
- */
-const LINUX_USER_HZ = 100;
 
 /**
  * CPU and memory consumed by one process over a measured window.
@@ -21,7 +14,7 @@ const LINUX_USER_HZ = 100;
  * Two `cputime` snapshots a known interval apart cannot be gamed that way.
  *
  * Not to be confused with `ProcessSample` in `src/chrome-devtools/lib/platform.ts`,
- * which is a single `ps` snapshot (decayed `%cpu`, `cputime` as a string) used to
+ * which is a single snapshot (lifetime-average CPU, CPU time as a string) used to
  * describe a browser process, not to measure it.
  */
 export interface ProcessSample {
@@ -53,137 +46,17 @@ function delay(ms: number): Promise<void> {
     });
 }
 
-export { parseCpuTime };
-
-/** Parse `Threads:\t7` out of a Linux /proc/<pid>/status body. */
-export function parseProcThreads(status: string): number | null {
-    const match = status.match(/^Threads:\s+(\d+)$/m);
-
-    if (!match) {
-        return null;
-    }
-
-    return Number(match[1]);
-}
-
-/** Parse `VmRSS:\t  12345 kB` out of a Linux /proc/<pid>/status body, in bytes. */
-export function parseProcRssBytes(status: string): number | null {
-    const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-
-    if (!match) {
-        return null;
-    }
-
-    return Number(match[1]) * 1024;
-}
-
-/**
- * Parse utime + stime out of a Linux /proc/<pid>/stat line, in milliseconds.
- * The comm field can contain spaces and parentheses, so everything before the
- * LAST `)` is discarded rather than split.
- */
-export function parseProcStatCpuMs(stat: string): number | null {
-    const close = stat.lastIndexOf(")");
-
-    if (close < 0) {
-        return null;
-    }
-
-    // After the comm field, index 0 is `state` (stat field 3), so stat field N
-    // sits at index N - 3: utime is 14 and stime is 15.
-    const fields = stat
-        .slice(close + 1)
-        .trim()
-        .split(/\s+/);
-    const utime = Number(fields[11]);
-    const stime = Number(fields[12]);
-
-    if (!Number.isFinite(utime) || !Number.isFinite(stime)) {
-        return null;
-    }
-
-    return ((utime + stime) / LINUX_USER_HZ) * 1000;
-}
-
-async function psStdout(args: string[]): Promise<string | null> {
-    const result = await capture("ps", args);
-
-    if (result.status !== 0) {
-        log.debug({ args, exitCode: result.status, stderr: result.stderr.trim() }, "ps returned non-zero");
-        return null;
-    }
-
-    return result.stdout;
-}
-
-async function psSnapshot(pid: number): Promise<RawSnapshot | null> {
-    const stdout = await psStdout(["-o", "time=,rss=", "-p", String(pid)]);
-
-    if (stdout === null) {
-        return null;
-    }
-
-    const line = stdout.trim().split("\n")[0] ?? "";
-    const fields = line.trim().split(/\s+/);
-    const cpuTimeMs = parseCpuTime(fields[0] ?? "");
-    const rssKb = Number(fields[1]);
-
-    if (cpuTimeMs === null || !Number.isFinite(rssKb)) {
-        log.debug({ pid, line }, "could not parse the ps snapshot line");
-        return null;
-    }
-
-    return { cpuTimeMs, rssBytes: rssKb * 1024, threads: null };
-}
-
-function procSnapshot(pid: number): RawSnapshot | null {
-    try {
-        const cpuTimeMs = parseProcStatCpuMs(readFileSync(`/proc/${pid}/stat`, "utf8"));
-        const status = readFileSync(`/proc/${pid}/status`, "utf8");
-        const rssBytes = parseProcRssBytes(status);
-        const threads = parseProcThreads(status);
-
-        if (cpuTimeMs === null || rssBytes === null) {
-            log.debug({ pid }, "could not parse /proc for the snapshot");
-            return null;
-        }
-
-        return { cpuTimeMs, rssBytes, threads };
-    } catch (err) {
-        log.debug({ err, pid }, "reading /proc for the snapshot failed");
-        return null;
-    }
-}
+export { parseCpuTime, parseProcRssBytes, parseProcStatCpuMs, parseProcThreads };
 
 function snapshot(pid: number): Promise<RawSnapshot | null> {
-    if (process.platform === "linux") {
-        return Promise.resolve(procSnapshot(pid));
-    }
-
-    return psSnapshot(pid);
+    return Promise.resolve(readProcessUsages([pid]).get(pid) ?? null);
 }
 
 /**
- * Thread count for one pid. On macOS this costs an extra `ps -M` spawn, so it
- * runs once per sample (after the window closes), never per snapshot. On Linux
- * the snapshot already carries it and this is never reached.
+ * Thread count for one pid, from the process layer; zero when unavailable.
  */
 export async function countThreads(pid: number): Promise<number> {
-    if (process.platform === "linux") {
-        return procSnapshot(pid)?.threads ?? 0;
-    }
-
-    const stdout = await psStdout(["-M", "-p", String(pid)]);
-
-    if (stdout === null) {
-        return 0;
-    }
-
-    const lines = stdout
-        .trim()
-        .split("\n")
-        .filter((line) => line.trim().length > 0);
-    return Math.max(0, lines.length - 1);
+    return readProcessUsages([pid]).get(pid)?.threads ?? 0;
 }
 
 function unsupportedSample(pid: number, windowMs: number): ProcessSample {
@@ -193,10 +66,8 @@ function unsupportedSample(pid: number, windowMs: number): ProcessSample {
 /**
  * Measure one process over a window by taking two CPU-time snapshots.
  *
- * Costs two `ps` spawns on macOS plus one `ps -M` for the thread count, and
- * zero spawns on Linux (it reads /proc). Windows is not supported: the sample
- * comes back with `alive: false` and a logged warning, because a wrong number
- * is worse than an obvious absence.
+ * The process layer chooses the platform reader. If either sample is unavailable,
+ * the result reports `alive: false` rather than inventing a CPU delta.
  *
  * ```ts
  * const sample = await sampleProcess(daemonPid, { windowMs: 30_000 });
@@ -204,11 +75,6 @@ function unsupportedSample(pid: number, windowMs: number): ProcessSample {
  * ```
  */
 export async function sampleProcess(pid: number, opts: { windowMs: number }): Promise<ProcessSample> {
-    if (process.platform === "win32") {
-        log.warn({ pid }, "sampleProcess is not implemented on Windows; reporting the sample as not alive");
-        return unsupportedSample(pid, opts.windowMs);
-    }
-
     const startedAt = performance.now();
     const first = await snapshot(pid);
     await delay(opts.windowMs);
@@ -239,8 +105,8 @@ export async function sampleProcess(pid: number, opts: { windowMs: number }): Pr
  *
  * `process.cpuUsage()` is exact and costs nothing, so prefer this over
  * `sampleProcess(process.pid, …)` whenever the code under test runs in-process.
- * The thread count still costs one `ps -M` spawn on macOS; pass
- * `countThreads: false` to skip it in a hot loop, which reports `threads: 0`.
+ * Pass `countThreads: false` to skip the layer's thread count in a hot loop,
+ * which reports `threads: 0`.
  */
 export async function sampleSelf(opts: { windowMs: number; countThreads?: boolean }): Promise<ProcessSample> {
     const startedAt = performance.now();

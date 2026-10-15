@@ -1,6 +1,8 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { logger } from "@genesiscz/utils/logger";
+import * as os from "@genesiscz/utils/process/os";
+import * as ps from "@genesiscz/utils/process/ps";
 import {
     collectHostMetrics,
     type HostSources,
@@ -102,22 +104,58 @@ describe("parseWifiSsid", () => {
 });
 
 describe("collectTopProcesses", () => {
-    test("uses a cheaper top-N path instead of enumerating + sorting every process", async () => {
-        const spawnSpy = mock(Bun.spawn);
-        const original = Bun.spawn;
-        // @ts-expect-error -- intentional test override
-        Bun.spawn = spawnSpy;
+    test("returns the largest RSS rows and requests cross-user usage once", async () => {
+        const entry = (pid: number, rssBytes: number) => ({
+            pid,
+            ppid: 1,
+            pgid: 1,
+            uid: 1000,
+            name: "fixture",
+            command: "fixture",
+            tty: null,
+            startMs: null,
+            zombie: false,
+            state: "S",
+            usage: { pid, rssBytes, cpuTimeMs: 0, threads: 1, running: false },
+        });
+        const read = mock(() => [entry(4000001, 20), entry(4000002, 90), entry(4000003, 50)]);
+        const { collectTopProcesses } = await import("./collector");
+        const result = await collectTopProcesses(2, read);
+        expect(result.map(({ pid, rssBytes }) => ({ pid, rssBytes }))).toEqual([
+            { pid: 4000002, rssBytes: 90 },
+            { pid: 4000003, rssBytes: 50 },
+        ]);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(read).toHaveBeenCalledWith({ otherUsers: true, commands: false });
+    });
+
+    test("on Windows the names come from the snapshot, with no CIM query per row", async () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const capture = spyOn(ps, "captureSync");
+        const entry = (pid: number, name: string, rssBytes: number) => ({
+            pid,
+            ppid: 4,
+            pgid: null,
+            uid: null,
+            name,
+            command: null,
+            tty: null,
+            startMs: null,
+            zombie: false,
+            state: "?",
+            usage: { pid, rssBytes, cpuTimeMs: 0, threads: 1, running: null },
+        });
 
         try {
             const { collectTopProcesses } = await import("./collector");
-            await collectTopProcesses(5);
+            const result = await collectTopProcesses(2, () => [entry(10, "chrome.exe", 90), entry(11, "Code.exe", 50)]);
 
-            const psCall = spawnSpy.mock.calls.find((c) => Array.isArray(c[0]) && c[0][0] === "ps");
-            expect(psCall).toBeDefined();
-            const argv = psCall?.[0] as string[];
-            expect(argv.some((a) => a.includes("-r") || a.includes("-m"))).toBe(true);
+            expect(result.map((row) => row.pid)).toEqual([10, 11]);
+            expect(result.every((row) => row.name.length > 0)).toBe(true);
+            expect(capture).not.toHaveBeenCalled();
         } finally {
-            Bun.spawn = original;
+            platform.mockRestore();
+            capture.mockRestore();
         }
     });
 });

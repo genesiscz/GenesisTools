@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { processFixture } from "./__tests__/process-fixture";
 import {
     type BackgroundLaunch,
     CdpLaunchError,
@@ -33,7 +34,7 @@ const listener = (pid: number, address = "127.0.0.1", port = 9333) =>
  * answers the row's executable, which these rows keep before their first ` --` flag.
  */
 function machine(listeners: string[], processes: string[]): ExecFn {
-    return (argv) => {
+    return processFixture((argv) => {
         const pidAt = argv.indexOf("-p");
 
         if (argv[0] === "ps" && pidAt !== -1) {
@@ -44,7 +45,7 @@ function machine(listeners: string[], processes: string[]): ExecFn {
         }
 
         return { exitCode: 0, stdout: (argv[0] === "lsof" ? listeners : processes).join("\n"), stderr: "" };
-    };
+    });
 }
 
 /** A quit path must never reach a real browser: one listens on 9222 on a developer's Mac. */
@@ -1072,7 +1073,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
             async (platform) => {
                 const exec: ExecFn =
                     platform === "win32"
-                        ? (argv) => ({
+                        ? processFixture((argv) => ({
                               exitCode: 0,
                               stdout:
                                   argv[0] === "netstat"
@@ -1081,7 +1082,7 @@ describe("quitting a browser so macOS deletes its 1.4 GB app copy", () => {
                                         ? "chrome.exe"
                                         : '[{"ProcessId":4242,"CommandLine":"chrome.exe"}]',
                               stderr: "",
-                          })
+                          }))
                         : throwaway;
                 const valid = "--user-data-dir=/tmp/fixture";
                 const refused = [

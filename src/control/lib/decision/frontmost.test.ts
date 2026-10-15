@@ -1,13 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-    activateApp,
-    ancestorPids,
-    frontmostTarget,
-    isBrowserApp,
-    parseParentTable,
-    pickFrontWindow,
-    switchableApps,
-} from "./frontmost";
+import { activateApp, ancestorPids, frontmostTarget, isBrowserApp, pickFrontWindow, switchableApps } from "./frontmost";
 
 const PS = `
     1     0
@@ -17,6 +9,18 @@ const PS = `
   430   420
   900     1
 `;
+
+function parseParentTable(stdout: string): Map<number, number> {
+    const table = new Map<number, number>();
+    for (const line of stdout.split("\n")) {
+        const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+        if (match) {
+            table.set(Number(match[1]), Number(match[2]));
+        }
+    }
+
+    return table;
+}
 
 describe("frontmost target", () => {
     test("ancestorPids walks the parent chain from one ps table and stops at launchd", () => {

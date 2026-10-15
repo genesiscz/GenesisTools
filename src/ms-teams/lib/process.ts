@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { findProcesses } from "@genesiscz/utils/process/processes";
 
 const log = logger.scoped("ms-teams").log;
 
@@ -40,21 +41,12 @@ export function isTeamsAppRunning(pgrepOutput: string): boolean {
 }
 
 export function pgrepTeams(): string {
-    // A spawn failure (pgrep missing, fork refused) must not throw out of
-    // `doctor` and the repair paths, which only ask whether Teams is up.
     try {
-        const proc = Bun.spawnSync(["pgrep", "-lf", "-i", "teams"], { stdout: "pipe", stderr: "pipe" });
-        const stdout = new TextDecoder().decode(proc.stdout);
-        const stderr = new TextDecoder().decode(proc.stderr).trim();
-
-        if (stderr) {
-            log.debug({ stderr, exitCode: proc.exitCode }, "[ms-teams] pgrep stderr");
-        }
-
-        return stdout;
+        return findProcesses({ command: /teams/i })
+            .map((entry) => `${entry.pid} ${entry.command ?? entry.name}`)
+            .join("\n");
     } catch (err) {
-        log.warn({ err }, "[ms-teams] pgrep could not run — treating Teams as not running");
-
+        log.warn({ err }, "[ms-teams] process lookup failed");
         return "";
     }
 }

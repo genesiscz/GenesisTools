@@ -11,7 +11,8 @@ import {
     sampleCpuBusyPercent,
     type VmPageCounts,
 } from "@genesiscz/utils/macos/host-stats";
-import { parseProcessRows } from "./processes";
+import { listProcessesWithUsage, readListedName } from "@genesiscz/utils/process/processes";
+import { friendlyProcessName } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
 export function parseCpuIdlePct(topOut: string): number | null {
@@ -317,16 +318,17 @@ async function collectWifi(): Promise<string | null> {
     return parseWifiSsid(out);
 }
 
-export async function collectTopProcesses(limit = 5): Promise<TopProcess[]> {
-    const out = await runShell(["ps", "-ax", "-m", "-o", "pid=,rss=,etime=,%cpu=,comm="]);
-
-    if (out === null) {
-        return [];
-    }
-
-    return parseProcessRows(out)
+export async function collectTopProcesses(limit = 5, read = listProcessesWithUsage): Promise<TopProcess[]> {
+    // Named as `ps -o comm=` printed them, after the cut to `limit` rows: a name costs a kernel read per row, and a
+    // hard-linked launcher such as `gt-hub` keeps its own name instead of its executable's `bun`.
+    return read({ otherUsers: true, commands: false })
+        .sort((a, b) => (b.usage?.rssBytes ?? 0) - (a.usage?.rssBytes ?? 0))
         .slice(0, limit)
-        .map((r) => ({ pid: r.pid, name: r.name, rssBytes: r.rssBytes }));
+        .map((entry) => ({
+            pid: entry.pid,
+            name: friendlyProcessName(readListedName(entry)),
+            rssBytes: entry.usage?.rssBytes ?? 0,
+        }));
 }
 
 export async function collectPulse(): Promise<PulseSnapshot> {

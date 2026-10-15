@@ -160,9 +160,18 @@ describe("own-pid lookups are read once per process", () => {
             }
 
             expect(spawnSync.mock.calls.length).toBe(warm);
+        } finally {
+            spawnSync.mockRestore();
+        }
+    });
 
-            // Negative control: a live pid that is not ours is still looked up every time. launchd is root's, so
-            // on macOS its argv comes from `ps` (setuid root) rather than the kernel read, as on every other system.
+    // Negative control: a live pid that is not ours is still looked up every time, so the spy sees spawns and the
+    // cache is own-pid only. launchd is root's, so on macOS its argv comes from `ps` (setuid root); every other
+    // system reads pid 1 from the kernel and spawns nothing to count.
+    it.skipIf(process.platform !== "darwin")("a pid that is not ours spawns `ps` on every lookup", () => {
+        const spawnSync = spyOn(Bun, "spawnSync");
+
+        try {
             const before = spawnSync.mock.calls.length;
             readProcessCommand(1);
             readProcessCommand(1);

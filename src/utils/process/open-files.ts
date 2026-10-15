@@ -1,6 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcPids, procHeldFiles, readProcProcess } from "./linux-proc";
+import { processPlatform } from "./os";
 
 export interface OpenFileHandle {
     pid: number;
@@ -10,8 +12,8 @@ export interface OpenFileHandle {
 
 /**
  * `"unknown"` is not "nothing is open". It means the question could not be answered — no `lsof`
- * on the box, or `lsof` complained. A caller deciding whether it is safe to move a file must
- * treat it exactly like a positive hit, never like a clear result.
+ * on the box, `lsof` complained, or on Linux `/proc` is not readable here (see {@link openFilesFromProc}). A caller
+ * deciding whether it is safe to move a file must treat it exactly like a positive hit, never like a clear result.
  */
 export type OpenFilesResult = OpenFileHandle[] | "unknown";
 
@@ -35,18 +37,22 @@ function lsofBinary(): string | undefined {
  * and the result degrades to `"unknown"`.
  */
 export function openFiles(query: OpenFilesQuery): OpenFilesResult {
-    const binary = lsofBinary();
-
-    if (!binary) {
-        logger.debug("lsof is unavailable; open-file inspection is unknown");
-        return "unknown";
-    }
-
     const files = (query.files ?? []).filter((path) => existsSync(path));
     const directories = (query.directories ?? []).filter((path) => existsSync(path));
 
     if (files.length === 0 && directories.length === 0) {
         return [];
+    }
+
+    if (processPlatform() === "linux") {
+        return openFilesFromProc(files, directories);
+    }
+
+    const binary = lsofBinary();
+
+    if (!binary) {
+        logger.debug("lsof is unavailable; open-file inspection is unknown");
+        return "unknown";
     }
 
     const args = ["-Fpcn"];
@@ -84,6 +90,85 @@ export function openFiles(query: OpenFilesQuery): OpenFilesResult {
             command = value;
         } else if (line.startsWith("n") && pid !== undefined && Number.isSafeInteger(pid)) {
             handles.push({ pid, command, path: value });
+        }
+    }
+
+    return handles;
+}
+
+/** The path the kernel shows for an open file: symlinks resolved, as `/proc` links are. */
+function realPath(path: string): string {
+    try {
+        return realpathSync(path);
+    } catch {
+        return path;
+    }
+}
+
+/** `<st_dev>:<st_ino>` of a file, as {@link procHeldFiles} names a held one; null when it cannot be read. */
+function fileId(path: string): string | null {
+    try {
+        const stat = statSync(path);
+        return `${stat.dev}:${stat.ino}`;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Linux with no `lsof` spawned: every readable process's held files ({@link procHeldFiles}). A file asked for matches by
+ * device and inode, as `lsof` matches it, so a hard link or a renamed path is still found; a directory tree matches by
+ * path, as `lsof +D` walks it. Like `lsof` run as this user, a process whose descriptors are not readable is left out:
+ * another user's, one that has gone, and one of this user's that is not dumpable (`ssh-agent`, `gpg-agent`).
+ * A `/proc` that cannot answer at all is `"unknown"`, and this process is the proof it is always there: missing from
+ * the listing, or its own descriptors unreadable (a restricted `/proc`, a sandbox).
+ */
+function openFilesFromProc(files: string[], directories: string[]): OpenFilesResult {
+    const wanted = new Map<string, string>();
+
+    for (const path of files) {
+        const id = fileId(path);
+
+        if (id) {
+            wanted.set(id, path);
+        }
+    }
+
+    const trees = directories.map(realPath);
+    const handles: OpenFileHandle[] = [];
+
+    const pids = listProcPids();
+
+    if (!pids.includes(process.pid)) {
+        logger.debug("/proc does not list this process; open-file inspection is unknown");
+        return "unknown";
+    }
+
+    for (const pid of pids) {
+        const seen = new Set<string>();
+        const held = procHeldFiles(pid);
+
+        if (held === null) {
+            if (pid === process.pid) {
+                logger.debug("this process's descriptors cannot be read; open-file inspection is unknown");
+                return "unknown";
+            }
+
+            continue;
+        }
+
+        for (const file of held) {
+            // A deleted file is no longer in the tree `lsof +D` walks.
+            const match =
+                (file.id !== null && wanted.has(file.id)) ||
+                (!file.path.endsWith(" (deleted)") &&
+                    trees.some((tree) => file.path === tree || file.path.startsWith(`${tree}/`)));
+
+            // One handle per file a process holds, however many descriptors and mappings point at it.
+            if (match && !seen.has(file.id ?? file.path)) {
+                seen.add(file.id ?? file.path);
+                handles.push({ pid, command: readProcProcess(pid)?.comm ?? "", path: file.path });
+            }
         }
     }
 

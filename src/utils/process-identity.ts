@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { processTableAvailable, readProcessRow, readPsCommand } from "@genesiscz/utils/process/libproc-table";
+import { readProcess } from "@genesiscz/utils/process/processes";
 
 /**
  * PID-identity verification for pid files and lock records.
@@ -59,10 +60,6 @@ function commandFromKernel(pid: number): string | null | undefined {
 }
 
 export function readProcessCommand(pid: number): string | null {
-    if (process.platform === "win32") {
-        return null;
-    }
-
     if (pid === process.pid && ownCommand !== null) {
         return ownCommand;
     }
@@ -78,17 +75,7 @@ export function readProcessCommand(pid: number): string | null {
     }
 
     try {
-        const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-
-        if (proc.exitCode !== 0) {
-            return null;
-        }
-
-        const command = proc.stdout.toString().trim();
-        const result = command.length > 0 ? command : null;
+        const result = readProcess(pid, { otherUsers: true })?.command?.trim() || null;
 
         if (pid === process.pid) {
             ownCommand = result;
@@ -104,9 +91,8 @@ export function readProcessCommand(pid: number): string | null {
 /**
  * When the process at `pid` started, in epoch ms, or null if it cannot be read.
  *
- * On macOS the kernel's start time (any user's process, to the microsecond). Elsewhere derived from
- * `ps -o etime=`, so it carries that command's one-second granularity: two readings for the SAME live process
- * differ by up to about a second, never more, and a record written by one path is read by the other. Compare with
+ * The platform reader supplies the start time. Older identity records derived it from
+ * `ps -o etime=`, whose one-second precision can differ from the kernel value. Compare with
  * {@link START_MS_TOLERANCE}, never for equality.
  *
  * This is the signal a command-line comparison cannot give you. A pid recycled
@@ -114,10 +100,6 @@ export function readProcessCommand(pid: number): string | null {
  * is what separates "our daemon" from "a second copy launched the same way".
  */
 export function processStartMs(pid: number): number | null {
-    if (process.platform === "win32") {
-        return null;
-    }
-
     if (pid === process.pid && ownStartMs !== null) {
         return ownStartMs;
     }
@@ -133,18 +115,7 @@ export function processStartMs(pid: number): number | null {
     }
 
     try {
-        const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "etime="], { stdout: "pipe", stderr: "pipe" });
-        const etime = proc.stdout.toString().trim();
-        const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(etime);
-
-        if (!match) {
-            return null;
-        }
-
-        const [, days, hours, minutes, seconds] = match;
-        const elapsedMs =
-            (((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
-        const startMs = Date.now() - elapsedMs;
+        const startMs = readProcess(pid, { otherUsers: true })?.startMs ?? null;
 
         if (pid === process.pid) {
             ownStartMs = startMs;

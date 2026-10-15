@@ -42,6 +42,11 @@ describe.skipIf(!SUPPORTED)("process cwd", () => {
         expect([...ownLineage(1)]).toEqual([process.pid]);
     });
 
+    it("reads the parent of another user's process, so a walk up passes a root-owned login", () => {
+        // launchd (macOS) and init (Linux) are pid 1, owned by root, with parent 0.
+        expect(readParentPid(1)).toBe(0);
+    });
+
     it("returns null for a pid that does not exist", () => {
         expect(readProcessCwd(0x7ffffff)).toBeNull();
         expect(readParentPid(0x7ffffff)).toBeNull();

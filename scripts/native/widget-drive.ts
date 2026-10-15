@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { captureSessionsRoot } from "@app/control/lib/peekaboo";
+import { type ExecResult, execTool } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 /**
  * Drives the running widget face without touching the pointer, and records its windows while it does.
  *
@@ -14,11 +19,7 @@
  * Preview bundle. `--preview` (first argument) drives GenesisTools Preview.app instead of the normal app. `record` films only the widget's own windows (ScreenCaptureKit via `tools control capture record`)
  * and sends each step at its offset in seconds after the recording's first frame.
  */
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { captureSessionsRoot } from "@app/control/lib/peekaboo";
-import { type ExecResult, execTool } from "@genesiscz/utils/cli";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { findProcesses } from "@genesiscz/utils/process/processes";
 
 const PREVIEW = process.argv[2] === "--preview";
 const NOTIFICATION = PREVIEW
@@ -62,13 +63,17 @@ $.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObjectUserIn
     }
 }
 
+export function readWidgetPid(): number | undefined {
+    return findProcesses({ command: FACE })
+        .map((entry) => entry.pid)
+        .sort((a, b) => a - b)[0];
+}
+
 function widgetPid(): number {
-    const ps = Bun.spawnSync(["pgrep", "-f", FACE]).stdout.toString().trim().split("\n");
-    const pid = Number(ps.filter(Boolean)[0]);
+    const pid = readWidgetPid();
     if (!pid) {
         throw new Error("no running widget face (bun scripts/native/staging.ts start)");
     }
-
     return pid;
 }
 
@@ -245,19 +250,23 @@ async function record(args: string[]): Promise<void> {
     checked("the recorder", result, deadlineMs);
 }
 
-const [verb, ...rest] = process.argv.slice(PREVIEW ? 3 : 2);
+if (import.meta.main) {
+    const [verb, ...rest] = process.argv.slice(PREVIEW ? 3 : 2);
 
-if (verb === "send" && rest[0]) {
-    send(rest.join(" "));
-} else if (verb === "windows") {
-    for (const window of await windows()) {
-        console.log(`${window.window_id}  ${window.title}  ${window.x},${window.y} ${window.width}x${window.height}`);
+    if (verb === "send" && rest[0]) {
+        send(rest.join(" "));
+    } else if (verb === "windows") {
+        for (const window of await windows()) {
+            console.log(
+                `${window.window_id}  ${window.title}  ${window.x},${window.y} ${window.width}x${window.height}`
+            );
+        }
+    } else if (verb === "record") {
+        await record(rest);
+    } else {
+        console.error(
+            'usage: bun scripts/native/widget-drive.ts send "<command>" | windows | record --seconds N --out <dir> "<t>:<command>"…'
+        );
+        process.exit(2);
     }
-} else if (verb === "record") {
-    await record(rest);
-} else {
-    console.error(
-        'usage: bun scripts/native/widget-drive.ts send "<command>" | windows | record --seconds N --out <dir> "<t>:<command>"…'
-    );
-    process.exit(2);
 }

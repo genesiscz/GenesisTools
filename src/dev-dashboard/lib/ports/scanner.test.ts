@@ -2,54 +2,97 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listListeningPorts, parseLsofListen } from "./scanner";
+import * as processes from "@genesiscz/utils/process/processes";
+import * as sockets from "@genesiscz/utils/process/sockets";
+import * as resolver from "./resolve";
+import { listListeningPorts } from "./scanner";
 
-const FIXTURE = [
-    "COMMAND     PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME",
-    "rapportd    711 Martin   10u  IPv4 0x8b160b4fe7f3824d      0t0  TCP *:53357 (LISTEN)",
-    "rapportd    711 Martin   11u  IPv6 0x84a01adc303d0215      0t0  TCP *:53357 (LISTEN)",
-    "node       1307 Martin   18u  IPv4 0xa4528e4de8db5a64      0t0  TCP 127.0.0.1:18789 (LISTEN)",
-    "node       1307 Martin   19u  IPv6 0x3486ea0eed65f93d      0t0  TCP [::1]:18789 (LISTEN)",
-    "bun        1321 Martin    7u  IPv4 0xf7ff0254c4e99697      0t0  TCP 127.0.0.1:3074 (LISTEN)",
-    "php-fpm    1331 Martin    9u  IPv4 0x571546a4f62a8e3b      0t0  TCP 127.0.0.1:9000 (LISTEN)",
-    "",
-].join("\n");
+test("one process snapshot supplies display names and enrichment for every listener in a scan", async () => {
+    const owner: processes.ProcessWithUsage = {
+        pid: 42420,
+        ppid: 1,
+        pgid: null,
+        uid: null,
+        name: "node.exe",
+        command: "node.exe server.js",
+        tty: null,
+        startMs: 1700000000000,
+        zombie: false,
+        state: "S",
+        usage: null,
+    };
+    const opaque = { ...owner, pid: 42421, name: "opaque-worker", command: null };
+    const socket: sockets.SocketEntry = {
+        pid: owner.pid,
+        protocol: "TCP",
+        family: "IPv4",
+        address: "127.0.0.1",
+        port: 43120,
+        remoteAddress: "",
+        remotePort: 0,
+        state: "LISTEN",
+    };
+    const scan = spyOn(sockets, "scanSockets").mockReturnValue([
+        socket,
+        socket,
+        { ...socket, family: "IPv6", address: "[::1]" },
+        { ...socket, port: 43121 },
+        { ...socket, pid: opaque.pid, port: 43122 },
+        { ...socket, pid: 42422, port: 43123 },
+    ]);
+    const snapshot = spyOn(processes, "readProcessesWithUsage").mockReturnValue([owner, opaque]);
+    const single = spyOn(processes, "readProcess").mockImplementation((pid) =>
+        pid === owner.pid ? owner : pid === opaque.pid ? opaque : null
+    );
+    const cwd = spyOn(resolver, "batchCwds").mockResolvedValue(new Map());
 
-describe("parseLsofListen", () => {
-    test("parses ports across IPv4/IPv6 and multiple PIDs, sorted by port", () => {
-        const result = parseLsofListen(FIXTURE);
+    try {
+        const result = await listListeningPorts();
+        expect(snapshot).toHaveBeenCalledTimes(1);
+        expect(snapshot).toHaveBeenLastCalledWith([42420, 42421, 42422]);
+        expect(single).not.toHaveBeenCalled();
+        expect(result.lsofAvailable).toBe(true);
+        expect(result.ports).toHaveLength(5);
+        for (const port of result.ports.filter((port) => port.pid === owner.pid)) {
+            expect(port).toMatchObject({
+                command: "node.exe",
+                fullCommand: "node.exe server.js",
+                startedAt: "2023-11-14T22:13:20.000Z",
+            });
+        }
+        expect(result.ports.find((port) => port.pid === opaque.pid)?.command).toBe("opaque-worker");
+        expect(result.ports.find((port) => port.pid === 42422)?.command).toBe("unknown");
 
-        // 7 LISTEN rows → 6 entries after deduping (rapportd :53357 v4+v6 share pid+port → kept as
-        // two distinct proto rows; node :18789 v4+v6 → two distinct proto rows). Dedup is per
-        // (pid, port, proto): no exact duplicate in the fixture, so all 6 unique rows survive,
-        // sorted ascending by port.
-        expect(result.map((p) => p.port)).toEqual([3074, 9000, 18789, 18789, 53357, 53357]);
-    });
+        // A supplied empty snapshot is authoritative: enrichment must not retry each missing PID.
+        snapshot.mockReturnValue([]);
+        const unavailableMeta = await listListeningPorts();
+        expect(snapshot).toHaveBeenCalledTimes(2);
+        expect(single).not.toHaveBeenCalled();
+        expect(unavailableMeta.lsofAvailable).toBe(true);
+        expect(unavailableMeta.ports).toHaveLength(5);
+        expect(unavailableMeta.ports.every((port) => port.command === "unknown")).toBe(true);
 
-    test("extracts pid, command (truncated ok), address and proto", () => {
-        const result = parseLsofListen(FIXTURE);
-        const bun = result.find((p) => p.port === 3074);
-        expect(bun).toEqual({ port: 3074, pid: 1321, command: "bun", address: "127.0.0.1", proto: "tcp4" });
+        scan.mockReturnValue(null);
+        expect(await listListeningPorts()).toMatchObject({ lsofAvailable: false, ports: [] });
+        scan.mockReturnValue([]);
+        expect(await listListeningPorts()).toMatchObject({ lsofAvailable: true, ports: [] });
+        expect(snapshot).toHaveBeenCalledTimes(2);
+    } finally {
+        scan.mockRestore();
+        snapshot.mockRestore();
+        single.mockRestore();
+        cwd.mockRestore();
+    }
+});
 
-        const phpFpm = result.find((p) => p.port === 9000);
-        expect(phpFpm?.command).toBe("php-fpm");
-
-        const node6 = result.find((p) => p.port === 18789 && p.proto === "tcp6");
-        expect(node6?.address).toBe("[::1]");
-    });
-
-    test("dedupes an exact (pid, port, proto) repeat", () => {
-        const dup = [
-            "node       1307 Martin   18u  IPv4 0xaaaa      0t0  TCP 127.0.0.1:18789 (LISTEN)",
-            "node       1307 Martin   20u  IPv4 0xbbbb      0t0  TCP 127.0.0.1:18789 (LISTEN)",
-        ].join("\n");
-        expect(parseLsofListen(dup)).toHaveLength(1);
-    });
-
-    test("skips the header and blank lines; empty input → []", () => {
-        expect(parseLsofListen("")).toEqual([]);
-        expect(parseLsofListen("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n")).toEqual([]);
-    });
+test("a failed socket scan is unavailable, not an empty successful listing", async () => {
+    const scan = spyOn(sockets, "scanSockets").mockReturnValue(null);
+    try {
+        expect(await listListeningPorts()).toMatchObject({ lsofAvailable: false, ports: [] });
+        expect(scan).toHaveBeenCalledTimes(1);
+    } finally {
+        scan.mockRestore();
+    }
 });
 
 describe.skipIf(process.platform !== "darwin")("listListeningPorts on a live listener", () => {

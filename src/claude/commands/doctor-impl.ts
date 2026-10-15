@@ -27,19 +27,29 @@ import { probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
+import { findProcesses, readProcess, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import pc from "picocolors";
 
-function pinnedProcessesFromPs(): string {
-    const pgrep = Bun.spawnSync(["pgrep", "-f", "claude"]);
-    const pids = new TextDecoder().decode(pgrep.stdout).split("\n").filter(Boolean);
-
-    if (pids.length === 0) {
-        return "";
-    }
-
-    // `eww` appends each process's env after its argv, which is where the pin lives.
-    const ps = Bun.spawnSync(["ps", "eww", "-o", "pid=,tty=,command=", "-p", pids.join(",")]);
-    return new TextDecoder().decode(ps.stdout);
+export function readPinnedCandidates(): ReturnType<typeof parsePinnedProcesses> {
+    return findProcesses({ command: "claude" }).flatMap((candidate) => {
+        const entry = readProcess(candidate.pid);
+        const environment = readProcessEnvironment(candidate.pid);
+        if (!entry?.command || !environment?.TOOLS_CLAUDE_ACCOUNT || !environment.CLAUDE_CODE_OAUTH_TOKEN) {
+            return [];
+        }
+        // Only the two fields the parser needs are carried across; never log this credential-bearing value.
+        const text =
+            entry.pid +
+            " " +
+            (entry.tty ?? "??") +
+            " " +
+            entry.command +
+            " TOOLS_CLAUDE_ACCOUNT=" +
+            environment.TOOLS_CLAUDE_ACCOUNT +
+            " CLAUDE_CODE_OAUTH_TOKEN=" +
+            environment.CLAUDE_CODE_OAUTH_TOKEN;
+        return parsePinnedProcesses(text);
+    });
 }
 
 function describeGroup(diag: Diagnosis, keychainLabel: string | undefined): void {
@@ -168,7 +178,7 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
         )
     );
 
-    const groups = groupSessions(parsePinnedProcesses(pinnedProcessesFromPs()));
+    const groups = groupSessions(readPinnedCandidates());
 
     if (groups.length === 0) {
         out.printlnErr("No running pinned sessions found.");

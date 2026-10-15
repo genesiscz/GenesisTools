@@ -66,6 +66,30 @@ function fixture({
         .join("\n");
     const calls: string[][] = [];
     const deps: FsmonitorDeps = {
+        processes: () => {
+            calls.push(["processes"]);
+            return [
+                ...running.map((name) => ({
+                    pid: pids[name],
+                    command: DAEMON,
+                    usage: { rssBytes: 7920 * 1024, cpuTimeMs: 250 },
+                })),
+                { pid: 103, command: "/bin/zsh -l", usage: { rssBytes: 100 * 1024, cpuTimeMs: 0 } },
+            ];
+        },
+        openFiles: (pid) => {
+            if (lsofFails) {
+                return null;
+            }
+            const name = running.find((name) => pids[name] === pid);
+            return name
+                ? [
+                      { fd: "5u", type: "DIR", name: root },
+                      { fd: "4u", type: "DIR", name: join(root, name) },
+                      { fd: "17u", type: "unix", name: name === "repo" ? sockets.repo : "fsmonitor--daemon.ipc" },
+                  ]
+                : [];
+        },
         statePath: join(root, "state", "fsmonitor.json"),
         globalConfigPath: join(root, "gitconfig"),
         now: () => new Date("2026-10-12T22:00:00.000Z"),
@@ -138,7 +162,7 @@ describe("git fsmonitor", () => {
         const { deps, calls } = fixture({ running: [] });
 
         expect(await listMonitorDaemons(deps)).toEqual([]);
-        expect(calls.map((call) => call[0])).toEqual(["ps"]);
+        expect(calls.map((call) => call[0])).toEqual(["processes"]);
     });
 
     test("listing writes nothing; record keeps the first sighting and moves the last", async () => {
@@ -379,7 +403,7 @@ describe("git fsmonitor", () => {
                 return deps.run(command, args, options);
             },
         };
-        const psCalls = () => calls.filter(([command]) => command === "ps").length;
+        const psCalls = () => calls.filter(([command]) => command === "processes").length;
 
         const disabling = disableFsmonitor(slowStop);
         await atStop;

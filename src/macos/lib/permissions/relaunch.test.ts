@@ -1,3 +1,10 @@
+function processRows(text: string): Array<{ pid: number; command: string }> {
+    return text.split("\n").flatMap((line) => {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+        return match ? [{ pid: Number(match[1]), command: match[2] }] : [];
+    });
+}
+
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -71,7 +78,7 @@ describe("windowFacesFromPs", () => {
             [101, ["--review", "--proposal", "/Users/alice/.genesis-tools/review/proposals/my file.json"]],
         ]);
         const faces = windowFacesFromPs({
-            psStdout: ps,
+            processes: processRows(ps),
             launcherPath: LAUNCHER,
             stalePids: new Set(["101", "102", "103", "104"]),
             records,
@@ -90,7 +97,7 @@ describe("windowFacesFromPs", () => {
 
     it("ignores a record of a reused pid and the pids the reap leaves alone", () => {
         const faces = windowFacesFromPs({
-            psStdout: ps,
+            processes: processRows(ps),
             launcherPath: LAUNCHER,
             stalePids: new Set(["102"]),
             records: new Map([[102, ["--review", "--repo", "/elsewhere"]]]),
@@ -197,7 +204,7 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
     const plan = (options: { psStdout: string; stalePids: string[]; frontPid?: number }) =>
         relaunchCommands(
             planRelaunch({
-                psStdout: options.psStdout,
+                processes: processRows(options.psStdout),
                 launcherPath: LAUNCHER,
                 stalePids: new Set(options.stalePids),
                 records: new Map(),

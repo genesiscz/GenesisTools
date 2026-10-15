@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     describeSource,
@@ -15,13 +15,7 @@ import {
     timedSteps,
 } from "./app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
-import {
-    genesisAppProcesses,
-    groupOldBuilds,
-    localNetworkAnswer,
-    parseLocalNetworkRules,
-    txtInodesByPid,
-} from "./local-network";
+import { type AppProcess, groupOldBuilds, localNetworkAnswer, parseLocalNetworkRules } from "./local-network";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
@@ -126,6 +120,13 @@ describe("grantsFor", () => {
     });
 });
 
+function processRows(text: string): Array<{ pid: number; command: string }> {
+    return text.split("\n").flatMap((line) => {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+        return match ? [{ pid: Number(match[1]), command: match[2] }] : [];
+    });
+}
+
 describe("staleAppFacePids", () => {
     const launcher = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
 
@@ -139,7 +140,7 @@ describe("staleAppFacePids", () => {
             `  666 ${launcher} --notify`,
         ].join("\n");
 
-        expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222", "333", "666"]);
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["111", "222", "333", "666"]);
     });
 
     it("kills a link router that outlived its link, but not a launcher whose program takes a URL", () => {
@@ -150,12 +151,12 @@ describe("staleAppFacePids", () => {
             `  444 ${launcher} genesis-tools://hub?mode=prs`,
         ].join("\n");
 
-        expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222"]);
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["111", "222"]);
     });
 
     it("ignores unrelated processes and empty listings", () => {
-        expect(staleAppFacePids("", launcher)).toEqual([]);
-        expect(staleAppFacePids("  1 /sbin/launchd", launcher)).toEqual([]);
+        expect(staleAppFacePids([], launcher)).toEqual([]);
+        expect(staleAppFacePids([{ pid: 1, command: "/sbin/launchd" }], launcher)).toEqual([]);
     });
 
     it("never takes a sibling binary whose name only starts with the launcher's", () => {
@@ -163,7 +164,7 @@ describe("staleAppFacePids", () => {
             "\n"
         );
 
-        expect(staleAppFacePids(stdout, launcher)).toEqual(["999"]);
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["999"]);
     });
 });
 
@@ -522,29 +523,36 @@ describe("old builds still running", () => {
         `  505 Mon Oct 12 20:55:00 2026     ${launcher}-helper --hub`,
     ].join("\n");
 
-    it("lists the app's processes by their program argument, with what each runs", () => {
-        const processes = genesisAppProcesses(ps, launcher);
-        expect(processes.map((p) => [p.pid, p.command])).toEqual([
-            [101, "--link-relay"],
-            [202, "gt-claude --preload x.ts run work"],
-            [303, "(window)"],
-        ]);
-        expect(processes[0].started.getDate()).toBe(5);
-    });
+    const PS_LINE = /^\s*(\d+)\s+(\w{3} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/;
 
-    it("reads each process's mapped files from lsof", () => {
-        const byPid = txtInodesByPid("p101\nfdtxt\ni11\ni99\np202\ni22\np303\n");
-        expect([...byPid.entries()].map(([pid, inodes]) => [pid, [...inodes]])).toEqual([
-            [101, [11, 99]],
-            [202, [22]],
-            [303, []],
-        ]);
-    });
+    /** The GenesisTools processes in `ps -Ao pid=,lstart=,args=`, as the live listing yields them. */
+    function genesisAppProcesses(psStdout: string, launcherPath: string): AppProcess[] {
+        return psStdout.split("\n").flatMap((line): AppProcess[] => {
+            const match = PS_LINE.exec(line);
+
+            if (!match || (match[3] !== launcherPath && !match[3].startsWith(`${launcherPath} `))) {
+                return [];
+            }
+
+            const rest = match[3].slice(launcherPath.length).trim();
+            const [program, ...args] = rest.split(" ");
+            const command = !program
+                ? "(window)"
+                : program.startsWith("-")
+                  ? rest
+                  : [basename(program), ...args].join(" ");
+            return [{ pid: Number(match[1]), started: new Date(match[2]), command }];
+        });
+    }
 
     it("groups the processes per retired build and answers for that build's path", () => {
         const builds = groupOldBuilds({
             processes: genesisAppProcesses(ps, launcher),
-            inodesByPid: txtInodesByPid("p101\ni11\np202\ni11\np303\ni33\n"),
+            inodesByPid: new Map([
+                [101, new Set([11])],
+                [202, new Set([11])],
+                [303, new Set([33])],
+            ]),
             retired: [
                 { bundle: "/r/2/GenesisTools.app", binary: "/r/2/bin", retiredAt: new Date(2_000), inode: 22 },
                 { bundle: "/r/1/GenesisTools.app", binary: retiredBinaryFor(1), retiredAt: new Date(1_000), inode: 11 },

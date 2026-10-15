@@ -4,11 +4,8 @@ import { Analyzer } from "@app/doctor/lib/analyzer";
 import { labelForProcess } from "@app/doctor/lib/process-labels";
 import { classifyProcess } from "@app/doctor/lib/safety";
 import type { Action, AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
-import { capture, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 
-export { parseCpuTime };
-
-const PS_LINE = /^\s*(\d+)\s+(\S+)\s+(.*)$/;
 const GENESIS_FACE = /GenesisTools\.app\/Contents\/MacOS\/GenesisTools(?:\s+--(?:rpc|window)\b|\s*$)/;
 const GENESIS_TOOL = /\/GenesisTools\/(?:src|scripts)\/|\/\.genesis-tools\/bin\/gt-/;
 
@@ -36,30 +33,6 @@ export interface CpuSpinOptions {
 }
 
 export type ProcessOwner = "genesis-face" | "genesis-tool" | null;
-
-/** Output of `ps -axo pid=,cputime=,command=`, keyed by pid. Lines that do not parse are skipped. */
-export function parseCpuTimeSamples(raw: string): Map<number, CpuTimeSample> {
-    const samples = new Map<number, CpuTimeSample>();
-
-    for (const line of raw.split(/\r?\n/)) {
-        const match = line.match(PS_LINE);
-
-        if (!match) {
-            continue;
-        }
-
-        const cpuMs = parseCpuTime(match[2]);
-
-        if (cpuMs === null) {
-            continue;
-        }
-
-        const pid = Number.parseInt(match[1], 10);
-        samples.set(pid, { pid, cpuMs, command: match[3].trim() });
-    }
-
-    return samples;
-}
 
 /**
  * Processes that burned at least `thresholdPercent` of one core between two samples. Two readings
@@ -144,6 +117,25 @@ function ownerHint(owner: ProcessOwner): string {
     return "";
 }
 
+export function sampleCpuTimes(): Map<number, CpuTimeSample> | null {
+    const entries = listProcessesWithUsage({ otherUsers: true });
+    if (entries.length === 0) {
+        return null;
+    }
+    return new Map(
+        entries.flatMap((entry) =>
+            entry.usage
+                ? [
+                      [
+                          entry.pid,
+                          { pid: entry.pid, cpuMs: entry.usage.cpuTimeMs, command: entry.command ?? entry.name },
+                      ] as const,
+                  ]
+                : []
+        )
+    );
+}
+
 export class CpuSpinAnalyzer extends Analyzer {
     readonly id = CPU_SPIN_ANALYZER_ID;
     readonly name = "CPU spin";
@@ -210,12 +202,6 @@ export class CpuSpinAnalyzer extends Analyzer {
     }
 
     private async sample(): Promise<Map<number, CpuTimeSample> | null> {
-        const res = await capture("ps", ["-axo", "pid=,cputime=,command="], { timeoutMs: 5_000 });
-
-        if (res.status !== 0) {
-            return null;
-        }
-
-        return parseCpuTimeSamples(res.stdout);
+        return sampleCpuTimes();
     }
 }

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { formatLstart, readProcessBasics } from "../process/process-basics";
 // Relative on purpose: the ban below is on the `@genesiscz/*` alias graph, and this module
 // imports nothing itself, so a relative path keeps the guard loadable from a /tmp repro.
 import { isProcessAlive } from "../process-alive";
@@ -126,21 +127,18 @@ function shQuote(value: string): string {
  * is not identity. Returns null when `ps` cannot answer, and the caller then declines to
  * schedule a kill at all.
  */
-function startedAt(pid: number): string | null {
-    try {
-        // Normalise whitespace the same way the shell side does. `ps -o lstart=` pads its
-        // column, so a raw `$(ps ...)` in sh keeps leading spaces that `.trim()` here would
-        // strip — the two strings then never match and the kill silently never fires. That
-        // exact mismatch turned the guard's own SIGKILL test red, which is how it was caught.
-        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" })
-            .replace(/\s+/g, " ")
-            .trim();
-
-        return started.length > 0 ? started : null;
-    } catch {
-        return null;
-    }
+export function startedAt(pid: number): string | null {
+    const startMs = readProcessBasics(pid)?.startMs;
+    // Match the shell watchdog's whitespace-normalised `ps -o lstart=` identity exactly. The watchdog runs that `ps`
+    // in the C locale and UTC (WATCHDOG_PS), so neither a Czech locale nor a POSIX TZ can make the two disagree.
+    return startMs == null ? null : formatLstart(startMs, "UTC").replace(/\s+/g, " ").trim();
 }
+
+/**
+ * The watchdog's `ps`, pinned to English day and month names and to UTC: `ps -o lstart=` follows the locale and `TZ`,
+ * and {@link startedAt} formats the kernel's start time in exactly that form.
+ */
+const WATCHDOG_PS = "LC_ALL=C TZ=UTC ps";
 
 /**
  * The poll interval is interpolated straight into `/bin/sh`, so it is a boundary.
@@ -198,11 +196,11 @@ export function buildWatchdogScript(args: {
         // precise failure this guard exists to prevent. An empty reading means the pid is gone
         // and subsumes `kill -0`; a different reading means it belongs to someone else. Both are
         // parent loss.
-        `  pnow=$(ps -o lstart= -p "$parent" 2>/dev/null | awk '{$1=$1;print}')`,
+        `  pnow=$(${WATCHDOG_PS} -o lstart= -p "$parent" 2>/dev/null | awk '{$1=$1;print}')`,
         '  if [ -z "$pnow" ] || [ "$pnow" != "$parentstart" ]; then',
         // pid-verified: `ps -o lstart=` is re-read here and compared against the value
         // captured at install time, so a recycled pid fails the check and is spared.
-        `    now=$(ps -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
+        `    now=$(${WATCHDOG_PS} -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
         '    if [ -n "$now" ] && [ "$now" = "$selfstart" ]; then',
         '      kill -KILL "$self"',
         "    fi",

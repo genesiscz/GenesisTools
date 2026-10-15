@@ -1,6 +1,7 @@
 import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { logger } from "@genesiscz/utils/logger";
-import { captureSync, processBasename } from "@genesiscz/utils/process/ps";
+import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { processBasename } from "@genesiscz/utils/process/ps";
 
 /**
  * Context for the label beside the animated cursor: why the act happens and who drives it.
@@ -90,27 +91,19 @@ export function ancestorNames({ rows, pid }: { rows: ProcessRow[]; pid: number }
     return names;
 }
 
-export function parseProcessRows(stdout: string): ProcessRow[] {
-    const rows: ProcessRow[] = [];
-    for (const line of stdout.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
-        if (match) {
-            rows.push({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] });
-        }
-    }
-
-    return rows;
-}
-
-/** One `ps` for the whole table, only when no agent host names the session. */
+/** This process's ancestors from the kernel, each named by its executable, only when no agent host names the session. */
 export function ancestorNamesOfThisProcess(): string[] {
-    const result = captureSync("ps", ["-Ao", "pid=,ppid=,comm="], { timeoutMs: 1000 });
-    if (result.status !== 0) {
-        logger.debug({ status: result.status, stderr: result.stderr }, "cursor label: ps failed; no parent name");
+    const rows = ancestry(process.pid).map((entry) => ({
+        pid: entry.pid,
+        ppid: entry.ppid,
+        command: readExecutablePath(entry.pid) ?? entry.name,
+    }));
+    if (rows.length === 0) {
+        logger.debug("cursor label: this process is not in the process table; no parent name");
         return [];
     }
 
-    return ancestorNames({ rows: parseProcessRows(result.stdout), pid: process.pid });
+    return ancestorNames({ rows, pid: process.pid });
 }
 
 /** The variables ax-tool reads; a key is present only when it has text. */

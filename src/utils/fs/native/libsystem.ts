@@ -44,12 +44,16 @@ export const libSystem = defineSystemLibrary({
         },
         /** `int proc_pidpath(int pid, void *buffer, uint32_t buffersize)` (libproc). */
         proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+        /** `int proc_listchildpids(pid_t ppid, void *buffer, int buffersize)` (libproc): the number of child pids written. */
+        proc_listchildpids: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
         /** `kern_return_t mach_timebase_info(mach_timebase_info_t)`: numer and denom of mach time units. */
         mach_timebase_info: { args: [FFIType.ptr], returns: FFIType.i32 },
         /** `char *devname(dev_t, mode_t)`: the `/dev` name of a device number, from a static buffer. */
         devname: { args: [FFIType.i32, FFIType.u16], returns: FFIType.ptr },
         /** `const char *inet_ntop(int af, const void *src, char *dst, socklen_t size)`: an address as text. */
         inet_ntop: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
+        /** `struct passwd *getpwuid(uid_t)`: `pw_name` is the struct's first field. Null for an unknown uid. */
+        getpwuid: { args: [FFIType.u32], returns: FFIType.ptr },
     },
 });
 

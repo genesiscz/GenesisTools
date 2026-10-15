@@ -307,41 +307,25 @@ export interface ProcessQuery {
 }
 
 /**
- * Is the agent still running on its tty, from `ps -t <tty> -o args=`? Only a listing that worked can say no: a
- * clean listing without the agent, `ps` exiting 1 with no output (nothing on the tty), or a tty that no longer
- * exists. Any other failure (a timeout, another status, another error) cannot rule the agent out, so it counts
- * as running, and close does not close a surface over an agent it could not see quit.
+ * Is the agent still running among the processes on its tty? Only processes of user `uid` count: root's `login` holds
+ * nearly every terminal and the kernel withholds its command line, and an agent never runs as another user. One of
+ * this user's processes whose command line cannot be read is unknown, so it counts as running.
  */
-export function psShowsAgentRunning(ps: ProcessQuery, agent: SessionAgentId): boolean {
-    if (ps.timedOut) {
+export function ttyProcessesShowAgent(
+    entries: Array<{ uid: number | null; command: string | null; zombie: boolean }>,
+    agent: SessionAgentId,
+    uid: number
+): boolean {
+    const own = entries.filter((entry) => entry.uid === uid && !entry.zombie);
+
+    if (own.some((entry) => entry.command === null)) {
         return true;
     }
 
-    if (ps.code === 0) {
-        return ttyRunsAgent(ps.stdout, agent);
-    }
-
-    const stderr = ps.stderr.trim();
-    return !(ps.code === 1 && (stderr === "" || /No such file or directory/.test(stderr)));
+    return ttyRunsAgent(own.map((entry) => entry.command).join("\n"), agent);
 }
 
-/**
- * Does the recorded shell still have a child (the agent), from `pgrep -P <pid>`? pgrep exits 0 with matches and 1
- * with none; anything else (2 syntax, 3 fatal, a timeout) is unknown and counts as running.
- */
-export function pgrepShowsChild(pgrep: ProcessQuery): boolean {
-    if (pgrep.timedOut) {
-        return true;
-    }
-
-    if (pgrep.code === 0) {
-        return pgrep.stdout.trim() !== "";
-    }
-
-    return pgrep.code !== 1;
-}
-
-/** Does a `ps -t <tty> -o args=` listing show the agent? Its binary, or the `tools <agent>` launcher. */
+/** Do these command lines, one per line, show the agent? Its binary, or the `tools <agent>` launcher. */
 export function ttyRunsAgent(psArgs: string, agent: SessionAgentId): boolean {
     const word = new RegExp(`(^|[\\s/])${agent}(\\s|$)`);
     return psArgs.split("\n").some((line) => word.test(line.trim()));

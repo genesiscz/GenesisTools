@@ -226,6 +226,181 @@ const SWIFT_WAIT_RULE = {
 };
 const SWIFT_BARE_WAIT = /\.wait\(\s*\)/;
 
+/**
+ * Process tools (2026-10-14). The process table, command lines, executables, listening sockets and working
+ * directories come from the kernel through `@genesiscz/utils/process` (libproc on macOS), measured at 9.5 ms where
+ * `lsof` cost 282 ms of CPU and at 38 ms where `ps` cost 567 ms (fb1a5f6da, d56c55667, 01ad30303). That layer owns
+ * the `ps`/`lsof` fallbacks for Linux, Windows and a failed self-check; nothing outside it spawns them.
+ */
+const PROCESS_TOOL_SPAWN_RULE = {
+    name: "no-process-tool-spawn",
+    severity: "error" as const,
+    message:
+        "Spawning ps, lsof or pgrep costs tens to hundreds of ms of CPU per call. Read the kernel through " +
+        "`@genesiscz/utils/process` (libproc-table, socket-owner, ps.ts), which owns the fallbacks, or " +
+        "`// lint-rules-ignore: <why the kernel read does not fit>`.",
+};
+const PROCESS_TOOLS = new Set(["ps", "lsof", "pgrep"]);
+/** The process layer that owns the fallbacks, and the benchmarks that measure the spawn against the kernel read. */
+const PROCESS_TOOL_EXEMPT = /^(?:src\/utils\/process\/|scripts\/benchmarks\/)/;
+/** Callees whose FIRST argument is the program name, with the arguments in a separate array. */
+const PROGRAM_FIRST_CALLEES = new Set(["spawn", "spawnSync", "execFile", "execFileSync", "capture", "captureSync"]);
+/** Callees that take one command string, and Bun's shell tag. */
+const COMMAND_STRING_CALLEES = new Set(["exec", "execSync", "$"]);
+/**
+ * Rust-side prefilter: a call whose arguments quote ps, lsof or pgrep anywhere, or a string that is the absolute path
+ * of one (`"/bin/ps"`, `"/usr/sbin/lsof"`), which no prose comment can be. `spawnsProcessTool` decides.
+ */
+const PROCESS_TOOL_CALL_MATCHER = {
+    rule: {
+        any: [
+            {
+                kind: "call_expression",
+                has: { field: "arguments", regex: "[\"'`]\\s*(?:(?:/usr)?/s?bin/)?(?:ps|lsof|pgrep)[\"'`\\s]" },
+            },
+            { kind: "string", regex: "^[\"'](?:/usr)?/s?bin/(?:ps|lsof|pgrep)[\"']$" },
+        ],
+    },
+};
+
+function unquote(node: SgNode): string {
+    return node.text().slice(1, -1);
+}
+
+function isToolString(node: SgNode | null | undefined): boolean {
+    return node?.kind() === "string" && PROCESS_TOOLS.has(unquote(node));
+}
+
+/** An explicit shell `-c` invocation whose command starts with a process tool. */
+function shellRunsProcessTool(program: string, args: SgNode[]): boolean {
+    if (!/^(?:.*\/)?(?:sh|bash|zsh|dash|ksh)$/.test(program)) {
+        return false;
+    }
+
+    for (let index = 0; index + 1 < args.length; index++) {
+        const flag = args[index];
+        const command = args[index + 1];
+
+        if (flag.kind() === "string" && /^-[a-z]*c[a-z]*$/.test(unquote(flag)) && command.kind() === "string") {
+            const executable = unquote(command).trim().split(/\s+/)[0].split("/").pop() ?? "";
+            return PROCESS_TOOLS.has(executable);
+        }
+    }
+
+    return false;
+}
+
+/** An argv array that runs a process tool: `["ps", …]`, or behind `env`: `["env", "LC_ALL=C", "ps", …]`. */
+function argvRunsProcessTool(array: SgNode, viaEnv = false): boolean {
+    const items = array.namedChildren();
+    let index = 0;
+
+    if (!viaEnv && items[0]?.kind() === "string" && unquote(items[0]) === "env") {
+        viaEnv = true;
+        index = 1;
+    }
+
+    while (viaEnv && items[index]?.kind() === "string" && unquote(items[index]).includes("=")) {
+        index++;
+    }
+
+    const program = items[index];
+    return (
+        isToolString(program) ||
+        (program?.kind() === "string" && shellRunsProcessTool(unquote(program), items.slice(index + 1)))
+    );
+}
+
+function spawnsProcessTool(node: SgNode): boolean {
+    // An absolute path to a process tool is only ever there to run it, whatever the call around it.
+    if (node.kind() === "string") {
+        return true;
+    }
+
+    const args = node.field("arguments");
+
+    if (!args) {
+        return false;
+    }
+
+    const calleeText = node.field("function")?.text() ?? "";
+    const callee = calleeText.split(".").pop() ?? "";
+    const first = args.kind() === "template_string" ? args : args.namedChildren()[0];
+
+    if (!first) {
+        return false;
+    }
+
+    // `Bun.which("lsof")` resolves the program a later spawn runs through a variable.
+    if (callee === "which") {
+        return isToolString(first);
+    }
+
+    if (first.kind() === "array") {
+        // A method's argv is its own program's (`this.run(["ps", …])` is `docker ps`); Bun.spawn's is the process.
+        const spawnsArgv = !calleeText.includes(".") || calleeText.startsWith("Bun.");
+
+        return spawnsArgv && argvRunsProcessTool(first);
+    }
+
+    // `Bun.spawn({ cmd: ["ps", …] })`.
+    if (first.kind() === "object" && calleeText.startsWith("Bun.")) {
+        const cmd = first
+            .namedChildren()
+            .find((pair) => pair.field("key")?.text() === "cmd")
+            ?.field("value");
+        return cmd?.kind() === "array" && argvRunsProcessTool(cmd);
+    }
+
+    const named = args.kind() === "template_string" ? [] : args.namedChildren();
+
+    // A program name followed by its argv anywhere in the call: `probeRun("listeners", "lsof", [...])`, and through
+    // env: `probeRun("processes", "env", ["LC_ALL=C", "ps", …])`.
+    for (let index = 0; index + 1 < named.length; index++) {
+        const program = named[index];
+        const argv = named[index + 1];
+
+        if (program.kind() !== "string" || argv.kind() !== "array") {
+            continue;
+        }
+
+        if (
+            PROCESS_TOOLS.has(unquote(program)) ||
+            (unquote(program) === "env" && argvRunsProcessTool(argv, true)) ||
+            shellRunsProcessTool(unquote(program), argv.namedChildren())
+        ) {
+            return true;
+        }
+    }
+
+    if (first.kind() !== "string" && first.kind() !== "template_string") {
+        return false;
+    }
+
+    const text = unquote(first);
+
+    if (PROCESS_TOOLS.has(text)) {
+        return PROGRAM_FIRST_CALLEES.has(callee);
+    }
+
+    return COMMAND_STRING_CALLEES.has(callee) && PROCESS_TOOLS.has(text.trim().split(/\s+/)[0].split("/").pop() ?? "");
+}
+
+function recordProcessToolSpawns(nodes: SgNode[], fileOf: (node: SgNode) => string, record: RecordFinding): void {
+    // One finding per line: `Bun.which("lsof") ?? "/usr/sbin/lsof"` is one call site, not two.
+    const seen = new Set<string>();
+
+    for (const node of nodes) {
+        const file = fileOf(node).replace(/\\/g, "/");
+        const key = `${file}:${node.range().start.line}`;
+
+        if (!PROCESS_TOOL_EXEMPT.test(file) && !seen.has(key) && spawnsProcessTool(node)) {
+            seen.add(key);
+            record(node, PROCESS_TOOL_SPAWN_RULE);
+        }
+    }
+}
+
 function parseNumberLiteral(text: string): number | null {
     const value = Number(text.replace(/_/g, ""));
 
@@ -558,6 +733,7 @@ export function checkSource(file: string, source: string): Finding[] {
     }
 
     recordBusyWaitFindings(root, record);
+    recordProcessToolSpawns(root.findAll(PROCESS_TOOL_CALL_MATCHER), () => file, record);
 
     // The `.genesis-tools` rule is about REACHING that directory through
     // `homedir()`, not about the literal. `join(env.tools.getHome(),
@@ -695,7 +871,18 @@ function render(finding: Finding): string {
  * that actually matched get read back here, and only to check for a suppression
  * comment.
  */
-async function scanAll(files: string[]): Promise<Finding[]> {
+/** Every `no-process-tool-spawn` finding in `files`: the live list of call sites. */
+/**
+ * The process-tool rule alone. Only its pass runs: every pass parses each file again, and all of them took 13.5 s of
+ * a 20 s test timeout on the CI runner (2026-10-15), where this one pass is a sixth of the work.
+ */
+export async function scanProcessToolSpawns(files: string[]): Promise<Finding[]> {
+    return (await scanAll(files, { processToolOnly: true })).filter(
+        (finding) => finding.rule === PROCESS_TOOL_SPAWN_RULE.name
+    );
+}
+
+async function scanAll(files: string[], options: { processToolOnly?: boolean } = {}): Promise<Finding[]> {
     const byLang = new Map<Lang, string[]>();
     const testsByLang = new Map<Lang, string[]>();
 
@@ -749,6 +936,19 @@ async function scanAll(files: string[]): Promise<Finding[]> {
     };
 
     for (const [lang, paths] of byLang) {
+        const processToolPass = findInFiles(
+            lang,
+            { paths, matcher: PROCESS_TOOL_CALL_MATCHER },
+            guard((nodes) => {
+                recordProcessToolSpawns(nodes, (node) => node.getRoot().filename(), push);
+            })
+        );
+
+        if (options.processToolOnly) {
+            await processToolPass;
+            continue;
+        }
+
         await Promise.all([
             findInFiles(
                 lang,
@@ -783,6 +983,7 @@ async function scanAll(files: string[]): Promise<Finding[]> {
                     recordSleepSyncFindings(nodes, push);
                 })
             ),
+            processToolPass,
             findInFiles(
                 lang,
                 { paths, matcher: { rule: { pattern: "$FN(homedir(), $$$ARGS)" } } },
@@ -820,7 +1021,8 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         ]);
     }
 
-    for (const [lang, paths] of testsByLang) {
+    // Test files and Swift sources carry other rules only.
+    for (const [lang, paths] of options.processToolOnly ? [] : testsByLang) {
         await findInFiles(
             lang,
             { paths, matcher: SPAWN_CALL_MATCHER },
@@ -842,7 +1044,7 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         );
     }
 
-    for (const file of files) {
+    for (const file of options.processToolOnly ? [] : files) {
         if (file.endsWith(".swift")) {
             unfiltered.push(...checkSwiftSource(file, await Bun.file(file).text()));
         }
@@ -875,6 +1077,7 @@ if (import.meta.main) {
     const started = Date.now();
     const files = await targetFiles();
     const listed = Date.now();
+
     const findings = await scanAll(files);
     const scanned = Date.now();
 
@@ -888,7 +1091,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 10 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 11 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }

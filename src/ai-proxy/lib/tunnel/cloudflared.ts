@@ -5,6 +5,7 @@ import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { detectCloudflared, installCloudflared } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { findProcesses } from "@genesiscz/utils/process/processes";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export { detectCloudflared, installCloudflared };
@@ -294,13 +295,9 @@ export async function writeCloudflaredConfig(config: AiProxyConfig, yaml: string
 
 export function isTunnelProcessRunning(tunnelName?: string): boolean {
     try {
-        const proc = Bun.spawnSync({
-            cmd: ["pgrep", "-fl", "cloudflared"],
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-
-        const output = proc.stdout.toString();
+        const output = findProcesses({ command: "cloudflared" })
+            .map((entry) => entry.command ?? "")
+            .join("\n");
         if (!output.trim()) {
             return false;
         }

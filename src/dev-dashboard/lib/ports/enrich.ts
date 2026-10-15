@@ -8,7 +8,7 @@ import {
 import { applyClassifyCache, rememberClassify } from "@app/dev-dashboard/lib/ports/classify-cache";
 import { isLocalAddress, parsePackageName } from "@app/dev-dashboard/lib/ports/enrich-parse";
 import { probeHttp } from "@app/dev-dashboard/lib/ports/probe";
-import { batchCwds, batchProcessMeta } from "@app/dev-dashboard/lib/ports/resolve";
+import { batchCwds, batchProcessMeta, type ProcessSnapshot } from "@app/dev-dashboard/lib/ports/resolve";
 import type { PortInfo } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -52,13 +52,16 @@ async function readPackageName(cwd: string): Promise<string | null> {
  * Fast enrichment: batch resolve argv/cwd/start, derive titles + visibility + genesis-tools flag.
  * Does NOT HTTP-probe — that is progressive via `classifyPortBatch` / SSE so the UI can paint first.
  */
-export async function enrichPortsMeta(ports: PortInfo[]): Promise<PortInfo[]> {
+export async function enrichPortsMeta(
+    ports: PortInfo[],
+    options: { snapshot?: ProcessSnapshot } = {}
+): Promise<PortInfo[]> {
     if (ports.length === 0) {
         return ports;
     }
 
     const pids = ports.map((p) => p.pid);
-    const [metaMap, cwdMap] = await Promise.all([batchProcessMeta(pids), batchCwds(pids)]);
+    const [metaMap, cwdMap] = await Promise.all([batchProcessMeta(pids, options), batchCwds(pids)]);
 
     const uniqueCwds = [...new Set([...cwdMap.values()])];
     const packageByCwd = new Map<string, string | null>();

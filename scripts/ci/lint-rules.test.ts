@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { checkSource, pluginsDisabledFor } from "./lint-rules";
 
 /**
@@ -232,29 +233,90 @@ describe("no-sync-poll-loop", () => {
     });
 });
 
-describe("swift-wait-without-timeout", () => {
-    const SWIFT = "native/x/Sources/main.swift";
+describe("no-process-tool-spawn", () => {
+    test("flags ps, lsof and pgrep in every spawn shape", () => {
+        for (const source of [
+            'exec(["ps", "-axo", "pid=,command="]);',
+            'Bun.spawnSync(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]);',
+            'runCommand(["pgrep", "-P", String(pid)]);',
+            'spawnSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" });',
+            'childProcess.execFileSync("lsof", ["-p", "1"]);',
+            'execSync("pgrep -f claude");',
+            'execSync("/bin/ps -ax");',
+            "await $`/usr/sbin/lsof -nP`;",
+            "await $`ps -axo pid=`;",
+            'Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "command="]);',
+            'const lsofBinary = process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof";',
+            'Bun.spawnSync({ cmd: ["pgrep", "-fl", "cloudflared"], stdout: "pipe" });',
+            'Bun.spawnSync(["env", "LC_ALL=C", "ps", "-axo", "pid="]);',
+            'probeRun("listeners", "lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);',
+            'probeRun("processes", "env", ["LC_ALL=C", "ps", "-axo", COLUMNS]);',
+            'deps.run("ps", ["-Ao", "pid=,rss="]);',
+            'const lsof = Bun.which("lsof");',
+            'Bun.spawn(["sh", "-c", "ps -ax"]);',
+            'Bun.spawn(["sh", "-c", " /bin/ps -ax"]);',
+            'spawnSync("sh", ["-c", "lsof -nP"]);',
+            'childProcess.spawn("/bin/bash", ["-lc", "pgrep -f server"]);',
+            'Bun.spawn({ cmd: ["env", "LC_ALL=C", "zsh", "-c", "ps -ax"] });',
+        ]) {
+            expect({ source, rules: rules(source) }).toEqual({ source, rules: ["no-process-tool-spawn"] });
+        }
+    });
 
-    test("flags a bare wait and accepts one with a timeout", () => {
-        expect(rules("let r = sem.wait()", SWIFT)).toContain("swift-wait-without-timeout");
-        expect(rules("group.wait( )", SWIFT)).toContain("swift-wait-without-timeout");
-        expect(rules("if done.wait(timeout: .now() + 10) == .timedOut {", SWIFT)).toEqual([]);
-        expect(rules("// sem.wait() would hang here", SWIFT)).toEqual([]);
-        expect(rules("// lint-rules-ignore: main thread must block\nsem.wait()", SWIFT)).toEqual([]);
+    test("one line is one finding, however many shapes it holds", () => {
+        expect(
+            rules('const lsof = Bun.which("lsof") ?? (existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : null);')
+        ).toEqual(["no-process-tool-spawn"]);
+    });
+
+    test("leaves other programs, log text and a bare string alone", () => {
+        expect(rules('exec(["git", "status"]);')).toEqual([]);
+        expect(rules('log.debug("ps -axo did not exit cleanly");')).toEqual([]);
+        expect(rules('spawnSync("psql", ["-c", "select 1"]);')).toEqual([]);
+        expect(rules('const program = "ps";')).toEqual([]);
+        expect(rules('this.run(["ps", "--filter", "name=db"]);')).toEqual([]);
+        expect(rules('program.command("ps").description("list running artifacts");')).toEqual([]);
+        expect(rules('Bun.spawnSync(["env", "LC_ALL=C", "git", "status"]);')).toEqual([]);
+        expect(rules('const docs = "/usr/share/man/man1/ps.1";')).toEqual([]);
+        expect(rules('Bun.spawn(["sh", "-c", "echo ps"]);')).toEqual([]);
+        expect(rules('spawnSync("sh", ["ps", "-c", "echo ok"]);')).toEqual([]);
+    });
+
+    test("the process layer and the benchmarks may spawn them, and a suppression names the reason", () => {
+        const source = 'Bun.spawnSync(["ps", "-axo", "pid="]);';
+        expect(rules(source, "src/utils/process/ps.ts")).toEqual([]);
+        expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
+        expect(rules(`// lint-rules-ignore: Linux fallback\n${source}`)).toEqual([]);
     });
 });
+
+/**
+ * A fake tool the wrapper starts, made once per body and kept: a new script per run, deleted with the run's folder,
+ * was one of the executables syspolicyd crashed on when the Mac froze on 2026-10-14.
+ */
+function fakeTool(name: string, body: string): string {
+    return persistentFixture(name, body, (path) => {
+        writeFileSync(path, body);
+        chmodSync(path, 0o755);
+    });
+}
 
 describe("lint-changed wrapper dispatch", () => {
     test("Swift-only and empty diffs still run repo rules while Biome remains scoped", () => {
         const dir = mkdtempSync(join(tmpdir(), "lint-changed-"));
         const trace = join(dir, "trace");
+        const bun = fakeTool(
+            "bun",
+            '#!/bin/sh\nprintf "bun %s\\n" "$*" >> "$LINT_TRACE"\nexit "${FAKE_BUN_EXIT:-0}"\n'
+        );
+        const biome = fakeTool("biome", '#!/bin/sh\nprintf "biome %s\\n" "$*" >> "$LINT_TRACE"\n');
         const run = (args: string[], extraEnv: Record<string, string> = {}) =>
             spawnSync(args[0]!, args.slice(1), {
                 cwd: dir,
                 encoding: "utf8",
                 env: {
                     ...process.env,
-                    PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}`,
+                    PATH: `${dirname(bun)}:${process.env.PATH ?? ""}`,
                     LINT_TRACE: trace,
                     ...extraEnv,
                 },
@@ -263,18 +325,8 @@ describe("lint-changed wrapper dispatch", () => {
         try {
             mkdirSync(join(dir, "scripts", "ci"), { recursive: true });
             mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
-            mkdirSync(join(dir, "bin"), { recursive: true });
             cpSync(join(import.meta.dir, "lint-changed.sh"), join(dir, "scripts", "ci", "lint-changed.sh"));
-            writeFileSync(
-                join(dir, "node_modules", ".bin", "biome"),
-                '#!/bin/sh\nprintf "biome %s\\n" "$*" >> "$LINT_TRACE"\n'
-            );
-            writeFileSync(
-                join(dir, "bin", "bun"),
-                '#!/bin/sh\nprintf "bun %s\\n" "$*" >> "$LINT_TRACE"\nexit "${FAKE_BUN_EXIT:-0}"\n'
-            );
-            chmodSync(join(dir, "node_modules", ".bin", "biome"), 0o755);
-            chmodSync(join(dir, "bin", "bun"), 0o755);
+            symlinkSync(biome, join(dir, "node_modules", ".bin", "biome"));
             expect(run(["git", "init", "-q"]).status).toBe(0);
             expect(run(["git", "config", "user.name", "Fixture User"]).status).toBe(0);
             expect(run(["git", "config", "user.email", "fixture@example.com"]).status).toBe(0);

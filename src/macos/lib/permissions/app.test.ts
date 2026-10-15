@@ -1,8 +1,16 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertFullXcodeToolchain, pinnedRetiredBundles, runningExecutableInodes, stampAppToolsPath } from "./app";
+import * as processes from "@genesiscz/utils/process/processes";
+import {
+    assertFullXcodeToolchain,
+    pinnedRetiredBundles,
+    readAppFaceProcesses,
+    readRunningExecutableInodes,
+    runningExecutableInodes,
+    stampAppToolsPath,
+} from "./app";
 import {
     type BuildOfferDeps,
     createRealBuildOfferDeps,
@@ -13,6 +21,36 @@ import {
     shouldAsk,
     writeOfferStateTo,
 } from "./build-offer";
+
+describe("readAppFaceProcesses", () => {
+    it("lists the faces oldest first, so they start again in the order they first started", () => {
+        const entry = (pid: number, startMs: number | null) => ({
+            pid,
+            ppid: 1,
+            pgid: null,
+            uid: null,
+            name: "GenesisTools",
+            command: `/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --face ${pid}`,
+            tty: null,
+            startMs,
+            zombie: false,
+            state: "S",
+        });
+        // The kernel table lists the newest pid first.
+        const list = spyOn(processes, "listProcesses").mockReturnValue([
+            entry(33602, 2_000),
+            entry(33573, 1_000),
+            entry(40000, null),
+            entry(33590, 1_000),
+        ]);
+
+        try {
+            expect(readAppFaceProcesses().map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
+        } finally {
+            list.mockRestore();
+        }
+    });
+});
 
 describe("stampAppToolsPath", () => {
     it("records the actual build checkout as XML text without changing template values", () => {
@@ -32,18 +70,29 @@ describe("stampAppToolsPath", () => {
 });
 
 describe("runningExecutableInodes", () => {
-    it("reads the inode lines of lsof -Fi and ignores the rest", () => {
-        const stdout = ["p101", "ftxt", "i596381987", "p102", "ftxt", "i42", "ftxt", "i596381987"].join("\n");
+    it("collects the executable inode of every process, once each", () => {
+        const inodes = new Map([
+            [101, 596381987],
+            [102, 42],
+            [103, 596381987],
+        ]);
 
-        expect(runningExecutableInodes({ code: 0, stdout })).toEqual(new Set([596381987, 42]));
+        expect(runningExecutableInodes([101, 102, 103], (pid) => inodes.get(pid) ?? null)).toEqual(
+            new Set([596381987, 42])
+        );
     });
 
-    it("keeps every retired bundle when lsof gave no answer", () => {
-        expect(runningExecutableInodes({ code: 1, stdout: "" })).toBeNull();
+    it("skips a process whose executable cannot be read, such as kernel_task or a binary an upgrade deleted", () => {
+        expect(runningExecutableInodes([0, 101], (pid) => (pid === 101 ? 42 : null))).toEqual(new Set([42]));
     });
 
-    it("keeps every retired bundle when lsof failed after printing part of the list", () => {
-        expect(runningExecutableInodes({ code: 1, stdout: ["p101", "ftxt", "i42"].join("\n") })).toBeNull();
+    it("keeps every retired bundle when no process could be read", () => {
+        expect(runningExecutableInodes([], () => 42)).toBeNull();
+        expect(runningExecutableInodes([0, 101], () => null)).toBeNull();
+    });
+
+    it.skipIf(process.platform !== "darwin")("reads this machine, including the binary running this test", () => {
+        expect(readRunningExecutableInodes()?.has(statSync(process.execPath).ino)).toBe(true);
     });
 });
 

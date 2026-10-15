@@ -4,7 +4,9 @@
  * process control: callers list before they kill, and kill exact pids only —
  * never a pattern.
  */
+
 import { basename } from "node:path";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 
 export interface RunningTurn {
     pid: number;
@@ -68,9 +70,10 @@ export async function runningTurnPids(sessionMarker: string, binaryPattern: RegE
         return [];
     }
 
-    const proc = Bun.spawn({ cmd: ["ps", "-axo", "pid=,command="], stdout: "pipe", stderr: "ignore" });
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
+    const text = listProcesses()
+        .filter((entry) => entry.command !== null)
+        .map((entry) => `${entry.pid} ${entry.command}`)
+        .join("\n");
 
     const matches: RunningTurn[] = [];
     for (const line of text.split("\n")) {

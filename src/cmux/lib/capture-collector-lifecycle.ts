@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
     closeSync,
@@ -14,6 +14,7 @@ import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcess } from "@genesiscz/utils/process/processes";
 import { z } from "zod";
 
 const ownerSchema = z.object({ pid: z.number().int().positive(), ownerToken: z.string().uuid() });
@@ -59,19 +60,16 @@ export function screenCollectorStatus(root: string): ScreenCollectorStatus {
         return { enabled, running: false, ownerMatches: false };
     }
 
-    const processInfo = spawnSync("/bin/ps", ["-p", String(owner.data.pid), "-o", "command="], { encoding: "utf8" });
+    const command = readProcess(owner.data.pid)?.command ?? "";
     const running =
-        processInfo.status === 0 &&
-        processInfo.stdout.includes("capture-watch-") &&
-        processInfo.stdout.includes(root) &&
-        processInfo.stdout.includes(owner.data.ownerToken);
+        command.includes("capture-watch-") && command.includes(root) && command.includes(owner.data.ownerToken);
     const ownerMatches = token === owner.data.ownerToken;
     return {
         enabled,
         running,
         ownerMatches,
         pid: running ? owner.data.pid : undefined,
-        runtimeFile: running ? processInfo.stdout.match(/capture-watch-[a-f0-9]{16}\.js/)?.[0] : undefined,
+        runtimeFile: running ? command.match(/capture-watch-[a-f0-9]{16}\.js/)?.[0] : undefined,
     };
 }
 

@@ -12,6 +12,7 @@ import type {
     Finding,
 } from "@app/doctor/lib/types";
 import { readSwapUsage, readVmPageCounts } from "@genesiscz/utils/macos/host-stats";
+import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import clipboardy from "clipboardy";
 
 export interface VmStatParsed {
@@ -129,43 +130,22 @@ interface TopProcess {
     label: string | null;
 }
 
-async function getTopProcessesByRss(limit: number): Promise<TopProcess[]> {
-    const res = await run("ps", ["-axo", "pid=,rss=,comm=,command="]);
-
-    if (res.status !== 0) {
-        return [];
-    }
-
-    const processes: TopProcess[] = [];
-
-    for (const line of res.stdout.split("\n")) {
-        const trimmed = line.trim();
-
-        if (!trimmed) {
-            continue;
-        }
-
-        const match = trimmed.match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
-
-        if (!match) {
-            continue;
-        }
-
-        const pid = Number.parseInt(match[1], 10);
-        const rssKb = Number.parseInt(match[2], 10);
-        const comm = match[3];
-        const command = match[4];
-        processes.push({
-            pid,
-            rssBytes: rssKb * 1024,
-            comm,
-            command,
-            label: labelForProcess({ comm, command }),
-        });
-    }
-
-    processes.sort((a, b) => b.rssBytes - a.rssBytes);
-    return processes.slice(0, limit);
+export async function getTopProcessesByRss(limit: number): Promise<TopProcess[]> {
+    return listProcessesWithUsage({ otherUsers: true, names: true })
+        .map((entry) => {
+            // `ps -o comm=`'s name, which the label rules (`/^node$/`) were written against.
+            const comm = entry.listedName ?? entry.name;
+            const command = entry.command ?? comm;
+            return {
+                pid: entry.pid,
+                rssBytes: entry.usage?.rssBytes ?? 0,
+                comm,
+                command,
+                label: labelForProcess({ comm, command }),
+            };
+        })
+        .sort((a, b) => b.rssBytes - a.rssBytes)
+        .slice(0, limit);
 }
 
 function killProcessAction(proc: TopProcess): Action {

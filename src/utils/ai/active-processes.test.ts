@@ -2,6 +2,8 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as kernel from "@genesiscz/utils/process/libproc-table";
+import * as processes from "@genesiscz/utils/process/processes";
 import { withTimeZoneAsync } from "@genesiscz/utils/test/timezone";
 import { listActiveAgentProcesses, parseLsofCwd, parsePsLine } from "./active-processes";
 
@@ -107,6 +109,56 @@ describe.skipIf(process.platform !== "darwin")("listActiveAgentProcesses on live
             await Promise.all(probes.map((probe) => probe.exited));
         }
     });
+
+    test("a row whose owner the platform cannot name (a Windows CIM row) is kept, not filtered as another user's", async () => {
+        const row = {
+            pid: process.pid,
+            ppid: process.ppid,
+            pgid: process.pid,
+            uid: null,
+            name: "bun",
+            command: "bun agent-marker",
+            tty: null,
+            startMs: Date.now() - 5000,
+            zombie: false,
+            state: "S",
+        };
+        const layer = spyOn(processes, "listProcesses").mockReturnValue([row]);
+
+        try {
+            const rows = await listActiveAgentProcesses({
+                alias: "claude",
+                classify: (args) => (args.includes("agent-marker") ? "tui" : null),
+            });
+
+            expect(rows.map((found) => found.pid)).toEqual([process.pid]);
+        } finally {
+            layer.mockRestore();
+        }
+    });
+
+    test.skipIf(process.platform !== "darwin")(
+        "task usage is read for the agents only, not for every process on the machine",
+        async () => {
+            const read = spyOn(kernel, "readProcessUsage");
+            const unused = `gt-who-none-${crypto.randomUUID()}`;
+            let reads = -1;
+
+            try {
+                const rows = await listActiveAgentProcesses({
+                    alias: "claude",
+                    classify: (args) => (args.includes(unused) ? "tui" : null),
+                });
+                reads = read.mock.calls.length;
+                expect(rows).toEqual([]);
+            } finally {
+                read.mockRestore();
+            }
+
+            // One kernel read per listed process is hundreds; no agent means none.
+            expect(reads).toBe(0);
+        }
+    );
 
     test("reads the process table without spawning ps or lsof", async () => {
         const spawn = spyOn(Bun, "spawn");

@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
+import { childPids, listProcesses, processesOnTty } from "@genesiscz/utils/process/processes";
 import { capture } from "@genesiscz/utils/process/ps";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -19,11 +20,10 @@ import {
     liveAgentSurfaces,
     type ProcessQuery,
     parseCmuxTree,
-    pgrepShowsChild,
     pickAdoptable,
-    psShowsAgentRunning,
     type TmuxPaneSurface,
     tmuxPaneStillShown,
+    ttyProcessesShowAgent,
 } from "./session-adopt";
 import {
     type AdoptedSession,
@@ -78,24 +78,23 @@ function parseWorkspaces(stdout: string): ListedWorkspace[] {
 }
 
 /** An adopted surface has no pid file: the agent runs while a process on the surface's tty is the agent. */
-async function adoptedAgentRunning(record: CloseSubject & { tty: string | null }): Promise<boolean> {
-    // No tty means no way to see the agent quit: assume it runs, so close never kills it without --force.
+export async function adoptedAgentRunning(
+    record: Pick<CloseSubject, "agent"> & { tty: string | null }
+): Promise<boolean> {
     if (!record.tty) {
-        log.debug({ surface: record.surface }, "adopted surface has no tty; treating the agent as running");
         return true;
     }
-
-    const ps = await runBounded(["ps", "-t", record.tty, "-o", "args="]);
-    const running = psShowsAgentRunning(ps, record.agent);
-
-    if (running && ps.code !== 0) {
-        log.warn(
-            { tty: record.tty, code: ps.code, stderr: ps.stderr.trim() },
-            "ps failed; the agent counts as running"
-        );
+    const entries = processesOnTty(record.tty);
+    // An empty terminal only means "quit" when the process table can be read at all; the whole table is read only then.
+    if (entries.length === 0 && listProcesses({ commands: false }).length === 0) {
+        return true;
     }
+    return ttyProcessesShowAgent(entries, record.agent, process.getuid?.() ?? -1);
+}
 
-    return running;
+export function shellHasChildren(pid: number): boolean {
+    // No children only means "no agent" when the process table can be read at all; checked only in that case.
+    return childPids(pid).length > 0 || listProcesses({ commands: false }).length === 0;
 }
 
 function readPid(record: SessionCreatedRecord): number | null {
@@ -342,16 +341,7 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 return false;
             }
 
-            // pgrep exits 1 when the shell has no child: the agent has quit and the shell is at its prompt.
-            const children = await runBounded(["pgrep", "-P", String(pid)]);
-            const running = pgrepShowsChild(children);
-
-            if (running && children.code !== 0) {
-                log.warn(
-                    { pid, code: children.code, stderr: children.stderr.trim() },
-                    "pgrep failed; the agent counts as running"
-                );
-            }
+            const running = shellHasChildren(pid);
 
             return running;
         },

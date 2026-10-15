@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { buildTmuxSpawnEnv } from "@genesiscz/utils/tmux/sessions";
 
@@ -13,6 +14,12 @@ import { buildTmuxSpawnEnv } from "@genesiscz/utils/tmux/sessions";
  * the instant it reaches zero sessions, so a dashboard-bootstrapped server with
  * that flag will wipe every session at once. Read-only; never throws.
  */
+export function readTtydProcessSnapshot(): string[] {
+    return listProcesses()
+        .filter((entry) => entry.command?.includes("ttyd -i 127"))
+        .map((entry) => `${entry.pid} ${entry.ppid} ${entry.pgid ?? ""} ${entry.command}`);
+}
+
 export function logTtydTmuxSnapshot(phase: string): void {
     try {
         const tmuxBin = resolveTmuxBin();
@@ -32,13 +39,7 @@ export function logTtydTmuxSnapshot(phase: string): void {
         ]);
         const sessions = sessionsRaw ? sessionsRaw.split("\n") : [];
 
-        const ttydProcs = Bun.spawnSync(["/bin/ps", "-axo", "pid,ppid,pgid,command"], {
-            stdio: ["ignore", "pipe", "ignore"],
-        })
-            .stdout.toString()
-            .split("\n")
-            .filter((line) => line.includes("ttyd -i 127"))
-            .map((line) => line.trim());
+        const ttydProcs = readTtydProcessSnapshot();
 
         logger.info(
             {

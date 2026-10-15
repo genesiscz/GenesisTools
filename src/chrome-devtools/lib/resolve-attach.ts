@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { processReaderFor } from "./platform";
 import {
     currentPlatform,
     defaultExec,
@@ -199,42 +200,25 @@ export function classifyProcessName(comm: string): BrowserId | null {
     return best?.id ?? null;
 }
 
-/** Parse `tasklist /FO CSV /NH` image names. Exported for tests. */
-export function parseTasklistImages(stdout: string): Set<string> {
-    const names = new Set<string>();
-    for (const line of stdout.split("\n")) {
-        const m = line.match(/^"([^"]+)"/);
-        if (m) {
-            names.add(m[1].toLowerCase());
-        }
-    }
-
-    return names;
+export function listRunningBrowsers(exec: ExecFn = defaultExec, platform: Platform = currentPlatform()): BrowserId[] {
+    const namesFor = (browser: BrowserKind) =>
+        platform === "win32"
+            ? (browser.winExes ?? [])
+            : platform === "linux"
+              ? (browser.linuxBins ?? [])
+              : [browser.app];
+    const running = processReaderFor(exec, platform).runningNames(BROWSERS.flatMap(namesFor));
+    return BROWSERS.filter((browser) => namesFor(browser).some((name) => running.has(name))).map(
+        (browser) => browser.id
+    );
 }
 
-export function listRunningBrowsers(exec: ExecFn = defaultExec, platform: Platform = currentPlatform()): BrowserId[] {
-    if (platform === "win32") {
-        const r = exec(["tasklist", "/FO", "CSV", "/NH"]);
-        const images = r.exitCode === 0 ? parseTasklistImages(r.stdout) : new Set<string>();
-
-        return BROWSERS.filter((b) => (b.winExes ?? []).some((exe) => images.has(exe))).map((b) => b.id);
-    }
-
-    if (platform === "linux") {
-        return BROWSERS.filter((b) => (b.linuxBins ?? []).some((bin) => exec(["pgrep", "-x", bin]).exitCode === 0)).map(
-            (b) => b.id
-        );
-    }
-
-    const found: BrowserId[] = [];
-    for (const b of BROWSERS) {
-        const r = exec(["pgrep", "-x", b.app]);
-        if (r.exitCode === 0) {
-            found.push(b.id);
-        }
-    }
-
-    return found;
+export function browserIsRunning(
+    app: string,
+    exec: ExecFn = defaultExec,
+    platform: Platform = currentPlatform()
+): boolean {
+    return processReaderFor(exec, platform).runningNames([app]).has(app);
 }
 
 export function isPortSpecified(argv: string[] = process.argv): boolean {
@@ -461,23 +445,9 @@ export async function quitBrowser(opts: {
     const linuxBins = opts.browser?.linuxBins ?? [];
     const winExe = opts.browser?.winExes?.[0];
 
-    const dead = (): boolean => {
-        if (platform === "win32") {
-            if (!winExe) {
-                return true;
-            }
-
-            const r = exec(["tasklist", "/FO", "CSV", "/NH", "/FI", `IMAGENAME eq ${winExe}`]);
-
-            return !parseTasklistImages(r.stdout).has(winExe);
-        }
-
-        if (platform === "linux") {
-            return linuxBins.every((bin) => exec(["pgrep", "-x", bin]).exitCode !== 0);
-        }
-
-        return exec(["pgrep", "-x", opts.app]).exitCode !== 0;
-    };
+    const names = platform === "win32" ? (winExe ? [winExe] : []) : platform === "linux" ? linuxBins : [opts.app];
+    const reader = processReaderFor(exec, platform);
+    const dead = (): boolean => reader.runningNames(names).size === 0;
 
     if (platform === "win32") {
         if (winExe) {
@@ -522,7 +492,7 @@ export async function quitBrowser(opts: {
             exec(["pkill", "-KILL", "-x", bin]);
         }
     } else {
-        const pids = exec(["pgrep", "-x", opts.app]).stdout.trim().split("\n").filter(Boolean);
+        const pids = reader.namedPids(opts.app).map(String);
         if (pids.length) {
             exec(["kill", "-KILL", ...pids]);
         }

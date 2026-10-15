@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { processFixture } from "./__tests__/process-fixture";
 import type { Target } from "./cdp.ts";
 import { quitBrowser } from "./resolve-attach.ts";
 import {
@@ -173,7 +174,7 @@ describe("quit deadline", () => {
     test("a beforeunload quit that takes 30s succeeds without ever force-killing", async () => {
         const clock = fakeClock();
         const argvLog: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             argvLog.push(argv);
 
             if (argv[0] === "pgrep") {
@@ -184,7 +185,7 @@ describe("quit deadline", () => {
             }
 
             return { exitCode: 0, stdout: "", stderr: "" };
-        };
+        });
 
         const notices: number[] = [];
         const r = await quitBrowser({
@@ -207,7 +208,7 @@ describe("quit deadline", () => {
 
     test("the old 15s window is what reported that same healthy quit as a failure", async () => {
         const clock = fakeClock();
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "pgrep") {
                 const alive = clock.now() < 1_000_000 + 30_000;
 
@@ -215,7 +216,7 @@ describe("quit deadline", () => {
             }
 
             return { exitCode: 0, stdout: "", stderr: "" };
-        };
+        });
 
         const r = await quitBrowser({
             app: "Brave Browser",
@@ -234,13 +235,13 @@ describe("quit deadline", () => {
     test("a browser that truly never exits still returns without force when --force is absent", async () => {
         const clock = fakeClock();
         const argvLog: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             argvLog.push(argv);
 
             return argv[0] === "pgrep"
                 ? { exitCode: 0, stdout: "1030\n", stderr: "" }
                 : { exitCode: 0, stdout: "", stderr: "" };
-        };
+        });
 
         const r = await quitBrowser({
             app: "Brave Browser",
@@ -262,7 +263,7 @@ describe("quit deadline", () => {
     test("a survivor of kill -KILL reports usedForce, so the CLI stops suggesting --force", async () => {
         const clock = fakeClock();
         const argvLog: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             argvLog.push(argv);
 
             if (argv[0] === "pgrep") {
@@ -270,7 +271,7 @@ describe("quit deadline", () => {
             }
 
             return { exitCode: 0, stdout: "", stderr: "" };
-        };
+        });
 
         const r = await quitBrowser({
             app: "Brave Browser",

@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import * as identity from "@genesiscz/utils/process-identity";
 import {
     attemptStaleTakeover,
+    buildPidRecord,
     classifyPidRecord,
     clearPidFile,
     inspectPidFile,
@@ -88,6 +90,41 @@ describe("pidfile", () => {
 
         expect(inspectPidFile(path).status).toBe("foreign");
         expect(readSignalablePid(path)).toBeNull();
+    });
+
+    test("a child read before its exec records no command, so the live child is not taken for a recycled pid", async () => {
+        // Linux spawns by fork then exec: until the exec the child shows this process's command line, and the
+        // kernel read is fast enough to see it. The start time is the same before and after the exec.
+        const child = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const real = identity.readProcessCommand;
+        const own = real(process.pid);
+        const read = spyOn(identity, "readProcessCommand").mockImplementation((pid) =>
+            pid === child.pid ? own : real(pid)
+        );
+
+        try {
+            const record = buildPidRecord(child.pid);
+            read.mockRestore();
+
+            expect(own).not.toBeNull();
+            expect(record.command).toBeNull();
+            expect(record.startedAt).not.toBeNull();
+            expect(classifyPidRecord(record).status).toBe("unverified");
+        } finally {
+            read.mockRestore();
+            child.kill();
+            await child.exited;
+        }
+    });
+
+    test("a record without a command is still foreign when its start time is another process's", () => {
+        const startedAt = identity.processStartMs(process.pid);
+
+        expect(startedAt).not.toBeNull();
+        expect(
+            classifyPidRecord({ pid: process.pid, command: null, startedAt: (startedAt ?? 0) - 600_000, writtenAt: 0 })
+                .status
+        ).toBe("foreign");
     });
 
     test("classifyPidRecord is the same verdict inspectPidFile uses, including start-time reuse", () => {

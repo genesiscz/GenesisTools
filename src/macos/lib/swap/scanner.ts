@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { listProcessesWithUsage, readExecutablePath } from "@genesiscz/utils/process/processes";
 import type { ProcessSwap, ScanOptions, ScanResult, SystemSwap } from "./types";
 
 const UNIT_MULT: Record<string, number> = {
@@ -29,63 +30,11 @@ export function parseSwapUsage(output: string): SystemSwap {
     };
 }
 
-export function parseEtime(etime: string): number {
-    const trimmed = etime.trim();
-    const match = trimmed.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
-
-    if (!match) {
-        return 0;
-    }
-
-    const days = match[1] ? Number.parseInt(match[1], 10) : 0;
-    const hours = match[2] ? Number.parseInt(match[2], 10) : 0;
-    const minutes = Number.parseInt(match[3], 10);
-    const seconds = Number.parseInt(match[4], 10);
-    return (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1000;
-}
-
 export interface PsRow {
     pid: number;
     rssBytes: number;
     uptimeMs: number;
     name: string;
-}
-
-export function parsePsOutput(output: string): PsRow[] {
-    const rows: PsRow[] = [];
-
-    for (const raw of output.split("\n")) {
-        const line = raw.trim();
-
-        if (line === "") {
-            continue;
-        }
-
-        const parts = line.split(/\s+/);
-
-        if (parts.length < 4) {
-            continue;
-        }
-
-        const pid = Number.parseInt(parts[0], 10);
-        const rssKb = Number.parseInt(parts[1], 10);
-
-        if (Number.isNaN(pid) || Number.isNaN(rssKb)) {
-            continue;
-        }
-
-        const etime = parts[2];
-        const name = parts.slice(3).join(" ");
-
-        rows.push({
-            pid,
-            rssBytes: rssKb * 1024,
-            uptimeMs: parseEtime(etime),
-            name,
-        });
-    }
-
-    return rows;
 }
 
 export function parseVmmapSwap(output: string): number {
@@ -189,14 +138,42 @@ async function getSystemSwap(): Promise<SystemSwap> {
     return parseSwapUsage(stdout);
 }
 
-async function getAllPsRows(): Promise<PsRow[]> {
-    const { stdout, exitCode } = await spawn(["ps", "-A", "-o", "pid=,rss=,etime=,comm="]);
+export function readSwapProcessRows(
+    readers: {
+        processes?: typeof listProcessesWithUsage;
+        executablePath?: typeof readExecutablePath;
+        now?: () => number;
+    } = {}
+): PsRow[] {
+    // Named as `ps -o comm=` printed them, so the one ps skips the command lines.
+    const entries = (readers.processes ?? listProcessesWithUsage)({ otherUsers: true, commands: false, names: true });
 
-    if (exitCode !== 0) {
-        throw new Error(`ps -A failed with exit code ${exitCode}`);
+    if (entries.length === 0) {
+        throw new Error("swap process table unavailable");
     }
 
-    return parsePsOutput(stdout);
+    const now = (readers.now ?? Date.now)();
+    const executablePath = readers.executablePath ?? readExecutablePath;
+
+    return entries.flatMap((entry): PsRow[] => {
+        // Without a start time there is no reliable identity for the per-pid swap cache.
+        if (entry.usage === null || entry.startMs === null) {
+            return [];
+        }
+
+        // `ps -o comm=`'s name keeps spaces in app names and leaves out command arguments; a hard-linked launcher
+        // such as `gt-hub` keeps its own name instead of its executable's `bun`.
+        const name = entry.listedName ?? executablePath(entry.pid) ?? (entry.command?.split(/\s+/)[0] || entry.name);
+        return [
+            {
+                pid: entry.pid,
+                rssBytes: entry.usage.rssBytes,
+                // Match ps etime's whole seconds: reconstructed starts stay within the 5 s cache tolerance.
+                uptimeMs: Math.max(0, Math.floor((now - entry.startMs) / 1000) * 1000),
+                name,
+            },
+        ];
+    });
 }
 
 interface ProbeResult {
@@ -230,7 +207,11 @@ async function pool<T, R>(items: T[], concurrency: number, worker: (item: T) => 
 }
 
 export async function scan(options: ScanOptions): Promise<ScanResult> {
-    const [system, psRows, cache] = await Promise.all([getSystemSwap(), getAllPsRows(), loadCache()]);
+    const [system, psRows, cache] = await Promise.all([
+        getSystemSwap(),
+        Promise.resolve().then(() => readSwapProcessRows()),
+        loadCache(),
+    ]);
     const now = Date.now();
 
     const sortedByRss = [...psRows].sort((a, b) => b.rssBytes - a.rssBytes);

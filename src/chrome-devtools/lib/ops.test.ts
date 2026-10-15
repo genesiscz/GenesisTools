@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { writePidFile } from "@genesiscz/utils/process/pidfile";
+import { processFixture } from "./__tests__/process-fixture";
 import { actionsFromFindings, clearStalePidfile, killRecorderPid, partitionForYes } from "./cleanup.ts";
 import { findingsFromStatus } from "./doctor.ts";
 import { ensureCaptureDir, recorderPidPath } from "./paths.ts";
@@ -89,7 +90,7 @@ describe("findingsFromStatus (doctor is pure — it can never mutate)", () => {
 describe("killRecorderPid (the irreversible call is guarded at the primitive)", () => {
     test("refuses to kill a pid that is not recorder-shaped, and never invokes kill", () => {
         const killed: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "kill") {
                 killed.push(argv);
                 throw new Error("kill must never be reached for a non-recorder pid");
@@ -97,7 +98,7 @@ describe("killRecorderPid (the irreversible call is guarded at the primitive)", 
 
             // ps -axo pid=,command= shows only innocent processes
             return { exitCode: 0, stdout: "  777 1 /usr/libexec/WiFiCloudAssetsXPCService\n", stderr: "" };
-        };
+        });
 
         const result = killRecorderPid(777, exec, () => new Map());
         expect(result.ok).toBe(false);
@@ -107,7 +108,7 @@ describe("killRecorderPid (the irreversible call is guarded at the primitive)", 
 
     test("kills a verified recorder pid via SIGTERM", () => {
         const killed: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "kill") {
                 killed.push(argv);
 
@@ -119,7 +120,7 @@ describe("killRecorderPid (the irreversible call is guarded at the primitive)", 
                 stdout: "  888 1 bun /repo/src/chrome-devtools/index.ts record --port 9222 --all-tabs\n",
                 stderr: "",
             };
-        };
+        });
 
         const result = killRecorderPid(888, exec, () => new Map());
         expect(result.ok).toBe(true);
@@ -128,7 +129,7 @@ describe("killRecorderPid (the irreversible call is guarded at the primitive)", 
 
     test("refuses to kill a LIVE pidfile-owned recorder and points at record --stop", () => {
         const killed: string[][] = [];
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "kill") {
                 killed.push(argv);
                 throw new Error("must not kill a live recorder");
@@ -139,7 +140,7 @@ describe("killRecorderPid (the irreversible call is guarded at the primitive)", 
                 stdout: "  500 1 bun /repo/src/chrome-devtools/index.ts record --port 9224 --all-tabs\n",
                 stderr: "",
             };
-        };
+        });
 
         const result = killRecorderPid(500, exec, () => new Map([[9224, 500]]));
         expect(result.ok).toBe(false);
@@ -156,14 +157,14 @@ describe("killRecorderPid (the irreversible call is guarded at the primitive)", 
             "  79113 79111 bun /repo/tools chrome-devtools record --port 9224 --all-tabs",
             "  79118 79113 bun /repo/src/chrome-devtools/index.ts record --port 9224 --all-tabs",
         ].join("\n");
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv[0] === "kill") {
                 killed.push(argv);
                 throw new Error("must not kill a live recorder's launcher");
             }
 
             return { exitCode: 0, stdout: psLines, stderr: "" };
-        };
+        });
 
         const result = killRecorderPid(79113, exec, () => new Map([[9224, 79118]]));
         expect(result.ok).toBe(false);
@@ -210,13 +211,13 @@ describe("actionsFromFindings / partitionForYes (PR #326 review — the kills-ne
 
 describe("ancestorPids", () => {
     test("collects the whole parent chain of owned pids, stopping at pid 1", () => {
-        const exec = (argv: string[]) => {
+        const exec = processFixture((argv: string[]) => {
             if (argv.includes("pid=,ppid=,command=")) {
                 return { exitCode: 0, stdout: "  10 1 a\n  20 10 b\n  30 20 c\n  99 1 d\n", stderr: "" };
             }
 
             return { exitCode: 1, stdout: "", stderr: "" };
-        };
+        });
 
         const ancestors = ancestorPids([30], exec);
         expect([...ancestors].sort((a, b) => a - b)).toEqual([10, 20]);

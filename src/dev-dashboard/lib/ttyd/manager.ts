@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
+import { readProcess } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
 import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
@@ -68,18 +69,12 @@ function tmuxAlreadyOpenInTtyd(tmuxSessionName: string): boolean {
  * unrelated process that reused the PID. ttyd is spawned with a unique
  * `-b /ttyd/<id>` base path, so its argv carries the session id as a marker.
  */
+export function sessionCommand(pid: number): string | null {
+    return readProcess(pid)?.command ?? null;
+}
+
 async function processMatchesSessionAsync(session: TtydSession): Promise<boolean> {
-    const proc = Bun.spawn(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
-        stdio: ["ignore", "pipe", "ignore"],
-    });
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        return false;
-    }
-
-    const cmd = stdout.trim();
+    const cmd = sessionCommand(session.pid) ?? "";
     return cmd.includes("ttyd") && cmd.includes(`/ttyd/${session.id}`);
 }
 
@@ -271,21 +266,8 @@ export function argvTargetsTmux(cmd: string, tmuxSessionName: string): boolean {
  * True when the live process cmdline still contains the expected session name.
  */
 async function ttydProcessTargetsTmuxAsync(session: TtydSession, tmuxSessionName: string): Promise<boolean> {
-    if (session.pid <= 0) {
-        return false;
-    }
-
-    const proc = Bun.spawn(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
-        stdio: ["ignore", "pipe", "ignore"],
-    });
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        return false;
-    }
-
-    return argvTargetsTmux(stdout, tmuxSessionName);
+    const command = sessionCommand(session.pid);
+    return command !== null && argvTargetsTmux(command, tmuxSessionName);
 }
 
 interface LaunchTtydParams {

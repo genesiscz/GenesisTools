@@ -1,6 +1,6 @@
-import { psEnvValue } from "@genesiscz/utils/ai/account-env";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcesses, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { profiler } from "@genesiscz/utils/profile";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { LiveTeammateProcess, TeamMemberView } from "./types";
@@ -19,21 +19,24 @@ export interface PsResult {
     stderr: string;
 }
 
-export type PsRunner = (cmd: string[]) => PsResult;
+export interface PsRunner {
+    processes: () => PsRow[] | null;
+    environment: (pid: number) => Record<string, string> | null;
+}
 
-const defaultPsRunner: PsRunner = (cmd) => {
-    const proc = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
-
-    return {
-        exitCode: proc.exitCode ?? -1,
-        stdout: proc.stdout.toString(),
-        stderr: proc.stderr.toString(),
-    };
+const defaultPsRunner: PsRunner = {
+    processes: () => {
+        const entries = listProcesses();
+        return entries.length === 0
+            ? null
+            : entries.map((entry) => ({ pid: entry.pid, ppid: entry.ppid, command: entry.command ?? "" }));
+    },
+    environment: readProcessEnvironment,
 };
 
 let psRunner: PsRunner = defaultPsRunner;
 
-/** Test seam for the `ps` calls, mirroring __setPersistRegistryForTest in ttyd/manager. */
+/** Test seam for process-table and environment reads. */
 export function __setPsRunnerForTest(runner: PsRunner | null): void {
     psRunner = runner ?? defaultPsRunner;
 }
@@ -45,30 +48,13 @@ export function __setPsRunnerForTest(runner: PsRunner | null): void {
  */
 function listAllProcesses(): PsRow[] | null {
     try {
-        const result = psRunner(["ps", "-ax", "-o", "pid=,ppid=,command="]);
-
-        // A nonzero exit is not an exception, so this cannot be left to the catch.
-        if (result.exitCode !== 0) {
-            logger.warn(
-                { exitCode: result.exitCode, stderr: result.stderr.trim() },
-                "[teams] ps -ax failed; live status is unknown for every teammate"
-            );
-            return null;
+        const rows = psRunner.processes();
+        if (rows === null) {
+            logger.warn({}, "[teams] process table unavailable; live status is unknown");
         }
-
-        const rows: PsRow[] = [];
-        for (const line of result.stdout.split("\n")) {
-            const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
-            if (!m) {
-                continue;
-            }
-
-            rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] });
-        }
-
         return rows;
     } catch (error) {
-        logger.warn({ error }, "[teams] ps -ax could not be spawned; live status is unknown");
+        logger.warn({ error }, "[teams] process table could not be read; live status is unknown");
         return null;
     }
 }
@@ -96,44 +82,22 @@ function flagValue(cmd: string, flag: string): string | undefined {
 }
 
 /**
- * Read selected env keys from a process. Expensive (`ps eww` per pid) — call
- * only for the few processes that need account attribution, never in a hot loop
- * over every claude on the machine.
+ * Read only the requested environment keys from the process layer. A missing or
+ * unreadable environment leaves account attribution unknown.
  */
 export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, string> {
     const out: Record<string, string> = {};
     try {
-        const result = psRunner(["ps", "eww", "-p", String(pid)]);
-
-        // spawnSync reports an ordinary command failure through exitCode, not by
-        // throwing — the process being gone, or ps refusing another user's env,
-        // never reaches the catch below. An empty result is safe here (unlike the
-        // process scan): callers read it as "account unknown" and fall back.
-        if (result.exitCode !== 0) {
-            logger.debug(
-                { pid, exitCode: result.exitCode, stderr: result.stderr.trim() },
-                "[teams] ps eww failed; account attribution skipped"
-            );
-            return out;
-        }
-
-        const text = result.stdout;
+        const environment = psRunner.environment(pid);
         for (const key of keys) {
-            // `psEnvValue` ends a value at the next `KEY=` word rather than at the next space,
-            // so an account named `work laptop` reads back whole. One reader for every caller;
-            // see @genesiscz/utils/ai/account-env.
-            const value = psEnvValue(text, key);
-
-            if (value !== undefined) {
+            const value = environment?.[key]?.trimEnd();
+            if (value) {
                 out[key] = value;
             }
         }
     } catch (error) {
-        // Callers treat a missing key as "account unknown" and fall back, so a
-        // ps that cannot even be spawned is degraded, not fatal.
-        logger.debug({ error, pid }, "[teams] could not spawn ps eww; account attribution skipped");
+        logger.debug({ error, pid }, "[teams] process environment unavailable; account attribution skipped");
     }
-
     return out;
 }
 
@@ -147,8 +111,9 @@ interface TmuxPaneRow {
 }
 
 function listTmuxPanes(): TmuxPaneRow[] {
-    const tmux = resolveTmuxBin();
     try {
+        // Inside the try: a machine without tmux has no panes, and the scan still lists its teammates.
+        const tmux = resolveTmuxBin();
         const proc = Bun.spawnSync(
             [
                 tmux,

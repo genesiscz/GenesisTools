@@ -3,22 +3,22 @@ import { basename, dirname, join } from "node:path";
 import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { listOpenFiles, type NetworkSnapshot, readNetworkSnapshot } from "@genesiscz/utils/process/process-files";
 import {
-    batchCwd,
-    batchPsInfo,
-    captureSync,
-    PS_COLUMNS_SPEC,
-    type PsRow,
-    parsePsLine,
-} from "@genesiscz/utils/process/ps";
-import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
+    listProcessesWithUsage,
+    type ProcessWithUsage,
+    readProcessesWithUsage,
+    userName,
+} from "@genesiscz/utils/process/processes";
+import { batchCwd, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
+import { listSockets, type SocketEntry } from "@genesiscz/utils/process/sockets";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessStatus } from "./types";
 
 const IS_WINDOWS = process.platform === "win32";
 
-const STATE_PRIORITY: Record<string, number> = {
+export const STATE_PRIORITY: Record<string, number> = {
     LISTEN: 1,
     ESTABLISHED: 2,
     CLOSE_WAIT: 3,
@@ -341,64 +341,18 @@ function extractPort(name: string): number | null {
     return Number.parseInt(match[1], 10);
 }
 
-export function parseLsofOutput(output: string, ownPid = process.pid): PortProcess[] {
-    const lines = output.trim().split("\n");
-
-    if (lines.length <= 1) {
-        return [];
-    }
-
-    const byPid = new Map<number, PortProcess>();
-
-    for (let i = 1; i < lines.length; i += 1) {
-        const parts = lines[i].trim().split(/\s+/);
-
-        if (parts.length < 9) {
-            continue;
-        }
-
-        const pid = Number.parseInt(parts[1], 10);
-
-        if (Number.isNaN(pid) || pid === ownPid) {
-            continue;
-        }
-
-        const name = parts.slice(8).join(" ");
-        const stateMatch = name.match(/\((\w+)\)$/);
-        const state = stateMatch?.[1] ?? "UNKNOWN";
-        const entry: PortProcess = {
-            pid,
-            command: parts[0],
-            user: parts[2],
-            state,
-            name,
-            fd: parts[3],
-        };
-        const existing = byPid.get(pid);
-
-        if (!existing) {
-            byPid.set(pid, entry);
-            continue;
-        }
-
-        const currentPriority = STATE_PRIORITY[existing.state] ?? 99;
-        const newPriority = STATE_PRIORITY[entry.state] ?? 99;
-
-        if (newPriority < currentPriority) {
-            byPid.set(pid, entry);
-        }
-    }
-
-    return Array.from(byPid.values());
-}
-
-function enrichPortProcesses(processes: PortProcess[]): PortSnapshot[] {
+function enrichPortProcesses(processes: PortProcess[], table: Map<number, ProcessWithUsage>): PortSnapshot[] {
     if (processes.length === 0) {
         return [];
     }
 
     const pids = [...new Set(processes.map((processInfo) => processInfo.pid))];
-    const psMap = batchPsInfo(pids);
+    const psMap = new Map(
+        pids.flatMap((pid) => {
+            const entry = table.get(pid);
+            return entry ? [[pid, processRow(entry)] as const] : [];
+        })
+    );
     const cwdMap = batchCwd(pids);
 
     return processes
@@ -437,435 +391,99 @@ function enrichPortProcesses(processes: PortProcess[]): PortSnapshot[] {
         .sort((left, right) => left.port - right.port || left.pid - right.pid);
 }
 
-// =================== Windows-specific Implementation ===================
-
-interface WindowsProcessRow {
-    name: string;
-    processName: string;
-    command: string;
-    cwd: string;
-    memoryKb: number;
-    startTime: Date | null;
-    user: string;
-}
-
-function parseWmicDate(dateStr: string): Date | null {
-    const match = dateStr.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
-
-    if (!match) {
-        return null;
-    }
-
-    const d = new Date(
-        Date.UTC(
-            Number.parseInt(match[1], 10),
-            Number.parseInt(match[2], 10) - 1,
-            Number.parseInt(match[3], 10),
-            Number.parseInt(match[4], 10),
-            Number.parseInt(match[5], 10),
-            Number.parseInt(match[6], 10)
-        )
-    );
-
-    return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function parseTasklistCsv(output: string): Map<number, { name: string; memoryKb: number; user: string }> {
-    const result = new Map<number, { name: string; memoryKb: number; user: string }>();
-
-    for (const line of output.split("\n")) {
-        const trimmed = line.trim();
-
-        if (!trimmed.startsWith('"')) {
-            continue;
-        }
-
-        // Parse quoted CSV manually to handle embedded commas correctly
-        const fields: string[] = [];
-        let inQuote = false;
-        let current = "";
-
-        for (const ch of trimmed) {
-            if (ch === '"') {
-                inQuote = !inQuote;
-            } else if (ch === "," && !inQuote) {
-                fields.push(current);
-                current = "";
-            } else {
-                current += ch;
-            }
-        }
-
-        if (current) {
-            fields.push(current);
-        }
-
-        if (fields.length < 5) {
-            continue;
-        }
-
-        const pid = Number.parseInt(fields[1], 10);
-
-        if (Number.isNaN(pid)) {
-            continue;
-        }
-
-        const memStr = fields[4].replace(/,/g, "").replace(/\s*K$/i, "").trim();
-        const memoryKb = Number.parseInt(memStr, 10);
-        const user = fields.length >= 7 ? fields[6] : "";
-
-        result.set(pid, {
-            name: fields[0],
-            memoryKb: Number.isNaN(memoryKb) ? 0 : memoryKb,
-            user,
-        });
-    }
-
-    return result;
-}
-
-const WINDOWS_TASKLIST_TIMEOUT_MS = 10000;
-const WINDOWS_WMIC_TIMEOUT_MS = 20000;
-const WINDOWS_NETSTAT_TIMEOUT_MS = 10000;
-
-function getWindowsProcessData(pidFilter?: number[]): Map<number, WindowsProcessRow> {
-    const result = new Map<number, WindowsProcessRow>();
-
-    // tasklist without /V is much faster (no window-title or username queries)
-    const taskResult = captureSync("tasklist", ["/FO", "CSV", "/NH"], { timeoutMs: WINDOWS_TASKLIST_TIMEOUT_MS });
-    const taskMap = taskResult.status === 0 ? parseTasklistCsv(taskResult.stdout) : new Map();
-
-    // Filtering wmic by PID is dramatically faster than enumerating every process —
-    // typical Windows hosts run 200-500 processes; we usually only need a handful.
-    const wmicArgs: string[] = ["process"];
-
-    if (pidFilter && pidFilter.length > 0) {
-        const where = pidFilter.map((p) => `ProcessId=${p}`).join(" OR ");
-        wmicArgs.push("where", `(${where})`);
-    }
-
-    wmicArgs.push("get", "ProcessId,Name,CommandLine,WorkingDirectory,CreationDate,WorkingSetSize", "/FORMAT:LIST");
-
-    const wmicResult = captureSync("wmic", wmicArgs, { timeoutMs: WINDOWS_WMIC_TIMEOUT_MS });
-
-    if (wmicResult.status === 0 && wmicResult.stdout.trim()) {
-        let current: Record<string, string> = {};
-
-        const flush = () => {
-            const pid = Number.parseInt(current.ProcessId ?? "", 10);
-
-            if (!Number.isNaN(pid) && pid > 0) {
-                const name = current.Name ?? taskMap.get(pid)?.name ?? "unknown";
-                const processName = name.replace(/\.exe$/i, "").toLowerCase();
-                const memBytes = Number.parseInt(current.WorkingSetSize ?? "0", 10);
-                const taskRow = taskMap.get(pid);
-
-                result.set(pid, {
-                    name,
-                    processName,
-                    command: current.CommandLine ?? name,
-                    cwd: current.WorkingDirectory ?? "",
-                    memoryKb: Number.isNaN(memBytes) ? (taskRow?.memoryKb ?? 0) : Math.round(memBytes / 1024),
-                    startTime: current.CreationDate ? parseWmicDate(current.CreationDate) : null,
-                    user: taskRow?.user ?? "",
-                });
-            }
-
-            current = {};
-        };
-
-        for (const line of wmicResult.stdout.split("\n")) {
-            const trimmed = line.trim();
-
-            if (!trimmed) {
-                flush();
-                continue;
-            }
-
-            const eqIdx = trimmed.indexOf("=");
-
-            if (eqIdx < 0) {
-                continue;
-            }
-
-            current[trimmed.substring(0, eqIdx)] = trimmed.substring(eqIdx + 1);
-        }
-
-        flush();
-    } else {
-        // wmic unavailable — fall back to tasklist data only
-        for (const [pid, task] of taskMap) {
-            const processName = task.name.replace(/\.exe$/i, "").toLowerCase();
-
-            result.set(pid, {
-                name: task.name,
-                processName,
-                command: task.name,
-                cwd: "",
-                memoryKb: task.memoryKb,
-                startTime: null,
-                user: task.user,
-            });
-        }
-    }
-
-    return result;
-}
-
-function parseNetstatForListening(output: string): Array<{ port: number; pid: number }> {
-    const seen = new Set<number>();
-    const results: Array<{ port: number; pid: number }> = [];
-
-    for (const line of output.split("\n")) {
-        const parts = line.trim().split(/\s+/);
-
-        if (parts.length < 5 || parts[0] !== "TCP" || parts[3] !== "LISTENING") {
-            continue;
-        }
-
-        const pid = Number.parseInt(parts[4], 10);
-
-        if (Number.isNaN(pid)) {
-            continue;
-        }
-
-        const portMatch = parts[1].match(/:(\d+)$/);
-
-        if (!portMatch) {
-            continue;
-        }
-
-        const port = Number.parseInt(portMatch[1], 10);
-
-        if (Number.isNaN(port) || seen.has(port)) {
-            continue;
-        }
-
-        seen.add(port);
-        results.push({ port, pid });
-    }
-
-    return results;
-}
-
-function parseNetstatForPort(output: string, targetPort: number): Array<{ port: number; pid: number; state: string }> {
-    const results: Array<{ port: number; pid: number; state: string }> = [];
-    const targetSuffix = `:${targetPort}`;
-
-    for (const line of output.split("\n")) {
-        const parts = line.trim().split(/\s+/);
-
-        if (parts.length < 5 || (parts[0] !== "TCP" && parts[0] !== "UDP")) {
-            continue;
-        }
-
-        if (!parts[1].endsWith(targetSuffix)) {
-            continue;
-        }
-
-        const pid = Number.parseInt(parts[4], 10);
-
-        if (Number.isNaN(pid)) {
-            continue;
-        }
-
-        const portMatch = parts[1].match(/:(\d+)$/);
-
-        if (!portMatch) {
-            continue;
-        }
-
-        const port = Number.parseInt(portMatch[1], 10);
-
-        if (Number.isNaN(port)) {
-            continue;
-        }
-
-        // Normalize Windows state names to match Unix conventions used elsewhere
-        const raw = parts[3];
-        const state = raw === "LISTENING" ? "LISTEN" : raw;
-
-        results.push({ port, pid, state });
-    }
-
-    return results;
-}
-
-function buildWindowsPortSnapshot(
-    port: number,
-    pid: number,
-    state: string,
-    processData: Map<number, WindowsProcessRow>
-): PortSnapshot | null {
-    const proc = processData.get(pid);
-    const processName = proc?.processName ?? "unknown";
-    const command = proc?.command ?? processName;
-    const cwd = proc?.cwd || null;
-    const projectRoot = cwd ? findProjectRoot(cwd) : null;
-
+function processRow(entry: ProcessWithUsage): PsRow {
+    const elapsedMs = entry.startMs === null ? 0 : Date.now() - entry.startMs;
     return {
-        port,
-        pid,
-        processName,
-        command,
-        user: proc?.user ?? "",
-        state,
-        name: `*:${port}`,
-        fd: "tcp",
-        cwd: projectRoot,
-        projectName: projectRoot ? basename(projectRoot) : null,
-        framework:
-            detectFrameworkFromCommand(command, processName) ??
-            (projectRoot ? detectFrameworkFromProject(projectRoot) : null),
-        uptime: formatUptime(proc?.startTime ?? null),
-        startTime: proc?.startTime ?? null,
-        memory: formatMemory(proc?.memoryKb ?? 0),
-        status: "healthy",
+        pid: entry.pid,
+        ppid: entry.ppid,
+        user: entry.uid === null ? "" : (userName(entry.uid) ?? String(entry.uid)),
+        stat: entry.usage?.running ? "R" : entry.state,
+        // `ps`'s %cpu (recent usage on macOS); the average since the start only where nothing measured it.
+        cpu: entry.cpuPercent ?? (elapsedMs > 0 ? (100 * (entry.usage?.cpuTimeMs ?? 0)) / elapsedMs : 0),
+        rss: (entry.usage?.rssBytes ?? 0) / 1024,
+        startTime: entry.startMs === null ? null : new Date(entry.startMs),
+        command: entry.command ?? entry.name,
     };
 }
 
-function getWindowsListeningPorts(): PortSnapshot[] {
-    const netstatResult = captureSync("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
-
-    if (netstatResult.status !== 0 && !netstatResult.stdout.trim()) {
-        return [];
-    }
-
-    const listening = parseNetstatForListening(netstatResult.stdout);
-
-    if (listening.length === 0) {
-        return [];
-    }
-
-    const uniquePids = [...new Set(listening.map(({ pid }) => pid))];
-    const processData = getWindowsProcessData(uniquePids);
-
-    return listening
-        .map(({ port, pid }) => buildWindowsPortSnapshot(port, pid, "LISTEN", processData))
-        .filter((entry): entry is PortSnapshot => entry !== null)
-        .sort((a, b) => a.port - b.port || a.pid - b.pid);
-}
-
-function getWindowsPortDetails(port: number): PortSnapshot[] {
-    const netstatResult = captureSync("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
-
-    if (netstatResult.status !== 0 && !netstatResult.stdout.trim()) {
-        return [];
-    }
-
-    const connections = parseNetstatForPort(netstatResult.stdout, port);
-
-    if (connections.length === 0) {
-        return [];
-    }
-
-    const uniquePids = [...new Set(connections.map(({ pid }) => pid))];
-    const processData = getWindowsProcessData(uniquePids);
-
-    return connections
-        .map(({ port: p, pid, state }) => buildWindowsPortSnapshot(p, pid, state, processData))
-        .filter((entry): entry is PortSnapshot => entry !== null)
-        .sort((a, b) => a.port - b.port || a.pid - b.pid);
-}
-
-function getWindowsAllProcesses(): ProcessSnapshot[] {
-    // For the global ps view we genuinely need every process, so no PID filter here.
-    const processData = getWindowsProcessData();
-    const netstatResult = captureSync("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
-    const listeningPortMap = new Map<number, number[]>();
-
-    if (netstatResult.status === 0) {
-        for (const { port, pid } of parseNetstatForListening(netstatResult.stdout)) {
-            const existing = listeningPortMap.get(pid) ?? [];
-            existing.push(port);
-            listeningPortMap.set(pid, existing);
+function socketProcesses(
+    sockets: SocketEntry[],
+    options: { ownPid: number; table: Map<number, ProcessWithUsage> }
+): PortProcess[] {
+    const byPid = new Map<number, PortProcess>();
+    const files = new Map<number, ReturnType<typeof listOpenFiles>>();
+    // The descriptors of every owner are named from the same network tables, read once for the scan.
+    let network: NetworkSnapshot | null | undefined;
+    for (const socket of sockets) {
+        if (socket.pid === options.ownPid) {
+            continue;
+        }
+        const entry = options.table.get(socket.pid);
+        const local = `${socket.address}:${socket.port}`;
+        const remote = socket.remotePort ? `->${socket.remoteAddress}:${socket.remotePort}` : "";
+        const name = local + remote + (socket.state ? ` (${socket.state})` : "");
+        if (!files.has(socket.pid)) {
+            network = network === undefined ? readNetworkSnapshot() : network;
+            files.set(socket.pid, listOpenFiles(socket.pid, { network }));
+        }
+        const fd =
+            files
+                .get(socket.pid)
+                ?.find(
+                    (file) =>
+                        file.type === socket.family &&
+                        (file.name === name || file.name === `${socket.protocol} ${name}`)
+                )?.fd ?? "";
+        const item: PortProcess = {
+            pid: socket.pid,
+            command: entry?.name ?? "",
+            user: entry?.uid == null ? "" : (userName(entry.uid) ?? String(entry.uid)),
+            state: socket.state ?? "UNKNOWN",
+            name,
+            fd,
+        };
+        const previous = byPid.get(socket.pid);
+        if (!previous || (STATE_PRIORITY[item.state] ?? 99) < (STATE_PRIORITY[previous.state] ?? 99)) {
+            byPid.set(socket.pid, item);
         }
     }
-
-    return Array.from(processData.entries())
-        .filter(([pid]) => pid > 0 && pid !== process.pid)
-        .map(([pid, proc]) => {
-            const cwd = proc.cwd || null;
-            const projectRoot = cwd ? findProjectRoot(cwd) : null;
-
-            return {
-                pid,
-                ppid: null,
-                processName: proc.processName,
-                command: proc.command,
-                user: proc.user,
-                cpu: 0,
-                memory: formatMemory(proc.memoryKb),
-                cwd: projectRoot,
-                projectName: projectRoot ? basename(projectRoot) : null,
-                framework:
-                    detectFrameworkFromCommand(proc.command, proc.processName) ??
-                    (projectRoot ? detectFrameworkFromProject(projectRoot) : null),
-                uptime: formatUptime(proc.startTime),
-                startTime: proc.startTime,
-                description: summarizeCommand(proc.command, proc.processName),
-                status: "healthy" as ProcessStatus,
-                listeningPorts: listeningPortMap.get(pid) ?? [],
-            } satisfies ProcessSnapshot;
-        })
-        .sort((a, b) => a.pid - b.pid);
+    return [...byPid.values()];
 }
 
-// =================== End Windows-specific Implementation ===================
+/** The socket owners with `ps`'s %cpu where the kernel gives it (this user's processes), with no `ps` spawned. */
+function ownerTable(pids: number[]): Map<number, ProcessWithUsage> {
+    return new Map(readProcessesWithUsage(pids, { cpuPercent: true }).map((entry) => [entry.pid, entry]));
+}
 
 export function getPortDetails(port: number): PortSnapshot[] {
-    if (IS_WINDOWS) {
-        return getWindowsPortDetails(port);
-    }
-
-    const result = captureSync("lsof", ["-i", `:${port}`, "-n", "-P"]);
-
-    if (result.status !== 0 && result.stdout.trim() === "") {
-        return [];
-    }
-
-    return enrichPortProcesses(parseLsofOutput(result.stdout));
+    const sockets = listSockets({ port }).filter((socket) => socket.pid !== process.pid);
+    const table = ownerTable(sockets.map((socket) => socket.pid));
+    return enrichPortProcesses(socketProcesses(sockets, { ownPid: process.pid, table }), table);
 }
 
 export function getListeningPorts(): PortSnapshot[] {
-    if (IS_WINDOWS) {
-        return getWindowsListeningPorts();
-    }
-
-    // libproc answers the same rows as lsof (55 of 55 on 2026-10-12) in about 4 ms of CPU instead of 267 ms.
-    const fromKernel = listListeningTcpAsLsof();
-    const result =
-        fromKernel === null
-            ? captureSync("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n"])
-            : { status: 0, stdout: fromKernel, stderr: "" };
-
-    if (result.status !== 0 || result.stdout.trim() === "") {
-        return [];
-    }
-
-    const seenPorts = new Set<number>();
-    const uniquePorts: PortProcess[] = [];
-
-    for (const processInfo of parseLsofOutput(result.stdout, -1)) {
-        const port = extractPort(processInfo.name);
-
-        if (!port || seenPorts.has(port)) {
-            continue;
+    const sockets = listSockets({ protocol: "TCP", state: "LISTEN" });
+    const table = ownerTable(sockets.map((socket) => socket.pid));
+    const seen = new Set<number>();
+    const unique = socketProcesses(sockets, { ownPid: -1, table }).filter((entry) => {
+        const port = extractPort(entry.name);
+        if (!port || seen.has(port)) {
+            return false;
         }
-
-        seenPorts.add(port);
-        uniquePorts.push(processInfo);
-    }
-
-    return enrichPortProcesses(uniquePorts);
+        seen.add(port);
+        return true;
+    });
+    return enrichPortProcesses(unique, table);
 }
 
 function getListeningPortMap(): Map<number, number[]> {
     const values = new Map<number, number[]>();
 
-    for (const portInfo of getListeningPorts()) {
+    for (const portInfo of listSockets({ protocol: "TCP", state: "LISTEN" })) {
         const existing = values.get(portInfo.pid) ?? [];
-        existing.push(portInfo.port);
+        if (!existing.includes(portInfo.port)) {
+            existing.push(portInfo.port);
+        }
         values.set(portInfo.pid, existing);
     }
 
@@ -936,41 +554,13 @@ export function isLikelyDevProcess(processName: string, command: string): boolea
 }
 
 export function getAllProcesses(): ProcessSnapshot[] {
-    if (IS_WINDOWS) {
-        return getWindowsAllProcesses();
-    }
-
-    const result = captureSync("ps", ["-axo", PS_COLUMNS_SPEC]);
-
-    if (result.status !== 0 || result.stdout.trim() === "") {
-        return [];
-    }
-
-    const cwdCandidates: number[] = [];
-    const parsedRows: PsRow[] = [];
+    const parsedRows = listProcessesWithUsage({ otherUsers: true, cpuPercent: true })
+        .map(processRow)
+        .filter((entry) => entry.pid > 1 && entry.pid !== process.pid);
+    const cwdCandidates = parsedRows
+        .filter((entry) => !entry.command.toLowerCase().includes("docker"))
+        .map((entry) => entry.pid);
     const listeningPortMap = getListeningPortMap();
-
-    for (const line of result.stdout.split("\n")) {
-        if (line.trim() === "") {
-            continue;
-        }
-
-        const parsed = parsePsLine(line);
-
-        if (!parsed) {
-            continue;
-        }
-
-        if (parsed.pid <= 1 || parsed.pid === process.pid) {
-            continue;
-        }
-
-        parsedRows.push(parsed);
-
-        if (!parsed.command.toLowerCase().includes("docker")) {
-            cwdCandidates.push(parsed.pid);
-        }
-    }
 
     const cwdMap = batchCwd(cwdCandidates);
 

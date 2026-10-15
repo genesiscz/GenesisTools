@@ -16,6 +16,7 @@
  * 2026-10-12 (Darwin 25.3, arm64).
  */
 import { CString } from "bun:ffi";
+import { readdirSync, statSync } from "node:fs";
 import { errnoNow, type LibSystem, libSystem } from "@genesiscz/utils/fs/native/libsystem";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -25,6 +26,7 @@ const CTL_KERN = 1;
 const KERN_PROC = 14;
 const KERN_PROC_ALL = 0;
 const KERN_PROC_PID = 1;
+const KERN_PROC_TTY = 4;
 const KERN_ARGMAX = 8;
 const KERN_PROCARGS2 = 49;
 const ENOMEM = 12;
@@ -40,8 +42,16 @@ const KP_COMM_SIZE = 17;
 /** `kp_eproc.e_ucred.cr_uid`: the effective uid, what `ps -o uid` prints. */
 const KP_UID = 420;
 const KP_PPID = 560;
+/** `kp_eproc.e_pgid`, right after `e_ppid`. */
+const KP_PGID = 564;
 const KP_TDEV = 572;
 const SZOMB = 5;
+/**
+ * `p_stat` (`sys/proc.h`) as a `ps -o state=` letter. Every live process is `SRUN` at this level: `ps` tells R from
+ * S (and I, idle over 20 s) by its threads' run states, so a live process reads S here and
+ * {@link readProcessUsage}'s `running` says whether a thread is on a CPU. SIDL (being created) reads I.
+ */
+const STATE_LETTERS = ["?", "I", "S", "S", "T", "Z"];
 const NODEV = -1;
 const S_IFCHR = 0o020000;
 
@@ -51,11 +61,25 @@ const PROC_TASKINFO_SIZE = 96;
 const PTI_RESIDENT_SIZE = 8;
 const PTI_TOTAL_USER = 16;
 const PTI_TOTAL_SYSTEM = 24;
+/** `proc_taskinfo.pti_threadnum` and `pti_numrunning`, after six 64-bit fields and nine 32-bit counters. */
+const PTI_THREADNUM = 84;
+const PTI_NUMRUNNING = 88;
 const PROC_PIDPATHINFO_MAXSIZE = 4096;
+// proc_pidinfo flavors and `struct proc_threadinfo` (sys/proc_info.h): one thread's scheduler usage.
+const PROC_PIDTHREADINFO = 5;
+const PROC_PIDLISTTHREADS = 6;
+const PROC_THREADINFO_SIZE = 112;
+const PTH_CPU_USAGE = 16;
+const PTH_FLAGS = 28;
+const TH_FLAGS_IDLE = 0x2;
+/** A thread's `cpu_usage` of TH_USAGE_SCALE is one whole CPU. */
+const TH_USAGE_SCALE = 1000;
 
 export interface ProcessTableRow {
     pid: number;
     ppid: number;
+    /** Process group, as `ps -o pgid=` prints it. */
+    pgid: number;
     /** Effective uid. */
     uid: number;
     /** Start time in epoch milliseconds (microsecond source, so finer than `ps lstart`). */
@@ -63,6 +87,8 @@ export interface ProcessTableRow {
     /** The kernel's 16-byte command name (`p_comm`). */
     comm: string;
     zombie: boolean;
+    /** S live, T stopped, Z zombie, I being created: `p_stat` cannot tell running from sleeping. */
+    state: string;
     /** The controlling terminal as `ps -o tty=` prints it (`ttys003`), or null where `ps` prints `??`. */
     tty: string | null;
 }
@@ -79,17 +105,24 @@ export interface ProcessUsage {
     rssBytes: number;
     /** User plus system CPU time. */
     cpuTimeMs: number;
+    /** Threads, as `ps -M` counts them. */
+    threads: number;
+    /** A thread is on a CPU right now: what makes `ps -o state=` print R rather than S. */
+    running: boolean;
 }
 
 let selfCheck: "pending" | "ok" | "failed" = "pending";
 const sizeWord = new BigUint64Array(1);
 const mibAll = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_ALL]);
+const mibTty = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_TTY, 0]);
 const mibPid = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_PID, 0]);
 const mibArgs = new Int32Array([CTL_KERN, KERN_PROCARGS2, 0]);
 const mibArgmax = new Int32Array([CTL_KERN, KERN_ARGMAX]);
 const argmaxWord = new Int32Array(1);
 const rowBuffer = new Uint8Array(KINFO_PROC_SIZE);
 const taskWords = new Uint32Array(PROC_TASKINFO_SIZE / 4);
+const threadWords = new Int32Array(PROC_THREADINFO_SIZE / 4);
+let threadIds = new BigUint64Array(256);
 const timebaseWords = new Uint32Array(2);
 const pathBuffer = Buffer.alloc(PROC_PIDPATHINFO_MAXSIZE);
 let tableBuffer = new Uint8Array(0);
@@ -128,9 +161,39 @@ export function processTableAvailable(): boolean {
     return calls() !== null;
 }
 
+/**
+ * The `/dev` name of every terminal device, read once: one `readdir` and a `stat` per `tty*` entry cost about 1 ms,
+ * while `devname()` costs about 0.5 ms a call. A terminal opened later is not in it, and falls back to `devname()`.
+ */
+function terminalNames(): Map<number, string> {
+    const names = new Map<number, string>();
+
+    try {
+        for (const name of readdirSync("/dev")) {
+            if (name.startsWith("tty") || name === "console") {
+                try {
+                    names.set(statSync(`/dev/${name}`).rdev, name);
+                } catch {
+                    // Gone between the readdir and the stat.
+                }
+            }
+        }
+    } catch {
+        // No /dev listing: every lookup goes to devname().
+    }
+
+    return names;
+}
+
 function ttyName(symbols: LibSystem, dev: number): string | null {
     if (dev === NODEV) {
         return null;
+    }
+
+    if (ttyNames.size === 0) {
+        for (const [device, name] of terminalNames()) {
+            ttyNames.set(device, name);
+        }
     }
 
     const cached = ttyNames.get(dev);
@@ -158,10 +221,12 @@ function decodeRow(symbols: LibSystem, bytes: Uint8Array, view: DataView, base: 
     return {
         pid: view.getInt32(base + KP_PID, true),
         ppid: view.getInt32(base + KP_PPID, true),
+        pgid: view.getInt32(base + KP_PGID, true),
         uid: view.getUint32(base + KP_UID, true),
         startMs: startSec * 1000 + Math.floor(startUsec / 1000),
         comm: Buffer.from(bytes.buffer, bytes.byteOffset + base + KP_COMM, commEnd - base - KP_COMM).toString("utf8"),
         zombie: bytes[base + KP_STAT] === SZOMB,
+        state: STATE_LETTERS[bytes[base + KP_STAT]] ?? "?",
         tty: ttyName(symbols, view.getInt32(base + KP_TDEV, true)),
     };
 }
@@ -190,6 +255,19 @@ export function readProcessRow(pid: number): ProcessTableRow | null {
 
 /** Every process on the machine, any user, from one `sysctl(KERN_PROC_ALL)`. Null when unavailable. */
 export function listProcessTable(): ProcessTableRow[] | null {
+    return readTable(mibAll);
+}
+
+/**
+ * The processes whose controlling terminal is device `dev` (`stat(/dev/ttys003).rdev`), any user, from one
+ * `sysctl(KERN_PROC_TTY)`: the kernel filters, so a terminal's dozen rows cost what a dozen rows cost, not 1,300.
+ */
+export function listTtyTable(dev: number): ProcessTableRow[] | null {
+    mibTty[3] = dev;
+    return readTable(mibTty);
+}
+
+function readTable(mib: Int32Array): ProcessTableRow[] | null {
     const symbols = calls();
 
     if (!symbols) {
@@ -199,8 +277,8 @@ export function listProcessTable(): ProcessTableRow[] | null {
     for (let attempt = 0; attempt < 4; attempt++) {
         sizeWord[0] = 0n;
 
-        if (symbols.sysctl(mibAll, 3, null, sizeWord, null, 0) !== 0) {
-            log.warn({ errno: errnoNow(symbols) }, "sysctl(KERN_PROC_ALL) size query failed");
+        if (symbols.sysctl(mib, mib.length, null, sizeWord, null, 0) !== 0) {
+            log.warn({ errno: errnoNow(symbols), mib: [...mib] }, "sysctl(KERN_PROC) size query failed");
             return null;
         }
 
@@ -213,7 +291,7 @@ export function listProcessTable(): ProcessTableRow[] | null {
 
         sizeWord[0] = BigInt(tableBuffer.byteLength);
 
-        if (symbols.sysctl(mibAll, 3, tableBuffer, sizeWord, null, 0) === 0) {
+        if (symbols.sysctl(mib, mib.length, tableBuffer, sizeWord, null, 0) === 0) {
             const count = Math.floor(Number(sizeWord[0]) / KINFO_PROC_SIZE);
             const view = new DataView(tableBuffer.buffer);
             const rows: ProcessTableRow[] = [];
@@ -228,12 +306,12 @@ export function listProcessTable(): ProcessTableRow[] | null {
         const errno = errnoNow(symbols);
 
         if (errno !== ENOMEM) {
-            log.warn({ errno }, "sysctl(KERN_PROC_ALL) failed");
+            log.warn({ errno, mib: [...mib] }, "sysctl(KERN_PROC) failed");
             return null;
         }
     }
 
-    log.warn("sysctl(KERN_PROC_ALL) kept growing past four attempts");
+    log.warn({ mib: [...mib] }, "sysctl(KERN_PROC) kept growing past four attempts");
     return null;
 }
 
@@ -297,11 +375,8 @@ function psText(buffer: Buffer, start: number, end: number): string {
     return parts.join("");
 }
 
-function readArgsWith(
-    symbols: LibSystem,
-    pid: number,
-    options: { env: boolean; psEncoded: boolean }
-): ProcessArgs | null {
+/** The argument block of `pid` into the shared buffer; its size, or null when the kernel withholds it. */
+function fetchArgs(symbols: LibSystem, pid: number): number | null {
     const buffer = argumentBuffer(symbols);
     mibArgs[2] = pid;
     sizeWord[0] = BigInt(buffer.byteLength);
@@ -312,11 +387,63 @@ function readArgsWith(
     }
 
     const size = Number(sizeWord[0]);
+    return size < 4 ? null : size;
+}
 
-    if (size < 4) {
+/** A byte that `ps` escapes ({@link psText}); NUL is the separator between arguments, not one of them. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the control bytes ps escapes are what this finds
+const CONTROL_BYTE = /[\x01-\x1f\x7f]/;
+
+/**
+ * `ps -o command=` from the argument block already in `buffer`, with one decode and one join instead of a byte loop
+ * per argument. Measured 2026-10-15 on 946 processes: equal to the escaping path on all 940 it answers, about 9 ms of
+ * CPU against 14 cold. Null when an argument holds a byte `ps` escapes, or the block does not parse.
+ */
+function plainPsCommand(buffer: Buffer, size: number): string | null {
+    const argc = buffer.readInt32LE(0);
+    let end = buffer.indexOf(0, 4);
+
+    if (end === -1 || end >= size) {
         return null;
     }
 
+    let offset = end;
+
+    while (offset < size && buffer[offset] === 0) {
+        offset++;
+    }
+
+    const start = offset;
+
+    for (let index = 0; index < argc && offset < size; index++) {
+        end = buffer.indexOf(0, offset);
+
+        if (end === -1 || end > size) {
+            end = size;
+        }
+
+        offset = end + 1;
+    }
+
+    const text = buffer.toString("utf8", start, Math.max(start, Math.min(end, size)));
+    return CONTROL_BYTE.test(text) ? null : text.replaceAll("\0", " ").trim();
+}
+
+function readArgsWith(
+    symbols: LibSystem,
+    pid: number,
+    options: { env: boolean; psEncoded: boolean }
+): ProcessArgs | null {
+    const size = fetchArgs(symbols, pid);
+
+    if (size === null) {
+        return null;
+    }
+
+    return parseArgs(argumentBuffer(symbols), size, options);
+}
+
+function parseArgs(buffer: Buffer, size: number, options: { env: boolean; psEncoded: boolean }): ProcessArgs | null {
     const text = (start: number, end: number) =>
         options.psEncoded ? psText(buffer, start, end) : buffer.toString("utf8", start, end);
     const argc = buffer.readInt32LE(0);
@@ -391,13 +518,21 @@ export function readPsCommand(pid: number, options: { env?: boolean } = {}): str
         return null;
     }
 
-    const args = readArgsWith(symbols, pid, { env: options.env === true, psEncoded: true });
+    const size = fetchArgs(symbols, pid);
 
-    if (!args) {
+    if (size === null) {
         return null;
     }
 
-    return [...args.argv, ...args.env].join(" ").trim();
+    const buffer = argumentBuffer(symbols);
+    const plain = options.env === true ? null : plainPsCommand(buffer, size);
+
+    if (plain !== null) {
+        return plain;
+    }
+
+    const args = parseArgs(buffer, size, { env: options.env === true, psEncoded: true });
+    return args ? [...args.argv, ...args.env].join(" ").trim() : null;
 }
 
 /** The executable of any process (`proc_pidpath` answers for other users too), or null. */
@@ -410,6 +545,35 @@ export function readProcessPath(pid: number): string | null {
 
     const length = symbols.proc_pidpath(pid, pathBuffer, PROC_PIDPATHINFO_MAXSIZE);
     return length > 0 ? pathBuffer.toString("utf8", 0, length) : null;
+}
+
+let childBuffer = new Int32Array(256);
+
+/**
+ * The children of `pid` straight from the kernel (`proc_listchildpids`), for any user's process: one call instead of
+ * the whole table when only one process's children matter. Null when libproc is not there.
+ */
+export function listChildPids(pid: number): number[] | null {
+    const symbols = calls();
+
+    if (!symbols) {
+        return null;
+    }
+
+    for (;;) {
+        const count = symbols.proc_listchildpids(pid, childBuffer, childBuffer.byteLength);
+
+        if (count < 0) {
+            return null;
+        }
+
+        // A full buffer may have cut the list short: read again with more room.
+        if (count < childBuffer.length) {
+            return [...childBuffer.subarray(0, count)];
+        }
+
+        childBuffer = new Int32Array(childBuffer.length * 4);
+    }
 }
 
 /** RSS and CPU time of one of this user's processes, or null for anyone else's, a zombie, or a pid that is gone. */
@@ -436,7 +600,50 @@ export function readProcessUsage(pid: number): ProcessUsage | null {
     const userUs = Math.floor((word(PTI_TOTAL_USER) * nsPerMachUnit) / 1000);
     const systemUs = Math.floor((word(PTI_TOTAL_SYSTEM) * nsPerMachUnit) / 1000);
 
-    return { rssBytes: word(PTI_RESIDENT_SIZE), cpuTimeMs: (userUs + systemUs) / 1000 };
+    return {
+        rssBytes: word(PTI_RESIDENT_SIZE),
+        cpuTimeMs: (userUs + systemUs) / 1000,
+        threads: taskWords[PTI_THREADNUM / 4],
+        running: taskWords[PTI_NUMRUNNING / 4] > 0,
+    };
+}
+
+/**
+ * `ps -o %cpu=` of one of this user's processes: the scheduler's recent usage of each thread that is not idle, summed
+ * as `ps` sums it, not CPU time over the process's life. Null for another user's process, a zombie, or a pid that is
+ * gone. Measured against `ps` on 2026-10-15: 931 of 931 equal, in about 6 ms of CPU for all of them (`ps`: 55 ms).
+ */
+export function readCpuPercent(pid: number): number | null {
+    const symbols = calls();
+
+    if (!symbols) {
+        return null;
+    }
+
+    for (;;) {
+        const bytes = symbols.proc_pidinfo(pid, PROC_PIDLISTTHREADS, 0n, threadIds, threadIds.byteLength);
+
+        if (bytes <= 0) {
+            return null;
+        }
+
+        // A full buffer may have cut the list short: read again with more room.
+        if (bytes / 8 < threadIds.length) {
+            let usage = 0;
+
+            for (const thread of threadIds.subarray(0, bytes / 8)) {
+                const read = symbols.proc_pidinfo(pid, PROC_PIDTHREADINFO, thread, threadWords, PROC_THREADINFO_SIZE);
+
+                if (read === PROC_THREADINFO_SIZE && (threadWords[PTH_FLAGS / 4] & TH_FLAGS_IDLE) === 0) {
+                    usage += threadWords[PTH_CPU_USAGE / 4];
+                }
+            }
+
+            return (usage * 100) / TH_USAGE_SCALE;
+        }
+
+        threadIds = new BigUint64Array(threadIds.length * 4);
+    }
 }
 
 /**

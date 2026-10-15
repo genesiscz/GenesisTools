@@ -11,6 +11,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { tmpdir } from "@genesiscz/utils/paths";
+import { childPids } from "@genesiscz/utils/process/processes";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
 import { parseNativeWindowList, parseScreenList, type ScreenInfo, type WindowBounds } from "./native-record";
 import { refuseRealMachineInTest } from "./runner";
@@ -683,14 +684,13 @@ export function navigateBrowser(app: string, url: string, target: "new-tab" | "a
 // capture process, which keeps recording and then wedges the retry as a
 // "concurrent capture" (observed live: auto-retry failed 4/5 while a direct
 // bypass run succeeded 2/2 — the corpse of attempt 1 was the difference).
+export function childPidsOf(pid: number): number[] {
+    return childPids(pid);
+}
+
 export function killTree(pid: number): void {
-    const kids = Bun.spawnSync(["pgrep", "-P", String(pid)], { timeout: 2_000 })
-        .stdout.toString()
-        .trim()
-        .split("\n")
-        .filter(Boolean);
-    for (const k of kids) {
-        killTree(Number(k));
+    for (const child of childPidsOf(pid)) {
+        killTree(child);
     }
 
     try {

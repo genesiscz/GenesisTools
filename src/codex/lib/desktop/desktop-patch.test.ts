@@ -1,12 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as processes from "@genesiscz/utils/process/processes";
 
 import {
     backupDirFor,
+    codexDesktopIsRunning,
     developerIdFromFindIdentity,
     launchableEntitlements,
     pruneOtherVersionBackups,
@@ -436,6 +438,51 @@ describe("apply and revert", () => {
         const after = inspectDesktop(appPath, backupRoot, deps().deps);
         expect(after.headerHash).toBe(before.headerHash);
         expect(after.patched).toBe(false);
+    });
+});
+
+describe("codexDesktopIsRunning", () => {
+    const appPath = "/Applications/Codex.app";
+    const binary = `${appPath}/Contents/MacOS/Codex`;
+
+    /** The layer as macOS gives it: another user's command line only when it is asked for with `otherUsers`. */
+    function layerWith(rows: { pid: number; uid: number; command: string }[]) {
+        return spyOn(processes, "listProcesses").mockImplementation((options) =>
+            rows.map((row) => ({
+                pid: row.pid,
+                ppid: 1,
+                pgid: row.pid,
+                uid: row.uid,
+                name: "Codex",
+                command: row.uid === (process.geteuid?.() ?? -1) || options?.otherUsers ? row.command : null,
+                tty: null,
+                startMs: 0,
+                zombie: false,
+                state: "S",
+            }))
+        );
+    }
+
+    test("another user's running copy of the shared app is found", () => {
+        const layer = layerWith([{ pid: 4242, uid: (process.geteuid?.() ?? 0) + 1, command: `${binary} --flag` }]);
+
+        try {
+            expect(codexDesktopIsRunning(appPath)).toBe(true);
+        } finally {
+            layer.mockRestore();
+        }
+    });
+
+    test("a process that merely sits beside the bundle is not a running copy", () => {
+        const layer = layerWith([
+            { pid: 4243, uid: process.geteuid?.() ?? 0, command: `${appPath}/Contents/Resources/x` },
+        ]);
+
+        try {
+            expect(codexDesktopIsRunning(appPath)).toBe(false);
+        } finally {
+            layer.mockRestore();
+        }
     });
 });
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import {
     agentKindFromLauncher,
     claudeSessionFromArgv,
     cleanLaunchCommand,
+    collectTtyCapture,
     deriveReplayCommand,
     discoverCcRunAliases,
     isAgentLauncher,
@@ -15,6 +16,7 @@ import {
     setCcRunAliases,
 } from "@app/cmux/lib/command-capture";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as processes from "@genesiscz/utils/process/processes";
 
 beforeAll(() => {
     setCcRunAliases(["cr"]);
@@ -22,6 +24,47 @@ beforeAll(() => {
 
 afterAll(() => {
     setCcRunAliases(undefined);
+});
+
+describe("collectTtyCapture", () => {
+    test("the launcher started a few ms before its agent in the same second is the launch command", async () => {
+        const base = 1_792_001_371_000;
+        const entry = (pid: number, startMs: number) => ({
+            pid,
+            ppid: 1,
+            pgid: null,
+            uid: null,
+            name: "x",
+            command: null,
+            tty: "ttys007",
+            startMs,
+            zombie: false,
+            state: "S",
+        });
+        const commands: Record<number, string> = {
+            4199: "bun /Users/x/Projects/GenesisTools/tools claude run work",
+            4207: "gt-cc run work",
+            4208: "/Users/x/.bun/bin/claude --resume 3f6c2a1e-1111-4222-8333-944455556666",
+        };
+        // The kernel table lists the newest pid first.
+        const list = spyOn(processes, "listProcesses").mockReturnValue([
+            entry(4208, base + 579),
+            entry(4207, base + 559),
+            entry(4199, base + 471),
+        ]);
+        const read = spyOn(processes, "readProcess").mockImplementation((pid) => ({
+            ...entry(pid, base),
+            command: commands[pid] ?? null,
+        }));
+
+        try {
+            const capture = await collectTtyCapture();
+            expect(capture.launchCommands.get("ttys007")).toBe("tools claude run work");
+        } finally {
+            list.mockRestore();
+            read.mockRestore();
+        }
+    });
 });
 
 describe("cleanLaunchCommand", () => {
@@ -303,16 +346,6 @@ describe("agent launchers do not match a hyphenated neighbour", () => {
         expect(agentKindFromLauncher("codex resume abc")).toBe("codex");
         expect(agentKindFromLauncher("grok -r abc")).toBe("grok");
         expect(agentKindFromLauncher("claude --resume abc")).toBe("claude");
-    });
-});
-
-describe("etimeToSeconds", () => {
-    test("parses mm:ss, hh:mm:ss and dd-hh:mm:ss", async () => {
-        const { etimeToSeconds } = await import("@app/cmux/lib/command-capture");
-        expect(etimeToSeconds("00:05")).toBe(5);
-        expect(etimeToSeconds("01:02:03")).toBe(3723);
-        expect(etimeToSeconds("2-01:00:00")).toBe(176400);
-        expect(etimeToSeconds("garbage")).toBe(0);
     });
 });
 

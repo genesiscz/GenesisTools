@@ -5,7 +5,6 @@ import {
     nextSortBy,
     OPEN_FILES_TTL_MS,
     type ProcessInfo,
-    parseOpenFiles,
     planOpenFilesRefresh,
     sortProcesses,
     toProcessInfos,
@@ -18,13 +17,6 @@ const PS_OUTPUT = [
     "  155   0.4  26512 /System/Library/Support/mdworker_shared -s mdworker",
     " 4021  12.5 174080 /opt/homebrew/bin/bun run src/macos-resources/index.tsx",
     " 5150   3.0  51200 /Applications/Widget.app/Contents/MacOS/widget --profile work",
-].join("\n");
-
-const LSOF_COLUMNS = [
-    "COMMAND   PID   USER   FD   TYPE DEVICE  SIZE/OFF   NODE NAME",
-    "bun      4021  alice  cwd    DIR 1,17         832 123456 /Users/alice/repo",
-    "bun      4021  alice  txt    REG 1,17     1048576 123457 /opt/homebrew/bin/bun",
-    "bun      4021  alice    0u   CHR 16,2       0t120    900 /dev/ttys002",
 ].join("\n");
 
 function row(pid: number, overrides: Partial<ProcessInfo> = {}): ProcessInfo {
@@ -258,29 +250,5 @@ describe("applyOpenFileCounts", () => {
 
         expect(result.lastFilesUpdate.has(999)).toBe(false);
         expect(result.lastFilesUpdate.has(500)).toBe(true);
-    });
-});
-
-describe("parseOpenFiles", () => {
-    test("reads fd, type and name, and sorts by type then name", () => {
-        const files = parseOpenFiles(LSOF_COLUMNS);
-
-        expect(files).toHaveLength(3);
-        expect(files[0]).toEqual({ fd: "0u", type: "CHR", name: "/dev/ttys002" });
-        expect(files[1].type).toBe("DIR");
-        expect(files[2].type).toBe("REG");
-    });
-
-    test("returns nothing for empty output or a header-only listing", () => {
-        expect(parseOpenFiles("")).toEqual([]);
-        expect(parseOpenFiles("COMMAND   PID   USER   FD   TYPE DEVICE  SIZE/OFF   NODE NAME")).toEqual([]);
-    });
-
-    test("keeps spaces inside a path", () => {
-        const files = parseOpenFiles(
-            ["HEADER", "bun  4021 alice  12r  REG 1,17  10 900 /Users/alice/My Documents/a b.txt"].join("\n")
-        );
-
-        expect(files[0].name).toBe("/Users/alice/My Documents/a b.txt");
     });
 });

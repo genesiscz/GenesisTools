@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+    getTopProcessesByRss,
     MemoryAnalyzer,
     parseSwapusage,
     parseVmStat,
@@ -11,6 +12,8 @@ import {
 } from "@app/doctor/analyzers/memory";
 import { analysisDirFor } from "@app/doctor/lib/paths";
 import type { EngineEvent } from "@app/doctor/lib/types";
+import * as processOs from "@genesiscz/utils/process/os";
+import * as ps from "@genesiscz/utils/process/ps";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const RUN_IDS: string[] = [];
@@ -119,4 +122,21 @@ describe("MemoryAnalyzer smoke", () => {
             expect(Math.abs((reported?.usedBytes ?? Number.NaN) - swap.usedBytes)).toBeLessThan(256 * 1024 * 1024);
         }
     );
+});
+it("top RSS processes use one Windows snapshot even when the limit excludes rows", async () => {
+    const platform = spyOn(processOs, "processPlatform").mockReturnValue("win32");
+    const capture = spyOn(ps, "captureSync").mockReturnValue({
+        stderr: "",
+        status: 0,
+        stdout: '[{"ProcessId":81001,"Name":"worker.exe","CommandLine":"worker.exe --job fixture","WorkingSetSize":1024},{"ProcessId":81002,"Name":"helper.exe","WorkingSetSize":2048}]',
+    });
+    try {
+        const rows = await getTopProcessesByRss(1);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ pid: 81002, comm: "helper.exe", rssBytes: 2048 });
+        expect(capture).toHaveBeenCalledTimes(1);
+    } finally {
+        capture.mockRestore();
+        platform.mockRestore();
+    }
 });

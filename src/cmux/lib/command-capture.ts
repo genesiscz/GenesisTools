@@ -1,12 +1,12 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parseEtime } from "@app/macos/lib/swap/scanner";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 
 /**
  * Foreground-command capture and replay-command derivation for profile save.
@@ -47,43 +47,28 @@ export function cleanLaunchCommand(command: string): string {
         .trim();
 }
 
-/** `[[dd-]hh:]mm:ss` → seconds. Returns 0 for unparseable values. */
-export function etimeToSeconds(etime: string): number {
-    // parseEtime owns this format (same `ps -o etime=` output, same regex); it
-    // answers in milliseconds, and the tty scan compares ages in seconds.
-    return parseEtime(etime) / 1000;
-}
-
 interface TtyProcess {
     tty: string;
-    ageSeconds: number;
+    /** Kernel start time in ms; an unknown one counts as now, the youngest. */
+    startMs: number;
     command: string;
 }
 
+/**
+ * Lowest pid first, as `ps` listed them, with the start time to the millisecond: a launcher and the agent it starts
+ * begin in the same second, so whole seconds tied them and the kernel table's newest-first order picked the agent.
+ */
 async function readTtyProcessTable(): Promise<TtyProcess[]> {
-    const out: TtyProcess[] = [];
-    try {
-        const proc = Bun.spawn(["ps", "-axo", "tty=,etime=,command="], {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-        const text = await new Response(proc.stdout).text();
-        await proc.exited;
-
-        for (const line of text.split("\n")) {
-            const match = line.match(/^\s*(ttys\d+)\s+([\d:-]+)\s+(.+)$/);
-            if (!match) {
-                continue;
+    const now = Date.now();
+    return listProcesses({ commands: false })
+        .sort((a, b) => a.pid - b.pid)
+        .flatMap((entry) => {
+            if (!entry.tty || !/^ttys\d+$/.test(entry.tty)) {
+                return [];
             }
-            const [, tty, etime, command] = match;
-            out.push({ tty, ageSeconds: etimeToSeconds(etime), command });
-        }
-    } catch (error) {
-        logger.warn({ error }, "[command-capture] ps tty scan failed");
-    }
-
-    return out;
+            const command = readProcess(entry.pid)?.command;
+            return command ? [{ tty: entry.tty, startMs: entry.startMs ?? now, command }] : [];
+        });
 }
 
 export interface TtyCapture {
@@ -134,7 +119,7 @@ export async function collectTtyCapture(): Promise<TtyCapture> {
         }
 
         const existing = oldest.get(entry.tty);
-        if (!existing || entry.ageSeconds > existing.ageSeconds) {
+        if (!existing || entry.startMs < existing.startMs) {
             oldest.set(entry.tty, entry);
         }
     }
