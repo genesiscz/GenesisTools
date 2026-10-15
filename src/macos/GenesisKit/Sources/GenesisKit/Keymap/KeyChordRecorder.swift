@@ -49,6 +49,12 @@ public struct KeyChordRecorder: View {
     }
 }
 
+public extension KeyChordRecorder {
+    /// Why the chord cannot be a shortcut, or nil: the rule every recorder shares, so an app's own recorder (a global
+    /// hotkey's) refuses the same keys with the same words.
+    @MainActor static func problem(_ chord: KeyChord) -> String? { KeyChordRecorderModel.problem(chord) }
+}
+
 /// Holds the key monitor while a recorder listens. The monitor swallows every key press it sees.
 @MainActor
 final class KeyChordRecorderModel: ObservableObject {
