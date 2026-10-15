@@ -278,6 +278,10 @@ export const CALL_SITES: CallSite[] = [
     },
     {
         id: "codex-desktop-running",
+        budget: {
+            spawns: 1,
+            reason: "the app bundle is shared, and another user's command line only the setuid ps reads on macOS",
+        },
         file: "src/codex/lib/desktop/app-bundle.ts",
         spawn: "ps -axww -o command=",
         frequency: "per-command",
