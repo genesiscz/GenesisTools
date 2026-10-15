@@ -105,7 +105,9 @@ export function replaceAsarIntegrityHash(plist: string, previousHash: string, ne
 }
 
 export function codexDesktopIsRunning(appPath: string): boolean {
-    const entries = listProcesses();
+    // Every user's command line, as the `ps -axww` this replaced printed: the bundle is shared, and a copy another
+    // logged-in user runs must stop a patch or revert as much as one of ours.
+    const entries = listProcesses({ otherUsers: true });
     if (entries.length === 0) {
         throw new Error("process table unavailable");
     }
