@@ -138,33 +138,6 @@ function pickUnique(hits: ReplayCatalogSession[]): ReplayCatalogSession | undefi
     return undefined;
 }
 
-/** Select the best Grok session for the tab title and directory using the shared evidence ranking. */
-export function matchGrokSession(
-    title: string,
-    cwd: string | undefined,
-    sessions: ReplayCatalogSession[]
-): ReplayCatalogSession | undefined {
-    return matchAgentSession("grok", title, cwd, sessions)?.session;
-}
-
-/** Select the best Claude session for the tab title and directory using the shared evidence ranking. */
-export function matchClaudeSession(
-    title: string,
-    cwd: string | undefined,
-    sessions: ReplayCatalogSession[]
-): ReplayCatalogSession | undefined {
-    return matchAgentSession("claude", title, cwd, sessions)?.session;
-}
-
-/** Select the best Codex session for the tab title and directory using the shared evidence ranking. */
-export function matchCodexSession(
-    title: string,
-    cwd: string | undefined,
-    sessions: ReplayCatalogSession[]
-): ReplayCatalogSession | undefined {
-    return matchAgentSession("codex", title, cwd, sessions)?.session;
-}
-
 /**
  * Title evidence outranks prompt evidence, and the pane's own directory
  * outranks both.
@@ -186,7 +159,7 @@ export function matchCodexSession(
  * exact-title session for every idle tab. Then only a title that names ANOTHER
  * agent disqualifies the match.
  */
-function matchAgentSession(
+export function matchAgentSession(
     kind: AgentKind,
     title: string,
     cwd: string | undefined,
@@ -567,10 +540,6 @@ export function dedupeResumeTargets(profile: Profile, catalog: ReplayCatalog): P
     });
 }
 
-export function grokSessionsDir(): string {
-    return grokSessionsRoot();
-}
-
 async function loadNativeCatalog(options: {
     kind: "codex" | "grok";
     cwds: string[];
@@ -601,7 +570,7 @@ async function loadNativeCatalog(options: {
 
 export function loadGrokCatalog(
     cwds: string[],
-    sessionsRoot: string = grokSessionsDir(),
+    sessionsRoot: string = grokSessionsRoot(),
     options: { cached?: boolean } = {}
 ): Promise<ReplayCatalogSession[]> {
     return loadNativeCatalog({ kind: "grok", cwds, roots: [sessionsRoot], cached: options.cached });
@@ -683,7 +652,7 @@ export function collectProfileCwds(profile: Profile): string[] {
 export async function loadReplayCatalog(profile: Profile, options: { cached?: boolean } = {}): Promise<ReplayCatalog> {
     const cwds = collectProfileCwds(profile);
     const [grok, claude, codex] = await Promise.all([
-        loadGrokCatalog(cwds, grokSessionsDir(), { cached: options.cached }),
+        loadGrokCatalog(cwds, grokSessionsRoot(), { cached: options.cached }),
         loadClaudeCatalog({ cached: options.cached }),
         loadCodexCatalog(cwds, nativeSessionRoots("codex", homedir()), { cached: options.cached }),
     ]);

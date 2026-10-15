@@ -607,7 +607,7 @@ export async function replayTerminal(
     surface: Surface & { type: "terminal" },
     workspaceId: string,
     surfaceId: string,
-    opts: RestoreOptions
+    opts: Pick<RestoreOptions, "replay" | "enter" | "neverFocus">
 ): Promise<string | undefined> {
     await waitForTerminalText({
         workspaceId: workspaceId,

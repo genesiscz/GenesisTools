@@ -5,6 +5,7 @@ import { liveTree } from "@app/cmux/lib/session-close-live";
 import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
@@ -423,19 +424,31 @@ export async function readInPlaceLiveState(options: { surfaceId?: string } = {})
             workspaceRef: tab.workspace,
             windowRef: tab.window,
         });
+    }
 
-        if (id === callerId || (options.surfaceId !== undefined && id !== cmuxIdKey(options.surfaceId))) {
-            continue;
-        }
+    // Three at a time, 3 s each: one read per tab at the 30 s default stacked to minutes on a starved cmux
+    // (review F23). A read that fails or times out leaves the tab without a screen, which the plan skips.
+    // A refresh for one restored tab reads only that tab's screen.
+    // A UUID names the surface across the whole tree, so the workspace adds nothing (target.ts).
+    const onlyId = options.surfaceId !== undefined ? cmuxIdKey(options.surfaceId) : undefined;
+    const readable = [...tabs.values()].filter((tab) => {
+        const id = tab.id.toLowerCase();
+        return id !== callerId && (onlyId === undefined || id === onlyId);
+    });
+    const read = await concurrentMap({
+        items: readable,
+        concurrency: 3,
+        fn: (tab) => runCmux(["read-screen", "--surface", tab.id], { timeoutMs: 3000 }),
+        onError: (tab, error) => logger.debug({ error, surface: tab.id }, "[restore-in-place] screen read failed"),
+    });
 
-        // A UUID names the surface across the whole tree, so the workspace adds nothing (target.ts).
-        const screen = await runCmux(["read-screen", "--surface", tab.id]);
+    for (const [tab, screen] of read) {
         if (screen.code !== 0) {
             logger.debug({ surface: tab.id, stderr: screen.stderr }, "[restore-in-place] screen unreadable");
             continue;
         }
 
-        screens.set(id, screen.stdout);
+        screens.set(tab.id.toLowerCase(), screen.stdout);
     }
 
     return {
@@ -615,14 +628,7 @@ export async function runInPlaceRestore(
                 { ...step.surface, screen: undefined },
                 live.workspaceId ?? live.workspaceRef,
                 live.id,
-                {
-                    prefix: "",
-                    replay: opts.replay,
-                    enter: enter && opts.replay,
-                    yes: true,
-                    dryRun: false,
-                    neverFocus: true,
-                }
+                { replay: opts.replay, enter: enter && opts.replay, neverFocus: true }
             );
 
             if (reason) {

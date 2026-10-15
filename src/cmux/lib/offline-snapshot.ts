@@ -1,9 +1,4 @@
-import {
-    grokSessionsDir,
-    loadGrokCatalog,
-    type ReplayCatalogSession,
-    replayCommandForSurface,
-} from "@app/cmux/lib/agent-replay";
+import { loadGrokCatalog, type ReplayCatalogSession, replayCommandForSurface } from "@app/cmux/lib/agent-replay";
 import {
     type AutosavePanel,
     type AutosaveSession,
@@ -29,6 +24,7 @@ import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
@@ -121,7 +117,7 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
     // This is the livelock rescue: the shared history database may be held by a starving process,
     // and a full grok discovery walks tens of thousands of files. Read the index or read nothing.
-    const grokSessions = await loadGrokCatalog(cwds, grokSessionsDir(), { cached: true });
+    const grokSessions = await loadGrokCatalog(cwds, grokSessionsRoot(), { cached: true });
 
     return buildOfflineProfile(
         session,

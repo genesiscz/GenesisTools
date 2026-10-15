@@ -3,7 +3,7 @@ import {
     correctNativeResumeBindings,
     dedupeResumeTargets,
     inferLauncherFromTitle,
-    matchGrokSession,
+    matchAgentSession,
     type ReplayCatalog,
     type ReplayCatalogSession,
     replayCommandForSurface,
@@ -78,6 +78,9 @@ describe("inferLauncherFromTitle", () => {
     });
 });
 
+const grokMatch = (title: string, cwd: string | undefined, sessions: ReplayCatalogSession[]) =>
+    matchAgentSession("grok", title, cwd, sessions)?.session;
+
 describe("matchGrokSession", () => {
     const sessions = [
         grokSession(),
@@ -89,26 +92,22 @@ describe("matchGrokSession", () => {
     ];
 
     test("matches an exact generated title in the same cwd", () => {
-        const hit = matchGrokSession("PRs merged into release/2026-09-03 - grok", "/Users/me/Projects/shop", sessions);
+        const hit = grokMatch("PRs merged into release/2026-09-03 - grok", "/Users/me/Projects/shop", sessions);
         expect(hit?.sessionId).toBe(GROK_ID);
     });
 
     test("matches a truncated cmux title against the longer generated title", () => {
-        const hit = matchGrokSession(
-            "Worktree bun installs: Skia copy costs 1… - grok",
-            "/Users/me/Projects/shop",
-            sessions
-        );
+        const hit = grokMatch("Worktree bun installs: Skia copy costs 1… - grok", "/Users/me/Projects/shop", sessions);
         expect(hit?.sessionId).toBe("01a05d17-c512-7dd2-abb6-e62d8c7d612a");
     });
 
     test("falls back to a globally unique title when cwd differs", () => {
-        const hit = matchGrokSession("aws-costs - grok", "/Users/me/Projects/App", sessions);
+        const hit = grokMatch("aws-costs - grok", "/Users/me/Projects/App", sessions);
         expect(hit?.sessionId).toBe("01a03d56-e4fe-7cd1-aee4-dbe54aaf53b3");
     });
 
     test("returns nothing for an idle shell title", () => {
-        expect(matchGrokSession("alice@host:~/Projects/shop", "/Users/me/Projects/shop", sessions)).toBeUndefined();
+        expect(grokMatch("alice@host:~/Projects/shop", "/Users/me/Projects/shop", sessions)).toBeUndefined();
     });
 });
 
@@ -645,7 +644,7 @@ describe("title evidence outranks prompt evidence", () => {
             })
         );
 
-        const hit = matchGrokSession("Native MCP OAuth gateway, Rohlik login p… - grok", "/Users/me/Projects/shop", [
+        const hit = grokMatch("Native MCP OAuth gateway, Rohlik login p… - grok", "/Users/me/Projects/shop", [
             ...noise,
             wanted,
         ]);
@@ -669,7 +668,7 @@ describe("title evidence outranks prompt evidence", () => {
             title: "fix the login redirect loop",
         });
 
-        const hit = matchGrokSession("fix the login redirect loop - grok", "/Users/me/Projects/app", [here, elsewhere]);
+        const hit = grokMatch("fix the login redirect loop - grok", "/Users/me/Projects/app", [here, elsewhere]);
 
         expect(hit?.sessionId).toBe("01a00000-0000-7000-8000-000000000001");
     });
@@ -684,7 +683,7 @@ describe("title evidence outranks prompt evidence", () => {
             title: "fix the login redirect loop",
         });
 
-        const hit = matchGrokSession("fix the login redirect loop - grok", "/Users/me/Projects/app", [elsewhere]);
+        const hit = grokMatch("fix the login redirect loop - grok", "/Users/me/Projects/app", [elsewhere]);
 
         expect(hit?.sessionId).toBe("01a00000-0000-7000-8000-000000000002");
     });
