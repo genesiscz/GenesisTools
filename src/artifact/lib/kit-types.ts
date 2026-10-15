@@ -44,6 +44,7 @@ const KIT_FILES = [
     "forms.tsx",
     "gantt.tsx",
     "theme.tsx",
+    "sortable.tsx",
     "index.ts",
 ];
 

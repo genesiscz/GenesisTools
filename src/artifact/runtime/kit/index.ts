@@ -251,6 +251,14 @@ export {
     TONE_VAR,
 } from "./primitives";
 export {
+    moveItem,
+    type SortableItem,
+    SortableList,
+    type SortableListProps,
+    type SortableMove,
+    sortableMoveBlocked,
+} from "./sortable";
+export {
     onColorSchemeChange,
     readThemeMode,
     resolveCssColor,

@@ -13,6 +13,7 @@ import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
 import { CodeBlock, Collapse, FilterChips, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
 import { matchRoute } from "./router";
+import { moveItem, SortableList } from "./sortable";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
@@ -1089,6 +1090,88 @@ describe("auto theme", () => {
 
         expect(mermaidRendered.length).toBeGreaterThan(before);
         expect(dom.container.querySelector("[data-mermaid-source]")).not.toBeNull();
+        await dom.unmount();
+    });
+});
+
+describe("SortableList", () => {
+    const ITEMS = ["Alpha", "Bravo", "Charlie", "Delta"].map((name) => ({ id: name.toLowerCase(), content: name }));
+
+    async function mountList(items = ITEMS) {
+        const calls: Array<{ ids: string[]; moved: { id: string; from: number; to: number } }> = [];
+        const dom = await mountDom(
+            <SortableList items={items} label="Steps" onReorder={(ids, moved) => calls.push({ ids, moved })} />
+        );
+        const grip = (id: string): Element | null => dom.container.querySelector(`[data-sortable-item="${id}"] button`);
+
+        return { dom, calls, grip };
+    }
+
+    test("moveItem returns a new array and leaves the input alone", () => {
+        const input = ["a", "b", "c"];
+        expect(moveItem(input, 0, 2)).toEqual(["b", "c", "a"]);
+        expect(input).toEqual(["a", "b", "c"]);
+    });
+
+    test("Space, Down, Space reorders once with the right move and announces it", async () => {
+        const { dom, calls, grip } = await mountList();
+        expect(grip("alpha")?.getAttribute("aria-label")).toBe("Reorder Alpha, position 1 of 4");
+        await dom.press(grip("alpha"), " ");
+        await dom.press(grip("alpha"), "ArrowDown");
+        expect(calls).toEqual([]);
+        await dom.press(grip("alpha"), " ");
+
+        expect(calls).toEqual([
+            { ids: ["bravo", "alpha", "charlie", "delta"], moved: { id: "alpha", from: 0, to: 1 } },
+        ]);
+        expect(dom.container.querySelector("[data-sortable-live]")?.textContent).toBe("Moved Alpha to position 2 of 4");
+        await dom.unmount();
+    });
+
+    test("Escape during a keyboard move restores and calls nothing", async () => {
+        const { dom, calls, grip } = await mountList();
+        await dom.press(grip("bravo"), " ");
+        await dom.press(grip("bravo"), "ArrowDown");
+        await dom.press(grip("bravo"), "Escape");
+        const order = [...dom.container.querySelectorAll("[data-sortable-item]")].map((li) =>
+            li.getAttribute("data-sortable-item")
+        );
+
+        expect(calls).toEqual([]);
+        expect(order).toEqual(["alpha", "bravo", "charlie", "delta"]);
+        await dom.unmount();
+    });
+
+    test("a pointer drag past the third item reorders once, on release", async () => {
+        const { dom, calls, grip } = await mountList();
+        dom.container.querySelectorAll<HTMLElement>("[data-sortable-item]").forEach((li, i) => {
+            li.getBoundingClientRect = () => new dom.window.DOMRect(0, i * 40, 200, 36);
+        });
+        await dom.pointer(grip("alpha"), "pointerdown", { clientY: 18, button: 0 });
+        await dom.pointer(grip("alpha"), "pointermove", { clientY: 100 });
+        await dom.pointer(grip("alpha"), "pointermove", { clientY: 104 });
+        expect(calls).toEqual([]);
+        await dom.pointer(grip("alpha"), "pointerup", { clientY: 104 });
+
+        expect(calls).toEqual([
+            { ids: ["bravo", "charlie", "alpha", "delta"], moved: { id: "alpha", from: 0, to: 2 } },
+        ]);
+        await dom.unmount();
+    });
+
+    test("a disabled item can be neither picked up nor displaced", async () => {
+        const items = ITEMS.map((item) => (item.id === "charlie" ? { ...item, disabled: true } : item));
+        const { dom, calls, grip } = await mountList(items);
+        await dom.press(grip("charlie"), " ");
+        await dom.press(grip("charlie"), "ArrowDown");
+        await dom.press(grip("charlie"), " ");
+        expect(calls).toEqual([]);
+
+        await dom.press(grip("alpha"), " ");
+        await dom.press(grip("alpha"), "ArrowDown");
+        await dom.press(grip("alpha"), "ArrowDown");
+        await dom.press(grip("alpha"), " ");
+        expect(calls.map((c) => c.moved)).toEqual([{ id: "alpha", from: 0, to: 1 }]);
         await dom.unmount();
     });
 });

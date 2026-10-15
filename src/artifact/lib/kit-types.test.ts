@@ -24,6 +24,7 @@ describe("kit API declaration", () => {
             "Gantt(",
             "CapacityGrid(",
             "ThemeToggle(",
+            "SortableList(",
         ]) {
             expect(dts).toContain(name);
         }
