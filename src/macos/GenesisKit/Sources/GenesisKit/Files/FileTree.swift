@@ -257,6 +257,10 @@ public struct FileTreeMetrics: Equatable, Sendable {
         CGFloat(depth) * indent + chevronWidth + iconWidth + 3 * spacing
     }
 
+    /// The room a git mark takes at a row's end: its letter (0.62 em in the monospaced face at the icon's size)
+    /// and the gap before it.
+    var gitMarkWidth: CGFloat { spacing + icon * 0.62 }
+
     /// Every size in proportion to a text size, so the row height, the icons and the indent follow the
     /// font. `compact` at 9.5 pt.
     public static func scaled(toText size: CGFloat) -> FileTreeMetrics {
@@ -352,6 +356,10 @@ public struct FileTreeView: View {
     let actions: FileTreeActions
     let pulse: FileTreePulse?
     let icon: (FileTreeRow) -> String
+    /// Git marks (M, A, U, D on files, a dot on folders that hold changes); nil shows none.
+    let git: GitTreeDecorations?
+    /// Only the changed files and the folders that hold them (with `git`).
+    let changedOnly: Bool
 
     public init(
         model: FileTreeModel,
@@ -359,6 +367,8 @@ public struct FileTreeView: View {
         style: FileTreeStyle,
         actions: FileTreeActions,
         pulse: FileTreePulse? = nil,
+        git: GitTreeDecorations? = nil,
+        changedOnly: Bool = false,
         icon: @escaping (FileTreeRow) -> String = FileTreeView.defaultIcon
     ) {
         self.model = model
@@ -366,7 +376,14 @@ public struct FileTreeView: View {
         self.style = style
         self.actions = actions
         self.pulse = pulse
+        self.git = git
+        self.changedOnly = changedOnly
         self.icon = icon
+    }
+
+    /// The rows `changedOnly` leaves: a changed file, or a folder that holds one.
+    public static func changedRows(_ rows: [FileTreeRow], _ git: GitTreeDecorations) -> [FileTreeRow] {
+        rows.filter { git.change(for: $0.id) != nil || git.holdsChanges($0.id) }
     }
 
     public static func defaultIcon(_ row: FileTreeRow) -> String {
@@ -385,10 +402,11 @@ public struct FileTreeView: View {
 
     public var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(model.rows) { row in
+            ForEach(changedOnly && git != nil ? Self.changedRows(model.rows, git ?? .none) : model.rows) { row in
                 FileTreeRowView(
                     row: row, selected: row.id == selected, icon: icon(row), style: style, model: model, actions: actions,
-                    pulse: pulse?.id == row.id ? pulse : nil
+                    pulse: pulse?.id == row.id ? pulse : nil,
+                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false
                 )
                 .equatable()
             }
@@ -406,13 +424,18 @@ struct FileTreeRowView: View, Equatable {
     let actions: FileTreeActions
     /// Only the row it names gets one; every other row gets nil, so a pulse re-renders one row.
     var pulse: FileTreePulse?
+    /// The file's git change (its letter at the row's end, its name tinted), nil for none.
+    var change: GitChangeKind?
+    /// A folder that holds changes: a dot at the row's end.
+    var holdsChanges = false
     @GenReduceMotion private var reduceMotion
     /// Resolve when the row is made: a font closure may capture mutable host settings, so
     /// asking both old and new closures during equality would lose the previous font.
     private let resolvedFont: Font
 
     init(row: FileTreeRow, selected: Bool, icon: String, style: FileTreeStyle,
-         model: FileTreeModel, actions: FileTreeActions, pulse: FileTreePulse? = nil) {
+         model: FileTreeModel, actions: FileTreeActions, pulse: FileTreePulse? = nil,
+         change: GitChangeKind? = nil, holdsChanges: Bool = false, lines: GitLineCount? = nil) {
         self.row = row
         self.selected = selected
         self.icon = icon
@@ -420,6 +443,9 @@ struct FileTreeRowView: View, Equatable {
         self.model = model
         self.actions = actions
         self.pulse = pulse
+        self.change = change
+        self.holdsChanges = holdsChanges
+        self.lines = lines
         resolvedFont = style.font(selected)
     }
 
@@ -430,6 +456,7 @@ struct FileTreeRowView: View, Equatable {
             && left.style.muted == right.style.muted && left.style.accent == right.style.accent
             && left.style.selection == right.style.selection && left.resolvedFont == right.resolvedFont
             && left.actions.revision == right.actions.revision
+            && left.change == right.change && left.holdsChanges == right.holdsChanges
     }
 
     var body: some View {
@@ -457,13 +484,22 @@ struct FileTreeRowView: View, Equatable {
                     .frame(width: metrics.iconWidth)
                 Text(row.name)
                     .font(resolvedFont)
-                    .foregroundColor(selected ? style.accent : style.secondary)
+                    .foregroundColor(selected ? style.accent : (change?.color ?? style.secondary))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if row.loading {
                     ProgressView().controlSize(.mini)
                 }
                 Spacer(minLength: 0)
+                if let change {
+                    GitChangeMark(change, size: metrics.icon)
+                        .instantTooltip("Git: \(change.word)")
+                } else if holdsChanges {
+                    Circle()
+                        .fill(GitChangeKind.modified.color.opacity(0.8))
+                        .frame(width: metrics.icon * 0.5, height: metrics.icon * 0.5)
+                        .instantTooltip("Holds changed files")
+                }
             }
             .padding(.leading, FileTreeMetrics.rowInset + CGFloat(row.depth) * metrics.indent)
             .padding(.trailing, FileTreeMetrics.rowInset)

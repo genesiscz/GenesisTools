@@ -19,6 +19,8 @@ public struct MarkdownViewerAppConfiguration {
     public var paths: [String]
     /// Whether those files bring the window to the front (false for a background launch, `open -g`).
     public var focus: Bool
+    /// The changes to show for the last of those files (`--diff`), in the Changes mode.
+    public var diff: MarkdownDiffRequest?
     /// Runs before the run loop starts, for the host's own launch setup (tooltip theme, hang watch).
     public var prepare: () -> Void
     /// A URL that reached this process (the host's scheme): route it, usually to
@@ -30,6 +32,7 @@ public struct MarkdownViewerAppConfiguration {
         defaultsSuite: String? = nil,
         paths: [String] = [],
         focus: Bool = true,
+        diff: MarkdownDiffRequest? = nil,
         prepare: @escaping () -> Void = {},
         handleURL: @escaping (URL) -> Void
     ) {
@@ -37,6 +40,7 @@ public struct MarkdownViewerAppConfiguration {
         self.defaultsSuite = defaultsSuite
         self.paths = paths
         self.focus = focus
+        self.diff = diff
         self.prepare = prepare
         self.handleURL = handleURL
     }
@@ -57,7 +61,8 @@ public enum MarkdownViewerApp {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         let delegate = MarkdownViewerDelegate(
-            handle: configuration.handleURL, initialPaths: configuration.paths, initialFocus: configuration.focus
+            handle: configuration.handleURL, initialPaths: configuration.paths, initialFocus: configuration.focus,
+            initialDiff: configuration.diff
         )
         self.delegate = delegate
         app.delegate = delegate
@@ -86,8 +91,10 @@ public final class MarkdownViewerDelegate: NSObject, NSApplicationDelegate {
     public var handle: (URL) -> Void
     private let initialPaths: [String]
     private let initialFocus: Bool
+    private let initialDiff: MarkdownDiffRequest?
 
-    public init(handle: @escaping (URL) -> Void, initialPaths: [String] = [], initialFocus: Bool = true) {
+    public init(handle: @escaping (URL) -> Void, initialPaths: [String] = [], initialFocus: Bool = true, initialDiff: MarkdownDiffRequest? = nil) {
+        self.initialDiff = initialDiff
         self.handle = handle
         self.initialPaths = initialPaths
         self.initialFocus = initialFocus
@@ -107,7 +114,7 @@ public final class MarkdownViewerDelegate: NSObject, NSApplicationDelegate {
         PerfLog.phase("viewer.didFinishLaunching")
         finishLaunching()
         if !initialPaths.isEmpty {
-            MainActor.assumeIsolated { controller.show(paths: initialPaths, focus: initialFocus) }
+            MainActor.assumeIsolated { controller.show(paths: initialPaths, focus: initialFocus, diff: initialDiff) }
         }
         // Next turn of the run loop, so the document window is up first.
         DispatchQueue.main.async {

@@ -18,16 +18,18 @@ enum MarkdownPane: String {
 /// What the pane shows: the rendered document, the raw source, or both side by
 /// side with the editor on the left.
 enum MarkdownViewMode: String, CaseIterable {
-    case preview, split, source
+    /// `changes` is the file's git diff (MarkdownChangesPane); the toolbar offers it only for a file in a repository.
+    case preview, split, source, changes
 
-    var showsEditor: Bool { self != .preview }
-    var showsPreview: Bool { self != .source }
+    var showsEditor: Bool { self == .split || self == .source }
+    var showsPreview: Bool { self == .preview || self == .split }
 
     var icon: String {
         switch self {
         case .preview: return "doc.richtext"
         case .split: return "rectangle.split.2x1"
         case .source: return "chevron.left.forwardslash.chevron.right"
+        case .changes: return "plusminus"
         }
     }
 
@@ -36,6 +38,7 @@ enum MarkdownViewMode: String, CaseIterable {
         case .preview: return "Reading view (⌘E)"
         case .split: return "Edit and preview side by side (⇧⌘E)"
         case .source: return "Source (⌘E)"
+        case .changes: return "The file's git changes: unstaged, staged, a commit, the branch"
         }
     }
 }

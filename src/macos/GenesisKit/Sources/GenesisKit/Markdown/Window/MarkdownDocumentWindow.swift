@@ -150,10 +150,11 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
     /// Opens (or re-selects) the given files. `focus` brings the app and window forward.
     /// No paths = show the viewer as it was last closed (tabs are remembered).
     /// `range` belongs to the last path, the tab that ends up selected.
-    public func show(paths: [String], focus: Bool, range: MarkdownLineRange? = nil) {
+    public func show(paths: [String], focus: Bool, range: MarkdownLineRange? = nil, diff: MarkdownDiffRequest? = nil) {
         let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         model.open(urls)
         if let range, !urls.isEmpty { model.reveal(range) }
+        if let diff, !urls.isEmpty { model.showChanges(diff) }
         guard let window else { return }
         if !window.isVisible, window.frameAutosaveName.isEmpty || !window.setFrameUsingName(window.frameAutosaveName) {
             let mouse = NSEvent.mouseLocation

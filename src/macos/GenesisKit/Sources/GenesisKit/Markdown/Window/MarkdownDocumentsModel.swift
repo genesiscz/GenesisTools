@@ -15,6 +15,7 @@ private let markdownModeKey = "markdownWindow.mode"
 private let markdownSplitKey = "markdownWindow.splitRatio"
 private let markdownOutlineKey = "markdownWindow.outline"
 private let markdownFilesKey = "markdownWindow.files"
+private let markdownGitKey = "markdownWindow.git"
 private let markdownFilesRootKey = "markdownWindow.filesRoot"
 private let markdownFilesWidthKey = "markdownWindow.filesWidth"
 private let markdownZoomKey = "markdownWindow.zoom"
@@ -234,6 +235,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         splitRatio = ratio > 0 ? ratio : MarkdownSplit.defaultRatio
         showOutline = defaults.bool(forKey: markdownOutlineKey)
         showFiles = defaults.bool(forKey: markdownFilesKey)
+        showGit = defaults.bool(forKey: markdownGitKey)
         filesRoot = defaults.string(forKey: markdownFilesRootKey) ?? ""
         filesWidth = MarkdownSidebarWidth.clamped(defaults.double(forKey: markdownFilesWidthKey))
     }
@@ -359,6 +361,23 @@ final class MarkdownDocumentsModel: ObservableObject {
 
     /// The compare sheet (mine versus disk) for the selected tab.
     @Published var compareOpen = false
+
+    // MARK: Git (MarkdownDocumentsModel+Git.swift)
+
+    /// The git sidebar: this file's history and the repository, remembered between launches.
+    @Published var showGit = false {
+        didSet { defaults.set(showGit, forKey: markdownGitKey) }
+    }
+    /// The Changes mode's scope (nil: the configured default) and its picked commit, here so the git sidebar can
+    /// open a file at a scope.
+    @Published var changesScope: GitFileScope?
+    @Published var changesCommit: String?
+    /// A past version of a file, read-only in its tab.
+    @Published var revisionView: MarkdownRevision?
+    /// Two versions of a file in the Changes mode.
+    @Published var revisionCompare: MarkdownRevisionCompare?
+    /// A commit's files, in a sheet.
+    @Published var commitSheet: MarkdownCommitSheet?
     /// The live reading web view, for PDF export and print.
     let webProxy = MarkdownWebProxy()
     /// Last export failure, shown in the toolbar until the next action.
@@ -593,6 +612,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// dropped on every switch; otherwise the new tab jumps to a heading of the
     /// old one that happens to share a slug.
     func select(_ id: String?) {
+        if id != selectedId {
+            revisionView = nil
+            revisionCompare = nil
+        }
         selectedId = id
         scrollTarget = nil
         lineTarget = nil

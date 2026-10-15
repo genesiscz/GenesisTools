@@ -23,6 +23,76 @@ struct MarkdownSourceSelection: Equatable {
 /// a link before AppKit inserts it as text.
 final class SourceTextView: NSTextView {
     var onKeyEquivalent: ((NSEvent) -> Bool)?
+    /// The lines that differ from HEAD, drawn as bars in the left inset (green added, blue changed, a red mark where
+    /// lines were removed). A click on a bar calls `onHunk` with the bar's rect.
+    var gitHunks: [GitHunk] = [] {
+        didSet { if gitHunks != oldValue { needsDisplay = true } }
+    }
+    var onHunk: ((GitHunk, NSRect) -> Void)?
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        for (hunk, bar) in hunkBars() where bar.intersects(rect) {
+            Self.color(hunk.kind).setFill()
+            if hunk.kind == .deleted {
+                // A small wedge on the line the removed text stood before.
+                let path = NSBezierPath()
+                path.move(to: NSPoint(x: bar.minX, y: bar.minY))
+                path.line(to: NSPoint(x: bar.maxX, y: bar.midY))
+                path.line(to: NSPoint(x: bar.minX, y: bar.maxY))
+                path.close()
+                path.fill()
+            } else {
+                NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+            }
+        }
+    }
+
+
+    static func color(_ kind: GitHunk.Kind) -> NSColor {
+        switch kind {
+        case .added: return NSColor(GitChangeKind.added.color)
+        case .modified: return NSColor(GitChangeKind.renamed.color)
+        case .deleted: return NSColor(GitChangeKind.deleted.color)
+        }
+    }
+
+    /// Each hunk's bar in view coordinates: x 3–6 pt in the 12 pt inset, as tall as its lines.
+    private func hunkBars() -> [(GitHunk, NSRect)] {
+        guard !gitHunks.isEmpty, let layout = layoutManager else { return [] }
+        let text = string as NSString
+        var starts = [0]
+        var index = 0
+        while index < text.length {
+            let line = text.lineRange(for: NSRange(location: index, length: 0))
+            index = NSMaxRange(line)
+            if index < text.length || text.hasSuffix("\n") { starts.append(index) }
+            if line.length == 0 { break }
+        }
+        let origin = textContainerOrigin
+        func lineRect(_ line: Int) -> NSRect? {
+            guard line < starts.count else { return nil }
+            let char = starts[line]
+            if char >= text.length {
+                let extra = layout.extraLineFragmentRect
+                return extra.isEmpty ? nil : extra
+            }
+            let glyph = layout.glyphIndexForCharacter(at: char)
+            return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        }
+        var bars: [(GitHunk, NSRect)] = []
+        for hunk in gitHunks {
+            if hunk.kind == .deleted {
+                let anchor = lineRect(hunk.newStart) ?? lineRect(max(0, hunk.newStart - 1)).map { $0.offsetBy(dx: 0, dy: $0.height) }
+                guard let anchor else { continue }
+                bars.append((hunk, NSRect(x: 2, y: origin.y + anchor.minY - 4, width: 6, height: 8)))
+                continue
+            }
+            guard let first = lineRect(hunk.newStart), let last = lineRect(hunk.newStart + max(0, hunk.newCount - 1)) else { continue }
+            bars.append((hunk, NSRect(x: 3, y: origin.y + first.minY + 1, width: 3, height: last.maxY - first.minY - 2)))
+        }
+        return bars
+    }
     /// Files dropped from Finder. Without this an NSTextView pastes the path
     /// into the document, which is never what dragging a note in means.
     var onDropFiles: (([URL]) -> Void)?
@@ -70,6 +140,13 @@ final class SourceTextView: NSTextView {
     var onOpenLink: ((String) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
+        // A click on a gutter bar, in the left inset.
+        let point = convert(event.locationInWindow, from: nil)
+        if point.x < textContainerInset.width, let onHunk,
+           let hit = hunkBars().first(where: { $0.1.insetBy(dx: -4, dy: -2).contains(point) }) {
+            onHunk(hit.0, hit.1)
+            return
+        }
         let command = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
         if command, let open = onOpenLink {
             let point = convert(event.locationInWindow, from: nil)
@@ -132,6 +209,10 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     /// Files dropped onto the editor. nil = AppKit's own handling, which
     /// pastes the path into the document.
     var onDropFiles: (([URL]) -> Void)? = nil
+    /// The lines that differ from HEAD, as gutter bars. Empty: no bars.
+    var gitHunks: [GitHunk] = []
+    /// A click on a gutter bar: the hunk, the bar's rect and the view it is in.
+    var onHunk: ((GitHunk, NSRect, NSView) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -160,6 +241,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         view.onDropFiles = { [weak coordinator = context.coordinator] urls in
             coordinator?.parent.onDropFiles?(urls)
         }
+        view.onHunk = { [weak coordinator = context.coordinator, weak view] hunk, rect in
+            guard let view else { return }
+            coordinator?.parent.onHunk?(hunk, rect, view)
+        }
+        view.gitHunks = gitHunks
         view.registerForDraggedTypes(MarkdownDrop.draggedTypes)
         view.delegate = context.coordinator
         view.isRichText = false
@@ -191,6 +277,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         guard let view = scroll.documentView as? NSTextView else { return }
         context.coordinator.parent = self
         apply(to: view, scroll: scroll)
+        if let source = view as? SourceTextView, source.gitHunks != gitHunks {
+            source.gitHunks = gitHunks
+        }
         if view.string != text {
             context.coordinator.invalidateLineStarts()
             let sel = view.selectedRange()

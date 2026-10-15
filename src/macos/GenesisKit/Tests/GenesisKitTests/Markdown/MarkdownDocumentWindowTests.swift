@@ -513,10 +513,12 @@ final class MarkdownWindowChromeTests: XCTestCase {
         }
         let runs = WindowTitlebar.Audit.runs(samples, step: 2)
         let line = runs.map { "\($0.kind.rawValue) \(Int($0.minX))-\(Int($0.maxX))" }.joined(separator: ", ")
-        // The room left for the traffic lights, then a gap between every two buttons.
+        // The row's leading inset, then a gap between every two buttons. The row sits under the title bar, so the
+        // traffic lights need no room in it (the 68 pt spacer went in the 2026-10-13 UX round).
         let lead = try XCTUnwrap(runs.first { $0.kind == .zone }, line)
         XCTAssertLessThan(lead.minX, 10, "the toolbar's leading room: \(line)")
-        XCTAssertGreaterThan(lead.maxX - lead.minX, 60, "the toolbar's leading room: \(line)")
+        XCTAssertGreaterThanOrEqual(lead.maxX - lead.minX, 6, "the toolbar's leading room: \(line)")
+        XCTAssertLessThan(lead.maxX, 30, "the first button starts near the window's edge: \(line)")
         XCTAssertGreaterThanOrEqual(runs.filter { $0.kind == .zone }.count, 5, "gaps between the buttons: \(line)")
         XCTAssertGreaterThanOrEqual(runs.filter { $0.kind == .content }.count, 5, "the toolbar's buttons: \(line)")
         // The toolbar's trailing end is empty: the strip stays the zone up to the right edge. (The folder

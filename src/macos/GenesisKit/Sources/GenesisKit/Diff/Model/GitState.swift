@@ -160,8 +160,37 @@ public struct GitRepoStatus: Equatable, Sendable {
         self.commits = commits
     }
 
+    /// The entry of a file in this repository, nil when the file is clean or outside it.
+    public func entry(for file: URL) -> GitStatusEntry? {
+        guard let path = GitQueries.relative(file, to: root) else { return nil }
+        return entries.first { $0.path == path }
+    }
+
     public var staged: [GitStatusEntry] { entries.filter { $0.staged != nil } }
     public var unstaged: [GitStatusEntry] { entries.filter { $0.unstaged != nil } }
+
+    /// The decorations spelled under `treeRoot` as a file tree spells its paths: git names the repository by its
+    /// real path (`/private/tmp`, a resolved link), a tree by the path it was given.
+    public func decorations(under treeRoot: URL) -> GitTreeDecorations {
+        // Both sides through the same real path: Foundation's own link resolution drops /private, `realpath` keeps it.
+        let given = treeRoot.standardizedFileURL.path
+        let givenReal = GitWorkingTreeSource.realPath(given)
+        let rootReal = GitWorkingTreeSource.realPath(root.standardizedFileURL.path)
+        var files: [String: GitChangeKind] = [:]
+        var folders = Set<String>()
+        for entry in entries {
+            guard let kind = entry.shown else { continue }
+            let real = rootReal + "/" + entry.path
+            guard real.hasPrefix(givenReal + "/") else { continue }
+            let spelled = given + real.dropFirst(givenReal.count)
+            files[spelled] = kind
+            var folder = (spelled as NSString).deletingLastPathComponent
+            while folder.count > given.count, folders.insert(folder).inserted {
+                folder = (folder as NSString).deletingLastPathComponent
+            }
+        }
+        return GitTreeDecorations(files: files, folders: folders)
+    }
 
     /// The change to show for each absolute path, and a mark for each folder that holds one: what a file tree
     /// decorates.

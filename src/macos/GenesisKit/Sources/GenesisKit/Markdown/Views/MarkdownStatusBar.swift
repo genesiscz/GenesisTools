@@ -35,12 +35,19 @@ struct MarkdownStats: Equatable {
 struct MarkdownStatusBar: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
+    @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
+    @StateObject private var git = GitFileStateModel()
 
     var body: some View {
         let stats = doc.stats
         HStack(spacing: 10) {
             Text(stats.summary)
                 .accessibilityIdentifier("markdown-stats")
+
+            if configuration.git, let state = git.state {
+                dot
+                GitStateBadge(state: state)
+            }
 
             if doc.hasDiskChange {
                 dot
@@ -86,6 +93,15 @@ struct MarkdownStatusBar: View {
             .instantTooltip("Theme: \(model.theme.label) — click for \(model.theme.next.label)")
             .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
             .accessibilityIdentifier("markdown-theme-toggle")
+        }
+        .onAppear { git.follow(configuration.git ? doc.url : nil) }
+        .onChange(of: doc.url) { _, url in git.follow(configuration.git ? url : nil) }
+        .onChange(of: configuration.git) { _, on in git.follow(on ? doc.url : nil) }
+        // A save changes the file's state before git's own folder changes (an unstaged edit touches no index).
+        .onChange(of: doc.modifiedAt) { _, _ in
+            guard configuration.git else { return }
+            git.refresh()
+            GitRepos.shared.noteSaved(doc.url)
         }
         .font(GenTypography.mono(9.5))
         // Secondary, not muted: every word here is information (Martin, 2026-10-13: the bar read too gray).

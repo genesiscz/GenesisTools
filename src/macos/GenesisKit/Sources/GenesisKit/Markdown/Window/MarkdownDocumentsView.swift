@@ -83,6 +83,11 @@ struct MarkdownDocumentsView: View {
                     }
                     MarkdownDocumentPane(doc: doc, model: model)
                         .id(doc.id)
+                    if model.showGit && model.configuration.git {
+                        Rectangle().fill(model.theme.border).frame(width: 1)
+                        MarkdownGitSidebar(doc: doc, model: model)
+                            .frame(width: 280)
+                    }
                 }
                 MarkdownStatusBar(doc: doc, model: model)
             } else {
@@ -238,6 +243,7 @@ private struct MarkdownWrapTabsToggle: View {
 private struct MarkdownDocumentTab: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
+    @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
 
     var body: some View {
         let active = doc.id == model.selected?.id
@@ -261,6 +267,9 @@ private struct MarkdownDocumentTab: View {
                         .font(.system(size: 12, weight: active ? .semibold : .regular))
                         // The preview tab, which the next single click in the file tree replaces.
                         .italic(preview)
+                    if configuration.gitShows(\.gitTreeDecorations) {
+                        GitFileMark(file: doc.url)
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -369,6 +378,9 @@ private struct MarkdownDocumentPane: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
     @StateObject private var live: MarkdownLivePreview
+    @StateObject private var gutter = GitGutterModel()
+    @StateObject private var blame = AgentBlameModel()
+    @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
 
     init(doc: MarkdownDocument, model: MarkdownDocumentsModel) {
         self.doc = doc
@@ -394,8 +406,19 @@ private struct MarkdownDocumentPane: View {
         .sheet(isPresented: $model.compareOpen) {
             MarkdownCompareSheet(doc: doc, model: model)
         }
+        .sheet(item: $model.commitSheet) { sheet in
+            MarkdownCommitSheetView(sheet: sheet, model: model)
+        }
         .onAppear { live.reset(doc.displayText) }
-        .onChange(of: doc.displayText) { _, new in live.update(new) }
+        .onChange(of: doc.displayText) { _, new in
+            live.update(new)
+            gutter.textChanged(new)
+        }
+        .onAppear { followGutter() }
+        .onChange(of: configuration.git) { _, _ in followGutter() }
+        .onChange(of: configuration.gitGutter) { _, _ in followGutter() }
+        .onChange(of: configuration.gitAgentAttribution) { _, _ in followGutter() }
+        .onChange(of: doc.modifiedAt) { _, _ in blame.reload() }
         .onChange(of: model.modeRaw) { _, _ in live.reset(doc.displayText) }
         // A render moves every block, so the page needs the line again.
         .onChange(of: live.text) { _, _ in
@@ -429,11 +452,17 @@ private struct MarkdownDocumentPane: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let revision = model.revisionView, revision.docID == doc.id {
+            VStack(spacing: 0) {
+                MarkdownRevisionBanner(revision: revision, doc: doc, model: model)
+                revisionBody(revision)
+            }
         } else {
             switch model.mode {
             case .source: sourceView(onTopLine: nil).onAppear { model.webProxy.web = nil }
             case .preview: previewView(doc.displayText, sync: syncLine)
             case .split: splitView
+            case .changes: MarkdownChangesPane(doc: doc, model: model).onAppear { model.webProxy.web = nil }
             }
         }
     }
@@ -529,6 +558,12 @@ private struct MarkdownDocumentPane: View {
                 // Faded out by a click: gone until a new range is opened, also
                 // when the page is rebuilt (a mode switch).
                 onLineHighlightCleared: { model.lineHighlight = nil },
+                gitMarks: gitMarks(native: native),
+                onGitMark: { index, rect in
+                    guard index < gutter.hunks.count, let web = model.webProxy.web else { return }
+                    let hunk = gutter.hunks[index]
+                    GitHunkPopover.show(hunk, source: attribution(hunk), at: rect, in: web) { revert(hunk) }
+                },
                 propertyVocabulary: { MarkdownVaultSuggestions.shared.propertyVocabularyJSON() },
                 onProperties: { doc.edit(MarkdownFrontmatter.replacing(properties: $0, in: doc.displayText)) },
                 onDropFiles: { model.acceptDrop($0) },
@@ -581,8 +616,74 @@ private struct MarkdownDocumentPane: View {
             onTopLine: onTopLine,
             onOpenLink: { model.follow($0, from: doc) },
             completions: { MarkdownVaultSuggestions.shared.values(for: $0) },
-            onDropFiles: { model.acceptDrop($0) }
+            onDropFiles: { model.acceptDrop($0) },
+            gitHunks: gutterShows ? gutter.hunks : [],
+            onHunk: { hunk, rect, view in
+                GitHunkPopover.show(hunk, source: attribution(hunk), at: rect, in: view) { revert(hunk) }
+            }
         )
+    }
+
+    /// A past version, read-only: a note rendered (its properties block cannot be edited), any other file as text.
+    @ViewBuilder
+    private func revisionBody(_ revision: MarkdownRevision) -> some View {
+        if DocumentPreview.presentation(for: doc.url) == .markdown && model.renderer == .web {
+            MarkdownWebView(
+                markdown: revision.text,
+                scrollTarget: nil,
+                highlightQuery: nil,
+                highlightToken: 0,
+                onWikilink: { model.follow($0, from: doc) },
+                onActiveSection: { _ in },
+                onRelativeLink: { model.follow($0, from: doc) },
+                zoom: model.zoom,
+                cssVariables: model.theme.cssVariables,
+                articleWidth: model.articleWidth <= 0 ? nil : model.articleWidth,
+                documentURL: doc.url,
+                vaultRoot: GenesisKit.host?.markdownVaultRoot
+            )
+        } else {
+            ScrollView {
+                Text(verbatim: revision.text)
+                    .font(.system(size: 12 * model.zoom, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+        }
+    }
+
+    // MARK: Git gutter
+
+    private var gutterShows: Bool { configuration.gitShows(\.gitGutter) }
+
+    private func followGutter() {
+        gutter.follow(gutterShows ? doc.url : nil, text: doc.displayText)
+        blame.follow(gutterShows && configuration.gitShows(\.gitAgentAttribution) ? doc.url : nil)
+    }
+
+    /// The agent session that wrote a hunk's lines. The blame is of the file on disk, so a draft gets none.
+    private func attribution(_ hunk: GitHunk) -> AgentBlameSource? {
+        guard !doc.isDirty, hunk.kind != .deleted else { return nil }
+        return blame.source(forLines: hunk.newLines)
+    }
+
+    /// The hunk's lines put back as HEAD had them, as one edit (undo takes it back).
+    private func revert(_ hunk: GitHunk) {
+        doc.edit(GitHunks.revert(hunk, in: doc.displayText))
+    }
+
+    /// The hunks in the page's terms: body lines, after the frontmatter. A change only inside the frontmatter has no
+    /// block to mark.
+    private func gitMarks(native: Bool) -> [MarkdownWebView.GitMark] {
+        guard gutterShows, native, !gutter.hunks.isEmpty else { return [] }
+        let offset = MarkdownFrontmatter.bodyLineOffset(in: doc.displayText)
+        return gutter.hunks.enumerated().compactMap { index, hunk in
+            let last = hunk.newStart + max(1, hunk.newCount) - 1 - offset
+            guard hunk.kind == .deleted ? hunk.newStart >= offset : last >= 0 else { return nil }
+            let first = max(0, hunk.newStart - offset)
+            return MarkdownWebView.GitMark(first: first, last: max(first, last), kind: hunk.kind, index: index)
+        }
     }
 
     /// The pointer on a link in the page: the note or file it points at previews next to the link, as a

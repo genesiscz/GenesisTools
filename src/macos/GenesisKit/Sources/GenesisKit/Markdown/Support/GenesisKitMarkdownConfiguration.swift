@@ -70,6 +70,25 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     /// Ticks on the page's scrollbar where the find matches are.
     @Published public var scrollbarMatchMarks: Bool { didSet { store(scrollbarMatchMarks, "scrollbarMatchMarks") } }
 
+    // MARK: Git
+
+    /// Every git control: the file's state, the gutter, the Changes mode, the history and the tree marks. A note
+    /// outside a repository shows none of them either way.
+    @Published public var git: Bool { didSet { store(git, "git") } }
+    /// Bars beside the lines that differ from HEAD, in the editor and on the page.
+    @Published public var gitGutter: Bool { didSet { store(gitGutter, "gitGutter") } }
+    /// M, A, U and D marks on file tree rows and tabs, and a dot on folders that hold changes.
+    @Published public var gitTreeDecorations: Bool { didSet { store(gitTreeDecorations, "gitTreeDecorations") } }
+    /// Which agent session and turn wrote a changed line (GenesisTools' `tools agents blame`).
+    @Published public var gitAgentAttribution: Bool { didSet { store(gitAgentAttribution, "gitAgentAttribution") } }
+    /// The scope the Changes mode opens with.
+    @Published public var gitDefaultScope: GitFileScope { didSet { store(gitDefaultScope.rawValue, "gitDefaultScope") } }
+
+    /// One switch for a part of the git integration: its own setting, and only while git as a whole is on.
+    public func gitShows(_ part: KeyPath<GenesisKitMarkdownConfiguration, Bool>) -> Bool {
+        git && self[keyPath: part]
+    }
+
     // MARK: Path actions
 
     /// What a folder offers (a path segment, a tree folder), in menu order.
@@ -98,6 +117,11 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         codeBlockBar = bool("codeBlockBar", true)
         stickySection = bool("stickySection", true)
         scrollbarMatchMarks = bool("scrollbarMatchMarks", true)
+        git = bool("git", true)
+        gitGutter = bool("gitGutter", true)
+        gitTreeDecorations = bool("gitTreeDecorations", true)
+        gitAgentAttribution = bool("gitAgentAttribution", true)
+        gitDefaultScope = string("gitDefaultScope").flatMap(GitFileScope.init(rawValue:)) ?? .uncommitted
     }
 
     private func store(_ value: Any, _ key: String) {

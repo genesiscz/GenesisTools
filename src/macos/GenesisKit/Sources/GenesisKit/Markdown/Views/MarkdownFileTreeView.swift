@@ -37,6 +37,10 @@ struct MarkdownFileTreeView: View {
     /// What the rows, or the search hits, ask of the text size. Kept across renders: a divider drag asks at
     /// every frame, and the names are measured only when the list changes.
     @State private var rowFit = MarkdownTreeFit<FileTreeRow>()
+    /// The same with room for a git mark at each row's end, kept apart so turning the marks on measures again.
+    @State private var markedRowFit = MarkdownTreeFit<FileTreeRow>()
+    @StateObject private var gitTree = GitTreeDecorationsModel()
+    @AppStorage("markdown.config.treeChangedOnly") private var changedOnly = false
     @State private var hitFit = MarkdownTreeFit<FileTreeSearch.Hit>()
     @State private var rowPulse: FileTreePulse?
     @State private var headerPulse: FileTreePulse?
@@ -58,12 +62,21 @@ struct MarkdownFileTreeView: View {
             scales: config.treeFontScalesWithWidth,
             demand: results
                 ? hitFit.demand(for: search.hits) { MarkdownTreeDemand.Line(hit: $0) }
-                : rowFit.demand(for: tree.rows) { MarkdownTreeDemand.Line(row: $0) },
+                : gitMarks
+                    ? markedRowFit.demand(for: tree.rows) { MarkdownTreeDemand.Line(row: $0, gitMark: true) }
+                    : rowFit.demand(for: tree.rows) { MarkdownTreeDemand.Line(row: $0) },
             reserve: MarkdownTreeFont.scrollerReserve
         ))
     }
 
     private var showingResults: Bool { searchOpen && search.isActive }
+
+    /// Git marks on the rows: the setting is on and the root is in a repository.
+    private var gitMarks: Bool { config.gitShows(\.gitTreeDecorations) && gitTree.decorations != .none }
+
+    private func followGit() {
+        gitTree.follow(config.gitShows(\.gitTreeDecorations) ? model.filesRootURL : nil)
+    }
 
     var body: some View {
         let root = model.filesRootURL
@@ -117,7 +130,11 @@ struct MarkdownFileTreeView: View {
             revealed = nil
             revealSelected(model.filesRootURL)
         }
+        .onAppear { followGit() }
+        .onChange(of: config.git) { _, _ in followGit() }
+        .onChange(of: config.gitTreeDecorations) { _, _ in followGit() }
         .onChange(of: model.filesRoot) { _, _ in
+            followGit()
             tree.setRoot(model.filesRootURL)
             revealSelected(model.filesRootURL)
             search.setRoot(model.filesRootURL)
@@ -137,11 +154,14 @@ struct MarkdownFileTreeView: View {
         let actions = treeActions
         let selected = revealed ?? model.selected?.id
         let pulse = rowPulse
+        let git: GitTreeDecorations? = gitMarks ? gitTree.decorations : nil
+        let rows = git.map { changedOnly ? FileTreeView.changedRows(tree.rows, $0) : tree.rows } ?? tree.rows
         return LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(tree.rows) { row in
+            ForEach(rows) { row in
                 FileTreeRowView(
                     row: row, selected: row.id == selected, icon: FileTreeView.defaultIcon(row), style: style,
-                    model: tree, actions: actions, pulse: pulse?.id == row.id ? pulse : nil
+                    model: tree, actions: actions, pulse: pulse?.id == row.id ? pulse : nil,
+                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false
                 )
                 .equatable()
                 .markdownHoverPreview(row.isFolder ? nil : row.url, model: model)
@@ -447,6 +467,21 @@ struct MarkdownFileTreeView: View {
             .accessibilityLabel("New file or folder")
             .accessibilityIdentifier("markdown-files-new")
             .instantTooltip("New file or folder in \(newItemFolder.lastPathComponent)")
+
+            if gitMarks {
+                Button {
+                    changedOnly.toggle()
+                } label: {
+                    Image(systemName: "plusminus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(changedOnly ? model.theme.accent : model.theme.textMuted)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .accessibilityIdentifier("markdown-files-changed-only")
+                .instantTooltip(changedOnly ? "Showing only changed files: click for all" : "Show only changed files")
+            }
 
             Button {
                 if searchOpen { closeSearch() } else { searchOpen = true }

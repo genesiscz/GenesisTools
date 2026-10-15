@@ -37,14 +37,14 @@ struct GitQueries {
 
     func fileState(_ file: URL) throws -> GitFileState? {
         guard let root = root(of: file.deletingLastPathComponent()), let path = Self.relative(file, to: root) else { return nil }
-        let status = Self.parseStatus(try run(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--", path], in: root))
+        let status = Self.parseStatus(try run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--", path], in: root))
         var state = GitFileState(repoRoot: root, path: path, branch: status.branch, entry: status.entries.first { $0.path == path })
         if state.hasUnstaged, !state.isUntracked,
-           let counts = Self.parseNumstat(try run(["diff", "--numstat", "--", path], in: root)) {
+           let counts = Self.parseNumstat(try run(["--no-optional-locks", "diff", "--numstat", "--", path], in: root)) {
             state.unstagedAdditions = counts.additions
             state.unstagedDeletions = counts.deletions
         }
-        if state.hasStaged, let counts = Self.parseNumstat(try run(["diff", "--cached", "--numstat", "--", path], in: root)) {
+        if state.hasStaged, let counts = Self.parseNumstat(try run(["--no-optional-locks", "diff", "--cached", "--numstat", "--", path], in: root)) {
             state.stagedAdditions = counts.additions
             state.stagedDeletions = counts.deletions
         }
@@ -71,7 +71,7 @@ struct GitQueries {
 
     func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? {
         guard let root = root(of: folder) else { return nil }
-        let status = Self.parseStatus(try run(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: root))
+        let status = Self.parseStatus(try run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: root))
         let log = commits > 0 ? (try? run(["log", "-n", String(commits), "--format=\u{1e}%H\u{1f}%h\u{1f}%s\u{1f}%an\u{1f}%ct"], in: root)) ?? "" : ""
         return GitRepoStatus(root: root, branch: status.branch, upstream: status.upstream, ahead: status.ahead, behind: status.behind,
                              entries: status.entries, commits: Self.parseLog(log))

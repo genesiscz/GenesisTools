@@ -77,6 +77,14 @@ struct MarkdownDocumentToolbar: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
     @StateObject private var share = MarkdownShareModel()
+    @ObservedObject private var gitConfiguration = GenesisKitMarkdownConfiguration.shared
+    @ObservedObject private var repos = GitRepos.shared
+
+    /// Read, Split, Source, and Changes while git is on and the file is in a repository (or Changes is open).
+    private var modes: [MarkdownViewMode] {
+        let changes = model.mode == .changes || (gitConfiguration.git && repos.model(for: doc.folder) != nil)
+        return MarkdownViewMode.allCases.filter { $0 != .changes || changes }
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -146,6 +154,15 @@ struct MarkdownDocumentToolbar: View {
                     tooltip: "Outline (⌘⇧O)", id: "markdown-outline-toggle", labels: labels,
                     action: toggleOutline
                 )
+                if modes.contains(.changes) {
+                    groupDivider
+                    toolButton(
+                        "arrow.triangle.branch", label: "Git",
+                        tint: model.showGit ? model.theme.accent : nil,
+                        tooltip: "Git: this file's history and the repository", id: "markdown-git-toggle", labels: labels,
+                        action: { withAnimation(GenAnimation.quick) { model.showGit.toggle() } }
+                    )
+                }
             }
 
             // No identifier on the picker itself: SwiftUI pushes a
@@ -336,7 +353,7 @@ struct MarkdownDocumentToolbar: View {
     /// no clicks, like every group's (`MarkdownToolbarGroup`).
     private func modePicker(labels: Bool) -> some View {
         HStack(spacing: 1) {
-            ForEach(MarkdownViewMode.allCases, id: \.self) { mode in
+            ForEach(modes, id: \.self) { mode in
                 let active = model.mode == mode
                 Button {
                     model.setMode(mode)
@@ -468,6 +485,7 @@ extension MarkdownViewMode {
         case .preview: "Read"
         case .split: "Split"
         case .source: "Source"
+        case .changes: "Changes"
         }
     }
 }

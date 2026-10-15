@@ -134,9 +134,10 @@ extension MarkdownTreeDemand.Line {
     /// than the name.
     private static let monoAdvance = 0.62
 
-    /// A tree row (`FileTreeRowView`).
-    init(row: FileTreeRow) {
-        self.init(name: row.name, layout: Double(Self.unit.widthBesidesName(depth: row.depth)))
+    /// A tree row (`FileTreeRowView`); `gitMark` keeps room for the git letter at its end.
+    init(row: FileTreeRow, gitMark: Bool = false) {
+        let mark = gitMark ? Self.unit.gitMarkWidth : 0
+        self.init(name: row.name, layout: Double(Self.unit.widthBesidesName(depth: row.depth) + mark))
     }
 
     /// The name line of a search hit (`MarkdownFileTreeResultRow`): the icon, the name and, for a text

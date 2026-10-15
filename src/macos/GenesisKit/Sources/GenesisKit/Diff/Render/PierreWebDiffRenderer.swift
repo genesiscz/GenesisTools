@@ -485,15 +485,26 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-/// Serves Contents/Resources/diff-viewer (or GENESIS_DIFF_VIEWER_DIR during development).
-private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
-    private let root: URL? = {
+extension PierreWebDiffRenderer {
+    /// The diff page's folder: Contents/Resources/diff-viewer, or GENESIS_DIFF_VIEWER_DIR during development.
+    public static let viewerRoot: URL? = {
         if let override = ProcessInfo.processInfo.environment["GENESIS_DIFF_VIEWER_DIR"] {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
 
         return Bundle.main.resourceURL?.appendingPathComponent("diff-viewer", isDirectory: true)
     }()
+
+    /// Whether this app bundles the diff page; without it the renderer shows an empty view.
+    public static var isBundled: Bool {
+        guard let root = viewerRoot else { return false }
+        return FileManager.default.fileExists(atPath: root.appendingPathComponent("index.html").path)
+    }
+}
+
+/// Serves `PierreWebDiffRenderer.viewerRoot`.
+private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let root = PierreWebDiffRenderer.viewerRoot
 
     public func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url, let root else {

@@ -342,7 +342,8 @@ final class MarkdownChromeTests: XCTestCase {
         XCTAssertEqual(MarkdownToolbarLabels.always.candidates, [true])
         XCTAssertEqual(MarkdownToolbarLabels.never.candidates, [false])
         XCTAssertEqual(configuration().toolbarLabels, .whenRoom)
-        XCTAssertEqual(MarkdownViewMode.allCases.map(\.shortLabel), ["Read", "Split", "Source"])
+        // Changes is offered only for a file in a git repository (MarkdownDocumentToolbar.modes).
+        XCTAssertEqual(MarkdownViewMode.allCases.map(\.shortLabel), ["Read", "Split", "Source", "Changes"])
     }
 
     func testTheSavedTimeReadsAsAnAge() {
