@@ -109,3 +109,6 @@ Research notes: `<notes vault>/Dev/Bun/2026-10-12-BunCpuProfiling/`.
   depth: a layout at the window root every frame means something asks the whole window to lay out.
 - Find who asks with a conditional breakpoint on `-[NSView setNeedsLayout:]` for that view's address, in a scratch
   app only (lldb on a user's app froze the Mac once).
+- Price parts with an environment switch, not with rebuilds: one binary reads `EXP_*` flags that turn single
+  modifiers off, so every variant runs interleaved from the same build (2026-10-15: four row modifiers priced in
+  12 runs, one build). Remove the switch before committing.

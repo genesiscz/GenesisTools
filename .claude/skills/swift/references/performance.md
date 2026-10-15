@@ -299,3 +299,29 @@ Release check app, a 600-row tree, 360 wheel events through the window, CPU per 
 - To find where the extra went, `/usr/bin/sample <pid> 5` during that scroll (read-only, safe on a user's app) and
   split `NSHostingView.layout` by its ancestors: 90 of 136 samples were inside the table's row cells, 15 in the window
   root. The rows' own SwiftUI hosting was the cost, not the git marks, the tab bar or tooltips.
+
+### Price a SwiftUI row before you rewrite it in AppKit (2026-10-15 21:30)
+Release check app, 600-row tree in an `NSTableView` whose cells host the row in an `NSHostingView`, 360 scripted wheel
+events, ms of CPU per event, two interleaved rounds each:
+
+| Cell | ms per event |
+|---|---|
+| Full SwiftUI row (Button, HStack, icons, git marks, `.contextMenu`, double-click gesture, hover style, hover preview) | 3.8–4.8 |
+| The same row without `.contextMenu` / without the double-click gesture / without the hover style / without the hover preview | about 0.2–0.7 less each |
+| The same row with all four off | 3.3 |
+| A hosted SwiftUI `Text` only | 2.4–2.5 |
+| A plain AppKit label (`NSTextField`) | 1.8–1.9 |
+
+- Hosting itself is cheap: a hosted `Text` costs only about 0.6 ms more than an AppKit label. The cost is what the
+  row carries. Per-row gestures, menus and hover styles each add a few tenths of a millisecond per scroll event.
+- Body runs were not the problem: `RenderProbe` counted 519 row bodies for the whole scroll, one per row that came
+  into view. `.equatable()` was already in place; removing an `AnyView` root changed nothing measurable.
+- So the order is: count bodies (`RenderProbe` or `Self._printChanges()` in debug), then price each modifier by
+  switching it off, then move per-row interaction to the container (one `menu(for:)`, one `doubleAction`, one tracking
+  area), and only then consider AppKit cells.
+- Research behind it (2026-10-15, three reports in the notes vault, Dev/Swift/Performance): Apple's WWDC22 10075
+  documents one `NSHostingView` per cell with `rootView` updated on reuse; WWDC26 321 lists four lazy-stack rules
+  (filter before the stack, keep unrelated environment reads out of row bodies, keep the row structure constant,
+  avoid height changes after appear); a Stack Overflow answer (72070486) explains that a table asking each row for its
+  height re-runs row bodies, so give rows a fixed height. Public case studies (kean.blog, troz.net) moved big lists to
+  AppKit tables but published no per-row numbers.
