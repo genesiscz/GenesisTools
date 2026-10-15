@@ -635,6 +635,19 @@ describe("journalReplayCommand", () => {
 
         expect(resolved.command).toBe(`tools claude start work -- --resume ${CLAUDE_ID}`);
         expect(resolved.drift[0]).toContain(`claude session ${CLAUDE_ID}`);
+        expect(resolved.drift[1]).toContain("dropped --fast");
+    });
+
+    test("an unknown launcher keeps the agent's own flags on the resume, never the model", () => {
+        const resolved = journalReplayCommand(
+            { command: "myclaude --dangerously-skip-permissions --model opus", atMs: 1_000 },
+            session
+        );
+
+        expect(resolved.command).toBe(
+            `tools claude start work -- --resume ${CLAUDE_ID} --dangerously-skip-permissions`
+        );
+        expect(resolved.drift).toContain("kept claude's own flags: --dangerously-skip-permissions");
     });
 
     test("a command typed after the session's last record replays verbatim", () => {

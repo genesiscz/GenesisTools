@@ -5,6 +5,7 @@ import type { CapturedCommand } from "@app/cmux/lib/capture-journal";
 import { agentRunLauncher } from "@app/cmux/lib/session-agents";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
+import { carryAgentFlags } from "@genesiscz/utils/agent-sessions/resume-flags";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
@@ -12,6 +13,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 
 /**
  * Foreground-command capture and replay-command derivation for profile save.
@@ -538,11 +540,19 @@ export function journalReplayCommand(
 
     if (session?.at !== undefined && session.at >= journal.atMs) {
         const typed = journal.command.split("\n")[0].slice(0, 60);
+        const flags = carryAgentFlags(session.provider, journal.command);
+        const resume = resumeCommandLine(session.provider, session.sessionId, session.account);
 
         return {
-            command: resumeCommandLine(session.provider, session.sessionId, session.account),
+            command: [resume, ...flags.kept.map(shellWord)].join(" "),
             drift: [
                 `the surface journal saw ${session.provider} session ${session.sessionId} in this tab after \`${typed}\` started, so the tab resumes that session`,
+                ...(flags.kept.length > 0 ? [`kept ${session.provider}'s own flags: ${flags.kept.join(" ")}`] : []),
+                ...(flags.dropped.length > 0
+                    ? [
+                          `dropped ${flags.dropped.join(" ")}: not a ${session.provider} flag a resume may carry (a model, a resume, or the wrapper's own)`,
+                      ]
+                    : []),
             ],
         };
     }

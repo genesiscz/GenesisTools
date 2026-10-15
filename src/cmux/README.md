@@ -195,7 +195,11 @@ Claude through any alias, function or wrapper (`cr work`, `ffff`, a shell functi
    - The journal saw the session **after** that command started: the session was the tab's
      last occupant, so it is resumed, whatever the command was. A launcher the code does not
      know becomes `tools claude start <account> -- --resume <id>` (account from the pin
-     journal).
+     journal). The agent's own flags on the typed line ride along
+     (`ffff --dangerously-skip-permissions` resumes with `--dangerously-skip-permissions`):
+     only flags the agent's `--help` lists, never a model, resume or print flag, and never a
+     wrapper's own flag such as `--cross-messages`, which the agent would refuse. The drift line
+     names what was kept and what was dropped.
    - A known launcher whose agent the journal saw only **before** the command started gets no
      journal session: that session belongs to an earlier run in the tab. The drift says so, and
      the tab title (rule 3) or the session id in the command decides.
