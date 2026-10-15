@@ -37,6 +37,8 @@ const KIT_FILES = [
     "diff.tsx",
     "structure.tsx",
     "viz.tsx",
+    "timeseries-core.ts",
+    "timeseries.tsx",
     "index.ts",
 ];
 

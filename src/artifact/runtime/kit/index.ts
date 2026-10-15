@@ -154,6 +154,28 @@ export {
     treeFromPaths,
 } from "./structure";
 export {
+    TimeSeries,
+    type TimeSeriesProps,
+    type TsMarker,
+    type TsSeries,
+    type TsSpan,
+    type TsUnitConfig,
+} from "./timeseries";
+export {
+    assignPanels,
+    clampRange,
+    clusterMarkers,
+    decimate,
+    layoutLanes,
+    nearestIndex,
+    packRows,
+    stackPoints,
+    type TsPoint,
+    type TsRange,
+    timeTicks,
+    zoomRange,
+} from "./timeseries-core";
+export {
     Heatmap,
     type HeatmapProps,
     heatShare,
