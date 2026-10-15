@@ -1,6 +1,6 @@
 ---
 name: artifact
-description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 40+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
+description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 60+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, Gantt, CapacityGrid, Tooltip, FilterChips, Wizard, EditableTable, ChangeLedger, form controls, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
 ---
 
 # tools artifact — dashboards from a single file
@@ -13,6 +13,7 @@ artifact — React, Tailwind v4 and the component kit resolve from GenesisTools.
 
 ```bash
 tools artifact init dashboard.tsx      # scaffold — never hand-write the shell
+tools artifact init plan.tsx --starter roadmap   # project roadmap: KPIs, Gantt, capacity, sync log
 tools artifact serve dashboard.tsx     # serves + opens /dashboard (clean URL); HMR on edit
 tools artifact build dashboard.tsx     # → dist/dashboard.html, opens from file://
 ```
@@ -27,7 +28,8 @@ tools artifact build dashboard.tsx     # → dist/dashboard.html, opens from fil
   the server to the next free one, and 3076 may be another folder's server (a Codex session
   opened a 404 there on 2026-10-16). A plain `serve` ties up the shell and dies with it.
 - **`tools artifact library up`** = ONE server for every registered folder: `/` is the library
-  page (meta + click to open), each folder mounts at `/a/<name>/`.
+  page (meta + click to open), each folder mounts at `/a/<name>/`. The built-in `kit-gallery`
+  shows one page per kit component (defaults, an edge case, keyboard use) in light and dark.
 - `build --watch` keeps the single-file output fresh on every edit. Single-file builds embed
   ONLY data the entry references — never the surrounding folder.
 
@@ -53,7 +55,7 @@ body renders as markdown. Full API: `tools artifact kit`.
 | Group | Components |
 |---|---|
 | Layout | `Page` `Hero` `Section` `Card`/`CardGrid` `Tabs` (hash-synced) `Router`/`RouterLink`/`useParams`/`useNavigate` (history API; hash fallback on file://) |
-| Data | `StatGrid` `DataTable` (filter, `rowTone`, toned/markdown cells) `SeriesTable` `Timeline` `Bullets` `QA` (per-item `open`/`featured`/`meta`) |
+| Data | `StatGrid` (`delta` against a baseline, `edge`, auto-fit `min`) `EditableTable` (input cells, add/remove, validation, totals) `ChangeLedger`/`FieldDiff`/`diffFields` (sync history with field changes) `DataTable` (filter, `rowTone`, toned/markdown cells) `SeriesTable` `Timeline` `Bullets` `QA` (per-item `open`/`featured`/`meta`) |
 | Evidence | `CodeBlock` (copy, `lang="ts"` highlighting, `highlightLines`/`badLines`) `FileMark` `Claim` ([NN%] badge) `Quote` `Callout` `Badge` `Chips` `Note` `Superseded` |
 | Markdown | `Md` `MdInline` `MdViewer` (`src="../doc.md"` fetches LIVE — TOC + section filter; replaces build-time inlining). Fenced code is highlighted; a ```` ```mermaid ```` fence renders as a diagram |
 | Diagrams | `Mermaid` (`chart` = mermaid source: flowchart, sequence, state, class, ER, gantt, gitGraph, mindmap, timeline; zoom toolbar, copy source, download SVG) `ZoomPane` |
@@ -62,6 +64,10 @@ body renders as markdown. Full API: `tools artifact kit`.
 | Time series | `TimeSeries` (canvas chart for dense time data: wheel/pinch zoom, drag pan, Shift-drag select, brush strip, presets, keyboard; viewer toggles series, combined/split layout, log, % of max, table, CSV/PNG; `markers` in a clustered band, `spans` as Gantt lanes; `syncId` links charts; `id` persists the view) |
 | Viz | `Sparkline` (inline trend for a cell or stat) `Meter` (bar with `thresholds`) `Heatmap` (rows × cols, one tone) |
 | Interactive | `Simulator` (step player) `ParametricSimulator` (sliders/segments/toggles + pure `generate(params)` + presets) `SegmentedControl` |
+| Viz | `Sparkline` (inline trend for a cell or stat) `Meter` (bar with `thresholds`) `Heatmap` (rows × cols, one tone) `Gantt` + `GanttTable` (sprint axis, lanes, baseline ghosts with a shift label, milestones, today line, drag and keyboard editing) `CapacityGrid` (load against capacity, over cells outlined) |
+| Interactive | `Simulator` (step player) `ParametricSimulator` (sliders/segments/toggles + pure `generate(params)` + presets) `SegmentedControl` `FilterChips` (toggle chips, `aria-pressed`) `SortableList` (grip drag + keyboard) `Wizard` (steps, validate, Skip, hash) `Tooltip`/`useTooltip` (one shared dark card) |
+| Forms | `Button` (`busy`) `Field` (label, hint, error) `TextInput` `NumberInput` (draft until blur) `DateInput` (YYYY-MM-DD) `Select` `Textarea` `FileInput` (drop zone, read in page) |
+| Theme | `ThemeToggle`/`useTheme` (opt-in System, Light, Dark; needs the `auto` template) `SERIES_COLOR` (8 lane colours, light and dark pairs) |
 
 Show-me rule: a flow, a sequence, a state machine or an architecture is a `Mermaid` (or a
 ```` ```mermaid ```` fence in an `.md`), never hand-drawn boxes. mermaid itself is NOT installed:
@@ -78,7 +84,8 @@ convention auto-embeds for single-file builds.
 `tools artifact templates` lists them; `serve/library --template <name>`:
 graphite (default instrument dark) · bone (editorial light, print) · forest (handbook green) ·
 steel (zero-chroma, color = status only) · tan (black+tan presentation, radius 0) · cobalt
-(client-facing light). Each is a `theme.css` token set bridged into Tailwind, so the SAME kit
+(client-facing light) · auto (cobalt by day, graphite by night: follows the system; `build -t auto` for a
+.tsx page). Each is a `theme.css` token set bridged into Tailwind, so the SAME kit
 code retints completely. A custom template dir may override just `theme.css`.
 
 ## Design rules (inlined — the kit already encodes most)

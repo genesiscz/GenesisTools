@@ -53,7 +53,9 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
 - Layout: `Page`, `Hero`, `Section`, `Card`/`CardGrid`, `Collapse` (styled details/summary),
   `Tabs` (hash-synced, sticky bar, per-tab status `badge`), `Router`/
   `RouterLink`/`useParams`/`useNavigate` (history API, base-aware, hash fallback on `file://`)
-- Data: `StatGrid`, `DataTable` (filter, `rowTone`, toned/markdown cells), `SeriesTable`,
+- Data: `StatGrid` (`delta` against a baseline, `edge` accent, auto-fit `min`), `EditableTable`
+  (input cells with drafts, add/remove, validation, totals), `ChangeLedger` + `FieldDiff` +
+  `diffFields` (sync history with added, removed and changed fields), `DataTable` (filter, `rowTone`, toned/markdown cells), `SeriesTable`,
   `Timeline`, `Bullets`, `QA` (per-item `open`/`featured`/`meta`), `Matrix`-style via cells
 - Charts: `DayChart` (bars/lines/stacks over labeled points, log scales, reference markers),
   `DonutChart` — recharts-backed, colored by theme tones; `ChartJs` renders a raw Chart.js v4
@@ -75,8 +77,21 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
   PNG export; clustered `markers`; `spans` as Gantt lanes; `syncId` shares viewport and crosshair;
   `id` persists the view in localStorage and the URL hash). Demo: `src/artifact/gallery/time-series.tsx`
 - Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid)
+- Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid),
+  `Gantt` + `GanttTable` (sprint axis, tinted lanes, baseline ghosts with a shift label,
+  milestones, today line, drag and keyboard editing), `CapacityGrid` (load against capacity)
 - Interactive: `Simulator` (step player), `ParametricSimulator` (sliders/segments/toggles +
-  pure `generate(params)` + presets), `SegmentedControl`
+  pure `generate(params)` + presets), `SegmentedControl`, `FilterChips`, `SortableList`,
+  `Wizard`, `Tooltip`/`useTooltip` (one shared hover card, dark in every theme)
+- Forms: `Button`, `Field`, `TextInput`, `NumberInput`, `DateInput`, `Select`, `Textarea`,
+  `FileInput` (dates are `YYYY-MM-DD` strings; every control has a 2 px focus ring)
+- Theme: `ThemeToggle`/`useTheme` (opt-in override for the `auto` template), `SERIES_COLOR`
+  (8 lane colours from the shared `--series-*` tokens), `contrastRatio`/`readableTextOn`
+
+The kit gallery (`src/artifact/gallery/`) has one page per component and is the built-in
+`kit-gallery` entry of `tools artifact library`. Its index finds pages with a glob, so a new
+`.tsx` file there shows up with no other edit. `tools artifact init <file>.tsx --starter roadmap`
+scaffolds a project roadmap page built from these pieces.
 
 ### Mermaid is not installed
 
@@ -95,7 +110,10 @@ Each template is a `theme.css` of CSS custom properties bridged into Tailwind v4
 `@theme inline`, so ONE kit renders correctly under every theme (`bg-canvas`, `text-ink`,
 `text-ok`, `rounded-card`, …). `--template <name|dir>`; a custom dir may override just
 `theme.css` or any chrome page (`catalog.html`, `page.html`, `tsx.html`) — missing files fall
-back to the default. The kit lives outside the served root, so `runtime/styles.css` carries an
+back to the default. The `auto` template writes every token once with `light-dark()` and
+follows `prefers-color-scheme`; `data-theme="light"` or `"dark"` on the root overrides it
+(ThemeToggle, plus a pre-paint script in the chrome pages). `build -t auto` applies it to a
+`.tsx` build. The kit lives outside the served root, so `runtime/styles.css` carries an
 explicit `@source "./kit"` — without it Tailwind never scans the kit's classes.
 
 ## Data rule
