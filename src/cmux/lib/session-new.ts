@@ -16,7 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { createTmuxSession, killTmuxSession, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
-import { parseCmuxTree } from "./session-adopt";
+import { parseCmuxTree } from "./live-layout";
 import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");

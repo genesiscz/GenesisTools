@@ -1,100 +1,11 @@
+import type { CmuxTreeView, LiveSurface } from "@app/cmux/lib/live-layout";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
-import { SafeJSON } from "@genesiscz/utils/json";
 import type { TmuxClientInfo, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
 import { titleMatchKeys } from "./agent-replay";
 import { isSessionAgentId, type SessionAgentId } from "./session-agents";
 import type { AdoptedSession } from "./session-close";
 import { commandRunsAgent } from "./tab-process";
-
-export interface LiveSurface {
-    ref: string;
-    /** The surface UUID (`--id-format both`); stable across cmux restarts, unlike `ref`. */
-    id: string | null;
-    tty: string | null;
-    workspace: string;
-    /** The workspace UUID (`--id-format both`); stable across cmux restarts, unlike `workspace`. */
-    workspaceId: string | null;
-    window: string;
-    /** The pane and window UUIDs, where the tree named them. */
-    paneId?: string | null;
-    windowId?: string | null;
-    /** The tab title (`vybava - grok`). */
-    title: string | null;
-    workspaceTitle: string | null;
-}
-
-export interface CmuxTreeView {
-    /** The surface this command runs in, as a ref; never adopted. */
-    caller: string | null;
-    /** The same surface's UUID, which survives a cmux relaunch (`--id-format both`). */
-    callerId: string | null;
-    surfaces: Map<string, LiveSurface>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function list(value: unknown): unknown[] {
-    return Array.isArray(value) ? value : [];
-}
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value !== "" ? value : null;
-}
-
-/** The terminal surfaces of `cmux --id-format both tree --json`, keyed by ref, with their UUID, tty, workspace and window. */
-export function parseCmuxTree(stdout: string): CmuxTreeView {
-    const parsed: unknown = SafeJSON.parse(stdout, { strict: true });
-    const surfaces = new Map<string, LiveSurface>();
-
-    if (!isRecord(parsed)) {
-        return { caller: null, callerId: null, surfaces };
-    }
-
-    const caller = isRecord(parsed.caller) ? text(parsed.caller.surface_ref) : null;
-    const callerId = isRecord(parsed.caller) ? text(parsed.caller.surface_id) : null;
-
-    for (const window of list(parsed.windows)) {
-        if (!isRecord(window) || !text(window.ref)) {
-            continue;
-        }
-
-        for (const workspace of list(window.workspaces)) {
-            if (!isRecord(workspace) || !text(workspace.ref)) {
-                continue;
-            }
-
-            for (const pane of list(workspace.panes)) {
-                if (!isRecord(pane)) {
-                    continue;
-                }
-
-                for (const surface of list(pane.surfaces)) {
-                    const ref = isRecord(surface) ? text(surface.ref) : null;
-
-                    if (isRecord(surface) && ref && surface.type === "terminal") {
-                        surfaces.set(ref, {
-                            ref,
-                            id: text(surface.id),
-                            tty: text(surface.tty),
-                            workspace: String(workspace.ref),
-                            workspaceId: text(workspace.id),
-                            window: String(window.ref),
-                            paneId: text(pane.id),
-                            windowId: text(window.id),
-                            title: text(surface.title),
-                            workspaceTitle: text(workspace.title),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    return { caller, callerId, surfaces };
-}
 
 /**
  * A tmux pane a cmux surface shows right now: the surface's tty is the tty of the only tmux client attached to

@@ -16,13 +16,12 @@ import { classifyPid } from "@genesiscz/utils/process-identity";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { killTmuxSessionExact, listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
+import { type CmuxTreeView, liveTree } from "./live-layout";
 import {
-    type CmuxTreeView,
     joinTmuxPanes,
     type LiveAgentSurface,
     liveAgentSurfaces,
     type ProcessQuery,
-    parseCmuxTree,
     pickAdoptable,
     type TmuxPaneSurface,
     tmuxPaneStillShown,
@@ -139,18 +138,6 @@ async function liveTmuxJoin(tree: CmuxTreeView): Promise<Map<string, TmuxPaneSur
     }
 
     return joinTmuxPanes({ panes: panes.items, clients: clients.items, tree });
-}
-
-/** Every terminal surface of every cmux window, with its UUID and tty. Reads in the background; it never changes focus. */
-export async function liveTree(): Promise<CmuxTreeView> {
-    // The surface UUIDs let adoption tell a session's own surface from a renumbered ref.
-    const result = await runCmux(["--id-format", "both", "tree", "--all"], { json: true });
-
-    if (result.code !== 0) {
-        throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
-    }
-
-    return parseCmuxTree(result.stdout);
 }
 
 /** The child dies at this deadline even if this process is killed first (child-deadline.ts). */

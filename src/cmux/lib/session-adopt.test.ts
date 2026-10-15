@@ -3,11 +3,11 @@ import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as linux from "@genesiscz/utils/process/linux-proc";
 import * as os from "@genesiscz/utils/process/os";
+import { parseCmuxTree } from "./live-layout";
 import {
     joinTmuxPanes,
     liveAgentSurfaces,
     matchLiveAgentSurfaces,
-    parseCmuxTree,
     pickAdoptable,
     tmuxPaneStillShown,
     ttyProcessesShowAgent,
