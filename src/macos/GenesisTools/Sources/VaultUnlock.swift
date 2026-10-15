@@ -52,12 +52,49 @@ struct VaultCaller {
 
     private static let scriptExtensions = [".ts", ".tsx", ".js", ".mjs", ".cjs"]
 
-    /// Where the script sits in the arguments: after the interpreter's flags and the `run` of `bun run <script>`.
+    /// Interpreter flags whose value is the next argument (`--preload <file>`): that value is not the script.
+    private static let valueFlags: Set<String> = [
+        "--preload", "-r", "--require", "--import", "--loader", "--config", "--cwd", "--env-file",
+    ]
+
+    /// The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
+    /// GenesisTools' own code, so they load no extra code (2026-10-15: every `tools claude login` could only be
+    /// allowed once, and the window named the preload as the program).
+    static let ownPreloads = ["src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts"]
+
+    /// The interpreter's flags before the script, each with its value (`--preload=x` or `--preload x`).
+    private var leadingFlags: [(flag: String, value: String?)] {
+        guard let arguments = args?.arguments, arguments.count > 1 else { return [] }
+        var flags: [(flag: String, value: String?)] = []
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "run" { index += 1; continue }
+            guard argument.hasPrefix("-") else { break }
+            if let equals = argument.firstIndex(of: "=") {
+                flags.append((String(argument[..<equals]), String(argument[argument.index(after: equals)...])))
+                index += 1
+            } else if Self.valueFlags.contains(argument) {
+                flags.append((argument, index + 1 < arguments.count ? arguments[index + 1] : nil))
+                index += 2
+            } else {
+                flags.append((argument, nil))
+                index += 1
+            }
+        }
+        return flags
+    }
+
+    /// Where the script sits in the arguments: after the interpreter's flags (and their values) and the `run` of
+    /// `bun run <script>`.
     private var scriptIndex: Int? {
         guard let arguments = args?.arguments, arguments.count > 1 else { return nil }
         var index = 1
-        while index < arguments.count, arguments[index].hasPrefix("-") || arguments[index] == "run" {
-            index += 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "run" { index += 1; continue }
+            guard argument.hasPrefix("-") else { break }
+            index += !argument.contains("=") && Self.valueFlags.contains(argument) ? 2 : 1
         }
 
         guard index < arguments.count, Self.scriptExtensions.contains(where: arguments[index].hasSuffix) else { return nil }
@@ -105,11 +142,15 @@ struct VaultCaller {
             }
         }
 
-        let arguments = args?.arguments ?? []
-        let end = scriptIndex ?? arguments.count
-        let flags = arguments.count > 1 ? arguments[1..<max(1, end)].filter { $0.hasPrefix("-") } : []
-        if flags.contains(where: { ["--preload", "-r", "--require", "--import", "--loader"].contains($0) }) {
-            found.append("interpreter flags \(flags.joined(separator: " "))")
+        // A checkout's own preloads are part of the program; any other preload, or any other loading flag, is not.
+        let checkout = script.flatMap { path in path.range(of: "/src/").map { String(path[..<$0.lowerBound]) } }
+        let own = Set(Self.ownPreloads.compactMap { relative in checkout.map { root in "\(root)/\(relative)" } })
+        let foreign = leadingFlags.filter { flag in
+            !(flag.flag == "--preload" && flag.value.map { value in own.contains((value as NSString).standardizingPath) } == true)
+        }
+        if foreign.contains(where: { ["--preload", "-r", "--require", "--import", "--loader"].contains($0.flag) }) {
+            let shown = foreign.map { flag in flag.value.map { value in "\(flag.flag) \(value)" } ?? flag.flag }
+            found.append("interpreter flags \(shown.joined(separator: " "))")
         }
 
         return found

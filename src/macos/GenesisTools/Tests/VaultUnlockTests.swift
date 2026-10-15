@@ -67,6 +67,26 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(injected.onceOnlyReason, "extra code may be loaded")
     }
 
+    func testGenesisToolsOwnPreloadsAreNotExtraCodeAndDoNotHideTheScript() {
+        // `tools claude login-long admin` as the tools wrapper starts it (2026-10-15: the window named the preload as
+        // the program and allowed it only once).
+        let login = caller(arguments: ["gt-claude", "--preload", "/repo/src/utils/bun/preload-solid-scoped.ts",
+                                       "--preload", "/repo/src/utils/search/stores/sqlite-vec-preload.ts",
+                                       "/repo/src/claude/index.ts", "login-long", "admin"])
+        XCTAssertEqual(login.script, "/repo/src/claude/index.ts")
+        XCTAssertEqual(login.toolName, "claude")
+        XCTAssertEqual(login.injected, [])
+        XCTAssertNil(login.onceOnlyReason)
+
+        // The same file from another checkout, or another file in this one, is still extra code.
+        let foreign = caller(arguments: ["gt-claude", "--preload", "/other/src/utils/bun/preload-solid-scoped.ts",
+                                         "/repo/src/claude/index.ts"])
+        XCTAssertEqual(foreign.script, "/repo/src/claude/index.ts")
+        XCTAssertFalse(foreign.injected.isEmpty)
+        let other = caller(arguments: ["gt-claude", "--preload=/repo/src/utils/bun/other.ts", "/repo/src/claude/index.ts"])
+        XCTAssertFalse(other.injected.isEmpty)
+    }
+
     func testARememberedApprovalCoversOnlyTheSameExecutableAndScriptUntilItEnds() {
         let grant = VaultGrant(key: "k", tool: "claude", executable: "/bin/gt-claude", script: "/repo/src/claude/index.ts",
                                grantedAt: 1_000, until: 2_000, method: "touch-id")

@@ -226,6 +226,24 @@ describe("describeClient", () => {
         expect(isInterpreter("/Applications/Pi.app/Contents/MacOS/pi")).toBe(false);
     });
 
+    test("GenesisTools' own preloads neither hide the script nor count as extra code", () => {
+        // `tools claude login-long admin` as the tools wrapper starts it (2026-10-15: every login could be allowed
+        // only once, and the preload was taken for the script).
+        const bun = "/opt/bun/bin/bun";
+        const login =
+            "gt-claude --preload /repo/src/utils/bun/preload-solid-scoped.ts" +
+            " --preload /repo/src/utils/search/stores/sqlite-vec-preload.ts /repo/src/claude/index.ts login-long admin";
+        expect(scriptOf(login, null, bun)).toBe("/repo/src/claude/index.ts");
+        expect(codeInjectionSignals(login, null, bun)).toEqual([]);
+
+        const foreign = "gt-claude --preload /other/src/utils/bun/preload-solid-scoped.ts /repo/src/claude/index.ts";
+        expect(scriptOf(foreign, null, bun)).toBe("/repo/src/claude/index.ts");
+        expect(codeInjectionSignals(foreign, null, bun)).toEqual(["flag --preload"]);
+        expect(codeInjectionSignals("bun --preload=/repo/src/utils/bun/x.ts /repo/src/a/index.ts", null, bun)).toEqual([
+            "flag --preload",
+        ]);
+    });
+
     test("framework Python and other interpreters are matched without regard to case", () => {
         for (const path of [
             "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",

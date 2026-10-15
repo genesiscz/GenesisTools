@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import {
     batchCommandWithEnvironment,
@@ -27,6 +27,54 @@ const COMMAND_DISPLAY_MAX = 200;
  */
 const INTERPRETERS =
     /^(node|nodejs|bun|deno|python[0-9.]*|pypy[0-9.]*|ruby[0-9.]*|perl[0-9.]*|php[0-9.]*|lua[0-9.]*|luajit|tclsh[0-9.]*|wish|osascript|java|pwsh|sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh)$/i;
+
+/** bun and node flags whose value is the next argument (`--preload <file>`): that value is not the script. */
+const VALUE_FLAGS = new Set([
+    "--preload",
+    "-r",
+    "--require",
+    "--import",
+    "--loader",
+    "--config",
+    "--cwd",
+    "--env-file",
+]);
+const VALUE_FLAG_RUNNERS = /^(node|nodejs|bun)$/i;
+
+/**
+ * The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
+ * GenesisTools' own code, so they load no extra code (2026-10-15: every `tools claude login` could be allowed only
+ * once, and the preload was taken for the script). The Swift vault window keeps the same list (`ownPreloads`).
+ */
+export const OWN_PRELOADS = ["src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts"];
+
+/** The interpreter's flags before the script, each with its value, and the arguments from the script on. */
+function splitLeadingFlags(
+    args: string[],
+    executable: string
+): { flags: Array<{ flag: string; value: string | null }>; rest: string[] } {
+    const takesValues = VALUE_FLAG_RUNNERS.test(basename(executable));
+    const flags: Array<{ flag: string; value: string | null }> = [];
+    let index = 0;
+
+    while (index < args.length && args[index].startsWith("-")) {
+        const arg = args[index];
+        const equals = arg.indexOf("=");
+
+        if (equals !== -1) {
+            flags.push({ flag: arg.slice(0, equals), value: arg.slice(equals + 1) });
+            index += 1;
+        } else if (takesValues && VALUE_FLAGS.has(arg)) {
+            flags.push({ flag: arg, value: args[index + 1] ?? null });
+            index += 2;
+        } else {
+            flags.push({ flag: arg, value: null });
+            index += 1;
+        }
+    }
+
+    return { flags, rest: args.slice(index) };
+}
 
 /** Runners that take a subcommand before the script: `bun run pi.ts`, `deno run -A pi.ts`. */
 const SUBCOMMAND_RUNNERS = /^(bun|deno)$/i;
@@ -192,7 +240,8 @@ export function scriptOf(
     cwd: string | null,
     executable: string = executableOf(command)
 ): string | null {
-    const script = scriptArgs(command, executable)?.find((arg) => !arg.startsWith("-"));
+    const args = scriptArgs(command, executable);
+    const script = args ? splitLeadingFlags(args, executable).rest[0] : undefined;
 
     if (!script) {
         return null;
@@ -217,13 +266,19 @@ export function codeInjectionSignals(
     executable: string = executableOf(command)
 ): string[] {
     const signals: string[] = [];
+    const { flags, rest } = splitLeadingFlags(scriptArgs(command, executable) ?? [], executable);
+    const script = rest[0];
+    const checkout =
+        script && isAbsolute(script) && script.includes("/src/") ? script.slice(0, script.indexOf("/src/")) : null;
+    const own = new Set(checkout ? OWN_PRELOADS.map((relative) => join(checkout, relative)) : []);
 
-    for (const arg of scriptArgs(command, executable) ?? []) {
-        if (!arg.startsWith("-")) {
-            break;
+    for (const { flag, value } of flags) {
+        // A checkout's own preloads are part of the program; any other preload, or any other flag, is not.
+        if (flag === "--preload" && value && own.has(resolve(value))) {
+            continue;
         }
 
-        signals.push(`flag ${arg.split("=")[0]}`);
+        signals.push(`flag ${flag}`);
     }
 
     signals.push(...environmentSignals(environmentLine, CODE_LOADING_ENV));
