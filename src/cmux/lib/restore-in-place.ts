@@ -5,7 +5,7 @@ import { liveTree } from "@app/cmux/lib/session-close-live";
 import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { runCmux, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
@@ -25,6 +25,13 @@ export interface LiveTab {
     paneId?: string | null;
     windowId?: string | null;
     tty: string | null;
+    /**
+     * False when cmux's tty for this tab cannot be believed: another tab reports the same tty, or the tab's
+     * renderer has not started yet. Right after a relaunch (cmux 0.65.1, 2026-10-15) four of fourteen
+     * background tabs reported another tab's tty, two of them shared with a tab that was drawn; cmux corrected
+     * them only after the tabs got input. Such a tab is judged by its screen alone. Undefined means trusted.
+     */
+    ttyTrusted?: boolean;
     title: string | null;
     /** `surface:N`, for the plan's display only. */
     ref: string;
@@ -62,6 +69,11 @@ export interface InPlaceStep {
     prepareNote?: string;
     /** Set when the tab is left alone. */
     skip?: string;
+    /**
+     * The skip may only mean the tab's shell is still starting (its init runs a program, or the prompt is not
+     * drawn yet), so a later read can plan the tab.
+     */
+    retry?: boolean;
 }
 
 export interface InPlaceLiveState {
@@ -143,11 +155,29 @@ interface Decision {
     skip?: string;
     prepare?: InPlacePrepare;
     prepareNote?: string;
+    retry?: boolean;
+}
+
+/** The tty that runs this agent session now, in any tab. */
+function ttyRunning(sessionId: string, state: InPlaceLiveState): string | undefined {
+    for (const [tty, agent] of state.ttyAgents) {
+        if (agent.sessionId === sessionId) {
+            return tty;
+        }
+    }
+
+    return undefined;
 }
 
 function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPlaceLiveState): Decision {
     if (!surface.surface_id) {
         return { skip: "the capture holds no surface id for this tab" };
+    }
+
+    // Before the live check: a captured tab with no command (a markdown or browser surface) is not a terminal
+    // in the live tree, and "gone" would be wrong.
+    if (!surface.command) {
+        return { skip: "nothing is recorded to restore here" };
     }
 
     if (!live) {
@@ -156,10 +186,6 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
 
     if (live.id.toLowerCase() === state.callerId) {
         return { skip: "this tab runs the restore" };
-    }
-
-    if (!surface.command) {
-        return { skip: "nothing is recorded to restore here" };
     }
 
     const agent = isAgentLauncher(surface.command);
@@ -188,9 +214,21 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
         return { skip: "cmux reports no tty for this tab yet (it was never shown); show the tab once and run again" };
     }
 
+    // A second `--resume` of a running session forks it, whichever tab the running one is in.
+    const runningOn = agent && target ? ttyRunning(target, state) : undefined;
+
+    if (runningOn !== undefined) {
+        return {
+            skip:
+                runningOn === live.tty
+                    ? "already runs the recorded session"
+                    : `the recorded session already runs on ${runningOn}, not on this tab's ${live.tty}`,
+        };
+    }
+
     const screen = state.screens.get(live.id.toLowerCase());
 
-    if (!state.idleTtys.has(live.tty)) {
+    if (live.ttyTrusted !== false && !state.idleTtys.has(live.tty)) {
         const running = state.ttyAgents.get(live.tty);
 
         if (agent && running?.sessionId && running.sessionId === target) {
@@ -210,11 +248,13 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
             skip: agent
                 ? `a program already runs here${running ? ` (${running.kind} ${running.sessionId ?? "without a session id"})` : ""}; the recorded session for this tab is: ${surface.command}`
                 : "a program already runs here",
+            // An unnamed program right after a relaunch is often the shell's own init still running.
+            ...(running ? {} : { retry: true }),
         };
     }
 
     if (screen === undefined) {
-        return { skip: "cmux could not read this tab's screen, so nothing proves its prompt is empty" };
+        return { skip: "cmux could not read this tab's screen, so nothing proves its prompt is empty", retry: true };
     }
 
     const prompt = classifyPrompt(screen);
@@ -227,7 +267,11 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
     }
 
     if (prompt.kind === "unknown") {
-        return { skip: `the last line is not a shell prompt this restore knows: ${lastLine(screen).slice(0, 100)}` };
+        return {
+            skip: `the last line is not a shell prompt this restore knows: ${lastLine(screen).slice(0, 100)}`,
+            // "You have mail." stood last while the prompt was not drawn yet (2026-10-15).
+            retry: true,
+        };
     }
 
     return {};
@@ -263,6 +307,55 @@ export function planInPlaceRestore(profile: Profile, state: InPlaceLiveState): I
     return steps;
 }
 
+/**
+ * The plan, read again while a tab is skipped for a reason that a starting shell explains (see
+ * {@link InPlaceStep.retry}). A restore started right after a relaunch met shells still running their init and
+ * prompts not drawn yet; a second read a minute later planned every tab (2026-10-15).
+ */
+export async function planInPlaceSettled(
+    profile: Profile,
+    options: { read?: () => Promise<InPlaceLiveState>; attempts?: number; delayMs?: number } = {}
+): Promise<InPlaceStep[]> {
+    const read = options.read ?? readInPlaceLiveState;
+    const attempts = options.attempts ?? 3;
+    let steps = planInPlaceRestore(profile, await read());
+
+    for (let attempt = 1; attempt < attempts && steps.some((step) => step.retry); attempt++) {
+        await Bun.sleep(options.delayMs ?? 2000);
+        steps = planInPlaceRestore(profile, await read());
+    }
+
+    return steps;
+}
+
+/** Surface UUIDs (lower case) whose renderer has not started, from `cmux surface-health` per workspace. */
+async function unstartedSurfaces(workspaceIds: Iterable<string>): Promise<Set<string>> {
+    const unstarted = new Set<string>();
+
+    for (const workspaceId of workspaceIds) {
+        try {
+            const health = await runCmuxJSON<{ surfaces?: Array<{ id?: string; render_health?: string | null }> }>([
+                "--id-format",
+                "both",
+                "surface-health",
+                "--workspace",
+                workspaceId,
+            ]);
+
+            for (const surface of health.surfaces ?? []) {
+                if (surface.id && surface.render_health === "not_started") {
+                    unstarted.add(surface.id.toLowerCase());
+                }
+            }
+        } catch (error) {
+            // An older cmux without the command: every tty stays trusted, as before.
+            logger.debug({ error, workspaceId }, "[restore-in-place] surface-health unavailable");
+        }
+    }
+
+    return unstarted;
+}
+
 /** The live tabs, which ttys are idle or run an agent, and every tab's screen. Nothing here changes focus. */
 export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
     const tree = await liveTree();
@@ -271,6 +364,21 @@ export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
     const tabs = new Map<string, LiveTab>();
     const screens = new Map<string, string>();
     const callerId = tree.callerId?.toLowerCase();
+
+    const ttyCounts = new Map<string, number>();
+    const workspaceIds = new Set<string>();
+
+    for (const tab of tree.surfaces.values()) {
+        if (tab.tty) {
+            ttyCounts.set(tab.tty, (ttyCounts.get(tab.tty) ?? 0) + 1);
+        }
+
+        if (tab.workspaceId) {
+            workspaceIds.add(tab.workspaceId);
+        }
+    }
+
+    const unstarted = await unstartedSurfaces(workspaceIds);
 
     for (const tab of tree.surfaces.values()) {
         if (!tab.id) {
@@ -284,6 +392,7 @@ export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
             paneId: tab.paneId ?? null,
             windowId: tab.windowId ?? null,
             tty: tab.tty,
+            ttyTrusted: !unstarted.has(id) && (tab.tty ? (ttyCounts.get(tab.tty) ?? 0) < 2 : true),
             title: tab.title,
             ref: tab.ref,
             workspaceRef: tab.workspace,

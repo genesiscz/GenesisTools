@@ -19,12 +19,7 @@ import {
     parseRestoreSource,
     type RestoreRestartSource,
 } from "@app/cmux/lib/restore-after-restart";
-import {
-    planInPlaceRestore,
-    readInPlaceLiveState,
-    renderInPlaceStep,
-    runInPlaceRestore,
-} from "@app/cmux/lib/restore-in-place";
+import { planInPlaceSettled, renderInPlaceStep, runInPlaceRestore } from "@app/cmux/lib/restore-in-place";
 import { loadSavedScreens } from "@app/cmux/lib/screen-cache";
 import { captureProfile, getCmuxVersion } from "@app/cmux/lib/snapshot";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
@@ -373,8 +368,7 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
 }
 
 async function runInPlace(inferred: Profile, flags: RestartFlags & { enter: boolean }): Promise<void> {
-    const state = await readInPlaceLiveState();
-    const steps = planInPlaceRestore(inferred, state);
+    const steps = await planInPlaceSettled(inferred);
     const planned = steps.filter((step) => !step.skip);
 
     const detail = renderProfileCommandDetail(inferred);

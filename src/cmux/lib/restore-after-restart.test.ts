@@ -3,7 +3,14 @@ import { setCcRunAliases } from "@app/cmux/lib/command-capture";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { filterReplayByAgents, isMissingEnumFlag, parseAgentList, parseRestoreSource } from "./restore-after-restart";
-import { agentsOnTtys, idleShellTtys, type LiveTab, planInPlaceRestore } from "./restore-in-place";
+import {
+    agentsOnTtys,
+    type InPlaceLiveState,
+    idleShellTtys,
+    type LiveTab,
+    planInPlaceRestore,
+    planInPlaceSettled,
+} from "./restore-in-place";
 
 describe("parseRestoreSource", () => {
     test("accepts previous, live, profile", () => {
@@ -207,11 +214,12 @@ describe("planInPlaceRestore", () => {
 
     const GROK_STALE = "b4d9d27d-1597-48fd-b6a6-f5ed76feb360";
     const GROK_RIGHT = "01a05cc5-0ecf-7d40-945e-977e45b3f935";
+    const GROK_BUSY = "01a05cc5-0ecf-7d40-945e-977e45b3f936";
     const TRUST = "Do you trust the contents of this directory?\n  Yes, proceed   y\n  No, quit       n\n";
     const surfaces: Surface[] = [
         tab(1, "alias", `ffff work -- --resume ${CLAUDE_ID}`),
         tab(2, "canonical", `tools claude start work -- --resume ${CLAUDE_ID}`),
-        tab(3, "busy", `grok -r ${GROK_RIGHT}`),
+        tab(3, "busy", `grok -r ${GROK_BUSY}`),
         tab(4, "me", `ffff work -- --resume ${CLAUDE_ID}`),
         tab(5, "new session", "ffff work"),
         tab(6, "ssh", "ssh deploy@example.com"),
@@ -272,7 +280,7 @@ describe("planInPlaceRestore", () => {
         expect(byTitle.get("alias")?.live?.ref).toBe("surface:101");
         expect(planned("canonical")).toEqual(["agent", undefined, undefined]);
         expect(byTitle.get("busy")?.skip).toBe(
-            `a program already runs here (claude 99999999-9999-4999-8999-999999999999); the recorded session for this tab is: grok -r ${GROK_RIGHT}`
+            `a program already runs here (claude 99999999-9999-4999-8999-999999999999); the recorded session for this tab is: grok -r ${GROK_BUSY}`
         );
         expect(byTitle.get("me")?.skip).toBe("this tab runs the restore");
         expect(byTitle.get("new session")?.skip).toBe(
@@ -315,6 +323,69 @@ describe("planInPlaceRestore", () => {
 
         expect(step?.prepare).toBeUndefined();
         expect(step?.skip).toContain(`a program already runs here (grok ${GROK_STALE})`);
+    });
+
+    // A second `--resume` of a running session forks it, so a session that runs in another tab is not resumed.
+    test("a session that already runs on another tab's tty is not resumed again", () => {
+        const elsewhere = {
+            ...state,
+            ttyAgents: new Map([...state.ttyAgents, ["ttys099", { kind: "claude" as const, sessionId: CLAUDE_ID }]]),
+        };
+        const step = planInPlaceRestore(liveProfile(surfaces), elsewhere).find((s) => s.title === "alias");
+
+        expect(step?.skip).toBe("the recorded session already runs on ttys099, not on this tab's ttys01");
+        expect(step?.retry).toBeUndefined();
+    });
+
+    // Measured 2026-10-15 after a cmux 0.65.1 relaunch: background tabs reported another tab's tty until they got
+    // input. The tty of such a tab says nothing, so its screen decides.
+    test("a tab whose tty cmux cannot vouch for is judged by its screen alone", () => {
+        const alias = tabs.get(uuid(1));
+        const busy = tabs.get(uuid(3));
+
+        if (!alias || !busy) {
+            throw new Error("fixture tabs 1 and 3 are missing");
+        }
+
+        // Tab 1 reports busy tab 3's tty: trusted, it would be skipped; untrusted, its idle prompt plans it.
+        const swapped = (ttyTrusted: boolean): InPlaceLiveState => ({
+            ...state,
+            tabs: new Map<string, LiveTab>([...tabs, [uuid(1), { ...alias, tty: busy.tty, ttyTrusted }]]),
+        });
+        const pick = (live: InPlaceLiveState) =>
+            planInPlaceRestore(liveProfile(surfaces), live).find((s) => s.title === "alias");
+
+        expect(pick(swapped(true))?.skip).toContain("a program already runs here");
+        expect(pick(swapped(false))?.skip).toBeUndefined();
+
+        const agentScreen = {
+            ...swapped(false),
+            screens: new Map([...state.screens, [uuid(1), "╭──╮\n│ ❯ │\n╰──╯\n  ? for shortcuts"]]),
+        };
+        expect(pick(agentScreen)?.skip).toContain("not a shell prompt this restore knows");
+    });
+
+    test("a skip a starting shell explains is read again, and a settled one is not", async () => {
+        const starting = {
+            ...state,
+            idleTtys: new Set([...state.idleTtys].filter((tty) => tty !== "ttys01")),
+            screens: new Map([...state.screens, [uuid(2), "Last login: Thu Oct 15 11:35:58\nYou have mail."]]),
+        };
+        const first = planInPlaceRestore(liveProfile(surfaces), starting);
+        expect(first.find((s) => s.title === "alias")?.retry).toBe(true);
+        expect(first.find((s) => s.title === "canonical")?.retry).toBe(true);
+        expect(first.find((s) => s.title === "busy")?.retry).toBeUndefined();
+
+        const reads = [starting, state];
+        let count = 0;
+        const steps = await planInPlaceSettled(liveProfile(surfaces), {
+            read: async () => reads[Math.min(count++, reads.length - 1)],
+            delayMs: 0,
+        });
+
+        expect(count).toBe(2);
+        expect(steps.find((s) => s.title === "alias")?.skip).toBeUndefined();
+        expect(steps.find((s) => s.title === "canonical")?.skip).toBeUndefined();
     });
 
     // Measured 2026-10-14: a tab opened in the background has `tty: null` in `cmux tree` until it is drawn,

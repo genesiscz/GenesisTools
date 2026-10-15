@@ -126,7 +126,12 @@ or `· skip: <reason>`. A tab is typed into only when all of these hold:
 - Its surface UUID is in the live layout. cmux keeps the UUID across a relaunch, while the
   `surface:N` refs are renumbered, so the pairing never depends on a ref or a tab position.
 - cmux reports the tab's tty. A tab opened in the background and never shown has no tty in
-  `cmux tree` yet; it is skipped until you show it once.
+  `cmux tree` yet; it is skipped until you show it once. Right after a relaunch, cmux can
+  report another tab's tty for a tab you have not shown yet (seen with cmux 0.65.1: four of
+  fourteen tabs). A tab that shares its tty with another tab, or whose renderer has not
+  started (`cmux surface-health`), is judged by its screen alone.
+- The session does not already run anywhere. A second `--resume` of a running session forks
+  it, so a session found on any tty is skipped with that tty named.
 - Its tty runs exactly one process, a shell. A tab with an agent, an `ssh`, a `tail -f`, a
   second shell (a script waiting for input) or any other program is busy and is skipped. When
   it runs the session the journal names, the line says `already runs the recorded session`.
@@ -143,6 +148,10 @@ or `· skip: <reason>`. A tab is typed into only when all of these hold:
   counts: after a relaunch cmux repaints the old scrollback (Claude Code's banner included) above
   the new prompt. A bare glyph counts only while no agent UI is on screen, because Claude Code's
   input box draws `❯` too. Any other last line is skipped and quoted in the plan.
+
+A restore started while the shells are still starting meets shells that run their init, and
+prompts not drawn yet ("You have mail." as the last line). Those skips are read again up to
+three times, 2 s apart, before the plan is final.
 
 Two preparations run before the command is typed. The plan prints each as `first: …`:
 

@@ -3,12 +3,7 @@ import { renderProfileCommandDetail } from "@app/cmux/lib/format";
 import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 import { cleanRelaunchEnv, killApp } from "@app/cmux/lib/rescue";
 import { reportWaitingPrompts } from "@app/cmux/lib/restore";
-import {
-    planInPlaceRestore,
-    readInPlaceLiveState,
-    renderInPlaceStep,
-    runInPlaceRestore,
-} from "@app/cmux/lib/restore-in-place";
+import { planInPlaceSettled, renderInPlaceStep, runInPlaceRestore } from "@app/cmux/lib/restore-in-place";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -162,7 +157,7 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
     // Give the app a moment to finish reopening its autosaved workspaces.
     await new Promise((resolve) => setTimeout(resolve, 5000));
 
-    const tabs = planInPlaceRestore(profile, await readInPlaceLiveState());
+    const tabs = await planInPlaceSettled(profile);
     p.note(tabs.map(renderInPlaceStep).join("\n") || "(no terminal tabs)", "In-place plan (reopened tabs)");
     // A rescue runs what each pane ran (an ssh logs back in), as it always did; the plan already holds back every
     // tab that is busy, unreadable, or has no evidence for its session.
