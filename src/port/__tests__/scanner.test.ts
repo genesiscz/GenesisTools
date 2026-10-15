@@ -237,6 +237,35 @@ describe("Windows port scan batching", () => {
             capture.mockRestore();
         }
     });
+
+    it("lists every port one process listens on, and a port once however many sockets hold it", () => {
+        const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
+        const cwd = spyOn(ps, "batchCwd").mockReturnValue(new Map());
+        const capture = spyOn(ps, "captureSync").mockImplementation((command) => ({
+            status: 0,
+            stderr: "",
+            stdout:
+                command === "powershell"
+                    ? '[{"ProcessId":42420,"ParentProcessId":4,"Name":"node.exe","CommandLine":"node.exe server.js","WorkingSetSize":10485760}]'
+                    : command === "netstat"
+                      ? "TCP 0.0.0.0:3000 0.0.0.0:0 LISTENING 42420\nTCP [::]:3000 [::]:0 LISTENING 42420\nTCP 0.0.0.0:4000 0.0.0.0:0 LISTENING 42420\n"
+                      : "",
+        }));
+
+        try {
+            const rows = getListeningPorts();
+
+            expect(rows.map((row) => [row.pid, row.port])).toEqual([
+                [42420, 3000],
+                [42420, 4000],
+            ]);
+            expect(getPortDetails(3000).map((row) => row.pid)).toEqual([42420]);
+        } finally {
+            platform.mockRestore();
+            cwd.mockRestore();
+            capture.mockRestore();
+        }
+    });
 });
 
 describe("summarizeCommand", () => {
