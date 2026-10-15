@@ -6,6 +6,7 @@ import { contrastRatio, readableTextOn } from "./color";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
+import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
 import { CodeBlock, Collapse, SegmentedControl } from "./primitives";
@@ -715,5 +716,89 @@ describe("Tooltip", () => {
         const bg = stylesToken("--tooltip-bg");
         expect(contrastRatio(stylesToken("--tooltip-text"), bg)).toBeGreaterThanOrEqual(7);
         expect(contrastRatio(stylesToken("--tooltip-dim"), bg)).toBeGreaterThanOrEqual(4.5);
+    });
+});
+
+describe("form controls", () => {
+    test("Field wires the label, the id and aria-describedby for hint and error", async () => {
+        const dom = await mountDom(
+            <Field label="Project name" hint="Shown in the header" error="Required" required>
+                <TextInput value="" onChange={() => {}} />
+            </Field>
+        );
+        const label = dom.container.querySelector("label");
+        const input = dom.container.querySelector("input");
+        const describedBy = input?.getAttribute("aria-describedby")?.split(" ") ?? [];
+
+        expect(input?.id).toBeTruthy();
+        expect(label?.getAttribute("for")).toBe(input?.id ?? "missing");
+        expect(describedBy.length).toBe(2);
+        expect(dom.container.querySelector(`[id="${describedBy[0]}"]`)?.textContent).toContain("Shown in the header");
+        expect(dom.container.querySelector(`[id="${describedBy[1]}"]`)?.getAttribute("role")).toBe("alert");
+        expect(input?.getAttribute("aria-invalid")).toBe("true");
+        expect(input?.className).toContain("focus-visible:outline-2");
+        await dom.unmount();
+    });
+
+    test("parseNumberDraft never yields NaN", () => {
+        expect(parseNumberDraft("1.")).toBe(1);
+        expect(parseNumberDraft("2,5")).toBe(2.5);
+        expect(parseNumberDraft("  ")).toBeNull();
+        expect(parseNumberDraft("abc")).toBeUndefined();
+    });
+
+    test("NumberInput keeps the draft until blur and never commits NaN", async () => {
+        const commits: Array<number | null> = [];
+        const dom = await mountDom(<NumberInput value={3} onChange={(v) => commits.push(v)} unit="h" />);
+        const input = dom.container.querySelector("input");
+        await dom.type(input, "1.");
+
+        expect(input?.value).toBe("1.");
+        expect(commits).toEqual([]);
+
+        await dom.fire(input, new dom.window.FocusEvent("focusout", { bubbles: true }));
+        expect(commits).toEqual([1]);
+
+        await dom.type(input, "abc");
+        await dom.fire(input, new dom.window.FocusEvent("focusout", { bubbles: true }));
+        expect(commits).toEqual([1]);
+        expect(input?.value).toBe("3");
+        await dom.unmount();
+    });
+
+    test("Button busy is disabled with aria-busy", async () => {
+        const dom = await mountDom(
+            <Button variant="primary" busy>
+                Save
+            </Button>
+        );
+        const button = dom.container.querySelector("button");
+
+        expect(button?.disabled).toBe(true);
+        expect(button?.getAttribute("aria-busy")).toBe("true");
+        await dom.unmount();
+    });
+
+    test("FileInput rejects a file over maxBytes with visible text and passes a small one with its text", async () => {
+        const picked: string[] = [];
+        const dom = await mountDom(
+            <FileInput maxBytes={10} read="text" onFiles={(files) => picked.push(...files.map((f) => f.text ?? ""))} />
+        );
+        const input = dom.container.querySelector<HTMLInputElement>("input[type=file]");
+        const pick = async (file: File): Promise<void> => {
+            Object.defineProperty(input, "files", { value: [file], configurable: true });
+            await dom.fire(input, new dom.window.Event("change", { bubbles: true }));
+            await new Promise((resolve) => setTimeout(resolve, 5));
+        };
+
+        await pick(new dom.window.File(["0123456789abcdef"], "big.csv"));
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toContain("over the 10 B limit");
+        expect(picked).toEqual([]);
+
+        await pick(new dom.window.File(["a,b"], "small.csv"));
+        expect(dom.container.querySelector('[role="alert"]')).toBeNull();
+        expect(picked).toEqual(["a,b"]);
+        expect(dom.container.textContent).toContain("small.csv (3 B)");
+        await dom.unmount();
     });
 });

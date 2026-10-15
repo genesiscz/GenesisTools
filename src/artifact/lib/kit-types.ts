@@ -41,6 +41,7 @@ const KIT_FILES = [
     "timeseries.tsx",
     "color.ts",
     "tooltip.tsx",
+    "forms.tsx",
     "index.ts",
 ];
 
