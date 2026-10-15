@@ -1,9 +1,10 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as transcripts from "@genesiscz/utils/ai/transcripts/resolve";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import type { JournalCoverage } from "@genesiscz/utils/cmux/journal-coverage";
 import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -12,6 +13,7 @@ import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { formatSessionList, registerAgentsCommand, runSessionNew } from "../commands/agents";
 import { accountChoiceMessage, budgetsFromCache, budgetsFromSnapshots } from "./account-budgets";
+import * as coverageLive from "./journal-coverage-live";
 import { agentRunCommand, agentRunLauncher, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import * as inventory from "./session-inventory";
 import {
@@ -747,6 +749,93 @@ test("agents status prints one table with every title, state, activity and one-l
     } finally {
         read.mockRestore();
     }
+});
+
+describe("agents list: live agent tabs the surface journal does not know", () => {
+    function listCommand(): Command {
+        const program = new Command().exitOverride();
+        registerAgentsCommand(program);
+
+        return program;
+    }
+
+    async function runList(args: string[], coverage: () => Promise<JournalCoverage>) {
+        const inventorySpy = spyOn(inventory, "sessionInventory").mockResolvedValue({ recorded: [], adoptable: [] });
+        const coverageSpy = spyOn(coverageLive, "liveJournalCoverage").mockImplementation(coverage);
+        const program = listCommand();
+        const stderr: string[] = [];
+        const original = process.stderr.write;
+        process.stderr.write = ((chunk: string | Uint8Array, encoding?: unknown, callback?: unknown) => {
+            stderr.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+            const done = typeof encoding === "function" ? encoding : callback;
+
+            if (typeof done === "function") {
+                (done as (error?: Error | null) => void)(null);
+            }
+
+            return true;
+        }) as typeof process.stderr.write;
+
+        try {
+            const stdout = await captureStdout(() =>
+                program.parseAsync(["agents", "list", ...args], { from: "user" }).then(() => {})
+            );
+
+            return { stdout, stderr: stderr.join(""), coverageCalls: coverageSpy.mock.calls.length };
+        } finally {
+            process.stderr.write = original;
+            inventorySpy.mockRestore();
+            coverageSpy.mockRestore();
+        }
+    }
+
+    test("one dim line names the tabs that have no record", async () => {
+        const { stderr } = await runList([], async () => ({
+            tabs: 5,
+            recorded: 3,
+            agentTabs: 3,
+            unrecordedAgentTabs: ["surface:7", "surface:11"],
+        }));
+
+        expect(stderr.trim().split("\n")).toHaveLength(1);
+        expect(stderr).toContain("No surface-journal record for 2 live agent tabs (surface:7, surface:11)");
+    });
+
+    test("nothing is added when every agent tab is recorded", async () => {
+        const { stderr, stdout } = await runList([], async () => ({
+            tabs: 5,
+            recorded: 5,
+            agentTabs: 3,
+            unrecordedAgentTabs: [],
+        }));
+
+        expect(stderr).not.toContain("surface-journal");
+        expect(stdout).toContain("No open sessions from agents new");
+    });
+
+    test("--json stays pure JSON and does not read the live tabs", async () => {
+        const { stderr, stdout, coverageCalls } = await runList(["--json"], async () => ({
+            tabs: 1,
+            recorded: 0,
+            agentTabs: 1,
+            unrecordedAgentTabs: ["surface:1"],
+        }));
+
+        expect(SafeJSON.parse(stdout)).toEqual([]);
+        expect(stderr).toBe("");
+        expect(coverageCalls).toBe(0);
+    });
+
+    test("a cmux that cannot list its tabs does not fail the list", async () => {
+        const exitCode = process.exitCode;
+        const { stderr, stdout } = await runList([], async () => {
+            throw new Error("cmux tree failed (1): fixture");
+        });
+
+        expect(stdout).toContain("No open sessions from agents new");
+        expect(stderr).not.toContain("surface-journal");
+        expect(process.exitCode).toBe(exitCode);
+    });
 });
 
 async function captureStdout(run: () => Promise<void>): Promise<string> {

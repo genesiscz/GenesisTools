@@ -54,3 +54,56 @@ describe("runDoctor: access-denied verdict", () => {
         mock.restore();
     });
 });
+
+describe("runDoctor: surface journal coverage", () => {
+    const healthy = async () => ({
+        state: "healthy",
+        appPid: 4242,
+        appCpu: 0,
+        probes: {
+            ping: { ok: true, ms: 2 },
+            capabilities: { ok: true, ms: 2 },
+            identify: { ok: true, ms: 3 },
+        },
+    });
+
+    it("prints how many live tabs the journal knows and how many agent tabs it misses", async () => {
+        mock.module("@genesiscz/utils/cmux/lib/health", () => ({ probeCmuxHealth: healthy }));
+        mock.module("@app/cmux/lib/send-self-preflight", () => ({
+            probeSelfSend: async () => ({ ok: true, detail: "ok", fix: "" }),
+        }));
+        mock.module("@app/cmux/lib/journal-coverage-live", () => ({
+            liveJournalCoverage: async () => ({
+                tabs: 14,
+                recorded: 12,
+                agentTabs: 5,
+                unrecordedAgentTabs: ["surface:3", "surface:9"],
+            }),
+        }));
+
+        const { runDoctor } = await import("./doctor");
+        const output = await captureStderr(() => runDoctor({}));
+
+        expect(output).toContain("12 of 14 live tabs have a surface-journal record; 2 of 5 agent tabs have none");
+    });
+
+    it("says the journal was not checked when cmux cannot list its tabs, and still prints the rest", async () => {
+        mock.module("@genesiscz/utils/cmux/lib/health", () => ({ probeCmuxHealth: healthy }));
+        mock.module("@app/cmux/lib/send-self-preflight", () => ({
+            probeSelfSend: async () => ({ ok: true, detail: "ok", fix: "" }),
+        }));
+        mock.module("@app/cmux/lib/journal-coverage-live", () => ({
+            liveJournalCoverage: async () => {
+                throw new Error("cmux tree failed (1): fixture");
+            },
+        }));
+
+        const { runDoctor } = await import("./doctor");
+        const output = await captureStderr(() => runDoctor({}));
+
+        expect(output).toContain("not checked (the live tabs could not be read)");
+        expect(output).toContain("healthy");
+
+        mock.restore();
+    });
+});

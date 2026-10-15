@@ -5,12 +5,15 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { ui } from "@genesiscz/utils/cli/ui";
+import { journalCoverageWarning } from "@genesiscz/utils/cmux/journal-coverage";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
 
 import type { Command } from "commander";
 import { type AccountBudget, accountChoiceMessage, liveAccountBudgets } from "../lib/account-budgets";
+import { liveJournalCoverage } from "../lib/journal-coverage-live";
 import {
     type AccountChoice,
     isSessionAgentId,
@@ -291,8 +294,25 @@ async function runSessionList(options: { agent?: string; all?: boolean; json?: b
         out.println(formatSessionList({ open, adoptable }));
     }
 
+    if (!options.json) {
+        await warnUnrecordedAgentTabs();
+    }
+
     // The writes above are asynchronous; like new and close, the command ends only after they drained.
     await out.flush();
+}
+
+/** A live agent tab the surface journal has no record of is missing from the list above. One dim line, never a failure. */
+async function warnUnrecordedAgentTabs(): Promise<void> {
+    try {
+        const warning = journalCoverageWarning(await liveJournalCoverage());
+
+        if (warning) {
+            ui.dim(warning);
+        }
+    } catch (error) {
+        log.debug({ error }, "the live tabs could not be compared with the surface journal");
+    }
 }
 
 async function runSessionStatus(options: { agent?: string; json?: boolean }): Promise<void> {

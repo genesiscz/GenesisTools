@@ -1,8 +1,10 @@
+import { liveJournalCoverage } from "@app/cmux/lib/journal-coverage-live";
 import { probeSelfSend } from "@app/cmux/lib/send-self-preflight";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { describeJournalCoverage, type JournalCoverage } from "@genesiscz/utils/cmux/journal-coverage";
 import { type CmuxHealth, type CmuxProbeResult, probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface DoctorFlags {
@@ -24,9 +26,11 @@ export async function runDoctor(flags: DoctorFlags): Promise<void> {
     // A green socket says nothing about whether THIS shell can type into its own
     // prompt: send-self failed for weeks while every line below it read ok.
     const selfSend = await probeSelfSend();
+    // The tree call needs a cmux that answers; on any other state there is nothing to compare the journal with.
+    const journal = health.state === "healthy" ? await readJournalCoverage() : null;
 
     if (flags.json) {
-        out.result({ ...health, selfSend });
+        out.result({ ...health, selfSend, journal });
         setExitCode(health, selfSend.ok);
         return;
     }
@@ -40,6 +44,7 @@ export async function runDoctor(flags: DoctorFlags): Promise<void> {
 
     ui.kv("identify", probeLine(health.probes.identify));
     ui.kv("send-self", selfSend.detail);
+    ui.kv("journal", journal ? describeJournalCoverage(journal) : "not checked (the live tabs could not be read)");
 
     switch (health.state) {
         case "healthy":
@@ -84,6 +89,17 @@ export async function runDoctor(flags: DoctorFlags): Promise<void> {
     }
 
     setExitCode(health, selfSend.ok);
+}
+
+/** Read-only: the journal against the live tabs. Null when cmux cannot list its tabs. */
+async function readJournalCoverage(): Promise<JournalCoverage | null> {
+    try {
+        return await liveJournalCoverage();
+    } catch (error) {
+        logger.warn({ error }, "[cmux doctor] the live tabs could not be compared with the surface journal");
+
+        return null;
+    }
 }
 
 function setExitCode(health: CmuxHealth, selfSendOk: boolean): void {

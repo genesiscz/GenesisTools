@@ -198,11 +198,10 @@ export function agentsOnTtyNow(tty: string): Set<SessionAgentId> {
     return new Set(SESSION_AGENT_IDS.filter((agent) => own.some((entry) => ttyRunsAgent(entry.command ?? "", agent))));
 }
 
-/** Discover running native sessions by joining background cmux state, journals, tmux clients and current processes. */
-export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
-    const tree = await liveTree();
-    const pins = await loadPins({ readOnly: true });
+/** The agents this user runs on each tty now (`ttys012`, no `/dev/`), from one process-table read. */
+export function agentsByTty(): Map<string, Set<SessionAgentId>> {
     const agents = new Map<string, Set<SessionAgentId>>();
+
     for (const process of listProcesses()) {
         if (!process.tty || !process.command || process.zombie || process.uid !== globalThis.process.getuid?.()) {
             continue;
@@ -217,6 +216,15 @@ export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
             }
         }
     }
+
+    return agents;
+}
+
+/** Discover running native sessions by joining background cmux state, journals, tmux clients and current processes. */
+export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
+    const tree = await liveTree();
+    const pins = await loadPins({ readOnly: true });
+    const agents = agentsByTty();
 
     return liveAgentSurfaces({
         refs: loadAllSessionCmuxRefs().values(),
