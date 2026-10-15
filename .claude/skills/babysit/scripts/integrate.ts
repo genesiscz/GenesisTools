@@ -12,7 +12,7 @@
  * exact old head, and refused when the remote moved since; the gates check only the PR's own commits after the restack.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { probeAddedLines } from "./probe";
@@ -196,9 +196,12 @@ for (const item of data.items ?? []) {
     }
 }
 
-const replies = join(run.vault, basename(repliesIn));
+// Named from the PR and round, never from the worker's file name: a reply file called `524-r2.json` made the summary
+// overwrite it, the posted marker point at the summary itself, and the round's summary and replies go unposted
+// (2026-10-15, #524 round 2).
+const replies = join(run.vault, `${pr}-r${round}-replies.json`);
 writeFileSync(replies, `${SafeJSON.stringify(data, null, 2)}\n`);
-const summary = replies.replace(/-replies\.json$/, "-summary.md");
+const summary = join(run.vault, `${pr}-r${round}-summary.md`);
 const range = flag("--range") ?? (oldHead !== newHead ? `${gateFrom}..${newHead}` : undefined);
 must(
     [
