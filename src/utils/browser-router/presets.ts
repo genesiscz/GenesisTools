@@ -17,9 +17,12 @@ export function decidePattern(linkHost: string): string {
     return linkPattern(linkHost, "decide/([A-Za-z0-9_-]{1,64})/(\\d{1,6})/([a-z])");
 }
 
-/** `decide/<session>/<n>/find`: scrolls that session's transcript to the decision. No free text either. */
-export function decideFindPattern(linkHost: string): string {
-    return linkPattern(linkHost, "decide/([A-Za-z0-9_-]{1,64})/(\\d{1,6})/find");
+/** `claude/find/<session>/decision/<n>` and `claude/find/<session>?q=<text>`: scroll a live transcript. */
+export function claudeFindPatterns(linkHost: string): { decision: string; text: string } {
+    return {
+        decision: linkPattern(linkHost, "claude/find/([A-Za-z0-9_-]{1,64})/decision/(\\d{1,6})"),
+        text: linkPattern(linkHost, "claude/find/([A-Za-z0-9_-]{1,64})"),
+    };
 }
 
 /** The `core` preset's patterns on a link host: minted links, wrapped local links, tab bundles. */
@@ -161,8 +164,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             // Types an answer into a live session with approval allow. The URL carries only a
             // session id, a number and one letter.
             description:
-                "https://<link host>/decide/<session>/<n>/<letter> types that answer into a live Claude session; " +
-                "/decide/<session>/<n>/find scrolls its transcript to that decision.",
+                "https://<link host>/decide/<session>/<n>/<letter> types that answer into a live Claude session.",
             enabledIf: ["claude:installed"],
             needsLinkHost: true,
             probe: linkHost ? `https://${linkHost}/decide/00000000-0000-4000-8000-000000000000/1/a` : undefined,
@@ -191,16 +193,44 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                         notify: "Answered DECISION $2: $3)",
                     },
                 },
+            ]),
+        },
+        {
+            id: "claude-find",
+            title: "Find in a Claude chat",
+            kind: "installable",
+            // Approval allow: the command types only into the transcript view's search bar, after the screen
+            // proves that view is open, and strips control characters from the text; it never submits a prompt.
+            description:
+                "https://<link host>/claude/find/<session>/decision/<n> scrolls that live Claude session to where " +
+                "DECISION <n> was first asked; /claude/find/<session>?q=<text>&at=oldest|newest finds any text. " +
+                "It opens the transcript view (ctrl+o) and searches there, then raises the tab.",
+            enabledIf: ["claude:installed", "cmux:installed"],
+            needsLinkHost: true,
+            probe: linkHost
+                ? `https://${linkHost}/claude/find/00000000-0000-4000-8000-000000000000/decision/1`
+                : undefined,
+            routes: withHost((host) => [
                 {
-                    preset: "decide",
+                    preset: "claude-find",
                     name: "Show a decision in its chat",
-                    pattern: decideFindPattern(host),
+                    pattern: claudeFindPatterns(host).decision,
                     action: {
                         type: "run",
-                        // Opens the transcript view and searches it; it types into the prompt nothing.
                         argv: ["tools", "claude", "cmux", "find", "$1", "--decision", "$2"],
                         approval: "allow",
                         notify: "Showing DECISION $2",
+                    },
+                },
+                {
+                    preset: "claude-find",
+                    name: "Find text in a Claude chat",
+                    pattern: claudeFindPatterns(host).text,
+                    action: {
+                        type: "run",
+                        argv: ["tools", "claude", "cmux", "find", "$1", "{q}", "--at", "{at}"],
+                        approval: "allow",
+                        notify: "Finding {q}",
                     },
                 },
             ]),

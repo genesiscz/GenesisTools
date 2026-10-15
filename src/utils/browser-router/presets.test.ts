@@ -86,6 +86,7 @@ describe("preset kinds", () => {
             "genesis-hub",
             "mail",
             "decide",
+            "claude-find",
             "cmux-claude",
             "artifact",
             "dashboard-names",

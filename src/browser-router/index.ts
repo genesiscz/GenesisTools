@@ -5,7 +5,7 @@ import { hasCapability } from "@genesiscz/utils/browser-router/capabilities";
 import { configFile } from "@genesiscz/utils/browser-router/config";
 import { tokenLink } from "@genesiscz/utils/browser-router/links";
 import { presets, presetWarnings } from "@genesiscz/utils/browser-router/presets";
-import { RouteError, route } from "@genesiscz/utils/browser-router/route";
+import { type PresetOptions, RouteError, route } from "@genesiscz/utils/browser-router/route";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
 import { mintBundleToken, withTokenLock } from "@genesiscz/utils/browser-router/tokens";
 import { isInteractive, runTool, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -250,6 +250,9 @@ const presetsCommand = program
         }
 
         out.println(
+            `Pick them with their options: ${suggestCommand("tools browser-router", { replaceCommand: ["presets", "configure"] })}`
+        );
+        out.println(
             `Switch one on: ${suggestCommand("tools browser-router", { replaceCommand: ["presets", "enable", "<id>"] })}`
         );
     });
@@ -305,6 +308,17 @@ presetsCommand
     });
 
 presetsCommand
+    .command("configure")
+    .description("Pick the presets to switch on, with what each click does, and set their options (a terminal)")
+    .action(async () => {
+        try {
+            await configurePresets();
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+presetsCommand
     .command("disable")
     .description("Switch an installable preset off and remove its routes")
     .argument("<id>")
@@ -348,6 +362,139 @@ program
             fail(error);
         }
     });
+
+const OPTION_PROMPTS: Record<keyof PresetOptions, { message: string; placeholder: string }> = {
+    only: {
+        message: "Only these registry keys (comma-separated, empty for all)",
+        placeholder: "dev-dashboard,artifact",
+    },
+    names: {
+        message: "Extra names, name=key pairs (comma-separated, empty for none)",
+        placeholder: "dash=dev-dashboard",
+    },
+};
+
+function optionText(name: keyof PresetOptions, saved: PresetOptions | undefined): string {
+    if (name === "only") {
+        return saved?.only?.join(",") ?? "";
+    }
+
+    return Object.entries(saved?.names ?? {})
+        .map(([alias, key]) => `${alias}=${key}`)
+        .join(",");
+}
+
+function parseOption(name: keyof PresetOptions, text: string): PresetOptions {
+    const items = text
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+    if (items.length === 0) {
+        return {};
+    }
+
+    if (name === "only") {
+        return { only: items };
+    }
+
+    return {
+        names: Object.fromEntries(
+            items.map((pair) => {
+                const [alias, key] = pair.split("=").map((part) => part.trim());
+
+                if (!alias || !key) {
+                    throw new Error(`a name takes name=key, got ${pair}`);
+                }
+
+                return [alias, key];
+            })
+        ),
+    };
+}
+
+/**
+ * `presets configure`: one multiselect of the installable presets (the hint is what a click does), then the
+ * options of each chosen preset that takes any, then enable and disable to match. Unavailable presets are
+ * listed with what they need instead of being offered, because enabling one would fail.
+ */
+async function configurePresets(): Promise<void> {
+    const config = await loadConfig();
+    const installable = presets({ config }).filter((preset) => preset.kind === "installable");
+
+    if (!isInteractive()) {
+        out.error("presets configure needs a terminal. Switch presets one at a time:");
+
+        for (const preset of installable) {
+            const verb = preset.enabled ? "disable" : "enable";
+            out.info(`  ${suggestCommand("tools browser-router", { replaceCommand: ["presets", verb, preset.id] })}`);
+        }
+
+        process.exitCode = 1;
+        return;
+    }
+
+    const blocked = installable.filter((preset) => !preset.available);
+
+    for (const preset of blocked) {
+        out.printlnErr(pc.dim(`${preset.id} cannot be on here: it needs ${preset.missing.join(", ")}`));
+    }
+
+    const offered = installable.filter((preset) => preset.available);
+    const picked = await p.multiselect({
+        message: "Which presets should be on? (space toggles, the hint says what a click does)",
+        options: offered.map((preset) => ({ value: preset.id, label: preset.title, hint: preset.description })),
+        initialValues: offered.filter((preset) => preset.enabled).map((preset) => preset.id),
+        required: false,
+    });
+
+    if (p.isCancel(picked)) {
+        out.println("Nothing changed");
+        return;
+    }
+
+    const chosen = new Set(picked.map(String));
+    const changes: string[] = [];
+
+    for (const preset of offered) {
+        if (!chosen.has(preset.id)) {
+            if (preset.enabled) {
+                await disablePreset(preset.id);
+                changes.push(`${preset.id} off`);
+            }
+
+            continue;
+        }
+
+        let options: PresetOptions = config?.presets?.[preset.id] ?? {};
+
+        for (const name of preset.options ?? []) {
+            const answer = await p.text({
+                message: `${preset.id}: ${OPTION_PROMPTS[name].message}`,
+                placeholder: OPTION_PROMPTS[name].placeholder,
+                initialValue: optionText(name, options),
+            });
+
+            if (p.isCancel(answer)) {
+                out.println(`Stopped at ${preset.id}; ${changes.join(", ") || "nothing changed"}`);
+                return;
+            }
+
+            const { [name]: _old, ...rest } = options;
+            options = { ...rest, ...parseOption(name, answer) };
+        }
+
+        const before = SafeJSON.stringify(config?.presets?.[preset.id] ?? null);
+
+        if (!preset.enabled || before !== SafeJSON.stringify(options)) {
+            const saved = await enablePreset({ id: preset.id, options });
+            const routes = saved.routes.filter((rule) => rule.preset === preset.id).length;
+            changes.push(`${preset.id} on (${routes} route(s))`);
+        }
+    }
+
+    out.println(changes.length > 0 ? `Changed: ${changes.join(", ")}` : "Nothing changed");
+}
 
 /** Every link host carries the same risk; the confirmation is the user accepting it. */
 async function acceptLinkHostRisk(host: string, accepted: boolean): Promise<boolean> {

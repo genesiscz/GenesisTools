@@ -87,15 +87,18 @@ lists them with their state and what each needs.
 - `genesis-md`: `https://<linkHost>/md/<path>` opens `genesis-md://<path>` in Genesis Markdown.
 - `mail` (macOS): `https://<linkHost>/mail/show/<rowid>` runs `tools macos mail open <rowid>`.
 - `decide`: `https://<linkHost>/decide/<session>/<n>/<letter>` types that answer into a live
-  Claude session, without an approval card. `.../decide/<session>/<n>/find` scrolls that session's
-  transcript view to where DECISION <n> was first asked (`tools claude cmux find`); every
-  ❓ DECISION section from `question_post` carries it as a "show in chat" link.
+  Claude session, without an approval card.
+- `claude-find`: `https://<linkHost>/claude/find/<session>/decision/<n>` scrolls that live Claude
+  session's transcript view to where DECISION <n> was first asked; `.../claude/find/<session>?q=<text>&at=oldest`
+  finds any text (`tools claude cmux find`). Every ❓ DECISION section from `question_post` carries
+  the first as a "show in chat" link while this preset is on.
 - `cmux-claude`: `https://<linkHost>/cmux/claude/run?prompt=...` starts Claude in a new cmux
   surface, after a prompt (a minted link skips the prompt once).
 - `artifact`: `https://<linkHost>/artifact/<name>/<page>` opens a registered artifact page.
 
 ```bash
 tools browser-router presets
+tools browser-router presets configure      # pick presets and their options in a terminal
 tools browser-router presets enable decide
 tools browser-router presets enable dashboard-names --only jev,dev-dashboard --name dashboard=artifact-library
 tools browser-router presets disable decide

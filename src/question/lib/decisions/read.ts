@@ -151,8 +151,8 @@ function findLink(row: DecisionRecord): string | null {
     }
 
     return routerLink({
-        preset: "decide",
-        action: "find",
+        preset: "claude-find",
+        action: "decision",
         data: { session: row.sessionId, decision: row.number },
         render: ({ link }) => `[show in chat](${link})`,
         fallback: () => null,

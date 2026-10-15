@@ -1,4 +1,5 @@
 import { type FindOutcome, findInTranscript, type TranscriptIO } from "@app/claude/lib/cmux/transcript-find";
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -10,7 +11,7 @@ const { log } = logger.scoped("claude-cmux-find");
 
 export interface FindOptions {
     decision?: string;
-    oldest?: boolean;
+    at?: string | true;
     activate?: boolean;
     first?: boolean;
     includeSelf?: boolean;
@@ -23,8 +24,12 @@ const MISSES: Record<Exclude<FindOutcome, { found: true }>["reason"], string> = 
     "no-result": "the search showed no result in time",
 };
 
+const AT = ["oldest", "newest"] as const;
+/** The search bar takes one line; a newline or Escape in it would act as a key in the transcript view. */
+const QUERY_CAP = 200;
+
 function needle(text: string | undefined, decision: string | undefined): string {
-    if (decision !== undefined) {
+    if (decision) {
         if (!/^\d{1,6}$/.test(decision)) {
             throw new Error(`--decision must be a number (got "${decision}")`);
         }
@@ -32,11 +37,17 @@ function needle(text: string | undefined, decision: string | undefined): string 
         return `DECISION ${decision}`;
     }
 
-    if (!text?.trim()) {
+    const clean = [...(text ?? "")]
+        .map((char) => (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? " " : char))
+        .join("")
+        .trim()
+        .slice(0, QUERY_CAP);
+
+    if (!clean) {
         throw new Error("pass the text to find, or --decision <n>");
     }
 
-    return text.trim();
+    return clean;
 }
 
 /**
@@ -46,8 +57,18 @@ function needle(text: string | undefined, decision: string | undefined): string 
 export async function findCommand(session: string, text: string | undefined, opts: FindOptions): Promise<void> {
     try {
         const query = needle(text, opts.decision);
+        // The router passes an absent `?at=` as "", so blank means the default.
+        const at = opts.at === true || opts.at === "" ? undefined : opts.at;
+        const picked = AT.find((value) => value === at);
+
+        if (at !== undefined && !picked) {
+            out.error(suggestEnumFlag("tools claude cmux find", "--at", AT, { given: at }));
+            process.exitCode = 1;
+            return;
+        }
+
         // A decision is found where it was first asked; a re-ask further down only names it.
-        const oldest = opts.oldest ?? opts.decision !== undefined;
+        const oldest = picked === undefined ? Boolean(opts.decision) : picked === "oldest";
         const located = await locatePane(session, { first: opts.first, includeSelf: opts.includeSelf }, {});
 
         if (!located) {

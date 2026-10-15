@@ -43,9 +43,11 @@ export interface LinkTargets {
         /** The GenesisTools hub on a PR, a commit in it, a repository or a session. */
         open: HubLinkQuery;
     };
-    decide: {
+    "claude-find": {
         /** Scroll a live Claude session's transcript to where DECISION `decision` was first asked. */
-        find: { session: string; decision: number };
+        decision: { session: string; decision: number };
+        /** Scroll it to `q`, the first (`oldest`) or the latest (`newest`, the default) match. */
+        text: { session: string; q: string; at?: "oldest" | "newest" };
     };
 }
 
@@ -143,9 +145,19 @@ const TARGETS: TargetTable = {
             transports: ["router", "scheme"],
         },
     },
-    decide: {
-        find: {
-            path: (data) => `decide/${encodeURIComponent(data.session)}/${data.decision}/find`,
+    "claude-find": {
+        decision: {
+            path: (data) => `claude/find/${encodeURIComponent(data.session)}/decision/${data.decision}`,
+        },
+        text: {
+            path: (data) =>
+                `claude/find/${encodeURIComponent(data.session)}${query(
+                    [
+                        ["q", data.q],
+                        ["at", data.at],
+                    ],
+                    { keepSlash: false }
+                )}`,
         },
     },
 };
