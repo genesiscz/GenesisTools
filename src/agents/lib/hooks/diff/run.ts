@@ -266,6 +266,25 @@ function renamesIn({
     return pairs;
 }
 
+/**
+ * A rename this call may announce. A deletion that was already there is `git status` still
+ * reporting an earlier `git mv`, and a file another actor owns is not this call's move either.
+ * Both used to print "moved unchanged" before those checks ran.
+ */
+function ownedRename(
+    pair: { from: string; to: string },
+    options: { dir: string; root: string; context: AttributionContext }
+): boolean {
+    if (alreadyGone({ dir: options.dir, root: options.root, absolute: pair.from })) {
+        return false;
+    }
+
+    const fromKind = attribute({ file: pair.from, root: options.root, context: options.context });
+    const toKind = attribute({ file: pair.to, root: options.root, context: options.context });
+
+    return fromKind !== "others" && fromKind !== "ambiguous" && toKind !== "others" && toKind !== "ambiguous";
+}
+
 function renameLine(root: string, pairs: Array<{ from: string; to: string }>): string {
     const shown = pairs.slice(0, 3).map((pair) => `${relative(root, pair.from)} → ${relative(root, pair.to)}`);
     const more = pairs.length > 3 ? ` and ${pairs.length - 3} more` : "";
@@ -355,12 +374,85 @@ function taskEnded(output: string): boolean {
     return /\[exited with code -?\d+\]\s*$/.test(tail);
 }
 
+/** The line `hook-diff-post` prints above a background task's diff. Its length is part of the budget. */
+export function deferredTaskHeading(task: { id: string; command: string }): string {
+    const first = task.command.split("\n")[0]?.slice(0, 80) ?? "";
+
+    return `background task ${task.id} ended (${first}):\n`;
+}
+
+function linkThatFits(decision: DiffDecision, room: number): string | undefined {
+    const path = decision.stats?.fullDiff;
+
+    if (!path || room <= 0) {
+        return undefined;
+    }
+
+    const line = `Full diff: ${path}`;
+
+    return line.length <= room ? line : undefined;
+}
+
+/**
+ * The decision whose message fits `room`. A message that does not fit becomes the full-diff line
+ * when that line fits, and is omitted when nothing does. The decision itself stays, so the log
+ * still names the files.
+ */
+function fitDecision(decision: DiffDecision, room: number | undefined): DiffDecision {
+    if (room === undefined || decision.message === undefined || decision.message.length <= room) {
+        return decision;
+    }
+
+    const message = linkThatFits(decision, room);
+    const stats = decision.stats ? { ...decision.stats, chars: message?.length ?? 0 } : undefined;
+
+    return { ...decision, message, ...(stats ? { stats } : {}) };
+}
+
+/** Headings plus messages, in the order `composePostDiff` joins them. */
+export function deferredMessageParts(flushed: DiffDecision[]): string[] {
+    return flushed
+        .filter((item) => item.message && item.task)
+        .map((item) => `${deferredTaskHeading(item.task as NonNullable<DiffDecision["task"]>)}${item.message}`);
+}
+
+/**
+ * One post phase: background tasks that have ended share half of the message, and this call gets
+ * what remains. The sum, headings included, stays inside `maxMessageChars`. Claude Code replaces
+ * a longer `systemMessage` with "Output too large".
+ */
+export function composePostDiff({
+    payload,
+    config,
+    record,
+}: {
+    payload: HookPayload;
+    config: HooksConfig;
+    record?: EditRecorder;
+}): { flushed: DiffDecision[]; decision: DiffDecision; message: string } {
+    const maxChars = diffFor(config, payload.harness).maxMessageChars;
+    const flushed = flushDeferred({ payload, config, record, maxChars: Math.floor(maxChars / 2) });
+    const flushedParts = deferredMessageParts(flushed);
+    // `+ 2` per part is the `\n\n` before the next part, including the one before this call.
+    const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
+    const decision = fitDecision(
+        runDiffPost({ payload, config, record, maxChars: Math.max(0, maxChars - flushedChars) }),
+        Math.max(0, maxChars - flushedChars)
+    );
+    const message = [...flushedParts, ...(decision.message ? [decision.message] : [])].join("\n\n");
+
+    return { flushed, decision, message };
+}
+
 /**
  * The diffs of this session's background calls whose task has ended, each taken now through the
  * same `runDiffPost`, so the claim store still keeps a file a later call printed from printing
  * twice. Runs at every post phase of the session: a parent directory listing and one small read
  * per deferred call. `background.json` is renamed before the diff, so of two post phases running
  * at once only one takes it.
+ *
+ * `maxChars`, when set, is ONE budget for every task, headings included. Each call used to receive
+ * the whole budget, so three ended tasks printed three times the ceiling.
  */
 export function flushDeferred({
     payload,
@@ -382,6 +474,7 @@ export function flushDeferred({
 
     const parent = dirname(callDir(payload.harness, session, call));
     const decisions: DiffDecision[] = [];
+    let spent = 0;
     let names: string[];
 
     try {
@@ -412,25 +505,36 @@ export function flushDeferred({
             continue;
         }
 
-        const decision = runDiffPost({
-            payload: {
-                ...payload,
-                toolUseId: name,
-                command: made.command,
-                cwd: made.cwd,
-                event: made.event,
-                nativeDiffFiles: [],
-                raw: {
-                    transcript_path: transcriptOf(payload),
-                    ...(deferred.agent ? { agent_id: deferred.agent } : {}),
+        const task = { id: deferred.id, toolUseId: name, command: made.command };
+        const heading = deferredTaskHeading(task);
+        const gap = maxChars !== undefined && decisions.some((item) => item.message) ? 2 : 0;
+        const room = maxChars === undefined ? undefined : Math.max(0, maxChars - spent - gap - heading.length);
+        const decision = fitDecision(
+            runDiffPost({
+                payload: {
+                    ...payload,
+                    toolUseId: name,
+                    command: made.command,
+                    cwd: made.cwd,
+                    event: made.event,
+                    nativeDiffFiles: [],
+                    raw: {
+                        transcript_path: transcriptOf(payload),
+                        ...(deferred.agent ? { agent_id: deferred.agent } : {}),
+                    },
                 },
-            },
-            config,
-            record,
-            maxChars,
-        });
+                config,
+                record,
+                maxChars: room,
+            }),
+            room
+        );
 
-        decisions.push({ ...decision, task: { id: deferred.id, toolUseId: name, command: made.command } });
+        if (maxChars !== undefined && decision.message) {
+            spent += gap + heading.length + decision.message.length;
+        }
+
+        decisions.push({ ...decision, task });
     }
 
     return decisions;
@@ -961,7 +1065,9 @@ export function runDiffPost({
         }
 
         const changed = changedFiles({ root, since, config: diff, source: { entries: summary.entries, committed } });
-        const renames = renamesIn({ root, base, files: changed, entries: summary.entries });
+        const renames = renamesIn({ root, base, files: changed, entries: summary.entries }).filter((pair) =>
+            ownedRename(pair, { dir, root, context: attribution })
+        );
         const renamed = new Set(renames.flatMap((pair) => [pair.from, pair.to]));
         const carried: string[] = [];
         const ownCommits = new Set(committed.map((name) => join(root, name)));

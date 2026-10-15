@@ -350,9 +350,11 @@ export function installHooks(options: {
     }
 
     // The hook replaces Claude Code's own Bash diff, in the same write as the wiring.
+    // While `shadow` is on the hook prints nothing (`hook-diff-post`), so turning the native
+    // diff off would remove the only diff the user sees. It stays until the hook speaks.
     let nativeDiff: InstallResult["nativeDiff"] = "kept";
 
-    if (config.diff.replaceNative && diffFor(config, "claude").enabled) {
+    if (!config.shadow && config.diff.replaceNative && diffFor(config, "claude").enabled) {
         nativeDiff = settings.bashEditDiffEnabled === false ? "already-off" : "turned-off";
         settings.bashEditDiffEnabled = false;
     }

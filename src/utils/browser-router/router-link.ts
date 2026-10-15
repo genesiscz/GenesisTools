@@ -58,6 +58,26 @@ interface Target<D> {
     scheme: (data: D) => string;
     /** Whether the app behind `scheme` is on this Mac. */
     appInstalled: (gate: LinkGate) => boolean;
+    /** Transports when the caller does not pass `via`. Default is the router. */
+    transports?: readonly LinkVia[];
+}
+
+/**
+ * The markdown app can be installed while its router preset is off, because that preset also
+ * needs a link host. A missing app capability starts with `app:`; a missing host does not.
+ */
+function markdownInstalled(gate: LinkGate): boolean {
+    const row = gate.presets["genesis-md"];
+
+    if (!row) {
+        return false;
+    }
+
+    if (row.available) {
+        return true;
+    }
+
+    return row.missing.every((item) => !item.startsWith("app:"));
 }
 
 type TargetTable = { [P in LinkPreset]: { [A in LinkAction<P>]: Target<LinkData<P, A>> } };
@@ -96,7 +116,7 @@ const TARGETS: TargetTable = {
                     ],
                     { keepSlash: true }
                 )}`,
-            appInstalled: (gate) => gate.presets["genesis-md"]?.available === true,
+            appInstalled: markdownInstalled,
         },
     },
     "genesis-hub": {
@@ -113,6 +133,8 @@ const TARGETS: TargetTable = {
                     { keepSlash: false }
                 )}`,
             appInstalled: (gate) => gate.installed,
+            // No catalog preset routes the hub. Advertising a router link would always fall back.
+            transports: ["scheme"],
         },
     },
 };
@@ -163,7 +185,7 @@ interface LinkOptions<P extends LinkPreset, A extends LinkAction<P>> {
     preset: P;
     action: A;
     data: LinkData<P, A>;
-    /** Transports to try, in order. Default `["router"]`: a terminal makes an https link clickable, not every scheme. */
+    /** Transports to try, in order. Omitted: the target's own list, or `["router"]`. */
     via?: readonly LinkVia[];
     /** A further condition; `false` gives the fallback with code `declined`. */
     when?: (ctx: LinkContext) => boolean;
@@ -271,9 +293,10 @@ export function routerLink<P extends LinkPreset, A extends LinkAction<P>, R>(
         return { result: options.fallback({ ...ctx, error }), link: null, via: null, error };
     }
 
+    const transports = options.via ?? TARGETS[options.preset][options.action].transports ?? ["router"];
     let first: LinkError | undefined;
 
-    for (const via of options.via ?? ["router"]) {
+    for (const via of transports) {
         const found = linkFor({ options, gate, via });
 
         if ("link" in found) {

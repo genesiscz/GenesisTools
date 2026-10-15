@@ -18,7 +18,14 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
-import { commandSlices, formatEntry, readDiffLog, readMessage } from "../diff-log";
+import {
+    commandSlices,
+    type DiffLogEntry,
+    extendFromTranscripts,
+    formatEntry,
+    readDiffLog,
+    readMessage,
+} from "../diff-log";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
@@ -49,6 +56,7 @@ import {
     captureChunks,
     capturedBefore,
     capturedBefores,
+    composePostDiff,
     type DiffDecision,
     flushDeferred,
     noteFileToolInput,
@@ -3670,6 +3678,92 @@ describe("tools agents hooks diff log", () => {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it("reads a command from the tail and skips an old subagent transcript", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-difflog-home-"));
+        const claude = mkdtempSync(join(tmpdir(), "gt-difflog-claude-"));
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, CLAUDE_CONFIG_DIR: claude }, () => {
+                const session = "gt-bound-main";
+                const project = join(claude, "projects", "proj-fixture");
+                const main = join(project, `${session}.jsonl`);
+
+                mkdirSync(join(project, session, "subagents"), { recursive: true });
+
+                const toolLine = (id: string, command: string, timestamp: string) =>
+                    SafeJSON.stringify({
+                        type: "assistant",
+                        timestamp,
+                        message: {
+                            role: "assistant",
+                            content: [{ type: "tool_use", id, name: "Bash", input: { command } }],
+                        },
+                    });
+                const old = Array.from({ length: 800 }, (_, index) =>
+                    toolLine(`toolu_old_${index}`, "echo OLD", "2020-01-01T00:00:00.000Z")
+                );
+                const recent = toolLine("toolu_recent", "echo RECENT-COMMAND", new Date().toISOString());
+
+                writeFileSync(main, `${old.join("\n")}\n${recent}\n`);
+                writeFileSync(
+                    join(project, session, "subagents", "agent-side.jsonl"),
+                    `${toolLine("toolu_side_1", "echo SIDE", new Date().toISOString())}\n`
+                );
+
+                const entry: DiffLogEntry = {
+                    at: new Date().toISOString(),
+                    session,
+                    toolUseId: "toolu_recent",
+                    harness: "claude",
+                    decision: "emitted",
+                    reason: "rendered",
+                    files: [],
+                    others: [],
+                    skipped: [],
+                };
+                const stats = extendFromTranscripts([entry]);
+
+                expect(stats.files).toBe(1);
+                expect(stats.parsed).toBeLessThan(10);
+                expect(stats.linesSeen).toBeLessThan(30);
+                expect(entry.command).toContain("RECENT-COMMAND");
+
+                const aged = "gt-bound-oldsub";
+                const agedMain = join(project, `${aged}.jsonl`);
+
+                writeFileSync(agedMain, `${toolLine("toolu_unrelated", "echo OLD", "2020-01-01T00:00:00.000Z")}\n`);
+
+                const side = join(project, aged, "subagents", "agent-old.jsonl");
+
+                mkdirSync(join(project, aged, "subagents"), { recursive: true });
+                writeFileSync(
+                    side,
+                    `${toolLine("toolu_onlysub", "echo SHOULD-NOT-READ", "2026-10-15T00:00:00.000Z")}\n`
+                );
+                utimesSync(side, new Date("2020-01-01T00:00:00.000Z"), new Date("2020-01-01T00:00:00.000Z"));
+
+                const hidden: DiffLogEntry = {
+                    at: new Date().toISOString(),
+                    session: aged,
+                    toolUseId: "toolu_onlysub",
+                    harness: "claude",
+                    decision: "emitted",
+                    reason: "rendered",
+                    files: [],
+                    others: [],
+                    skipped: [],
+                };
+                const hiddenStats = extendFromTranscripts([hidden]);
+
+                expect(hiddenStats.files).toBe(1);
+                expect(hidden.command).toBeUndefined();
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+            rmSync(claude, { recursive: true, force: true });
+        }
+    });
 });
 
 describe("the misfires of 2026-10-14", () => {
@@ -3867,6 +3961,138 @@ describe("the misfires of 2026-10-14", () => {
         } finally {
             rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
             rmSync(target, { force: true });
+        }
+    });
+
+    it("does not announce a rename that was already gone when this command began", () => {
+        writeFileSync(join(repo, "owned-src.ts"), "moved\nbody\n");
+        git(["add", "owned-src.ts"]);
+        git(["commit", "-qm", "owned"]);
+        const past = new Date(Date.now() - 60_000);
+
+        utimesSync(join(repo, "owned-src.ts"), past, past);
+
+        const first = begin({ command: "git mv owned-src.ts owned-dst.ts" });
+
+        git(["mv", "owned-src.ts", "owned-dst.ts"]);
+        expect(runDiffPost({ payload: first, config: plain }).message).toContain("owned-src.ts → owned-dst.ts");
+
+        const status = runDiffPost({ payload: begin({ command: "git status" }), config: plain }).message ?? "";
+
+        expect(status).not.toContain("moved unchanged");
+        expect(status).not.toContain("owned-src.ts → owned-dst.ts");
+
+        const build = runDiffPost({ payload: begin({ command: "bun run build" }), config: plain }).message ?? "";
+
+        expect(build).not.toContain("moved unchanged");
+        expect(build).not.toContain("owned-src.ts → owned-dst.ts");
+        git(["commit", "-qm", "owned done"]);
+    });
+
+    it("does not announce a rename another actor owns", () => {
+        writeFileSync(join(repo, "foreign-src.ts"), "moved\nbody\n");
+        git(["add", "foreign-src.ts"]);
+        git(["commit", "-qm", "foreign"]);
+        const past = new Date(Date.now() - 60_000);
+
+        utimesSync(join(repo, "foreign-src.ts"), past, past);
+
+        const current = begin({ command: "bun run build" });
+
+        git(["mv", "foreign-src.ts", "foreign-dst.ts"]);
+        recordTouches([
+            {
+                session: "gt-other:agent-y",
+                start: Date.now() - 500,
+                end: Date.now(),
+                kind: "named",
+                path: join(repo, "foreign-dst.ts"),
+            },
+        ]);
+
+        const text = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        expect(text).not.toContain("moved unchanged");
+        expect(text).not.toContain("foreign-src.ts → foreign-dst.ts");
+        git(["commit", "-qm", "foreign done"]);
+    });
+
+    it("keeps every ended background task inside one message budget", () => {
+        const session = `gt-bg-budget-${process.pid}`;
+        const project = `gt-bg-budget-project-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, session, "tasks");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const diff = { ...plain.diff, maxMessageChars: 700, highlight: "none" as const, fullDiff: "path" as const };
+        const config = { ...plain, diff };
+        const ids = ["bgtaskA", "bgtaskB", "bgtaskC"] as const;
+        const body = (id: string) =>
+            `${Array.from({ length: 80 }, (_, at) => `LINE-${id}-${at}-xxxxxxxx`).join("\n")}\n`;
+
+        mkdirSync(tasks, { recursive: true });
+        mkdirSync(join(tmpdir(), project), { recursive: true });
+
+        try {
+            const probe = join(repo, "budget-probe.ts");
+
+            writeFileSync(probe, "seed\n");
+            git(["add", "budget-probe.ts"]);
+            git(["commit", "-qm", "budget probe"]);
+
+            const probeCall = begin(
+                { sessionId: session, toolUseId: "budget-probe", command: `bun /x/long.ts ${probe}` },
+                diff
+            );
+
+            writeFileSync(probe, body("probe"));
+
+            const alone = runDiffPost({ payload: probeCall, config, maxChars: Math.floor(700 / 2) });
+
+            expect((alone.message ?? "").length).toBeGreaterThan(200);
+
+            for (const id of ids) {
+                const target = join(repo, `budget-${id}.ts`);
+                const output = join(tasks, `${id}.output`);
+
+                writeFileSync(target, "seed\n");
+                git(["add", `budget-${id}.ts`]);
+                git(["commit", "-qm", `budget ${id}`]);
+                writeFileSync(output, "");
+
+                const started = begin(
+                    { sessionId: session, toolUseId: `call-${id}`, command: `bun /x/long.ts ${target}` },
+                    diff
+                );
+
+                runDiffPost({
+                    payload: {
+                        ...started,
+                        raw: { transcript_path: transcript, tool_response: { backgroundTaskId: id } },
+                    },
+                    config,
+                });
+                writeFileSync(target, body(id));
+                writeFileSync(output, "done\n\n[exited with code 0]\n");
+            }
+
+            const next = begin({ sessionId: session, command: "true", raw: { transcript_path: transcript } }, diff);
+            const composed = composePostDiff({ payload: next, config });
+
+            expect(composed.flushed).toHaveLength(3);
+            expect(composed.flushed.map((item) => item.task?.id).sort()).toEqual([...ids].sort());
+            expect(composed.message.length).toBeLessThanOrEqual(700);
+            expect(composed.message.length).toBeGreaterThan(0);
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(sessionDir("claude", session), { recursive: true, force: true });
+            git([
+                "checkout",
+                "-q",
+                "--",
+                "budget-probe.ts",
+                "budget-bgtaskA.ts",
+                "budget-bgtaskB.ts",
+                "budget-bgtaskC.ts",
+            ]);
         }
     });
 });

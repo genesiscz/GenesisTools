@@ -132,7 +132,13 @@ function nativeDiffLabel(config: HooksConfig): string {
     }
 
     if (state === "off") {
-        return "off: the hook draws every Bash diff";
+        return config.shadow
+            ? "off, and shadow is on: neither diff is shown until shadow is off"
+            : "off: the hook draws every Bash diff";
+    }
+
+    if (config.shadow) {
+        return `${state} (shadow on: the hook prints nothing, so Claude Code's diff stays)`;
     }
 
     if (!config.diff.replaceNative) {

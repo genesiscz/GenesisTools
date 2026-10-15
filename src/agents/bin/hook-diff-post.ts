@@ -2,8 +2,8 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { fileToolSource } from "../lib/changes/log";
-import { diffFor, loadHooksConfig, megabytes } from "../lib/hooks/config";
-import { flushDeferred, noteFileToolInput, recordFileToolChange, runDiffPost } from "../lib/hooks/diff/run";
+import { loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { composePostDiff, noteFileToolInput, recordFileToolChange } from "../lib/hooks/diff/run";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
 
@@ -35,18 +35,9 @@ if (!isTerminalTool(payload.tool)) {
     process.exit(0);
 }
 
-// A background call deferred its diff to the end of its task (`flushDeferred`); the ones that have
-// ended since print first, in at most half of the one message, and this call gets the rest.
-const maxChars = diffFor(config, payload.harness).maxMessageChars;
-const flushed = flushDeferred({ payload, config, maxChars: Math.floor(maxChars / 2) });
-const flushedParts = flushed
-    .filter((item) => item.message && item.task)
-    .map(
-        (item) =>
-            `background task ${item.task?.id} ended (${item.task?.command.split("\n")[0]?.slice(0, 80)}):\n${item.message}`
-    );
-const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
-const decision = runDiffPost({ payload, config, maxChars: Math.max(0, maxChars - flushedChars) });
+// A background call deferred its diff to the end of its task. The ones that have ended share half
+// of the one message, headings included, and this call gets the rest (`composePostDiff`).
+const { flushed, decision, message } = composePostDiff({ payload, config });
 
 for (const item of [...flushed, decision]) {
     logDecision(
@@ -67,8 +58,6 @@ for (const item of [...flushed, decision]) {
         config.logPath
     );
 }
-
-const message = [...flushedParts, ...(decision.message ? [decision.message] : [])].join("\n\n");
 
 if (message && !config.shadow) {
     // systemMessage is the only field the USER sees; additionalContext is model-only.

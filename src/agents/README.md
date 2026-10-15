@@ -221,9 +221,10 @@ PR body, a repro script) is not printed unless `diff.showTempScratch` is on.
 ### Claude Code's own Bash diff
 
 With the hook drawing every Bash diff, `install --write` switches Claude Code's own one off
-(`"bashEditDiffEnabled": false` in `~/.claude/settings.json`, while `diff.replaceNative` is on).
-That one has no attribution: it shows whatever changed in the cwd repository during the call,
-another session's edit included. `tools agents hooks native-diff [status|off|on] --write` sets it.
+(`"bashEditDiffEnabled": false` in `~/.claude/settings.json`) once `shadow` is off and
+`diff.replaceNative` is on. While `shadow` is on the hook prints nothing, so that diff stays.
+It has no attribution: it shows whatever changed in the cwd repository during the call, another
+session's edit included. `tools agents hooks native-diff [status|off|on] --write` sets it.
 
 🛑 `CLAUDE_CODE_BASH_EDIT_DIFF=1` in a session's environment wins over the setting. `tools claude
 start` set it on every launch until 2026-10-15; it now leaves it unset while the setting is off.

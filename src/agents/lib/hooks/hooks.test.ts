@@ -466,6 +466,45 @@ describe("installHooks", () => {
         expect(readSettings(path).hooks?.PostToolUse?.[0]?.matcher).toBe("Bash|Edit|MultiEdit|Write");
     });
 
+    it("keeps Claude Code's Bash diff on while shadow is on", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hooks-shadow-"));
+        const configDir = join(home, ".genesis-tools", "agents");
+
+        mkdirSync(configDir, { recursive: true });
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+                const configPath = join(configDir, "hooks.json");
+
+                writeFileSync(configPath, SafeJSON.stringify({ shadow: true }));
+
+                const shadowed = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+                const kept = installHooks({ dist: "/dist", settingsPath: shadowed, write: true });
+
+                expect(kept.nativeDiff).toBe("kept");
+                expect(readSettings(shadowed).bashEditDiffEnabled).toBe(true);
+
+                writeFileSync(configPath, SafeJSON.stringify({ shadow: false }));
+
+                const live = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+                const turned = installHooks({ dist: "/dist", settingsPath: live, write: true });
+
+                expect(turned.nativeDiff).toBe("turned-off");
+                expect(readSettings(live).bashEditDiffEnabled).toBe(false);
+
+                writeFileSync(configPath, SafeJSON.stringify({ shadow: false, diff: { replaceNative: false } }));
+
+                const stood = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+                const alone = installHooks({ dist: "/dist", settingsPath: stood, write: true });
+
+                expect(alone.nativeDiff).toBe("kept");
+                expect(readSettings(stood).bashEditDiffEnabled).toBe(true);
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+
     it("dry run reports what it would add and writes nothing", () => {
         const path = settingsFile({ hooks: {} });
         const result = installHooks({ dist: "/dist", settingsPath: path, write: false });

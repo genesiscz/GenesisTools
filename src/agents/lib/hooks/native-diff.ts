@@ -7,7 +7,8 @@ import { writeJsonFile } from "./write-json";
  * Claude Code's own Bash diff (`bashEditDiffEnabled`, 2.1.296). It has no attribution: it draws
  * whatever changed in the cwd repository while a Bash call ran, another session's edit included
  * (observed 2026-10-14 22:59: another session's `run.ts` under an unrelated `cat > step1.ts`). With
- * `diff.replaceNative` on, the hook draws every Bash diff and this one is switched off.
+ * `diff.replaceNative` on and `shadow` off, the hook draws every Bash diff and this one is switched off.
+ * While `shadow` is on the hook prints nothing, so this diff stays.
  *
  * `on` and `off` are what the settings file says; `default` is no key, which Claude Code reads as
  * on in auto and bypassPermissions mode. The `CLAUDE_CODE_BASH_EDIT_DIFF` variable wins over all of

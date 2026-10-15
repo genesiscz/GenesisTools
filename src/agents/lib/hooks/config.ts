@@ -84,9 +84,10 @@ export interface DiffConfig {
     fullDiff: FullDiffMode;
     standDownWhenNative: boolean;
     /**
-     * The hook replaces Claude Code's own Bash diff: `tools agents hooks install --write` sets
-     * `bashEditDiffEnabled: false` in `~/.claude/settings.json`, and `doctor` warns while it is on.
-     * Claude Code's diff has no attribution and shows other sessions' edits; see `native-diff.ts`.
+     * The hook replaces Claude Code's own Bash diff once `shadow` is off: `install --write` then
+     * sets `bashEditDiffEnabled: false` in `~/.claude/settings.json`, and `doctor` warns while it
+     * is on. While `shadow` is on the hook prints nothing, so the native diff stays. Claude Code's
+     * diff has no attribution and shows other sessions' edits; see `native-diff.ts`.
      */
     replaceNative: boolean;
     /**

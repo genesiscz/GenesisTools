@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { readSessionState } from "./diff/mentions";
@@ -237,15 +238,135 @@ function transcriptOf(session: string): string | null {
     return null;
 }
 
-/** The main transcript and every subagent transcript beside it. */
-function transcriptsOf(session: string): string[] {
-    const main = transcriptOf(session);
+/** First window, then four times larger, and never past this. A transcript is read from the end. */
+const TAIL_START_BYTES = 64 * 1024;
+const TAIL_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * How far before the oldest selected call a command line may still belong to it. The call's own
+ * log row is written when the command ends, and a command can run for hours, so a short slack
+ * would miss its tool line. Finding the command is the real stop; this is only the backstop.
+ */
+const TRANSCRIPT_HORIZON_MS = 24 * 60 * 60 * 1000;
+const STAMP = /"timestamp"\s*:\s*"([^"]+)"/;
 
-    if (!main) {
-        return [];
+function lineStamp(line: string): number | null {
+    const match = STAMP.exec(line);
+
+    if (!match?.[1]) {
+        return null;
     }
 
-    const found = [main];
+    const at = Date.parse(match[1]);
+
+    return Number.isFinite(at) ? at : null;
+}
+
+function lineNamesCall(line: string, wanted: Set<string>): boolean {
+    for (const id of wanted) {
+        if (line.includes(id)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function oldestAt(calls: Map<string, DiffLogEntry>): number {
+    let oldest = Number.POSITIVE_INFINITY;
+
+    for (const entry of calls.values()) {
+        const at = Date.parse(entry.at);
+
+        if (Number.isFinite(at) && at < oldest) {
+            oldest = at;
+        }
+    }
+
+    return oldest;
+}
+
+/**
+ * Reads `file` from the end until every selected call has its command, a line is older than
+ * `floor`, or the window hits the cap. Only lines that name a still-wanted call are parsed.
+ * A larger window's new lines are the older prefix; the lines already read stay a suffix.
+ */
+function hydrateTail({
+    file,
+    calls,
+    agent,
+    wanted,
+    floor,
+}: {
+    file: string;
+    calls: Map<string, DiffLogEntry>;
+    agent: string | undefined;
+    wanted: Set<string>;
+    floor: number;
+}): { parsed: number; linesSeen: number } {
+    let maxBytes = TAIL_START_BYTES;
+    let covered = 0;
+    let parsed = 0;
+    let linesSeen = 0;
+
+    while (wanted.size > 0) {
+        let edge: { lines: string[]; wholeFile: boolean };
+
+        try {
+            edge = readLastLines(file, { maxBytes });
+        } catch {
+            return { parsed, linesSeen };
+        }
+
+        const fresh = edge.lines.slice(0, Math.max(0, edge.lines.length - covered));
+        let aged = false;
+
+        for (let index = fresh.length - 1; index >= 0; index -= 1) {
+            const line = fresh[index] ?? "";
+            linesSeen += 1;
+            const stamp = lineStamp(line);
+
+            if (stamp !== null && stamp < floor) {
+                aged = true;
+                break;
+            }
+
+            if (!lineNamesCall(line, wanted)) {
+                continue;
+            }
+
+            parsed += 1;
+
+            try {
+                readRow({ row: SafeJSON.parse(line, { strict: true }), calls, agent });
+            } catch {
+                // The line names a selected call and is not one JSON value.
+            }
+
+            for (const id of [...wanted].filter((callId) => calls.get(callId)?.command !== undefined)) {
+                wanted.delete(id);
+            }
+
+            if (wanted.size === 0) {
+                break;
+            }
+        }
+
+        covered = edge.lines.length;
+
+        if (aged || edge.wholeFile || wanted.size === 0 || maxBytes >= TAIL_MAX_BYTES) {
+            break;
+        }
+
+        const grown = maxBytes * 4;
+        maxBytes = grown > TAIL_MAX_BYTES ? TAIL_MAX_BYTES : grown;
+    }
+
+    return { parsed, linesSeen };
+}
+
+/** Subagent transcripts modified within the horizon. An older file cannot hold a selected call. */
+function recentSubagents(main: string, floor: number): string[] {
+    const found: string[] = [];
     const pending = [main.replace(/\.jsonl$/, "/subagents")];
 
     while (pending.length > 0) {
@@ -253,14 +374,31 @@ function transcriptsOf(session: string): string[] {
 
         try {
             for (const entry of readdirSync(dir, { withFileTypes: true })) {
+                const path = join(dir, entry.name);
+
                 if (entry.isDirectory()) {
-                    pending.push(join(dir, entry.name));
-                } else if (entry.name.endsWith(".jsonl")) {
-                    found.push(join(dir, entry.name));
+                    pending.push(path);
+                    continue;
+                }
+
+                if (!entry.name.endsWith(".jsonl")) {
+                    continue;
+                }
+
+                let mtimeMs = 0;
+
+                try {
+                    mtimeMs = statSync(path).mtimeMs;
+                } catch {
+                    continue;
+                }
+
+                if (mtimeMs >= floor) {
+                    found.push(path);
                 }
             }
         } catch {
-            // No subagents.
+            // No subagents here.
         }
     }
 
@@ -273,8 +411,12 @@ function field(value: unknown, key: string): unknown {
         : undefined;
 }
 
-/** Fills the transcript fields of Claude entries in place. */
-export function extendFromTranscripts(entries: DiffLogEntry[]): void {
+/**
+ * Fills the transcript fields of Claude entries in place. The main transcript is read from the
+ * end, and a subagent file is opened only when a selected call still has no command and the file
+ * was modified inside the horizon. Returns how much was opened, so a bound can be tested.
+ */
+export function extendFromTranscripts(entries: DiffLogEntry[]): { files: number; parsed: number; linesSeen: number } {
     const bySession = new Map<string, Map<string, DiffLogEntry>>();
 
     for (const entry of entries) {
@@ -287,36 +429,41 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): void {
         bySession.set(entry.session, calls);
     }
 
+    let files = 0;
+    let parsed = 0;
+    let linesSeen = 0;
+
     for (const [session, calls] of bySession) {
-        const files = transcriptsOf(session);
+        const main = transcriptOf(session);
 
-        files.forEach((file, index) => {
-            const agent = index === 0 ? undefined : basename(file, ".jsonl");
-            let lines: string[];
+        if (!main) {
+            continue;
+        }
 
-            try {
-                lines = readFileSync(file, "utf8").split("\n");
-            } catch {
-                return;
+        const wanted = new Set(calls.keys());
+        const floor = oldestAt(calls) - TRANSCRIPT_HORIZON_MS;
+        const mainCounts = hydrateTail({ file: main, calls, agent: undefined, wanted, floor });
+        files += 1;
+        parsed += mainCounts.parsed;
+        linesSeen += mainCounts.linesSeen;
+
+        if (wanted.size === 0) {
+            continue;
+        }
+
+        for (const file of recentSubagents(main, floor)) {
+            const counts = hydrateTail({ file, calls, agent: basename(file, ".jsonl"), wanted, floor });
+            files += 1;
+            parsed += counts.parsed;
+            linesSeen += counts.linesSeen;
+
+            if (wanted.size === 0) {
+                break;
             }
-
-            for (const line of lines) {
-                if (!line.includes("toolu_") && !line.includes("call_")) {
-                    continue;
-                }
-
-                let row: unknown;
-
-                try {
-                    row = SafeJSON.parse(line, { strict: true });
-                } catch {
-                    continue;
-                }
-
-                readRow({ row, calls, agent });
-            }
-        });
+        }
     }
+
+    return { files, parsed, linesSeen };
 }
 
 function readRow({
