@@ -113,7 +113,6 @@ async function withListener<T>(fn: (port: number) => T | Promise<T>): Promise<T>
 async function withChildListener<T>(fn: (listener: { port: number; pid: number }) => T | Promise<T>): Promise<T> {
     const code = `const s = require("node:net").createServer().listen(0, "127.0.0.1", () => console.log(s.address().port));`;
     const child = Bun.spawn([process.execPath, "-e", code], {
-        env: process.env,
         stdin: "ignore",
         stdout: "pipe",
         stderr: "ignore",
