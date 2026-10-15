@@ -18,8 +18,10 @@
  * keeps its first PR's name across later PRs, so "bs-compress turn 13" read as the compress PR taking 13 turns when
  * it was #516 round 3 (2026-10-14).
  */
+import { existsSync } from "node:fs";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import { turnLogPath } from "@genesiscz/utils/grok/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readEvents } from "./ledger";
 
@@ -192,6 +194,15 @@ async function watchGrok(w: Worker): Promise<void> {
             if (status.turns !== w.seenTurn) {
                 w.seenTurn = status.turns;
                 say(w, `turn ${status.turns} RUNNING`);
+            }
+
+            // The tail follows the newest log file. Until the running turn has written its own, that is the turn
+            // before it, which the tail replays and ends at once (#521 turns 2 to 4, 2026-10-15). Wait for the turn's
+            // own file, with a deadline.
+            const deadline = Date.now() + 60_000;
+
+            while (!existsSync(turnLogPath(w.name, status.turns)) && Date.now() < deadline) {
+                await Bun.sleep(1000);
             }
 
             await pump(w, [
