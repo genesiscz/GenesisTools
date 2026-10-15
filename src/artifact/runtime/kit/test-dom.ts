@@ -16,6 +16,10 @@ export interface DomHarness {
     click: (element: Element | null | undefined) => Promise<void>;
     /** Dispatch a keydown and flush the React work it schedules. */
     press: (element: Element | null | undefined, key: string) => Promise<void>;
+    /** Dispatch a pointer event (pointerdown, pointermove, pointerup, ...) and flush React. */
+    pointer: (element: Element | null | undefined, type: string, init?: PointerEventInit) => Promise<void>;
+    /** Dispatch any prepared event and flush React (focusin, focusout, keydown with modifiers). */
+    fire: (element: Element | Document | null | undefined, event: Event) => Promise<void>;
     /** Set a controlled input's value the way a user would, and flush React. */
     type: (element: Element | null | undefined, value: string) => Promise<void>;
     html: () => string;
@@ -34,6 +38,7 @@ export async function mountDom(node: ReactNode, url = "http://localhost/"): Prom
         HTMLElement: dom.window.HTMLElement,
         Element: dom.window.Element,
         Node: dom.window.Node,
+        HTMLInputElement: dom.window.HTMLInputElement,
         IS_REACT_ACT_ENVIRONMENT: true,
     });
 
@@ -57,6 +62,24 @@ export async function mountDom(node: ReactNode, url = "http://localhost/"): Prom
     const press = async (element: Element | null | undefined, key: string): Promise<void> => {
         await act(async () => {
             element?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+        });
+    };
+
+    const pointer = async (
+        element: Element | null | undefined,
+        type: string,
+        init: PointerEventInit = {}
+    ): Promise<void> => {
+        await act(async () => {
+            element?.dispatchEvent(
+                new dom.window.PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, ...init })
+            );
+        });
+    };
+
+    const fire = async (element: Element | Document | null | undefined, event: Event): Promise<void> => {
+        await act(async () => {
+            element?.dispatchEvent(event);
         });
     };
 
@@ -95,6 +118,8 @@ export async function mountDom(node: ReactNode, url = "http://localhost/"): Prom
         render,
         click,
         press,
+        pointer,
+        fire,
         type,
         html: () => container.innerHTML,
         unmount: async () => {

@@ -192,3 +192,18 @@ export {
 // Kept as one block after the older exports, so later additions merge without touching the lists above.
 
 export { SERIES_COLOR } from "./charts";
+export { contrastRatio, parseCssColor, type Rgb, readableTextOn, relativeLuminance } from "./color";
+export {
+    placeTooltip,
+    TOOLTIP_ID,
+    Tooltip,
+    TooltipCard,
+    type TooltipContent,
+    type TooltipInput,
+    type TooltipOptions,
+    type TooltipPlacement,
+    type TooltipProps,
+    type TooltipRow,
+    type TooltipTargetProps,
+    useTooltip,
+} from "./tooltip";

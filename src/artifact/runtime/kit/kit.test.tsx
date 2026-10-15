@@ -1,5 +1,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parsePatch } from "diff";
+import { contrastRatio, readableTextOn } from "./color";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
@@ -9,6 +12,7 @@ import { CodeBlock, Collapse, SegmentedControl } from "./primitives";
 import { matchRoute } from "./router";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
+import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
 import { Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
 
 const mermaidRendered: string[] = [];
@@ -602,5 +606,114 @@ describe("viz", () => {
         expect(cells[3].textContent).toBe("");
         expect(cells[3].getAttribute("title")).toBe("b / 2: no data");
         await dom.unmount();
+    });
+});
+
+/** A shared token's literal value from runtime/styles.css. */
+function stylesToken(name: string): string {
+    const css = readFileSync(join(import.meta.dir, "..", "styles.css"), "utf8");
+    const match = css.match(new RegExp(`${name}:\\s*([^;]+);`));
+
+    return match?.[1].trim() ?? "";
+}
+
+describe("colour maths", () => {
+    test("contrast of black on white is 21 and readable text flips on a light fill", () => {
+        expect(Math.round(contrastRatio("#000", "#ffffff"))).toBe(21);
+        expect(readableTextOn("#eda100")).toBe("#111318");
+        expect(readableTextOn("rgb(40, 40, 120)")).toBe("#ffffff");
+    });
+});
+
+describe("Tooltip", () => {
+    const viewport = { viewportWidth: 1024, viewportHeight: 768 };
+
+    test("placement: pointer offset, kept inside on the right, flipped above near the bottom", () => {
+        expect(placeTooltip({ x: 100, y: 100, width: 200, height: 80, mode: "pointer", ...viewport })).toEqual({
+            left: 114,
+            top: 112,
+        });
+        const right = placeTooltip({ x: 1000, y: 100, width: 200, height: 80, mode: "pointer", ...viewport });
+        expect(right.left + 200).toBe(1024 - 8);
+        const bottom = placeTooltip({ x: 100, y: 740, width: 200, height: 80, mode: "pointer", ...viewport });
+        expect(bottom.top).toBe(740 - 12 - 80);
+    });
+
+    test("pointer at (100, 100) places the card at (114, 112) and links aria-describedby", async () => {
+        const dom = await mountDom(
+            <Tooltip content={{ title: "Task", rows: [{ k: "Hours", v: "8.0 h" }] }}>
+                <button type="button">target</button>
+            </Tooltip>
+        );
+        const button = dom.container.querySelector("button");
+        await dom.pointer(button, "pointermove", { clientX: 100, clientY: 100, pointerType: "mouse" });
+        const card = dom.window.document.querySelector<HTMLElement>('[role="tooltip"]');
+
+        expect(card?.style.left).toBe("114px");
+        expect(card?.style.top).toBe("112px");
+        expect(card?.textContent).toContain("8.0 h");
+        expect(button?.getAttribute("aria-describedby")).toBe(card?.id ?? "missing");
+
+        await dom.pointer(button, "pointerout", { pointerType: "mouse" });
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
+        expect(button?.hasAttribute("aria-describedby")).toBe(false);
+        await dom.unmount();
+    });
+
+    test("100 targets share at most one card, and a function content runs only when shown", async () => {
+        let calls = 0;
+        const content = (): { title: string } => {
+            calls += 1;
+
+            return { title: "lazy" };
+        };
+        function Target() {
+            return <span {...useTooltip(content)}>cell</span>;
+        }
+        function Many() {
+            return (
+                <div>
+                    {Array.from({ length: 100 }, (_, i) => (
+                        <Target key={i} />
+                    ))}
+                </div>
+            );
+        }
+        const dom = await mountDom(<Many />);
+        expect(calls).toBe(0);
+        const spans = dom.container.querySelectorAll("span");
+        await dom.pointer(spans[3], "pointermove", { clientX: 10, clientY: 10, pointerType: "mouse" });
+        await dom.pointer(spans[3], "pointermove", { clientX: 12, clientY: 10, pointerType: "mouse" });
+        await dom.pointer(spans[50], "pointermove", { clientX: 20, clientY: 10, pointerType: "mouse" });
+
+        expect(dom.window.document.querySelectorAll('[role="tooltip"]').length).toBe(1);
+        expect(calls).toBe(2);
+        await dom.unmount();
+    });
+
+    test("focus shows it, blur and Escape hide it", async () => {
+        const dom = await mountDom(
+            <Tooltip content="plain text tip">
+                <button type="button">target</button>
+            </Tooltip>
+        );
+        const button = dom.container.querySelector("button");
+        const doc = dom.window.document;
+        await dom.fire(button, new dom.window.FocusEvent("focusin", { bubbles: true }));
+        expect(doc.querySelector('[role="tooltip"]')?.textContent).toBe("plain text tip");
+        await dom.fire(button, new dom.window.FocusEvent("focusout", { bubbles: true }));
+        expect(doc.querySelector('[role="tooltip"]')).toBeNull();
+
+        await dom.fire(button, new dom.window.FocusEvent("focusin", { bubbles: true }));
+        await dom.press(button, "Escape");
+        expect(doc.querySelector('[role="tooltip"]')).toBeNull();
+        expect(button?.hasAttribute("aria-describedby")).toBe(false);
+        await dom.unmount();
+    });
+
+    test("default tokens: text at least 7:1 and dim at least 4.5:1 on the card", () => {
+        const bg = stylesToken("--tooltip-bg");
+        expect(contrastRatio(stylesToken("--tooltip-text"), bg)).toBeGreaterThanOrEqual(7);
+        expect(contrastRatio(stylesToken("--tooltip-dim"), bg)).toBeGreaterThanOrEqual(4.5);
     });
 });
