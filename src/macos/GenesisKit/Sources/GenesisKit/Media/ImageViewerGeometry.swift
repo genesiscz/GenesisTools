@@ -254,59 +254,54 @@ public enum ImageViewerOrdering {
 
 /// What a key does in the viewer. The window's key handler asks first; nil leaves the key to the app.
 public enum ImageViewerAction: Equatable, Sendable {
-    case dismiss, previous, next, zoomIn, zoomOut, fit, actualSize, copy
+    case dismiss, close, previous, next, zoomIn, zoomOut, fit, actualSize, copy
     case divider(CGFloat)
     case pickerMove(dx: Int, dy: Int), pickerChoose
 }
 
+/// The viewer's keys, read from `ImageViewerKeymap`. The window asks this before a control sees the press.
 public enum ImageViewerKeys {
     public static func action(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, picking: Bool,
                               comparing: Bool) -> ImageViewerAction?
     {
-        let flags = modifiers.intersection([.command, .option, .shift, .control])
-        if flags.contains(.command) {
-            guard !flags.contains(.control), !flags.contains(.option) else { return nil }
-            switch characters {
-            case "=", "+": return .zoomIn
-            case "-", "_": return .zoomOut
-            case "0": return .fit
-            case "1": return .actualSize
-            case "c" where !flags.contains(.shift): return .copy
-            default:
-                // A layout whose keys print other characters (Czech: the 0 key prints "é") still has the keys in
-                // their US places.
-                switch keyCode {
-                case 24: return .zoomIn
-                case 27: return .zoomOut
-                case 29: return .fit
-                case 18: return .actualSize
-                case 8 where !flags.contains(.shift): return .copy
-                default: return nil
-                }
+        let stroke = KeyStroke(keyCode: keyCode, character: characters ?? "", modifiers: KeyModifiers(modifiers))
+        return MainActor.assumeIsolated {
+            let keymap = ImageViewerKeymap.shared
+            if picking, let id = keymap.commands(for: stroke, in: [ImageViewerKeymap.pickerScope]).first?.id {
+                return pickerAction(id)
             }
+            guard let id = keymap.commands(for: stroke, in: [.window]).first?.id else { return nil }
+            return windowAction(id, stroke, comparing: comparing)
         }
-        if picking {
-            switch keyCode {
-            case 53: return .dismiss
-            case 123: return .pickerMove(dx: -1, dy: 0)
-            case 124: return .pickerMove(dx: 1, dy: 0)
-            case 125: return .pickerMove(dx: 0, dy: 1)
-            case 126: return .pickerMove(dx: 0, dy: -1)
-            case 36, 76: return .pickerChoose
-            default: return nil
-            }
+    }
+
+    private static func pickerAction(_ id: String) -> ImageViewerAction? {
+        switch id {
+        case ImageViewerKeymap.pickerLeft: return .pickerMove(dx: -1, dy: 0)
+        case ImageViewerKeymap.pickerRight: return .pickerMove(dx: 1, dy: 0)
+        case ImageViewerKeymap.pickerUp: return .pickerMove(dx: 0, dy: -1)
+        case ImageViewerKeymap.pickerDown: return .pickerMove(dx: 0, dy: 1)
+        case ImageViewerKeymap.pickerChoose: return .pickerChoose
+        default: return nil
         }
-        switch keyCode {
-        case 53 where flags.isEmpty: return .dismiss
-        case 123, 124:
-            let sign: CGFloat = keyCode == 123 ? -1 : 1
-            if flags.contains(.option) {
-                guard comparing else { return nil }
-                return .divider(sign * (flags.contains(.shift) ? 0.01 : 0.05))
-            }
-            return flags.isEmpty ? (keyCode == 123 ? .previous : .next) : nil
-        default:
-            return nil
+    }
+
+    private static func windowAction(_ id: String, _ stroke: KeyStroke, comparing: Bool) -> ImageViewerAction? {
+        switch id {
+        case ImageViewerKeymap.zoomIn: return .zoomIn
+        case ImageViewerKeymap.zoomOut: return .zoomOut
+        case ImageViewerKeymap.fit: return .fit
+        case ImageViewerKeymap.actualSize: return .actualSize
+        case ImageViewerKeymap.copy: return .copy
+        case ImageViewerKeymap.close: return .close
+        case ImageViewerKeymap.back: return .dismiss
+        case ImageViewerKeymap.previous: return .previous
+        case ImageViewerKeymap.next: return .next
+        case ImageViewerKeymap.dividerLeft, ImageViewerKeymap.dividerRight:
+            guard comparing else { return nil }
+            let sign: CGFloat = id == ImageViewerKeymap.dividerLeft ? -1 : 1
+            return .divider(sign * (stroke.modifiers.contains(.shift) ? 0.01 : 0.05))
+        default: return nil
         }
     }
 }

@@ -83,7 +83,7 @@ private struct ImageViewerToolbar: View {
                     .titlebarLabel()
             }
             HStack(spacing: 2) {
-                IconButton(systemName: "minus.magnifyingglass", tooltip: "Zoom out (⌘−)") { model.perform(.zoomOut) }
+                IconButton(systemName: "minus.magnifyingglass", tooltip: ImageViewerKeymap.hint("Zoom out", ImageViewerKeymap.zoomOut)) { model.perform(.zoomOut) }
                 MenuButton(items: { zoomMenu }) {
                     Text(verbatim: "\(readout.percent) %")
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
@@ -92,7 +92,7 @@ private struct ImageViewerToolbar: View {
                 }
                 .instantTooltip(readout.isFit ? "Fitted to the window. Click for zoom levels" : "Zoom level. Click for zoom levels")
                 .accessibilityLabel(Text(verbatim: "Zoom \(readout.percent) percent"))
-                IconButton(systemName: "plus.magnifyingglass", tooltip: "Zoom in (⌘+)") { model.perform(.zoomIn) }
+                IconButton(systemName: "plus.magnifyingglass", tooltip: ImageViewerKeymap.hint("Zoom in", ImageViewerKeymap.zoomIn)) { model.perform(.zoomIn) }
             }
             .disabled(model.stateA.isReady == false)
             divider
@@ -106,7 +106,7 @@ private struct ImageViewerToolbar: View {
             .disabled(model.items.count < 2)
             .accessibilityIdentifier("image-viewer-compare")
             divider
-            IconButton(systemName: "doc.on.doc", tooltip: "Copy image (⌘C)") { model.copyCurrent() }
+            IconButton(systemName: "doc.on.doc", tooltip: ImageViewerKeymap.hint("Copy image", ImageViewerKeymap.copy)) { model.copyCurrent() }
                 .disabled(model.copyStatus == .copying)
             IconButton(systemName: "folder", tooltip: model.current?.isTemporary == true
                 ? "This picture is embedded in the note and has no file to show"
@@ -125,10 +125,10 @@ private struct ImageViewerToolbar: View {
 
     private var zoomMenu: [MenuButtonItem] {
         [
-            .action("Fit to window  ⌘0", checked: readout.isFit) { model.perform(.fit) },
+            .action("Fit to window  \(ImageViewerKeymap.label(ImageViewerKeymap.fit))", checked: readout.isFit) { model.perform(.fit) },
             .divider,
             .action("50 %", checked: readout.percent == 50) { zoom(0.5) },
-            .action("100 %  ⌘1", checked: readout.percent == 100 && !readout.isFit) { model.perform(.actualSize) },
+            .action("100 %  \(ImageViewerKeymap.label(ImageViewerKeymap.actualSize))", checked: readout.percent == 100 && !readout.isFit) { model.perform(.actualSize) },
             .action("200 %", checked: readout.percent == 200) { zoom(2) },
             .action("400 %", checked: readout.percent == 400) { zoom(4) },
         ]
@@ -300,7 +300,7 @@ private struct ImageViewerCompareBar: View {
                 .fixedSize()
             Button("Done") { model.endCompare() }
                 .buttonStyle(.genHover())
-                .instantTooltip("Back to one image (Esc)")
+                .instantTooltip(ImageViewerKeymap.hint("Back to one image", ImageViewerKeymap.back))
         }
         .font(.system(size: 11.5))
         .padding(.horizontal, 12)
@@ -336,7 +336,7 @@ private struct ImageViewerPicker: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
-                IconButton(systemName: "xmark", tooltip: "Close (Esc)") { model.closePicker() }
+                IconButton(systemName: "xmark", tooltip: ImageViewerKeymap.hint("Close", ImageViewerKeymap.back)) { model.closePicker() }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
