@@ -1,4 +1,5 @@
-import { type KeyboardEvent, type ReactNode, useMemo, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { plainSegment, withPlainSegment } from "./hash";
 import { MdInline } from "./md";
 import {
     Badge,
@@ -35,13 +36,16 @@ export interface TabsProps {
  * browser percent-encodes spaces and other reserved characters on assignment,
  * so both directions must agree or a reload lands on the fallback tab.
  */
-export function tabHash(id: string): string {
-    return `#${encodeURIComponent(id)}`;
+export function tabHash(id: string, current = ""): string {
+    return withPlainSegment(current, encodeURIComponent(id));
 }
 
-/** Tab id carried by a location hash ("#my%20tab" → "my tab"); "" when absent or malformed. */
+/**
+ * Tab id carried by a location hash ("#my%20tab" → "my tab"); "" when absent.
+ * Chart segments (`ts.<id>=...`, see `./hash`) share the hash and are skipped.
+ */
 export function tabIdFromHash(hash: string): string {
-    const raw = hash.replace(/^#/, "");
+    const raw = plainSegment(hash);
 
     try {
         return decodeURIComponent(raw);
@@ -72,6 +76,20 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
     const current = tabs.find((t) => t.id === active) ?? tabs[0];
     const currentIndex = tabs.findIndex((t) => t.id === current?.id);
 
+    // A same-page link to "#<tab>" changes only the hash; follow it. Chart-only hash writes carry no tab id.
+    useEffect(() => {
+        const onHash = () => {
+            const id = tabIdFromHash(window.location.hash);
+
+            if (tabs.some((t) => t.id === id)) {
+                setActive(id);
+            }
+        };
+        window.addEventListener("hashchange", onHash);
+
+        return () => window.removeEventListener("hashchange", onHash);
+    }, [tabs]);
+
     const select = (index: number): void => {
         const next = tabs[(index + tabs.length) % tabs.length];
 
@@ -80,7 +98,7 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
         }
 
         setActive(next.id);
-        history.replaceState(null, "", tabHash(next.id));
+        history.replaceState(null, "", tabHash(next.id, window.location.hash));
         // The roving tabIndex only helps if focus actually moves with the
         // selection; getElementById (not a selector) because ids are encoded.
         document.getElementById(tabButtonId(next.id))?.focus();
@@ -125,7 +143,7 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
                         tabIndex={t.id === current?.id ? 0 : -1}
                         onClick={() => {
                             setActive(t.id);
-                            history.replaceState(null, "", tabHash(t.id));
+                            history.replaceState(null, "", tabHash(t.id, window.location.hash));
                         }}
                         onKeyDown={onTabKeyDown}
                         className={`${scroll ? "shrink-0 " : ""}${
@@ -144,7 +162,14 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
                 ))}
             </div>
             {current ? (
-                <div role="tabpanel" id={tabPanelId(current.id)} aria-labelledby={tabButtonId(current.id)}>
+                // Keyed by tab id: two tabs whose content starts with the same component type
+                // must not share one instance (its state would leak from one tab into the other).
+                <div
+                    key={current.id}
+                    role="tabpanel"
+                    id={tabPanelId(current.id)}
+                    aria-labelledby={tabButtonId(current.id)}
+                >
                     {current.content}
                 </div>
             ) : null}

@@ -1,6 +1,6 @@
 // Kit gallery: TimeSeries. Serve with `tools artifact serve src/artifact/gallery/time-series.tsx`.
 // Every number below is invented by a seeded generator; nothing comes from a real session.
-import { Callout, Hero, Page, Section, TimeSeries, type TsMarker, type TsSeries, type TsSpan } from "@artifact/kit";
+import { Callout, Hero, Page, Tabs, TimeSeries, type TsMarker, type TsSeries, type TsSpan } from "@artifact/kit";
 
 const MINUTE = 60_000;
 const DAYS = 10;
@@ -169,6 +169,7 @@ function buildDemo(): Demo {
 }
 
 const DEMO = buildDemo();
+const UNITS = { tokens: { label: "tokens" }, usd: { label: "USD" }, "%": { label: "%" } };
 const POINTS = DEMO.series.reduce((n, s) => n + s.points.length, 0);
 
 export default function TimeSeriesGallery() {
@@ -179,35 +180,58 @@ export default function TimeSeriesGallery() {
                 title="TimeSeries"
                 subtitle={`Canvas chart for dense time data: ${POINTS.toLocaleString("en-US")} invented points, ${DEMO.markers.length} markers and ${DEMO.spans.length} spans over ${DAYS} days.`}
             />
-            <Section title="Session over ten days">
-                <TimeSeries
-                    id="gallery-session"
-                    title="Context and cost"
-                    syncId="gallery"
-                    series={DEMO.series}
-                    markers={DEMO.markers}
-                    spans={DEMO.spans}
-                    units={{
-                        tokens: { label: "tokens" },
-                        usd: { label: "USD" },
-                        "%": { label: "%" },
-                    }}
-                />
-            </Section>
-            <Section title="Synced second chart">
-                <TimeSeries
-                    id="gallery-usage"
-                    title="Usage bar (synced viewport and crosshair)"
-                    syncId="gallery"
-                    height={140}
-                    brush={false}
-                    series={DEMO.series.filter((s) => s.id === "usage").map((s) => ({ ...s, dashed: false }))}
-                />
-            </Section>
+            <Tabs
+                tabs={[
+                    {
+                        id: "overview",
+                        label: "Overview",
+                        content: (
+                            <>
+                                <TimeSeries
+                                    id="gallery-session"
+                                    title="Context and cost"
+                                    syncId="gallery"
+                                    series={DEMO.series}
+                                    markers={DEMO.markers}
+                                    spans={DEMO.spans}
+                                    units={UNITS}
+                                />
+                                <TimeSeries
+                                    id="gallery-usage"
+                                    title="Usage bar (synced viewport and crosshair)"
+                                    syncId="gallery"
+                                    height={140}
+                                    brush={false}
+                                    series={DEMO.series
+                                        .filter((s) => s.id === "usage")
+                                        .map((s) => ({ ...s, dashed: false }))}
+                                />
+                            </>
+                        ),
+                    },
+                    {
+                        id: "cache",
+                        label: "Cache",
+                        content: (
+                            <TimeSeries
+                                id="gallery-cache"
+                                title="Cache reads and writes (stacked)"
+                                layout="split"
+                                series={DEMO.series
+                                    .filter((s) => s.id === "reads" || s.id === "writes" || s.id === "hit")
+                                    .map((s) => ({ ...s, hidden: false }))}
+                                markers={DEMO.markers.filter((m) => m.kind === "compaction")}
+                                units={UNITS}
+                            />
+                        ),
+                    },
+                ]}
+            />
             <Callout tone="info" title="Try it">
                 Scroll over the plot to zoom around the cursor, drag to pan, Shift-drag to select a range, drag the
                 window in the overview strip, or press + - and the arrow keys after focusing the chart. Alt-click a
-                series chip to show only that series. Click a marker count to list its markers.
+                series chip to show only that series. Click a marker count to list its markers. The tab and every
+                chart's view share the URL hash, so a reload or a copied link keeps both.
             </Callout>
         </Page>
     );

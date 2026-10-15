@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tabHash, tabIdFromHash } from "./data";
+import { composeHash, isChartSegment, plainSegment, withPlainSegment } from "./hash";
 import { mountDom } from "./test-dom";
 import { TimeSeries } from "./timeseries";
 import {
@@ -234,7 +236,43 @@ describe("csv and state", () => {
 
         expect(hash).toContain("ts.other=x");
         expect(readHashState(hash ?? "", "main")).toBe(encoded);
-        expect(writeHashState("#overview", "main", encoded)).toBeNull();
+        expect(writeHashState("#overview", "main", encoded)).toBe(`#overview&ts.main=${encodeURIComponent(encoded)}`);
+    });
+});
+
+describe("shared URL hash (Tabs + charts)", () => {
+    test("chart segments are recognised by their ts.<id>= prefix only", () => {
+        expect(isChartSegment("ts.ctx=r%3D1")).toBe(true);
+        expect(isChartSegment("ts.ctx")).toBe(false);
+        expect(isChartSegment("misses")).toBe(false);
+    });
+
+    test("compose puts the plain segment first and keeps chart order", () => {
+        expect(composeHash(["ts.a=1", "misses", "ts.b=2"])).toBe("#misses&ts.a=1&ts.b=2");
+        expect(composeHash([])).toBe("");
+        expect(plainSegment("#ts.a=1&my%20tab&ts.b=2")).toBe("my%20tab");
+        expect(withPlainSegment("#old&ts.a=1", "")).toBe("#ts.a=1");
+    });
+
+    test("a tab write keeps every chart segment and a chart write keeps the tab", () => {
+        const withCharts = writeHashState(writeHashState("", "a", "r=1~2"), "b", "l=split");
+        const tabbed = tabHash("misses", withCharts);
+
+        expect(tabIdFromHash(tabbed)).toBe("misses");
+        expect(readHashState(tabbed, "a")).toBe("r=1~2");
+        expect(readHashState(tabbed, "b")).toBe("l=split");
+
+        const rewritten = writeHashState(tabbed, "a", "r=3~4");
+
+        expect(tabIdFromHash(rewritten)).toBe("misses");
+        expect(readHashState(rewritten, "a")).toBe("r=3~4");
+        expect(tabHash("other", rewritten)).toBe(rewritten.replace("#misses", "#other"));
+    });
+
+    test("a hash with only chart segments carries no tab id", () => {
+        expect(tabIdFromHash("#ts.a=1")).toBe("");
+        expect(tabIdFromHash("#misses")).toBe("misses");
+        expect(tabHash("my tab")).toBe("#my%20tab");
     });
 });
 

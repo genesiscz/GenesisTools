@@ -409,7 +409,7 @@ function saveViewState(id: string, state: TsViewState): void {
 
     const next = writeHashState(window.location.hash, id, encoded);
 
-    if (next !== null && next !== window.location.hash) {
+    if (next !== window.location.hash) {
         window.history.replaceState(
             window.history.state,
             "",
@@ -1758,7 +1758,7 @@ export function TimeSeries({
 
         const theme = readTheme(root);
         const dpr = window.devicePixelRatio || 1;
-        const head = 30;
+        const head = 50;
         const out = document.createElement("canvas");
         out.width = Math.round(frame.width * dpr);
         out.height = Math.round((frame.height + head) * dpr);
@@ -1779,9 +1779,43 @@ export function TimeSeries({
             8,
             15
         );
+        // Legend with the chip state: series that are off are drawn faded and struck through.
+        ctx.font = `11px ${theme.font}`;
+        let lx = 8;
+
+        for (const s of series) {
+            const on = visibleIds.has(s.id);
+            const label = s.unit ? `${s.label} (${units?.[s.unit]?.label ?? s.unit})` : s.label;
+            const w = ctx.measureText(label).width;
+            ctx.globalAlpha = on ? 1 : 0.4;
+            ctx.strokeStyle = theme.resolve(seriesColor.get(s.id) ?? "var(--dim)");
+            ctx.lineWidth = 2;
+            ctx.setLineDash(s.dashed ? [3, 2] : []);
+            ctx.beginPath();
+            ctx.moveTo(lx, 37);
+            ctx.lineTo(lx + 12, 37);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = on ? theme.text : theme.dim;
+            ctx.textAlign = "left";
+            ctx.fillText(label, lx + 16, 37);
+
+            if (!on) {
+                ctx.fillRect(lx + 16, 37, w, 1);
+            }
+
+            lx += w + 34;
+        }
+
+        ctx.globalAlpha = 1;
         ctx.drawImage(canvas, 0, head, frame.width, frame.height);
         ctx.font = `10px ${theme.font}`;
         ctx.fillStyle = theme.dim;
+        ctx.textAlign = "right";
+
+        for (const lane of frame.lanes) {
+            ctx.fillText(lane.name, frame.plotLeft - 8, lane.top + Math.min(lane.height, 16) / 2 + head);
+        }
 
         for (const panel of frame.panels) {
             for (const axis of panel.axes) {
@@ -1814,7 +1848,7 @@ export function TimeSeries({
 
         const full = view[0] <= bounds[0] && view[1] >= bounds[1];
         const encoded = encodeViewState({ ...saved, range: full ? undefined : view });
-        const hash = writeHashState("", id, encoded) ?? "";
+        const hash = writeHashState(window.location.hash, id, encoded);
         const url = `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
 
         try {

@@ -1,3 +1,5 @@
+import { composeHash, hashSegments } from "./hash";
+
 /**
  * Pure helpers behind the TimeSeries chart: time and value ticks, min/max
  * decimation, nearest-point search, range math, stacking, lane packing,
@@ -1012,41 +1014,26 @@ export function decodeViewState(text: string): TsViewState {
     return state;
 }
 
-/** Read this chart's entry (`ts.<id>=...`) out of a URL hash that may carry several charts. */
+/** Read this chart's entry (`ts.<id>=...`) out of a URL hash shared with tab ids and other charts. */
 export function readHashState(hash: string, id: string): string | null {
     const key = `ts.${encodeURIComponent(id)}=`;
+    const part = hashSegments(hash).find((s) => s.startsWith(key));
 
-    for (const part of hash.replace(/^#/, "").split("&")) {
-        if (part.startsWith(key)) {
-            try {
-                return decodeURIComponent(part.slice(key.length));
-            } catch {
-                return null;
-            }
-        }
-    }
-
-    return null;
-}
-
-/**
- * Write this chart's entry into a hash. Returns null when the hash belongs to
- * someone else (a tab id, a hash route): those are left alone.
- */
-export function writeHashState(hash: string, id: string, encoded: string): string | null {
-    const body = hash.replace(/^#/, "");
-    const parts = body ? body.split("&") : [];
-
-    if (parts.some((part) => !part.startsWith("ts."))) {
+    if (part === undefined) {
         return null;
     }
 
-    const key = `ts.${encodeURIComponent(id)}=`;
-    const kept = parts.filter((part) => !part.startsWith(key));
-
-    if (encoded) {
-        kept.push(`${key}${encodeURIComponent(encoded)}`);
+    try {
+        return decodeURIComponent(part.slice(key.length));
+    } catch {
+        return null;
     }
+}
 
-    return kept.length ? `#${kept.join("&")}` : "";
+/** Replace this chart's entry in a hash, keeping every other segment (the tab id, other charts). */
+export function writeHashState(hash: string, id: string, encoded: string): string {
+    const key = `ts.${encodeURIComponent(id)}=`;
+    const kept = hashSegments(hash).filter((s) => !s.startsWith(key));
+
+    return composeHash(encoded ? [...kept, `${key}${encodeURIComponent(encoded)}`] : kept);
 }
