@@ -135,7 +135,9 @@ export class TurnJudge {
             this.questions.push(question);
         }
 
-        return snapshot.state === "STALLED" ? this.result("stalled") : null;
+        // Only the answering turn can stall: the silence of a turn from before the send (an idle session whose
+        // last turn never wrote its end) said STALLED at once on 2026-10-15, seconds before the reply began.
+        return snapshot.state === "STALLED" && answering ? this.result("stalled") : null;
     }
 
     result(outcome: TurnWaitOutcome): TurnWaitResult {
