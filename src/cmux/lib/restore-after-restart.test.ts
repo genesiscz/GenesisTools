@@ -8,14 +8,13 @@ import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
 import * as processes from "@genesiscz/utils/process/processes";
 import { filterReplayByAgents, isMissingEnumFlag, parseAgentList, parseRestoreSource } from "./restore-after-restart";
 import {
-    agentsOnTtys,
     type InPlaceLiveState,
-    idleShellTtys,
     type LiveTab,
     planInPlaceRestore,
     planInPlaceSettled,
     runInPlaceRestore,
 } from "./restore-in-place";
+import { agentsOnTtys, idleShellTtys } from "./tab-process";
 
 describe("parseRestoreSource", () => {
     test("accepts previous, live, profile", () => {

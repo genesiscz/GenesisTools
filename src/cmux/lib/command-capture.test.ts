@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     agentKindFromLauncher,
-    claudeSessionFromArgv,
     cleanLaunchCommand,
     collectTtyCapture,
     deriveReplayCommand,
@@ -19,6 +18,7 @@ import {
     staleSessionNote,
     stripModelFlags,
 } from "@app/cmux/lib/command-capture";
+import { agentOfCommand } from "@app/cmux/lib/tab-process";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
 
@@ -442,7 +442,12 @@ describe("discoverCcRunAliases", () => {
     });
 });
 
-describe("claudeSessionFromArgv", () => {
+const claudeSessionFromArgv = (command: string) => {
+    const agent = agentOfCommand(command);
+    return agent?.kind === "claude" ? agent.sessionId : undefined;
+};
+
+describe("agentOfCommand reads a claude session", () => {
     const id = "f2f57edd-be32-4dae-be97-3fc3923afca9";
 
     test("reads the concrete uuid a live claude process resumes", () => {

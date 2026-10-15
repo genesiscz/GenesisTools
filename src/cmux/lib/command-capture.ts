@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CapturedCommand } from "@app/cmux/lib/capture-journal";
 import { agentRunLauncher } from "@app/cmux/lib/session-agents";
+import { agentOfCommand } from "@app/cmux/lib/tab-process";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { carryAgentFlags } from "@genesiscz/utils/agent-sessions/resume-flags";
@@ -74,26 +75,6 @@ export interface TtyCapture {
     claudeSessions: Map<string, string>;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * The session id in a live claude process's argv, or undefined. Only a concrete
- * uuid counts: `--resume` alone opens the picker and a query is fuzzy.
- */
-export function claudeSessionFromArgv(command: string): string | undefined {
-    const tokens = command.trim().split(/\s+/);
-    const base = tokens[0]?.split("/").pop();
-
-    if (base !== "claude") {
-        return undefined;
-    }
-
-    const at = tokens.indexOf("--resume");
-    const value = at === -1 ? undefined : tokens[at + 1];
-
-    return value && UUID_RE.test(value) ? value.toLowerCase() : undefined;
-}
-
 /**
  * One process-table read, two answers per tty: the launch command the user
  * typed, and the Claude session a `claude --resume <uuid>` on that tty is
@@ -105,7 +86,8 @@ export async function collectTtyCapture(): Promise<TtyCapture> {
     const claudeSessions = new Map<string, string>();
 
     for (const entry of await readTtyProcessTable()) {
-        const sessionId = claudeSessionFromArgv(entry.command);
+        const agent = agentOfCommand(entry.command);
+        const sessionId = agent?.kind === "claude" ? agent.sessionId : undefined;
         if (sessionId && !claudeSessions.has(entry.tty)) {
             claudeSessions.set(entry.tty, sessionId);
         }

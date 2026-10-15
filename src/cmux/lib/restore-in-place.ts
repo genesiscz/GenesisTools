@@ -2,17 +2,15 @@ import { agentKindFromLauncher, isAgentLauncher, resumeTargetFromCommand } from 
 import { profileSurfaces } from "@app/cmux/lib/profile-walk";
 import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
 import { liveTree } from "@app/cmux/lib/session-close-live";
+import { agentsOnTtys, idleShellTtys, runningAgentSessions, type TtyAgent } from "@app/cmux/lib/tab-process";
 import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyCommand } from "@genesiscz/utils/process/classify";
-import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
-import { isShellProgram } from "@genesiscz/utils/shell/programs";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 import pc from "picocolors";
 
 /**
@@ -39,12 +37,6 @@ export interface LiveTab {
     ref: string;
     workspaceRef: string;
     windowRef: string;
-}
-
-/** An agent session running on a tty, read off its process command line. */
-export interface TtyAgent {
-    kind: AccountProviderAlias;
-    sessionId?: string;
 }
 
 /**
@@ -97,81 +89,6 @@ export interface InPlaceLiveState {
 const TYPABLE_EVIDENCE: ReadonlySet<string> = new Set(["journal", "typed", "title"]);
 
 const GROK_TRUST_PROMPT = /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/;
-
-/**
- * The ttys where this user runs exactly one process, and it is a shell: the tab's own login shell, waiting at
- * its prompt. Any other process (an agent, an ssh, a `tail -f`, a background job) makes the tab busy, and so
- * does a SECOND shell: a script that runs under `bash` and waits for input looks like a shell by name, and
- * typing into it would feed its stdin (2026-10-14, caught by the live proof). `login` is root's, so it is not
- * counted.
- */
-export function idleShellTtys(processes: ProcessEntry[], uid: number): Set<string> {
-    const byTty = new Map<string, ProcessEntry[]>();
-
-    for (const entry of processes) {
-        if (entry.tty && entry.uid === uid && !entry.zombie) {
-            byTty.set(entry.tty, [...(byTty.get(entry.tty) ?? []), entry]);
-        }
-    }
-
-    const idle = new Set<string>();
-
-    for (const [tty, entries] of byTty) {
-        if (entries.length === 1 && isShellProgram(entries[0].name)) {
-            idle.add(tty);
-        }
-    }
-
-    return idle;
-}
-
-function liveAgent(entry: ProcessEntry, uid: number): TtyAgent | undefined {
-    if (entry.uid !== uid || entry.zombie || !entry.command) {
-        return undefined;
-    }
-
-    const agent = classifyCommand(entry.command);
-    if (
-        (agent.kind === "agent" || agent.kind === "wrapper") &&
-        (agent.provider === "claude" || agent.provider === "grok" || agent.provider === "codex")
-    ) {
-        return { kind: agent.provider, sessionId: agent.sessionId ?? undefined };
-    }
-
-    return undefined;
-}
-
-/** Index all recognized running sessions for duplicate-resume checks, including interpreter, shared-tty and headless launches. */
-export function runningAgentSessions(processes: ProcessEntry[], uid: number): Map<string, string> {
-    const sessions = new Map<string, string>();
-
-    for (const entry of processes) {
-        const agent = liveAgent(entry, uid);
-        if (agent?.sessionId) {
-            sessions.set(agent.sessionId.toLowerCase(), entry.tty ?? "(no tty)");
-        }
-    }
-
-    return sessions;
-}
-
-/** The agent each busy tty runs, from the first agent command line on it (`/…/grok -r <id>`, `claude --resume <id>`). */
-export function agentsOnTtys(processes: ProcessEntry[], uid: number): Map<string, TtyAgent> {
-    const agents = new Map<string, TtyAgent>();
-
-    for (const entry of processes) {
-        if (!entry.tty || agents.has(entry.tty)) {
-            continue;
-        }
-
-        const agent = liveAgent(entry, uid);
-        if (agent) {
-            agents.set(entry.tty, agent);
-        }
-    }
-
-    return agents;
-}
 
 function lastLine(screen: string): string {
     return (
@@ -257,7 +174,7 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
     if (live.ttyTrusted !== false && !state.idleTtys.has(live.tty)) {
         const running = state.ttyAgents.get(live.tty);
 
-        if (agent && running?.sessionId && running.sessionId === target) {
+        if (agent && running?.sessionId && running.sessionId === target?.toLowerCase()) {
             return { skip: "already runs the recorded session" };
         }
 

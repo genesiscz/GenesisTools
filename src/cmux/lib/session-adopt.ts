@@ -5,6 +5,7 @@ import type { TmuxClientInfo, TmuxPaneInfo } from "@genesiscz/utils/tmux/session
 import { titleMatchKeys } from "./agent-replay";
 import { isSessionAgentId, type SessionAgentId } from "./session-agents";
 import type { AdoptedSession } from "./session-close";
+import { commandRunsAgent } from "./tab-process";
 
 export interface LiveSurface {
     ref: string;
@@ -346,8 +347,7 @@ export function ttyProcessesShowAgent(
 
 /** Do these command lines, one per line, show the agent? Its binary, or the `tools <agent>` launcher. */
 export function ttyRunsAgent(psArgs: string, agent: SessionAgentId): boolean {
-    const word = new RegExp(`(^|[\\s/])${agent}(\\s|$)`);
-    return psArgs.split("\n").some((line) => word.test(line.trim()));
+    return psArgs.split("\n").some((line) => commandRunsAgent(line.trim(), agent));
 }
 
 export interface LiveAgentSurface {
