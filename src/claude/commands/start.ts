@@ -1,3 +1,4 @@
+import { nativeDiffState } from "@app/agents/lib/hooks/native-diff";
 import { startPassthrough } from "@app/claude/lib/cross-messages";
 import { accountOwningKeychain } from "@app/claude/lib/doctor";
 import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
@@ -1007,7 +1008,12 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
     // rollout, so accounts outside that cohort never see it. Default it on for every launch,
     // but keep an explicit value: `CLAUDE_CODE_BASH_EDIT_DIFF=0` is how a user turns it off.
-    launchEnv.CLAUDE_CODE_BASH_EDIT_DIFF ??= "1";
+    // Not when the settings switched it off (`tools agents hooks install` does, for the diff hook
+    // that replaces it): the variable wins over the setting, so forcing it brought back a diff
+    // that shows other sessions' edits (2026-10-15).
+    if (launchEnv.CLAUDE_CODE_BASH_EDIT_DIFF === undefined && nativeDiffState() !== "off") {
+        launchEnv.CLAUDE_CODE_BASH_EDIT_DIFF = "1";
+    }
 
     // Agent-team tmux teammates do NOT inherit CLAUDE_CODE_OAUTH_TOKEN (CC spawn
     // allowlist). Point CLAUDE_CODE_TEAMMATE_COMMAND at a per-PID wrapper that

@@ -27,6 +27,7 @@ import {
     DEFAULT_HOOKS_CONFIG,
     type DecisionsHookConfig,
     decisionHooksWanted,
+    defaultLogPath,
     diffFor,
     keepsCommand,
     lastConfigLoadError,
@@ -52,7 +53,8 @@ import {
     uninstallHooks,
     wiringStatus,
 } from "./install";
-import { logDecision, releaseRotationLock, setMaxLogBytes, takeRotationLock } from "./log";
+import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
+import { nativeDiffState } from "./native-diff";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
@@ -349,7 +351,7 @@ describe("installHooks", () => {
 
         expect(second.added).toEqual([]);
         expect(second.updated).toEqual([]);
-        expect(second.unchanged).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(second.unchanged).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(second.changed).toBe(false);
         expect(readFileSync(path, "utf8")).toBe(bytes);
         // A no-op must be a NO-OP: the earlier version rewrote the file every time.
@@ -364,7 +366,7 @@ describe("installHooks", () => {
         const moved = installHooks({ dist: "/dist-B", settingsPath: path, write: true });
         const after = readFileSync(path, "utf8");
 
-        expect(moved.updated).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(moved.updated).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(moved.changed).toBe(true);
         expect(after).toContain("/dist-B/src/agents/bin/hook-pre.ts");
         expect(after).not.toContain("/dist-A");
@@ -436,7 +438,7 @@ describe("installHooks", () => {
         const removed = uninstallHooks({ settingsPath: path, write: true });
         const after = readSettings(path);
 
-        expect(removed.removed).toBe(4);
+        expect(removed.removed).toBe(5);
         expect(after.hooks?.PreToolUse).toEqual([{ hooks: [{ type: "command", command: "/existing.sh" }] }]);
         expect(after.hooks?.PostToolUse).toEqual([]);
         expect(after.hooks?.SessionEnd).toEqual([]);
@@ -452,7 +454,7 @@ describe("installHooks", () => {
 
         expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false, unpushed: false })).toEqual({
             state: "stale",
-            events: ["PreToolUse", "SessionEnd", "PostToolUse"],
+            events: ["PreToolUse", "PostToolUseFailure", "SessionEnd", "PostToolUse"],
         });
 
         installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false, unpushed: false });
@@ -466,13 +468,121 @@ describe("installHooks", () => {
         expect(readSettings(path).hooks?.PostToolUse?.[0]?.matcher).toBe("Bash|Edit|MultiEdit|Write");
     });
 
+    it("keeps Claude Code's Bash diff on while shadow is on", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hooks-shadow-"));
+        const configDir = join(home, ".genesis-tools", "agents");
+
+        mkdirSync(configDir, { recursive: true });
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+                const configPath = join(configDir, "hooks.json");
+
+                writeFileSync(configPath, SafeJSON.stringify({ shadow: true }));
+
+                const shadowed = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+                const kept = installHooks({ dist: "/dist", settingsPath: shadowed, write: true });
+
+                expect(kept.nativeDiff).toBe("kept");
+                expect(readSettings(shadowed).bashEditDiffEnabled).toBe(true);
+
+                writeFileSync(configPath, SafeJSON.stringify({ shadow: false }));
+
+                const live = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+                const turned = installHooks({ dist: "/dist", settingsPath: live, write: true });
+
+                expect(turned.nativeDiff).toBe("turned-off");
+                expect(readSettings(live).bashEditDiffEnabled).toBe(false);
+
+                writeFileSync(configPath, SafeJSON.stringify({ shadow: false, diff: { replaceNative: false } }));
+
+                const stood = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+                const alone = installHooks({ dist: "/dist", settingsPath: stood, write: true });
+
+                expect(alone.nativeDiff).toBe("kept");
+                expect(readSettings(stood).bashEditDiffEnabled).toBe(true);
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+
+    it("restores the native diff uninstall took over, and leaves one the user changed", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hooks-native-restore-"));
+        const configDir = join(home, ".genesis-tools", "agents");
+
+        mkdirSync(configDir, { recursive: true });
+        writeFileSync(join(configDir, "hooks.json"), SafeJSON.stringify({ shadow: false }));
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+                const turned = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+
+                installHooks({ dist: "/dist", settingsPath: turned, write: true });
+                expect(readSettings(turned).bashEditDiffEnabled).toBe(false);
+                uninstallHooks({ settingsPath: turned, write: true });
+                expect(readSettings(turned).bashEditDiffEnabled).toBe(true);
+
+                const absent = settingsFile({ hooks: {} });
+
+                installHooks({ dist: "/dist", settingsPath: absent, write: true });
+                expect(readSettings(absent).bashEditDiffEnabled).toBe(false);
+                uninstallHooks({ settingsPath: absent, write: true });
+                expect(readSettings(absent).bashEditDiffEnabled).toBeUndefined();
+
+                const owned = settingsFile({ hooks: {}, bashEditDiffEnabled: true });
+
+                installHooks({ dist: "/dist", settingsPath: owned, write: true });
+
+                const edited = readSettings(owned);
+                edited.bashEditDiffEnabled = true;
+                writeJsonFile(owned, edited);
+                uninstallHooks({ settingsPath: owned, write: true });
+                expect(readSettings(owned).bashEditDiffEnabled).toBe(true);
+
+                const already = settingsFile({ hooks: {}, bashEditDiffEnabled: false });
+
+                installHooks({ dist: "/dist", settingsPath: already, write: true });
+                uninstallHooks({ settingsPath: already, write: true });
+                expect(readSettings(already).bashEditDiffEnabled).toBe(false);
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+
     it("dry run reports what it would add and writes nothing", () => {
         const path = settingsFile({ hooks: {} });
         const result = installHooks({ dist: "/dist", settingsPath: path, write: false });
 
-        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(result.changed).toBe(true);
         expect(readSettings(path).hooks).toEqual({});
+    });
+});
+
+describe("nativeDiffState", () => {
+    it("reads a broken settings file as the default, and a real value as itself", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-native-diff-"));
+        const broken = join(dir, "broken.json");
+        const off = join(dir, "off.json");
+        const on = join(dir, "on.json");
+        const diag = join(dir, "diag.jsonl");
+
+        writeFileSync(broken, "{");
+        writeFileSync(off, SafeJSON.stringify({ bashEditDiffEnabled: false }));
+        writeFileSync(on, SafeJSON.stringify({ bashEditDiffEnabled: true }));
+        setDiagLogPath(diag);
+
+        try {
+            expect(nativeDiffState(broken)).toBe("default");
+            expect(nativeDiffState(off)).toBe("off");
+            expect(nativeDiffState(on)).toBe("on");
+            expect(readFileSync(diag, "utf8")).toContain("Could not read the native diff setting");
+        } finally {
+            setDiagLogPath(defaultLogPath());
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 
@@ -540,7 +650,7 @@ describe("applySetting", () => {
         for (const [key, value] of [
             ["diff.maxFiles", "-1"],
             ["diff.maxFiles", "2.5"],
-            ["diff.maxMessageBytes", "0"],
+            ["diff.maxMessageChars", "0"],
             ["guard.longCommand.lines", ""],
             ["guard.contextCapPerSession", "-1"],
         ]) {
@@ -957,7 +1067,7 @@ describe("the config writers build on the file they write", () => {
                 diff: {
                     maxFiles: "3",
                     enabled: "no",
-                    harnesses: { grok: { enabled: "true" }, codex: { maxFiles: "9", maxMessageBytes: 4000 } },
+                    harnesses: { grok: { enabled: "true" }, codex: { maxFiles: "9", maxMessageChars: 4000 } },
                 },
             })
         );
@@ -971,7 +1081,7 @@ describe("the config writers build on the file they write", () => {
         // diff back on for Grok, and a string number must not reach Codex, while a valid one does.
         expect(diffFor(config, "grok").enabled).toBe(false);
         expect(diffFor(config, "codex").maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
-        expect(diffFor(config, "codex").maxMessageBytes).toBe(4000);
+        expect(diffFor(config, "codex").maxMessageChars).toBe(4000);
     });
 });
 
@@ -1095,7 +1205,7 @@ describe("installHooks on a machine with no settings file", () => {
         const path = join(dir, "nested", "settings.json");
         const result = installHooks({ dist: "/dist", settingsPath: path, write: true });
 
-        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"]);
         expect(result.backup).toBe(`${path}.pre-agents-hooks`);
         expect(existsSync(`${path}.pre-agents-hooks`)).toBe(false);
         expect(readSettings(path).hooks?.PreToolUse).toHaveLength(1);

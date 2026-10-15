@@ -54,6 +54,8 @@ interface Rule {
     kinds: string[];
     /** Given the node's source text, does it violate? */
     test: (text: string) => boolean;
+    /** Files where the pattern is the implementation, not a violation. */
+    allowedIn?: RegExp;
 }
 
 /**
@@ -73,6 +75,9 @@ const HOMEDIR_MESSAGE =
 
 const LITERAL_KINDS = ["string", "template_string"];
 
+/** A link to a GenesisTools app: on the browser router's host, or an app's own scheme. */
+const GENESIS_ROUTER_LINK = /genesis\.tools\/|genesis-(?:md|tools):\/\//;
+
 const RULES: Rule[] = [
     {
         name: "no-hardcoded-tmp",
@@ -91,6 +96,18 @@ const RULES: Rule[] = [
             "Hardcoded user-specific path. Use `homedir()` from node:os, `process.env.HOME`, or resolve relative " +
             "to the repo/project root.",
         test: (text) => HARDCODED_USER_PATH.test(text),
+    },
+    {
+        name: "no-raw-genesis-link",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A genesis.tools link opens something only when GenesisTools.app is installed, is the https handler and " +
+            "routes that preset, and a link on the genesis-md or genesis-tools scheme only when its app is installed. Build it " +
+            "with `routerLink()` (or `schemeLink()` to open it) from @genesiscz/utils/browser-router/router-link: the " +
+            "preset builds the link, and the caller gets its fallback with the reason instead of a dead link.",
+        test: (text) => GENESIS_ROUTER_LINK.test(text),
+        allowedIn: /(^|\/)src\/utils\/browser-router\//,
     },
 ];
 
@@ -722,7 +739,7 @@ export function checkSource(file: string, source: string): Finding[] {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (rule.test(text)) {
+            if (rule.test(text) && !rule.allowedIn?.test(file)) {
                 record(node, rule);
             }
         }
@@ -958,7 +975,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                         const text = node.text();
 
                         for (const rule of RULES) {
-                            if (rule.test(text)) {
+                            if (rule.test(text) && !rule.allowedIn?.test(node.getRoot().filename())) {
                                 push(node, rule);
                             }
                         }

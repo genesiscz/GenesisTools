@@ -128,7 +128,7 @@ program
         "--agent <id>",
         "open this agent in the Agents mode (agent id or worker name); --session names its parent, else every parent is searched"
     )
-    .option("--print-url", "print the genesis-tools://hub link for these flags instead of opening")
+    .option("--print-url", "print the hub link for these flags instead of opening")
     .option("--pr <ref>", "select this PR/MR in the PRs mode: 42, with its project: group/app#42, or its page URL")
     .option("--reveal <path>", "with --pr: open this repo-relative file in that PR's review")
     .option("--worktree <path>", "open the Worktrees mode on this checkout folder")

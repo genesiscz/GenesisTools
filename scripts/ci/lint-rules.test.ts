@@ -367,3 +367,22 @@ describe("lint-changed wrapper dispatch", () => {
         }
     });
 });
+
+describe("no-raw-genesis-link", () => {
+    test("flags a router link built outside the router utils", () => {
+        expect(rules("const u = `https://genesis.tools/md/open?path=${p}`;", "src/agents/x.ts")).toContain(
+            "no-raw-genesis-link"
+        );
+    });
+
+    test("flags an app scheme link built by hand", () => {
+        expect(rules("const u = `genesis-md://open?path=${p}`;", "src/gitlab/x.ts")).toContain("no-raw-genesis-link");
+        expect(rules('const u = "genesis-tools://hub";', "src/hub/x.ts")).toContain("no-raw-genesis-link");
+    });
+
+    test("allows the router utils, which own the gate", () => {
+        expect(rules('const u = "https://genesis.tools/t/";', "src/utils/browser-router/x.ts")).not.toContain(
+            "no-raw-genesis-link"
+        );
+    });
+});

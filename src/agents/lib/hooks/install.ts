@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { agentsDataDir, decisionHooksWanted, loadHooksConfig } from "./config";
+import { agentsDataDir, decisionHooksWanted, diffFor, loadHooksConfig } from "./config";
 import { hookDiag } from "./log";
 import { writeJsonFile } from "./write-json";
 
@@ -103,6 +103,15 @@ export function entriesFor(
             event: "PostToolUse",
             entry: {
                 matcher: "Bash|Edit|MultiEdit|Write",
+                hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
+            },
+        },
+        {
+            // A Bash call that FAILS gets no PostToolUse, so its edits were never shown: 98 failed
+            // calls in a day, 48 of them editing files (2026-10-14). Same entry point, its own event.
+            event: "PostToolUseFailure",
+            entry: {
+                matcher: "Bash",
                 hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
             },
         },
@@ -249,6 +258,8 @@ export interface InstallResult {
     changed: boolean;
     backup?: string;
     dist: string;
+    /** What became of Claude Code's own Bash diff; see `diff.replaceNative`. */
+    nativeDiff?: "turned-off" | "already-off" | "kept";
 }
 
 /** Does this entry belong to this installer? */
@@ -338,10 +349,22 @@ export function installHooks(options: {
         (ours.length === 0 ? added : updated).push(event);
     }
 
+    // The hook replaces Claude Code's own Bash diff, in the same write as the wiring.
+    // While `shadow` is on the hook prints nothing (`hook-diff-post`), so turning the native
+    // diff off would remove the only diff the user sees. It stays until the hook speaks.
+    // The value replaced here is remembered, so uninstall can put it back unless the user changed it.
+    let nativeDiff: InstallResult["nativeDiff"] = "kept";
+    const previousNative = settings.bashEditDiffEnabled;
+
+    if (!config.shadow && config.diff.replaceNative && diffFor(config, "claude").enabled) {
+        nativeDiff = previousNative === false ? "already-off" : "turned-off";
+        settings.bashEditDiffEnabled = false;
+    }
+
     const changed = SafeJSON.stringify(settings) !== before;
 
     if (!options.write || !changed) {
-        return { added, updated, unchanged, removed, changed, dist };
+        return { added, updated, unchanged, removed, changed, dist, nativeDiff };
     }
 
     const backup = `${settingsPath}.pre-agents-hooks`;
@@ -352,7 +375,38 @@ export function installHooks(options: {
 
     writeJsonFile(settingsPath, settings);
 
-    return { added, updated, unchanged, removed, changed, backup, dist };
+    if (nativeDiff === "turned-off") {
+        rememberNativeDiff(settingsPath, previousNative);
+    }
+
+    return { added, updated, unchanged, removed, changed, backup, dist, nativeDiff };
+}
+
+/** The previous `bashEditDiffEnabled`, kept beside the settings file install rewrote. */
+function nativeDiffOwnedPath(settingsPath: string): string {
+    return `${settingsPath}.native-diff-owned`;
+}
+
+/** `true` when the key was on. `false` when it was absent, so uninstall deletes it. */
+function rememberNativeDiff(settingsPath: string, previous: unknown): void {
+    writeJsonFile(nativeDiffOwnedPath(settingsPath), { previous: previous === true });
+}
+
+/** A file that does not parse is left unread, so uninstall does not guess. */
+function savedNativeDiff(settingsPath: string): { found: true; wasOn: boolean } | { found: false } {
+    const path = nativeDiffOwnedPath(settingsPath);
+
+    if (!existsSync(path)) {
+        return { found: false };
+    }
+
+    try {
+        return { found: true, wasOn: readSettings(path).previous === true };
+    } catch (err) {
+        hookDiag("Could not read the saved native diff setting", { err, path });
+
+        return { found: false };
+    }
 }
 
 export interface WiringStatus {
@@ -403,8 +457,27 @@ export function uninstallHooks(options: { settingsPath?: string; write: boolean 
         }
     }
 
-    if (options.write && removed > 0) {
+    const saved = options.write ? savedNativeDiff(settingsPath) : { found: false as const };
+    let restored = false;
+
+    // Still the `false` install wrote: the user has not changed it. A later `true`, or a deleted
+    // key, is theirs and stays.
+    if (saved.found && settings.bashEditDiffEnabled === false) {
+        if (saved.wasOn) {
+            settings.bashEditDiffEnabled = true;
+        } else {
+            delete settings.bashEditDiffEnabled;
+        }
+
+        restored = true;
+    }
+
+    if (options.write && (removed > 0 || restored)) {
         writeJsonFile(settingsPath, settings);
+    }
+
+    if (saved.found) {
+        rmSync(nativeDiffOwnedPath(settingsPath), { force: true });
     }
 
     return { removed };

@@ -1,19 +1,55 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, readdirSync, type Stats, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
-import { type DiffConfig, megabytes } from "../config";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { type DiffConfig, defaultLogPath, megabytes } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
-import { callDir, safeSegment } from "../paths";
+import { callDir, hookDataRoot, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
+import { actorOf } from "./attribution";
 import { commandDirs, namedArguments } from "./command-paths";
-import { coverage, refreshMentions } from "./mentions";
+import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
 import { makePrivateDir } from "./private-dir";
 
+/**
+ * Files the hooks and the harness append to during EVERY call: the decision log and its rotated
+ * generation, the hooks' own scratch, and Claude's transcripts. A command that only reads one
+ * still "changes" it, because the hooks write it while the command runs. Observed 2026-10-14
+ * 23:23: once the log rotated below the 2 MB named-path cap, a `tail` of it printed
+ * `Updated ~/.genesis-tools/logs/agents-hooks.jsonl (+2 -0)`. Before, only the cap hid this.
+ */
+export function harnessOwnFile(path: string): boolean {
+    const forms = new Set([path, canonical(path)]);
+    const log = defaultLogPath();
+    const scratch = dirname(hookDataRoot());
+    const transcripts = join(env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude"), "projects");
+
+    for (const form of forms) {
+        if (form === log || form.startsWith(`${log}.`)) {
+            return true;
+        }
+
+        for (const dir of new Set([scratch, canonical(scratch)])) {
+            if (form.startsWith(`${dir}/`)) {
+                return true;
+            }
+        }
+
+        if (form.startsWith(`${transcripts}/`) && form.endsWith(".jsonl")) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /** The Claude transcript this call belongs to, from the payload. */
-function transcriptOf(payload: HookPayload): string | null {
+export function transcriptOf(payload: HookPayload): string | null {
     const value = payload.raw.transcript_path ?? payload.raw.transcriptPath;
 
     return typeof value === "string" && value.length > 0 ? value : null;
@@ -112,12 +148,17 @@ interface CapturePlan {
  * holds more files than the whole capture may take is left out as a unit rather than expanded
  * without bound, and deletions are skipped because `tar` cannot stat them.
  */
-function captureList(
-    root: string,
-    entries: StatusEntry[],
-    config: DiffConfig,
-    mentioned: (relativePath: string) => boolean
-): { files: string[]; namesOnly: string[]; tooWide: string[] } {
+function captureList({
+    root,
+    entries,
+    config,
+    mentioned,
+}: {
+    root: string;
+    entries: StatusEntry[];
+    config: DiffConfig;
+    mentioned: (relativePath: string) => boolean;
+}): { files: string[]; namesOnly: string[]; tooWide: string[] } {
     const files: string[] = [];
     const namesOnly: string[] = [];
     const tooWide: string[] = [];
@@ -191,12 +232,17 @@ const MAX_RECORDED_NAMES = 5_000;
  * not fit are written out, because a file that EXISTED but has no copy must never be reported
  * as one the command created.
  */
-function planCapture(
-    root: string,
-    files: string[],
-    config: DiffConfig,
-    mentioned: (relativePath: string) => boolean
-): CapturePlan {
+function planCapture({
+    root,
+    files,
+    config,
+    mentioned,
+}: {
+    root: string;
+    files: string[];
+    config: DiffConfig;
+    mentioned: (relativePath: string) => boolean;
+}): CapturePlan {
     const fileCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
     const sized = files.map((file) => ({
@@ -322,7 +368,9 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     const dirs = commandDirs(payload.command, payload.cwd);
     const captured_roots = rootsOf(dirs, config);
     const roots = captured_roots.map((entry) => entry.root);
-    const wanted = config.watchNamedPaths ? namedArguments(payload.command, dirs) : [];
+    const wanted = config.watchNamedPaths
+        ? namedArguments(payload.command, dirs).filter((path) => !harnessOwnFile(path))
+        : [];
     const skipped: string[] = [];
     let captured = 0;
 
@@ -369,13 +417,32 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     // The named-path pass runs FIRST so a capture with no git root still produces a call
     // directory. The post phase gates on `roots.txt`, and returning early when `roots` was
     // empty is exactly what made an edit outside every repository unreportable.
-    const named = captureNamed(dir, wanted, config);
+    const named = captureNamed({ dir, paths: wanted, config });
 
     skipped.push(...named.skipped);
     writePrivateFile(join(dir, "stamp"), String(Math.floor(Date.now() / 1000)));
     // `stamp` is whole seconds (mtime comparisons); the writer journal needs the real start.
     writePrivateFile(join(dir, "started-ms"), String(Date.now()));
     writePrivateFile(join(dir, "roots.txt"), roots.length > 0 ? `${roots.join("\n")}\n` : "");
+    // What this call names, canonical, so a PARALLEL call of the same session (or a subagent's)
+    // whose post phase runs while this one is still in flight can leave these files to it.
+    const ownNamed = [
+        ...wanted,
+        ...mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }).filter(
+            (path) => !path.startsWith("glob:")
+        ),
+    ].map(canonical);
+    writePrivateFile(join(dir, "named.txt"), `${[...new Set(ownNamed)].join("\n")}\n`);
+    // The call itself, for a background call whose diff is taken when the task ends, not now.
+    writePrivateFile(
+        join(dir, "call.json"),
+        SafeJSON.stringify({
+            command: payload.command,
+            cwd: payload.cwd,
+            event: payload.event,
+            actor: actorOf(payload),
+        })
+    );
     // One line per root, aligned by index with roots.txt. An empty line means "no HEAD".
     writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));
 
@@ -385,10 +452,10 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         // exits 1, and one such entry discards the whole archive — the root then loses its
         // before-state for every file. Observed on 2026-09-20 during a `git rm`. The post
         // phase renders a deletion from `git diff HEAD` and needs no captured copy.
-        const named = coverage(mentions.current, root, "deep");
-        const earlier = coverage(mentions.index, root, "shallow");
+        const named = coverage({ mentions: mentions.current, root, reach: "deep" });
+        const earlier = coverage({ mentions: mentions.index, root, reach: "shallow" });
         const mentioned = (name: string) => named(join(root, name)) || earlier(join(root, name));
-        const { files, namesOnly, tooWide } = captureList(root, entries, config, mentioned);
+        const { files, namesOnly, tooWide } = captureList({ root, entries, config, mentioned });
         // Excluding them from the archive also leaves the post phase unable to tell a
         // deletion this command MADE from one that was already sitting in `git status`.
         // Writing the names down is what closes that. See `alreadyGone` for the measurement.
@@ -402,7 +469,7 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
             return;
         }
 
-        const plan = planCapture(root, files, config, mentioned);
+        const plan = planCapture({ root, files, config, mentioned });
         const left = [...plan.left, ...namesOnly, ...tooWide];
 
         // The refusal is RECORDED rather than silent, so the post phase can tell a file it

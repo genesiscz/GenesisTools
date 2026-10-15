@@ -14,6 +14,7 @@ import { commandTokenIndex, commandWord, scanShell, splitPipeline, tokenize } fr
 import { commandEditsFiles } from "../../changes/log";
 import { hookDiag } from "../log";
 import { hookDataRoot, touchesPath } from "../paths";
+import type { HookPayload } from "../payload";
 import { covers, type Mentions, readSessionState } from "./mentions";
 import { assertPrivateFile } from "./private-dir";
 
@@ -108,6 +109,71 @@ const READ_ONLY_GIT = new Set([
     "for-each-ref",
     "name-rev",
 ]);
+
+/** The session, or `session:agent` for a subagent's call, so a subagent's edit is not its parent's. */
+export function actorOf(payload: HookPayload): string {
+    const agent = payload.raw.agent_id ?? payload.raw.agentId;
+    const session = payload.sessionId ?? "";
+
+    return typeof agent === "string" && agent.length > 0 ? `${session}:${agent}` : session;
+}
+
+/** git verbs that bring content the command did not write: other commits, a stash, another branch. */
+const HISTORY_GIT = new Set(["rebase", "cherry-pick", "merge", "pull", "am", "revert", "switch", "checkout", "reset"]);
+
+/**
+ * The git verb that rewrote the work tree with content the command did not write, or `null`:
+ * `rebase`, `cherry-pick`, `stash pop`. Read from the command word of each pipeline element, so a
+ * heredoc body that merely mentions `git rebase` does not count.
+ *
+ * A stopped rebase or cherry-pick leaves the half-applied commit in the work tree, and `stash pop`
+ * restores earlier edits; both read as the command's own edits without this (2026-10-14: 7 stopped
+ * rebases printed 72 files, 2 stash pops 17).
+ */
+export function gitOperation(command: string): string | null {
+    let units: ReturnType<typeof scanShell>["units"];
+
+    try {
+        units = scanShell(command).units;
+    } catch (err) {
+        hookDiag("Could not scan the command for a git operation", { err });
+        return null;
+    }
+
+    for (const unit of units) {
+        for (const statement of unit) {
+            for (const element of splitPipeline(statement)) {
+                const tokens = tokenize(element);
+                const index = commandTokenIndex(tokens);
+                const word = index === -1 ? undefined : tokens[index];
+
+                if (!word || commandWord(word.text) !== "git") {
+                    continue;
+                }
+
+                const rest = tokens.slice(index + 1).map((token) => token.text);
+                let at = 0;
+
+                while (at < rest.length && rest[at]?.startsWith("-")) {
+                    at += rest[at] === "-C" || rest[at] === "-c" ? 2 : 1;
+                }
+
+                const verb = rest[at];
+                const sub = rest[at + 1];
+
+                if (verb === "stash" && (sub === "pop" || sub === "apply")) {
+                    return `stash ${sub}`;
+                }
+
+                if (verb && HISTORY_GIT.has(verb)) {
+                    return verb;
+                }
+            }
+        }
+    }
+
+    return null;
+}
 
 /**
  * Whether every stage of the command only reads. Judged by the command word of each pipeline
@@ -249,7 +315,15 @@ export function recordTouches(rows: Touch[], path = touchesPath()): void {
 }
 
 /** Rows from sessions other than `session` whose command ended at or after `since`. */
-export function othersTouches(session: string, since: number, path = touchesPath()): Map<string, Touch[]> {
+export function othersTouches({
+    session,
+    since,
+    path = touchesPath(),
+}: {
+    session: string;
+    since: number;
+    path?: string;
+}): Map<string, Touch[]> {
     const found = new Map<string, Touch[]>();
     let fd: number;
 
@@ -311,7 +385,15 @@ const SAME_BATCH_MS = 2_000;
  * every pre phase writes (`<harness>/<session>/diff/<call>/roots.txt`). Only read when a
  * change is otherwise unattributed, so the ordinary call never lists it.
  */
-export function inFlightRoots(session: string, now: number, root = hookDataRoot()): Set<string> {
+export function inFlightRoots({
+    session,
+    now,
+    root = hookDataRoot(),
+}: {
+    session: string;
+    now: number;
+    root?: string;
+}): Set<string> {
     const roots = new Set<string>();
     const list = (dir: string): string[] => {
         try {
@@ -375,19 +457,55 @@ export interface AttributionContext {
     readOnly: () => boolean;
     others: () => Map<string, Touch[]>;
     busyRoots: () => Set<string>;
+    /**
+     * Files another call of this session still in flight names (a parallel call, a subagent's call,
+     * a background call): theirs, not this call's, even when this session mentioned them earlier.
+     */
+    siblings: () => Set<string>;
 }
 
-export function attribute(file: string, root: string, context: AttributionContext): Attribution {
+export function attribute({
+    file,
+    root,
+    context,
+}: {
+    file: string;
+    root: string;
+    context: AttributionContext;
+}): Attribution {
     // A command that only reads changed nothing, even a file it names (`cat src/a.ts`): the change is another writer's.
     if (context.readOnly()) {
         return "others";
     }
 
-    if (covers(context.named, file, root, "deep")) {
+    if (covers({ mentions: context.named, file, root, reach: "file" })) {
         return "named";
     }
 
-    if (covers(context.mentions(), file, root, "file")) {
+    // Before the mention index, which is per SESSION: a subagent's Edit, or a parallel call, puts the
+    // file there too, and the call that happened to finish first used to print it (2026-10-14:
+    // `tools grok usage --help` showed a sibling's `agents-bridge.ts +1-1`). A file another actor NAMED
+    // during this call (its Edit, its command), or another call in flight names, is that actor's. An
+    // "ambiguous" or "runner" touch is no such evidence: that actor did not know either.
+    if (
+        context.siblings().has(file) ||
+        context
+            .others()
+            .get(file)
+            ?.some((touch) => touch.kind === "named")
+    ) {
+        return "others";
+    }
+
+    // A FOLDER the command names covers every file in it, which says less than naming the file: it
+    // comes after another actor's record. 2026-10-15 01:15: a gate's `bun test src/`, run in a worktree
+    // after `cd $G`, also resolved against the first `cd` and claimed a subagent's `wizard.ts` edit
+    // recorded 2 s earlier.
+    if (covers({ mentions: context.named, file, root, reach: "deep" })) {
+        return "named";
+    }
+
+    if (covers({ mentions: context.mentions(), file, root, reach: "file" })) {
         return "mentioned";
     }
 
@@ -399,7 +517,15 @@ export function attribute(file: string, root: string, context: AttributionContex
 }
 
 /** `N file(s) changed by others in this root: a.ts, b.ts and 3 more`, relative to their roots. */
-export function summaryLine(label: string, files: Array<{ path: string; root: string }>, shown = 4): string {
+export function summaryLine({
+    label,
+    files,
+    shown = 4,
+}: {
+    label: string;
+    files: Array<{ path: string; root: string }>;
+    shown?: number;
+}): string {
     const names = files.slice(0, shown).map((file) => relative(file.root, file.path) || file.path);
     const more = files.length > shown ? ` and ${files.length - shown} more` : "";
 

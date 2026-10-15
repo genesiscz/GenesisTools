@@ -37,6 +37,7 @@ When creating a new tool and writing helper functions, check if the utility is *
 - `src/utils/cli/interrupt.ts` - `withInterrupt(fn)`: Ctrl-C as an AbortSignal. Use it instead of `process.once("SIGINT")`: `./tools` and the app launcher forward each Ctrl-C, and a `once` listener lets the second copy kill the process mid-cleanup
 - `src/utils/repo-context/` - Repository context gatherers (agent instruction files, owning project + package manager + test runner, test commands) over a caller-supplied reader; `gatherRepoContext()`, `defaultGatherers()`
 - `src/utils/ai/evaluation/spend.ts` - All Jev spend from the usage ledger: `jevSpend()`, `jevCalls()` (by feature label, model, day)
+- `src/utils/browser-router/router-link.ts` - Every link to a GenesisTools app: `routerLink({ preset, action, data, via?, when?, render?, fallback })` returns `{ result, link, via, error? }`, the link only when it opens on this Mac (router installed, the https handler, preset routed; or the app installed for its scheme) and the fallback with a coded reason otherwise; `schemeLink()` for a link the code opens itself. A new kind of link is a new entry in its `LinkTargets` table, never a URL at a call site: lint-rules `no-raw-genesis-link` fails a `genesis.tools/`, `genesis-md://` or `genesis-tools://` literal anywhere else
 
 Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
 

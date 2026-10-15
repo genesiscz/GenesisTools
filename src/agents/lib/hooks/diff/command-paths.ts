@@ -78,7 +78,15 @@ function scan(command: string, what: string): ShellScan | null {
  * keeps them (`V=/x cat "$V"` sets V for that one command), and a value `plainArgument` does not
  * accept (`V=$(pwd)`) forgets the earlier one rather than keep a value the shell no longer has.
  */
-function applyAssignments(command: string, tokens: Span[], known: Map<string, string>): void {
+function applyAssignments({
+    command,
+    tokens,
+    known,
+}: {
+    command: string;
+    tokens: Span[];
+    known: Map<string, string>;
+}): void {
     const assigned: Array<[string, string | null]> = [];
     // `export P=/x` (and `readonly`, `declare`) sets P for the rest of the command as a bare assignment does.
     const declares = tokens.length > 0 && DECLARING.has(rawToken(command, tokens[0] as Span));
@@ -165,7 +173,7 @@ function cdTargets(command: string): string[] {
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
                 if (elements.length === 1) {
-                    applyAssignments(command, tokens, known);
+                    applyAssignments({ command, tokens, known });
                 }
             }
         }
@@ -270,8 +278,21 @@ function expandVariable(raw: string | null, known: Map<string, string>): string 
     return base ? base + (match?.[3] ?? "") : null;
 }
 
-function add(into: string[], raw: string | null, bases: string[], known: Map<string, string> = new Map()): void {
-    const plain = plainArgument(raw) ?? expandVariable(raw, known);
+function add({
+    into,
+    raw,
+    bases,
+    known = new Map(),
+}: {
+    into: string[];
+    raw: string | null;
+    bases: string[];
+    known?: Map<string, string>;
+}): void {
+    // The statement's `;` comes with its last token (`perl -pi … a.ts; echo ok`), and `a.ts;` is a
+    // file that never exists, so the edit went unwatched (2026-10-15, a background `perl -pi`).
+    const token = raw?.replace(/;+$/, "") ?? null;
+    const plain = plainArgument(token) ?? expandVariable(token, known);
 
     if (plain === null) {
         return;
@@ -310,6 +331,76 @@ function add(into: string[], raw: string | null, bases: string[], known: Map<str
 }
 
 /**
+ * The folder a `git -C <dir> …` element works in, or null. Git reads the element's relative paths
+ * against it, so the session cwd, where the same relative path often exists too (a worktree and its
+ * main checkout), must not win: `git -C $W add src/a.ts` watched the main checkout's `src/a.ts`,
+ * and a merge there then rendered as this command's named edit (2026-10-15). Only the options
+ * before the subcommand count, because `git commit -C <commit>` reuses a commit message.
+ */
+function gitDirectory({
+    command,
+    tokens,
+    bases,
+    known,
+}: {
+    command: string;
+    tokens: Span[];
+    bases: string[];
+    known: Map<string, string>;
+}): string | null {
+    const index = commandTokenIndex(tokens);
+    const word = index === -1 ? undefined : tokens[index];
+
+    if (!word || commandWord(word.text) !== "git") {
+        return null;
+    }
+
+    let dir: string | null = null;
+
+    for (let at = index + 1; at < tokens.length; at += 1) {
+        const token = tokens[at] as Span;
+        const text = rawToken(command, token);
+
+        if (text !== "-C" && text !== "-c") {
+            if (text.startsWith("-")) {
+                continue;
+            }
+
+            break;
+        }
+
+        const raw = nextRawArgument(command, token.start + token.text.length);
+        const next = tokens[at + 1];
+
+        // An unquoted value is the next token. A quoted one was blanked and has no token.
+        if (next && raw !== null && rawToken(command, next) === raw) {
+            at += 1;
+        }
+
+        if (text === "-c") {
+            continue;
+        }
+
+        const value = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
+
+        if (!value) {
+            return null;
+        }
+
+        // `git -C a -C b` works in `a/b`.
+        const from: string[] = dir ? [dir] : bases;
+        const candidates: string[] = isAbsolute(value) ? [value] : from.map((base) => resolve(base, value));
+        dir = candidates.find((candidate) => existsSync(candidate)) ?? null;
+
+        if (!dir) {
+            return null;
+        }
+    }
+
+    return dir;
+}
+
+/**
  * Absolute paths the command NAMES, plus relative ones resolved against `bases`.
  *
  * Two reads per token, because the two shapes need different handling. `rawToken` recovers an
@@ -318,11 +409,43 @@ function add(into: string[], raw: string | null, bases: string[], known: Map<str
  * produces no token of its own.
  */
 export function namedArguments(command: string, bases: string[]): string[] {
-    const found: string[] = [];
+    return walkNamed({ command, bases, readings: false }).found;
+}
+
+/**
+ * What the relative paths of a `git -C <dir>` element name: `scoped`, read inside `<dir>`, and
+ * `misread`, the same tokens read against each of `bases` the way a parser that ignores `-C`
+ * reads them, minus every path the rest of the command names. `mentionsOf` reads tokens out of
+ * the text with no statement structure, so it drops `misread` and adds `scoped`: through it,
+ * `git -C /other add src/a.ts` still named `main/src/a.ts` (eve on #520, 2026-10-15).
+ */
+export function gitDirReadings(command: string, bases: string[]): { scoped: string[]; misread: string[] } {
+    if (!command.includes("-C")) {
+        return { scoped: [], misread: [] };
+    }
+
+    const walked = walkNamed({ command, bases, readings: true });
+    const kept = new Set([...walked.found, ...walked.outside]);
+
+    return { scoped: walked.scoped, misread: walked.misread.filter((path) => !kept.has(path)) };
+}
+
+interface Walked {
+    found: string[];
+    /** Relative tokens of `git -C` elements, read inside their folder. */
+    scoped: string[];
+    /** The same tokens read against every base. */
+    misread: string[];
+    /** Every other token read against every base, so a path named outside `git -C` is kept. */
+    outside: string[];
+}
+
+function walkNamed({ command, bases, readings }: { command: string; bases: string[]; readings: boolean }): Walked {
+    const walked: Walked = { found: [], scoped: [], misread: [], outside: [] };
     const scanned = scan(command, "named paths");
 
     if (!scanned) {
-        return found;
+        return walked;
     }
 
     const known = new Map<string, string>();
@@ -333,19 +456,37 @@ export function namedArguments(command: string, bases: string[]): string[] {
 
             for (const element of elements) {
                 const tokens = tokenize(element);
+                const gitDir = gitDirectory({ command, tokens, bases, known });
+                const from = gitDir ? [gitDir] : bases;
 
                 for (const token of tokens) {
-                    add(found, rawToken(command, token), bases, known);
-                    add(found, nextRawArgument(command, token.start + token.text.length), bases, known);
+                    for (const raw of [
+                        rawToken(command, token),
+                        nextRawArgument(command, token.start + token.text.length),
+                    ]) {
+                        add({ into: walked.found, raw, bases: from, known });
+
+                        if (!readings) {
+                            continue;
+                        }
+
+                        for (const base of bases) {
+                            add({ into: gitDir ? walked.misread : walked.outside, raw, bases: [base], known });
+                        }
+
+                        if (gitDir) {
+                            add({ into: walked.scoped, raw, bases: [gitDir], known });
+                        }
+                    }
                 }
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
                 if (elements.length === 1) {
-                    applyAssignments(command, tokens, known);
+                    applyAssignments({ command, tokens, known });
                 }
             }
         }
     }
 
-    return found;
+    return walked;
 }

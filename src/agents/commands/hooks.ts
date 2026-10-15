@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -26,6 +27,8 @@ import {
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { type CustomRules, loadRuleSet } from "../lib/hooks/custom-rules";
+import { findFullDiff, fullDiffDir } from "../lib/hooks/diff/full";
+import { decisionCounts, extendFromTranscripts, formatEntry, readDiffLog } from "../lib/hooks/diff-log";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
 import { lastSeenPerHarness } from "../lib/hooks/harnesses";
 import { hooksFileListsOldDefaults, recordInstallState } from "../lib/hooks/hooks-file";
@@ -38,6 +41,7 @@ import {
     uninstallHooks,
     wiringStatus,
 } from "../lib/hooks/install";
+import { nativeDiffForced, nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
@@ -83,6 +87,12 @@ function printInstallResult(result: InstallResult, write: boolean, file: string)
         ui.raw(`${pc.bold("backup")}     ${result.backup}`);
     }
 
+    if (result.nativeDiff === "turned-off") {
+        ui.raw(
+            `${pc.bold("native")}     Claude Code's own Bash diff ${write ? "turned off" : "would be turned off"} (bashEditDiffEnabled: false): the hook draws every Bash diff`
+        );
+    }
+
     if (!result.changed) {
         ui.raw("");
         ui.raw(pc.dim(`already wired exactly like this; ${file} was not touched`));
@@ -109,6 +119,35 @@ function ruleOverrides(config: HooksConfig, rules: readonly ShellRule[]): { off:
             .map((rule) => `${rule.id} ${rule.state.slice(3)}`)
             .join(", "),
     };
+}
+
+/** Claude Code's own Bash diff, as `doctor` reports it; loud while it duplicates and misattributes. */
+function nativeDiffLabel(config: HooksConfig): string {
+    const state = nativeDiffState();
+
+    if (state === "off" && nativeDiffForced() === "1") {
+        return pc.red(
+            "🛑 off in settings, but CLAUDE_CODE_BASH_EDIT_DIFF=1 in this environment turns it on for sessions started here"
+        );
+    }
+
+    if (state === "off") {
+        return config.shadow
+            ? "off, and shadow is on: neither diff is shown until shadow is off"
+            : "off: the hook draws every Bash diff";
+    }
+
+    if (config.shadow) {
+        return `${state} (shadow on: the hook prints nothing, so Claude Code's diff stays)`;
+    }
+
+    if (!config.diff.replaceNative) {
+        return `${state} (diff.replaceNative false: the hook stands down per file)`;
+    }
+
+    return pc.red(
+        `🛑 ${state === "on" ? "ON" : "ON (default)"}: it shows other sessions' edits. Fix: ${toolCommand("agents hooks native-diff off", "--write")}`
+    );
 }
 
 function seenLabel(at: string | undefined): string {
@@ -205,6 +244,7 @@ export function registerHooksCommands(program: Command): void {
             table.push(["diff.enabled", String(config.diff.enabled)]);
             table.push(["diff.maxFiles", String(config.diff.maxFiles)]);
             table.push(["diff.standDownWhenNative", String(config.diff.standDownWhenNative)]);
+            table.push(["native Bash diff", nativeDiffLabel(config)]);
             table.push(["diff per harness", perHarnessDiff(config)]);
             table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
             table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
@@ -427,6 +467,165 @@ export function registerHooksCommands(program: Command): void {
 
             out.result(filtered);
         });
+
+    hooks
+        .command("native-diff [state]")
+        .description(
+            "Claude Code's own Bash diff (bashEditDiffEnabled): status, off or on. It has no attribution and shows other sessions' edits, so the hook replaces it"
+        )
+        .option("--write", "Actually change ~/.claude/settings.json; without it this is a dry run")
+        .action((state: string | undefined, options: { write?: boolean }) => {
+            const wanted = state ?? "status";
+
+            if (wanted === "status") {
+                const now = nativeDiffState();
+                ui.raw(`Claude Code's own Bash diff: ${now === "off" ? pc.green("off") : pc.red(now)}`);
+
+                if (nativeDiffForced() === "1") {
+                    ui.raw(
+                        pc.yellow(
+                            `🛑 CLAUDE_CODE_BASH_EDIT_DIFF=1 is set here, and it wins over the setting: a session started from this environment shows it anyway. Unset it, or start sessions with ${toolCommand("claude start")}.`
+                        )
+                    );
+                }
+
+                if (now !== "off") {
+                    ui.raw(
+                        pc.yellow(
+                            `🛑 It shows other sessions' edits. Run: ${toolCommand("agents hooks native-diff off", "--write")}`
+                        )
+                    );
+                }
+
+                return;
+            }
+
+            if (wanted !== "off" && wanted !== "on") {
+                ui.err(`native-diff takes status, off or on, not ${wanted}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const result = setNativeDiff({ enabled: wanted === "on", write: Boolean(options.write) });
+
+            if (!result.changed) {
+                ui.raw(pc.dim(`already ${result.after}; ${claudeSettingsPath()} was not touched`));
+                return;
+            }
+
+            ui.raw(`Claude Code's own Bash diff: ${result.before} -> ${result.after}`);
+
+            if (result.backup) {
+                ui.raw(`${pc.bold("backup")} ${result.backup}`);
+            }
+
+            if (!options.write) {
+                ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));
+            }
+        });
+
+    const diffCommand = hooks.command("diff").description("The Bash diff hook");
+
+    diffCommand
+        .command("show <call>")
+        .description("Print the full diff a cut message linked, by tool call id or a prefix of it")
+        .action((call: string) => {
+            const path = findFullDiff(call);
+
+            if (!path) {
+                ui.err(`no full diff for ${call} in ${fullDiffDir()}: only a message that had to cut lines writes one`);
+                process.exitCode = 1;
+                return;
+            }
+
+            out.println(readFileSync(path, "utf8"));
+        });
+
+    diffCommand
+        .command("log")
+        .description(
+            "What the diff hook decided per Bash call, told against the call: --extended reads the transcript for the command, what the message showed, and Claude Code's own diff"
+        )
+        .option("--session <id>", "Only this session (a prefix is enough)")
+        .option("--since <duration>", "How far back, e.g. 30m, 6h, 2d", "24h")
+        .option(
+            "--decision <list>",
+            "Comma list of emitted, noted, failed, silent, skip; `all` for every one",
+            "emitted,noted,failed"
+        )
+        .option("-n, --lines <count>", "At most this many calls, the newest", "50")
+        .option("--extended", "Join each call with its Claude transcript")
+        .option("--full-command", "Print each command whole, in a fence (implies --extended, which reads the command)")
+        .option("--json", "The entries as JSON")
+        .action(
+            (options: {
+                session?: string;
+                since?: string;
+                decision?: string;
+                lines?: string;
+                extended?: boolean;
+                fullCommand?: boolean;
+                json?: boolean;
+            }) => {
+                const count = Number(options.lines ?? "50");
+                let horizonMs: number;
+
+                try {
+                    horizonMs = parseHorizon(options.since ?? "24h");
+                } catch (err) {
+                    logger.debug({ err, since: options.since }, "Rejected a diff log horizon");
+                    ui.err(`--since takes a duration like 30m, 6h or 2d, not ${options.since}`);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (!Number.isInteger(count) || count < 1) {
+                    ui.err(`--lines must be a positive integer, got ${options.lines}`);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const wanted = new Set((options.decision ?? "").split(",").map((name) => name.trim()));
+                const all = readDiffLog({
+                    logPath: loadHooksConfig().logPath,
+                    since: Date.now() - horizonMs,
+                    session: options.session,
+                });
+                const entries = all.filter((entry) => wanted.has("all") || wanted.has(entry.decision)).slice(-count);
+
+                // The command comes from the transcript, so asking for it whole is asking for --extended.
+                const extended = options.extended === true || options.fullCommand === true;
+
+                if (extended) {
+                    extendFromTranscripts(entries);
+                }
+
+                if (options.json) {
+                    out.result(entries);
+                    return;
+                }
+
+                const colours = pc.createColors(process.stdout.isTTY === true);
+
+                for (const entry of entries) {
+                    const lines = formatEntry(entry, {
+                        extended,
+                        fullCommand: options.fullCommand === true,
+                        colours,
+                    });
+
+                    out.println(lines.join("\n"));
+                    out.println("");
+                }
+
+                const totals = [...decisionCounts(all)].map(([decision, total]) => `${decision} ${total}`).join(", ");
+                out.println(
+                    pc.dim(
+                        `${entries.length} shown of ${all.length} calls in the last ${options.since ?? "24h"}: ${totals}`
+                    )
+                );
+            }
+        );
 
     hooks
         .command("gc")

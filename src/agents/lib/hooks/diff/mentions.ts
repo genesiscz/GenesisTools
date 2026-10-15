@@ -13,6 +13,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { hookDiag } from "../log";
 import { mentionsRoot, safeSegment } from "../paths";
+import { gitDirReadings } from "./command-paths";
 import { makePrivateDir } from "./private-dir";
 
 /**
@@ -252,6 +253,10 @@ export function mentionsOf(mention: ToolMention): string[] {
             }
 
             const bases = cdBases(command, cwd);
+            // A `git -C <dir>` element's relative paths live in `<dir>`: read against these bases,
+            // they name another checkout's files (`gitDirReadings`).
+            const git = gitDirReadings(command, bases);
+            const misread = new Set(git.misread.map(canonical));
 
             for (const token of textPaths(command)) {
                 if (isAbsolute(expandHome(token))) {
@@ -260,8 +265,16 @@ export function mentionsOf(mention: ToolMention): string[] {
                 }
 
                 for (const base of bases) {
-                    push(token, base);
+                    const value = normalise(token, base);
+
+                    if (value && !misread.has(value)) {
+                        out.push(value);
+                    }
                 }
+            }
+
+            for (const path of git.scoped) {
+                push(path, cwd);
             }
 
             // Each `cd` target is itself a mentioned directory: `cd pkg && codemod` owns pkg.
@@ -347,7 +360,15 @@ export function loadMentions(sessionId: string | undefined): Mentions {
 }
 
 /** Appends what `known` does not already hold, and adds it to `known`. Never throws. */
-export function appendMentions(sessionId: string | undefined, known: Mentions, entries: string[]): number {
+export function appendMentions({
+    sessionId,
+    known,
+    entries,
+}: {
+    sessionId: string | undefined;
+    known: Mentions;
+    entries: string[];
+}): number {
     const session = safeSegment(sessionId);
 
     if (session === null) {
@@ -572,7 +593,7 @@ export function refreshMentions(options: {
         hookDiag("Could not refresh the session's mention index", { err, session });
     }
 
-    appendMentions(options.sessionId, known, [...entries, ...own]);
+    appendMentions({ sessionId: options.sessionId, known, entries: [...entries, ...own] });
 
     return { index: known, current };
 }
@@ -602,7 +623,17 @@ export type Reach = "deep" | "shallow" | "file";
  * `cd <repo>` are mentions of the whole repository, and counting them would cover every file a
  * second session writes there, which is the exact case this index exists to separate.
  */
-export function covers(mentions: Mentions, file: string, root: string, reach: Reach = "deep"): boolean {
+export function covers({
+    mentions,
+    file,
+    root,
+    reach = "deep",
+}: {
+    mentions: Mentions;
+    file: string;
+    root: string;
+    reach?: Reach;
+}): boolean {
     if (mentions.paths.has(file)) {
         return true;
     }
@@ -674,7 +705,15 @@ function globsByPrefix(globs: string[]): Map<string, string[]> {
  * first, so a capture that weighs 800 dirty files against a session index of thousands of paths
  * pays for the few entries that can match, not for the whole index each time.
  */
-export function coverage(mentions: Mentions, root: string, reach: Reach): (file: string) => boolean {
+export function coverage({
+    mentions,
+    root,
+    reach,
+}: {
+    mentions: Mentions;
+    root: string;
+    reach: Reach;
+}): (file: string) => boolean {
     const floor = root.endsWith(sep) ? root : `${root}${sep}`;
     const inside: Mentions = {
         paths: new Set([...mentions.paths].filter((path) => path.startsWith(floor))),
@@ -685,5 +724,5 @@ export function coverage(mentions: Mentions, root: string, reach: Reach): (file:
         return () => false;
     }
 
-    return (file) => covers(inside, file, root, reach);
+    return (file) => covers({ mentions: inside, file, root, reach });
 }

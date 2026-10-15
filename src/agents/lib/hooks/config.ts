@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
+import { FULL_DIFF_MODES, type FullDiffMode } from "./diff/full";
+import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
 export type HarnessName = "claude" | "codex" | "grok";
@@ -23,12 +25,18 @@ export interface DiffConfig {
     enabled: boolean;
     /**
      * How many changed files one message may name. Every file that fits gets its header, and
-     * `maxMessageBytes` then decides how much of each DIFF is shown. So raising this trades
+     * `maxMessageChars` then decides how much of each DIFF is shown. So raising this trades
      * depth per file for breadth: at 15 a wide sweep is fully listed, and each file shows a
      * few lines rather than thirty.
      */
     maxFiles: number;
     maxLinesPerFile: number;
+    /**
+     * A file with more added plus removed lines than this prints its header and counts only, and
+     * the message links its full diff. A regenerated ledger printed 30 lines of +12,459 -6,099
+     * churn that nobody reads (2026-10-14: 20 such blocks in a day).
+     */
+    maxBlockLines: number;
     contextLines: number;
     maxRoots: number;
     untrackedExpansionCap: number;
@@ -41,8 +49,47 @@ export interface DiffConfig {
      * ceiling keeps 58 entries in 1.8 MB.
      */
     maxCaptureFileMB: number;
-    highlight: "bat" | "none";
+    /**
+     * Syntax colour, through `bat`. `256` (default): 256-colour codes, about half the characters of
+     * truecolor after compaction; the colours are the nearest of the 256-colour palette, which a
+     * terminal theme that remaps that palette can shift. `truecolor`: `bat`'s exact theme colours,
+     * so fewer lines fit the 10,000-character message. `none`: no syntax colour; rows keep their
+     * bands and markers. Every mode drops escape codes that change nothing (`compactColour`), which
+     * loses no colour, so there is no raw mode.
+     */
+    highlight: HighlightMode;
+    /**
+     * How far a changed row's band reaches. `block` (default): the widest row of the file, so a pane
+     * made narrower after the message was printed wraps only the rows that are long anyway. `terminal`:
+     * the pane's width, like Claude Code's own diff; a hook message is fixed text, so once the pane gets
+     * narrower every row wraps into an empty band row. `none`: the band ends with the text.
+     */
+    fill: FillMode;
+    /**
+     * How a block looks; see `diff/theme.ts`. `claude` copies Claude Code's own Bash diff in the
+     * theme Claude Code is set to, so the hook can replace that diff (`bashEditDiffEnabled: false`)
+     * without a change of look. `classic` is the original look.
+     */
+    theme: DiffThemeName;
+    /**
+     * How wide a changed row's band is, in columns. `auto` reads the terminal the harness draws
+     * in, less `BAND_MARGIN`; `0` ends the band at the text. Padding costs message bytes, so it is
+     * bought only after every changed line fits.
+     */
+    columns: number | "auto";
+    /**
+     * Where a message whose lines were cut points for the rest: `genesis` (a Genesis viewer link),
+     * `path` (the file), `off`. The file is `~/.genesis-tools/agents/hook-diffs/<call>.md`, kept a week.
+     */
+    fullDiff: FullDiffMode;
     standDownWhenNative: boolean;
+    /**
+     * The hook replaces Claude Code's own Bash diff once `shadow` is off: `install --write` then
+     * sets `bashEditDiffEnabled: false` in `~/.claude/settings.json`, and `doctor` warns while it
+     * is on. While `shadow` is on the hook prints nothing, so the native diff stays. Claude Code's
+     * diff has no attribution and shows other sessions' edits; see `native-diff.ts`.
+     */
+    replaceNative: boolean;
     /**
      * Also watch files the command NAMES as a path, not only those inside a git root it
      * works in. It is what makes an edit to a vault note, a `~/.claude` memory file or any
@@ -61,6 +108,12 @@ export interface DiffConfig {
      */
     namedPathsShowCreated: boolean;
     /**
+     * Whether a named file in a temp folder outside every git work tree is printed: a session's
+     * PR body, repro script or scratch JSON. Off: 146 such blocks in a day (2026-10-14), none of
+     * them the work itself.
+     */
+    showTempScratch: boolean;
+    /**
      * Print one file change at most ONCE across every session on the machine. Sessions share
      * repositories, and a file another session writes during this command's window is newer
      * than this command's stamp, so without this every session prints every session's edits.
@@ -74,19 +127,18 @@ export interface DiffConfig {
      */
     othersSummary: "line" | "hidden";
     /**
-     * The most bytes ONE message may carry, escape codes included.
+     * The most characters (UTF-16 units, escape codes included) ONE message may carry.
      *
-     * 🛑 The harness has its own ceiling, and breaching it loses the TAIL silently. Measured
-     * 2026-09-21 across 206 PostToolUse messages in one session: the largest shown whole was
-     * 9814 bytes, the smallest replaced by `Output too large (9.9KB)` was about 10138, and 13
-     * of the 206 (6%) were cut. A cut message keeps the FIRST file and drops the last, which
-     * is usually the one the command was about: one call rendered `parity.ts` and `proofs.ts`,
-     * and only `parity.ts` survived.
+     * 🛑 Claude Code's own ceiling: `systemMessage.length <= 1e4` (`gce`, `aTs = 1e4` in the 2.1.296
+     * binary, read 2026-10-14); a longer message is replaced by `Output too large` and a preview.
+     * It counts `.length`, not bytes, so `Č` is one unit here although it is two UTF-8 bytes. The
+     * budget used to be 9,000 BYTES, an inference from 206 measured messages (largest whole 9,814,
+     * smallest cut about 10,138) that matched the real rule only by luck.
      *
-     * `maxFiles` and `maxLinesPerFile` cannot prevent this on their own, because a bat-coloured
-     * line costs about 175 bytes rather than its visible width.
+     * `maxFiles` and `maxLinesPerFile` cannot prevent this on their own, because a coloured line
+     * costs far more than its visible width.
      */
-    maxMessageBytes: number;
+    maxMessageChars: number;
     /**
      * Which KINDS of change are printed. `source` is anything that is not one of the others.
      *
@@ -285,28 +337,35 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         enabled: true,
         maxFiles: 15,
         maxLinesPerFile: 30,
+        maxBlockLines: 400,
         contextLines: 3,
         maxRoots: 4,
         untrackedExpansionCap: 200,
         maxCaptureFiles: 400,
         maxCaptureMB: 8,
         maxCaptureFileMB: 0.256,
-        highlight: "bat",
+        highlight: "256",
+        fill: "block",
+        theme: "claude",
+        columns: "auto",
+        fullDiff: "genesis",
         standDownWhenNative: true,
+        replaceNative: true,
         watchNamedPaths: true,
         maxNamedPaths: 8,
         maxNamedPathMB: 2,
         namedPathsShowCreated: false,
+        showTempScratch: false,
         dedupeAcrossSessions: true,
         othersSummary: "line",
-        maxMessageBytes: 9_000,
+        maxMessageChars: 9_900,
         categories: { source: true, formatting: true, log: false, generated: false },
         harnesses: {
             // 🛑 OFF for Grok, because Grok cannot show a diff. Observed 2026-09-22 on a real
             // PostToolUse message: it prints the escape sequences as literal text (`[1mUpdated`
             // with the ESC byte eaten), and it cuts the message after about 200 characters,
             // ending `-impo… [+7768 chars]`. So one file HEADER already overflows it, and no
-            // setting of `maxMessageBytes` or `highlight` makes 200 characters a diff. The
+            // setting of `maxMessageChars` or `highlight` makes 200 characters a diff. The
             // capture is skipped too, so a Grok session pays nothing for a render it cannot
             // have. Claude and Codex both render it correctly and are unaffected.
             grok: { enabled: false },
@@ -467,6 +526,11 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             value: stored?.maxLinesPerFile,
             fallback: base.maxLinesPerFile,
         }),
+        maxBlockLines: countOr({
+            field: "diff.maxBlockLines",
+            value: stored?.maxBlockLines,
+            fallback: base.maxBlockLines,
+        }),
         contextLines: countOr({
             field: "diff.contextLines",
             value: stored?.contextLines,
@@ -494,7 +558,11 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             value: stored?.maxCaptureFileMB,
             fallback: base.maxCaptureFileMB,
         }),
-        highlight: stored?.highlight === "bat" || stored?.highlight === "none" ? stored.highlight : base.highlight,
+        highlight: highlightOr(stored?.highlight, base.highlight),
+        fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
+        theme: themeOr(stored?.theme, base.theme),
+        columns: columnsOr(stored?.columns, base.columns),
+        fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
         standDownWhenNative: boolOr(stored?.standDownWhenNative, base.standDownWhenNative),
         watchNamedPaths: boolOr(stored?.watchNamedPaths, base.watchNamedPaths),
         maxNamedPaths: countOr({
@@ -508,12 +576,14 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
             fallback: base.maxNamedPathMB,
         }),
         namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
+        showTempScratch: boolOr(stored?.showTempScratch, base.showTempScratch),
         dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
+        replaceNative: boolOr(stored?.replaceNative, base.replaceNative),
         othersSummary: othersSummaryOr(stored?.othersSummary, base.othersSummary),
-        maxMessageBytes: countOr({
-            field: "diff.maxMessageBytes",
-            value: stored?.maxMessageBytes,
-            fallback: base.maxMessageBytes,
+        maxMessageChars: countOr({
+            field: "diff.maxMessageChars",
+            value: stored?.maxMessageChars,
+            fallback: base.maxMessageChars,
         }),
         // Merged FIELD BY FIELD for the same reason `longCommand` is: a hand-edited `hooks.json`
         // that turns one category on would otherwise blank every other one, and `undefined`
@@ -528,6 +598,30 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         // delete the shipped Grok one, which is what turns the diff off there.
         harnesses: mergedHarnesses(stored?.harnesses),
     };
+}
+
+export const FILL_MODES = ["block", "terminal", "none"] as const;
+export type FillMode = (typeof FILL_MODES)[number];
+
+export const HIGHLIGHT_MODES = ["256", "truecolor", "none"] as const;
+export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
+
+/** A stored highlight mode; `bat`, the old name of the only colour mode, reads as `truecolor`. */
+export function highlightOr(value: unknown, fallback: HighlightMode): HighlightMode {
+    if (value === "bat") {
+        return "truecolor";
+    }
+
+    return HIGHLIGHT_MODES.find((mode) => mode === value) ?? fallback;
+}
+
+export function themeOr(value: unknown, fallback: DiffThemeName): DiffThemeName {
+    return DIFF_THEMES.find((theme) => theme === value) ?? fallback;
+}
+
+/** `auto`, or a whole number of columns (0 = no fill); anything else falls back. */
+export function columnsOr(value: unknown, fallback: DiffConfig["columns"]): DiffConfig["columns"] {
+    return value === "auto" || isCount(value, 0) ? value : fallback;
 }
 
 export const OTHERS_SUMMARIES: readonly DiffConfig["othersSummary"][] = ["line", "hidden"];
@@ -582,11 +676,12 @@ function mergedHarnesses(
 const OVERRIDE_COUNTS = [
     "maxFiles",
     "maxLinesPerFile",
+    "maxBlockLines",
     "maxRoots",
     "untrackedExpansionCap",
     "maxCaptureFiles",
     "maxNamedPaths",
-    "maxMessageBytes",
+    "maxMessageChars",
 ] as const;
 
 const OVERRIDE_MEGABYTES = ["maxCaptureMB", "maxCaptureFileMB", "maxNamedPathMB"] as const;
@@ -596,7 +691,9 @@ const OVERRIDE_BOOLEANS = [
     "standDownWhenNative",
     "watchNamedPaths",
     "namedPathsShowCreated",
+    "showTempScratch",
     "dedupeAcrossSessions",
+    "replaceNative",
 ] as const;
 
 /**
@@ -650,12 +747,32 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
         }
     }
 
-    if (stored.highlight === "bat" || stored.highlight === "none") {
-        checked.highlight = stored.highlight;
+    const fill = FILL_MODES.find((mode) => mode === stored.fill);
+
+    if (fill) {
+        checked.fill = fill;
+    }
+
+    const highlight: unknown = stored.highlight;
+
+    if (highlight === "bat" || HIGHLIGHT_MODES.some((mode) => mode === highlight)) {
+        checked.highlight = highlightOr(highlight, "256");
     }
 
     if (stored.othersSummary === "line" || stored.othersSummary === "hidden") {
         checked.othersSummary = stored.othersSummary;
+    }
+
+    if (DIFF_THEMES.some((theme) => theme === stored.theme)) {
+        checked.theme = stored.theme;
+    }
+
+    if (stored.columns === "auto" || isCount(stored.columns, 0)) {
+        checked.columns = stored.columns;
+    }
+
+    if (FULL_DIFF_MODES.some((mode) => mode === stored.fullDiff)) {
+        checked.fullDiff = stored.fullDiff;
     }
 
     const categories: Partial<Record<DiffCategory, boolean>> = {};

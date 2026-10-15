@@ -1,7 +1,9 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import {
+    FILL_MODES,
     type HarnessName,
+    HIGHLIGHT_MODES,
     type HookOutcome,
     type HooksConfig,
     hooksConfigPath,
@@ -10,6 +12,8 @@ import {
     loadHooksConfigForWrite,
     OTHERS_SUMMARIES,
 } from "./config";
+import { FULL_DIFF_MODES } from "./diff/full";
+import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 import { writeHooksFile } from "./hooks-file";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
@@ -17,7 +21,8 @@ const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
 const NUMERIC_DIFF = [
     "maxFiles",
     "maxLinesPerFile",
-    "maxMessageBytes",
+    "maxBlockLines",
+    "maxMessageChars",
     "maxCaptureMB",
     "maxCaptureFileMB",
     "maxNamedPathMB",
@@ -30,11 +35,19 @@ export const SETTABLE_KEYS = [
     "diff.enabled",
     "diff.maxFiles",
     "diff.maxLinesPerFile",
-    "diff.maxMessageBytes",
+    "diff.maxBlockLines",
+    "diff.maxMessageChars",
     "diff.maxCaptureMB",
     "diff.maxCaptureFileMB",
     "diff.maxNamedPathMB",
     "diff.othersSummary",
+    "diff.theme",
+    "diff.highlight",
+    "diff.fill",
+    "diff.columns",
+    "diff.fullDiff",
+    "diff.replaceNative",
+    "diff.showTempScratch",
     "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
     "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
     "maxLogMB",
@@ -175,7 +188,43 @@ function withHarnessDiff(next: HooksConfig, key: string, value: string, harness:
         return next;
     }
 
-    throw new Error(`cannot set ${field} per harness. Settable: enabled, ${NUMERIC_DIFF.join(", ")}`);
+    if (field === "theme") {
+        next.diff.harnesses[harness as HarnessName] = { ...held, theme: asTheme(key, value) };
+        return next;
+    }
+
+    if (field === "columns") {
+        next.diff.harnesses[harness as HarnessName] = { ...held, columns: asColumns(key, value) };
+        return next;
+    }
+
+    throw new Error(`cannot set ${field} per harness. Settable: enabled, theme, columns, ${NUMERIC_DIFF.join(", ")}`);
+}
+
+function asTheme(key: string, value: string): DiffThemeName {
+    const theme = DIFF_THEMES.find((candidate) => candidate === value);
+
+    if (!theme) {
+        throw new Error(`${key} takes ${DIFF_THEMES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+    }
+
+    return theme;
+}
+
+function asColumns(key: string, value: string): number | "auto" {
+    if (value === "auto") {
+        return value;
+    }
+
+    const columns = Number(value);
+
+    if (!isCount(columns, 0)) {
+        throw new Error(
+            `${key} takes auto or a whole number of columns (0 = no fill), not ${SafeJSON.stringify(value)}`
+        );
+    }
+
+    return columns;
 }
 
 /** The ids a rule key may name: the built-in rules, plus the custom ones when the caller loaded them. */
@@ -232,6 +281,16 @@ export function applySetting(
         return next;
     }
 
+    if (key === "diff.replaceNative") {
+        next.diff.replaceNative = asBoolean(key, value);
+        return next;
+    }
+
+    if (key === "diff.showTempScratch") {
+        next.diff.showTempScratch = asBoolean(key, value);
+        return next;
+    }
+
     if (key.startsWith("unpushed.")) {
         const field = key.slice("unpushed.".length);
 
@@ -253,6 +312,49 @@ export function applySetting(
         throw new Error(
             `unknown key: ${key}. Settable: unpushed.enabled, maxCommits, maxAgeMinutes, remindEveryMinutes`
         );
+    }
+
+    if (key === "diff.fill") {
+        const mode = FILL_MODES.find((candidate) => candidate === value);
+
+        if (!mode) {
+            throw new Error(`${key} takes ${FILL_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.fill = mode;
+        return next;
+    }
+
+    if (key === "diff.highlight") {
+        const mode = HIGHLIGHT_MODES.find((candidate) => candidate === value);
+
+        if (!mode) {
+            throw new Error(`${key} takes ${HIGHLIGHT_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.highlight = mode;
+        return next;
+    }
+
+    if (key === "diff.theme") {
+        next.diff.theme = asTheme(key, value);
+        return next;
+    }
+
+    if (key === "diff.columns") {
+        next.diff.columns = asColumns(key, value);
+        return next;
+    }
+
+    if (key === "diff.fullDiff") {
+        const mode = FULL_DIFF_MODES.find((candidate) => candidate === value);
+
+        if (!mode) {
+            throw new Error(`${key} takes ${FULL_DIFF_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.fullDiff = mode;
+        return next;
     }
 
     if (key === "diff.othersSummary") {

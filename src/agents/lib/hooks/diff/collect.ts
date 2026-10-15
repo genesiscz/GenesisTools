@@ -35,7 +35,17 @@ export interface ChangedSource {
     committed: string[];
 }
 
-export function changedFiles(root: string, since: number, config: DiffConfig, source?: ChangedSource): ChangedFile[] {
+export function changedFiles({
+    root,
+    since,
+    config,
+    source,
+}: {
+    root: string;
+    since: number;
+    config: DiffConfig;
+    source?: ChangedSource;
+}): ChangedFile[] {
     const entries: ChangedFile[] = [];
 
     // A file the command edited AND COMMITTED is clean by the time the post phase looks, so

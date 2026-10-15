@@ -12,34 +12,58 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
-import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
+import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
+import {
+    commandSlices,
+    type DiffLogEntry,
+    extendFromTranscripts,
+    formatEntry,
+    readDiffLog,
+    readMessage,
+} from "../diff-log";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
-import { readOnlyCommand } from "./attribution";
+import { readOnlyCommand, recordTouches } from "./attribution";
 import { beforeCopy } from "./before";
-import { type CaptureResult, capturePre, captureRoots } from "./capture";
+import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
-import { covers, mentionsFrom, textPaths } from "./mentions";
-import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
+import { covers, mentionsFrom, mentionsOf, textPaths } from "./mentions";
+import {
+    assembleMessage,
+    compactColour,
+    type DiffBlock,
+    fitPath,
+    hasContext,
+    highlightRange,
+    hunkRange,
+    renderPatch,
+    themedDress,
+    wordSpans,
+    wrapVisible,
+} from "./render";
 import {
     blobBatches,
     type CapturedEdit,
     captureChunks,
     capturedBefore,
     capturedBefores,
+    composePostDiff,
     type DiffDecision,
+    flushDeferred,
     noteFileToolInput,
     runDiffPost,
     silentReason,
 } from "./run";
+import { resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
 
 let repo: string;
@@ -117,14 +141,14 @@ describe("changedFiles", () => {
         mkdirSync(join(repo, "scratch"), { recursive: true });
         writeFileSync(join(repo, "scratch/deep.ts"), "one\n");
 
-        const found = changedFiles(repo, Date.now() - 60_000, DEFAULT_HOOKS_CONFIG.diff);
+        const found = changedFiles({ root: repo, since: Date.now() - 60_000, config: DEFAULT_HOOKS_CONFIG.diff });
 
         expect(found.map((file) => file.path)).toContain(join(repo, "scratch/deep.ts"));
         expect(found.find((file) => file.path.endsWith("deep.ts"))?.untracked).toBe(true);
     });
 
     it("ignores a file older than the stamp", () => {
-        const found = changedFiles(repo, Date.now() + 60_000, DEFAULT_HOOKS_CONFIG.diff);
+        const found = changedFiles({ root: repo, since: Date.now() + 60_000, config: DEFAULT_HOOKS_CONFIG.diff });
 
         expect(found.filter((file) => !file.deleted)).toEqual([]);
     });
@@ -174,7 +198,7 @@ describe("beforeCopy", () => {
 
         writeFileSync(join(repo, "scratch/deep.ts"), "one\nTWO-EDIT\nthree\n");
 
-        const copy = beforeCopy(dir, repo, join(repo, "scratch/deep.ts"));
+        const copy = beforeCopy({ dir, root: repo, absolute: join(repo, "scratch/deep.ts") });
 
         expect(copy).not.toBeNull();
         expect(readFileSync(copy as string, "utf8")).toBe("one\ntwo\nthree\n");
@@ -184,7 +208,7 @@ describe("beforeCopy", () => {
         const current = begin();
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
 
-        expect(beforeCopy(dir, repo, join(repo, "kept.ts"))).toBeNull();
+        expect(beforeCopy({ dir, root: repo, absolute: join(repo, "kept.ts") })).toBeNull();
     });
 });
 
@@ -198,8 +222,12 @@ describe("runDiffPost", () => {
             writeFileSync(join(repo, "cap-a.ts"), "a\n");
             writeFileSync(join(repo, "cap-b.ts"), "b\n");
             let logged: string[] = [];
-            const decision = runDiffPost(current, capped, (_payload, captures) => {
-                logged = captures.map((item) => item.path);
+            const decision = runDiffPost({
+                payload: current,
+                config: capped,
+                record: (_payload, captures) => {
+                    logged = captures.map((item) => item.path);
+                },
             });
             rmSync(join(repo, "cap-a.ts"));
             rmSync(join(repo, "cap-b.ts"));
@@ -218,8 +246,12 @@ describe("runDiffPost", () => {
         const current = begin({ command: "perl -pi -e 's/bravo/BRAVO/' kept.ts" }, plain.diff);
         writeFileSync(join(repo, "kept.ts"), "alpha\nBRAVO\ncharlie\ndelta\necho\n");
         let kept: CapturedEdit | undefined;
-        runDiffPost(current, plain, (_payload, captures) => {
-            kept = captures.find((item) => item.path.endsWith("kept.ts"));
+        runDiffPost({
+            payload: current,
+            config: plain,
+            record: (_payload, captures) => {
+                kept = captures.find((item) => item.path.endsWith("kept.ts"));
+            },
         });
         git(["checkout", "--", "kept.ts"]);
 
@@ -237,8 +269,12 @@ describe("runDiffPost", () => {
         );
         writeFileSync(join(repo, "kept.ts"), "alpha\nNATIVE\ncharlie\ndelta\necho\n");
         let logged: string[] = [];
-        const decision = runDiffPost(current, plain, (_payload, captures) => {
-            logged = captures.map((item) => relative(repo, item.path));
+        const decision = runDiffPost({
+            payload: current,
+            config: plain,
+            record: (_payload, captures) => {
+                logged = captures.map((item) => relative(repo, item.path));
+            },
         });
         git(["checkout", "--", "kept.ts"]);
 
@@ -251,8 +287,12 @@ describe("runDiffPost", () => {
         writeFileSync(join(callDir("claude", "gt-diff-test", current.toolUseId ?? ""), "1.left"), "kept.ts\n");
         writeFileSync(join(repo, "kept.ts"), "alpha\nLEFT\ncharlie\ndelta\necho\n");
         let kept: CapturedEdit | undefined;
-        runDiffPost(current, plain, (_payload, captures) => {
-            kept = captures.find((item) => item.path.endsWith("kept.ts"));
+        runDiffPost({
+            payload: current,
+            config: plain,
+            record: (_payload, captures) => {
+                kept = captures.find((item) => item.path.endsWith("kept.ts"));
+            },
         });
         git(["checkout", "--", "kept.ts"]);
 
@@ -329,7 +369,7 @@ describe("runDiffPost", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nAFTER\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.message).toContain("AFTER");
@@ -343,7 +383,7 @@ describe("runDiffPost", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nPRE-EXISTING\ncharlie\ndelta\nECHO-NEW\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.message).toContain("ECHO-NEW");
         expect(decision.message).toContain("(+1 -1)");
@@ -356,7 +396,7 @@ describe("runDiffPost", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nAGAIN\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("silent");
         expect(decision.reason).toContain("already rendered natively");
@@ -369,7 +409,7 @@ describe("runDiffPost", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nEMPTY-PAYLOAD\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.message).toContain("EMPTY-PAYLOAD");
@@ -380,7 +420,7 @@ describe("runDiffPost", () => {
     it("says nothing when the command changed no file", () => {
         const current = begin();
 
-        expect(runDiffPost(current, plain).decision).toBe("silent");
+        expect(runDiffPost({ payload: current, config: plain }).decision).toBe("silent");
     });
 
     it("shows a new file whole once, then only its delta", () => {
@@ -388,7 +428,7 @@ describe("runDiffPost", () => {
 
         writeFileSync(join(repo, "fresh.ts"), "one\ntwo\nthree\n");
 
-        const initial = runDiffPost(first, plain);
+        const initial = runDiffPost({ payload: first, config: plain });
 
         expect(initial.message).toContain("Added");
         expect(initial.message).toContain("two");
@@ -397,7 +437,7 @@ describe("runDiffPost", () => {
 
         writeFileSync(join(repo, "fresh.ts"), "one\nTWO-CHANGED\nthree\n");
 
-        const delta = runDiffPost(second, plain);
+        const delta = runDiffPost({ payload: second, config: plain });
 
         expect(delta.message).toContain("Updated");
         expect(delta.message).toContain("TWO-CHANGED");
@@ -414,13 +454,13 @@ describe("runDiffPost", () => {
         const first = begin();
 
         writeFileSync(join(repo, "deep/nested.ts"), "one\ntwo\nthree\nfour\n");
-        expect(runDiffPost(first, plain).message).toContain("four");
+        expect(runDiffPost({ payload: first, config: plain }).message).toContain("four");
 
         const second = begin();
 
         writeFileSync(join(repo, "deep/nested.ts"), "one\nTWO-EDIT\nthree\nfour\n");
 
-        const delta = runDiffPost(second, plain);
+        const delta = runDiffPost({ payload: second, config: plain });
 
         expect(delta.decision).toBe("emitted");
         expect(delta.message).toContain("TWO-EDIT");
@@ -432,7 +472,7 @@ describe("runDiffPost", () => {
 
         git(["rm", "-qf", "kept.ts"]);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.message).toContain("Deleted");
@@ -454,7 +494,7 @@ describe("paths git would C-quote", () => {
 
         writeFileSync(join(repo, "a file.ts"), "one\nTWO-EDITED\n");
 
-        const decision = runDiffPost(first, plain);
+        const decision = runDiffPost({ payload: first, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.files).toContain(join(repo, "a file.ts"));
@@ -471,7 +511,7 @@ describe("paths git would C-quote", () => {
 
         writeFileSync(join(repo, "příliš.ts"), "one\nZLUTOUCKY\n");
 
-        const decision = runDiffPost(first, plain);
+        const decision = runDiffPost({ payload: first, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.message).toContain("ZLUTOUCKY");
@@ -509,7 +549,7 @@ describe("a command that edits a sibling repository", () => {
 
         writeFileSync(join(other, "sibling.ts"), "one\nTWO-IN-SIBLING\nthree\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.files).toContain(join(other, "sibling.ts"));
@@ -643,9 +683,12 @@ describe("the capture is private and option-safe", () => {
 
         writeFileSync(join(repo, "-C"), "one\nTWO-EDITED\n");
 
-        const decision = runDiffPost(first, {
-            ...DEFAULT_HOOKS_CONFIG,
-            diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" },
+        const decision = runDiffPost({
+            payload: first,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" },
+            },
         });
 
         expect(decision.decision).toBe("emitted");
@@ -755,9 +798,12 @@ describe("a staged deletion does not cost the root its capture", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nSURVIVES-THE-DELETION\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, {
-            ...DEFAULT_HOOKS_CONFIG,
-            diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" },
+        const decision = runDiffPost({
+            payload: current,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" },
+            },
         });
 
         expect(decision.message).toContain("SURVIVES-THE-DELETION");
@@ -795,7 +841,11 @@ describe("an ambiguous cd target is refused, not guessed", () => {
 describe("files the command NAMES rather than works in", () => {
     // Both shapes below were measured on 2026-09-21 producing a silent
     // `no change since this command began` while the file really had changed.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    // Its files live in a temp folder outside git, which `showTempScratch` hides by default.
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true },
+    };
     let vault: string;
     let outside: string;
 
@@ -827,7 +877,7 @@ describe("files the command NAMES rather than works in", () => {
 
         writeFileSync(note, "alpha\nBRAVO-NAMED\ncharlie\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.files).toContain(note);
@@ -841,7 +891,7 @@ describe("files the command NAMES rather than works in", () => {
 
         writeFileSync(note, "one\nTWO-OUTSIDE-GIT\nthree\n");
 
-        expect(runDiffPost(current, plain).message).toContain("TWO-OUTSIDE-GIT");
+        expect(runDiffPost({ payload: current, config: plain }).message).toContain("TWO-OUTSIDE-GIT");
     });
 
     it("a read-only command that names an absolute path never claims a concurrent edit to it", () => {
@@ -851,7 +901,7 @@ describe("files the command NAMES rather than works in", () => {
         const current = begin({ command: `cat ${note}` });
 
         writeFileSync(note, "one\nTWO-BY-SOMEONE-ELSE\nthree\n");
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files ?? []).not.toContain(note);
         expect(decision.message ?? "").not.toContain("TWO-BY-SOMEONE-ELSE");
@@ -866,15 +916,20 @@ describe("files the command NAMES rather than works in", () => {
 
         writeFileSync(quiet, "brand\nnew\n");
 
-        expect(runDiffPost(off, plain).files).not.toContain(quiet);
+        expect(runDiffPost({ payload: off, config: plain }).files).not.toContain(quiet);
 
         const loud = join(outside, "created-loud.md");
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, namedPathsShowCreated: true };
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            namedPathsShowCreated: true,
+            showTempScratch: true,
+        };
         const on = begin({ command: `bun /x/cli.ts ${loud}` }, diff);
 
         writeFileSync(loud, "brand\nnew\n");
 
-        const decision = runDiffPost(on, { ...plain, diff });
+        const decision = runDiffPost({ payload: on, config: { ...plain, diff } });
 
         expect(decision.message).toContain("Added");
         expect(decision.message).toContain("brand");
@@ -889,7 +944,7 @@ describe("files the command NAMES rather than works in", () => {
 
         rmSync(doomed);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.message).toContain("Deleted");
         expect(decision.message).toContain("gone");
@@ -898,7 +953,7 @@ describe("files the command NAMES rather than works in", () => {
     it("stays silent when the named file did not change", () => {
         const current = begin({ command: `bun /x/cli.ts ${join(vault, "wrapup.md")}` });
 
-        expect(runDiffPost(current, plain).decision).toBe("silent");
+        expect(runDiffPost({ payload: current, config: plain }).decision).toBe("silent");
     });
 
     it("stands down for a named file the harness already rendered", () => {
@@ -907,7 +962,7 @@ describe("files the command NAMES rather than works in", () => {
 
         writeFileSync(note, "alpha\nNATIVE-ALREADY\ncharlie\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("silent");
         expect(decision.reason).toContain("already rendered natively");
@@ -919,7 +974,7 @@ describe("files the command NAMES rather than works in", () => {
 
         writeFileSync(tracked, "alpha\nONCE-ONLY\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files.filter((path) => path === tracked)).toHaveLength(1);
         expect(decision.message?.match(/ONCE-ONLY/g)).toHaveLength(1);
@@ -935,7 +990,7 @@ describe("files the command NAMES rather than works in", () => {
 
             writeFileSync(note, `alpha\n${marker}\ncharlie\n`);
 
-            return runDiffPost(current, { ...plain, diff });
+            return runDiffPost({ payload: current, config: { ...plain, diff } });
         };
 
         // The ON arm is the positive control: without it, a pass that never ran at all would
@@ -972,6 +1027,13 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`bun /x/cli.ts log "${note}"`, [vault])).toContain(note);
     });
 
+    it("finds a path that ends its statement, without the semicolon", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`sleep 1; perl -pi -e s/a/b/ ${note}; echo ok`, [vault])).toContain(note);
+        expect(namedArguments(`cat "${note}";`, [vault])).toContain(note);
+    });
+
     it.each([
         ["a URL", "curl https://example.com/a/b"],
         ["a variable", 'bun x "$HOME/note.md"'],
@@ -987,6 +1049,44 @@ describe("files the command NAMES rather than works in", () => {
         // Single quotes do not expand, and a variable the command never set is the environment's.
         expect(namedArguments(`V=${vault}; cat '$V/wrapup.md'`, [vault])).toEqual([]);
         expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
+    });
+
+    it("reads the relative paths of a git -C element against its folder, not the session cwd", () => {
+        const main = join(vault, "git-c-main");
+        const other = join(vault, "git-c-other");
+
+        for (const dir of [main, other]) {
+            mkdirSync(join(dir, "src"), { recursive: true });
+            writeFileSync(join(dir, "src", "a.ts"), "x");
+        }
+
+        const mine = join(other, "src", "a.ts");
+        const theirs = join(main, "src", "a.ts");
+
+        for (const command of [
+            `W=${other}; git -C $W add src/a.ts`,
+            `W=${other}; git -C "$W" add src/a.ts && git -C "$W" commit -m x`,
+            `git -c core.quotepath=off -C ${other} add src/a.ts`,
+            `git -C ${vault} -C git-c-other add src/a.ts`,
+        ]) {
+            const named = namedArguments(command, [main]);
+
+            expect(named).toContain(mine);
+            expect(named).not.toContain(theirs);
+        }
+
+        // A subcommand's -C is not git's: `git commit -C HEAD` reuses that commit's message.
+        expect(namedArguments("git commit -C HEAD src/a.ts", [main])).toContain(theirs);
+
+        // The mention parser reads tokens out of the text, and the named set joins both parsers.
+        const mentioned = mentionsOf({ tool: "Bash", input: { command: `git -C ${other} add src/a.ts` }, cwd: main });
+
+        expect(mentioned).toContain(mine);
+        expect(mentioned).not.toContain(theirs);
+        // The same token outside the git -C element keeps its session-folder reading.
+        expect(
+            mentionsOf({ tool: "Bash", input: { command: `cat src/a.ts && git -C ${other} add src/a.ts` }, cwd: main })
+        ).toContain(theirs);
     });
 
     it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {
@@ -1054,8 +1154,8 @@ describe("two sessions sharing one repository", () => {
 
         writeFileSync(shared, "one\nSHARED-ONCE\nthree\n");
 
-        const first = runDiffPost(a, plain);
-        const second = runDiffPost(b, plain);
+        const first = runDiffPost({ payload: a, config: plain });
+        const second = runDiffPost({ payload: b, config: plain });
 
         expect(first.files).toContain(shared);
         expect(first.message).toContain("SHARED-ONCE");
@@ -1068,7 +1168,7 @@ describe("two sessions sharing one repository", () => {
 
         writeFileSync(shared, "one\nSHARED-SECOND-EDIT\nthree\n");
 
-        expect(runDiffPost(c, plain).message).toContain("SHARED-SECOND-EDIT");
+        expect(runDiffPost({ payload: c, config: plain }).message).toContain("SHARED-SECOND-EDIT");
     });
 
     it("prints a later edit by the same session, then not the unchanged state again", () => {
@@ -1076,14 +1176,14 @@ describe("two sessions sharing one repository", () => {
 
         writeFileSync(shared, "one\nSAME-SESSION-AGAIN\nthree\n");
 
-        expect(runDiffPost(again, plain).message).toContain("SAME-SESSION-AGAIN");
+        expect(runDiffPost({ payload: again, config: plain }).message).toContain("SAME-SESSION-AGAIN");
 
         const retry = begin({ sessionId: "gt-diff-c", command: SHARED_WRITER, toolUseId: "share-4" });
 
         // No further edit, so the mtime is older than this call's stamp. This is the `since`
         // filter, NOT the claim: the claim's own behaviour is pinned in "the render claim,
         // on its own", because an edit always moves the mtime and never repeats a key.
-        expect(runDiffPost(retry, plain).files).not.toContain(shared);
+        expect(runDiffPost({ payload: retry, config: plain }).files).not.toContain(shared);
     });
 
     it("dedupeAcrossSessions:false lets both sessions print it", () => {
@@ -1093,8 +1193,8 @@ describe("two sessions sharing one repository", () => {
 
         writeFileSync(shared, "one\nBOTH-PRINT\nthree\n");
 
-        expect(runDiffPost(a, { ...plain, diff }).message).toContain("BOTH-PRINT");
-        expect(runDiffPost(b, { ...plain, diff }).message).toContain("BOTH-PRINT");
+        expect(runDiffPost({ payload: a, config: { ...plain, diff } }).message).toContain("BOTH-PRINT");
+        expect(runDiffPost({ payload: b, config: { ...plain, diff } }).message).toContain("BOTH-PRINT");
 
         git(["checkout", "--", "shared.ts"]);
     });
@@ -1136,7 +1236,7 @@ describe("a tree too dirty to capture whole", () => {
 
         writeFileSync(small, "alpha\nBRAVO-DELTA\ncharlie\n");
 
-        const decision = runDiffPost(current, { ...plain, diff });
+        const decision = runDiffPost({ payload: current, config: { ...plain, diff } });
 
         expect(decision.message).toContain("BRAVO-DELTA");
         expect(decision.message).toContain("Updated");
@@ -1151,13 +1251,53 @@ describe("a tree too dirty to capture whole", () => {
 
         writeFileSync(small, "alpha\nNOT-ADDED\ncharlie\n");
 
-        const decision = runDiffPost(current, { ...plain, diff });
+        const decision = runDiffPost({ payload: current, config: { ...plain, diff } });
 
         // No diff, since a whole-file `Added` would be a lie, but the file is NAMED.
         expect(decision.decision).toBe("noted");
         expect(decision.reason).toContain("no captured before-state");
         expect(decision.message).toContain("dirty file(s) changed with no captured before-state:");
         expect(decision.message).toContain("note.md");
+    });
+
+    it("gives a file past the file cap with no captured before-state no patch, and names it", () => {
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            maxCaptureMB: 0.000001,
+            maxFiles: 1,
+            fullDiff: "path" as const,
+        };
+        const first = join(big, "a-first.txt");
+        const run = (args: string[]) => spawnSync("git", ["-C", big, ...args], { encoding: "utf8", env: process.env });
+
+        writeFileSync(first, "one\n");
+        run(["add", "a-first.txt"]);
+        run(["commit", "-qm", "first"]);
+        // Dirty before the call, and over the capture budget: there is no before-state for it.
+        writeFileSync(small, "alpha\nEARLIER-EDIT\ncharlie\n");
+
+        // An editing command that names only the first file, so the root pass goes on past the cap.
+        const current = begin({ cwd: big, toolUseId: "bigtree-overflow", command: "perl -pi -e 1 a-first.txt" }, diff);
+
+        writeFileSync(first, "one\nFIRST-EDIT\n");
+        writeFileSync(small, "alpha\nEARLIER-EDIT\nCALL-EDIT\n");
+
+        const decision = runDiffPost({ payload: current, config: { ...plain, diff } });
+        const fullDiff = decision.stats?.fullDiff;
+
+        try {
+            expect(decision.files).toEqual([first]);
+            expect(decision.message).toContain("dirty file(s) changed with no captured before-state:");
+
+            if (fullDiff) {
+                expect(readFileSync(fullDiff, "utf8")).not.toContain("EARLIER-EDIT");
+            }
+        } finally {
+            if (fullDiff) {
+                rmSync(fullDiff, { force: true });
+            }
+        }
     });
 });
 
@@ -1181,7 +1321,7 @@ describe("a path with a non-ASCII name", () => {
 
         writeFileSync(accented, "alpha\nBRAVO-DIACRITICS\ncharlie\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files).toContain(accented);
         expect(decision.message).toContain("BRAVO-DIACRITICS");
@@ -1198,7 +1338,7 @@ describe("a path with a non-ASCII name", () => {
 
         writeFileSync(accented, "one\nTWO-CHANGED\n");
 
-        const copy = beforeCopy(dir, repo, accented);
+        const copy = beforeCopy({ dir, root: repo, absolute: accented });
 
         expect(copy).not.toBeNull();
         expect(readFileSync(copy as string, "utf8")).toBe("one\ntwo\n");
@@ -1240,7 +1380,7 @@ describe("the capture budget sees what an entry really weighs", () => {
 
         writeFileSync(join(tree, "note.md"), "alpha\nBRAVO-SMALL\n");
 
-        const decision = runDiffPost(current, { ...DEFAULT_HOOKS_CONFIG, diff });
+        const decision = runDiffPost({ payload: current, config: { ...DEFAULT_HOOKS_CONFIG, diff } });
 
         expect(decision.message).toContain("BRAVO-SMALL");
         expect(decision.message).toContain("Updated");
@@ -1273,7 +1413,7 @@ describe("the capture budget sees what an entry really weighs", () => {
 
         writeFileSync(big, `EARLIER-EDIT\n${lines.join("\n")}\nTHIS-COMMAND\n`);
 
-        const decision = runDiffPost(current, { ...DEFAULT_HOOKS_CONFIG, diff });
+        const decision = runDiffPost({ payload: current, config: { ...DEFAULT_HOOKS_CONFIG, diff } });
 
         expect(decision.message ?? "").not.toContain("EARLIER-EDIT");
         expect(decision.files).not.toContain(big);
@@ -1313,7 +1453,7 @@ describe("a deletion that was already there when the command began", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nLATER-COMMAND\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.message).toContain("LATER-COMMAND");
         expect(decision.message).not.toContain("old-gone.ts");
@@ -1330,7 +1470,7 @@ describe("a deletion that was already there when the command began", () => {
 
         git(["rm", "-qf", "fresh-gone.ts"]);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.message).toContain("Deleted");
         expect(decision.message).toContain("fresh-gone.ts");
@@ -1349,7 +1489,7 @@ describe("a path with glob characters", () => {
 
         const current = begin();
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
-        const before = beforeCopy(dir, repo, join(repo, "app/[id].ts"));
+        const before = beforeCopy({ dir, root: repo, absolute: join(repo, "app/[id].ts") });
 
         expect(before).not.toBeNull();
         expect(readFileSync(before ?? "", "utf8")).toBe("one\nDIRTY-BEFORE\n");
@@ -1445,7 +1585,7 @@ describe("what KIND of change it is", () => {
     ];
 
     it.each(cases)("calls %s %s", (_label, path, expected) => {
-        expect(classifyChange(path, "@@ -1 +1 @@\n-one\n+two\n")).toBe(expected);
+        expect(classifyChange({ path, patch: "@@ -1 +1 @@\n-one\n+two\n" })).toBe(expected);
     });
 
     it("calls a reindentation formatting, and a real edit source", () => {
@@ -1454,22 +1594,28 @@ describe("what KIND of change it is", () => {
             "@@ -1,2 +1,2 @@\n-import b from 'b';\n-import a from 'a';\n+import a from 'a';\n+import b from 'b';\n";
         const real = "@@ -1,2 +1,2 @@\n-const a = 1;\n-const b = 2;\n+const a = 1;\n+const b = 99;\n";
 
-        expect(classifyChange("/repo/src/x.ts", reindented)).toBe("formatting");
-        expect(classifyChange("/repo/src/x.ts", reordered)).toBe("formatting");
-        expect(classifyChange("/repo/src/x.ts", real)).toBe("source");
+        expect(classifyChange({ path: "/repo/src/x.ts", patch: reindented })).toBe("formatting");
+        expect(classifyChange({ path: "/repo/src/x.ts", patch: reordered })).toBe("formatting");
+        expect(classifyChange({ path: "/repo/src/x.ts", patch: real })).toBe("source");
     });
 
     it("tests the directories below the repository root, never the root's own ancestors", () => {
         const patch = "@@ -1 +1 @@\n-one\n+two\n";
 
-        expect(classifyChange("/home/u/build/app/src/x.ts", patch, "/home/u/build/app")).toBe("source");
-        expect(classifyChange("/home/u/dev/logs/tool/src/x.ts", patch, "/home/u/dev/logs/tool")).toBe("source");
-        expect(classifyChange("/home/u/build/app/dist/x.js", patch, "/home/u/build/app")).toBe("generated");
-        expect(classifyChange("/tmp/z1.log", patch, "/tmp")).toBe("log");
+        expect(classifyChange({ path: "/home/u/build/app/src/x.ts", patch, root: "/home/u/build/app" })).toBe("source");
+        expect(classifyChange({ path: "/home/u/dev/logs/tool/src/x.ts", patch, root: "/home/u/dev/logs/tool" })).toBe(
+            "source"
+        );
+        expect(classifyChange({ path: "/home/u/build/app/dist/x.js", patch, root: "/home/u/build/app" })).toBe(
+            "generated"
+        );
+        expect(classifyChange({ path: "/tmp/z1.log", patch, root: "/tmp" })).toBe("log");
     });
 
     it("never calls a brand new file formatting, however tidy it is", () => {
-        expect(classifyChange("/repo/src/new.ts", "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n")).toBe("source");
+        expect(
+            classifyChange({ path: "/repo/src/new.ts", patch: "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n" })
+        ).toBe("source");
     });
 });
 
@@ -1477,37 +1623,48 @@ describe("silentReason", () => {
     const hidden = new Map([["log", 2] as const]);
 
     it("names one cause on its own terms when only one holds", () => {
-        expect(silentReason(0, 0, 0, 0, hidden)).toBe("every changed file was a kind this config hides: 2 log");
-        expect(silentReason(3, 0, 0, 0, new Map())).toBe("every changed file was already rendered natively");
-        expect(silentReason(0, 0, 2, 0, new Map())).toBe("2 changed file(s) had already been rendered");
-        expect(silentReason(0, 1, 0, 0, new Map())).toBe(
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: hidden })).toBe(
+            "every changed file was a kind this config hides: 2 log"
+        );
+        expect(silentReason({ covered: 3, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
+            "every changed file was already rendered natively"
+        );
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 2, stale: 0, suppressed: new Map() })).toBe(
+            "2 changed file(s) had already been rendered"
+        );
+        expect(silentReason({ covered: 0, uncaptured: 1, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
             "1 changed file(s) had no captured before-state, over the capture cap"
         );
-        expect(silentReason(0, 0, 0, 4, new Map())).toBe(
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 4, suppressed: new Map() })).toBe(
             "4 deletion(s) had already happened before this command began"
         );
-        expect(silentReason(0, 0, 0, 0, new Map())).toBe("no change since this command began");
+        expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
+            "no change since this command began"
+        );
     });
 
     it("reports a mix as a mix, instead of claiming the first cause was everything", () => {
         // The suppressed branch used to come first and say "every changed file was a kind
         // this config hides" while files had also been rendered natively — so the reader
         // went and changed the wrong setting.
-        const reason = silentReason(1, 0, 0, 0, hidden);
+        const reason = silentReason({ covered: 1, uncaptured: 0, claimed: 0, stale: 0, suppressed: hidden });
 
         expect(reason).toBe("nothing left to print: a kind this config hides (2 log); 1 already rendered natively");
         expect(reason).not.toContain("every changed file");
     });
 
     it("lists every cause that holds, in a fixed order", () => {
-        expect(silentReason(1, 2, 3, 4, hidden)).toBe(
+        expect(silentReason({ covered: 1, uncaptured: 2, claimed: 3, stale: 4, suppressed: hidden })).toBe(
             "nothing left to print: a kind this config hides (2 log); 1 already rendered natively; 3 already rendered; 2 with no captured before-state, over the capture cap; 4 deletion(s) already gone before this command began"
         );
     });
 });
 
 describe("hiding a kind of change", () => {
-    const base = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const base = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true },
+    };
     let scratch: string;
 
     beforeAll(() => {
@@ -1524,6 +1681,7 @@ describe("hiding a kind of change", () => {
 
         const diff = {
             ...DEFAULT_HOOKS_CONFIG.diff,
+            showTempScratch: true,
             highlight: "none" as const,
             categories: { ...DEFAULT_HOOKS_CONFIG.diff.categories, ...categories },
         };
@@ -1531,7 +1689,7 @@ describe("hiding a kind of change", () => {
 
         writeFileSync(log, "console.error\n");
 
-        return runDiffPost(current, { ...base, diff });
+        return runDiffPost({ payload: current, config: { ...base, diff } });
     }
 
     it("hides a scratch log by default and says so, and prints it when asked", () => {
@@ -1577,7 +1735,7 @@ describe("hiding a kind of change", () => {
 
         writeFileSync(note, "one\nTWO-REAL\n");
 
-        const decision = runDiffPost(current, base);
+        const decision = runDiffPost({ payload: current, config: base });
 
         expect(decision.message).toContain("TWO-REAL");
         expect(decision.message).not.toContain("·");
@@ -1615,7 +1773,7 @@ describe("a command that edits AND commits in the same call", () => {
         run(["add", "-A"]);
         run(["commit", "-qm", "same call"]);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files).toContain(note);
         expect(decision.message).toContain("EDIT-THEN-COMMIT");
@@ -1640,7 +1798,7 @@ describe("a command that edits AND commits in the same call", () => {
         run(["commit", "-qm", "commit inside the call"]);
         writeFileSync(twice, "one\nCOMMITTED-EDIT\nAND-AGAIN\n");
 
-        const decision = runDiffPost(current, { ...plain, diff });
+        const decision = runDiffPost({ payload: current, config: { ...plain, diff } });
 
         expect(decision.files.filter((path) => path === twice)).toHaveLength(1);
     });
@@ -1661,7 +1819,7 @@ describe("a command that edits AND commits in the same call", () => {
 
         run(["commit", "-qm", "commit only"]);
 
-        expect(runDiffPost(current, plain).files).not.toContain(older);
+        expect(runDiffPost({ payload: current, config: plain }).files).not.toContain(older);
     });
 
     it("still works in a repository that has no commits at all", () => {
@@ -1673,7 +1831,7 @@ describe("a command that edits AND commits in the same call", () => {
 
         writeFileSync(join(empty, "fresh.md"), "brand\nnew\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.message).toContain("brand");
 
@@ -1720,7 +1878,7 @@ describe("a command that moves HEAD through history", () => {
 
         run(["rebase", "-q", "master"]);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files).toEqual([]);
         expect(decision.message ?? "").not.toContain("UPSTREAM-ONE");
@@ -1733,7 +1891,7 @@ describe("a command that moves HEAD through history", () => {
 
         run(["checkout", "-q", "topic"]);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         // topic.md arrives, and both upstream files leave: three files differ between the two tips.
         expect(decision.files).toEqual([]);
@@ -1751,7 +1909,7 @@ describe("a command that moves HEAD through history", () => {
 
         run(["merge", "-q", "--ff-only", "topic"]);
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files).toEqual([]);
         expect(decision.message ?? "").toContain("git merge moved HEAD");
@@ -1765,7 +1923,7 @@ describe("a command that moves HEAD through history", () => {
         run(["rebase", "-q", "master"]);
         commitFile("own.md", "OWN-WORK-AFTER-REBASE\n", "own work");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files).toEqual([join(repo3, "own.md")]);
         expect(decision.message).toContain("OWN-WORK-AFTER-REBASE");
@@ -1778,7 +1936,7 @@ describe("a command that moves HEAD through history", () => {
 
         commitFile("mine.md", "PLAIN-COMMIT-WORK\n", "mine");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.files).toEqual([join(repo3, "mine.md")]);
         expect(decision.message).toContain("PLAIN-COMMIT-WORK");
@@ -1812,7 +1970,7 @@ describe("a deletion that is still sitting in `git status`", () => {
 
         rmSync(join(repo, "doomed.ts"));
 
-        const decision = runDiffPost(removing, plain);
+        const decision = runDiffPost({ payload: removing, config: plain });
 
         expect(decision.message).toContain("Deleted");
         expect(decision.message).toContain("two");
@@ -1823,7 +1981,7 @@ describe("a deletion that is still sitting in `git status`", () => {
         expect(statusEntries(repo).some((entry) => entry.path === "doomed.ts" && isDeleted(entry))).toBe(true);
 
         const later = begin({ sessionId: "gt-diff-gone", command, toolUseId: "gone-2" }, plain.diff);
-        const decision = runDiffPost(later, plain);
+        const decision = runDiffPost({ payload: later, config: plain });
 
         expect(decision.decision).toBe("silent");
         expect(decision.reason).toContain("already happened before this command began");
@@ -1838,7 +1996,7 @@ describe("a deletion that is still sitting in `git status`", () => {
 
         rmSync(join(repo, "doomed.ts"));
 
-        const decision = runDiffPost(again, plain);
+        const decision = runDiffPost({ payload: again, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.message).toContain("Deleted");
@@ -1904,9 +2062,9 @@ describe("one message, fitted to what the harness will actually show", () => {
             at: index + 1,
         })),
     });
-    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageBytes: bytes });
+    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: bytes });
 
-    it("never exceeds maxMessageBytes", () => {
+    it("never exceeds maxMessageChars", () => {
         expect(assembleMessage([block("a", 60), block("b", 60)], budget(600)).length).toBeLessThanOrEqual(600);
     });
 
@@ -1921,7 +2079,9 @@ describe("one message, fitted to what the harness will actually show", () => {
         };
         const message = assembleMessage([accented, block("b", 10)], budget(600));
 
-        expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(600);
+        // Claude Code counts `.length`, so an accented letter costs one unit, not two bytes.
+        expect(message.length).toBeLessThanOrEqual(600);
+        expect(Buffer.byteLength(message, "utf8")).toBeGreaterThan(600);
     });
 
     it("keeps EVERY header, because losing the last file is the bug being fixed", () => {
@@ -1961,7 +2121,7 @@ describe("a harness that cannot show a diff", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nGROK-EDIT\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("skip");
         expect(decision.message).toBeUndefined();
@@ -1975,7 +2135,7 @@ describe("a harness that cannot show a diff", () => {
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nCLAUDE-EDIT\ncharlie\ndelta\necho\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.decision).toBe("emitted");
         expect(decision.message).toContain("CLAUDE-EDIT");
@@ -1998,7 +2158,7 @@ describe("the budget buys the change before the context", () => {
             { text: `${name} context four ${"x".repeat(79)}`, changed: false, at: 4 },
         ],
     });
-    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageBytes: bytes });
+    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: bytes });
 
     it("prints the added and removed lines and not the context around them", () => {
         const message = assembleMessage([edit("a")], budget(300));
@@ -2140,7 +2300,7 @@ describe("highlighting is skipped when nothing would use it", () => {
     // 🛑 One `bat` spawn per changed file sits on the hot path. Measured 2026-09-22 on a
     // 15-file change that rewrote every line: 597 ms with highlighting against 159 ms
     // without, for BYTE-IDENTICAL output, because only CONTEXT lines are ever coloured.
-    const batty = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "bat" as const };
+    const batty = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "truecolor" as const };
     const range = { from: 1, to: 4 };
     const rewrite = "@@ -1,2 +1,2 @@\n-old one\n-old two\n+new one\n+new two";
     const edited = "@@ -1,3 +1,3 @@\n kept line\n-old two\n+new two\n kept three";
@@ -2159,12 +2319,12 @@ describe("highlighting is skipped when nothing would use it", () => {
 
         writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
 
-        expect(highlightRange(file, range, batty, rewrite)).toEqual([]);
+        expect(highlightRange({ path: file, range, config: batty, patch: rewrite })).toEqual([]);
 
         if (batPresent) {
             // The positive control for this very assertion: same file, same range, same
             // config, and the ONLY difference is a patch that has context.
-            expect(highlightRange(file, range, batty, edited).length).toBeGreaterThan(0);
+            expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
         }
     });
 
@@ -2180,13 +2340,13 @@ describe("highlighting is skipped when nothing would use it", () => {
 
         writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
 
-        expect(highlightRange(file, range, batty, edited).length).toBeGreaterThan(0);
+        expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
     });
 
     it("still returns nothing when highlighting is off entirely", () => {
         const off = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const };
 
-        expect(highlightRange(join(repo, "anything.ts"), range, off, edited)).toEqual([]);
+        expect(highlightRange({ path: join(repo, "anything.ts"), range, config: off, patch: edited })).toEqual([]);
     });
 });
 
@@ -2275,7 +2435,7 @@ describe("a change another session made", () => {
             payload({ sessionId: "gt-attr-other", tool: "Write", raw: { tool_input: { file_path: lifecycle } } })
         );
 
-        const decision = runDiffPost(mine, plain);
+        const decision = runDiffPost({ payload: mine, config: plain });
 
         expect(decision.files).not.toContain(lifecycle);
         expect(decision.message ?? "").not.toContain("OTHER-SESSION");
@@ -2291,7 +2451,7 @@ describe("a change another session made", () => {
 
         writeFileSync(readme, "one\nWHOSE-EDIT\nthree\n");
 
-        const decision = runDiffPost(unnamed, plain);
+        const decision = runDiffPost({ payload: unnamed, config: plain });
 
         expect(decision.files).not.toContain(readme);
         expect(decision.message).toContain("changed by others in this root:");
@@ -2302,9 +2462,9 @@ describe("a change another session made", () => {
 
         writeFileSync(readme, "one\nWHOSE-EDIT-2\nthree\n");
 
-        expect(runDiffPost(cdInto, plain).files).toContain(readme);
+        expect(runDiffPost({ payload: cdInto, config: plain }).files).toContain(readme);
 
-        runDiffPost(theirs, plain);
+        runDiffPost({ payload: theirs, config: plain });
         rmSync(sessionDir("claude", "gt-attr-cd"), { recursive: true, force: true });
     });
 
@@ -2322,12 +2482,12 @@ describe("a change another session made", () => {
 
         writeFileSync(plan, "one\nMENTIONED-EARLIER\nthree\n");
 
-        const decision = runDiffPost(mine, plain);
+        const decision = runDiffPost({ payload: mine, config: plain });
 
         expect(decision.files).toContain(plan);
         expect(decision.message).toContain("MENTIONED-EARLIER");
 
-        runDiffPost(theirs, plain);
+        runDiffPost({ payload: theirs, config: plain });
         rmSync(transcript, { force: true });
     });
 
@@ -2337,7 +2497,7 @@ describe("a change another session made", () => {
 
         writeFileSync(target, "one\nCODEMOD\nthree\n");
 
-        const ran = runDiffPost(codemod, plain);
+        const ran = runDiffPost({ payload: codemod, config: plain });
 
         expect(ran.files).toContain(target);
         expect(ran.message).toContain("CODEMOD");
@@ -2346,10 +2506,11 @@ describe("a change another session made", () => {
 
         writeFileSync(target, "one\nWHILE-READING\nthree\n");
 
-        const read = runDiffPost(status, plain);
+        const read = runDiffPost({ payload: status, config: plain });
 
         expect(read.files).not.toContain(target);
-        expect(read.decision).toBe("noted");
+        // Not even a line: a command that only reads gets no news about other writers.
+        expect(read.decision).toBe("silent");
     });
 
     it("hides the others line when othersSummary is hidden", () => {
@@ -2358,7 +2519,7 @@ describe("a change another session made", () => {
 
         writeFileSync(join(shared, "src", "lifecycle.ts"), "one\nHIDDEN-LINE\nthree\n");
 
-        const decision = runDiffPost(status, { ...plain, diff });
+        const decision = runDiffPost({ payload: status, config: { ...plain, diff } });
 
         expect(decision.decision).toBe("silent");
         expect(decision.reason).toContain("not attributable to this session");
@@ -2415,7 +2576,7 @@ describe("a dirty tree past the capture cap", () => {
         writeFileSync(join(vault, "inbox", "e.md"), "e.md\nMENTIONED-DELTA\n");
         writeFileSync(join(vault, "inbox", "c.md"), "c.md\nUNCAPTURED\n");
 
-        const decision = runDiffPost(current, plain);
+        const decision = runDiffPost({ payload: current, config: plain });
 
         expect(decision.message).toContain("NEW-NOTE");
         expect(decision.message).toContain("MENTIONED-DELTA");
@@ -2478,9 +2639,9 @@ describe("mention extraction", () => {
         const root = "/work/app";
         const mentions = mentionsFrom([root, `${root}/src/feature`, `glob:${root}/**/*.ts`, `glob:${root}/docs/*.md`]);
 
-        expect(covers(mentions, `${root}/src/feature/x.ts`, root)).toBe(true);
-        expect(covers(mentions, `${root}/docs/y.md`, root)).toBe(true);
-        expect(covers(mentions, `${root}/src/other/z.ts`, root)).toBe(false);
+        expect(covers({ mentions, file: `${root}/src/feature/x.ts`, root })).toBe(true);
+        expect(covers({ mentions, file: `${root}/docs/y.md`, root })).toBe(true);
+        expect(covers({ mentions, file: `${root}/src/other/z.ts`, root })).toBe(false);
     });
 
     it("an EARLIER mention reaches only a directory's direct children and a glob without **", () => {
@@ -2489,11 +2650,13 @@ describe("mention extraction", () => {
         // file under `src` for it, another session's new file included.
         const mentions = mentionsFrom([`${root}/src`, `glob:${root}/lib/**/*.ts`, `glob:${root}/docs/*.md`]);
 
-        expect(covers(mentions, `${root}/src/index.ts`, root, "shallow")).toBe(true);
-        expect(covers(mentions, `${root}/src/utils/services/lifecycle.ts`, root, "shallow")).toBe(false);
-        expect(covers(mentions, `${root}/src/utils/services/lifecycle.ts`, root, "deep")).toBe(true);
-        expect(covers(mentions, `${root}/lib/deep/a.ts`, root, "shallow")).toBe(false);
-        expect(covers(mentions, `${root}/docs/y.md`, root, "shallow")).toBe(true);
+        expect(covers({ mentions, file: `${root}/src/index.ts`, root, reach: "shallow" })).toBe(true);
+        expect(covers({ mentions, file: `${root}/src/utils/services/lifecycle.ts`, root, reach: "shallow" })).toBe(
+            false
+        );
+        expect(covers({ mentions, file: `${root}/src/utils/services/lifecycle.ts`, root, reach: "deep" })).toBe(true);
+        expect(covers({ mentions, file: `${root}/lib/deep/a.ts`, root, reach: "shallow" })).toBe(false);
+        expect(covers({ mentions, file: `${root}/docs/y.md`, root, reach: "shallow" })).toBe(true);
     });
 
     it("attribution from an EARLIER mention needs the file itself, not its directory", () => {
@@ -2506,9 +2669,9 @@ describe("mention extraction", () => {
             `glob:${root}/docs/*.md`,
         ]);
 
-        expect(covers(mentions, `${root}/Sources/Hub/HubWindow.swift`, root, "file")).toBe(true);
-        expect(covers(mentions, `${root}/Sources/Hub/HubMainMenu.swift`, root, "file")).toBe(false);
-        expect(covers(mentions, `${root}/docs/y.md`, root, "file")).toBe(false);
+        expect(covers({ mentions, file: `${root}/Sources/Hub/HubWindow.swift`, root, reach: "file" })).toBe(true);
+        expect(covers({ mentions, file: `${root}/Sources/Hub/HubMainMenu.swift`, root, reach: "file" })).toBe(false);
+        expect(covers({ mentions, file: `${root}/docs/y.md`, root, reach: "file" })).toBe(false);
     });
 
     it("classifies read-only commands, and anything that writes or runs a program as a runner", () => {
@@ -2654,8 +2817,12 @@ describe("characterization: what one call shows, logs and attributes", () => {
     // Pinned on f8cb4f9f1, before the hooks' `git status` changed how it reads the tree. Every
     // field a user or a log sees is here: the pre phase's result, the decision, its reason, the
     // message, the files and the others, and each change-log row with its before-state bytes.
-    // A change to HOW the status is read must leave every snapshot below as it is.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    // A change to HOW the status is read must leave every snapshot below as it is. They pin the
+    // `classic` look, which must stay byte for byte; the Claude themes have their own cases.
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, theme: "classic" as const },
+    };
     const session = "gt-diff-char";
     let main: string;
     let second: string;
@@ -2696,14 +2863,18 @@ describe("characterization: what one call shows, logs and attributes", () => {
         act();
 
         let log: Observed["log"] = [];
-        const decision: DiffDecision = runDiffPost(current, plain, (_payload, captures) => {
-            // The capture directory is gone once the post phase returns, so the bytes are read here.
-            log = captures.map((item) => ({
-                path: normalize(item.path),
-                deleted: item.deleted,
-                from: item.before ? "copy" : item.gitBase ? `git ${normalize(item.gitBase.base)}` : "none",
-                before: capturedBefore(item).after?.toString("utf8") ?? null,
-            }));
+        const decision: DiffDecision = runDiffPost({
+            payload: current,
+            config: plain,
+            record: (_payload, captures) => {
+                // The capture directory is gone once the post phase returns, so the bytes are read here.
+                log = captures.map((item) => ({
+                    path: normalize(item.path),
+                    deleted: item.deleted,
+                    from: item.before ? "copy" : item.gitBase ? `git ${normalize(item.gitBase.base)}` : "none",
+                    before: capturedBefore(item).after?.toString("utf8") ?? null,
+                }));
+            },
         });
 
         return {
@@ -3048,10 +3219,10 @@ describe("characterization: what one call shows, logs and attributes", () => {
             call("rg needle tracked.ts", () => write(main, "tracked.ts", "one\nWRITER\nthree\n"))
         ).toMatchInlineSnapshot(`
           {
-            "decision": "noted",
+            "decision": "silent",
             "files": [],
             "log": [],
-            "message": "1 file(s) changed by others in this root: tracked.ts",
+            "message": null,
             "others": [
               "<main>/tracked.ts",
             ],
@@ -3283,5 +3454,944 @@ describe("characterization: what one call shows, logs and attributes", () => {
             "reason": "no change since this command began",
           }
         `);
+    });
+});
+
+describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () => {
+    const palette = resolvePalette("claude-dark");
+    const quiet = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 };
+
+    if (!palette) {
+        throw new Error("claude-dark has a palette");
+    }
+
+    it("reads a legacy theme only when settings.json has no theme key", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-claude-theme-"));
+        const light = "\u001b[48;2;220;255;220m";
+
+        try {
+            await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, () => {
+                writeFileSync(join(dir, ".claude.json"), SafeJSON.stringify({ theme: "light" }));
+                expect(resolvePalette("claude")?.added).toBe(light);
+
+                writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ theme: "dark" }));
+                expect(resolvePalette("claude")).toEqual(palette);
+
+                writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ theme: 1 }));
+                expect(resolvePalette("claude")).toEqual(palette);
+
+                writeFileSync(join(dir, "settings.json"), "{");
+                expect(resolvePalette("claude")?.added).toBe(light);
+
+                writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ model: "keep" }));
+                expect(resolvePalette("claude")?.added).toBe(light);
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("follows Claude Code's theme setting, reads an unknown one as dark, and classic has none", () => {
+        expect(resolvePalette("claude", () => "light")?.added).toBe("\u001b[48;2;220;255;220m");
+        // Claude Code's diff rows, not its theme's `diffAdded`: near black in dark.
+        expect(palette.added).toBe("\u001b[48;2;2;40;0m");
+        expect(resolvePalette("claude", () => "a-theme-from-the-future")).toEqual(palette);
+        expect(resolvePalette("claude", () => undefined)).toEqual(palette);
+        expect(resolvePalette("classic")).toBeNull();
+    });
+
+    it("numbers a removed row with its OLD line, bands both rows and marks the changed word", () => {
+        const patch = ["@@ -10,3 +10,3 @@", " keep", "-const total = 1;", "+const total = 2;", " keep"].join("\n");
+        const rendered = renderPatch(patch, palette);
+
+        expect(rendered.body.map((line) => stripAnsi(line.text))).toEqual([
+            "    10  keep",
+            "    11 -const total = 1;",
+            "    11 +const total = 2;",
+            "    12  keep",
+        ]);
+        expect(rendered.body[1]?.text.startsWith(palette.removed)).toBe(true);
+        expect(rendered.body[2]?.text).toContain(`${palette.addedWord}2${palette.added}`);
+    });
+
+    it("highlights whole words, and nothing when the rows share too little", () => {
+        expect(wordSpans("value = fooBar(x)", "value = fooBaz(x)")).toEqual({ before: [8, 14], after: [8, 14] });
+        expect(wordSpans("alpha", "omega zeta")).toBeNull();
+    });
+
+    it("fills a changed row to the terminal width only once every changed line fits", () => {
+        const patch = ["@@ -1,2 +1,2 @@", "-old line", "+new line", " same"].join("\n");
+        const themed = (width: number): DiffBlock => {
+            const rendered = renderPatch(patch, palette);
+
+            return {
+                head: "head",
+                body: rendered.body,
+                dress: themedDress({ palette, path: "x.ts", width }),
+            };
+        };
+        const budget = (bytes: number) => ({ ...quiet, fill: "terminal" as const, maxMessageChars: bytes });
+        const rows = (message: string) =>
+            message.split("\n").filter((line) => /[+-](old|new) line/.test(stripAnsi(line)));
+
+        const roomy = rows(assembleMessage([themed(60)], budget(100_000)));
+        expect(roomy.map((line) => Bun.stringWidth(stripAnsi(line)))).toEqual([60, 60]);
+
+        // Room for the content and the reserved elision footer (about 40 bytes), not for a fill
+        // (about 43 bytes a row): both rows print, neither is filled.
+        const plainBytes = Buffer.byteLength(assembleMessage([themed(0)], budget(100_000)));
+        const tight = rows(assembleMessage([themed(60)], budget(plainBytes + 50)));
+        expect(tight).toHaveLength(2);
+        expect(tight.every((line) => Bun.stringWidth(stripAnsi(line)) < 60)).toBe(true);
+    });
+
+    it("fills the changed rows of a block to its widest row by default, so a narrower pane does not wrap them", () => {
+        const patch = ["@@ -1,2 +1,2 @@", "-old line that is long", "+new", " same"].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.ts", width: 120 }),
+        };
+        const message = assembleMessage([block], { ...quiet, maxMessageChars: 100_000 });
+        const widths = message
+            .split("\n")
+            .filter((line) => /[+-](old|new)/.test(stripAnsi(line)))
+            .map((line) => Bun.stringWidth(stripAnsi(line)));
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.fill).toBe("block");
+        expect(widths).toHaveLength(2);
+        expect(widths[0]).toBe(widths[1]);
+        expect(widths[0]).toBeLessThan(40);
+    });
+
+    it("wraps a long row under its own content, band and colour carried onto every part", () => {
+        const long = `const message = "${"x".repeat(50)}";`;
+        const patch = ["@@ -1,1 +1,1 @@", "-const message = 1;", `+${long}`].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.ts", width: 40 }),
+        };
+        const rows = assembleMessage([block], { ...quiet, maxMessageChars: 100_000 })
+            .split("\n")
+            .slice(2);
+
+        expect(rows.map((row) => Bun.stringWidth(stripAnsi(row)))).toEqual([40, 40, 40]);
+        // The parts after the first are indented under the content, not started at column 0.
+        expect(stripAnsi(rows[1] ?? "")).toBe(`${" ".repeat(8)}${"x".repeat(32)}`);
+        expect(stripAnsi(rows[2] ?? "")).toMatch(/^ {8}x+";\s*$/);
+        expect(rows.every((row) => row.startsWith(palette.added) || row.startsWith(palette.removed))).toBe(true);
+    });
+
+    it("writes a colour only where the visible text needs a new one, and never a full reset", () => {
+        const pink = "\u001b[38;5;197m";
+        const white = "\u001b[38;5;231m";
+        const bat = `${pink}const\u001b[0m${white} \u001b[0m${white}total\u001b[0m${white} \u001b[0m${white}=\u001b[0m\u001b[1m${pink}x\u001b[0m`;
+        const compact = compactColour(bat);
+
+        expect(stripAnsi(compact)).toBe(stripAnsi(bat));
+        expect(compact).toBe(`${pink}const ${white}total =\u001b[1m${pink}x\u001b[22;23;24m\u001b[39m`);
+        expect(compact).not.toContain("\u001b[0m");
+    });
+
+    it("keeps the context rows right around a change before any other context", () => {
+        const patch = ["@@ -1,7 +1,7 @@", " alpha", " bravo", " charlie", "-old", "+new", " delta", " echo"].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.txt", width: 0 }),
+        };
+        // The two changed rows and their two neighbours fit; the outer context does not.
+        const budget = 4 + 60 + 4 * 40;
+        const shown = stripAnsi(assembleMessage([block], { ...quiet, maxMessageChars: budget }));
+
+        expect(shown).toContain("charlie");
+        expect(shown).toContain("delta");
+        expect(shown).not.toContain("alpha");
+    });
+
+    it("colours every themed row from the start, in 256 colours by default", () => {
+        const rendered = renderPatch(["@@ -1,1 +1,1 @@", "-const a = 1;", "+const a = 2;"].join("\n"), palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.ts", width: 0 }),
+        };
+        const message = assembleMessage([block], { ...DEFAULT_HOOKS_CONFIG.diff, maxMessageChars: 100_000 });
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.highlight).toBe("256");
+        expect(message).toContain("\u001b[38;5;");
+        expect(message).not.toContain("\u001b[0m\u001b[38;");
+    });
+
+    it("keeps a colour that a cut splits across two rows", () => {
+        const rows = wrapVisible("\u001b[38;2;1;2;3mabcdef\u001b[39m", 4);
+
+        expect(rows.map((row) => row.width)).toEqual([4, 2]);
+        expect(rows[1]?.text.startsWith("\u001b[38;2;1;2;3m")).toBe(true);
+    });
+
+    it("fits a long path to the header by cutting folders from the left", () => {
+        expect(fitPath("/tmp/cc/project/session/worktrees/kit/src/Flow/Support/Window.swift", 30)).toBe(
+            "…/Flow/Support/Window.swift"
+        );
+        expect(fitPath("src/a.ts", 30)).toBe("src/a.ts");
+        expect(fitPath("src/a.ts", 0)).toBe("src/a.ts");
+    });
+
+    it("bands nothing in an ansi theme, the way Claude Code colours only the markers there", () => {
+        const ansi = resolvePalette("claude-dark-ansi");
+        const rendered = renderPatch(["@@ -1,1 +1,1 @@", "-old", "+new"].join("\n"), ansi);
+
+        expect(rendered.body[1]?.text).toContain("\u001b[92m+");
+        expect(rendered.body[1]?.text).not.toContain("\u001b[48;");
+    });
+
+    it("puts a file past maxFiles into the full diff, not only its path", () => {
+        const current = begin(
+            { command: "perl -pi -e 1 overflow-a.ts overflow-b.ts", toolUseId: `call-overflow-${calls}` },
+            quiet
+        );
+
+        writeFileSync(join(repo, "overflow-a.ts"), "alpha\n");
+        writeFileSync(join(repo, "overflow-b.ts"), "bravo\n");
+
+        const decision = runDiffPost({
+            payload: current,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...quiet, maxFiles: 1, fullDiff: "path" },
+            },
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            const text = readFileSync(path, "utf8");
+
+            expect(decision.files).toHaveLength(1);
+            expect(text).toContain("+alpha");
+            expect(text).toContain("+bravo");
+            expect(text).not.toContain("## Changed, past the file cap");
+        } finally {
+            rmSync(join(repo, "overflow-a.ts"), { force: true });
+            rmSync(join(repo, "overflow-b.ts"), { force: true });
+            rmSync(path, { force: true });
+        }
+    });
+
+    it("stops taking overflow patches at three times maxFiles, and names the files past that", () => {
+        const names = ["a", "b", "c", "d", "e"].map((letter) => `bound-${letter}.ts`);
+        const current = begin(
+            { command: `perl -pi -e 1 ${names.join(" ")}`, toolUseId: `call-overflow-bound-${calls}` },
+            quiet
+        );
+
+        for (const name of names) {
+            writeFileSync(join(repo, name), `body of ${name}\n`);
+        }
+
+        const decision = runDiffPost({
+            payload: current,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...quiet, maxFiles: 1, fullDiff: "path" },
+            },
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            const text = readFileSync(path, "utf8");
+            const patched = names.filter((name) => text.includes(`+body of ${name}`));
+
+            expect(decision.files).toHaveLength(1);
+            // One rendered block plus three overflow patches; the fifth file is named only.
+            expect(patched).toHaveLength(4);
+            expect(text).toContain("## Changed, past the file cap");
+        } finally {
+            for (const name of names) {
+                rmSync(join(repo, name), { force: true });
+            }
+
+            rmSync(path, { force: true });
+        }
+    });
+
+    it("links the full diff when the budget cuts lines, and the file holds every line", () => {
+        const long = Array.from({ length: 80 }, (_, index) => `line ${index}`).join("\n");
+        const current = begin({ command: "perl -pi -e 1 big.ts", toolUseId: `call-full-${calls}` }, quiet);
+        writeFileSync(join(repo, "big.ts"), `${long}\n`);
+        const decision = runDiffPost({
+            payload: current,
+            config: {
+                ...DEFAULT_HOOKS_CONFIG,
+                diff: { ...quiet, maxMessageChars: 900, fullDiff: "path" },
+            },
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            expect(decision.stats?.elided).toBeGreaterThan(0);
+            expect(stripAnsi(decision.message ?? "")).toContain(`Full diff: ${path}`);
+            expect((decision.message ?? "").length).toBeLessThanOrEqual(900);
+            expect(readFileSync(path, "utf8")).toContain("+line 79");
+        } finally {
+            rmSync(join(repo, "big.ts"), { force: true });
+            rmSync(path, { force: true });
+        }
+    });
+
+    it("renders a file once when the command names it through another path to the same folder", () => {
+        // `/tmp` is a symlink to `/private/tmp` on macOS: git names the root by its real path and
+        // the command by the typed one, and both used to render, 84 times in one day.
+        const alias = join(realpathSync(tmpdir()), `gt-alias-${process.pid}`);
+        symlinkSync(repo, alias);
+
+        try {
+            const current = begin({ command: `perl -pi -e 's/charlie/CHARLIE/' ${alias}/kept.ts` }, quiet);
+            writeFileSync(join(repo, "kept.ts"), "alpha\nbravo\nCHARLIE\ndelta\necho\n");
+            const decision = runDiffPost({ payload: current, config: { ...DEFAULT_HOOKS_CONFIG, diff: quiet } });
+
+            expect(decision.files).toEqual([join(repo, "kept.ts")]);
+            expect(stripAnsi(decision.message ?? "").match(/^Updated /gm)).toEqual(["Updated "]);
+            // Labelled like Claude Code labels it: relative to the session folder.
+            expect(stripAnsi(decision.message ?? "")).toStartWith("Updated kept.ts (+1 -1)");
+        } finally {
+            rmSync(alias);
+            git(["checkout", "--", "kept.ts"]);
+        }
+    });
+});
+
+describe("files the harness writes during every call", () => {
+    it("are never watched as named paths: the decision log, its rotation, the hooks' scratch, transcripts", () => {
+        const log = defaultLogPath();
+
+        expect(harnessOwnFile(log)).toBe(true);
+        expect(harnessOwnFile(`${log}.1`)).toBe(true);
+        expect(harnessOwnFile(join(claimsRoot(), "x.json"))).toBe(true);
+        const claude = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+
+        expect(harnessOwnFile(join(claude, "projects", "-repo", "session.jsonl"))).toBe(true);
+        expect(harnessOwnFile(join(claude, "projects", "-repo", "memory", "note.md"))).toBe(false);
+        expect(harnessOwnFile(join(repo, "kept.ts"))).toBe(false);
+    });
+});
+
+describe("tools agents hooks diff log", () => {
+    it("reads back what a message showed: each file, its changed lines shown, and the notes", () => {
+        const message = [
+            "\u001b[1mUpdated src/a.ts\u001b[0m \u001b[2m(+2 -1)\u001b[0m",
+            "     4  keep",
+            "     5 -old",
+            "     5 +new",
+            "        … 1 more lines",
+            "",
+            "1 file(s) changed by others in this root: b.ts",
+        ].join("\n");
+        const read = readMessage(message);
+
+        expect(read.blocks).toEqual([{ verb: "Updated", path: "src/a.ts", added: 2, removed: 1, changedShown: 2 }]);
+        expect(read.notes).toEqual(["1 file(s) changed by others in this root: b.ts"]);
+    });
+
+    it("splits a message at background task headings: the call's own part first, then each task's", () => {
+        const message = [
+            "Updated src/own.ts (+1 -0)",
+            "     1 +own",
+            "",
+            "background task bgA ended (bun /x/long.ts):",
+            "Added src/task.ts (+2 -0)",
+            "     1 +one",
+            "     2 +two",
+        ].join("\n");
+        const read = readMessage(message);
+
+        expect(read.blocks.map((block) => block.path)).toEqual(["src/own.ts"]);
+        expect(read.tasks).toEqual([
+            {
+                id: "bgA",
+                blocks: [{ verb: "Added", path: "src/task.ts", added: 2, removed: 0, changedShown: 2 }],
+                notes: [],
+            },
+        ]);
+    });
+
+    it("shows a command's first line and then only the lines that name a file", () => {
+        const command = [
+            "cd /repo && python3 - <<'PY'",
+            "import json",
+            "p = 'src/a.ts'",
+            "print(1)",
+            "PY",
+            "git status",
+        ].join("\n");
+
+        expect(commandSlices({ command, files: ["/repo/src/a.ts"] })).toEqual([
+            "cd /repo && python3 - <<'PY'",
+            "…",
+            "p = 'src/a.ts'",
+            "… (6 lines)",
+        ]);
+    });
+
+    it("joins the pre and post record of a call, and a pre record alone is a failed or running call", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-difflog-"));
+        const log = join(dir, "hooks.jsonl");
+        const now = Date.now();
+        const at = (ago: number) => new Date(now - ago).toISOString();
+        const rows = [
+            { at: at(5000), phase: "pre", harness: "claude", session: "s1", toolUseId: "t1", captured: 3, named: 1 },
+            {
+                at: at(4000),
+                phase: "post",
+                harness: "claude",
+                session: "s1",
+                toolUseId: "t1",
+                decision: "emitted",
+                reason: "rendered",
+                files: ["/r/a.ts"],
+            },
+            { at: at(3000), phase: "pre", harness: "claude", session: "s1", toolUseId: "t2", captured: 0, named: 0 },
+            { at: at(2000), phase: "guard", harness: "claude", session: "s1", toolUseId: "t2", decision: "allow" },
+        ];
+
+        writeFileSync(log, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n{"torn`);
+
+        try {
+            const entries = readDiffLog({ logPath: log, since: now - 60_000 });
+
+            expect(entries.map((entry) => [entry.toolUseId, entry.decision, entry.captured])).toEqual([
+                ["t1", "emitted", 3],
+                ["t2", "failed", 0],
+            ]);
+            expect(entries[0] ? formatEntry(entries[0], { extended: false }) : []).toContain("     -> /r/a.ts");
+            expect(readDiffLog({ logPath: log, since: now - 60_000, session: "other" })).toEqual([]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("reads a command from the tail and skips an old subagent transcript", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-difflog-home-"));
+        const claude = mkdtempSync(join(tmpdir(), "gt-difflog-claude-"));
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, CLAUDE_CONFIG_DIR: claude }, () => {
+                const session = "gt-bound-main";
+                const project = join(claude, "projects", "proj-fixture");
+                const main = join(project, `${session}.jsonl`);
+
+                mkdirSync(join(project, session, "subagents"), { recursive: true });
+
+                const toolLine = (id: string, command: string, timestamp: string) =>
+                    SafeJSON.stringify({
+                        type: "assistant",
+                        timestamp,
+                        message: {
+                            role: "assistant",
+                            content: [{ type: "tool_use", id, name: "Bash", input: { command } }],
+                        },
+                    });
+                const old = Array.from({ length: 800 }, (_, index) =>
+                    toolLine(`toolu_old_${index}`, "echo OLD", "2020-01-01T00:00:00.000Z")
+                );
+                const recent = toolLine("toolu_recent", "echo RECENT-COMMAND", new Date().toISOString());
+
+                writeFileSync(main, `${old.join("\n")}\n${recent}\n`);
+                writeFileSync(
+                    join(project, session, "subagents", "agent-side.jsonl"),
+                    `${toolLine("toolu_side_1", "echo SIDE", new Date().toISOString())}\n`
+                );
+
+                const entry: DiffLogEntry = {
+                    at: new Date().toISOString(),
+                    session,
+                    toolUseId: "toolu_recent",
+                    harness: "claude",
+                    decision: "emitted",
+                    reason: "rendered",
+                    files: [],
+                    others: [],
+                    skipped: [],
+                };
+                const stats = extendFromTranscripts([entry]);
+
+                expect(stats.files).toBe(1);
+                expect(stats.parsed).toBeLessThan(10);
+                expect(stats.linesSeen).toBeLessThan(30);
+                expect(entry.command).toContain("RECENT-COMMAND");
+
+                const aged = "gt-bound-oldsub";
+                const agedMain = join(project, `${aged}.jsonl`);
+
+                writeFileSync(agedMain, `${toolLine("toolu_unrelated", "echo OLD", "2020-01-01T00:00:00.000Z")}\n`);
+
+                const side = join(project, aged, "subagents", "agent-old.jsonl");
+
+                mkdirSync(join(project, aged, "subagents"), { recursive: true });
+                writeFileSync(
+                    side,
+                    `${toolLine("toolu_onlysub", "echo SHOULD-NOT-READ", "2026-10-15T00:00:00.000Z")}\n`
+                );
+                utimesSync(side, new Date("2020-01-01T00:00:00.000Z"), new Date("2020-01-01T00:00:00.000Z"));
+
+                const hidden: DiffLogEntry = {
+                    at: new Date().toISOString(),
+                    session: aged,
+                    toolUseId: "toolu_onlysub",
+                    harness: "claude",
+                    decision: "emitted",
+                    reason: "rendered",
+                    files: [],
+                    others: [],
+                    skipped: [],
+                };
+                const hiddenStats = extendFromTranscripts([hidden]);
+
+                expect(hiddenStats.files).toBe(1);
+                expect(hidden.command).toBeUndefined();
+
+                // More than 8 MiB of newer turns after the call, all inside the horizon: still found.
+                const long = "gt-bound-long";
+                const filler = Array.from({ length: 9_000 }, (_, index) =>
+                    toolLine(`toolu_filler_${index}`, `echo ${"x".repeat(1_000)}`, new Date().toISOString())
+                );
+
+                writeFileSync(
+                    join(project, `${long}.jsonl`),
+                    `${toolLine("toolu_early", "echo EARLY-COMMAND", new Date().toISOString())}\n${filler.join("\n")}\n`
+                );
+
+                const early: DiffLogEntry = { ...entry, session: long, toolUseId: "toolu_early" };
+                const earlyStats = extendFromTranscripts([early]);
+
+                expect(early.command).toContain("EARLY-COMMAND");
+                // Each read stays one 64 KiB chunk. Growing the window made the next read 256 KiB.
+                expect(earlyStats.widestRead).toBeLessThanOrEqual(64 * 1024);
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+            rmSync(claude, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("the misfires of 2026-10-14", () => {
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+
+    it("names what `git stash pop` brought back in one line instead of rendering it", () => {
+        writeFileSync(join(repo, "stashed.ts"), "one\n");
+        git(["add", "stashed.ts"]);
+        git(["commit", "-qm", "stashed"]);
+        writeFileSync(join(repo, "stashed.ts"), "one\nSTASHED-EDIT\n");
+        git(["stash", "-q"]);
+
+        const current = begin({ command: "git stash pop" });
+
+        git(["stash", "pop", "-q"]);
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.files).toEqual([]);
+        expect(decision.message ?? "").not.toContain("STASHED-EDIT");
+        expect(decision.message).toContain("changed by git stash pop");
+        git(["checkout", "-q", "--", "stashed.ts"]);
+    });
+
+    it("names a file moved without a change in one line, not as a Deleted and an Added block", () => {
+        writeFileSync(join(repo, "mv-src.ts"), "moved\nbody\n");
+        git(["add", "mv-src.ts"]);
+        git(["commit", "-qm", "mv"]);
+        const past = new Date(Date.now() - 60_000);
+        utimesSync(join(repo, "mv-src.ts"), past, past);
+
+        const current = begin({ command: "git mv mv-src.ts mv-dst.ts" });
+
+        git(["mv", "mv-src.ts", "mv-dst.ts"]);
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.message ?? "").not.toContain("Deleted");
+        expect(decision.message).toContain("mv-src.ts → mv-dst.ts");
+        git(["commit", "-qm", "mv done"]);
+    });
+
+    it("prints a block past maxBlockLines as its header and a count, and links the full diff", () => {
+        const big = join(repo, "big.ts");
+        const diff = { ...plain.diff, maxBlockLines: 5, fullDiff: "path" as const };
+        const current = begin({ command: `bun /x/gen.ts ${big}` }, diff);
+
+        writeFileSync(big, `${Array.from({ length: 12 }, (_, at) => `GENERATED-${at}`).join("\n")}\n`);
+
+        const decision = runDiffPost({ payload: current, config: { ...plain, diff } });
+
+        expect(decision.message).toContain("big.ts");
+        expect(decision.message ?? "").not.toContain("GENERATED-3");
+        expect(stripAnsi(decision.message ?? "")).toContain("… 12 more lines");
+        expect(decision.message).toContain("Full diff:");
+    });
+
+    it("leaves a named file in a temp folder outside git alone, unless showTempScratch", () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "gt-scratch-")));
+        const note = join(scratch, "body.md");
+
+        try {
+            writeFileSync(note, "draft\n");
+
+            const hidden = begin({ command: `bun /x/cli.ts ${note}` });
+            writeFileSync(note, "draft\nSCRATCH-EDIT\n");
+            expect(runDiffPost({ payload: hidden, config: plain }).files).not.toContain(note);
+
+            const diff = { ...plain.diff, showTempScratch: true };
+            const shown = begin({ command: `bun /x/cli.ts ${note}` }, diff);
+            writeFileSync(note, "draft\nSCRATCH-AGAIN\n");
+            expect(stripAnsi(runDiffPost({ payload: shown, config: { ...plain, diff } }).message ?? "")).toContain(
+                "SCRATCH-AGAIN"
+            );
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+    });
+
+    it("leaves a file to another agent's call that names it and is still running", () => {
+        const target = join(repo, "sibling.ts");
+
+        writeFileSync(target, "one\n");
+        git(["add", "sibling.ts"]);
+        git(["commit", "-qm", "sibling"]);
+
+        const theirs = begin({
+            toolUseId: "sib-agent",
+            command: `bun /x/fix.ts ${target}`,
+            raw: { agent_id: "agent-x" },
+        });
+        const mine = begin({ command: "bun run codemod" });
+
+        writeFileSync(target, "one\nSUBAGENT-EDIT\n");
+
+        try {
+            expect(runDiffPost({ payload: mine, config: plain }).files).not.toContain(target);
+        } finally {
+            rmSync(callDir("claude", "gt-diff-test", theirs.toolUseId ?? ""), { recursive: true, force: true });
+            git(["checkout", "-q", "--", "sibling.ts"]);
+        }
+    });
+
+    it("negative control: an abandoned capture of the same agent takes no file away", () => {
+        const target = join(repo, "kept.ts");
+        const abandoned = begin({ toolUseId: "abandoned", command: `bun /x/fix.ts ${target}` });
+        const mine = begin({ command: `bun /x/other.ts ${target}` });
+
+        writeFileSync(target, "alpha\nbravo\nSAME-AGENT\ndelta\necho\n");
+
+        try {
+            expect(runDiffPost({ payload: mine, config: plain }).message).toContain("SAME-AGENT");
+        } finally {
+            rmSync(callDir("claude", "gt-diff-test", abandoned.toolUseId ?? ""), { recursive: true, force: true });
+            git(["checkout", "-q", "--", "kept.ts"]);
+        }
+    });
+
+    it("leaves a file inside a folder the command names to the actor that recorded editing it", () => {
+        const folder = join(repo, "lib-folder");
+        const target = join(folder, "wizard.ts");
+
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(target, "one\n");
+        git(["add", "-A"]);
+        git(["commit", "-qm", "folder"]);
+
+        const mine = begin({ command: "bun run codegen lib-folder/" });
+
+        writeFileSync(target, "one\nOTHER-AGENT\n");
+        recordTouches([
+            { session: "gt-other:agent-y", start: Date.now() - 500, end: Date.now(), kind: "named", path: target },
+        ]);
+
+        try {
+            expect(runDiffPost({ payload: mine, config: plain }).files).not.toContain(target);
+        } finally {
+            git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
+        }
+    });
+
+    it("negative control: a file the command names exactly stays its own, and the log says why", () => {
+        const target = join(repo, "lib-folder", "wizard.ts");
+        const mine = begin({ command: `bun /x/fix.ts ${target}` });
+
+        writeFileSync(target, "one\nMINE-EXACTLY\n");
+        recordTouches([
+            { session: "gt-other:agent-y", start: Date.now() - 500, end: Date.now(), kind: "named", path: target },
+        ]);
+
+        try {
+            const decision = runDiffPost({ payload: mine, config: plain });
+
+            expect(decision.files).toContain(target);
+            expect(decision.attributed?.[target]).toBe("named");
+        } finally {
+            git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
+        }
+    });
+
+    it("gives a git -C command no claim on the session folder's file of the same relative path", () => {
+        const other = realpathSync(mkdtempSync(join(tmpdir(), "gt-git-c-")));
+        const target = join(repo, "lib-folder", "wizard.ts");
+
+        mkdirSync(join(other, "lib-folder"), { recursive: true });
+        writeFileSync(join(other, "lib-folder", "wizard.ts"), "x\n");
+
+        const mine = begin({ command: `git -C ${other} add lib-folder/wizard.ts` });
+
+        writeFileSync(target, "one\nTHEIRS-IN-MAIN\n");
+        recordTouches([
+            { session: "gt-other:agent-y", start: Date.now() - 500, end: Date.now(), kind: "named", path: target },
+        ]);
+
+        try {
+            expect(runDiffPost({ payload: mine, config: plain }).files).not.toContain(target);
+        } finally {
+            git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
+            rmSync(other, { recursive: true, force: true });
+        }
+    });
+
+    it("puts the call's own diff before the background tasks it prints, so diff log can split them", () => {
+        const project = `gt-bg-order-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
+        const output = join(tasks, "bgorder1.output");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const target = join(repo, "background-order.ts");
+        // Outside the task's repository, so the task cannot claim the flushing call's own file.
+        const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "gt-order-")));
+        const own = join(elsewhere, "own-order.ts");
+        // A named file in a temp folder outside git is hidden by default.
+        const config = { ...plain, diff: { ...plain.diff, showTempScratch: true } };
+
+        mkdirSync(tasks, { recursive: true });
+        writeFileSync(output, "");
+        writeFileSync(own, "seed\n");
+
+        try {
+            const started = begin({ toolUseId: "bg-order-call", command: `bun /x/long.ts ${target}` });
+
+            runDiffPost({
+                payload: {
+                    ...started,
+                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgorder1" } },
+                },
+                config,
+            });
+            writeFileSync(target, "BACKGROUND-ORDER\n");
+            writeFileSync(output, "done\n\n[exited with code 0]\n");
+
+            const next = begin({ command: `bun /x/own.ts ${own}`, raw: { transcript_path: transcript } });
+
+            writeFileSync(own, "seed\nOWN-ORDER\n");
+
+            const read = readMessage(composePostDiff({ payload: next, config }).message);
+
+            expect(read.blocks.map((block) => block.path).join(" ")).toContain("own-order.ts");
+            expect(read.tasks.map((task) => task.id)).toEqual(["bgorder1"]);
+            expect(read.tasks[0]?.blocks.map((block) => block.path).join(" ")).toContain("background-order.ts");
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(target, { force: true });
+            rmSync(elsewhere, { recursive: true, force: true });
+        }
+    });
+
+    it("defers a background call's diff to the end of its task", () => {
+        const project = `gt-bg-project-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
+        const output = join(tasks, "bgtest1.output");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const target = join(repo, "background.ts");
+
+        mkdirSync(tasks, { recursive: true });
+        writeFileSync(output, "");
+
+        try {
+            const started = begin({ toolUseId: "bg-call", command: `bun /x/long.ts ${target}` });
+            const deferred = runDiffPost({
+                payload: {
+                    ...started,
+                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgtest1" } },
+                },
+                config: plain,
+            });
+
+            expect(deferred.decision).toBe("deferred");
+
+            writeFileSync(target, "BACKGROUND-EDIT\n");
+
+            const next = begin({ command: "true", raw: { transcript_path: transcript } });
+            expect(flushDeferred({ payload: next, config: plain })).toEqual([]);
+
+            writeFileSync(output, "done\n\n[exited with code 0]\n");
+
+            const flushed = flushDeferred({ payload: next, config: plain });
+
+            expect(flushed.map((item) => item.task?.id)).toEqual(["bgtest1"]);
+            expect(flushed[0]?.message).toContain("BACKGROUND-EDIT");
+            expect(flushDeferred({ payload: next, config: plain })).toEqual([]);
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(target, { force: true });
+        }
+    });
+
+    it("does not announce a rename that was already gone when this command began", () => {
+        writeFileSync(join(repo, "owned-src.ts"), "moved\nbody\n");
+        git(["add", "owned-src.ts"]);
+        git(["commit", "-qm", "owned"]);
+        const past = new Date(Date.now() - 60_000);
+
+        utimesSync(join(repo, "owned-src.ts"), past, past);
+
+        const first = begin({ command: "git mv owned-src.ts owned-dst.ts" });
+
+        git(["mv", "owned-src.ts", "owned-dst.ts"]);
+        expect(runDiffPost({ payload: first, config: plain }).message).toContain("owned-src.ts → owned-dst.ts");
+
+        const status = runDiffPost({ payload: begin({ command: "git status" }), config: plain }).message ?? "";
+
+        expect(status).not.toContain("moved unchanged");
+        expect(status).not.toContain("owned-src.ts → owned-dst.ts");
+
+        const build = runDiffPost({ payload: begin({ command: "bun run build" }), config: plain }).message ?? "";
+
+        expect(build).not.toContain("moved unchanged");
+        expect(build).not.toContain("owned-src.ts → owned-dst.ts");
+        git(["commit", "-qm", "owned done"]);
+    });
+
+    it("does not announce a rename another actor owns", () => {
+        writeFileSync(join(repo, "foreign-src.ts"), "moved\nbody\n");
+        git(["add", "foreign-src.ts"]);
+        git(["commit", "-qm", "foreign"]);
+        const past = new Date(Date.now() - 60_000);
+
+        utimesSync(join(repo, "foreign-src.ts"), past, past);
+
+        const current = begin({ command: "bun run build" });
+
+        git(["mv", "foreign-src.ts", "foreign-dst.ts"]);
+        recordTouches([
+            {
+                session: "gt-other:agent-y",
+                start: Date.now() - 500,
+                end: Date.now(),
+                kind: "named",
+                path: join(repo, "foreign-dst.ts"),
+            },
+        ]);
+
+        const text = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        expect(text).not.toContain("moved unchanged");
+        expect(text).not.toContain("foreign-src.ts → foreign-dst.ts");
+        git(["commit", "-qm", "foreign done"]);
+    });
+
+    it("keeps every ended background task inside one message budget", () => {
+        const session = `gt-bg-budget-${process.pid}`;
+        const project = `gt-bg-budget-project-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, session, "tasks");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const diff = { ...plain.diff, maxMessageChars: 700, highlight: "none" as const, fullDiff: "path" as const };
+        const config = { ...plain, diff };
+        const ids = ["bgtaskA", "bgtaskB", "bgtaskC"] as const;
+        const body = (id: string) =>
+            `${Array.from({ length: 80 }, (_, at) => `LINE-${id}-${at}-xxxxxxxx`).join("\n")}\n`;
+
+        mkdirSync(tasks, { recursive: true });
+        mkdirSync(join(tmpdir(), project), { recursive: true });
+
+        try {
+            const probe = join(repo, "budget-probe.ts");
+
+            writeFileSync(probe, "seed\n");
+            git(["add", "budget-probe.ts"]);
+            git(["commit", "-qm", "budget probe"]);
+
+            const probeCall = begin(
+                { sessionId: session, toolUseId: "budget-probe", command: `bun /x/long.ts ${probe}` },
+                diff
+            );
+
+            writeFileSync(probe, body("probe"));
+
+            const alone = runDiffPost({ payload: probeCall, config, maxChars: Math.floor(700 / 2) });
+
+            expect((alone.message ?? "").length).toBeGreaterThan(200);
+
+            for (const id of ids) {
+                const target = join(repo, `budget-${id}.ts`);
+                const output = join(tasks, `${id}.output`);
+
+                writeFileSync(target, "seed\n");
+                git(["add", `budget-${id}.ts`]);
+                git(["commit", "-qm", `budget ${id}`]);
+                writeFileSync(output, "");
+
+                const started = begin(
+                    { sessionId: session, toolUseId: `call-${id}`, command: `bun /x/long.ts ${target}` },
+                    diff
+                );
+
+                runDiffPost({
+                    payload: {
+                        ...started,
+                        raw: { transcript_path: transcript, tool_response: { backgroundTaskId: id } },
+                    },
+                    config,
+                });
+                writeFileSync(target, body(id));
+                writeFileSync(output, "done\n\n[exited with code 0]\n");
+            }
+
+            // A task whose message can no longer fit stays for the next post phase instead of being
+            // taken and dropped, so every task is shown, over as many phases as the budget needs.
+            const shown: string[] = [];
+
+            for (let phase = 0; phase < ids.length && shown.length < ids.length; phase += 1) {
+                const next = begin(
+                    {
+                        sessionId: session,
+                        toolUseId: `budget-next-${phase}`,
+                        command: "true",
+                        raw: { transcript_path: transcript },
+                    },
+                    diff
+                );
+                const composed = composePostDiff({ payload: next, config });
+
+                expect(composed.flushed.length).toBeGreaterThan(0);
+                expect(composed.message.length).toBeLessThanOrEqual(700);
+
+                for (const item of composed.flushed) {
+                    expect(item.message ?? "").not.toBe("");
+                    shown.push(item.task?.id ?? "");
+                }
+            }
+
+            expect(shown.sort()).toEqual([...ids].sort());
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(sessionDir("claude", session), { recursive: true, force: true });
+            git([
+                "checkout",
+                "-q",
+                "--",
+                "budget-probe.ts",
+                "budget-bgtaskA.ts",
+                "budget-bgtaskB.ts",
+                "budget-bgtaskC.ts",
+            ]);
+        }
     });
 });

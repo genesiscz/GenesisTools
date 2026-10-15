@@ -46,7 +46,15 @@ export interface NamedCapture {
  * Copies of files the command named, so the post phase has a before-state. They can hold
  * secrets exactly like the root tars, so the tree is 0700 and every copy 0600.
  */
-export function captureNamed(dir: string, paths: string[], config: DiffConfig): NamedCapture {
+export function captureNamed({
+    dir,
+    paths,
+    config,
+}: {
+    dir: string;
+    paths: string[];
+    config: DiffConfig;
+}): NamedCapture {
     const entries: NamedEntry[] = [];
     const skipped: string[] = [];
     const existing: { path: string; stat: Stats }[] = [];

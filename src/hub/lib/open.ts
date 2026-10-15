@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
@@ -131,17 +132,14 @@ export function hubArgs(options: OpenHubOptions): string[] {
 export function hubUrl(
     options: Pick<OpenHubOptions, "mode" | "session" | "agent" | "pr" | "reveal" | "tab" | "filter" | "worktree">
 ): string {
-    // encodeURIComponent, not URLSearchParams: that writes a space as `+`, which Foundation's
-    // URLComponents reads back as a literal plus.
-    const query: string[] = [];
-    for (const key of ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree"] as const) {
-        const value = options[key];
-        if (value !== undefined && value !== "") {
-            query.push(`${key}=${encodeURIComponent(value)}`);
-        }
-    }
+    // The link itself is built in the router utils, beside its https twin, so the two cannot drift.
+    const { mode, session, agent, pr, reveal, tab, filter, worktree } = options;
 
-    return query.length > 0 ? `genesis-tools://hub?${query.join("&")}` : "genesis-tools://hub";
+    return schemeLink({
+        preset: "genesis-hub",
+        action: "open",
+        data: { mode, session, agent, pr, reveal, tab, filter, worktree },
+    });
 }
 
 /** Why the installed app cannot serve the hub as it is, or undefined when it can. */
