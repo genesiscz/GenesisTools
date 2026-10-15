@@ -84,3 +84,12 @@ checklist.md or motion.md as well.
   assistive tool could address one. Identifiers must be unique per window. d5ae82bef.
 - 2026-10-10 — **Expand jumped preview → full in one frame; collapse showed an empty card.** Per-frame window
   resizes plus a 250 ms content build before the first frame. Fixed with one resize + an animated mask. 417458101.
+- 2026-10-15 — **"Show in Sidebar" re-rooted the tree for a deep note.** Martin expected the folders to open and the
+  tree to glide to the row; changing the root is "Navigate in Sidebar". Show in Sidebar now keeps the root at any
+  depth; outside the root it re-roots at the deepest folder shared with the old root, then glides to the row.
+- 2026-10-15 — **The tree header did not read as "the folder you are in".** A bare monospaced name looked like a
+  button label. Now: a folder glyph in the accent, the parent folder muted, the name in semibold, on an accent tint,
+  with back/forward arrows that restore the exact earlier tree (root, open folders, scroll offset).
+- 2026-10-15 — **Text that grows with a sidebar's width grew too far** (+4 pt to 17 pt). Capped at +1.5 pt.
+- 2026-10-15 — **A dead-end message needs a way out.** "File is gone" now makes the path a menu: open in the default
+  app, show the folder in Finder, navigate to the folder in the sidebar.

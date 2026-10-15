@@ -253,3 +253,40 @@ Key the cache by file identity (`stat`: inode, size, mtime), bucket pixel sizes 
   call returns, the transcript after its first layout. A content with nothing to wait for calls `ready` on appear; the
   timeout (0.6 s) covers one that never signals. The leaving copy must give up shared things (sheets, find panels,
   the window's web proxy): the viewer passes `leaving` to its pane.
+
+## From the GenesisKit markdown viewer's file tree (2026-10-15 19:15)
+
+Release check app, a 600-row tree, 360 wheel events through the window, CPU per event, two interleaved rounds each.
+
+### A SwiftUI `LazyVStack` of rows costs about 12 to 17 ms per scroll event
+- Every scroll frame re-laid out the visible rows, hashed and compared their ids, and walked every row's responders
+  for accessibility focus. 100 tabs open made it worse (each publish re-ran the tree).
+- **Fix: an `NSTableView` whose cells host the SwiftUI row** (`MarkdownTreeTable`). Scrolling only moves the clip
+  view; a row's SwiftUI view is built when its cell comes into view or its value changes. 16.7 / 17.1 → 5.7 / 5.6 ms
+  (debug), 15.7 / 16.1 → 5.2 / 5.8 ms (release).
+- Folder open/close: diff the old and new row keys and `insertRows`/`removeRows` with `.slideDown`/`.slideUp`
+  (`MarkdownTreeTable.animate`); reload only when Reduce Motion is on or the change is large.
+- Row ids that are long paths: hash once (`FileTreeRowKey`), never re-hash a `String` per comparison.
+
+### A hosted cell's safe area lays out the whole window
+- Each cell's `NSHostingView` re-evaluated its safe area on scroll, and the invalidation climbed to the table's own
+  SwiftUI host, so every frame laid out the window root. `host.safeAreaRegions = []` in the cell: 5.2 / 5.8 → 4.4 /
+  5.1 ms. Found by breaking on `-[NSView setNeedsLayout:]` for the root view in a scratch app (never on Martin's apps).
+
+### A scrolling AppKit view inside any SwiftUI host makes that host lay out every frame
+- Moving the table into its own `NSHostingView` gave nothing (that host laid out every frame instead). Laying the
+  table's scroll view over the window's SwiftUI root, as a sibling of the root (`MarkdownWindowContentView` +
+  `MarkdownOverlaySlot`), stopped the root's layout (500–570 → 98 samples) but saved only 13% (5.5 / 5.1 → 4.8 / 4.2
+  ms): the rest is SwiftUI building rows as they scroll in. A table of AppKit rows measured 2.0 ms beside the root.
+- Cost of the overlay: the window's content view is AppKit's, so focus and right-clicks behave differently (see
+  gotchas.md). Do it only when the measured gain is worth it.
+
+### Measure scroll cost on a visible window
+- A window behind the desktop or at alpha 0 is not drawn, so its scroll cost reads near zero. Use a visible window on
+  a second display (or a quiet moment), interleave the before and after builds, and report each round.
+- Debug builds cost about 25% more than release here. Install with `bun run start` (release) before judging lag.
+
+### Divider drags: log, do not guess
+- A resize that "is not 1:1" was not reproducible. The divider now logs one line per drag to the unified log
+  (subsystem `genesiskit`): moves, pointer and divider travel, the largest gap, the overlay's drift from its slot.
+  A drag that stops at the sidebar's maximum width (560 pt) looks like lag; check the clamp first.

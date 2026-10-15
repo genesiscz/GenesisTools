@@ -231,3 +231,30 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **Swift 6 `@MainActor` class + `DispatchQueue.main.async { self… }` compiles only because the package is in Swift 5
   mode** (`swift-tools-version: 5.9`). New async hops in GenesisKit follow the file's existing pattern; do not mix
   `Task.detached` and GCD in one model.
+
+## From the GenesisKit markdown viewer's file tree (2026-10-15 19:15)
+
+- **`NSTableView` swallows clicks meant for SwiftUI buttons in its cells** until `validateProposedFirstResponder(_:for:)`
+  returns `true`.
+- **An `NSTableView` of hosted SwiftUI cells hides its rows from accessibility search** unless
+  `accessibilityChildren` returns `NSAccessibility.unignoredChildren(from:)` of the on-screen cells. Raw row views or
+  ignored `NSView`s make the rows vanish; all rows made an AX search take 3.6 to 4.1 s.
+- **A right-click on an AppKit view laid over a SwiftUI root never reaches SwiftUI's `.contextMenu`.** AppKit sends an
+  unhandled right-click up the clicked view's superviews only, and an overlay's superviews are AppKit's. Asking the
+  root's `menu(for:)` returns nil, and a slot that declines the hit test hands SwiftUI a point over its placeholder,
+  which opens nothing. What works: the overlay ends at its content, and a view inside the root (the slot) takes the
+  rest of the hit and returns no menu, so AppKit walks up to the SwiftUI host.
+- **A window whose content view is an AppKit container gives its first focus to the first view in the key-view loop**
+  that accepts it. Here that was a sidebar divider: a blue focus ring the height of the window, and arrow keys that
+  resized the sidebar. Gate such controls on keyboard navigation (`NSApp.isFullKeyboardAccessEnabled`) and draw focus
+  as an accent line, not a ring.
+- **Every file is not text.** A viewer that loads documents with `String(contentsOf:encoding: .utf8)` and treats a
+  failure as "missing" shows "File is gone" for a PNG that exists. Check `fileExists` before calling a file missing.
+- **A stuck window (clicks do nothing, AX presses work) after a held press:** `isMovableByWindowBackground` made the
+  hosting view's whole area a window drag, which kept the mouse-up. Turn it off for windows with SwiftUI controls.
+- **Proving a context menu:** `tools control` right-clicks are window events and open no SwiftUI context menu, and
+  `AXShowMenu` on a SwiftUI button timed out (2026-10-15, being fixed in tools control). In a scratch app, send a
+  real `rightMouseDown` through `NSWindow.sendEvent` and read the menu on `NSMenu.didBeginTrackingNotification`, then
+  `cancelTrackingWithoutAnimation()`.
+- **`git checkout --theirs <file>` takes the other side's whole file**, dropping this side's hunks that did not
+  conflict. For "theirs wins only in conflicts" use `git merge-file --theirs ours base theirs`.

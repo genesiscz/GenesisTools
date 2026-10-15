@@ -99,3 +99,13 @@ bun --cpu-prof-md ...   # Bun's own markdown summary (await gaps billed as work,
 The file is Chrome's `.cpuprofile` JSON: `nodes` (with `callFrame` and `children`), `samples` (leaf node ids),
 `timeDeltas` (µs since the previous sample). Weight samples by the gap to the NEXT sample, and clip long gaps.
 Research notes: `<notes vault>/Dev/Bun/2026-10-12-BunCpuProfiling/`.
+
+## 7. Native UI cost (2026-10-15, markdown viewer)
+
+- Measure CPU per input event (`ps -o cputime` before and after N scripted events), not frame rate: it shows the cost
+  even when frames are not dropped.
+- Interleave the before and after builds, two rounds each, on a visible window; a hidden window is not drawn.
+- `sample <pid> 5` during the scripted events, then count the main thread's `NSHostingView.layout` calls by stack
+  depth: a layout at the window root every frame means something asks the whole window to lay out.
+- Find who asks with a conditional breakpoint on `-[NSView setNeedsLayout:]` for that view's address, in a scratch
+  app only (lldb on a user's app froze the Mac once).
