@@ -26,6 +26,7 @@ import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -189,7 +190,7 @@ export function registerRestoreAfterRestartCommand(program: Command): void {
     program
         .command("restore-after-restart")
         .description(
-            "Restore cmux tabs after a crash or restart: resume each tab's Claude/Grok/Codex session (found by the tab's surface UUID) and its last shell command. --in-place types into the tabs cmux reopened; the default rebuilds them as new workspaces. Examples: tools cmux --readme"
+            `Restore cmux tabs after a crash or restart: resume each tab's Claude/Grok/Codex session (found by the tab's surface UUID) and its last shell command. --in-place types into the tabs cmux reopened; the default rebuilds them as new workspaces. Examples: ${toolCommand("cmux", "--readme")}`
         )
         .option("--source [source]", "previous | live | profile")
         .option("--profile <name>", "Named profile (with --source profile)")

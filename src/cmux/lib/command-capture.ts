@@ -7,6 +7,7 @@ import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { carryAgentFlags } from "@genesiscz/utils/agent-sessions/resume-flags";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
@@ -533,7 +534,7 @@ export function journalReplayCommand(
         return {
             command: run.launcher,
             drift: [
-                `\`tools cmux agents new\` ${run.agent} tab: resumes its session, the first prompt is not sent again`,
+                `\`${toolCommand("cmux", "agents", "new")}\` ${run.agent} tab: resumes its session, the first prompt is not sent again`,
             ],
         };
     }
