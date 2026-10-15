@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { setCcRunAliases } from "@app/cmux/lib/command-capture";
+import { setCcRunAliases } from "@app/cmux/lib/launchers";
 import * as restore from "@app/cmux/lib/restore";
 import * as liveSessions from "@app/cmux/lib/session-close-live";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";

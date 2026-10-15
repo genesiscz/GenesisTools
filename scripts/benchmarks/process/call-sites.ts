@@ -295,10 +295,10 @@ export const CALL_SITES: CallSite[] = [
     },
     {
         id: "cmux-tty-capture",
-        file: "src/cmux/lib/command-capture.ts",
+        file: "src/cmux/lib/tty-capture.ts",
         spawn: "ps -axo tty=,etime=,command=",
         frequency: "per-poll",
-        run: async () => (await import("@app/cmux/lib/command-capture")).collectTtyCapture(),
+        run: async () => (await import("@app/cmux/lib/tty-capture")).collectTtyCapture(),
     },
     {
         id: "codex-writer-started",

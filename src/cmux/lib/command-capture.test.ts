@@ -2,23 +2,17 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { journalReplayCommand } from "@app/cmux/lib/command-capture";
+import { agentKindFromLauncher, discoverCcRunAliases, isAgentLauncher, setCcRunAliases } from "@app/cmux/lib/launchers";
 import {
-    agentKindFromLauncher,
-    cleanLaunchCommand,
-    collectTtyCapture,
     deriveReplayCommand,
-    discoverCcRunAliases,
-    isAgentLauncher,
-    journalReplayCommand,
-    loadSurfaceSessions,
-    pickSurfaceSession,
     resumeQueryFromCommand,
     resumeTargetFromCommand,
-    setCcRunAliases,
-    staleSessionNote,
     stripModelFlags,
-} from "@app/cmux/lib/command-capture";
+} from "@app/cmux/lib/render-resume";
+import { loadSurfaceSessions, pickSurfaceSession, staleSessionNote } from "@app/cmux/lib/surface-sessions";
 import { agentOfCommand } from "@app/cmux/lib/tab-process";
+import { cleanLaunchCommand, collectTtyCapture } from "@app/cmux/lib/tty-capture";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
 

@@ -1,5 +1,6 @@
-import { agentKindFromLauncher, cleanLaunchCommand } from "@app/cmux/lib/command-capture";
+import { agentKindFromLauncher } from "@app/cmux/lib/launchers";
 import { mapTerminalSurfaces } from "@app/cmux/lib/profile-walk";
+import { cleanLaunchCommand } from "@app/cmux/lib/tty-capture";
 import type { Profile } from "@app/cmux/lib/types";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 

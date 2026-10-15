@@ -1,7 +1,6 @@
 import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
 import { panelsById, readAutosaveSession, readPreviousAutosaveSession } from "@app/cmux/lib/autosave";
 import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
-import { loadSurfaceSessions } from "@app/cmux/lib/command-capture";
 import { renderProfileCommandDetail, renderProfileTree } from "@app/cmux/lib/format";
 import { buildOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 import {
@@ -23,6 +22,7 @@ import { planInPlaceSettled, renderInPlaceStep, runInPlaceRestore } from "@app/c
 import { loadSavedScreens } from "@app/cmux/lib/screen-cache";
 import { captureProfile, getCmuxVersion } from "@app/cmux/lib/snapshot";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
+import { loadSurfaceSessions } from "@app/cmux/lib/surface-sessions";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";

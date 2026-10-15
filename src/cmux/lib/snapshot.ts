@@ -6,16 +6,8 @@ import {
 } from "@app/cmux/lib/agent-replay";
 import { type AutosaveSession, panelsById, panelWorkingDirectory, readAutosaveSession } from "@app/cmux/lib/autosave";
 import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
-import {
-    collectTtyCapture,
-    isAgentLauncher,
-    journalReplayCommand,
-    loadPinnedAccounts,
-    loadSurfaceSessions,
-    pickSurfaceSession,
-    type SurfaceSessionInfo,
-    staleSessionNote,
-} from "@app/cmux/lib/command-capture";
+import { journalReplayCommand } from "@app/cmux/lib/command-capture";
+import { isAgentLauncher } from "@app/cmux/lib/launchers";
 import { loadSavedScreens, preferredScreenText } from "@app/cmux/lib/screen-cache";
 import {
     captureSurfaceState,
@@ -23,6 +15,14 @@ import {
     lastCommandFromCapture,
     type SurfaceCaptureResult,
 } from "@app/cmux/lib/shell-probe";
+import {
+    loadPinnedAccounts,
+    loadSurfaceSessions,
+    pickSurfaceSession,
+    type SurfaceSessionInfo,
+    staleSessionNote,
+} from "@app/cmux/lib/surface-sessions";
+import { collectTtyCapture } from "@app/cmux/lib/tty-capture";
 import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { resolveWindowId } from "@app/cmux/lib/window-ref";

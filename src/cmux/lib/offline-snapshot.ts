@@ -9,19 +9,18 @@ import {
     readAutosaveSession,
 } from "@app/cmux/lib/autosave";
 import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
+import { journalReplayCommand } from "@app/cmux/lib/command-capture";
+import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/launchers";
+import { deriveReplayCommand } from "@app/cmux/lib/render-resume";
+import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
+import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import {
-    agentKindFromLauncher,
-    collectTtyLaunchCommands,
-    deriveReplayCommand,
-    isAgentLauncher,
-    journalReplayCommand,
     loadSurfaceSessions,
     pickSurfaceSession,
     type SurfaceSessionInfo,
     staleSessionNote,
-} from "@app/cmux/lib/command-capture";
-import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
-import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
+} from "@app/cmux/lib/surface-sessions";
+import { collectTtyLaunchCommands } from "@app/cmux/lib/tty-capture";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";

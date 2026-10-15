@@ -1,6 +1,7 @@
-import { agentKindFromLauncher, isAgentLauncher, resumeTargetFromCommand } from "@app/cmux/lib/command-capture";
+import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/launchers";
 import { liveTree } from "@app/cmux/lib/live-layout";
 import { profileSurfaces } from "@app/cmux/lib/profile-walk";
+import { resumeTargetFromCommand } from "@app/cmux/lib/render-resume";
 import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
 import { agentsOnTtys, idleShellTtys, runningAgentSessions, type TtyAgent } from "@app/cmux/lib/tab-process";
 import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";

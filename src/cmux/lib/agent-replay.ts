@@ -1,15 +1,14 @@
 import { homedir } from "node:os";
 import { getSessionListing } from "@app/claude/lib/history/search";
+import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/launchers";
+import { mapTerminalSurfaces } from "@app/cmux/lib/profile-walk";
 import {
-    agentKindFromLauncher,
     bareResumeFlag,
     deriveReplayCommand,
-    isAgentLauncher,
     resumeQueryFromCommand,
     resumeTargetFromCommand,
     stripModelFlags,
-} from "@app/cmux/lib/command-capture";
-import { mapTerminalSurfaces } from "@app/cmux/lib/profile-walk";
+} from "@app/cmux/lib/render-resume";
 import type { Profile, ResumeEvidence, TerminalSurface } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
