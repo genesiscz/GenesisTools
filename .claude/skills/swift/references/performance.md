@@ -371,3 +371,30 @@ window, load average 15 to 25. Stall reports from the real app showed 509 to 126
 - A body probe (`tree.row`) cannot see a list that rebuilds its rows and then skips every body. A probe in the row's
   `init` (`tree.rowItem`) counts it, and it exists in the old code too, so a regression test can fail on the old
   version (`MarkdownWindowPublishCostTests`: 9 rows built and 9 tab bodies for 3 publishes before, 0 after).
+
+## Fourth pass on the markdown viewer: bridged paths, N² tabs, web views on the click (2026-10-15 06:32)
+
+Evidence: 38 stalls over 500 ms in one night (`~/.genesis/logs/hangs/stack-md-*.txt`). Each holds ONE sample taken as
+the stall ended, so it names the pass (layout, a web view init, `setFrame`) and not its cause. The causes came from
+the bench (`MarkdownTreeLagBenchTests`, now with `MARKDOWN_TREE_BENCH_TABS`, `MARKDOWN_TREE_BENCH_WRAP` and a
+select-phase mark file for `sample`).
+
+### Bridged strings in a model
+- `URL.path`, `lastPathComponent` and Foundation listings return NSString-backed Strings when the path holds a
+  non-ASCII letter ("Č"). `==`, hashing and searching walk them through CoreFoundation a character at a time
+  (`_CFStringCheckAndGetCharacterAtIndex`, `_foreignIndex` in the stalls). Make a path native once where it enters a
+  model (`String.nativeUTF8`, `makeContiguousUTF8()`). 636 vault paths: find one 0.42 → 0.02 ms, Set 1.42 → 0.36 ms.
+- A computed `id { url.path }` builds that bridged string on every read; store it in `init`.
+- `model.selected` (a search by id) asked once per tab made a tab bar pass N². Read it once per body.
+- **Measured** (100 tabs, Wrap Tabs, debug, two interleaved rounds): 20 unrelated publishes 869 / 859 → 350 / 285 ms
+  busy; 10 tab switches 1788 / 2420 → 1500 / 1259 ms.
+
+### A web view per click
+- The spare page is consumed by the first new pane and refilled 1.5 s later, so a burst of opened tabs built one
+  `WKWebView` per pane on the main thread (580 to 1799 ms each). A page leaving the window now becomes the spare
+  (`MarkdownWebSpare.recycle` from `dismantleNSView`). Reset what a pane sets only when it has one (marks, line
+  highlight, column width); the render-tag check compares equality, so the old tag cannot confirm a new render.
+
+### Check the build configuration first
+- The installed app at 04:01 was a DEBUG build (`start:debug`; same size as the worktree's debug product, no release
+  product there). Before profiling a user's lag, compare the installed binary with the build products.

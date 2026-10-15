@@ -158,3 +158,8 @@ checklist.md or motion.md as well.
 - 2026-10-15 — **A create menu must say where the item lands.** "New file or folder in Design or …" left the target
   unclear. One possible folder: "New File in Notes…". Two (the open note's folder and the root): "New File in…"
   and "New Folder in…" submenus that list both by name.
+- 2026-10-15 — **"Show in Sidebar" did nothing on a note another session had just written.** The file tree never
+  re-read a folder after its first listing, so the new note had no row and the reveal had nothing to scroll to; the
+  user saw no feedback at all. Fix: the tree watches its root (FSEvents) and a reveal re-reads a folder that lacks the
+  file; the reveal jumps a far row to the nearer edge, glides the last stretch and pulses the row. Before and after
+  recordings in the notes vault's `GenesisTools.native/MarkdownViewer/Screenshots/2026-10-15-0618-*`.
