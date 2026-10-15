@@ -409,11 +409,43 @@ function gitDirectory({
  * produces no token of its own.
  */
 export function namedArguments(command: string, bases: string[]): string[] {
-    const found: string[] = [];
+    return walkNamed({ command, bases, readings: false }).found;
+}
+
+/**
+ * What the relative paths of a `git -C <dir>` element name: `scoped`, read inside `<dir>`, and
+ * `misread`, the same tokens read against each of `bases` the way a parser that ignores `-C`
+ * reads them, minus every path the rest of the command names. `mentionsOf` reads tokens out of
+ * the text with no statement structure, so it drops `misread` and adds `scoped`: through it,
+ * `git -C /other add src/a.ts` still named `main/src/a.ts` (eve on #520, 2026-10-15).
+ */
+export function gitDirReadings(command: string, bases: string[]): { scoped: string[]; misread: string[] } {
+    if (!command.includes("-C")) {
+        return { scoped: [], misread: [] };
+    }
+
+    const walked = walkNamed({ command, bases, readings: true });
+    const kept = new Set([...walked.found, ...walked.outside]);
+
+    return { scoped: walked.scoped, misread: walked.misread.filter((path) => !kept.has(path)) };
+}
+
+interface Walked {
+    found: string[];
+    /** Relative tokens of `git -C` elements, read inside their folder. */
+    scoped: string[];
+    /** The same tokens read against every base. */
+    misread: string[];
+    /** Every other token read against every base, so a path named outside `git -C` is kept. */
+    outside: string[];
+}
+
+function walkNamed({ command, bases, readings }: { command: string; bases: string[]; readings: boolean }): Walked {
+    const walked: Walked = { found: [], scoped: [], misread: [], outside: [] };
     const scanned = scan(command, "named paths");
 
     if (!scanned) {
-        return found;
+        return walked;
     }
 
     const known = new Map<string, string>();
@@ -428,13 +460,24 @@ export function namedArguments(command: string, bases: string[]): string[] {
                 const from = gitDir ? [gitDir] : bases;
 
                 for (const token of tokens) {
-                    add({ into: found, raw: rawToken(command, token), bases: from, known });
-                    add({
-                        into: found,
-                        raw: nextRawArgument(command, token.start + token.text.length),
-                        bases: from,
-                        known,
-                    });
+                    for (const raw of [
+                        rawToken(command, token),
+                        nextRawArgument(command, token.start + token.text.length),
+                    ]) {
+                        add({ into: walked.found, raw, bases: from, known });
+
+                        if (!readings) {
+                            continue;
+                        }
+
+                        for (const base of bases) {
+                            add({ into: gitDir ? walked.misread : walked.outside, raw, bases: [base], known });
+                        }
+
+                        if (gitDir) {
+                            add({ into: walked.scoped, raw, bases: [gitDir], known });
+                        }
+                    }
                 }
 
                 // A pipeline stage runs in a subshell: its assignments end with it.
@@ -445,5 +488,5 @@ export function namedArguments(command: string, bases: string[]): string[] {
         }
     }
 
-    return found;
+    return walked;
 }

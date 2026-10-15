@@ -55,6 +55,16 @@ export interface DiffLogEntry {
     fullDiff?: string;
     /** Why each printed file counted as the call's (logged since 2026-10-15): named, named folder, mentioned, runner, writer. */
     attributed?: Record<string, string>;
+    /** A background task's id, when this row is the diff printed at the end of that task. */
+    task?: string;
+    /** The call whose post phase printed it: that call's message holds this task's blocks. */
+    flushedBy?: string;
+}
+
+/** The blocks and notes of one part of a hook message. */
+export interface ShownPart {
+    blocks: ShownBlock[];
+    notes: string[];
 }
 
 type LogRecord = Record<string, unknown>;
@@ -143,6 +153,8 @@ export function readDiffLog(options: { logPath: string; since: number; session?:
             dropped: typeof record.dropped === "number" ? record.dropped : undefined,
             fullDiff: typeof record.fullDiff === "string" ? record.fullDiff : undefined,
             attributed: attributedOf(record.attributed),
+            ...(typeof record.background === "string" ? { task: record.background } : {}),
+            ...(typeof record.flushedBy === "string" ? { flushedBy: record.flushedBy } : {}),
         });
     }
 
@@ -173,13 +185,36 @@ const NOTE = /^(\d+ file\(s\) changed by others|\d+ dirty file\(s\) changed with
 /** The marker column of a body row: six columns of line number, then a space. */
 const MARKER = 7;
 
-/** What one hook message showed, read back from the text Claude Code recorded. */
-export function readMessage(message: string): { blocks: ShownBlock[]; notes: string[]; chars: number } {
-    const blocks: ShownBlock[] = [];
-    const notes: string[] = [];
+/** The heading `composePostDiff` puts above an ended background task's diff (`deferredTaskHeading`). */
+const TASK_HEADING = /^background task (\S+) ended \(/;
+
+/**
+ * What one hook message showed, read back from the text Claude Code recorded. The call's own part
+ * comes first; each background task the call printed follows under its heading, in `tasks`.
+ */
+export function readMessage(message: string): {
+    blocks: ShownBlock[];
+    notes: string[];
+    chars: number;
+    tasks: Array<ShownPart & { id: string }>;
+} {
+    const own: ShownPart = { blocks: [], notes: [] };
+    const tasks: Array<ShownPart & { id: string }> = [];
+    let part: ShownPart = own;
     let current: ShownBlock | null = null;
 
     for (const line of stripAnsi(message).split("\n")) {
+        const task = TASK_HEADING.exec(line);
+
+        if (task) {
+            const next = { id: task[1] ?? "", blocks: [], notes: [] };
+
+            tasks.push(next);
+            part = next;
+            current = null;
+            continue;
+        }
+
         const header = HEADER.exec(line);
 
         if (header) {
@@ -190,12 +225,12 @@ export function readMessage(message: string): { blocks: ShownBlock[]; notes: str
                 removed: Number(header[4]),
                 changedShown: 0,
             };
-            blocks.push(current);
+            part.blocks.push(current);
             continue;
         }
 
         if (NOTE.test(line)) {
-            notes.push(line);
+            part.notes.push(line);
             current = null;
             continue;
         }
@@ -205,7 +240,7 @@ export function readMessage(message: string): { blocks: ShownBlock[]; notes: str
         }
     }
 
-    return { blocks, notes, chars: message.length };
+    return { blocks: own.blocks, notes: own.notes, chars: message.length, tasks };
 }
 
 function claudeDir(): string {
@@ -355,6 +390,12 @@ function hydrateTail({
     let linesSeen = 0;
     let widestRead = 0;
     let fd: number;
+    // A background task's blocks are in the message of the later call that printed them.
+    const flushers = new Set(
+        [...calls.values()].flatMap((entry) =>
+            entry.flushedBy && wanted.has(entry.toolUseId) ? [entry.flushedBy] : []
+        )
+    );
 
     try {
         fd = openSync(file, "r");
@@ -387,7 +428,7 @@ function hydrateTail({
                     break;
                 }
 
-                if (!lineNamesCall(line, wanted)) {
+                if (!lineNamesCall(line, wanted) && !lineNamesCall(line, flushers)) {
                     continue;
                 }
 
@@ -581,22 +622,38 @@ function readRow({
     const attachment = field(row, "attachment");
 
     if (field(attachment, "type") === "hook_success" && field(attachment, "hookEvent") === "PostToolUse") {
-        const entry = calls.get(text(field(attachment, "toolUseID")));
+        const id = text(field(attachment, "toolUseID"));
         const stdout = text(field(attachment, "stdout"));
+        const entry = calls.get(id);
+        // Background tasks this call's post phase printed: the blocks under each heading are theirs.
+        const flushed = [...calls.values()].filter((item) => item.flushedBy === id && item.task && !item.blocks);
 
-        if (!entry || stdout.length === 0 || entry.blocks) {
+        if (stdout.length === 0 || ((!entry || entry.blocks) && flushed.length === 0)) {
             return;
         }
 
         try {
             const message = text(field(SafeJSON.parse(stdout, { strict: true }), "systemMessage"));
 
-            if (message.length > 0) {
-                const read = readMessage(message);
+            if (message.length === 0) {
+                return;
+            }
 
+            const read = readMessage(message);
+
+            if (entry && !entry.blocks) {
                 entry.blocks = read.blocks;
                 entry.notes = read.notes;
                 entry.chars ??= read.chars;
+            }
+
+            for (const item of flushed) {
+                const part = read.tasks.find((task) => task.id === item.task);
+
+                if (part) {
+                    item.blocks = part.blocks;
+                    item.notes = part.notes;
+                }
             }
         } catch {
             // Another hook's output on the same event.

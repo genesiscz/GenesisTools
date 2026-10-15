@@ -36,7 +36,7 @@ import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
-import { covers, mentionsFrom, textPaths } from "./mentions";
+import { covers, mentionsFrom, mentionsOf, textPaths } from "./mentions";
 import {
     assembleMessage,
     compactColour,
@@ -1077,6 +1077,16 @@ describe("files the command NAMES rather than works in", () => {
 
         // A subcommand's -C is not git's: `git commit -C HEAD` reuses that commit's message.
         expect(namedArguments("git commit -C HEAD src/a.ts", [main])).toContain(theirs);
+
+        // The mention parser reads tokens out of the text, and the named set joins both parsers.
+        const mentioned = mentionsOf({ tool: "Bash", input: { command: `git -C ${other} add src/a.ts` }, cwd: main });
+
+        expect(mentioned).toContain(mine);
+        expect(mentioned).not.toContain(theirs);
+        // The same token outside the git -C element keeps its session-folder reading.
+        expect(
+            mentionsOf({ tool: "Bash", input: { command: `cat src/a.ts && git -C ${other} add src/a.ts` }, cwd: main })
+        ).toContain(theirs);
     });
 
     it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {
@@ -1248,6 +1258,46 @@ describe("a tree too dirty to capture whole", () => {
         expect(decision.reason).toContain("no captured before-state");
         expect(decision.message).toContain("dirty file(s) changed with no captured before-state:");
         expect(decision.message).toContain("note.md");
+    });
+
+    it("gives a file past the file cap with no captured before-state no patch, and names it", () => {
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            maxCaptureMB: 0.000001,
+            maxFiles: 1,
+            fullDiff: "path" as const,
+        };
+        const first = join(big, "a-first.txt");
+        const run = (args: string[]) => spawnSync("git", ["-C", big, ...args], { encoding: "utf8", env: process.env });
+
+        writeFileSync(first, "one\n");
+        run(["add", "a-first.txt"]);
+        run(["commit", "-qm", "first"]);
+        // Dirty before the call, and over the capture budget: there is no before-state for it.
+        writeFileSync(small, "alpha\nEARLIER-EDIT\ncharlie\n");
+
+        // An editing command that names only the first file, so the root pass goes on past the cap.
+        const current = begin({ cwd: big, toolUseId: "bigtree-overflow", command: "perl -pi -e 1 a-first.txt" }, diff);
+
+        writeFileSync(first, "one\nFIRST-EDIT\n");
+        writeFileSync(small, "alpha\nEARLIER-EDIT\nCALL-EDIT\n");
+
+        const decision = runDiffPost({ payload: current, config: { ...plain, diff } });
+        const fullDiff = decision.stats?.fullDiff;
+
+        try {
+            expect(decision.files).toEqual([first]);
+            expect(decision.message).toContain("dirty file(s) changed with no captured before-state:");
+
+            if (fullDiff) {
+                expect(readFileSync(fullDiff, "utf8")).not.toContain("EARLIER-EDIT");
+            }
+        } finally {
+            if (fullDiff) {
+                rmSync(fullDiff, { force: true });
+            }
+        }
     });
 });
 
@@ -3747,6 +3797,28 @@ describe("tools agents hooks diff log", () => {
         expect(read.notes).toEqual(["1 file(s) changed by others in this root: b.ts"]);
     });
 
+    it("splits a message at background task headings: the call's own part first, then each task's", () => {
+        const message = [
+            "Updated src/own.ts (+1 -0)",
+            "     1 +own",
+            "",
+            "background task bgA ended (bun /x/long.ts):",
+            "Added src/task.ts (+2 -0)",
+            "     1 +one",
+            "     2 +two",
+        ].join("\n");
+        const read = readMessage(message);
+
+        expect(read.blocks.map((block) => block.path)).toEqual(["src/own.ts"]);
+        expect(read.tasks).toEqual([
+            {
+                id: "bgA",
+                blocks: [{ verb: "Added", path: "src/task.ts", added: 2, removed: 0, changedShown: 2 }],
+                notes: [],
+            },
+        ]);
+    });
+
     it("shows a command's first line and then only the lines that name a file", () => {
         const command = [
             "cd /repo && python3 - <<'PY'",
@@ -4065,6 +4137,73 @@ describe("the misfires of 2026-10-14", () => {
         }
     });
 
+    it("gives a git -C command no claim on the session folder's file of the same relative path", () => {
+        const other = realpathSync(mkdtempSync(join(tmpdir(), "gt-git-c-")));
+        const target = join(repo, "lib-folder", "wizard.ts");
+
+        mkdirSync(join(other, "lib-folder"), { recursive: true });
+        writeFileSync(join(other, "lib-folder", "wizard.ts"), "x\n");
+
+        const mine = begin({ command: `git -C ${other} add lib-folder/wizard.ts` });
+
+        writeFileSync(target, "one\nTHEIRS-IN-MAIN\n");
+        recordTouches([
+            { session: "gt-other:agent-y", start: Date.now() - 500, end: Date.now(), kind: "named", path: target },
+        ]);
+
+        try {
+            expect(runDiffPost({ payload: mine, config: plain }).files).not.toContain(target);
+        } finally {
+            git(["checkout", "-q", "--", "lib-folder/wizard.ts"]);
+            rmSync(other, { recursive: true, force: true });
+        }
+    });
+
+    it("puts the call's own diff before the background tasks it prints, so diff log can split them", () => {
+        const project = `gt-bg-order-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
+        const output = join(tasks, "bgorder1.output");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const target = join(repo, "background-order.ts");
+        // Outside the task's repository, so the task cannot claim the flushing call's own file.
+        const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "gt-order-")));
+        const own = join(elsewhere, "own-order.ts");
+        // A named file in a temp folder outside git is hidden by default.
+        const config = { ...plain, diff: { ...plain.diff, showTempScratch: true } };
+
+        mkdirSync(tasks, { recursive: true });
+        writeFileSync(output, "");
+        writeFileSync(own, "seed\n");
+
+        try {
+            const started = begin({ toolUseId: "bg-order-call", command: `bun /x/long.ts ${target}` });
+
+            runDiffPost({
+                payload: {
+                    ...started,
+                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgorder1" } },
+                },
+                config,
+            });
+            writeFileSync(target, "BACKGROUND-ORDER\n");
+            writeFileSync(output, "done\n\n[exited with code 0]\n");
+
+            const next = begin({ command: `bun /x/own.ts ${own}`, raw: { transcript_path: transcript } });
+
+            writeFileSync(own, "seed\nOWN-ORDER\n");
+
+            const read = readMessage(composePostDiff({ payload: next, config }).message);
+
+            expect(read.blocks.map((block) => block.path).join(" ")).toContain("own-order.ts");
+            expect(read.tasks.map((task) => task.id)).toEqual(["bgorder1"]);
+            expect(read.tasks[0]?.blocks.map((block) => block.path).join(" ")).toContain("background-order.ts");
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(target, { force: true });
+            rmSync(elsewhere, { recursive: true, force: true });
+        }
+    });
+
     it("defers a background call's diff to the end of its task", () => {
         const project = `gt-bg-project-${process.pid}`;
         const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
@@ -4215,13 +4354,32 @@ describe("the misfires of 2026-10-14", () => {
                 writeFileSync(output, "done\n\n[exited with code 0]\n");
             }
 
-            const next = begin({ sessionId: session, command: "true", raw: { transcript_path: transcript } }, diff);
-            const composed = composePostDiff({ payload: next, config });
+            // A task whose message can no longer fit stays for the next post phase instead of being
+            // taken and dropped, so every task is shown, over as many phases as the budget needs.
+            const shown: string[] = [];
 
-            expect(composed.flushed).toHaveLength(3);
-            expect(composed.flushed.map((item) => item.task?.id).sort()).toEqual([...ids].sort());
-            expect(composed.message.length).toBeLessThanOrEqual(700);
-            expect(composed.message.length).toBeGreaterThan(0);
+            for (let phase = 0; phase < ids.length && shown.length < ids.length; phase += 1) {
+                const next = begin(
+                    {
+                        sessionId: session,
+                        toolUseId: `budget-next-${phase}`,
+                        command: "true",
+                        raw: { transcript_path: transcript },
+                    },
+                    diff
+                );
+                const composed = composePostDiff({ payload: next, config });
+
+                expect(composed.flushed.length).toBeGreaterThan(0);
+                expect(composed.message.length).toBeLessThanOrEqual(700);
+
+                for (const item of composed.flushed) {
+                    expect(item.message ?? "").not.toBe("");
+                    shown.push(item.task?.id ?? "");
+                }
+            }
+
+            expect(shown.sort()).toEqual([...ids].sort());
         } finally {
             rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
             rmSync(sessionDir("claude", session), { recursive: true, force: true });

@@ -13,6 +13,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { hookDiag } from "../log";
 import { mentionsRoot, safeSegment } from "../paths";
+import { gitDirReadings } from "./command-paths";
 import { makePrivateDir } from "./private-dir";
 
 /**
@@ -252,6 +253,10 @@ export function mentionsOf(mention: ToolMention): string[] {
             }
 
             const bases = cdBases(command, cwd);
+            // A `git -C <dir>` element's relative paths live in `<dir>`: read against these bases,
+            // they name another checkout's files (`gitDirReadings`).
+            const git = gitDirReadings(command, bases);
+            const misread = new Set(git.misread.map(canonical));
 
             for (const token of textPaths(command)) {
                 if (isAbsolute(expandHome(token))) {
@@ -260,8 +265,16 @@ export function mentionsOf(mention: ToolMention): string[] {
                 }
 
                 for (const base of bases) {
-                    push(token, base);
+                    const value = normalise(token, base);
+
+                    if (value && !misread.has(value)) {
+                        out.push(value);
+                    }
                 }
+            }
+
+            for (const path of git.scoped) {
+                push(path, cwd);
             }
 
             // Each `cd` target is itself a mentioned directory: `cd pkg && codemod` owns pkg.

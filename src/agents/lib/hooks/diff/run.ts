@@ -381,6 +381,12 @@ function taskEnded(output: string): boolean {
     return /\[exited with code -?\d+\]\s*$/.test(tail);
 }
 
+/**
+ * Room a deferred task needs past its heading once the phase has printed something: enough for a
+ * summary or the full-diff line (`Full diff: <path>`, about 90 characters).
+ */
+const DEFERRED_MIN_ROOM = 200;
+
 /** The line `hook-diff-post` prints above a background task's diff. Its length is part of the budget. */
 export function deferredTaskHeading(task: { id: string; command: string }): string {
     const first = task.command.split("\n")[0]?.slice(0, 80) ?? "";
@@ -416,7 +422,7 @@ function fitDecision(decision: DiffDecision, room: number | undefined): DiffDeci
     return { ...decision, message, ...(stats ? { stats } : {}) };
 }
 
-/** Headings plus messages, in the order `composePostDiff` joins them. */
+/** Headings plus messages, in the order `composePostDiff` joins them after the call's own diff. */
 export function deferredMessageParts(flushed: DiffDecision[]): string[] {
     return flushed.flatMap((item) =>
         item.message && item.task ? [`${deferredTaskHeading(item.task)}${item.message}`] : []
@@ -426,7 +432,8 @@ export function deferredMessageParts(flushed: DiffDecision[]): string[] {
 /**
  * One post phase: background tasks that have ended share half of the message, and this call gets
  * what remains. The sum, headings included, stays inside `maxMessageChars`. Claude Code replaces
- * a longer `systemMessage` with "Output too large".
+ * a longer `systemMessage` with "Output too large". The call's own diff comes first and each task
+ * follows under its heading, so `diff log` can tell which blocks are whose (`readMessage`).
  */
 export function composePostDiff({
     payload,
@@ -440,13 +447,13 @@ export function composePostDiff({
     const maxChars = diffFor(config, payload.harness).maxMessageChars;
     const flushed = flushDeferred({ payload, config, record, maxChars: Math.floor(maxChars / 2) });
     const flushedParts = deferredMessageParts(flushed);
-    // `+ 2` per part is the `\n\n` before the next part, including the one before this call.
+    // `+ 2` per part is the `\n\n` between parts, including the one after this call's own diff.
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
     const decision = fitDecision(
         runDiffPost({ payload, config, record, maxChars: Math.max(0, maxChars - flushedChars) }),
         Math.max(0, maxChars - flushedChars)
     );
-    const message = [...flushedParts, ...(decision.message ? [decision.message] : [])].join("\n\n");
+    const message = [...(decision.message ? [decision.message] : []), ...flushedParts].join("\n\n");
 
     return { flushed, decision, message };
 }
@@ -506,16 +513,23 @@ export function flushDeferred({
             continue;
         }
 
+        const task = { id: deferred.id, toolUseId: name, command: made.command };
+        const heading = deferredTaskHeading(task);
+        const gap = maxChars !== undefined && decisions.some((item) => item.message) ? 2 : 0;
+        const room = maxChars === undefined ? undefined : Math.max(0, maxChars - spent - gap - heading.length);
+
+        // Taking a task claims its files and removes its capture, so a task whose message can no
+        // longer fit would be lost. It stays for the next post phase. The first task of a phase is
+        // always taken, so a heading longer than the budget cannot hold a task back for ever.
+        if (room !== undefined && spent > 0 && room < DEFERRED_MIN_ROOM) {
+            break;
+        }
+
         try {
             renameSync(join(dir, "background.json"), join(dir, "background.taken"));
         } catch {
             continue;
         }
-
-        const task = { id: deferred.id, toolUseId: name, command: made.command };
-        const heading = deferredTaskHeading(task);
-        const gap = maxChars !== undefined && decisions.some((item) => item.message) ? 2 : 0;
-        const room = maxChars === undefined ? undefined : Math.max(0, maxChars - spent - gap - heading.length);
         const decision = fitDecision(
             runDiffPost({
                 payload: {
@@ -1149,6 +1163,14 @@ export function runDiffPost({
             });
 
             if (full()) {
+                if (leftOut) {
+                    // No before-state was captured: a patch against HEAD or /dev/null would pass the
+                    // file's earlier uncommitted edits off as this call's.
+                    uncaptured += 1;
+                    uncapturedFiles.push({ path: file.path, root });
+                    continue;
+                }
+
                 notShown.push(file.path);
 
                 if (overflowRoom()) {

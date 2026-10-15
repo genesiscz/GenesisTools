@@ -215,7 +215,8 @@ PR body, a repro script) is not printed unless `diff.showTempScratch` is on.
 - A file another agent's call is still working on, or a background call names, is that call's.
 - A command that only reads gets no line about other writers.
 - A background call is diffed when its task ends, and the next call of the session prints it under
-  "background task <id> ended".
+  "background task <id> ended", after that call's own diff. Ended tasks share half of the message;
+  one that no longer fits waits for the next call.
 - A failed command's edits are diffed too (PostToolUseFailure), with a note that it failed.
 
 ### Claude Code's own Bash diff
