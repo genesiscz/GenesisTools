@@ -72,6 +72,29 @@ final class DetachedToolsJobTests: XCTestCase {
         XCTAssertEqual(follower.record.pid, record.pid)
     }
 
+    func testStderrReadsOnlyTheTailOfALargeFile() throws {
+        let url = directory.appendingPathComponent("err.log")
+        let limit = ToolsLineStream.stderrLimit
+        var bytes = Data(repeating: 0x61, count: limit + 5000)
+        bytes.append(contentsOf: Data("TAIL-MARK".utf8))
+        try bytes.write(to: url)
+        let tail = DetachedToolsJob.stderrTail(at: url.path, limit: limit)
+        let read = try XCTUnwrap(tail.read)
+        XCTAssertEqual(read.fileBytes, UInt64(bytes.count))
+        XCTAssertEqual(read.count, limit)
+        XCTAssertEqual(read.offset, UInt64(bytes.count - limit))
+        XCTAssertEqual(tail.data, bytes.suffix(limit))
+        XCTAssertEqual(tail.data.suffix(9), Data("TAIL-MARK".utf8))
+        let missing = DetachedToolsJob.stderrTail(at: directory.appendingPathComponent("missing.log").path)
+        XCTAssertEqual(missing.data, Data())
+        XCTAssertNil(missing.read)
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/GenesisKit/Tools/DetachedToolsJob.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("stderrTail(at: record.errorPath)"))
+        XCTAssertFalse(source.contains("Data(contentsOf:"))
+    }
+
     func testADetachedIndexBuildDoesNotStopOnStdin() {
         // Its stdin is /dev/null: with --stop-on-stdin the CLI cancels at once (exit 130, seen live 2026-10-14).
         XCTAssertFalse(ToolsDiskProvider.duIndexBuildArguments().contains("--stop-on-stdin"))

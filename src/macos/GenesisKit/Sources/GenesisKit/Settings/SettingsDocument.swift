@@ -13,7 +13,9 @@ import SwiftUI
 ///   replaces them on purpose.
 /// - A change made outside (another process, the CLI) is read back after the backend reports it. A pending local
 ///   edit wins: the read waits until that edit is saved, and a read whose value equals the current one publishes
-///   nothing.
+///   nothing. A load that started before a local edit, or before a save of one, is dropped even when it returns
+///   after that save has finished, so it cannot write the old value back. A load that started before a newer
+///   load is dropped the same way, even when the older one returns last.
 /// - A failed save (a full disk, a lock held past its timeout) keeps the edit pending: it is retried after 5, 15,
 ///   30, 60 and 60 s, then on the next edit or `flush()`, and a queued external read waits for it.
 /// - Call `flush()` when a window closes, and at quit: `applicationWillTerminate` cannot await, so return
@@ -51,9 +53,19 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
     private var failedSaves = 0
     private static var retryDelays: [Duration] { [.seconds(5), .seconds(15), .seconds(30), .seconds(60), .seconds(60)] }
     private var loadInFlight = false
+    /// Incremented each time a load is requested. A load applies only while it is still the newest request, so an
+    /// older read that returns later cannot replace a newer one. `loadInFlight` stays true until that newest load
+    /// returns.
+    private var loadSerial = 0
     private var reloadWanted = false
     /// What the backend holds as far as this document knows; nil when nothing is stored.
     private var lastStored: Value?
+    /// The value of a save that has been handed to the backend and has not finished. A later edit is compared
+    /// with this, not only with `lastStored`, so reverting while that save is in flight is still written.
+    private var lastQueued: Value?
+    /// Bumped on a local edit and on a successful save. A load records it at the start and applies only when it
+    /// still matches, so a slow read cannot land after the value has moved on.
+    private var generation = 0
 
     public init(key: String, backend: KitSettingsBackend, defaultValue: Value,
                 debounce: Duration = .milliseconds(400), observesExternalChanges: Bool = true) {
@@ -84,6 +96,7 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
         change(&next)
         if state == .loading { preloadChanges.append(change) }
         guard next != value else { return }
+        generation &+= 1
         value = next
         scheduleSave()
     }
@@ -126,15 +139,20 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
     public func overwriteUnreadableValue() {
         guard case .unreadable = state else { return }
         state = .ready
+        generation &+= 1
         dirty = true
         lastStored = nil
+        lastQueued = nil
         saveNow()
     }
 
     // MARK: - Load
 
     private func performLoad() async {
+        loadSerial &+= 1
+        let ticket = loadSerial
         loadInFlight = true
+        let seen = generation
         let backend = self.backend
         let key = self.key
         let result: Result<Value?, Error> = await Task.detached(priority: .utility) {
@@ -145,15 +163,21 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
                 return .failure(error)
             }
         }.value
+        // A newer load was requested while this one ran. Leave `loadInFlight` set for that load.
+        guard ticket == loadSerial else { return }
         loadInFlight = false
-        apply(result)
+        apply(result, seenGeneration: seen)
         if reloadWanted, !hasPendingChanges {
             reloadWanted = false
             Task { [weak self] in await self?.performLoad() }
         }
     }
 
-    private func apply(_ result: Result<Value?, Error>) {
+    private func apply(_ result: Result<Value?, Error>, seenGeneration: Int) {
+        if state == .ready, seenGeneration != generation {
+            reloadWanted = true
+            return
+        }
         switch result {
         case .success(let stored):
             if state == .ready, hasPendingChanges {
@@ -212,19 +236,30 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
         debounceTask?.cancel()
         debounceTask = nil
         guard state == .ready, dirty else { return }
-        dirty = false
         let snapshot = value
-        guard snapshot != lastStored else { return }
+        if savesInFlight > 0 {
+            if snapshot == lastQueued {
+                dirty = false
+                return
+            }
+        } else if snapshot == lastStored {
+            dirty = false
+            return
+        }
         let data: Data
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             data = try encoder.encode(snapshot)
         } catch {
+            // Still pending: an encode failure (a value the encoder refuses) must not drop the edit, and a
+            // queued external read waits. A retry would fail the same way until the value changes.
             let reason = Self.describe(error)
             if lastError != reason { lastError = reason }
             return
         }
+        dirty = false
+        lastQueued = snapshot
         savesInFlight += 1
         let previous = lastSave
         let backend = self.backend
@@ -245,6 +280,7 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
     private func finishedSave(_ saved: Value, failure: String?) {
         savesInFlight -= 1
         if let failure {
+            if lastQueued == saved { lastQueued = nil }
             if lastError != failure { lastError = failure }
             if value != lastStored {
                 // Still pending: `flush()` and the next edit retry it, and a queued read waits for it.
@@ -256,6 +292,8 @@ public final class SettingsDocument<Value: Codable & Equatable & Sendable>: Obse
             }
         } else {
             lastStored = saved
+            if lastQueued == saved { lastQueued = nil }
+            generation &+= 1
             failedSaves = 0
             if lastError != nil { lastError = nil }
         }

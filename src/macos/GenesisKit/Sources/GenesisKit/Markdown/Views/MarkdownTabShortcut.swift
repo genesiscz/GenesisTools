@@ -16,6 +16,21 @@ final class MarkdownDocumentWindow: ConstraintSafeWindow {
     /// Mouse presses here, tab actions from `MarkdownDocumentsView`: a press that arrives with no action after it is a
     /// click SwiftUI dropped.
     static let input = Logger(subsystem: "genesiskit", category: "markdown.input")
+}
+
+/// A tab-bar log line: the action, the tab's index, and the gesture. The title and the path stay out of it.
+/// Both are the file name or the path, and this log is `privacy: .public`.
+enum MarkdownTabLog {
+    static func note(action: String, index: Int, gesture: String? = nil) -> String {
+        var note = "tab action \(action) index=\(index)"
+        if let gesture {
+            note += " via=\(gesture)"
+        }
+        return note
+    }
+}
+
+extension MarkdownDocumentWindow {
 
     /// Every mouse press, with what it hits and the app's modal state, so a window whose clicks stop working can be
     /// read afterwards: `log show --predicate 'subsystem == "genesiskit" && category == "markdown.input"'`.
