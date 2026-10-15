@@ -23,6 +23,7 @@ import {
     orderPanels,
     packRows,
     plainText,
+    planMarkerLines,
     readHashState,
     stackPoints,
     stripTags,
@@ -269,6 +270,30 @@ describe("split rework: text, marker kinds, group order", () => {
                 ["context"]
             ).map((p) => p.key)
         ).toEqual(["context", "cost"]);
+    });
+
+    test("planMarkerLines: sparse views keep lines, dense views only tick, forced markers always keep theirs", () => {
+        const sparse = [
+            { x: 10, items: [0] },
+            { x: 50, items: [1, 2, 3] },
+        ];
+
+        expect(planMarkerLines(sparse, [false, false, false, false])).toEqual({ full: [0], faint: [50], ticks: [] });
+
+        const dense = Array.from({ length: 40 }, (_, i) => ({ x: i * 10, items: [i] }));
+        const forced = dense.map((_, i) => i === 7);
+        const plan = planMarkerLines(dense, forced);
+
+        expect(plan.full).toEqual([7]);
+        expect(plan.faint).toEqual([]);
+        expect(plan.ticks).toHaveLength(40);
+    });
+
+    test("a cluster never draws one line per member", () => {
+        const plan = planMarkerLines([{ x: 5, items: [0, 1, 2, 3, 4] }], [false, true, false, false, false]);
+
+        expect(plan.full).toEqual([1]);
+        expect(plan.faint).toEqual([5]);
     });
 
     test("the old hidden-markers form still decodes", () => {

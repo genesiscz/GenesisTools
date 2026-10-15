@@ -38,6 +38,7 @@ import {
     type PanelSpec,
     panRange,
     plainText,
+    planMarkerLines,
     rangeAround,
     readHashState,
     SECOND,
@@ -90,6 +91,8 @@ export interface TsMarker {
     color?: string;
     /** Markdown. */
     detail?: string;
+    /** Always draw a full-height line, even when the view is dense (for example compactions on a context chart). */
+    line?: boolean;
 }
 
 export interface TsSpan {
@@ -129,6 +132,8 @@ export interface TimeSeriesProps {
     markers?: TsMarker[];
     /** Marker kinds shown at first; the other kinds start off but stay in the toolbar. Default: every kind. */
     markerKinds?: string[];
+    /** Marker kinds that always keep a full-height line, however dense the view. */
+    lineKinds?: string[];
     spans?: TsSpan[];
     /** Initial visible range; default = all data. */
     range?: [number, number];
@@ -612,11 +617,12 @@ interface DrawInput {
     markerColor: (m: TsMarker) => string;
     markerGlyph: (kind: string) => Glyph;
     spanColor: (s: TsSpan) => string;
+    lineKinds?: string[];
 }
 
 function drawMain(
     ctx: CanvasRenderingContext2D,
-    { frame, theme, markers, spans, markerColor, markerGlyph, spanColor }: DrawInput
+    { frame, theme, markers, spans, markerColor, markerGlyph, spanColor, lineKinds }: DrawInput
 ) {
     const { plotLeft, plotRight, plotWidth } = frame;
     ctx.font = `11px ${theme.font}`;
@@ -757,19 +763,39 @@ function drawMain(
         ctx.clip();
         ctx.setLineDash([2, 3]);
         ctx.lineWidth = 1;
-
-        for (const i of frame.markerOrder) {
-            const m = markers[i];
-            const x = Math.round(toX(frame, m.t)) + 0.5;
-            ctx.strokeStyle = theme.resolve(markerColor(m));
-            ctx.globalAlpha = 0.2;
+        const forced = frame.markerOrder.map((i) => markers[i].line ?? lineKinds?.includes(markers[i].kind) ?? false);
+        const plan = planMarkerLines(frame.clusters, forced);
+        const vline = (x: number) => {
             ctx.beginPath();
-            ctx.moveTo(x, frame.markerTop + frame.markerHeight);
-            ctx.lineTo(x, linesBottom);
+            ctx.moveTo(Math.round(x) + 0.5, frame.markerTop + frame.markerHeight);
+            ctx.lineTo(Math.round(x) + 0.5, linesBottom);
             ctx.stroke();
+        };
+
+        for (const k of plan.full) {
+            const m = markers[frame.markerOrder[k]];
+            ctx.strokeStyle = theme.resolve(markerColor(m));
+            ctx.globalAlpha = forced[k] ? 0.45 : 0.22;
+            vline(toX(frame, m.t));
+        }
+
+        ctx.strokeStyle = theme.dim;
+        ctx.globalAlpha = 0.12;
+
+        for (const x of plan.faint) {
+            vline(x);
         }
 
         ctx.setLineDash([]);
+        ctx.globalAlpha = 0.4;
+        const tickTops = frame.panels.length ? frame.panels.map((p) => p.top) : [frame.lanesTop];
+
+        for (const x of plan.ticks) {
+            for (const top of tickTops) {
+                ctx.fillRect(Math.round(x), top, 1, 5);
+            }
+        }
+
         ctx.globalAlpha = 1;
 
         for (const [ci, cluster] of frame.clusters.entries()) {
@@ -975,6 +1001,7 @@ export function TimeSeries({
     brush = true,
     groups,
     markerKinds: initialMarkerKinds,
+    lineKinds,
 }: TimeSeriesProps) {
     const instanceId = useId();
     const rootRef = useRef<HTMLDivElement>(null);
@@ -1489,9 +1516,18 @@ export function TimeSeries({
         const ctx = setupCanvas(canvas, frame.width, frame.height);
 
         if (ctx) {
-            drawMain(ctx, { frame, theme: readTheme(root), markers, spans, markerColor, markerGlyph, spanColor });
+            drawMain(ctx, {
+                frame,
+                theme: readTheme(root),
+                markers,
+                spans,
+                markerColor,
+                markerGlyph,
+                spanColor,
+                lineKinds,
+            });
         }
-    }, [frame, themeTick, markers, spans, markerColor, markerGlyph, spanColor]);
+    }, [frame, themeTick, markers, spans, markerColor, markerGlyph, spanColor, lineKinds]);
 
     const crosshairT = hover?.region === "panel" ? hover.t : remoteHover;
     // Value dots go on the panel under the pointer ("*" = every panel); a synced chart shows only its line.
@@ -1515,7 +1551,45 @@ export function TimeSeries({
         const theme = readTheme(root);
         const bottom = frame.lanesHeight ? frame.lanesTop + frame.lanesHeight : frame.panelsBottom;
 
-        if (pin && pin.kind !== "span") {
+        // The markers under the pointer or pinned always get their full line, even in a dense view.
+        const lit =
+            hover?.region === "marker"
+                ? (frame.clusters[hover.cluster]?.items ?? []).map((k) => frame.markerOrder[k])
+                : pin?.kind === "markers"
+                  ? pin.items
+                  : [];
+
+        if (lit.length) {
+            const linesBottom = frame.panels.length ? frame.panelsBottom : frame.lanesTop + frame.lanesHeight;
+            ctx.setLineDash([3, 3]);
+
+            // A big cluster gets one shaded band over its time span instead of a line per member.
+            if (lit.length > 12) {
+                const xs = lit.map((i) => toX(frame, markers[i].t));
+                const x0 = Math.max(frame.plotLeft, Math.min(...xs));
+                const x1 = Math.min(frame.plotRight, Math.max(...xs));
+                const top = frame.markerTop + frame.markerHeight;
+                ctx.fillStyle = theme.accent;
+                ctx.globalAlpha = 0.08;
+                ctx.fillRect(x0 - 1, top, x1 - x0 + 2, linesBottom - top);
+                ctx.globalAlpha = 1;
+            }
+
+            for (const i of lit.length > 12 ? [] : lit) {
+                const x = Math.round(toX(frame, markers[i].t)) + 0.5;
+                ctx.strokeStyle = theme.resolve(markerColor(markers[i]));
+                ctx.globalAlpha = 0.8;
+                ctx.beginPath();
+                ctx.moveTo(x, frame.markerTop + frame.markerHeight);
+                ctx.lineTo(x, linesBottom);
+                ctx.stroke();
+            }
+
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+        }
+
+        if (pin && pin.kind === "time") {
             const x = Math.round(toX(frame, pin.t)) + 0.5;
 
             if (x >= frame.plotLeft && x <= frame.plotRight) {
@@ -1588,7 +1662,7 @@ export function TimeSeries({
             ctx.strokeRect(x0 + 0.5, frame.panelsTop + 0.5, x1 - x0 - 1, frame.panelsBottom - frame.panelsTop - 1);
             ctx.globalAlpha = 1;
         }
-    }, [frame, crosshairT, dotPanel, pin, drag, themeTick]);
+    }, [frame, crosshairT, dotPanel, pin, drag, themeTick, hover, markers, markerColor]);
 
     // ─── Hit testing ───
 
@@ -2090,11 +2164,11 @@ export function TimeSeries({
                         <div key={i}>
                             <div className="flex items-baseline gap-2">
                                 <Swatch color={markerColor(m)} glyph={markerGlyph(m.kind)} />
-                                <span className="font-mono text-[0.7rem] text-dim">
+                                <span className="shrink-0 whitespace-nowrap font-mono text-[0.7rem] text-dim">
                                     {formatTime(m.t, timeZone, "seconds")}
                                 </span>
-                                <span className="text-ink">{m.label}</span>
-                                <span className="text-[0.7rem] text-dim">{m.kind}</span>
+                                <span className="min-w-0 text-ink">{plainText(m.label)}</span>
+                                <span className="shrink-0 whitespace-nowrap text-[0.7rem] text-dim">{m.kind}</span>
                             </div>
                             {m.detail && (items.length === 1 || interactive) ? (
                                 <div className="pl-4">{detailText(m.detail, interactive)}</div>
@@ -2184,7 +2258,7 @@ export function TimeSeries({
 
         return (
             <div
-                className={`absolute z-10 w-max max-w-[280px] rounded-card border border-line bg-panel px-3 py-2 text-xs shadow-lg ${interactive ? "" : "pointer-events-none"}`}
+                className={`absolute z-10 w-max max-w-[280px] rounded-card border border-line bg-panel px-3 py-2 text-xs shadow-lg [overflow-wrap:anywhere] ${interactive ? "" : "pointer-events-none"}`}
                 style={{ left, top: Math.max(4, y + 12) }}
                 role={interactive ? "dialog" : "tooltip"}
             >

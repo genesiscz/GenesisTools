@@ -205,6 +205,7 @@ export default function TimeSeriesGallery() {
                     series={pick("context")}
                     markers={DEMO.markers}
                     markerKinds={["compaction", "prompt"]}
+                    lineKinds={["compaction"]}
                     units={UNITS}
                 />
                 <TimeSeries

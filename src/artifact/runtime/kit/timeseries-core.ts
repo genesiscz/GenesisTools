@@ -837,6 +837,51 @@ export function visibleMarkerKinds(
     return new Set(kinds.filter((k) => overrides[k] ?? (initial ? initial.includes(k) : true)));
 }
 
+/** Clusters in view at or below which every marker keeps its full-height line. */
+export const SPARSE_MARKER_CLUSTERS = 30;
+
+export interface MarkerLinePlan {
+    /** Positions in the visible marker order that get a full-height line. */
+    full: number[];
+    /** Pixel x of one faint line per multi-marker cluster (sparse views only). */
+    faint: number[];
+    /** Pixel x of a short tick at the top of each plot (dense views only). */
+    ticks: number[];
+}
+
+/**
+ * Which marker lines to draw. A sparse view (few clusters) keeps one full line
+ * per lone marker and one faint line per cluster; a dense view draws only a
+ * short tick per cluster, so thousands of markers do not stripe the plot.
+ * Markers flagged in `forced` (an author's `line: true` or `lineKinds`) keep
+ * their full line either way.
+ */
+export function planMarkerLines(
+    clusters: ReadonlyArray<{ x: number; items: number[] }>,
+    forced: readonly boolean[],
+    sparseLimit = SPARSE_MARKER_CLUSTERS
+): MarkerLinePlan {
+    const sparse = clusters.length <= sparseLimit;
+    const plan: MarkerLinePlan = { full: [], faint: [], ticks: [] };
+
+    for (const cluster of clusters) {
+        const pinned = cluster.items.filter((i) => forced[i]);
+        plan.full.push(...pinned);
+
+        if (!sparse) {
+            plan.ticks.push(cluster.x);
+        } else if (cluster.items.length === 1) {
+            if (!pinned.length) {
+                plan.full.push(cluster.items[0]);
+            }
+        } else if (pinned.length < cluster.items.length) {
+            plan.faint.push(cluster.x);
+        }
+    }
+
+    return plan;
+}
+
 // ─── Text ───
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'", nbsp: " " };
