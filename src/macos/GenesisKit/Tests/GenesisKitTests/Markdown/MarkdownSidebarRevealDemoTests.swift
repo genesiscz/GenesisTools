@@ -4,7 +4,8 @@ import XCTest
 
 /// Martin's "Show in Sidebar" case played slowly in a visible window, for a screen recording (it never activates, so
 /// it takes nobody's focus). Skipped unless MARKDOWN_REVEAL_DEMO names a scratch vault folder; real notes are never
-/// written. The window's number goes to MARKDOWN_REVEAL_DEMO_WINDOW so a recorder can attach to it.
+/// written. The window's number goes to MARKDOWN_REVEAL_DEMO_WINDOW so a recorder can attach to it. The folder and the
+/// two notes are MARKDOWN_REVEAL_DEMO_FOLDER, MARKDOWN_REVEAL_DEMO_LATE and MARKDOWN_REVEAL_DEMO_EARLY.
 ///
 ///   1. The tree opens big task folders, as Martin's had them; then another app writes a note into a folder the tree
 ///      already read, and it opens as a tab.
@@ -16,9 +17,10 @@ final class MarkdownSidebarRevealDemoTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         guard let rootPath = env["MARKDOWN_REVEAL_DEMO"] else { throw XCTSkip("set MARKDOWN_REVEAL_DEMO to a scratch vault folder") }
         let root = URL(fileURLWithPath: rootPath)
-        let folder = root.appendingPathComponent("col-271437-marketplace-2.0")
-        let late = folder.appendingPathComponent("2026-10-15-UnslopProposals.sol3.md")
-        let early = folder.appendingPathComponent("WorkItem.md")
+        // The folder under the root, the note written late and a note there from the start.
+        let folder = root.appendingPathComponent(env["MARKDOWN_REVEAL_DEMO_FOLDER"] ?? "project")
+        let late = folder.appendingPathComponent(env["MARKDOWN_REVEAL_DEMO_LATE"] ?? "late-note.md")
+        let early = folder.appendingPathComponent(env["MARKDOWN_REVEAL_DEMO_EARLY"] ?? "early-note.md")
         try? FileManager.default.removeItem(at: late)
         let expand = (env["MARKDOWN_REVEAL_EXPAND"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)) }
 

@@ -33,12 +33,45 @@ struct MarkdownOutline {
     }
 }
 
+/// The heading the reading pane shows, apart from the window's model, so a heading change while scrolling redraws the
+/// outline and nothing else.
+@MainActor
+final class MarkdownSectionSpy: ObservableObject {
+    @Published var slug: String?
+}
+
+/// The outline of the text it last saw. The outline observes the window's model, so its body runs on every publish;
+/// the headings are parsed again only when the text changed (a 164 KB note was parsed whole each time).
+final class MarkdownOutlineCache {
+    private var text: String?
+    private var cached: [MarkdownOutline.Item] = []
+    private(set) var parses = 0
+
+    func items(for text: String) -> [MarkdownOutline.Item] {
+        if text != self.text {
+            cached = MarkdownOutline.items(of: text)
+            self.text = text
+            parses += 1
+        }
+        return cached
+    }
+}
+
 struct MarkdownOutlineView: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
+    /// The model's heading on screen, observed here and nowhere else in the window.
+    @ObservedObject var section: MarkdownSectionSpy
     @Namespace private var barNS
+    @State private var outline = MarkdownOutlineCache()
 
-    var items: [MarkdownOutline.Item] { MarkdownOutline.items(of: doc.displayText) }
+    init(doc: MarkdownDocument, model: MarkdownDocumentsModel) {
+        _doc = ObservedObject(wrappedValue: doc)
+        _model = ObservedObject(wrappedValue: model)
+        _section = ObservedObject(wrappedValue: model.section)
+    }
+
+    var items: [MarkdownOutline.Item] { outline.items(for: doc.displayText) }
 
     var body: some View {
         let _ = RenderProbe.hit("md.outline")
@@ -63,14 +96,14 @@ struct MarkdownOutlineView: View {
                 }
             }
             .padding(.bottom, 10)
-            .animation(.easeOut(duration: 0.22), value: model.activeSectionSlug)
+            .animation(.easeOut(duration: 0.22), value: section.slug)
         }
         .background(model.theme.chrome)
         .accessibilityIdentifier("markdown-outline")
     }
 
     private func row(_ item: MarkdownOutline.Item) -> some View {
-        let active = model.activeSectionSlug == item.slug
+        let active = section.slug == item.slug
         return Button {
             model.activeSectionSlug = item.slug
             model.scrollTarget = item.text

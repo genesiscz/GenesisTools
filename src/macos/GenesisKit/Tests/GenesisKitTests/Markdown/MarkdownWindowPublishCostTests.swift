@@ -115,13 +115,25 @@ final class MarkdownWindowPublishCostTests: XCTestCase {
 
         let before = RenderProbe.snapshot()
         for index in 0..<3 {
-            model.activeSectionSlug = "section-\(index)"
+            model.findQuery = "unrelated-\(index)"
             settle(window, 0.05)
         }
         let unrelated = RenderProbe.snapshot().merging(before) { now, then in now - then }
         XCTAssertGreaterThan(unrelated["md.window", default: 0], 0, "the window reads the model and updates")
         XCTAssertEqual(unrelated["md.tab", default: 0], 0, "no tab shows the section")
         XCTAssertEqual(unrelated["tree.rowItem", default: 0], 0, "the tree builds no row for the section")
+
+        // The heading on screen is not the window's (`MarkdownSectionSpy`): it redraws the outline and nothing else.
+        model.showOutline = true
+        settle(window, 0.3)
+        let beforeSection = RenderProbe.snapshot()
+        for index in 0..<3 {
+            model.activeSectionSlug = "section-\(index)"
+            settle(window, 0.05)
+        }
+        let section = RenderProbe.snapshot().merging(beforeSection) { now, then in now - then }
+        XCTAssertEqual(section["md.window", default: 0], 0, "a heading change does not redraw the window")
+        XCTAssertGreaterThan(section["md.outline", default: 0], 0, "the outline follows the heading")
 
         let beforeSelect = RenderProbe.snapshot()
         model.select(model.docs[0].id)

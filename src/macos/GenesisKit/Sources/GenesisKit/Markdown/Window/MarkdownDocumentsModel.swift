@@ -190,7 +190,18 @@ final class MarkdownDocumentsModel: ObservableObject {
 
     /// Heading the reading pane should jump to, and the one it currently shows.
     @Published var scrollTarget: String?
-    @Published var activeSectionSlug: String?
+    /// The heading on screen lives in its own object (`MarkdownSectionSpy`): the page reports it while the reader
+    /// scrolls, and as a property of this model every report re-ran the whole window's bodies (2026-10-15: eight
+    /// views per report, 15 ms each with 100 tabs). Only the outline shows it.
+    let section = MarkdownSectionSpy()
+    var activeSectionSlug: String? {
+        get { section.slug }
+        set {
+            if section.slug != newValue {
+                section.slug = newValue
+            }
+        }
+    }
     /// Find bar (⌘F): the query, the token that re-fires it, and the tally the
     /// renderer reports back.
     @Published var findOpen = false

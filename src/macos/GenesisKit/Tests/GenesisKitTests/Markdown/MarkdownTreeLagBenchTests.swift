@@ -26,6 +26,9 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         // A configuration of its own: the shared one writes the test process's defaults, which other tests read.
         model.configuration = GenesisKitMarkdownConfiguration(defaults: UserDefaults(suiteName: "md-tree-bench-config-\(UUID().uuidString)")!)
         model.configuration.wrapTabs = env["MARKDOWN_TREE_BENCH_WRAP"] == "1"
+        if env["MARKDOWN_TREE_BENCH_OUTLINE"] == "1" {
+            model.showOutline = true
+        }
         model.open(notes)
 
         let window = NSWindow(

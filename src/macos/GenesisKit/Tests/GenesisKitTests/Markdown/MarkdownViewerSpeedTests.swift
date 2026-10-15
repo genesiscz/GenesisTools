@@ -57,6 +57,17 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertGreaterThan(MarkdownTreeScroll.eased(0.9), 0.9, "slow at the end")
     }
 
+    func testTheOutlineParsesANoteOnlyWhenItsTextChanged() {
+        let cache = MarkdownOutlineCache()
+        let text = "# One\n\ntext\n\n## Two\n"
+        XCTAssertEqual(cache.items(for: text).map(\.text), ["One", "Two"])
+        _ = cache.items(for: text)
+        _ = cache.items(for: String(text))
+        XCTAssertEqual(cache.parses, 1, "the same text is not parsed again")
+        XCTAssertEqual(cache.items(for: text + "## Three\n").map(\.text), ["One", "Two", "Three"])
+        XCTAssertEqual(cache.parses, 2)
+    }
+
     /// The page a pane gives back is the next spare: the next take gets it at once, already loaded.
     func testAPageThatLeavesTheWindowIsTheNextSpare() throws {
         let spare = MarkdownWebSpare()
