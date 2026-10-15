@@ -312,3 +312,34 @@ describe("renderReleasesMarkdown", () => {
         expect(markdown).toContain("1 release from");
     });
 });
+describe("parseRepoRef host anchoring", () => {
+    // Regression test: a github.com address inside another host's path selected that repository
+    it("refuses a github.com address that sits inside another URL", () => {
+        expect(parseRepoRef("https://example.com/github.com/acme/widgets")).toBeNull();
+        expect(parseRepoRef("https://evil.test/?u=github.com/acme/widgets")).toBeNull();
+    });
+
+    it("still reads the bare, www and ssh shapes", () => {
+        const expected = { owner: "acme", repo: "widgets" };
+
+        expect(parseRepoRef("github.com/acme/widgets")).toEqual(expected);
+        expect(parseRepoRef("https://www.github.com/acme/widgets")).toEqual(expected);
+        expect(parseRepoRef("ssh://git@github.com/acme/widgets.git")).toEqual(expected);
+    });
+});
+
+describe("demoteHeadings fences", () => {
+    // Regression test: a line such as ```js inside a fenced block closed the fence, so the headings after it were
+    // demoted although they were still code
+    it("keeps a fence open until a closing marker with only whitespace after it", () => {
+        const body = ["```md", "```js", "# still code", "```", "# outside"].join("\n");
+
+        expect(demoteHeadings(body)).toBe(["```md", "```js", "# still code", "```", "### outside"].join("\n"));
+    });
+
+    it("closes a fence on a marker followed by spaces or tabs", () => {
+        const body = ["~~~", "# code", "~~~ \t", "# outside"].join("\n");
+
+        expect(demoteHeadings(body)).toBe(["~~~", "# code", "~~~ \t", "### outside"].join("\n"));
+    });
+});

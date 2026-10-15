@@ -32,7 +32,7 @@ const NAME_PART = /^[\w.-]+$/;
 /** `owner/repo`, an https or ssh github.com URL (with or without `.git` or a trailing path). */
 export function parseRepoRef(input: string): RepoRef | null {
     const trimmed = input.trim();
-    const url = /github\.com[:/]+([^/]+)\/([^/#?]+)/i.exec(trimmed);
+    const url = /^(?:(?:https?|ssh|git):\/\/)?(?:[\w.-]+@)?(?:www\.)?github\.com[:/]+([^/]+)\/([^/#?]+)/i.exec(trimmed);
     const short = /^([^/]+)\/([^/]+)$/.exec(trimmed);
     const match = url ?? short;
 
@@ -133,12 +133,13 @@ export function demoteHeadings(body: string, by = 2): string {
     return body
         .split("\n")
         .map((line) => {
-            const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+            const found = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+            const marker = found?.[1];
 
             if (marker) {
                 if (fence === null) {
                     fence = marker;
-                } else if (marker[0] === fence[0] && marker.length >= fence.length) {
+                } else if (marker[0] === fence[0] && marker.length >= fence.length && /^[ \t]*$/.test(found[2])) {
                     fence = null;
                 }
 
