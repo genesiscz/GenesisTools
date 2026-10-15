@@ -46,7 +46,7 @@ tools azure-devops comment add <id> --file x.md  # Post markdown (--text, --file
 tools azure-devops comment edit <id> <commentId> --file x.md   # Replace a comment's text
 tools azure-devops comment delete <id> <commentId> --yes   # --yes is required without a terminal (alias: rm)
 tools azure-devops workitem-create               # Create work item (alias: create)
-tools azure-devops workitem-post <id>            # Read multilineFieldsFormat; with --field, patch in one request
+tools azure-devops workitem-update <id>          # Read multilineFieldsFormat; with --field, patch in one request (alias: update)
 tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
 tools azure-devops timelog types                 # List available time types
 tools azure-devops timelog list -w <id>          # List time logs for work item (--day <date>, --from/--to, --user @me)
@@ -333,17 +333,17 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Get task 12345 with screenshots" | `tools azure-devops workitem 12345 --task-folders --images` |
 | "Analyze bug with images" | Fetch with `--images` → Read images → Explore agent with visual context |
 
-### Post field updates
+### Update fields
 
-`workitem-post` reads one work item, including `multilineFieldsFormat`, and can update fields in a single JSON Patch. Without `--confirm` it prints the patch and writes nothing. Field names are the caller's; the command hard-codes none.
+`workitem-update` (alias `update`) reads one work item, including `multilineFieldsFormat`, and can update fields in a single JSON Patch. Without `--confirm` it prints the patch and writes nothing. Field names are the caller's; the command hard-codes none.
 
 ```bash
-tools azure-devops workitem-post 12345 --json
-tools azure-devops workitem-post 12345 \
+tools azure-devops workitem-update 12345 --json
+tools azure-devops workitem-update 12345 \
   --field System.Description=@description.html \
   --markdown System.Description \
   --image-root ./drafts \
-  --reuse posted-images.json \
+  --reuse uploaded-images.json \
   --rev 6 \
   --confirm --json
 ```

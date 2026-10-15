@@ -6,14 +6,14 @@ import { formatJSON } from "@app/azure-devops/cache";
 import { handleCliError } from "@app/azure-devops/cli.utils";
 import { resolveWorkItemId } from "@app/azure-devops/lib/comments";
 import {
-    executeWorkItemPost,
+    executeWorkItemUpdate,
     localImageSources,
     parseFieldSpec,
     parseReuseFile,
     sha256Hex,
-    type WorkItemPostImage,
-    type WorkItemPostResult,
-} from "@app/azure-devops/lib/work-item-post";
+    type WorkItemUpdateImage,
+    type WorkItemUpdateResult,
+} from "@app/azure-devops/lib/work-item-update";
 import { requireConfig } from "@app/azure-devops/utils";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -22,9 +22,9 @@ function collect(value: string, previous: string[]): string[] {
     return [...previous, value];
 }
 
-function resolveImages(values: string[], imageRoot: string): WorkItemPostImage[] {
+function resolveImages(values: string[], imageRoot: string): WorkItemUpdateImage[] {
     const sources = [...new Set(values.flatMap((value) => localImageSources(value)))];
-    const images: WorkItemPostImage[] = [];
+    const images: WorkItemUpdateImage[] = [];
 
     for (const src of sources) {
         const relative = decodeURI(src);
@@ -42,7 +42,7 @@ function resolveImages(values: string[], imageRoot: string): WorkItemPostImage[]
     return images;
 }
 
-function printResult(result: WorkItemPostResult, asJson: boolean): void {
+function printResult(result: WorkItemUpdateResult, asJson: boolean): void {
     if (!result.ok) {
         if (asJson) {
             out.println(formatJSON(result));
@@ -77,9 +77,10 @@ function printResult(result: WorkItemPostResult, asJson: boolean): void {
     out.println(`updated work item to rev ${result.rev}`);
 }
 
-export function registerWorkItemPostCommand(program: Command): void {
+export function registerWorkItemUpdateCommand(program: Command): void {
     program
-        .command("workitem-post")
+        .command("workitem-update")
+        .alias("update")
         .description(
             "Read a work item, including multilineFieldsFormat, and update fields in one JSON Patch. Without --confirm, print the patch and send nothing."
         )
@@ -98,7 +99,7 @@ export function registerWorkItemPostCommand(program: Command): void {
         )
         .option(
             "--rev <n>",
-            "Refuse the post unless the work item is still at this rev. The patch tests /rev either way."
+            "Refuse the update unless the work item is still at this rev. The patch tests /rev either way."
         )
         .option("--image-root <dir>", "Directory that relative <img src> paths are resolved against.", process.cwd())
         .option(
@@ -151,7 +152,7 @@ export function registerWorkItemPostCommand(program: Command): void {
                         fields.map((field) => field.value),
                         options.imageRoot
                     );
-                    const result = await executeWorkItemPost(
+                    const result = await executeWorkItemUpdate(
                         {
                             read: (itemId) => api.getWorkItemLive(itemId),
                             upload: (fileName, bytes) => api.uploadAttachment(fileName, bytes),

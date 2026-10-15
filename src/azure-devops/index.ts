@@ -12,7 +12,7 @@
  *   tools azure-devops dashboard <url|id> [options]
  *   tools azure-devops list
  *   tools azure-devops workitem-create [options]
- *   tools azure-devops workitem-post <id> [--field Name=value] [--markdown Field] [--confirm]
+ *   tools azure-devops workitem-update|update <id> [--field Name=value] [--markdown Field] [--confirm]
  *   tools azure-devops timelog <add|list|delete|types|import|configure|prepare-import|export-month> [options]
  *   tools azure-devops history <show|search|sync|activity|mentions> [options]
  *   tools azure-devops iterations [options]
@@ -51,7 +51,7 @@ import { registerWikiCommand } from "@app/azure-devops/commands/wiki";
 import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
-import { registerWorkItemPostCommand } from "@app/azure-devops/commands/workitem-post";
+import { registerWorkItemUpdateCommand } from "@app/azure-devops/commands/workitem-update";
 import { runTool } from "@genesiscz/utils/cli";
 
 // Wire up cross-command dependencies
@@ -80,7 +80,7 @@ registerWorkitemCommand(program);
 registerAncestorsCommand(program);
 registerTreeCommand(program);
 registerWorkitemCreateCommand(program);
-registerWorkItemPostCommand(program);
+registerWorkItemUpdateCommand(program);
 registerWorkitemCacheCommand(program);
 registerDashboardCommand(program);
 registerTimelogCommand(program);
@@ -105,6 +105,7 @@ Commands:
   dashboard <input>      Fetch dashboard and list its queries
   list                   List cached work items (alias: ls)
   workitem-create        Create a new work item, interactive or from template (alias: create)
+  workitem-update <id>   Read a work item's field formats, or update fields in one JSON Patch (alias: update)
   timelog                Manage time log entries (add, list, delete, types, import, configure,
                          prepare-import, export-month)
   history                Work item history commands (show, search, sync, activity, mentions)
@@ -162,6 +163,15 @@ Workitem-Create Options:
   --tags <tags>          Tags (comma-separated)
   --assignee <email>     Assignee email
   --parent <id>          Parent work item ID
+
+Workitem-Update Options:
+  --field <name=value>   Set a field; repeat per field (Name=@file reads the value from a file)
+  --markdown <field>     Switch a multiline field to Markdown; repeat per field
+  --rev <n>              Refuse the update unless the work item is still at this rev
+  --image-root <dir>     Directory that relative <img src> paths resolve against
+  --reuse <file>         JSON of already uploaded images; an image with the same sha256 is not uploaded again
+  --confirm              Send the patch (without it, print the patch and send nothing)
+  --json                 Print the live work item, the dry-run plan, or the verify result as JSON
 
 Timelog Subcommands:
   timelog add            Add a time log entry (--date <date>, default today)

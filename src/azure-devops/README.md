@@ -400,6 +400,7 @@ tools azure-devops workitem-create --type Bug --title "Error in checkout" --seve
 | `dashboard <input>` | Extract queries from a dashboard           |
 | `list` (alias `ls`) | List all cached work items                 |
 | `workitem-create` (alias `create`) | Create new work items (interactive or from template) |
+| `workitem-update` (alias `update`) | Read a work item's field formats, or update fields in one JSON Patch (`--field`, `--markdown`, `--confirm`) |
 | `iterations`   | List the project's sprints (alias `sprints`)      |
 | `sprint`       | List the work items of one sprint              |
 | `history show`, `history sync` | One item's history; bulk history sync for cached items (`--since`, `--batch`) |

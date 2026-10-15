@@ -5,46 +5,46 @@ import type { JsonPatchOperation, WorkItemLive } from "@app/azure-devops/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** An image already stored on the work item. Keyed by the file's base name. */
-export interface PostedImage {
+export interface UploadedImage {
     sha256: string;
     url: string;
 }
 
-export interface WorkItemPostImage {
+export interface WorkItemUpdateImage {
     src: string;
     name: string;
     sha256: string;
     bytes: Uint8Array;
 }
 
-export interface WorkItemPostClient {
+export interface WorkItemUpdateClient {
     read(id: number): Promise<WorkItemLive>;
     upload(fileName: string, bytes: Uint8Array): Promise<string>;
     update(id: number, operations: JsonPatchOperation[]): Promise<void>;
 }
 
-export interface WorkItemPostInput {
+export interface WorkItemUpdateInput {
     id: number;
-    /** When set, the post is refused unless the work item is still at this rev. */
+    /** When set, the update is refused unless the work item is still at this rev. */
     rev?: number;
     fields: { name: string; value: string }[];
     /** Multiline fields the caller wants stored as Markdown. Names come from the caller. */
     markdownFields: string[];
-    images: WorkItemPostImage[];
-    reuse: ReadonlyMap<string, PostedImage>;
+    images: WorkItemUpdateImage[];
+    reuse: ReadonlyMap<string, UploadedImage>;
     confirm: boolean;
 }
 
-export interface WorkItemPostPlan {
+export interface WorkItemUpdatePlan {
     rev: number;
     operations: JsonPatchOperation[];
     uploads: { src: string; name: string; sha256: string }[];
     reused: { src: string; url: string }[];
 }
 
-export type WorkItemPostResult =
-    | { ok: true; dryRun: true; plan: WorkItemPostPlan }
-    | { ok: true; dryRun: false; rev: number; images: Record<string, PostedImage>; plan: WorkItemPostPlan }
+export type WorkItemUpdateResult =
+    | { ok: true; dryRun: true; plan: WorkItemUpdatePlan }
+    | { ok: true; dryRun: false; rev: number; images: Record<string, UploadedImage>; plan: WorkItemUpdatePlan }
     | { ok: false; error: string; mismatches?: { field: string; sent: string; stored: string }[] };
 
 /** Local `<img src>` values. `http`, `https` and `data` sources are already remote. */
@@ -72,12 +72,12 @@ export function sha256Hex(bytes: Uint8Array): string {
 export function imageReuseMap(
     sources: readonly string[],
     files: ReadonlyMap<string, string>,
-    posted: ReadonlyMap<string, PostedImage>
+    uploaded: ReadonlyMap<string, UploadedImage>
 ): Map<string, string> {
     const urls = new Map<string, string>();
 
     for (const src of sources) {
-        const known = posted.get(basename(src));
+        const known = uploaded.get(basename(src));
         const sha256 = files.get(src);
 
         if (known && sha256 && known.sha256 === sha256 && known.url !== "") {
@@ -121,7 +121,7 @@ export function workItemPatch(input: {
  * (`width="375"` stored as `width=375`; `width="48%"` keeps the quotes), and a local image src is the
  * attachment URL from `images`. Comments, added semicolons and insignificant space are ignored too.
  */
-export function samePostedMarkdown(
+export function sameStoredMarkdown(
     stored: string,
     sent: string,
     images: ReadonlyMap<string, string> = new Map()
@@ -172,14 +172,14 @@ export function parseFieldSpec(spec: string, readFile: (path: string) => string)
     return { name, value: readFile(path) };
 }
 
-export function parseReuseFile(text: string): Map<string, PostedImage> {
+export function parseReuseFile(text: string): Map<string, UploadedImage> {
     const parsed: unknown = SafeJSON.parse(text);
 
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error("--reuse must be a JSON object of { name: { sha256, url } }");
     }
 
-    const posted = new Map<string, PostedImage>();
+    const uploaded = new Map<string, UploadedImage>();
 
     for (const [name, value] of Object.entries(parsed)) {
         if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -193,10 +193,10 @@ export function parseReuseFile(text: string): Map<string, PostedImage> {
             throw new Error(`--reuse entry ${name} needs sha256 and url strings`);
         }
 
-        posted.set(name, { sha256, url });
+        uploaded.set(name, { sha256, url });
     }
 
-    return posted;
+    return uploaded;
 }
 
 function fieldText(value: unknown): string {
@@ -204,10 +204,10 @@ function fieldText(value: unknown): string {
 }
 
 /** Read, substitute images, and either describe the patch or send it and compare the read-back. */
-export async function executeWorkItemPost(
-    client: WorkItemPostClient,
-    input: WorkItemPostInput
-): Promise<WorkItemPostResult> {
+export async function executeWorkItemUpdate(
+    client: WorkItemUpdateClient,
+    input: WorkItemUpdateInput
+): Promise<WorkItemUpdateResult> {
     const live = await client.read(input.id);
 
     if (input.rev !== undefined && input.rev !== live.rev) {
@@ -218,7 +218,7 @@ export async function executeWorkItemPost(
     const sources = [...new Set(input.fields.flatMap((field) => localImageSources(field.value)))];
     const files = new Map(input.images.map((image) => [image.src, image.sha256]));
     const reuse = imageReuseMap(sources, files, input.reuse);
-    const uploads: WorkItemPostImage[] = [];
+    const uploads: WorkItemUpdateImage[] = [];
 
     for (const src of sources) {
         if (reuse.has(src)) {
@@ -249,7 +249,7 @@ export async function executeWorkItemPost(
         markdownFields: input.markdownFields,
         liveFormats: live.multilineFieldsFormat,
     });
-    const plan: WorkItemPostPlan = {
+    const plan: WorkItemUpdatePlan = {
         rev: live.rev,
         operations,
         uploads: uploads.map(({ src, name, sha256 }) => ({ src, name, sha256 })),
@@ -267,7 +267,7 @@ export async function executeWorkItemPost(
     for (const field of fields) {
         const stored = fieldText(after.fields[field.name]);
 
-        if (!samePostedMarkdown(stored, field.value)) {
+        if (!sameStoredMarkdown(stored, field.value)) {
             mismatches.push({ field: field.name, sent: field.value, stored });
         }
 
@@ -290,10 +290,10 @@ export async function executeWorkItemPost(
         };
     }
 
-    const images: Record<string, PostedImage> = {};
+    const images: Record<string, UploadedImage> = {};
 
-    for (const [name, posted] of input.reuse) {
-        images[name] = posted;
+    for (const [name, uploaded] of input.reuse) {
+        images[name] = uploaded;
     }
 
     for (const image of input.images) {

@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { registerWorkItemPostCommand } from "@app/azure-devops/commands/workitem-post";
+import { registerWorkItemUpdateCommand } from "@app/azure-devops/commands/workitem-update";
 import {
-    executeWorkItemPost,
+    executeWorkItemUpdate,
     imageReuseMap,
     parseFieldSpec,
     parseReuseFile,
-    samePostedMarkdown,
+    sameStoredMarkdown,
     sha256Hex,
-    type WorkItemPostClient,
-    type WorkItemPostImage,
+    type WorkItemUpdateClient,
+    type WorkItemUpdateImage,
     workItemPatch,
-} from "@app/azure-devops/lib/work-item-post";
+} from "@app/azure-devops/lib/work-item-update";
 import type { JsonPatchOperation, WorkItemLive } from "@app/azure-devops/types";
 import { Command } from "commander";
 
@@ -26,14 +26,14 @@ function live(overrides: Partial<WorkItemLive> = {}): WorkItemLive {
     };
 }
 
-function image(src: string, bytes: Uint8Array, sha256 = sha256Hex(bytes)): WorkItemPostImage {
+function image(src: string, bytes: Uint8Array, sha256 = sha256Hex(bytes)): WorkItemUpdateImage {
     return { src, name: src.slice(src.lastIndexOf("/") + 1), sha256, bytes };
 }
 
 function client(
     item: WorkItemLive,
     uploadUrl = ATTACHMENT
-): WorkItemPostClient & { uploads: string[]; operations: JsonPatchOperation[][] } {
+): WorkItemUpdateClient & { uploads: string[]; operations: JsonPatchOperation[][] } {
     const state = { ...item, fields: { ...item.fields }, multilineFieldsFormat: { ...item.multilineFieldsFormat } };
     const uploads: string[] = [];
     const operations: JsonPatchOperation[][] = [];
@@ -75,18 +75,18 @@ describe("image reuse", () => {
     const sha256 = sha256Hex(bytes);
 
     test("reuses the attachment URL when the file sha256 is unchanged, and uploads when it changed", () => {
-        const posted = new Map([["a.png", { sha256, url: ATTACHMENT }]]);
+        const uploaded = new Map([["a.png", { sha256, url: ATTACHMENT }]]);
         const same = image("shots/a.png", bytes, sha256);
         const changed = image("shots/a.png", bytes, "f".repeat(64));
 
-        expect(imageReuseMap([same.src], new Map([[same.src, same.sha256]]), posted).get(same.src)).toBe(ATTACHMENT);
-        expect(imageReuseMap([changed.src], new Map([[changed.src, changed.sha256]]), posted).size).toBe(0);
+        expect(imageReuseMap([same.src], new Map([[same.src, same.sha256]]), uploaded).get(same.src)).toBe(ATTACHMENT);
+        expect(imageReuseMap([changed.src], new Map([[changed.src, changed.sha256]]), uploaded).size).toBe(0);
     });
 
-    test("a confirm post does not upload a file whose sha256 is already posted", async () => {
+    test("a confirmed update does not upload a file whose sha256 is already uploaded", async () => {
         const shot = image("shots/a.png", bytes);
         const ado = client(live());
-        const result = await executeWorkItemPost(ado, {
+        const result = await executeWorkItemUpdate(ado, {
             id: 100,
             fields: [{ name: "System.Description", value: `<img src="${shot.src}">` }],
             markdownFields: [],
@@ -129,7 +129,7 @@ describe("the rev test and the format switch", () => {
 
     test("a stale --rev sends nothing", async () => {
         const ado = client(live());
-        const result = await executeWorkItemPost(ado, {
+        const result = await executeWorkItemUpdate(ado, {
             id: 100,
             rev: 5,
             fields: [{ name: "System.Description", value: "next" }],
@@ -146,7 +146,7 @@ describe("the rev test and the format switch", () => {
 
     test("confirm sends the rev test and the format switch, then accepts the read-back", async () => {
         const ado = client(live());
-        const result = await executeWorkItemPost(ado, {
+        const result = await executeWorkItemUpdate(ado, {
             id: 100,
             fields: [{ name: "System.Description", value: "next" }],
             markdownFields: ["System.Description"],
@@ -172,21 +172,21 @@ describe("the rev test and the format switch", () => {
 
 describe("read-back rewrites", () => {
     test("an emoji stored as a character reference matches the emoji that was sent", () => {
-        expect(samePostedMarkdown("see &#128279; this", "see 🔗 this")).toBe(true);
-        expect(samePostedMarkdown("see &#x1F517; this", "see 🔗 this")).toBe(true);
+        expect(sameStoredMarkdown("see &#128279; this", "see 🔗 this")).toBe(true);
+        expect(sameStoredMarkdown("see &#x1F517; this", "see 🔗 this")).toBe(true);
     });
 
     test("a quoted integer attribute may lose its quotes, and a percent value keeps them", () => {
-        expect(samePostedMarkdown('<img width="375">', "<img width=375>")).toBe(true);
-        expect(samePostedMarkdown('<img width="48%">', '<img width="48%">')).toBe(true);
-        expect(samePostedMarkdown('<img width="48%">', "<img width=48%>")).toBe(false);
+        expect(sameStoredMarkdown('<img width="375">', "<img width=375>")).toBe(true);
+        expect(sameStoredMarkdown('<img width="48%">', '<img width="48%">')).toBe(true);
+        expect(sameStoredMarkdown('<img width="48%">', "<img width=48%>")).toBe(false);
     });
 
     test("a local image src matches the attachment URL it was replaced with", () => {
         const images = new Map([["shots/a.png", ATTACHMENT]]);
 
-        expect(samePostedMarkdown(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">', images)).toBe(true);
-        expect(samePostedMarkdown(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">')).toBe(false);
+        expect(sameStoredMarkdown(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">', images)).toBe(true);
+        expect(sameStoredMarkdown(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">')).toBe(false);
     });
 });
 
@@ -206,14 +206,15 @@ describe("command input", () => {
 
     test("--help names every flag", () => {
         const program = new Command();
-        registerWorkItemPostCommand(program);
-        const command = program.commands.find((item) => item.name() === "workitem-post");
+        registerWorkItemUpdateCommand(program);
+        const command = program.commands.find((item) => item.name() === "workitem-update");
         const flags = command?.options.map((option) => option.long) ?? [];
 
         expect(flags).toEqual(
             expect.arrayContaining(["--field", "--markdown", "--rev", "--image-root", "--reuse", "--confirm", "--json"])
         );
         expect(command?.description().length).toBeGreaterThan(0);
+        expect(command?.aliases()).toEqual(["update"]);
 
         for (const option of command?.options ?? []) {
             expect(option.description.length, option.long).toBeGreaterThan(0);
