@@ -290,3 +290,12 @@ Release check app, a 600-row tree, 360 wheel events through the window, CPU per 
 - A resize that "is not 1:1" was not reproducible. The divider now logs one line per drag to the unified log
   (subsystem `genesiskit`): moves, pointer and divider travel, the largest gap, the overlay's drift from its slot.
   A drag that stops at the sidebar's maximum width (560 pt) looks like lag; check the clamp first.
+
+### The installed app is the measurement that counts (2026-10-15 20:10)
+- The same scripted scroll cost 4.2 to 4.8 ms per event in the check app and 8.1 ms in Martin's installed viewer
+  (1720 × 1255 window, about 30 tabs, git marks, a large vault): at the 8.3 ms of one 120 Hz frame. A check app
+  proves direction, not the user's number. Measure both: `ps -o cputime` of the app's pid around
+  `tools control scroll --app <pid> --coords X,Y --direction down --pixels 3000 --time 1.5 --repeat 4 --alternate`.
+- To find where the extra went, `/usr/bin/sample <pid> 5` during that scroll (read-only, safe on a user's app) and
+  split `NSHostingView.layout` by its ancestors: 90 of 136 samples were inside the table's row cells, 15 in the window
+  root. The rows' own SwiftUI hosting was the cost, not the git marks, the tab bar or tooltips.

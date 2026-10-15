@@ -93,3 +93,8 @@ checklist.md or motion.md as well.
 - 2026-10-15 — **Text that grows with a sidebar's width grew too far** (+4 pt to 17 pt). Capped at +1.5 pt.
 - 2026-10-15 — **A dead-end message needs a way out.** "File is gone" now makes the path a menu: open in the default
   app, show the folder in Finder, navigate to the folder in the sidebar.
+- 2026-10-15 — **Every part of a location header should be a way to move.** The muted parent ("Projects /") looked
+  like a link and did nothing; it now goes up a folder, as the arrow does, and Back returns.
+- 2026-10-15 — **A create menu must say where the item lands.** "New file or folder in Design or …" left the target
+  unclear. One possible folder: "New File in Notes…". Two (the open note's folder and the root): "New File in…"
+  and "New Folder in…" submenus that list both by name.

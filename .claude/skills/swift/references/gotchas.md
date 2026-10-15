@@ -258,3 +258,8 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   `cancelTrackingWithoutAnimation()`.
 - **`git checkout --theirs <file>` takes the other side's whole file**, dropping this side's hunks that did not
   conflict. For "theirs wins only in conflicts" use `git merge-file --theirs ours base theirs`.
+- **Restoring a table's scroll offset in the same pass as new rows puts it back at the top.** The tree's
+  `onChange(of: rows)` ran before `updateNSView` handed the table its rows, and the reload landed at offset 0. Set the
+  offset one run-loop turn later and check it again a moment after (`MarkdownFileTreeView.applyPendingPlaceScroll`).
+- **A context menu opened by automation closes within seconds if nothing picks an item.** Run the right-click,
+  `see --scope menu` and the press back to back (tools control #530, 2026-10-15).
