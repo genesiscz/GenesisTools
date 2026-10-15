@@ -26,6 +26,14 @@ export interface InboxGuidance {
 }
 
 const DECISION_DOOR = `a question_post item with type "decision" (CLI: \`${toolCommand("question ask", "--json", "-")}\`)`;
+
+/**
+ * When the native question tool is right. It ends the agent's turn until the user answers, so it is for a real
+ * blocker only (Martin, 2026-10-15): with other work unblocked, the question goes in the reply and the work goes on.
+ */
+const NATIVE_ASK =
+    "Use your native question tool (for example AskUserQuestion) only for a real blocker: it stops your work " +
+    "until the user answers. While other work is unblocked, write the question in your reply and keep working.";
 const MESSAGE_DOOR = `inbox_send with the screenshot paths in \`images\` (CLI: \`${toolCommand("question message")} "<text>" --image /abs/shot.png\`)`;
 
 /** The INBOX paragraph: when to post and how. Empty without the native app. */
@@ -42,10 +50,10 @@ export function inboxInstructions(state: NativeInboxState): string {
 
     if (state === "installed") {
         return (
-            "INBOX: the GenesisTools app is installed on this Mac, but its widget is not running, so nobody may see " +
-            `the inbox. You may still post a decision, as ${DECISION_DOOR}, or a message or screenshot, as ` +
-            `${MESSAGE_DOOR}. But ALWAYS also ask the user directly in this chat, with your native question tool ` +
-            "or in your reply."
+            "INBOX: the GenesisTools app is installed on this Mac, but its widget is not running. A post is still " +
+            "stored and reaches the user when they turn the widget on, so keep posting: a decision as " +
+            `${DECISION_DOOR}, a message or screenshot as ${MESSAGE_DOOR}. Until the widget is on, the user sees ` +
+            "only this chat, so ALWAYS also write each question in your reply, as it is."
         );
     }
 
@@ -56,8 +64,9 @@ export function inboxInstructions(state: NativeInboxState): string {
 export function decisionNudge({ state, askViaQuestionTool }: InboxGuidance): string {
     if (state === "installed") {
         return (
-            "The GenesisTools widget is not running, so a post may go unseen: ask decisive questions with your " +
-            "native question tool (for example AskUserQuestion) or in your reply, and post here only as a copy. "
+            "The GenesisTools widget is not running: a post is stored and shows when the user turns it on, but " +
+            "until then the user sees only your reply. Post each ❓ DECISION here AND write it in your reply. " +
+            `${NATIVE_ASK} `
         );
     }
 
@@ -65,14 +74,14 @@ export function decisionNudge({ state, askViaQuestionTool }: InboxGuidance): str
         return askViaQuestionTool
             ? "Post every ❓ DECISION this way instead of your native question tool: the user answers it in the " +
                   "widget inbox. Also write it in your reply. "
-            : "Ask decisive questions with your native question tool (for example AskUserQuestion) and in your " +
-                  "reply, and also post each ❓ DECISION here so it reaches the user's widget inbox. ";
+            : "Write each ❓ DECISION in your reply, and also post each ❓ DECISION here so it reaches the user's " +
+                  `widget inbox. ${NATIVE_ASK} `;
     }
 
     return askViaQuestionTool
         ? "Post every ❓ DECISION this way, and also write it in your reply: the log is a copy. "
-        : "The user has NOT opted in to agents asking through question_post, so ask decisive questions with your " +
-              "native question tool (for example AskUserQuestion) and in your reply. ";
+        : "The user has NOT opted in to agents asking through question_post, so write decisive questions in your " +
+              `reply. ${NATIVE_ASK} `;
 }
 
 const REPLY_COPY =
@@ -82,16 +91,16 @@ const REPLY_COPY =
 export function postNote({ state, askViaQuestionTool }: InboxGuidance): string {
     if (state === "installed") {
         return (
-            "Saved to the inbox, but the GenesisTools widget is not running, so the user may not see it. Ask the " +
-            "user directly in this chat now: your native question tool (for example AskUserQuestion) or your reply."
+            "Stored in the inbox, but the GenesisTools widget is off, so the user sees it only once they turn it on. " +
+            "Write the question in your chat reply now, as it is, and keep posting each one here as well: both " +
+            `ways, every time. ${NATIVE_ASK}`
         );
     }
 
     if (state === "running") {
         return askViaQuestionTool
             ? `Posted to the user's widget inbox. ${REPLY_COPY}`
-            : `Posted to the user's widget inbox. ${REPLY_COPY} Ask decisive questions with your native question ` +
-                  "tool (for example AskUserQuestion) as usual.";
+            : `Posted to the user's widget inbox. ${REPLY_COPY} ${NATIVE_ASK}`;
     }
 
     if (askViaQuestionTool) {
@@ -100,8 +109,7 @@ export function postNote({ state, askViaQuestionTool }: InboxGuidance): string {
 
     return (
         `The user has not opted in to agents asking through ${toolCommand("question")} (${toolCommand("question config")}). ` +
-        "The post was saved, but ask decisive questions with your native question tool (for example " +
-        `AskUserQuestion) and in your chat reply. ${REPLY_COPY}`
+        `The post was saved. ${REPLY_COPY} ${NATIVE_ASK}`
     );
 }
 
@@ -112,7 +120,10 @@ export function messageNote(state: NativeInboxState): string {
     }
 
     if (state === "installed") {
-        return "Saved to the inbox, but the GenesisTools widget is not running: also tell the user in this chat.";
+        return (
+            "Stored in the inbox; the GenesisTools widget is off, so the user sees it once they turn it on. Tell " +
+            "the user in this chat now as well, and keep sending both ways."
+        );
     }
 
     return "Saved to the question log. This Mac has no native GenesisTools inbox, so tell the user in this chat.";
@@ -123,7 +134,8 @@ export function inboxSendDescription(state: NativeInboxState): string {
     const when =
         state === "running"
             ? "The user's widget is running, so this reaches them even when they are not watching the chat."
-            : "The widget is not running, so nobody may see it: ALSO tell the user in this chat.";
+            : "The widget is not running: the message is stored and shows when the user turns it on, so ALSO tell " +
+              "the user in this chat, and keep sending both ways.";
 
     return (
         "Send the user a message, optionally with screenshots, to their GenesisTools widget inbox. It lands as an " +

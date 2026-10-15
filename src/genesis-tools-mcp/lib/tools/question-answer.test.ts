@@ -180,7 +180,8 @@ describe("inbox_send", () => {
         );
 
         expect(receipt.context).toMatchObject({ agent: "codex", sessionId: "codex-thread" });
-        expect(receipt.summary).toContain("also tell the user in this chat");
+        expect(receipt.summary).toContain("Tell the user in this chat now as well");
+        expect(receipt.summary).toContain("keep sending both ways");
     });
 
     it("refuses a message with neither text nor image, and an unknown session gets the warning", async () => {

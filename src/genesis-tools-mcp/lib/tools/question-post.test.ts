@@ -504,7 +504,7 @@ describe("the opt-in nudge", () => {
             const [instructions, description] = texts(askViaQuestionTool, "installed");
 
             expect(instructions).toContain(inboxInstructions("installed"));
-            expect(instructions).toContain("ALWAYS also ask the user directly in this chat");
+            expect(instructions).toContain("ALWAYS also write each question in your reply");
             expect(description).toContain("widget is not running");
             expect(description).not.toContain("Post every ❓ DECISION");
 
@@ -512,7 +512,8 @@ describe("the opt-in nudge", () => {
                 { sessionHint: "sess-1", items: [decision] },
                 withLog(askViaQuestionTool, "installed")
             );
-            expect(note).toContain("Ask the user directly in this chat now");
+            expect(note).toContain("Write the question in your chat reply now");
+            expect(note).toContain("only for a real blocker");
         }
     });
 

@@ -27,7 +27,7 @@ export const RUNNING_HINT =
     'INBOX: the user\'s GenesisTools widget is running on this Mac, and its inbox reaches the user even when they are not watching this chat. Post there only when you need the user: a decision you cannot make yourself, as a question_post item with type "decision" (CLI: `tools question ask --json -`); or a finished long task, a blocker, or a result they must see (attach the screenshot), as inbox_send with the screenshot paths in `images` (CLI: `tools question message "<text>" --image /abs/shot.png`). Never post routine progress or anything you can decide yourself. Also write every question in your chat reply.';
 
 export const INSTALLED_HINT =
-    'INBOX: the GenesisTools app is installed on this Mac, but its widget is not running, so nobody may see the inbox. You may still post a decision, as a question_post item with type "decision" (CLI: `tools question ask --json -`), or a message or screenshot, as inbox_send with the screenshot paths in `images` (CLI: `tools question message "<text>" --image /abs/shot.png`). But ALWAYS also ask the user directly in this chat, with your native question tool or in your reply.';
+    'INBOX: the GenesisTools app is installed on this Mac, but its widget is not running. A post is still stored and reaches the user when they turn the widget on, so keep posting: a decision as a question_post item with type "decision" (CLI: `tools question ask --json -`), a message or screenshot as inbox_send with the screenshot paths in `images` (CLI: `tools question message "<text>" --image /abs/shot.png`). Until the widget is on, the user sees only this chat, so ALWAYS also write each question in your reply, as it is.';
 
 export interface InboxStateRecord {
     installed?: unknown;
