@@ -121,6 +121,8 @@ export interface GanttProps {
     onBarChange?: (id: string, next: GanttSpan, phase: "preview" | "commit") => void;
     onBarClick?: (id: string) => void;
     ariaLabel?: string;
+    /** Caption at the bottom of the label column header ("Lane / item"). */
+    labelTitle?: ReactNode;
     /** Max height of the scroll frame (CSS length or px). Default: no limit. */
     maxHeight?: number | string;
 }
@@ -353,6 +355,7 @@ export function Gantt({
     onBarClick,
     ariaLabel = "Project timeline",
     maxHeight,
+    labelTitle,
 }: GanttProps) {
     const dayWidth = axis.dayWidth ?? DEFAULT_DAY_WIDTH;
     const cellWidth = (axis.cellDays ?? DEFAULT_CELL_DAYS) * dayWidth;
@@ -591,9 +594,11 @@ export function Gantt({
                 {/* Header */}
                 <div className="sticky top-0 z-30 flex border-b border-line bg-panel" style={{ height: headerHeight }}>
                     <div
-                        className="sticky left-0 z-40 shrink-0 border-r border-line bg-panel"
+                        className="sticky left-0 z-40 flex shrink-0 items-end border-r border-line bg-panel px-3 pb-2 text-xs text-dim"
                         style={{ width: labelWidth }}
-                    />
+                    >
+                        {labelTitle}
+                    </div>
                     <div className="relative" style={{ width: trackWidth }}>
                         {cells.map((cell, i) => (
                             <div
@@ -703,6 +708,7 @@ export function Gantt({
                                 rights={mode === "baseline" ? editRights(false) : rights}
                                 clickable={Boolean(onBarClick)}
                                 dragging={drag?.id === row.bar.id && drag.moved}
+                                dragEdge={drag?.id === row.bar.id ? drag.edge : "move"}
                                 onPointerDown={(event) => onBarPointerDown(event, row.bar)}
                                 onPointerMove={onBarPointerMove}
                                 onPointerUp={() => endDrag(true)}
@@ -778,7 +784,7 @@ function LaneRow({
     return (
         <div
             data-gantt-row="lane"
-            className="relative flex"
+            className="relative flex border-b border-line/70"
             style={{ height: LANE_ROW, borderTop: `2px solid ${color}`, background: tint }}
         >
             <div className={`${LABEL_CELL} gap-2`} style={{ width: labelWidth, background: tint }}>
@@ -888,13 +894,19 @@ interface BarRowProps extends RowCommon {
     rights: EditRights;
     clickable: boolean;
     dragging: boolean;
+    /** Which part of the bar the drag holds, for the drag tag. */
+    dragEdge: "start" | "end" | "move";
     onPointerDown: (event: PointerEvent<HTMLElement>) => void;
     onPointerMove: (event: PointerEvent<HTMLElement>) => void;
     onPointerUp: () => void;
     onPointerCancel: () => void;
 }
 
-const HANDLE = "absolute top-0 bottom-0 w-2 cursor-ew-resize touch-none";
+/** A resize grip: 9 px, reaching 4 px past the bar edge, shown on hover, focus and drag. */
+const HANDLE =
+    "absolute -top-[3px] -bottom-[3px] w-[9px] cursor-ew-resize touch-none rounded-[3px] bg-ink opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60";
+/** The baseline outline is a thin dashed band centred on the bar, so the bar itself stays readable over it. */
+const GHOST_HEIGHT = 6;
 
 function BarRow({
     bar,
@@ -907,6 +919,7 @@ function BarRow({
     rights,
     clickable,
     dragging,
+    dragEdge,
     onPointerDown,
     onPointerMove,
     onPointerUp,
@@ -958,6 +971,25 @@ function BarRow({
                   }
     );
 
+    const ghostTip = useTooltip(() => ({
+        title: "Baseline plan",
+        subtitle: bar.label,
+        rows: [
+            { k: "Baseline", v: ghost ? rangeText(ghost, fmt) : "none" },
+            { k: "Now", v: rangeText(span, fmt) },
+        ],
+        note: "The dashed outline is where this item sat in the baseline plan. The solid bar is where it sits now.",
+    }));
+    const shiftTip = useTooltip(() => ({
+        title: `End shift ${shift ? shiftLabel(shift) : ""}`,
+        subtitle: bar.label,
+        rows: [
+            { k: "Baseline end", v: ghost ? fmt.day.format(utcDate(ghost.end)) : "none" },
+            { k: "End now", v: fmt.day.format(utcDate(span.end)) },
+        ],
+        note: "Calendar days against the baseline. A positive number is a delay.",
+    }));
+
     // In-bar text colour by contrast against the RESOLVED bar colour, so a light series stays readable.
     useLayoutEffect(() => {
         if (textRef.current && barRef.current) {
@@ -968,7 +1000,7 @@ function BarRow({
     const shiftNearEdge = left + width + 6 + 48 > trackWidth;
 
     return (
-        <div data-gantt-row="bar" className="relative flex" style={{ height: rowHeight }}>
+        <div data-gantt-row="bar" className="relative flex border-b border-line/70" style={{ height: rowHeight }}>
             <div className={LABEL_CELL} style={{ width: labelWidth, background: "var(--panel)" }}>
                 {bar.href ? (
                     <a
@@ -990,8 +1022,15 @@ function BarRow({
                     <span
                         aria-hidden="true"
                         data-gantt-ghost=""
-                        className="absolute rounded border border-dashed border-dim"
-                        style={{ left: ghostPx.left, width: ghostPx.width, top: BAR_TOP, height: BAR_HEIGHT }}
+                        className="absolute cursor-help rounded-[3px] border border-dashed border-dim hover:border-ink hover:bg-[var(--wash)]"
+                        style={{
+                            left: ghostPx.left,
+                            width: ghostPx.width,
+                            top: BAR_TOP + (BAR_HEIGHT - GHOST_HEIGHT) / 2,
+                            height: GHOST_HEIGHT,
+                        }}
+                        onPointerMove={ghostTip.onPointerMove}
+                        onPointerLeave={ghostTip.onPointerLeave}
                     />
                 ) : null}
                 <span
@@ -1025,24 +1064,25 @@ function BarRow({
                     onPointerUp={onPointerUp}
                     onPointerCancel={onPointerCancel}
                     aria-describedby={tip["aria-describedby"]}
-                    className={`absolute block overflow-hidden rounded hover:brightness-[1.12] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info motion-safe:transition-[filter] ${
+                    className={`group absolute block rounded hover:brightness-[1.12] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info motion-safe:transition-[filter] ${
                         rights.move
                             ? "cursor-grab touch-none active:cursor-grabbing"
                             : interactive
                               ? "cursor-pointer"
                               : ""
-                    } ${dragging ? "brightness-[1.12]" : ""}`}
+                    } ${dragging ? "z-[5] brightness-[1.12] outline-2 outline-offset-1 outline-solid outline-ink" : ""}`}
                     style={{ left, width, top: BAR_TOP, height: BAR_HEIGHT, background: color }}
                 >
                     {bar.progress ? (
-                        <span
-                            aria-hidden="true"
-                            className="absolute top-0 bottom-0 left-0"
-                            style={{
-                                width: `${Math.max(0, Math.min(1, bar.progress)) * 100}%`,
-                                background: "rgba(0,0,0,.3)",
-                            }}
-                        />
+                        <span aria-hidden="true" className="absolute inset-0 overflow-hidden rounded">
+                            <span
+                                className="absolute top-0 bottom-0 left-0"
+                                style={{
+                                    width: `${Math.max(0, Math.min(1, bar.progress)) * 100}%`,
+                                    background: "rgba(0,0,0,.3)",
+                                }}
+                            />
+                        </span>
                     ) : null}
                     {labelFits ? (
                         <span
@@ -1054,13 +1094,40 @@ function BarRow({
                             {bar.barLabel}
                         </span>
                     ) : null}
-                    {rights.start ? <span data-gantt-handle="start" className={`${HANDLE} left-0`} /> : null}
-                    {rights.end ? <span data-gantt-handle="end" className={`${HANDLE} right-0`} /> : null}
+                    {rights.start ? (
+                        <span
+                            data-gantt-handle="start"
+                            className={`${HANDLE} -left-1 ${dragging ? "opacity-60" : ""}`}
+                        />
+                    ) : null}
+                    {rights.end ? (
+                        <span
+                            data-gantt-handle="end"
+                            className={`${HANDLE} -right-1 ${dragging ? "opacity-60" : ""}`}
+                        />
+                    ) : null}
+                    {dragging ? (
+                        <span
+                            data-gantt-drag-tag=""
+                            aria-hidden="true"
+                            className="pointer-events-none absolute -top-px z-10 -translate-x-1/2 -translate-y-full rounded border border-line bg-panel px-1.5 text-[10px] whitespace-nowrap text-ink"
+                            style={{ left: dragEdge === "end" ? "100%" : 0 }}
+                        >
+                            {dragEdge === "end"
+                                ? `to ${fmt.day.format(utcDate(span.end))}, ${ganttSpanDays(span)} days`
+                                : dragEdge === "start"
+                                  ? `from ${fmt.day.format(utcDate(span.start))}, ${ganttSpanDays(span)} days`
+                                  : `from ${fmt.day.format(utcDate(span.start))}`}
+                        </span>
+                    ) : null}
                 </span>
                 {shift ? (
                     <span
                         data-gantt-shift=""
-                        className={`pointer-events-none absolute text-[10px] leading-[14px] tabular-nums ${shift > 0 ? "text-err" : "text-ok"}`}
+                        aria-hidden="true"
+                        onPointerMove={shiftTip.onPointerMove}
+                        onPointerLeave={shiftTip.onPointerLeave}
+                        className={`absolute cursor-help text-[10px] leading-[14px] font-semibold whitespace-nowrap tabular-nums ${shift > 0 ? "text-err" : "text-ok"}`}
                         style={
                             shiftNearEdge
                                 ? { right: trackWidth - left + 6, top: BAR_TOP }

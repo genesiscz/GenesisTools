@@ -215,7 +215,9 @@ describe("Gantt editing", () => {
         const { dom, changes, handle } = await editable();
         await dom.pointer(handle("end"), "pointerdown", { clientX: 100, button: 0 });
         await dom.pointer(handle("end"), "pointermove", { clientX: 130 });
+        expect(dom.container.querySelector("[data-gantt-drag-tag]")?.textContent).toContain("15 days");
         await dom.pointer(handle("end"), "pointerup", { clientX: 130 });
+        expect(dom.container.querySelector("[data-gantt-drag-tag]")).toBeNull();
         const commits = changes.filter((c) => c.phase === "commit");
 
         expect(commits).toEqual([{ id: "x", next: { start: "2026-10-01", end: "2026-10-15" }, phase: "commit" }]);
