@@ -832,12 +832,14 @@ function textLength(text: string): number {
 
 /**
  * The right edge of a `block` fill: the widest kept CHANGED row of the file plus two columns (a context
- * row carries no band, and one long wrapped comment made the block as wide as the pane). A hook message
- * is fixed text, so a band padded to the terminal's width wrapped into an empty band row under every
- * row once the pane got narrower (2026-10-15 01:17: rows of 163 columns, padded for a 170-column pane
- * that was 167 columns by then). A block-wide band wraps only where the text itself would.
+ * row carries no band), and never past `fillMax` columns in all (the gutter is `INDENT` of them). A hook
+ * message is fixed text, so a band padded to the terminal's width wrapped into an empty band row under
+ * every row once the pane got narrower (2026-10-15 01:17: rows of 163 columns, padded for a 170-column
+ * pane that was 167 by then). One long changed line made the block as wide as the pane all the same
+ * (11:54: 30 rows padded to 106 columns for one 98-column comment, shown in a pane of 76), hence the cap.
+ * A row past the cap is not padded; its band ends with the text.
  */
-function blockWidth(body: PatchLine[], held: Set<number> | undefined): number {
+function blockWidth(body: PatchLine[], held: Set<number> | undefined, fillMax: number): number {
     let widest = 0;
 
     for (const at of held ?? []) {
@@ -848,7 +850,7 @@ function blockWidth(body: PatchLine[], held: Set<number> | undefined): number {
         }
     }
 
-    return widest + 2;
+    return fillMax > 0 ? Math.min(widest + 2, Math.max(0, fillMax - INDENT)) : widest + 2;
 }
 
 /**
@@ -862,12 +864,14 @@ function dressBlocks({
     tinted,
     budget,
     fill,
+    fillMax,
 }: {
     blocks: DiffBlock[];
     kept: Set<number>[];
     tinted: Map<number, string>[];
     budget: number;
     fill: FillMode;
+    fillMax: number;
 }): number {
     let left = budget;
 
@@ -882,7 +886,7 @@ function dressBlocks({
             return;
         }
 
-        const fillTo = fill === "block" ? blockWidth(block.body, kept[index]) : undefined;
+        const fillTo = fill === "block" ? blockWidth(block.body, kept[index], fillMax) : undefined;
 
         for (const at of [...(kept[index] ?? [])].sort((first, second) => first - second)) {
             const line = block.body[at];
@@ -984,7 +988,7 @@ export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: 
         }
     }
 
-    left = dressBlocks({ blocks, kept, tinted, budget: left, fill: config.fill });
+    left = dressBlocks({ blocks, kept, tinted, budget: left, fill: config.fill, fillMax: config.fillMax });
 
     blocks.forEach((block, index) => {
         const held = kept[index];

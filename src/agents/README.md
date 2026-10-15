@@ -198,7 +198,9 @@ only while the browser router routes Markdown on this Mac; otherwise the message
 `tools agents hooks diff show <call>` prints it too.
 
 `diff.fill` sets how far a changed row's band reaches. `block` (default) fills to the widest row of
-the file. `terminal` fills to the pane's width, like Claude Code's own diff; but a hook message is fixed
+the file, but never past `diff.fillMax` columns (72; 0 lifts the limit): without that, one long line made
+every row as wide as the pane, and every row wrapped into an empty band row when the pane got narrower.
+A row longer than the limit is not padded. `terminal` fills to the pane's width, like Claude Code's own diff; but a hook message is fixed
 text, so when the pane later gets narrower, every row wraps into an empty band row. `none` ends the band
 with the text.
 

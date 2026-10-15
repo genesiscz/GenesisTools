@@ -3565,6 +3565,28 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(widths[0]).toBeLessThan(40);
     });
 
+    it("stops a block fill at fillMax, so one long changed row cannot widen every row to the pane", () => {
+        const long = `-old ${"x".repeat(95)}`;
+        const patch = ["@@ -1,3 +1,3 @@", long, "-short one", "+short two", " same"].join("\n");
+        const rendered = renderPatch(patch, palette);
+        const block: DiffBlock = {
+            head: "head",
+            body: rendered.body,
+            dress: themedDress({ palette, path: "x.ts", width: 120 }),
+        };
+        const shown = (fillMax: number) =>
+            assembleMessage([block], { ...quiet, fillMax, maxMessageChars: 100_000 })
+                .split("\n")
+                .map((line) => stripAnsi(line))
+                .filter((line) => /short (one|two)/.test(line))
+                .map((line) => Bun.stringWidth(line));
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.fillMax).toBe(72);
+        expect(shown(72)).toEqual([72, 72]);
+        // 0 lifts the limit: the short rows reach the long row's width, as before.
+        expect(shown(0).every((width) => width > 100)).toBe(true);
+    });
+
     it("wraps a long row under its own content, band and colour carried onto every part", () => {
         const long = `const message = "${"x".repeat(50)}";`;
         const patch = ["@@ -1,1 +1,1 @@", "-const message = 1;", `+${long}`].join("\n");

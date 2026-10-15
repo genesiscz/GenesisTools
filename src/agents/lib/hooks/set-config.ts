@@ -44,6 +44,7 @@ export const SETTABLE_KEYS = [
     "diff.theme",
     "diff.highlight",
     "diff.fill",
+    "diff.fillMax",
     "diff.columns",
     "diff.fullDiff",
     "diff.replaceNative",
@@ -343,6 +344,11 @@ export function applySetting(
 
     if (key === "diff.columns") {
         next.diff.columns = asColumns(key, value);
+        return next;
+    }
+
+    if (key === "diff.fillMax") {
+        next.diff.fillMax = asCount(key, value, 0);
         return next;
     }
 

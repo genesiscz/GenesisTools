@@ -66,6 +66,14 @@ export interface DiffConfig {
      */
     fill: FillMode;
     /**
+     * The most columns a `block` fill pads a row to, the gutter included; 0 lifts the limit. Without it
+     * one long changed line widened every row of the file to the pane, and a hook message is fixed text:
+     * once the pane was narrower than when the message was drawn, every padded row wrapped into an empty
+     * band row (2026-10-15 11:54: rows of 106 columns, shown in a pane of 76). A row longer than this is
+     * not padded and its band ends with the text.
+     */
+    fillMax: number;
+    /**
      * How a block looks; see `diff/theme.ts`. `claude` copies Claude Code's own Bash diff in the
      * theme Claude Code is set to, so the hook can replace that diff (`bashEditDiffEnabled: false`)
      * without a change of look. `classic` is the original look.
@@ -346,6 +354,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxCaptureFileMB: 0.256,
         highlight: "256",
         fill: "block",
+        fillMax: 72,
         theme: "claude",
         columns: "auto",
         fullDiff: "genesis",
@@ -560,6 +569,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         }),
         highlight: highlightOr(stored?.highlight, base.highlight),
         fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
+        fillMax: countOr({ field: "diff.fillMax", value: stored?.fillMax, fallback: base.fillMax, min: 0 }),
         theme: themeOr(stored?.theme, base.theme),
         columns: columnsOr(stored?.columns, base.columns),
         fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
