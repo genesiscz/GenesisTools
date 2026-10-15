@@ -32,7 +32,9 @@ beforeEach(() => {
     runMigrations(db, PENDING_MIGRATIONS as Migration[], { tableName: "qa_pending" });
     scratch = mkdtempSync(join(tmpdir(), "gt-ask-"));
     logBase = join(scratch, "log");
-    deps = { db, eventBase: join(scratch, "events"), logBase, notify: false };
+    // ambient: false stamps no poster, so a post runs no `git`; the poster tests opt back in with ambient: true.
+    // See notify.test.ts: Bun 1.4.2 loses a spawnSync exit now and then under `bun test --parallel`.
+    deps = { db, eventBase: join(scratch, "events"), logBase, notify: false, ambient: false };
 });
 
 afterEach(() => {
@@ -68,7 +70,7 @@ describe("postAskForm", () => {
     test("an omitted session hint is the harness that posted the question", async () => {
         const form = await postAskForm(
             { projectPath: PROJECT, items: [{ promptMarkdown: "Ship?" }] },
-            { ...deps, env: { CLAUDE_CODE_SESSION_ID: "sess-9", CLAUDECODE: "1" } }
+            { ...deps, ambient: true, env: { CLAUDE_CODE_SESSION_ID: "sess-9", CLAUDECODE: "1" } }
         );
 
         expect(form.sessionHint).toBe("sess-9");
@@ -77,7 +79,7 @@ describe("postAskForm", () => {
     test("a typed session hint is kept when this process is a test", async () => {
         const form = await postAskForm(
             { projectPath: PROJECT, sessionHint: "typed", items: [{ promptMarkdown: "Ship?" }] },
-            { ...deps, env: { CLAUDE_CODE_SESSION_ID: "sess-9", CLAUDECODE: "1" } }
+            { ...deps, ambient: true, env: { CLAUDE_CODE_SESSION_ID: "sess-9", CLAUDECODE: "1" } }
         );
 
         expect(form.sessionHint).toBe("typed");
@@ -657,6 +659,7 @@ test("a form retains its posting context when another process submits the answer
         },
         {
             ...deps,
+            ambient: true,
             env: {},
             ctx: {
                 agent: "codex",
@@ -731,7 +734,7 @@ test("a multiplexed caller's explicit project path supplies missing source cwd",
                 sessionHint: "known-thread",
                 items: [{ promptMarkdown: "Ready?" }],
             },
-            { ...deps, env: {} }
+            { ...deps, ambient: true, env: {} }
         )
     );
     expect(form.poster?.cwd).toBe(PROJECT);
@@ -740,7 +743,7 @@ test("a multiplexed caller's explicit project path supplies missing source cwd",
 });
 
 test("invalid or newer form provenance cannot block healthy forms or rewrite the stored metadata", async () => {
-    const context = { ...deps, env: {}, ctx: { agent: "codex" as const, sessionId: "poster-session" } };
+    const context = { ...deps, ambient: true, env: {}, ctx: { agent: "codex" as const, sessionId: "poster-session" } };
     const broken = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "First?" }] }, context);
     const healthy = await postAskForm(
         { projectPath: PROJECT, items: [{ promptMarkdown: "Second?" }], sourceMessage: { toolCallId: "known-call" } },
