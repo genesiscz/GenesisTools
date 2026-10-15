@@ -105,6 +105,36 @@ async function withListener<T>(fn: (port: number) => T | Promise<T>): Promise<T>
     }
 }
 
+/**
+ * Runs `fn` while a child of this process listens on a loopback TCP port. A reader that skips this process's own
+ * sockets (getPortDetails) finds no owner in `withListener`, so it would measure the path with no owner to read. The
+ * child is killed after 10 s if it never prints its port.
+ */
+async function withChildListener<T>(fn: (listener: { port: number; pid: number }) => T | Promise<T>): Promise<T> {
+    const code = `const s = require("node:net").createServer().listen(0, "127.0.0.1", () => console.log(s.address().port));`;
+    const child = Bun.spawn([process.execPath, "-e", code], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+    });
+
+    try {
+        const { value } = await child.stdout.getReader().read();
+        const port = Number(new TextDecoder().decode(value).trim());
+
+        if (!Number.isInteger(port) || port <= 0) {
+            throw new Error("the child listener printed no port");
+        }
+
+        return await fn({ port, pid: child.pid });
+    } finally {
+        child.kill();
+        await child.exited;
+    }
+}
+
 const AGENT_SCAN = { alias: "claude" as const, classify: (args: string) => (args.includes("claude") ? "tui" : null) };
 
 /*
@@ -432,7 +462,15 @@ export const CALL_SITES: CallSite[] = [
         frequency: "per-command",
         run: async () => {
             const { getPortDetails } = await import("@app/port/lib/scanner");
-            return withListener((port) => getPortDetails(port));
+            return withChildListener(({ port, pid }) => {
+                const rows = getPortDetails(port);
+
+                if (!rows.some((row) => row.pid === pid)) {
+                    throw new Error(`port-details found no row for the listener's pid ${pid}`);
+                }
+
+                return rows;
+            });
         },
     },
     {

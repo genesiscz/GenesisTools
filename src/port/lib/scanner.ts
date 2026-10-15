@@ -406,11 +406,12 @@ function processRow(entry: ProcessWithUsage): PsRow {
     };
 }
 
+/** One row per owner, or with `perPort` one row per owner and port, so a process that listens twice shows both. */
 function socketProcesses(
     sockets: SocketEntry[],
-    options: { ownPid: number; table: Map<number, ProcessWithUsage> }
+    options: { ownPid: number; table: Map<number, ProcessWithUsage>; perPort?: boolean }
 ): PortProcess[] {
-    const byPid = new Map<number, PortProcess>();
+    const rows = new Map<string, PortProcess>();
     const files = new Map<number, ReturnType<typeof listOpenFiles>>();
     // The descriptors of every owner are named from the same network tables, read once for the scan.
     let network: NetworkSnapshot | null | undefined;
@@ -442,12 +443,13 @@ function socketProcesses(
             name,
             fd,
         };
-        const previous = byPid.get(socket.pid);
+        const key = options.perPort ? `${socket.pid}:${socket.port}` : String(socket.pid);
+        const previous = rows.get(key);
         if (!previous || (STATE_PRIORITY[item.state] ?? 99) < (STATE_PRIORITY[previous.state] ?? 99)) {
-            byPid.set(socket.pid, item);
+            rows.set(key, item);
         }
     }
-    return [...byPid.values()];
+    return [...rows.values()];
 }
 
 /** The socket owners with `ps`'s %cpu where the kernel gives it (this user's processes), with no `ps` spawned. */
@@ -465,7 +467,7 @@ export function getListeningPorts(): PortSnapshot[] {
     const sockets = listSockets({ protocol: "TCP", state: "LISTEN" });
     const table = ownerTable(sockets.map((socket) => socket.pid));
     const seen = new Set<number>();
-    const unique = socketProcesses(sockets, { ownPid: -1, table }).filter((entry) => {
+    const unique = socketProcesses(sockets, { ownPid: -1, table, perPort: true }).filter((entry) => {
         const port = extractPort(entry.name);
         if (!port || seen.has(port)) {
             return false;
