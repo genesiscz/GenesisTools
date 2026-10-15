@@ -47,7 +47,7 @@ function defaultVerify(): string {
         "   - `bun run lint:rules` and `bun scripts/ci/check-tool-commands.ts`",
         ...(has("--swift")
             ? [
-                  "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen. One heavy Swift build at a time on this Mac: before each `swift build` or `swift test`, wait until no other one runs (`timeout 1800 sh -c 'while pgrep -x swift-build >/dev/null || pgrep -x swift-test >/dev/null; do sleep 20; done'`; match by process name, because `pgrep -f swift` matches this waiting shell itself).",
+                  "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen. One heavy Swift build at a time on this Mac: before each `swift build` or `swift test`, wait until no other one runs (`timeout 1800 sh -c 'while ps -axo comm= | grep -Eq \"/(swift-build|swift-test|swift-package|swift-frontend|xctest)$\"; do sleep 20; done'`; it matches executable paths, because `pgrep -x` misses a build whose process name reads swift-package and `pgrep -f swift` matches this waiting shell itself).",
               ]
             : []),
     ].join("\n");

@@ -106,8 +106,11 @@
   commit (no history rewrite).
 - **Wait for a free Swift slot by process name, never by command line.** `until ! pgrep -f 'swift-(build|test)|xctest'`
   waited forever on 2026-10-15: the `zsh -c` running the loop carries that pattern in its own command line, so
-  `pgrep -f` matches the waiting shell itself. Use `pgrep -x swift-build`, `pgrep -x swift-test`, `pgrep -x xctest`
-  (process names), or a script file whose command line does not contain the pattern.
+  `pgrep -f` matches the waiting shell itself. `pgrep -x swift-build` is not enough either: the same day a running
+  `swift build` showed the process name `swift-package` (pid 6576), `pgrep -x swift-build` printed nothing, and a
+  worker started its build beside it. Match the executable path, which the waiting shell never has:
+  `while ps -axo comm= | grep -Eq '/(swift-build|swift-test|swift-package|swift-frontend|xctest)$'; do sleep 20; done`.
+  `swift-frontend` also catches an Xcode build of another session, which uses the same CPU.
 
 ## Animated panel verification
 
