@@ -477,6 +477,57 @@ final class PostureMonitorTests: XCTestCase {
         XCTAssertEqual(VisionPose.selectFace([other, own], near: nil)?.confidence, 0.99)
     }
 
+    /// Debug recording 2026-10-15 14:58 (Office): the camera sits low, so the user's shoulders are below the frame,
+    /// while a colleague stands behind with both shoulders visible. The colleague's joints are the recording's; the
+    /// user is the nearer, larger head.
+    func testTheNearestHeadWinsOverSomeoneBehindWithShoulders() {
+        let colleague: [PoseJoint: PoseJointPoint] = [
+            .nose: PoseJointPoint(x: 0.679, y: 0.413, confidence: 0.86),
+            .leftEar: PoseJointPoint(x: 0.751, y: 0.313, confidence: 0.80),
+            .leftEye: PoseJointPoint(x: 0.687, y: 0.358, confidence: 0.87),
+            .rightEye: PoseJointPoint(x: 0.669, y: 0.378, confidence: 0.14),
+            .leftShoulder: PoseJointPoint(x: 0.768, y: 0.903, confidence: 1),
+            .rightShoulder: PoseJointPoint(x: 0.620, y: 0.860, confidence: 1),
+            .neck: PoseJointPoint(x: 0.698, y: 0.858, confidence: 1),
+        ]
+        let user: [PoseJoint: PoseJointPoint] = [
+            .nose: PoseJointPoint(x: 0.29, y: 0.58, confidence: 0.9),
+            .leftEye: PoseJointPoint(x: 0.33, y: 0.52, confidence: 0.9),
+            .rightEye: PoseJointPoint(x: 0.24, y: 0.52, confidence: 0.9),
+            .leftEar: PoseJointPoint(x: 0.39, y: 0.55, confidence: 0.8),
+            .rightEar: PoseJointPoint(x: 0.19, y: 0.55, confidence: 0.7),
+        ]
+        XCTAssertEqual(VisionPose.nearestPerson([colleague, user]), user)
+        XCTAssertEqual(VisionPose.nearestPerson([user, colleague]), user)
+        XCTAssertEqual(VisionPose.nearestPerson([colleague]), colleague, "alone, the colleague is the person")
+
+        // The 3D shoulders: the body under the user's head, not the colleague's.
+        func body(_ confidence: Double, midX: Double, y: Double) -> VisionPose.Body3DCandidate {
+            VisionPose.Body3DCandidate(
+                confidence: confidence,
+                left: PoseJointPoint(x: midX + 0.08, y: y, confidence: confidence),
+                right: PoseJointPoint(x: midX - 0.08, y: y, confidence: confidence),
+                neck: PoseJointPoint(x: midX, y: y - 0.02, confidence: confidence))
+        }
+        let colleagueBody = body(0.95, midX: 0.70, y: 0.88)
+        let userBody = body(0.6, midX: 0.31, y: 0.97)
+        XCTAssertEqual(VisionPose.selectBody([colleagueBody, userBody], matching: user)?.confidence, 0.6)
+        XCTAssertNil(VisionPose.selectBody([colleagueBody], matching: user), "the colleague's body is not under the head")
+    }
+
+    /// The head's size: ear to ear, else the eyes doubled; a person seen only by the shoulders ranks by an estimate.
+    func testHeadSizeFromEarsElseEyes() {
+        let ears: [PoseJoint: PoseJointPoint] = [
+            .leftEar: PoseJointPoint(x: 0.6, y: 0.5, confidence: 0.9), .rightEar: PoseJointPoint(x: 0.4, y: 0.5, confidence: 0.9),
+        ]
+        let eyes: [PoseJoint: PoseJointPoint] = [
+            .leftEye: PoseJointPoint(x: 0.55, y: 0.5, confidence: 0.9), .rightEye: PoseJointPoint(x: 0.45, y: 0.5, confidence: 0.9),
+        ]
+        XCTAssertEqual(VisionPose.headSize(ears) ?? 0, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(VisionPose.headSize(eyes) ?? 0, 0.2, accuracy: 1e-9)
+        XCTAssertNil(VisionPose.headSize([.nose: PoseJointPoint(x: 0.5, y: 0.5, confidence: 0.9)]))
+    }
+
     /// Live run 2026-10-14: a hand over one shoulder left the nose, the eyes and one shoulder. The body
     /// engine skipped the face request (it had a nose), so no measure came out and "Upright" stayed.
     func testTheBodyEngineAsksForTheFaceWhenAShoulderOrTheNoseIsMissing() {

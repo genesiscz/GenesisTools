@@ -199,35 +199,57 @@ enum VisionPose {
         return request
     }
 
-    /// The joints of the nearest person (widest confident shoulders, else the most confident nose),
-    /// flipped from Vision's bottom-left origin to top-left. Zero-confidence points are invalid and left out.
+    /// The joints of the nearest person (`nearestPerson`), flipped from Vision's bottom-left origin to top-left.
+    /// Zero-confidence points are invalid and left out.
     static func joints(from observations: [VNHumanBodyPoseObservation]) -> [PoseJoint: PoseJointPoint] {
-        var best: [PoseJoint: PoseJointPoint] = [:]
-        var bestScore = -1.0
-        for observation in observations {
-            guard let points = try? observation.recognizedPoints(.all) else { continue }
+        let people = observations.compactMap { observation -> [PoseJoint: PoseJointPoint]? in
+            guard let points = try? observation.recognizedPoints(.all) else { return nil }
             var joints: [PoseJoint: PoseJointPoint] = [:]
             for (name, joint) in jointNames {
                 guard let point = points[name], point.confidence > 0 else { continue }
                 joints[joint] = PoseJointPoint(x: Double(point.location.x), y: 1 - Double(point.location.y),
                                                confidence: Double(point.confidence))
             }
-            let score = personScore(joints)
-            if score > bestScore {
-                best = joints
-                bestScore = score
-            }
+            return joints
         }
-        return best
+        return nearestPerson(people)
+    }
+
+    /// The person closest to the camera: the one whose head looks largest. A low camera cuts the user's shoulders
+    /// off while someone standing behind shows both, so ranking by shoulder width tracked the colleague for a whole
+    /// debug recording (2026-10-15 14:58, Office). A person with no measurable head counts by an estimate from the
+    /// shoulders, and a person with neither by the nose's confidence, below anyone with a size.
+    static func nearestPerson(_ people: [[PoseJoint: PoseJointPoint]]) -> [PoseJoint: PoseJointPoint] {
+        people.max { personScore($0) < personScore($1) } ?? [:]
     }
 
     static func personScore(_ joints: [PoseJoint: PoseJointPoint]) -> Double {
-        let minimum = PoseSample.minimumConfidence
-        if let left = joints[.leftShoulder], let right = joints[.rightShoulder],
-           left.confidence > minimum, right.confidence > minimum {
-            return 1 + hypot(left.x - right.x, left.y - right.y)
-        }
+        if let head = headSize(joints) { return 1 + head }
+        if let span = shoulderSpan(joints) { return 1 + span * headPerShoulder }
         return joints[.nose]?.confidence ?? 0
+    }
+
+    /// A head's width over a shoulder span, for comparing a person seen only by the shoulders with one seen by the
+    /// head (about 0.45 for an adult facing the camera).
+    static let headPerShoulder = 0.45
+
+    /// The head's width in the image: ear to ear, else eye to eye doubled (the eyes sit about half as far apart).
+    static func headSize(_ joints: [PoseJoint: PoseJointPoint]) -> Double? {
+        let minimum = PoseSample.minimumConfidence
+        if let left = joints[.leftEar], let right = joints[.rightEar], left.confidence > minimum, right.confidence > minimum {
+            return hypot(left.x - right.x, left.y - right.y)
+        }
+        if let left = joints[.leftEye], let right = joints[.rightEye], left.confidence > minimum, right.confidence > minimum {
+            return 2 * hypot(left.x - right.x, left.y - right.y)
+        }
+        return nil
+    }
+
+    static func shoulderSpan(_ joints: [PoseJoint: PoseJointPoint]) -> Double? {
+        let minimum = PoseSample.minimumConfidence
+        guard let left = joints[.leftShoulder], let right = joints[.rightShoulder],
+              left.confidence > minimum, right.confidence > minimum else { return nil }
+        return hypot(left.x - right.x, left.y - right.y)
     }
 
     /// One 3D body already projected into the image (top-left). Tests build these; Vision observations cannot.
@@ -238,8 +260,9 @@ enum VisionPose {
         var neck: PoseJointPoint
     }
 
-    /// The 3D body that belongs to the person `joints` already chose (widest confident 2D shoulders).
-    /// With no confident 2D shoulders, the most confident 3D body (the close-camera case that has no 2D body).
+    /// The 3D body that belongs to the person `joints` already chose (`nearestPerson`).
+    /// With no confident 2D shoulders, the body under the chosen nose (the low-camera case: the user's shoulders
+    /// below the frame, someone else's above it), else the most confident 3D body (no 2D body at all).
     /// A body whose shoulder midpoint sits farther than the 2D shoulder span is someone else and is left out:
     /// the same person's 3D shoulders are narrower, but they share the midpoint.
     static func selectBody(_ bodies: [Body3DCandidate], matching joints: [PoseJoint: PoseJointPoint]) -> Body3DCandidate? {
@@ -248,7 +271,21 @@ enum VisionPose {
         guard !eligible.isEmpty else { return nil }
         guard let left = joints[.leftShoulder], let right = joints[.rightShoulder],
               left.confidence > minimum, right.confidence > minimum else {
-            return eligible.max { $0.confidence < $1.confidence }
+            guard let nose = joints[.nose], nose.confidence > minimum else {
+                return eligible.max { $0.confidence < $1.confidence }
+            }
+            // Under the head: the shoulders' midpoint below the nose and within a head and a half of it sideways.
+            let reach: Double = max(1.5 * (headSize(joints) ?? 0), 0.1)
+            var best: (body: Body3DCandidate, offset: Double)?
+            for body in eligible {
+                let midX: Double = (body.left.x + body.right.x) / 2
+                let midY: Double = (body.left.y + body.right.y) / 2
+                let offset: Double = abs(midX - nose.x)
+                guard offset <= reach, midY > nose.y else { continue }
+                if let current = best, current.offset <= offset { continue }
+                best = (body, offset)
+            }
+            return best?.body
         }
         let anchorX = (left.x + right.x) / 2
         let anchorY = (left.y + right.y) / 2
