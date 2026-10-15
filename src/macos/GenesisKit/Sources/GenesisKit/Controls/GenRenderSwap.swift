@@ -69,10 +69,19 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
 
     private func key(_ item: Value?) -> ID? { item.map { $0[keyPath: idPath] } }
 
+    /// The value that builds underneath: the pending one, or the latest value while its switch has not started yet
+    /// (the body pass before `onChange`, or a switch `onChange` missed). Mounting it in that pass too keeps one
+    /// content per id, so no web view is made twice.
+    private var building: Value? {
+        if let pending { return pending }
+        let id = value[keyPath: idPath]
+        return current != nil && id != key(current) ? value : nil
+    }
+
     private var mounted: [Value] {
         var items: [Value] = []
         var seen = Set<ID>()
-        for item in [pending, current, leaving] {
+        for item in [building, current, leaving] {
             guard let item, seen.insert(item[keyPath: idPath]).inserted else { continue }
             // The latest value for its id: a session row or a document that changed since it was kept.
             items.append(item[keyPath: idPath] == value[keyPath: idPath] ? value : item)
@@ -81,12 +90,13 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
     }
 
     public var body: some View {
+        let _ = catchMissedSwitch()
         ZStack {
             ForEach(mounted, id: idPath) { item in
                 let id = item[keyPath: idPath]
                 content(item, GenRenderReady(token: AnyHashable(id)) { arrived(id) })
                     .opacity(id == key(leaving) && fading ? 0 : 1)
-                    .allowsHitTesting(id == key(current) && pending == nil)
+                    .allowsHitTesting(id == key(current) && building == nil)
                     .zIndex(id == key(leaving) ? 2 : id == key(current) ? 1 : 0)
             }
         }
@@ -96,12 +106,28 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
         .onChange(of: value[keyPath: idPath]) { _, _ in switchTo(value) }
     }
 
+    /// A switch `onChange` did not deliver: the body sees a value that is neither on screen nor pending. Seen in the
+    /// markdown viewer (2026-10-14): a tab click changed the value, no switch followed, and the old tab's page stayed
+    /// until a later switch got through. The body starts the switch itself, a turn later (state is not written while
+    /// the body runs); when `onChange` did fire, that switch finds it pending and does nothing.
+    private func catchMissedSwitch() {
+        let id = value[keyPath: idPath]
+        guard current != nil, id != key(current), id != key(pending) else { return }
+        let latest = value
+        DispatchQueue.main.async {
+            // A newer switch that arrived meanwhile wins; this one would set an older value pending again.
+            guard pending == nil else { return }
+            switchTo(latest)
+        }
+    }
+
     private func switchTo(_ new: Value) {
         let id = new[keyPath: idPath]
         guard id != key(current) else {
             pending = nil
             return
         }
+        guard id != key(pending) else { return }
         pending = new
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
             if key(pending) == id { promote() }
@@ -109,7 +135,7 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
     }
 
     private func arrived(_ id: ID) {
-        guard id == key(pending) else { return }
+        guard id == key(building) else { return }
         // One turn for the page to paint what it just built.
         DispatchQueue.main.async {
             if key(pending) == id { promote() }

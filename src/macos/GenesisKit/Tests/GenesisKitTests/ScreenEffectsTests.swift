@@ -3,6 +3,7 @@ import SwiftUI
 import XCTest
 
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 @MainActor
 final class ScreenEffectsTests: XCTestCase {
@@ -97,12 +98,21 @@ final class ScreenEffectsTests: XCTestCase {
     private func controller(
         _ configuration: ScreenEffectConfiguration, screens: @escaping () -> [ScreenEffectScreen],
         cursor: CGPoint = CGPoint(x: -39_900, y: -39_900), reduceMotion: Bool = true,
-        capture: @escaping () -> Bool? = { false }
+        capture: @escaping () -> Bool? = { false },
+        pillPositions: ScreenEffectPillPositions? = nil
     ) -> ScreenEffectsController {
         _ = NSApplication.shared
         return ScreenEffectsController(
             configuration: configuration, screens: screens, cursor: { cursor }, reduceMotion: { reduceMotion },
-            reduceTransparency: { false }, screenCapture: capture)
+            reduceTransparency: { false }, screenCapture: capture, pillPositions: pillPositions ?? self.pillPositions())
+    }
+
+    /// Saved pill places in a defaults suite of their own. A suite is a real plist in ~/Library/Preferences, so the
+    /// test removes it afterwards.
+    private func pillPositions() -> ScreenEffectPillPositions {
+        let name = "genesiskit-tests-screen-effect-\(UUID().uuidString)"
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
+        return ScreenEffectPillPositions(defaults: UserDefaults(suiteName: name)!)
     }
 
     private func spin(_ seconds: TimeInterval) {
@@ -131,6 +141,143 @@ final class ScreenEffectsTests: XCTestCase {
         effects.configuration.coversMenuBar = false
         effects.configuration.target = .mainScreen
         XCTAssertEqual(effects.panelFrames, ["display-a": left.visibleFrame])
+    }
+
+    /// Transparent has no tint: its panel holds only the pill, at the pill's place, so WindowServer does not blend a
+    /// whole screen (2026-10-14). A tint covers the screen again.
+    func testTransparentUsesAPillSizedPanel() {
+        let effects = controller(ScreenEffectConfiguration(style: .dim, target: .mainScreen), screens: { [self.left] })
+        defer { effects.tearDown() }
+        XCTAssertTrue(effects.show())
+        XCTAssertEqual(effects.panelFrames["display-a"], left.frame)
+
+        effects.configuration.style = .transparent
+        let frame = try? XCTUnwrap(effects.panelFrames["display-a"])
+        XCTAssertEqual(frame?.size, ScreenEffectGeometry.pillPanelSize)
+        let pill = ScreenEffectGeometry.pillCenter(panel: left.frame, visible: left.visibleFrame)
+        XCTAssertEqual(frame?.midX ?? 0, left.frame.minX + pill.x, accuracy: 0.5, "centred on the pill")
+        XCTAssertEqual(frame?.midY ?? 0, left.frame.maxY - pill.y, accuracy: 0.5)
+        let layout = ScreenEffectGeometry.layout(on: left, coversMenuBar: true, style: .transparent)
+        XCTAssertEqual(layout.pillCenter, CGPoint(x: 360, y: 48), "the pill in the middle of its panel")
+
+        effects.configuration.style = .dim
+        XCTAssertEqual(effects.panelFrames["display-a"], left.frame, "a tint covers the screen again")
+    }
+
+    /// A saved place for the message: the pill's centre as a fraction of the visible frame, kept on the screen.
+    func testASavedPillPlaceMovesTheMessage() {
+        let visible = left.visibleFrame
+        let placed = ScreenEffectGeometry.layout(on: left, coversMenuBar: true, style: .transparent,
+                                                 pillFraction: CGPoint(x: 0.5, y: 0.75))
+        XCTAssertEqual(placed.frame.midX, visible.midX, accuracy: 0.5)
+        XCTAssertEqual(placed.frame.midY, visible.maxY - 0.75 * visible.height, accuracy: 0.5)
+        let roundTrip = ScreenEffectGeometry.pillFraction(of: placed.frame, visible: visible)
+        XCTAssertEqual(roundTrip.x, 0.5, accuracy: 0.001)
+        XCTAssertEqual(roundTrip.y, 0.75, accuracy: 0.001)
+
+        // A place at the very corner keeps the whole pill panel on the visible frame.
+        let corner = ScreenEffectGeometry.layout(on: left, coversMenuBar: true, style: .transparent,
+                                                 pillFraction: CGPoint(x: 0, y: 1))
+        XCTAssertTrue(visible.contains(corner.frame), "\(corner.frame) inside \(visible)")
+
+        // A tint keeps the whole screen and draws the pill at the saved place inside it.
+        let tint = ScreenEffectGeometry.layout(on: left, coversMenuBar: true, style: .dim, pillFraction: CGPoint(x: 0.5, y: 0.75))
+        XCTAssertEqual(tint.frame, left.frame)
+        XCTAssertEqual(tint.frame.minX + tint.pillCenter.x, visible.midX, accuracy: 0.5)
+        XCTAssertEqual(tint.frame.maxY - tint.pillCenter.y, visible.maxY - 0.75 * visible.height, accuracy: 0.5)
+    }
+
+    /// Martin, 2026-10-14: "maybe it can be movable like the camera window". The message alone (Transparent) takes
+    /// presses so it can be dragged, a drop is saved per screen, and the next show puts it there. A tint stays
+    /// click-through.
+    func testTheMessageCanBeDraggedAndKeepsItsPlace() throws {
+        let positions = pillPositions()
+        let config = ScreenEffectConfiguration(style: .transparent, target: .mainScreen,
+                                               message: ScreenEffectMessage("Sit up straight"), maximumDuration: nil)
+        let effects = controller(config, screens: { [self.left] }, pillPositions: positions)
+        defer { effects.tearDown() }
+        XCTAssertTrue(effects.show())
+        let panel = try XCTUnwrap(effects.panelList.first)
+        XCTAssertFalse(panel.ignoresMouseEvents, "the message alone can be dragged")
+        XCTAssertNil(positions.fraction(for: "display-a"), "showing it saves nothing")
+
+        // The user drags it near the bottom left, in two moves, and lets go.
+        let visible = left.visibleFrame
+        let drop = CGPoint(x: visible.minX + 20, y: visible.minY + 20)
+        drag(panel, by: CGPoint(x: drop.x - panel.frame.minX, y: drop.y - panel.frame.minY), positions: positions)
+        XCTAssertEqual(panel.frame.minX, drop.x, accuracy: 1)
+        XCTAssertEqual(panel.frame.minY, drop.y, accuracy: 1)
+        let saved = try XCTUnwrap(positions.fraction(for: "display-a"), "the drop is saved")
+        XCTAssertLessThan(saved.x, 0.5)
+        XCTAssertGreaterThan(saved.y, 0.5)
+
+        // A second drag in the same show moves it again (the window server's drag managed only the first), and a
+        // press that does not move it saves nothing.
+        drag(panel, by: CGPoint(x: 30, y: 0), positions: positions)
+        XCTAssertEqual(panel.frame.minX, drop.x + 30, accuracy: 1)
+        let second = try XCTUnwrap(positions.fraction(for: "display-a"))
+        XCTAssertGreaterThan(second.x, saved.x)
+        drag(panel, by: .zero, positions: positions)
+        XCTAssertEqual(positions.fraction(for: "display-a"), second)
+
+        // Shown again, it comes back where it was dropped.
+        effects.tearDown()
+        XCTAssertTrue(effects.show())
+        let again = try XCTUnwrap(effects.panelList.first)
+        XCTAssertEqual(again.frame.minX, drop.x + 30, accuracy: 1)
+        XCTAssertEqual(again.frame.minY, drop.y, accuracy: 1)
+
+        // A tint covers the screen and keeps ignoring the mouse; no message, nothing to drag. The controller's own
+        // moves (the resize to a full-screen tint and back) are not drops.
+        effects.configuration.style = .dim
+        XCTAssertTrue(again.ignoresMouseEvents)
+        effects.configuration.style = .transparent
+        XCTAssertEqual(positions.fraction(for: "display-a"), second, "a style change does not move the saved place")
+        effects.configuration.message = nil
+        XCTAssertTrue(again.ignoresMouseEvents)
+    }
+
+    /// The drag follows each event's own location, not the hardware pointer, so a drag delivered to the window
+    /// without moving the pointer (`tools control` in the background) moves the message too.
+    func testTheMessageFollowsTheEventsNotThePointer() throws {
+        let positions = pillPositions()
+        let config = ScreenEffectConfiguration(style: .transparent, target: .mainScreen,
+                                               message: ScreenEffectMessage("Sit up straight"), maximumDuration: nil)
+        let effects = controller(config, screens: { [self.left] }, pillPositions: positions)
+        defer { effects.tearDown() }
+        XCTAssertTrue(effects.show())
+        let panel = try XCTUnwrap(effects.panelList.first)
+        let view = try XCTUnwrap(panel.contentView as? ScreenEffectPillDragView)
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: panel.convertPoint(fromScreen: point), modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        let start = panel.frame.origin
+        let grab = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
+        let drop = CGPoint(x: grab.x - 25, y: grab.y - 10)
+        view.mouseDown(with: try event(.leftMouseDown, at: grab))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: drop))
+        view.mouseUp(with: try event(.leftMouseUp, at: drop))
+        XCTAssertEqual(panel.frame.minX, start.x - 25, accuracy: 1)
+        XCTAssertEqual(panel.frame.minY, start.y - 10, accuracy: 1)
+        XCTAssertNotNil(positions.fraction(for: "display-a"), "the drop is saved")
+    }
+
+    /// Presses the pill's middle, drags `delta` in two steps (global points) and lets go, as the drag view's mouse
+    /// handlers do with each event's screen location. Nothing is saved before the release.
+    private func drag(_ panel: NSPanel, by delta: CGPoint, positions: ScreenEffectPillPositions,
+                      file: StaticString = #filePath, line: UInt = #line) {
+        guard let view = panel.contentView as? ScreenEffectPillDragView else {
+            return XCTFail("the panel's content is not the drag view", file: file, line: line)
+        }
+        let before = positions.fraction(for: "display-a")
+        let grab = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
+        view.beginDrag(at: grab)
+        view.drag(to: CGPoint(x: grab.x + delta.x / 2, y: grab.y + delta.y / 2))
+        view.drag(to: CGPoint(x: grab.x + delta.x, y: grab.y + delta.y))
+        XCTAssertEqual(positions.fraction(for: "display-a"), before, "nothing is saved until the drop", file: file, line: line)
+        view.endDrag()
     }
 
     func testPanelsFollowADisplayChange() {

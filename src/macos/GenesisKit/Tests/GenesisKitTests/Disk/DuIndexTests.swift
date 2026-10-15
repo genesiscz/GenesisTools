@@ -3,6 +3,7 @@ import GenesisKitFixtures
 import SQLite3
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 /// The contract fixtures (`contract-*` in GenesisKitFixtures) were frozen by the CLI side in GenesisTools commit
 /// 91a1fa1e6; the GenesisTools bun tests check each one against the real output. The schema is

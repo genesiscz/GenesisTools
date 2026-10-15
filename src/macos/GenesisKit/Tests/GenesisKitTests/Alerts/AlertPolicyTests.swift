@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 final class AlertPolicyTests: XCTestCase {
     private let gb = 1_000_000_000.0

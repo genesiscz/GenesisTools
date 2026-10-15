@@ -94,7 +94,8 @@ public enum GenesisKit {
     }
 
 
-    static func log(_ line: String) {
+    /// `package`: the Genesis-only libraries (GenesisKitPosture, GenesisKitDisk) log through it too.
+    package static func log(_ line: String) {
         host?.log(line)
         unifiedLog.notice("\(line, privacy: .public)")
     }

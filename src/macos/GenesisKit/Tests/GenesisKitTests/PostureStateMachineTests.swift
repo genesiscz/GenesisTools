@@ -1,5 +1,6 @@
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 final class PostureStateMachineTests: XCTestCase {
     private let bad = PostureReading.scored(isBad: true, isClear: false)
@@ -167,7 +168,10 @@ final class PostureStateMachineTests: XCTestCase {
         XCTAssertEqual(M.captureMode(state: .disabled, confirming: false, policy: .balanced, rates: rates), .off)
         XCTAssertEqual(M.captureMode(state: .monitoring, confirming: false, policy: .balanced, rates: rates), .continuous(fps: 2))
         XCTAssertEqual(M.captureMode(state: .monitoring, confirming: true, policy: .balanced, rates: rates), .continuous(fps: 10))
-        XCTAssertEqual(M.captureMode(state: .recovery, confirming: false, policy: .balanced, rates: rates), .continuous(fps: 10))
+        XCTAssertEqual(M.captureMode(state: .recovery, confirming: false, policy: .balanced, rates: rates), .continuous(fps: 4))
+        XCTAssertEqual(M.captureMode(state: .slouching, confirming: false, policy: .balanced, rates: rates), .continuous(fps: 4),
+                       "a confirmed slouch is watched at the confirm rate")
+        XCTAssertEqual(M.captureMode(state: .slouching, confirming: false, policy: .responsive, rates: rates), .continuous(fps: 10))
         XCTAssertEqual(M.captureMode(state: .monitoring, confirming: false, policy: .batterySaver, rates: rates),
                        .interval(every: 30, frames: 3))
         XCTAssertEqual(M.captureMode(state: .monitoring, confirming: true, policy: .batterySaver, rates: rates), .continuous(fps: 4))

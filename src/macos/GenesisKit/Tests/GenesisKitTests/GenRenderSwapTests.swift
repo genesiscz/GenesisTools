@@ -65,4 +65,65 @@ final class GenRenderSwapTests: XCTestCase {
         pump(0.6)
         XCTAssertEqual(rig.mounted, ["c"], "the timeout swaps without a ready")
     }
+
+    final class Doc: ObservableObject {
+        let name: String
+        var id: String { "/notes/\(name).md" }
+        init(_ name: String) { self.name = name }
+    }
+
+    final class DocRig: ObservableObject {
+        let docs = [Doc("a"), Doc("b"), Doc("c")]
+        @Published var selectedId: String?
+        var mounted: Set<String> = []
+        var appears: [String: Int] = [:]
+        var selected: Doc? { docs.first { $0.id == selectedId } ?? docs.last }
+    }
+
+    struct DocProbe: View {
+        @ObservedObject var doc: Doc
+        let rig: DocRig
+        var body: some View {
+            Text(verbatim: doc.name)
+                .onAppear {
+                    rig.mounted.insert(doc.name)
+                    rig.appears[doc.name, default: 0] += 1
+                }
+                .onDisappear { rig.mounted.remove(doc.name) }
+        }
+    }
+
+    struct DocHost: View {
+        @ObservedObject var rig: DocRig
+        var body: some View {
+            if let doc = rig.selected {
+                HStack {
+                    GenRenderSwap(value: doc, id: \.id) { shown, _ in
+                        DocProbe(doc: shown, rig: rig)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The viewer's case: class documents, the first value the fallback (the last tab) before the saved selection
+    /// arrives, then tab switches.
+    func testClassDocumentsFollowTheSelection() {
+        let rig = DocRig()
+        let hosting = NSHostingView(rootView: DocHost(rig: rig))
+        hosting.frame = NSRect(x: 0, y: 0, width: 300, height: 200)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.contentView = nil }
+        pump(0.1)
+        XCTAssertEqual(rig.mounted, ["c"])
+        rig.selectedId = "/notes/a.md"
+        pump(0.9)
+        XCTAssertEqual(rig.mounted, ["a"], "the saved selection replaces the fallback")
+        rig.selectedId = "/notes/b.md"
+        pump(0.9)
+        XCTAssertEqual(rig.mounted, ["b"], "a tab switch arrives")
+        XCTAssertEqual(rig.appears, ["c": 1, "a": 1, "b": 1], "every content appears once: none is built twice")
+    }
 }

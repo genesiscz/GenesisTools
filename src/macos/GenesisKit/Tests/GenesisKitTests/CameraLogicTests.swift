@@ -1,5 +1,6 @@
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 final class CameraLogicTests: XCTestCase {
     @MainActor
@@ -67,6 +68,20 @@ final class CameraLogicTests: XCTestCase {
         XCTAssertEqual(kept.count, 6)
         var exact = FrameThrottle(fps: 10)
         XCTAssertEqual([0, 0.098, 0.199, 0.297].filter { exact.admit($0) }.count, 4)
+    }
+
+    func testAnalysisFramesScaleDownToSixHundredFortyKeepingTheAspect() {
+        let hd = AVCameraSessionDriver.analysisSize(width: 1920, height: 1080)
+        XCTAssertEqual(hd?.width, 640)
+        XCTAssertEqual(hd?.height, 360)
+        let portrait = AVCameraSessionDriver.analysisSize(width: 1080, height: 1920)
+        XCTAssertEqual(portrait?.width, 360)
+        XCTAssertEqual(portrait?.height, 640)
+        let odd = AVCameraSessionDriver.analysisSize(width: 1552, height: 1552 * 3 / 4)
+        XCTAssertEqual(odd.map { $0.width % 2 }, 0)
+        XCTAssertEqual(odd.map { $0.height % 2 }, 0)
+        XCTAssertNil(AVCameraSessionDriver.analysisSize(width: 640, height: 480), "VGA stays as it is")
+        XCTAssertNil(AVCameraSessionDriver.analysisSize(width: 0, height: 0))
     }
 
     func testFrameDurationPicksTheSlowestSupportedRate() {

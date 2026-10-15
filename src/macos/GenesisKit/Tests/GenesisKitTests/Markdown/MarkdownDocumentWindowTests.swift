@@ -54,6 +54,13 @@ final class MarkdownDocumentWindowTests: XCTestCase {
         XCTAssertEqual(window?.frameAutosaveName, "genesis.markdown-window.v2")
     }
 
+    /// A press held on a tab dragged the window, the window drag took the mouse-up, and every later click did
+    /// nothing (2026-10-14). The title bar strip moves the window instead.
+    @MainActor
+    func testTheWindowDoesNotMoveFromItsBackground() {
+        XCTAssertEqual(MarkdownDocumentWindowController.shared.window?.isMovableByWindowBackground, false)
+    }
+
     func testANoteNameWithADotStillFindsItsMarkdownFile() {
         let folder = URL(fileURLWithPath: "/vault/Clients/Acme")
         let present: Set<String> = ["/vault/Clients/Acme/ado/1234.analysis.md", "/vault/Clients/Acme/report.v2.pdf"]
@@ -283,8 +290,18 @@ final class MarkdownDocumentWindowTests: XCTestCase {
         XCTAssertTrue(model.docs.isEmpty)
         XCTAssertEqual(model.recentlyClosed.map(\.lastPathComponent), ["b.md", "a.md"])
 
+        // ⌘W on the empty window closes it; with a tab left it closes the tab (the last tab leaves the window open).
+        if case .window = MarkdownDocumentWindowController.closeTarget(selected: model.selected) {} else {
+            XCTFail("no tab left: ⌘W closes the window")
+        }
+
         model.reopenLastClosed()
         XCTAssertEqual(model.docs.map(\.title), ["a"])
+        if case let .tab(doc) = MarkdownDocumentWindowController.closeTarget(selected: model.selected) {
+            XCTAssertEqual(doc.title, "a", "the last tab is closed, not the window")
+        } else {
+            XCTFail("one tab left: ⌘W closes the tab")
+        }
 
         // b is next on the stack; a is open again, so it is not offered twice.
         model.open([a])

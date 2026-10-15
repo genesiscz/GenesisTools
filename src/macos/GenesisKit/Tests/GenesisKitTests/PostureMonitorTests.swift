@@ -1,6 +1,7 @@
 import Combine
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 /// Records the modes a monitor asks for, instead of a camera.
 final class RecordingCamera: CameraModeControlling, @unchecked Sendable {
@@ -417,6 +418,86 @@ final class PostureMonitorTests: XCTestCase {
         }
         XCTAssertEqual(try run(.visionFace), .slouching, "the face width is the face engine's own measure")
         XCTAssertEqual(try run(.visionBody), .monitoring, "a body reading without shoulders leaves Forward head unjudged")
+    }
+
+    /// Review of #514 (2026-10-14): after the user left, a throttled frame still merged the last 3D shoulders, so an
+    /// empty frame read as a person with the head dropped (a severe slouch) instead of away. Cached shoulders now
+    /// count only when the frame shows the person by itself.
+    func testCachedShouldersDoNotKeepAPersonWhoLeft() {
+        let full = postureSample().joints
+        let shoulders = full.filter { VisionPose.shoulderJoints.contains($0.key) }
+        XCTAssertFalse(shoulders.isEmpty)
+
+        // The user left: no 2D joint, no face, only the cached 3D shoulders.
+        let empty = VisionBodyPoseEngine.trustedJoints(shoulders, current: [:], cachedShoulders: true, face: nil)
+        XCTAssertTrue(empty.isEmpty, "cached shoulders alone are not a person")
+        XCTAssertFalse(PoseSample(time: 0, engine: .visionBody, joints: empty).hasPerson)
+
+        // Still there: the face (or any own 2D joint) keeps the cached shoulders.
+        let face = PoseFace(box: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.25), confidence: 0.9)
+        XCTAssertEqual(VisionBodyPoseEngine.trustedJoints(shoulders, current: [:], cachedShoulders: true, face: face).count,
+                       shoulders.count)
+        let nose = [PoseJoint.nose: PoseJointPoint(x: 0.5, y: 0.45, confidence: 0.9)]
+        XCTAssertEqual(VisionBodyPoseEngine.trustedJoints(shoulders.merging(nose) { $1 }, current: nose,
+                                                          cachedShoulders: true, face: nil).count, shoulders.count + 1)
+        // A faint face or only shoulder-like 2D joints do not count.
+        let faint = PoseFace(box: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.25), confidence: 0.05)
+        XCTAssertTrue(VisionBodyPoseEngine.trustedJoints(shoulders, current: shoulders, cachedShoulders: true, face: faint).isEmpty)
+        // Shoulders from this frame's own 3D run stay.
+        XCTAssertEqual(VisionBodyPoseEngine.trustedJoints(shoulders, current: [:], cachedShoulders: false, face: nil).count,
+                       shoulders.count)
+    }
+
+    /// Live run 2026-10-14: a hand over one shoulder left the nose, the eyes and one shoulder. The body
+    /// engine skipped the face request (it had a nose), so no measure came out and "Upright" stayed.
+    func testTheBodyEngineAsksForTheFaceWhenAShoulderOrTheNoseIsMissing() {
+        let full = postureSample().joints
+        XCTAssertFalse(VisionBodyPoseEngine.needsFace(full))
+        var oneShoulder = full
+        oneShoulder[.rightShoulder] = nil
+        XCTAssertTrue(VisionBodyPoseEngine.needsFace(oneShoulder))
+        var faintNose = full
+        faintNose[.nose] = PoseJointPoint(x: 0.5, y: 0.45, confidence: 0.1)
+        XCTAssertTrue(VisionBodyPoseEngine.needsFace(faintNose))
+        XCTAssertTrue(VisionBodyPoseEngine.needsFace([:]))
+    }
+
+    /// A baseline calibrated while the body pose found no shoulders holds only face measures, so every
+    /// frame needs the face request, or a reading with a nose has nothing to compare.
+    func testAFaceOnlyBaselineKeepsTheFaceRequestOnEveryFrame() throws {
+        let face = PoseSample(time: 0, engine: .visionBody,
+                              joints: [.nose: PoseJointPoint(x: 0.5, y: 0.45, confidence: 0.9)],
+                              face: PoseFace(box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2), confidence: 0.9, roll: 0, pitch: 0))
+        let faceOnly = try XCTUnwrap(PostureBaseline.calibrate(upright: (0..<5).map { _ in PostureMetrics(sample: face) }))
+        let body = try XCTUnwrap(PostureBaseline.calibrate(upright: (0..<5).map { _ in PostureMetrics(sample: postureSample()) }))
+        XCTAssertTrue(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: faceOnly))
+        XCTAssertFalse(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: body))
+        XCTAssertTrue(PostureCore.needsFaceOnEveryFrame(calibrating: true, baseline: body))
+        XCTAssertFalse(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: nil))
+    }
+
+    /// The same reading once the face rides along: head on one hand, one shoulder hidden, the face rolled
+    /// 0.6 rad and lower. Against a face-only baseline that is a slouch, not "Upright".
+    func testAHeadOnHandWithOneShoulderHiddenSlouchesAgainstAFaceOnlyBaseline() throws {
+        let clock = ClockBox()
+        let configuration = PostureMonitor.Configuration(
+            scorer: PostureScorer(forwardHeadWithoutShoulders: .needsShoulders),
+            timing: PostureTiming(confirmBad: 1, confirmGood: 0.5, onsetDelay: 1, resetStreak: 2, resumeGrace: 0))
+        let monitor = PostureMonitor(configuration: configuration, camera: nil, cameraControl: RecordingCamera(),
+                                     engine: NoEngine(), history: nil, clock: { clock.now },
+                                     wallClock: { Date(timeIntervalSince1970: 1_800_000_000 + clock.now) })
+        func sample(roll: Double, y: Double, time: TimeInterval) -> PoseSample {
+            PoseSample(time: time, engine: .visionBody,
+                       joints: [.nose: PoseJointPoint(x: 0.5, y: y + 0.1, confidence: 0.9),
+                                .leftShoulder: PoseJointPoint(x: 0.2, y: 0.8, confidence: 0.9)],
+                       face: PoseFace(box: CGRect(x: 0.4, y: y, width: 0.3, height: 0.3), confidence: 0.9, roll: roll, pitch: 0))
+        }
+        monitor.setBaseline(try XCTUnwrap(PostureBaseline.calibrate(
+            upright: (0..<5).map { _ in PostureMetrics(sample: sample(roll: 0, y: 0.3, time: 0)) })))
+        monitor.enable()
+        clock.now = 0
+        feedSamples(monitor, clock: clock, from: 0, to: 4) { sample(roll: 0.6, y: 0.4, time: $0) }
+        XCTAssertEqual(monitor.state, .slouching)
     }
 
     private func feedSamples(_ monitor: PostureMonitor, clock: ClockBox, from: TimeInterval, to: TimeInterval,

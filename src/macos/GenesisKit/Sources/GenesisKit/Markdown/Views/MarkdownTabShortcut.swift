@@ -9,6 +9,28 @@
 //
 
 import AppKit
+import os
 
 /// The viewer's window. A `ConstraintSafeWindow`, so an animated zoom from its own `setFrame` is not dropped.
-final class MarkdownDocumentWindow: ConstraintSafeWindow {}
+final class MarkdownDocumentWindow: ConstraintSafeWindow {
+    /// Mouse presses here, tab actions from `MarkdownDocumentsView`: a press that arrives with no action after it is a
+    /// click SwiftUI dropped.
+    static let input = Logger(subsystem: "genesiskit", category: "markdown.input")
+
+    /// Every mouse press, with what it hits and the app's modal state, so a window whose clicks stop working can be
+    /// read afterwards: `log show --predicate 'subsystem == "genesiskit" && category == "markdown.input"'`.
+    /// (2026-10-14: every click in the viewer did nothing while accessibility presses worked; a restart cleared it.)
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .leftMouseUp {
+            let hit = contentView?.superview?.hitTest(event.locationInWindow).map { String(describing: type(of: $0)) } ?? "nil"
+            Self.input.notice("""
+                \(event.type == .leftMouseDown ? "down" : "up", privacy: .public) clicks=\(event.clickCount) \
+                hit=\(hit, privacy: .public) key=\(self.isKeyWindow) active=\(NSApp.isActive) \
+                modal=\(NSApp.modalWindow.map { String(describing: type(of: $0)) } ?? "nil", privacy: .public) \
+                sheet=\(self.attachedSheet != nil) \
+                buttons=\(NSEvent.pressedMouseButtons)
+                """)
+        }
+        super.sendEvent(event)
+    }
+}

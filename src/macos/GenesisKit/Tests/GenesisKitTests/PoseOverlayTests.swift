@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 final class PoseOverlayGeometryTests: XCTestCase {
     func testAMatchingAspectFillsTheViewAndMirrorsX() {

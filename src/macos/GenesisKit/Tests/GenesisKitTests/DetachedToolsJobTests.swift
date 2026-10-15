@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 /// A `tools` job whose output goes to files: the starting instance follows it, and a second follower that only
 /// has the saved record (an app restart) reads everything from the start and still sees the end.

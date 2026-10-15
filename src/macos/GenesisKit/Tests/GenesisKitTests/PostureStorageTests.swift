@@ -1,5 +1,6 @@
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 final class PostureCalibrationTests: XCTestCase {
     private func calibrated() throws -> PostureBaseline {

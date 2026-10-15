@@ -252,7 +252,17 @@ final class MarkdownSplitViewTests: XCTestCase {
         XCTAssertEqual(view.accessibilityValue() as? String, "Editor 50 percent")
         XCTAssertTrue(view.accessibilityPerformIncrement())
         XCTAssertTrue(view.accessibilityPerformDecrement())
+        let navigation = MarkdownSplitDivider.DividerView.keyboardNavigation
+        defer { MarkdownSplitDivider.DividerView.keyboardNavigation = navigation }
+        MarkdownSplitDivider.DividerView.keyboardNavigation = { true }
         XCTAssertTrue(view.acceptsFirstResponder)
+        XCTAssertTrue(view.canBecomeKeyView)
+        XCTAssertEqual(view.focusRingType, .none, "focus lights the line instead of ringing the strip")
+        // Keyboard navigation off: the divider never takes focus, so a tab switch cannot hand it the window's focus.
+        MarkdownSplitDivider.DividerView.keyboardNavigation = { false }
+        XCTAssertFalse(view.acceptsFirstResponder)
+        XCTAssertFalse(view.canBecomeKeyView)
+        MarkdownSplitDivider.DividerView.keyboardNavigation = { true }
 
         func key(_ code: UInt16) throws -> NSEvent {
             try XCTUnwrap(NSEvent.keyEvent(
@@ -287,6 +297,10 @@ final class MarkdownSplitViewTests: XCTestCase {
         defer { window.close() }
         let divider = MarkdownSplitDivider.DividerView(frame: NSRect(x: 200, y: 0, width: 8, height: 200))
         window.contentView?.addSubview(divider)
+        // With keyboard navigation on (the Tab step below needs it).
+        let navigation = MarkdownSplitDivider.DividerView.keyboardNavigation
+        defer { MarkdownSplitDivider.DividerView.keyboardNavigation = navigation }
+        MarkdownSplitDivider.DividerView.keyboardNavigation = { true }
 
         window.event = NSEvent.mouseEvent(
             with: .leftMouseDown, location: NSPoint(x: 204, y: 100), modifierFlags: [], timestamp: 0,

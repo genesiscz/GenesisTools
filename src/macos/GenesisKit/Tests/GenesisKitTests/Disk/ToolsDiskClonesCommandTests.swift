@@ -1,6 +1,7 @@
 import GenesisKitFixtures
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 /// The typed `tools macos clones` commands that change state (reclaim apply, rollback, presets, daemon, config) and
 /// the doctor act expectations. A fake `tools` script records its argv and prints a canned payload; the shapes come

@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 /// Collects batches from the stream's queue.
 private final class BatchLog: @unchecked Sendable {

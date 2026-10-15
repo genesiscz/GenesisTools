@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import os
 import UniformTypeIdentifiers
 
 struct MarkdownDocumentsView: View {
@@ -87,6 +88,7 @@ struct MarkdownDocumentsView: View {
                     .background(model.theme.chrome)
                     // Chrome too, under the zone's strip: the same double-click as the title bar.
                     .onTapGesture(count: 2) {
+                        MarkdownDocumentWindow.input.notice("tab bar double click")
                         if let window = MarkdownDocumentWindowController.shared.window {
                             WindowTitlebar.performDoubleClick(on: window)
                         }
@@ -258,7 +260,7 @@ private struct MarkdownDocumentTab: View {
         let previews = !active && model.configuration.hoverPreview
         HStack(spacing: 6) {
             Button {
-                selectOrKeep()
+                selectOrKeep(via: "button")
             } label: {
                 HStack(spacing: 6) {
                     if doc.hasDiskChange {
@@ -282,6 +284,7 @@ private struct MarkdownDocumentTab: View {
             .accessibilityLabel(accessibilityTitle)
             .accessibilityAddTraits(active ? .isSelected : [])
             Button {
+                MarkdownDocumentWindow.input.notice("tab action close \(doc.title, privacy: .public)")
                 model.close(doc)
             } label: {
                 Image(systemName: "xmark")
@@ -300,7 +303,7 @@ private struct MarkdownDocumentTab: View {
         .background(active ? model.theme.fill : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
-        .onTapGesture { selectOrKeep() }
+        .onTapGesture { selectOrKeep(via: "tap") }
         .contextMenu {
             if preview {
                 Button("Keep Tab") { model.keep(doc) }
@@ -316,7 +319,8 @@ private struct MarkdownDocumentTab: View {
 
     /// A click selects. The second click of a double-click also keeps a preview tab, as in an editor;
     /// a separate double-tap gesture would hold every single click back by the double-click interval.
-    private func selectOrKeep() {
+    private func selectOrKeep(via gesture: String) {
+        MarkdownDocumentWindow.input.notice("tab action select \(doc.title, privacy: .public) via=\(gesture, privacy: .public)")
         model.select(doc.id)
         if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
             model.keep(doc)

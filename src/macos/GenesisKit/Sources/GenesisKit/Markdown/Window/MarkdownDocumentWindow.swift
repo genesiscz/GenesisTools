@@ -52,7 +52,11 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         // set, with `representedURL`, for the Window menu, Mission Control and VoiceOver.
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
+        // Off: a press held on a tab (or any SwiftUI control) became a window drag, the drag took the mouse-up, and
+        // SwiftUI was left waiting for it, so every later click in the window did nothing until a restart
+        // (2026-10-14, reproduced with a real press-and-drag on a tab). The title bar strip still moves the window:
+        // `TitlebarZoneView` starts that drag itself.
+        window.isMovableByWindowBackground = false
         window.backgroundColor = NSColor(MarkdownTheme.genesis.page)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: Self.root(model: model))
@@ -105,24 +109,32 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
     }
 
     /// ⌘W: the selected tab goes, not the window. A dirty tab asks first
-    /// (save / don't save / cancel); when the last tab closes the window
-    /// follows, the way a browser's does.
+    /// (save / don't save / cancel). Closing the last tab leaves the window open and empty, ready for the next
+    /// file; ⌘W on the empty window closes it (Martin, 2026-10-14).
     @objc public func closeSelectedTab(_ sender: Any?) {
         closeSelectedTabOrWindow()
+    }
+
+    /// What ⌘W closes: the selected tab, or the window when no tab is left.
+    static func closeTarget(selected: MarkdownDocument?) -> CloseTarget {
+        selected.map(CloseTarget.tab) ?? .window
+    }
+
+    enum CloseTarget {
+        case tab(MarkdownDocument)
+        case window
     }
 
     /// Returns false when the reader cancelled the unsaved-changes prompt.
     @discardableResult
     func closeSelectedTabOrWindow() -> Bool {
-        guard let doc = model.selected else {
+        switch Self.closeTarget(selected: model.selected) {
+        case let .tab(doc):
+            return model.close(doc)
+        case .window:
             window?.performClose(nil)
             return true
         }
-        guard model.close(doc) else { return false }
-        if model.docs.isEmpty {
-            window?.performClose(nil)
-        }
-        return true
     }
 
     @objc public func saveSelected(_ sender: Any?) {

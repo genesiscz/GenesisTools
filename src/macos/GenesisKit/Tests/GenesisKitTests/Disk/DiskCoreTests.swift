@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 final class VolumeSpaceTests: XCTestCase {
     func testStatfsReadsTheDataVolumeAndCostsMicroseconds() throws {

@@ -1,6 +1,7 @@
 import GenesisKitFixtures
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitDisk
 
 /// The captured outputs in GenesisKitFixtures (the `Disk/*.json` files without the `contract-` prefix) are real
 /// output, captured on 2026-10-13 with the GenesisTools CLI at

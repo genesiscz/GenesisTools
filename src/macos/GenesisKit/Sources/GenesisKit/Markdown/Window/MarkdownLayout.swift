@@ -171,8 +171,8 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         private var startX: CGFloat = 0
         private var area: NSTrackingArea?
 
-        /// The window is `isMovableByWindowBackground`, so a view that does not
-        /// claim its own mouse-down drags the whole window instead of resizing.
+        /// A window that is `isMovableByWindowBackground` (the viewer's was until 2026-10-14) drags itself from a
+        /// view that does not claim its own mouse-down, instead of resizing.
         override var mouseDownCanMoveWindow: Bool { false }
 
         override func updateTrackingAreas() {
@@ -213,8 +213,9 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         }
 
         override func draw(_ dirtyRect: NSRect) {
-            let width: CGFloat = hot ? 3 : 1
-            (hot ? accent : line).setFill()
+            let lit = hot || focused
+            let width: CGFloat = lit ? 3 : 1
+            (lit ? accent : line).setFill()
             NSRect(x: (bounds.width - width) / 2, y: 0, width: width, height: bounds.height).fill()
         }
 
@@ -243,14 +244,30 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         // on the keyboard: Tab focuses it (with keyboard navigation on), the
         // arrows move it, Return puts it back to even.
 
-        // Tab focus only. A click that starts a drag must leave the editor
-        // focused, or the next keystrokes reach the divider and are lost.
+        /// Whether the keyboard moves focus between controls (System Settings › Keyboard › Keyboard navigation).
+        /// A seam for tests.
+        nonisolated(unsafe) static var keyboardNavigation: () -> Bool = { NSApp.isFullKeyboardAccessEnabled }
+
+        // Tab focus only, and only with keyboard navigation on. A click that starts a drag must leave the editor
+        // focused, or the next keystrokes reach the divider and are lost. Without keyboard navigation AppKit still
+        // handed it focus when a tab switch removed the focused page, and its focus ring drew a 6 pt blue bar the
+        // height of the window (2026-10-14).
         override var acceptsFirstResponder: Bool {
-            window?.currentEvent?.type != .leftMouseDown
+            Self.keyboardNavigation() && window?.currentEvent?.type != .leftMouseDown
         }
-        override var canBecomeKeyView: Bool { true }
-        override var focusRingMaskBounds: NSRect { bounds }
-        override func drawFocusRingMask() { bounds.fill() }
+        override var canBecomeKeyView: Bool { Self.keyboardNavigation() }
+
+        /// Focus shows as the accent line the pointer lights, not as a ring around the whole strip.
+        private var focused = false { didSet { if focused != oldValue { needsDisplay = true } } }
+        override var focusRingType: NSFocusRingType { get { .none } set {} }
+        override func becomeFirstResponder() -> Bool {
+            focused = true
+            return true
+        }
+        override func resignFirstResponder() -> Bool {
+            focused = false
+            return true
+        }
 
         override func keyDown(with event: NSEvent) {
             switch event.keyCode {

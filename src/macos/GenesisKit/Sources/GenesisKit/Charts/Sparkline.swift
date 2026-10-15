@@ -156,3 +156,12 @@ struct SparklineArea: Shape {
         return path
     }
 }
+
+extension View {
+    /// Sets the identifier only when there is one: an empty identifier would replace one the caller set outside.
+    /// `package`: the charts in GenesisKitCharts use it too.
+    @ViewBuilder
+    package func chartAccessibilityIdentifier(_ identifier: String?) -> some View {
+        if let identifier { accessibilityIdentifier(identifier) } else { self }
+    }
+}

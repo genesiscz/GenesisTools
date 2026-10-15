@@ -3,6 +3,7 @@ import CoreVideo
 import Foundation
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 /// The Vision engines on synthetic 640x480 frames: what they return, and what one request costs.
 /// No camera is opened. `POSTURE_BENCH=1` runs 60 timed calls per engine instead of 8 and prints the

@@ -3,6 +3,7 @@ import SwiftUI
 import XCTest
 
 @testable import GenesisKit
+@testable import GenesisKitCharts
 
 /// A made-up disk: every number is invented.
 enum ChartFixtures {

@@ -65,7 +65,7 @@ public final class DirectoryWatcher {
 
     // FSEvents uses /private aliases that Foundation file URLs collapse. Normalize the spelling
     // without resolving symlinks (and restatting the filesystem) for every event in a busy stream.
-    static func normalizedEventPath(_ path: String) -> String {
+    package static func normalizedEventPath(_ path: String) -> String {
         if path == "/private/var" || path.hasPrefix("/private/var/")
             || path == "/private/tmp" || path.hasPrefix("/private/tmp/") {
             return String(path.dropFirst("/private".count))

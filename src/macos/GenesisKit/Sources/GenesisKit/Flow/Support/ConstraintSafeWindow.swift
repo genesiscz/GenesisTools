@@ -45,18 +45,19 @@ class ConstraintSafeWindow: NSWindow {
 }
 
 /// NSPanel subclass with the same constraint loop protection.
-/// Use for floating panels, overlays, and non-activating windows.
-class ConstraintSafePanel: NSPanel {
+/// Use for floating panels, overlays, and non-activating windows. `open`: GenesisKitPosture's screen-effect panel
+/// subclasses it from another module.
+open class ConstraintSafePanel: NSPanel {
 
     /// Re-entrancy guard: prevents recursive setFrame during super.setFrame.
     private var isSettingFrame = false
 
-    override func updateConstraintsIfNeeded() {
+    override open func updateConstraintsIfNeeded() {
         guard ConstraintLoopDetector.shared.beginUpdate(for: self) else { return }
         super.updateConstraintsIfNeeded()
     }
 
-    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+    override open func setFrame(_ frameRect: NSRect, display flag: Bool) {
         guard !isSettingFrame else { return }
         guard frameRect != self.frame else { return }
         isSettingFrame = true
@@ -67,7 +68,7 @@ class ConstraintSafePanel: NSPanel {
     /// No re-entrancy flag here: AppKit sets the frame from inside this call (each step of an animated
     /// change goes through `setFrame(_:display:)`), and with the flag set every step was dropped, so
     /// `zoom` left the window at its size (Genesis markdown viewer, 2026-10-02). The inner call keeps its guard.
-    override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
+    override open func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
         guard !isSettingFrame else { return }
         guard frameRect != self.frame else { return }
         super.setFrame(frameRect, display: displayFlag, animate: animateFlag)

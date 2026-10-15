@@ -1,5 +1,6 @@
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 /// Builds an upright-ish body sample: shoulders 0.4 wide at y 0.75, eyes 0.1 apart, nose at `noseY`. The
 /// image is square unless asked, so x and y distances are the same unit and the numbers stay readable;

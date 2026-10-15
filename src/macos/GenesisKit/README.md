@@ -12,9 +12,23 @@ logging, the title bar zone and the small controls. One copy, two consumers:
 
 ## Layout
 
-One target, folders by job. A file goes where its job is, not where its first caller was. The second product,
-`GenesisKitFixtures` (`Sources/GenesisKitFixtures/`), is for test targets only: the one copy of the `tools` disk
-fixtures, read with `KitFixture.url(_:)`, `data(_:)` and `string(_:)` by file name (`contract-doctor-act.ndjson`).
+Four libraries, folders by job. A file goes where its job is, not where its first caller was.
+
+- `GenesisKit` (`Sources/GenesisKit/`): what both apps use. GenesisTools.app depends on this one only.
+- `GenesisKitCharts` (`Sources/GenesisKitCharts/`): sunburst, treemap, donut, ring gauge, health bar and their
+  layouts. `Sparkline` and the native charts stay in the core, because Focus and Clicky use them.
+- `GenesisKitPosture` (`Sources/GenesisKitPosture/`): PostureWatcher's `Camera/`, `Pose/`, `Posture/` and the
+  screen effects in `Overlay/`.
+- `GenesisKitDisk` (`Sources/GenesisKitDisk/`): the Disk Manager's `Disk/`, `Alerts/` and the channel matrix row.
+
+Code only Genesis uses goes into one of the Genesis-only libraries, never into the core, so GenesisTools.app does not
+compile it (Martin, 2026-10-14). They reach core helpers through `package` access, not `public`.
+`KitModuleBoundaryTests` in GenesisTools fails when the app names or imports one of them, or when one of their types
+is declared in the core again. Genesis lists each library it uses and imports it where it is used.
+
+The fixtures product, `GenesisKitFixtures` (`Sources/GenesisKitFixtures/`), is for test targets only: the one copy
+of the `tools` disk fixtures, read with `KitFixture.url(_:)`, `data(_:)` and `string(_:)` by file name
+(`contract-doctor-act.ndjson`).
 A fixture an app test needs goes there under its own name, never into a test target.
 
 | Folder | What |
@@ -28,12 +42,12 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
 | `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
-| `Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
-| `Camera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
-| `Disk/` | Free-space sampling (`VolumeSpaceMonitor`), forecasts, history, a resumable FSEvents stream, the big-file radar, the du index reader and the decoders for the tools disk commands (`ToolsDiskProvider`); unrelated to `DiskCache` in `Tools/` |
-| `Overlay/` | Screen effects: click-through panels over every display (vignette, sepia, blur, dim, edge glow), a message pill and a camera bubble (`ScreenEffectsController`) |
-| `Pose/` | Pose samples, the Vision body and face engines and the AirPods engine, and the skeleton overlay |
-| `Posture/` | PostureWatcher's logic: metrics, scorer, state machine, health, calibration slots, history, the activity gate and `PostureMonitor` |
+| `GenesisKitDisk/Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
+| `GenesisKitPosture/Camera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
+| `GenesisKitDisk/Disk/` | Free-space sampling (`VolumeSpaceMonitor`), forecasts, history, a resumable FSEvents stream, the big-file radar, the du index reader and the decoders for the tools disk commands (`ToolsDiskProvider`); unrelated to `DiskCache` in `Tools/` |
+| `GenesisKitPosture/Overlay/` | Screen effects: click-through panels over every display (vignette, sepia, blur, dim, edge glow), a message pill and a camera bubble (`ScreenEffectsController`) |
+| `GenesisKitPosture/Pose/` | Pose samples, the Vision body and face engines and the AirPods engine, and the skeleton overlay |
+| `GenesisKitPosture/Posture/` | PostureWatcher's logic: metrics, scorer, state machine, health, calibration slots, history, the activity gate and `PostureMonitor` |
 | `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit; `HostWindow` + `HostWindowReader` (the window a view is in, without SwiftUI state); `WindowSnapshot` (a `--snapshot` PNG as the window server composes it, Liquid Glass included); `WindowRaise` (one window forward, not the whole app); `SingleInstance` (one process of a kind per login session: a later launch hands its arguments over and exits) |
 | `Permissions/` | `PermissionKind` (every privacy grant: title, reason, exact System Settings pane, request style), `PermissionAccess` (status and in-place request through TCC, with the `GenesisToolsSimulateDeniedPermissions` denial simulation on top), `PermissionCenter` + `PermissionNeed` (the one permission dialog: one per kind at a time, grants in place where macOS allows it, otherwise explains and opens the pane, offers Relaunch for a grant only a new process sees, closes itself when the grant arrives), `PermissionDialogView` / `PermissionPanelPresenter` |
 | `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
@@ -6379,7 +6393,8 @@ Members: `joint(_:) -> PoseJointPoint?` returns a joint above `minimumConfidence
 
 Vision 2D body pose (`VNDetectHumanBodyPoseRequest`, `preferBackgroundProcessing`). It keeps the nearest person: the widest confident shoulders, else the most confident nose.
 
-- `faceDetection: FaceDetection = .fallback`: `.fallback` runs face rectangles on the same frame when the body has no confident nose (a seated upper body sometimes yields no body, which is why Dorso has the same fallback); `.always` runs both on every frame (use it while calibrating, so the baseline also holds the face measures); `.never`. Change it only from the queue that calls `analyze`.
+- `faceDetection: FaceDetection = .fallback`: `.fallback` runs face rectangles on the same frame when the body has no confident nose or misses a shoulder (a seated upper body sometimes yields no body, which is why Dorso has the same fallback); `.always` runs both on every frame (use it while calibrating, so the baseline also holds the face measures); `.never`. Change it only from the queue that calls `analyze`.
+- `body3D: Body3D = .throttled`, `body3DInterval: TimeInterval = 4`: the shoulders and the neck come from `VNDetectHumanBodyPose3DRequest` instead of the 2D request, which often finds no body for a person close to a laptop camera (real frames, 2026-10-14). The two place the shoulders differently (3D about a third narrower), so a reading never mixes them. 3D costs about 80 ms of CPU a frame against 7 ms for 2D plus face: `.throttled` runs it at most once per interval and keeps its shoulders for two intervals; `.always` runs it on every frame (calibration); `.never` keeps the 2D shoulders.
 
 #### `VisionFaceEngine`
 
@@ -6445,7 +6460,7 @@ The measures read from one sample, as `[PostureMeasure: Double]` with a subscrip
 Measures (`PostureMeasure`) and the fault (`PostureMetricKind`) each stands in for:
 
 - `headHeight` (shoulder midpoint y − nose y, over shoulder width), `faceCenterY`: `.headDrop`.
-- `eyeSpanRatio` (eye span over shoulder width), `faceWidth`: `.forwardHead`.
+- `eyeSpanRatio` (eye span over shoulder width), `faceWidthRatio` (face box width over shoulder width, when the shoulders come from 3D and the eyes are missing), `faceWidth`: `.forwardHead`.
 - `shoulderWidth`: `.leanIn`.
 - `shoulderTilt` (radians): `.shoulderTilt`.
 - `lateralOffset`, `faceRoll`, `faceCenterX`: `.lateralLean`.
@@ -6568,6 +6583,10 @@ Initializer: `configuration: Configuration = Configuration()`, `camera: CameraFr
 Methods: `enable()`, `disable()`, `setBaseline(_:)`, `pause(for:)`, `pause(until:)`, `resume()`, `observe(gate:)`, `setEngine(_:)`, `setSource(_:headphones:)` (`PostureSource`: `.camera`, `.headphones`, `.auto`), `ingest(_:)` (any thread), `resetHealth()`, `flushHistory()` (writes the open minute and waits until it is on disk), `setHistory(_ store: PostureHistoryStore?)` (swap or switch off history; the open minute goes to the old store), and `history: PostureHistoryStore?`. `onEvent` gets each `PostureEvent` on the main actor: state changes, `slouchStarted` (one per episode), `recoveryStarted`, `streakReset`.
 
 `collectCalibrationSamples(count: Int, timeout: TimeInterval) async throws -> [PoseSample]` gathers `count` samples with a person in them (dark frames skipped) from the running pipeline: the camera runs at the active rate meanwhile whatever the state, a Vision body engine adds the face request, and readings are not scored. It throws `PostureCalibrationError`: `.busy` while another collection runs, `.timedOut(collected:)` and `.cameraUnavailable(_:collected:)` with what it gathered, `.cancelled` when the task is cancelled or the monitor goes away. No second camera lease is needed.
+
+`captureShots(count: Int, label: String, into directory: URL)` (any thread) saves the next `count` analyzed camera frames to `<directory>/<label>/<stamp>-<NN>.png`, each with its `PoseSample` as `.json`, for replaying in `PostureShotsTests` (frames in `Tests/PostureShots/<pose>/`, gitignored because they show the user, or in `POSTURE_SHOTS_DIR`). Only frames the monitor analyzes count, so it must be watching or calibrating.
+
+`startDebugRecording(into folder: URL, maxDuration: TimeInterval = 10, completion:)` and `stopDebugRecording()` (any thread) record a bug report: the analyzed camera frames as `<folder>/movie.mp4` (H.264, at capture time) and every reading as `<folder>/log.ndjson`, a `start` line (baseline, scorer) then one `frame` line per frame with `t`, `state`, `sample`, `metrics` and `score` (each signal's deviation, enter and exit thresholds, severity). It ends after `maxDuration` seconds of frames or at the stop call; `completion` gets a `PostureDebugRecording` (folder, movie, log, frames, duration, error) once, off the main thread. Only analyzed frames count, so the monitor must be watching or calibrating.
 
 `holdScoring(_ hold: Bool)` holds scoring while a calibration sheet is open (`isScoringHeld` reads it back): readings still reach `feed` and a collection, but none is judged, so the slouch a calibration asks for never starts an episode or an alert. Holding, releasing and a different `setBaseline` all start the posture afresh (upright, with the resume grace), so a slouch judged against the old baseline does not outlive it.
 

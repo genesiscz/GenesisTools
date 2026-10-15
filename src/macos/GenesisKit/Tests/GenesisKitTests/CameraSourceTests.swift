@@ -2,6 +2,7 @@ import AVFoundation
 import CoreVideo
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitPosture
 
 /// A camera driver with no camera: it records what the source asks for.
 final class FakeCameraDriver: CameraSessionDriving, @unchecked Sendable {
