@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,7 +63,10 @@ beforeEach(() => {
     db = new Database(":memory:");
     runMigrations(db, PENDING_MIGRATIONS as Migration[], { tableName: "qa_pending" });
     const scratch = mkdtempSync(join(tmpdir(), "gt-ask-notify-"));
-    deps = { db, eventBase: join(scratch, "events"), logBase: join(scratch, "log"), notify: true };
+    // ambient: false stamps no poster, so a post runs no `git` (eight spawnSync calls otherwise). Bun 1.4.2
+    // loses a spawnSync child's exit now and then under `bun test --parallel`, and the worker that hit it timed
+    // out every later test in this file at 20 s on CI (240 s for 12 tests). The poster has its own tests.
+    deps = { db, eventBase: join(scratch, "events"), logBase: join(scratch, "log"), notify: true, ambient: false };
 });
 
 afterEach(() => {
@@ -71,6 +74,25 @@ afterEach(() => {
 });
 
 describe("pending-form notification", () => {
+    test("posting and answering a form starts no child process", async () => {
+        const spawnSync = spyOn(Bun, "spawnSync");
+        const spawn = spyOn(Bun, "spawn");
+
+        try {
+            const form = await postAskForm(
+                { projectPath: "/tmp/gt-notify-fixture", items: [{ promptMarkdown: "Ship the PR?" }] },
+                deps
+            );
+            await answerAskForm(form.id, [{ itemId: "q1", freeText: "yes" }], deps);
+
+            expect(spawnSync).not.toHaveBeenCalled();
+            expect(spawn).not.toHaveBeenCalled();
+        } finally {
+            spawnSync.mockRestore();
+            spawn.mockRestore();
+        }
+    });
+
     test("a new form raises one banner that deep-links to /qa?id=<formId>", async () => {
         const form = await postAskForm(
             { projectPath: "/tmp/gt-notify-fixture", items: [{ promptMarkdown: "Ship the PR?" }] },

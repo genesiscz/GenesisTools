@@ -139,10 +139,16 @@ export function getAgentRuntimeContext(
     // `.git`, so they differ. The old `endsWith(${repoRoot}/.git)` guard was
     // always false inside a worktree because repoRoot already pointed at the
     // main root — `isWorktree` could never be true (t23).
-    const gitDir = gitSync(["rev-parse", "--git-dir"], cwd);
-    const gitCommonDir = gitSync(["rev-parse", "--git-common-dir"], cwd);
+    //
+    // A fact the overrides already carry is not read: the override wins in the merge below anyway,
+    // and every read is a synchronous `git` spawn (an answered question passes all of them).
+    const given = (field: keyof AgentRuntimeContext) => Object.hasOwn(overrides, field);
+    const layoutGiven = given("repoRoot") && given("project") && given("isWorktree") && given("worktreePath");
+    const readGit = (field: keyof AgentRuntimeContext, args: string[]) => (given(field) ? null : gitSync(args, cwd));
+    const gitDir = layoutGiven ? null : gitSync(["rev-parse", "--git-dir"], cwd);
+    const gitCommonDir = layoutGiven ? null : gitSync(["rev-parse", "--git-common-dir"], cwd);
     const isWorktree = gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir);
-    const topLevel = gitSync(["rev-parse", "--show-toplevel"], cwd);
+    const topLevel = layoutGiven ? null : gitSync(["rev-parse", "--show-toplevel"], cwd);
     // A linked worktree's main repo is the parent of the shared `.git`; anywhere
     // else it is the checkout root. Taking `cwd` verbatim named the project after
     // whatever subdirectory the session happened to be in.
@@ -158,9 +164,9 @@ export function getAgentRuntimeContext(
         cwd,
         isWorktree,
         worktreePath: isWorktree ? topLevel : null,
-        branch: gitSync(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
-        commitSha: gitSync(["rev-parse", "--short", "HEAD"], cwd),
-        commitMessage: gitSync(["log", "-1", "--format=%s"], cwd),
+        branch: readGit("branch", ["rev-parse", "--abbrev-ref", "HEAD"]),
+        commitSha: readGit("commitSha", ["rev-parse", "--short", "HEAD"]),
+        commitMessage: readGit("commitMessage", ["log", "-1", "--format=%s"]),
     };
 
     const merged = { ...base, ...agentPartial, ...overrides };
