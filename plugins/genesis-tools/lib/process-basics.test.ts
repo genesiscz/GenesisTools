@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
@@ -18,6 +19,33 @@ test("the plugin's liveness probe is byte-identical to src/utils/process-alive.t
     const copy = readFileSync(join(import.meta.dir, "process-alive.ts"), "utf8");
     // pid-safety-guard.sh allows the signal-0 probe only in files named process-alive.ts, so the copy must stay that helper.
     expect(copy === canonical).toBe(true);
+});
+
+test.skipIf(process.platform !== "linux")(
+    "the Linux table reads /proc/stat once and no command line, not once per process",
+    () => {
+        const spy = spyOn(fs, "readFileSync");
+        let paths: string[] = [];
+        let rows = 0;
+
+        try {
+            rows = listProcessBasics().length;
+            paths = spy.mock.calls.map(([path]) => String(path));
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(rows).toBeGreaterThan(1);
+        expect(paths.filter((path) => path === "/proc/stat")).toHaveLength(1);
+        expect(paths.filter((path) => path.endsWith("/cmdline"))).toEqual([]);
+    }
+);
+
+test.skipIf(process.platform !== "linux")("a table row carries the start time the single-process reader gives", () => {
+    const row = listProcessBasics().find((entry) => entry.pid === process.pid);
+
+    expect(row?.startMs).not.toBeNull();
+    expect(row?.startMs).toBe(readProcessBasics(process.pid)?.startMs ?? -1);
 });
 
 // The standalone reader must answer exactly what the utils layer answers, for the processes a hook reads: itself,

@@ -319,7 +319,18 @@ function ttyFromLinux(ttyNr: number): string | null {
     return major === 4 ? (minor < 64 ? `tty${minor}` : `ttyS${minor - 64}`) : null;
 }
 
-function readLinux(pid: number): ProcessBasics | null {
+/** The boot time in ms, from the `btime` line of `/proc/stat` (which also holds every CPU's counters); null if unread. */
+function readBootMs(): number | null {
+    try {
+        const boot = readFileSync("/proc/stat", "utf8").match(/^btime\s+(\d+)$/m);
+        return boot ? Number(boot[1]) * 1000 : null;
+    } catch {
+        return null;
+    }
+}
+
+/** One process's `stat` as a row, without its command line; null when it has gone. */
+function readLinuxRow(pid: number, bootMs: number | null): Omit<ProcessBasics, "command"> | null {
     try {
         const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
         const open = stat.indexOf("(");
@@ -328,19 +339,30 @@ function readLinux(pid: number): ProcessBasics | null {
             .slice(close + 1)
             .trim()
             .split(/\s+/);
-        const boot = readFileSync("/proc/stat", "utf8").match(/^btime\s+(\d+)$/m);
-        const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
-        const name = stat.slice(open + 1, close);
 
         return {
             pid,
             ppid: Number(fields[1]),
-            name,
-            command: argv.length > 0 ? argv.join(" ") : `[${name}]`,
+            name: stat.slice(open + 1, close),
             tty: ttyFromLinux(Number(fields[4])),
             // starttime (stat field 22) counts USER_HZ ticks after boot; USER_HZ is 100 on mainstream builds.
-            startMs: boot ? Number(boot[1]) * 1000 + Number(fields[19]) * 10 : null,
+            startMs: bootMs === null ? null : bootMs + Number(fields[19]) * 10,
         };
+    } catch {
+        return null;
+    }
+}
+
+function readLinux(pid: number): ProcessBasics | null {
+    const row = readLinuxRow(pid, readBootMs());
+
+    if (!row) {
+        return null;
+    }
+
+    try {
+        const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+        return { ...row, command: argv.length > 0 ? argv.join(" ") : `[${row.name}]` };
     } catch {
         return null;
     }
@@ -355,11 +377,12 @@ function readLinuxTable(): Omit<ProcessBasics, "command">[] {
         return [];
     }
 
+    // The boot time and each row's `stat` only: one `/proc/stat` read for the table, not one per process, and no
+    // command line, which this table discards.
+    const bootMs = readBootMs();
     return names.flatMap((name) => {
-        const basics = readLinux(Number(name));
-        return basics
-            ? [{ pid: basics.pid, ppid: basics.ppid, name: basics.name, tty: basics.tty, startMs: basics.startMs }]
-            : [];
+        const row = readLinuxRow(Number(name), bootMs);
+        return row ? [row] : [];
     });
 }
 
