@@ -43,6 +43,10 @@ export interface LinkTargets {
         /** The GenesisTools hub on a PR, a commit in it, a repository or a session. */
         open: HubLinkQuery;
     };
+    decide: {
+        /** Scroll a live Claude session's transcript to where DECISION `decision` was first asked. */
+        find: { session: string; decision: number };
+    };
 }
 
 export type LinkPreset = keyof LinkTargets;
@@ -55,9 +59,10 @@ export type LinkVia = "router" | "scheme";
 interface Target<D> {
     /** The path after the link host. The preset's route turns it into `scheme(data)`. */
     path: (data: D) => string;
-    scheme: (data: D) => string;
+    /** Absent when only the router can serve the target: it runs a command, no app opens it. */
+    scheme?: (data: D) => string;
     /** Whether the app behind `scheme` is on this Mac. */
-    appInstalled: (gate: LinkGate) => boolean;
+    appInstalled?: (gate: LinkGate) => boolean;
     /** Transports when the caller does not pass `via`. Default is the router. */
     transports?: readonly LinkVia[];
 }
@@ -138,6 +143,11 @@ const TARGETS: TargetTable = {
             transports: ["router", "scheme"],
         },
     },
+    decide: {
+        find: {
+            path: (data) => `decide/${encodeURIComponent(data.session)}/${data.decision}/find`,
+        },
+    },
 };
 
 /** The app's own link for a target, for a caller that opens it rather than prints it (`open genesis-md://…`). */
@@ -150,7 +160,13 @@ export function schemeLink<P extends LinkPreset, A extends LinkAction<P>>({
     action: A;
     data: LinkData<P, A>;
 }): string {
-    return TARGETS[preset][action].scheme(data);
+    const { scheme } = TARGETS[preset][action];
+
+    if (!scheme) {
+        throw new Error(`${preset} ${action} has no app link; only the router serves it`);
+    }
+
+    return scheme(data);
 }
 
 export type LinkErrorCode =
@@ -257,7 +273,17 @@ function linkFor<P extends LinkPreset, A extends LinkAction<P>>({
     const target = TARGETS[options.preset][options.action];
 
     if (via === "scheme") {
-        return target.appInstalled(gate)
+        if (!target.scheme) {
+            return {
+                error: {
+                    code: "app-missing",
+                    message: `no app opens ${options.preset} links; only the router serves them`,
+                    reason: "the target has no app scheme",
+                },
+            };
+        }
+
+        return target.appInstalled?.(gate)
             ? { link: target.scheme(options.data) }
             : {
                   error: {

@@ -17,6 +17,11 @@ export function decidePattern(linkHost: string): string {
     return linkPattern(linkHost, "decide/([A-Za-z0-9_-]{1,64})/(\\d{1,6})/([a-z])");
 }
 
+/** `decide/<session>/<n>/find`: scrolls that session's transcript to the decision. No free text either. */
+export function decideFindPattern(linkHost: string): string {
+    return linkPattern(linkHost, "decide/([A-Za-z0-9_-]{1,64})/(\\d{1,6})/find");
+}
+
 /** The `core` preset's patterns on a link host: minted links, wrapped local links, tab bundles. */
 export function corePatterns(linkHost: string): { token: string; unwrap: string; tabs: string } {
     return {
@@ -156,7 +161,8 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             // Types an answer into a live session with approval allow. The URL carries only a
             // session id, a number and one letter.
             description:
-                "https://<link host>/decide/<session>/<n>/<letter> types that answer into a live Claude session.",
+                "https://<link host>/decide/<session>/<n>/<letter> types that answer into a live Claude session; " +
+                "/decide/<session>/<n>/find scrolls its transcript to that decision.",
             enabledIf: ["claude:installed"],
             needsLinkHost: true,
             probe: linkHost ? `https://${linkHost}/decide/00000000-0000-4000-8000-000000000000/1/a` : undefined,
@@ -183,6 +189,18 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                         ],
                         approval: "allow",
                         notify: "Answered DECISION $2: $3)",
+                    },
+                },
+                {
+                    preset: "decide",
+                    name: "Show a decision in its chat",
+                    pattern: decideFindPattern(host),
+                    action: {
+                        type: "run",
+                        // Opens the transcript view and searches it; it types into the prompt nothing.
+                        argv: ["tools", "claude", "cmux", "find", "$1", "--decision", "$2"],
+                        approval: "allow",
+                        notify: "Showing DECISION $2",
                     },
                 },
             ]),

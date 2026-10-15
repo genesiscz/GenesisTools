@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
@@ -140,6 +141,24 @@ function letter(index: number): string {
     return String.fromCharCode(97 + index);
 }
 
+/**
+ * A link that scrolls the live Claude session to where this decision was first asked, so a later
+ * short re-ask can point back at its context. Null outside Claude and where the router cannot serve it.
+ */
+function findLink(row: DecisionRecord): string | null {
+    if ((row.provider ?? "claude") !== "claude") {
+        return null;
+    }
+
+    return routerLink({
+        preset: "decide",
+        action: "find",
+        data: { session: row.sessionId, decision: row.number },
+        render: ({ link }) => `[show in chat](${link})`,
+        fallback: () => null,
+    }).result;
+}
+
 /** The chat rendering of posted items: the ❓ DECISION or TODO section the agent pastes. */
 export function decisionsMarkdown(rows: DecisionRecord[]): string {
     return json2md(
@@ -153,6 +172,7 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                 (row.revision ?? 1) > 1
                     ? `revision ${row.revision} (earlier text: ${toolCommand("question show")} ${row.id} --versions)`
                     : null,
+                todo ? null : findLink(row),
             ].filter((part): part is string => part !== null);
 
             return [

@@ -64,7 +64,7 @@ async function capturePane(
     return result.stdout;
 }
 
-interface Located {
+export interface Located {
     target: FocusTarget;
     surfaceId: string;
     source: string;
@@ -74,7 +74,7 @@ interface Located {
  * The pane `tools claude cmux send` would type into. Prints the same miss and ambiguity errors.
  * Returns null when the command must stop.
  */
-async function locatePane(query: string, opts: ReadOptions, deps: ResolveDeps): Promise<Located | null> {
+export async function locatePane(query: string, opts: ReadOptions, deps: ResolveDeps): Promise<Located | null> {
     const queryTrim = query.trim();
     const sendOpts: SendOptions = { first: opts.first, includeSelf: opts.includeSelf };
     let result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, deps });

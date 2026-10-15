@@ -40,7 +40,7 @@ async function windowIdFor(workspaceId: string): Promise<string | undefined> {
 }
 
 /** Raise the cmux app itself, so a focused pane is actually on screen. */
-async function activateApp(identity?: CmuxIdentity): Promise<boolean> {
+export async function activateApp(identity?: CmuxIdentity): Promise<boolean> {
     if (process.platform !== "darwin") {
         log.debug({ platform: process.platform }, "app activation is macOS-only; skipped");
         return false;
@@ -79,7 +79,7 @@ async function activateApp(identity?: CmuxIdentity): Promise<boolean> {
  * pane of a dead tab first left the user looking at an unrelated pane (2026-09-30).
  * A matcher target keeps the lenient pane-focused-but-tab-hidden behavior.
  */
-async function focusTarget(target: FocusTarget): Promise<string | undefined> {
+export async function focusTarget(target: FocusTarget): Promise<string | undefined> {
     const recorded = target.matchedOn === "recorded" && Boolean(target.surfaceId);
 
     if (recorded && target.surfaceId) {

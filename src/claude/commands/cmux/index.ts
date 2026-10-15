@@ -1,5 +1,6 @@
 import { out } from "@genesiscz/utils/logger";
 import { type Command, Option } from "commander";
+import { findCommand } from "./find";
 import { focusCommand } from "./focus";
 import { openSessionCommand } from "./open-session";
 import { pinsCommand } from "./pins";
@@ -45,6 +46,15 @@ export function registerCmuxCommand(program: Command): void {
         .option("--dry-run", "Print what would be focused and stop")
         .option("--json", "Emit the match as JSON instead of a status line")
         .action(focusCommand);
+
+    cmux.command("find <session> [text]")
+        .description("Scroll a session's transcript view to the text (ctrl+o, then its / search), then raise its tab")
+        .option("--decision <n>", "Find where ❓ DECISION <n> was first asked (implies --oldest)")
+        .option("--oldest", "Land on the first match instead of the newest")
+        .option("--no-activate", "Focus the tab without bringing the cmux app to the front")
+        .option("--first", "Take the best match instead of failing when several panes match")
+        .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
+        .action(findCommand);
 
     cmux.command("read <session>")
         .description("Print the cmux pane text for a session, using the same resolution as send")

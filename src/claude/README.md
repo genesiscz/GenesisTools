@@ -138,6 +138,7 @@ tools claude cmux open-session <id> --workspace workspace:1   # resume as a new 
 tools claude cmux send <id> "run the tests"   # type into the session's own pane
 tools claude cmux send <id> "/compact" --no-enter --dry-run
 tools claude cmux read <id> --lines 40       # print that pane's text
+tools claude cmux find <id> --decision 7     # transcript view (ctrl+o) scrolled to DECISION 7, tab raised after a hit
 tools claude wait <id|title> [--timeout S] [--next] [--stream] [--json]   # block until the turn ends
 tools claude message <id|name|title> "status?"   # into the running session's socket, no typing
 ```

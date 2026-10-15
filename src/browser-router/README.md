@@ -87,7 +87,9 @@ lists them with their state and what each needs.
 - `genesis-md`: `https://<linkHost>/md/<path>` opens `genesis-md://<path>` in Genesis Markdown.
 - `mail` (macOS): `https://<linkHost>/mail/show/<rowid>` runs `tools macos mail open <rowid>`.
 - `decide`: `https://<linkHost>/decide/<session>/<n>/<letter>` types that answer into a live
-  Claude session, without an approval card.
+  Claude session, without an approval card. `.../decide/<session>/<n>/find` scrolls that session's
+  transcript view to where DECISION <n> was first asked (`tools claude cmux find`); every
+  ❓ DECISION section from `question_post` carries it as a "show in chat" link.
 - `cmux-claude`: `https://<linkHost>/cmux/claude/run?prompt=...` starts Claude in a new cmux
   surface, after a prompt (a minted link skips the prompt once).
 - `artifact`: `https://<linkHost>/artifact/<name>/<page>` opens a registered artifact page.
