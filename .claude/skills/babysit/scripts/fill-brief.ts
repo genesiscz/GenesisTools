@@ -47,7 +47,7 @@ function defaultVerify(): string {
         "   - `bun run lint:rules` and `bun scripts/ci/check-tool-commands.ts`",
         ...(has("--swift")
             ? [
-                  "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen.",
+                  "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen. One heavy Swift build at a time on this Mac: before each `swift build` or `swift test`, wait until no other one runs (`timeout 1800 sh -c 'while pgrep -x swift-build >/dev/null || pgrep -x swift-test >/dev/null; do sleep 20; done'`; match by process name, because `pgrep -f swift` matches this waiting shell itself).",
               ]
             : []),
     ].join("\n");
@@ -69,7 +69,9 @@ const text = readFileSync(join(import.meta.dir, "../references/brief-self-fetch.
     .replaceAll("{{MODEL_LABEL}}", flag("--model") ?? "GPT-6.1 Sol")
     .replaceAll("{{ROUND_POLICY}}", policy)
     .replaceAll("{{VERIFY}}", verify)
-    .replace("## 2. Fix", `${judgeSection}## 2. Fix`);
+    .replace("## 2. Fix", `${judgeSection}## 2. Fix`)
+    // Another repository (run.json `verify`) has no GenesisTools install in its worktree.
+    .replace("; `node_modules` is installed.", run.verify ? "." : "; `node_modules` is installed.");
 
 if (text.includes("{{")) {
     console.error(`unfilled placeholder left: ${text.match(/\{\{[A-Z_]+\}\}/)?.[0]}`);
