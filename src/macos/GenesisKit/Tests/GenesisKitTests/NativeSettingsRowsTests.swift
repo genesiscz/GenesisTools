@@ -3,7 +3,6 @@ import SwiftUI
 import XCTest
 
 @testable import GenesisKit
-@testable import GenesisKitDisk
 
 /// Pictures for a person to look at: written only when `GENESISKIT_SHOTS` names a folder. The tests assert on the
 /// bitmap either way.

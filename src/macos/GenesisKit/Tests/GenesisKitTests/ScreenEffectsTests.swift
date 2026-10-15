@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 
 @testable import GenesisKit
-@testable import GenesisKitPosture
+@testable import GenesisKitOverlay
 
 @MainActor
 final class ScreenEffectsTests: XCTestCase {

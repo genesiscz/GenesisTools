@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import GenesisKit
 
 /// Tells whether something captures the screen right now: a screen share (Zoom, Meet, Teams, FaceTime), a recording
 /// (QuickTime, the screenshot toolbar's recorder, OBS) or an always-on recorder.

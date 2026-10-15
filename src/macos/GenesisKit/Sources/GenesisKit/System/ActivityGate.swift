@@ -2,7 +2,6 @@ import AppKit
 import AVFoundation
 import CoreGraphics
 import IOKit.ps
-import GenesisKit
 
 /// Why watching posture should stop for now.
 public enum ActivityPauseReason: String, CaseIterable, Codable, Sendable {

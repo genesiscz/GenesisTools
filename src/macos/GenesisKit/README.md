@@ -12,19 +12,23 @@ logging, the title bar zone and the small controls. One copy, two consumers:
 
 ## Layout
 
-Four libraries, folders by job. A file goes where its job is, not where its first caller was.
+Five libraries, folders by job. A file goes where its job is, not where its first caller was. An app compiles only
+the libraries it imports, so an optional part costs an app nothing until it uses it (Martin, 2026-10-14 and 15).
 
-- `GenesisKit` (`Sources/GenesisKit/`): what both apps use. GenesisTools.app depends on this one only.
+- `GenesisKit` (`Sources/GenesisKit/`): what both apps use, including `Alerts/` (`AlertPolicy`, the channels and the
+  channel matrix row), `System/` (`ActivityGate`, `ScreenCaptureDetector`) and `ChartColor`. GenesisTools.app always
+  compiles it.
 - `GenesisKitCharts` (`Sources/GenesisKitCharts/`): sunburst, treemap, donut, ring gauge, health bar and their
-  layouts. `Sparkline` and the native charts stay in the core, because Focus and Clicky use them.
-- `GenesisKitPosture` (`Sources/GenesisKitPosture/`): PostureWatcher's `Camera/`, `Pose/`, `Posture/` and the
-  screen effects in `Overlay/`.
-- `GenesisKitDisk` (`Sources/GenesisKitDisk/`): the Disk Manager's `Disk/`, `Alerts/` and the channel matrix row.
+  layouts. Any app may import it. `Sparkline`, the native charts and `ChartColor` stay in the core.
+- `GenesisKitOverlay` (`Sources/GenesisKitOverlay/`): screen effects (`ScreenEffectsController`: tints, edge glow,
+  a draggable message pill per display). Any app may import it; it needs only the core.
+- `GenesisKitPosture` (`Sources/GenesisKitPosture/`): PostureWatcher's `Camera/`, `Pose/` and `Posture/`. Genesis's.
+- `GenesisKitDisk` (`Sources/GenesisKitDisk/`): the Disk Manager's `Disk/`. Genesis's.
 
-Code only Genesis uses goes into one of the Genesis-only libraries, never into the core, so GenesisTools.app does not
-compile it (Martin, 2026-10-14). They reach core helpers through `package` access, not `public`.
-`KitModuleBoundaryTests` in GenesisTools fails when the app names or imports one of them, or when one of their types
-is declared in the core again. Genesis lists each library it uses and imports it where it is used.
+A part goes into the core only when GenesisTools.app uses it; otherwise into a library of its own. The libraries reach
+core helpers through `package` access, not `public`. `KitModuleBoundaryTests` in GenesisTools fails when the app names
+or imports `GenesisKitPosture` or `GenesisKitDisk`, or when a type of any optional library is declared in the core
+again. Genesis lists each library it uses and imports it where it is used.
 
 The fixtures product, `GenesisKitFixtures` (`Sources/GenesisKitFixtures/`), is for test targets only: the one copy
 of the `tools` disk fixtures, read with `KitFixture.url(_:)`, `data(_:)` and `string(_:)` by file name
@@ -42,10 +46,10 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
 | `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
-| `GenesisKitDisk/Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
+| `Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
 | `GenesisKitPosture/Camera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
 | `GenesisKitDisk/Disk/` | Free-space sampling (`VolumeSpaceMonitor`), forecasts, history, a resumable FSEvents stream, the big-file radar, the du index reader and the decoders for the tools disk commands (`ToolsDiskProvider`); unrelated to `DiskCache` in `Tools/` |
-| `GenesisKitPosture/Overlay/` | Screen effects: click-through panels over every display (vignette, sepia, blur, dim, edge glow), a message pill and a camera bubble (`ScreenEffectsController`) |
+| `GenesisKitOverlay/` | Screen effects: click-through panels over every display (vignette, sepia, blur, dim, edge glow), a message pill and a camera bubble (`ScreenEffectsController`) |
 | `GenesisKitPosture/Pose/` | Pose samples, the Vision body and face engines and the AirPods engine, and the skeleton overlay |
 | `GenesisKitPosture/Posture/` | PostureWatcher's logic: metrics, scorer, state machine, health, calibration slots, history, the activity gate and `PostureMonitor` |
 | `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit; `HostWindow` + `HostWindowReader` (the window a view is in, without SwiftUI state); `WindowSnapshot` (a `--snapshot` PNG as the window server composes it, Liquid Glass included); `WindowRaise` (one window forward, not the whole app); `SingleInstance` (one process of a kind per login session: a later launch hands its arguments over and exits) |

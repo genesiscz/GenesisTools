@@ -1,15 +1,17 @@
 import XCTest
 
-/// GenesisTools.app links the core `GenesisKit` library only. PostureWatcher, the Disk Manager and their charts live
-/// in Genesis-only libraries of the same package, so this app never compiles them (Martin, 2026-10-14: "make sure
-/// the posture watcher and disk manager are not compiled when compiling GenesisTools"). Both checks read files, so
-/// they fail before a build would quietly start compiling that code again.
+/// GenesisTools.app links the core `GenesisKit` library and compiles another GenesisKit library only when it imports
+/// it (Martin, 2026-10-14: "make sure the posture watcher and disk manager are not compiled when compiling
+/// GenesisTools"; 2026-10-15: GenesisTools may import the charts and the screen effects). PostureWatcher and the Disk
+/// Manager are Genesis's and never imported here. Both checks read files, so they fail before a build would quietly
+/// start compiling that code again.
 final class KitModuleBoundaryTests: XCTestCase {
-    private static let genesisOnly = ["GenesisKitCharts", "GenesisKitPosture", "GenesisKitDisk"]
-    /// One type from each Genesis-only area; any of them declared in the core means its code compiles into this app.
+    private static let genesisOnly = ["GenesisKitPosture", "GenesisKitDisk"]
+    /// One type from each optional library; any of them declared in the core means it compiles into this app whether
+    /// it is used or not.
     private static let anchors = [
-        "PostureMonitor", "CameraFrameSource", "ScreenEffectsController", "VisionBodyPoseEngine",
-        "ToolsDiskProvider", "DuIndexReader", "AlertPolicy", "SunburstChart", "TreemapView", "HealthBar",
+        "PostureMonitor", "CameraFrameSource", "VisionBodyPoseEngine", "ToolsDiskProvider", "DuIndexReader",
+        "ScreenEffectsController", "SunburstChart", "TreemapView", "HealthBar",
     ]
 
     private var package: URL {
@@ -33,7 +35,7 @@ final class KitModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(imports, [], "the app imports a Genesis-only library")
     }
 
-    func testTheCoreKitDeclaresNoPostureDiskOrChartType() throws {
+    func testTheCoreKitDeclaresNoTypeOfAnOptionalLibrary() throws {
         let core = package.deletingLastPathComponent().appendingPathComponent("GenesisKit/Sources/GenesisKit")
         var scanned = 0
         var found: [String] = []
@@ -50,6 +52,6 @@ final class KitModuleBoundaryTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(scanned, 100, "read the core kit at \(core.path)")
-        XCTAssertEqual(found, [], "Genesis-only code is back in the core GenesisKit target")
+        XCTAssertEqual(found, [], "an optional library's code is back in the core GenesisKit target")
     }
 }

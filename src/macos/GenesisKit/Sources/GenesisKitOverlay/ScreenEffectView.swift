@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import GenesisKit
-import GenesisKitCharts
 
 /// What one screen of a screen effect shows: the tint of `style` at `intensity`, and the message pill. A still view:
 /// the ramp in and out is the panel's alpha, so nothing here animates or redraws while the effect is up. A settings

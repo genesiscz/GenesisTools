@@ -1,5 +1,4 @@
 import Foundation
-import GenesisKit
 
 /// One way an alert reaches the user: a banner, a sound, speech, a screen glow, a menu tint. The app implements
 /// each; the kit decides which ones an event goes to.

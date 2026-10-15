@@ -1,5 +1,4 @@
 import Foundation
-import GenesisKit
 
 /// How bad an alert is. Ordered: `info < warning < critical < emergency`.
 public enum AlertSeverity: Int, Codable, Comparable, CaseIterable, Sendable {

@@ -1,5 +1,4 @@
 import SwiftUI
-import GenesisKit
 
 /// A tier of a `NativeSettingsChannelMatrix` (a row): "Warning", "Critical", "Emergency".
 public struct NativeSettingsMatrixTier: Identifiable, Hashable {

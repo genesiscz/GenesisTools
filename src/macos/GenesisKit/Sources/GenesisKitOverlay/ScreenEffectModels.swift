@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import GenesisKit
-import GenesisKitCharts
 
 /// How a screen effect changes the screen.
 public enum ScreenEffectStyle: String, CaseIterable, Codable, Sendable {

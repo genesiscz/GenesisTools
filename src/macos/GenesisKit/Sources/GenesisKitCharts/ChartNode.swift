@@ -1,20 +1,6 @@
 import Foundation
 import GenesisKit
 
-/// An sRGB colour a host gives a chart node (to colour by age or type instead of by branch). Plain numbers, so a node
-/// stays `Sendable` and `Equatable`.
-public struct ChartColor: Equatable, Hashable, Sendable {
-    public let red: Double
-    public let green: Double
-    public let blue: Double
-
-    public init(red: Double, green: Double, blue: Double) {
-        self.red = red
-        self.green = green
-        self.blue = blue
-    }
-}
-
 /// One node of the hierarchy a `SunburstChart` or a `TreemapView` draws: a folder and its subfolders, a category and
 /// its parts. `value` is the node's own size; a node whose children add up to more is drawn at their sum. The space a
 /// node has beyond its children (its own files, unaccounted bytes) stays empty in the next ring, so a gap means
