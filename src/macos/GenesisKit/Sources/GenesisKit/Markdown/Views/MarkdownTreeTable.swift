@@ -23,7 +23,9 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    /// The table's scroll view lives outside SwiftUI: laid over this slot by the window's content view
+    /// (`MarkdownWindowContentView`), so its scrolling never lays out a SwiftUI host.
+    func makeNSView(context: Context) -> MarkdownOverlaySlot {
         let table = MarkdownTreeTableView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
         column.resizingMask = .autoresizingMask
@@ -51,13 +53,17 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         context.coordinator.table = table
         box.scrollView = scroll
         apply(to: context.coordinator, table: table, force: true)
-        return scroll
+        return MarkdownOverlaySlot(overlay: scroll)
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        box.scrollView = scroll
+    func updateNSView(_ slot: MarkdownOverlaySlot, context: Context) {
+        box.scrollView = slot.overlay as? NSScrollView
         guard let table = context.coordinator.table else { return }
         apply(to: context.coordinator, table: table, force: false)
+    }
+
+    static func dismantleNSView(_ slot: MarkdownOverlaySlot, coordinator: Coordinator) {
+        slot.leave()
     }
 
     private func apply(to coordinator: Coordinator, table: NSTableView, force: Bool) {
@@ -164,8 +170,26 @@ final class MarkdownTreeTableView: NSTableView {
         return NSAccessibility.unignoredChildren(from: cells)
     }
 
-    /// The empty space under the rows has no menu of its own: the right-click goes up to the sidebar's.
+    /// The empty space under the rows has no menu of its own; its right-click goes to the sidebar (`rightMouseDown`).
     override func menu(for event: NSEvent) -> NSMenu? { nil }
+
+    /// The empty space under the rows shows the sidebar's own menu (New File…, New Folder…). The table lies over the
+    /// window's SwiftUI root, outside it (`MarkdownWindowContentView`), so the click is handed to the root's view
+    /// under the pointer, which shows SwiftUI's context menu; a row's own menu comes from the row's cell.
+    override func rightMouseDown(with event: NSEvent) {
+        guard row(at: convert(event.locationInWindow, from: nil)) < 0, let target = sidebarTarget(for: event) else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        target.rightMouseDown(with: event)
+    }
+
+    /// The view inside the window's SwiftUI root under the pointer: the slot's host, which carries the sidebar menu.
+    func sidebarTarget(for event: NSEvent) -> NSView? {
+        let content = sequence(first: superview, next: { $0?.superview }).compactMap { $0 as? MarkdownWindowContentView }.first
+        guard let root = content?.root, let parent = root.superview else { return nil }
+        return root.hitTest(parent.convert(event.locationInWindow, from: nil))
+    }
 }
 
 /// One reused cell: a hosting view whose root view is swapped when the cell shows another row.

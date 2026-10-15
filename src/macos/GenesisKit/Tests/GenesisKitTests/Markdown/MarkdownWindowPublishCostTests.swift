@@ -10,7 +10,7 @@ final class MarkdownWindowPublishCostTests: XCTestCase {
     @MainActor
     func testTheWindowContentStatesNoSizesOfItsOwn() {
         let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-cost-\(UUID().uuidString)")!)
-        XCTAssertEqual(MarkdownDocumentWindowController.contentView(model: model).sizingOptions, [])
+        XCTAssertEqual(MarkdownDocumentWindowController.contentView(model: model).rootSizingOptions(), [])
     }
 
     /// What the hosting view used to impose by itself, the window's minimum now states: in each sidebar state the

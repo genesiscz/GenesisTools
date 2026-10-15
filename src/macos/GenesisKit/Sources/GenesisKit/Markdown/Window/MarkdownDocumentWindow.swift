@@ -106,10 +106,12 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
     /// bar) on every update: 59% of the main thread's layout time in a 24-tab window, on every publish of the
     /// documents model (2026-10-14, MarkdownTreeLagBenchTests; the hub had the same, HubGlass). The window's
     /// minimum (`MarkdownWindowMinimum`) keeps it from shrinking past the content.
-    static func contentView(model: MarkdownDocumentsModel) -> NSHostingView<some View> {
-        let hosting = NSHostingView(rootView: root(model: model))
+    ///
+    /// The file tree's table is not in that root: it is laid over the root's slot for it (`MarkdownWindowContentView`).
+    static func contentView(model: MarkdownDocumentsModel) -> MarkdownWindowContentView {
+        let hosting = MarkdownRootHostingView(rootView: root(model: model))
         hosting.sizingOptions = []
-        return hosting
+        return MarkdownWindowContentView(root: hosting)
     }
 
     /// The window's root. The title bar and the toolbar under it are one strip (Window/WindowTitlebar.swift):

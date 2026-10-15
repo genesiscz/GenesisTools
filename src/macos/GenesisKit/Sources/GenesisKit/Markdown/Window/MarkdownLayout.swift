@@ -204,6 +204,12 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         private var hot = false { didSet { if hot != oldValue { needsDisplay = true } } }
         private var startX: CGFloat = 0
         private var area: NSTrackingArea?
+        /// The drag log (`logDrag`): where the divider was drawn when the drag began, the last pointer offset, the
+        /// number of moves and the largest gap between the drawn divider and the pointer.
+        private var drawnStartX: CGFloat = 0
+        private var lastPointerDX: CGFloat = 0
+        private var moves = 0
+        private var largestGap: CGFloat = 0
 
         /// A window that is `isMovableByWindowBackground` (the viewer's was until 2026-10-14) drags itself from a
         /// view that does not claim its own mouse-down, instead of resizing.
@@ -259,18 +265,44 @@ struct MarkdownSplitDivider: NSViewRepresentable {
                 return
             }
             startX = event.locationInWindow.x
+            drawnStartX = drawnX
+            lastPointerDX = 0
+            moves = 0
+            largestGap = 0
             hot = true
             onBegin?()
         }
 
         override func mouseDragged(with event: NSEvent) {
             NSCursor.resizeLeftRight.set()
-            onDrag?(Double(event.locationInWindow.x - startX))
+            // How far the divider drawn now is from where the previous move asked it to be.
+            largestGap = max(largestGap, abs((drawnX - drawnStartX) - lastPointerDX))
+            moves += 1
+            lastPointerDX = event.locationInWindow.x - startX
+            onDrag?(Double(lastPointerDX))
         }
 
         override func mouseUp(with event: NSEvent) {
             hot = bounds.contains(convert(event.locationInWindow, from: nil))
             onEnd?()
+            logDrag(pointerDX: event.locationInWindow.x - startX)
+        }
+
+        /// The divider's middle in window coordinates.
+        private var drawnX: CGFloat { convert(NSPoint(x: bounds.midX, y: 0), to: nil).x }
+
+        /// One line per drag in the host's log, so a resize that felt "not 1:1" can be read afterwards (Martin,
+        /// 2026-10-15: "pls just keep the logger for the resize so you can debug it later if i catch that again").
+        /// The divider's travel is read after the window has laid out the last move; `overlays` is how far any
+        /// AppKit overlay (the file tree's table) sits from its slot.
+        private func logDrag(pointerDX: CGFloat) {
+            guard moves > 0 else { return }
+            window?.contentView?.layoutSubtreeIfNeeded()
+            let dividerDX = drawnX - drawnStartX
+            let overlays = (window?.contentView as? MarkdownWindowContentView)?.overlayDrift() ?? 0
+            let line = String(format: "markdown: divider drag \"%@\": %d moves, pointer %+.0f pt, divider %+.0f pt, largest gap %.0f pt, overlay drift %.0f pt",
+                              label, moves, Double(pointerDX), Double(dividerDX), Double(largestGap), Double(overlays))
+            GenesisKit.log(line)
         }
 
         // MARK: keyboard and VoiceOver
