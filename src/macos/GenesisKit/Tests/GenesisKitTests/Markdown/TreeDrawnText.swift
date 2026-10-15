@@ -7,6 +7,11 @@ import Vision
 @MainActor
 enum TreeDrawnText {
     static func lines(of view: NSView, savingTo png: String? = nil) -> [String] {
+        placed(in: view, savingTo: png).map(\.text)
+    }
+
+    /// Each drawn line with the height of its middle in the view: 0 at the top, 1 at the bottom.
+    static func placed(in view: NSView, savingTo png: String? = nil) -> [(text: String, middle: Double)] {
         let rect = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: rect) else { return [] }
         view.cacheDisplay(in: rect, to: rep)
@@ -18,7 +23,9 @@ enum TreeDrawnText {
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
         try? VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        return (request.results ?? []).compactMap { result in
+            result.topCandidates(1).first.map { (text: $0.string, middle: 1 - Double(result.boundingBox.midY)) }
+        }
     }
 
     /// The tallest scroll view in the window's left third: the file tree's.

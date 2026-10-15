@@ -376,13 +376,11 @@ struct MarkdownFileTreeView: View {
         // One turn later: rows that just appeared are laid out first, so the scroll lands on them.
         DispatchQueue.main.async {
             // A lazy list knows only the rows it laid out: an animated `scrollTo` to a far row lands on an estimate,
-            // waits, then jumps (recorded 2026-10-15). So the tree's own scroll view glides there frame by frame (the
-            // list lays out rows as they come into view), and SwiftUI then settles the row in the middle.
+            // waits, then jumps (recorded 2026-10-15), and as the last step of the glide it once left the row three rows
+            // above the sidebar. So the tree's own scroll view glides there frame by frame and places the row itself.
             let rows = displayedRows
             if animation != nil, let index = rows.firstIndex(where: { $0.id == pending.id }), let scroll = scrollBox.scrollView {
-                MarkdownTreeScroll.glide(toRow: index, of: rows.count, in: scroll) {
-                    withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(pending.id, anchor: .center) }
-                }
+                MarkdownTreeScroll.glide(toRow: index, of: rows.count, in: scroll)
             } else {
                 withAnimation(animation) { proxy.scrollTo(pending.id, anchor: .center) }
             }
@@ -670,7 +668,7 @@ private struct MarkdownTreeScrollFinder: NSViewRepresentable {
 }
 
 /// The reveal's glide. The rows are one height, so the document's height over the row count places a row before the
-/// lazy list has laid it out; SwiftUI corrects the small rest once the row is on screen.
+/// lazy list has laid it out.
 enum MarkdownTreeScroll {
     /// The rows' vertical padding inside the scroll content (`MarkdownFileTreeView`).
     static let padding: CGFloat = 4
@@ -696,42 +694,66 @@ enum MarkdownTreeScroll {
         progress < 0.5 ? 2 * progress * progress : 1 - pow(-2 * progress + 2, 2) / 2
     }
 
-    /// Scrolls the clip view to row `index` frame by frame, then calls `settle`.
+    /// How long the glide keeps the row in the middle after its motion, while the list's height settles.
+    static let holdLimit: TimeInterval = 0.5
+
+    /// Scrolls the clip view to row `index` frame by frame and leaves the row in the middle.
+    ///
+    /// The target follows the document's height on every frame: rows a reveal just opened arrive in it a few frames
+    /// later (5721 → 5915 → 6192 pt in the 2026-10-15 recording). After the motion the glide holds the row in the
+    /// middle until that height has stopped changing. Only the reader's own scroll stops it early: a change of the
+    /// clip origin alone is also what the list does while it grows, and stopping on it left the row three rows above
+    /// the sidebar.
     @MainActor
-    static func glide(toRow index: Int, of count: Int, in scroll: NSScrollView, then settle: @escaping () -> Void) {
-        // Rows that just arrived (a folder the reveal opened) are not in the document's height until the next layout:
-        // a target from the old height left a last row just below the sidebar (2026-10-15). Lay out first, and
-        // follow the height on every frame, since the lazy list refines it as rows come into view.
+    static func glide(toRow index: Int, of count: Int, in scroll: NSScrollView) {
         scroll.window?.contentView?.layoutSubtreeIfNeeded()
         let clip = scroll.contentView
         let visible = clip.bounds.height
+        func height() -> CGFloat { scroll.documentView?.frame.height ?? 0 }
         func target() -> CGFloat {
-            centeredOrigin(index: index, count: count, documentHeight: scroll.documentView?.frame.height ?? 0, visibleHeight: visible)
+            centeredOrigin(index: index, count: count, documentHeight: height(), visibleHeight: visible)
         }
         let start = glideStart(from: clip.bounds.origin.y, to: target(), visibleHeight: visible)
-        GenesisKit.log("markdown: tree reveal row \(index) of \(count), document \(Int(scroll.documentView?.frame.height ?? 0)) pt, glide \(Int(clip.bounds.origin.y)) -> \(Int(start)) -> \(Int(target()))")
-        var last = start
+        GenesisKit.log("markdown: tree reveal row \(index) of \(count), document \(Int(height())) pt, glide \(Int(clip.bounds.origin.y)) -> \(Int(start)) -> \(Int(target()))")
         func place(_ y: CGFloat) {
+            guard abs(clip.bounds.origin.y - y) >= 0.5 else { return }
             clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
             scroll.reflectScrolledClipView(clip)
-            last = y
         }
         place(start)
+        // A wheel or a trackpad over the window: the reader takes the list over.
+        var readerScrolled = false
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            if event.window === scroll.window { readerScrolled = true }
+            return event
+        }
         let began = CACurrentMediaTime()
+        var lastHeight = height()
+        var steadySince = began + duration
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
             MainActor.assumeIsolated {
-                // Moved by someone else (the reader's scroll, or the list resizing its estimate): stop here and let
-                // SwiftUI place the row.
-                guard abs(clip.bounds.origin.y - last) < 1 else {
-                    timer.invalidate()
-                    settle()
-                    return
+                let now = CACurrentMediaTime()
+                var done: String?
+                if readerScrolled {
+                    done = "stopped by the reader"
+                } else {
+                    let progress = min(1, (now - began) / duration)
+                    if height() != lastHeight {
+                        lastHeight = height()
+                        steadySince = max(now, began + duration)
+                    }
+                    place(start + (target() - start) * eased(progress))
+                    // Done once the height has held for a few frames after the motion, or the hold ran out.
+                    if progress >= 1, now - steadySince > 0.08 || now - began > duration + holdLimit {
+                        done = "end"
+                    }
                 }
-                let progress = min(1, (CACurrentMediaTime() - began) / duration)
-                place(start + (target() - start) * eased(progress))
-                if progress >= 1 {
+                if let done {
                     timer.invalidate()
-                    settle()
+                    if let monitor { NSEvent.removeMonitor(monitor) }
+                    let origin = Int(clip.bounds.origin.y)
+                    let document = Int(height())
+                    GenesisKit.log("markdown: tree glide \(done) at \(origin), document \(document) pt")
                 }
             }
         }
