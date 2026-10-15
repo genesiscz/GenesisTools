@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
 import type { AxResult } from "../runner";
+import { NativeMenuSession } from "./menu";
 import { ComputerReplEngine } from "./repl";
 import { computerSchemas } from "./schemas";
 import { ComputerUse, type NativeBridge } from "./session";
@@ -1764,4 +1765,28 @@ test("an action's note reaches the native call that draws the cursor label", asy
         "why"
     );
     computer.close_session();
+});
+
+test("menu-bar-only observations explicitly select the native bar surface", async () => {
+    const calls: string[][] = [];
+    const session = new NativeMenuSession({
+        run: async ({ args }) => {
+            calls.push(args);
+            return {
+                ok: true,
+                app: "Fixture",
+                surface: "menu",
+                pid: 7,
+                processLaunch: 123,
+                snapshot: "menu-token",
+                elements: [{ index: 0, depth: 0, role: "AXMenuBar", actions: [] }],
+            };
+        },
+    });
+    await session.observe({ app: "Fixture", limit: 40, ...{ menu_bar_only: true } });
+    expect(calls[0]).toEqual(["menu-see", "--app", "Fixture", "--menu-bar-only"]);
+    await session.observe({ app: "Fixture", limit: 40 });
+    expect(calls[1]).toEqual(["menu-see", "--app", "Fixture"]);
+    await session.observe({ app: "Fixture", top_menu: "File", limit: 40 });
+    expect(calls[2]).toEqual(["menu-see", "--app", "Fixture", "--menu", "File"]);
 });

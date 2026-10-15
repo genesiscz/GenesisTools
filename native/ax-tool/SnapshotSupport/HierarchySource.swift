@@ -216,6 +216,9 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         }
     }
     try walk(root, level: 0, clip: snapshotFrame(root, source: source))
+    guard !expired() else {
+        throw ObservedTreeError(observationBudgetMessage(walked: tree.elements.count))
+    }
     // Before the binders rewrite targetKey: the fallback must be the identity as it was when the
     // stable key was chosen, not one that has had sibling text folded into it.
     demoteSharedStableKeys(&tree.rows)

@@ -1,9 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { NativeMenuSession } from "@app/control/lib/computer-use/menu";
 import type { Observation } from "@app/control/lib/decision/observation";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { PrefetchPayload } from "../prefetch";
+import { createMenuCandidates } from "./menu-candidates";
 import { axView, createListenPipeline, type ListenSurface } from "./pipeline";
 import { listenCandidates } from "./verbs";
 
@@ -338,4 +340,56 @@ test("wake mode jev: destructive commands hold until confirmed", async () => {
     const acted = await confirmed.decide(final("hey jev send it"));
     expect(acted.status).toBe("act");
     expect(acts).toBe(1);
+});
+
+test("menu inventory requests the menu bar while a context menu is open", async () => {
+    const view = (title: string, path: string[]) => ({
+        app: "Fixture",
+        revision: "fixture-menu",
+        pid: 7,
+        surface: "menu" as const,
+        observedAt: "2026-01-01T00:00:00Z",
+        items: [
+            {
+                ref: title,
+                index: 1,
+                depth: path.length,
+                role: "AXMenuItem",
+                title,
+                path,
+                enabled: true,
+                selected: false,
+                bounds: undefined,
+                actions: ["AXPress"],
+            },
+        ],
+        total: 1,
+        truncated: false,
+    });
+    const observe = spyOn(NativeMenuSession.prototype, "observe").mockImplementation(async (options) => {
+        if (options.top_menu === "File") {
+            return view("Open", ["File", "Open"]);
+        }
+
+        if (options.top_menu) {
+            throw new Error("a context-menu item is not a top-level menu-bar title");
+        }
+
+        return "menu_bar_only" in options && options.menu_bar_only === true
+            ? view("File", ["File"])
+            : view("Copy", ["Copy"]);
+    });
+    const act = spyOn(NativeMenuSession.prototype, "act").mockResolvedValue({ ok: true });
+    try {
+        const candidates = createMenuCandidates("Fixture", new AbortController().signal);
+        const items = await candidates.items();
+        expect(items.map((item) => item.label)).toEqual(["File > Open"]);
+        expect(observe.mock.calls[0][0]).toMatchObject({ menu_bar_only: true });
+        expect(await candidates.act(items[0].menuRef!)).toEqual({ ok: true, error: undefined });
+        expect(observe.mock.calls.at(-1)?.[0]).toMatchObject({ top_menu: "File" });
+        expect(act.mock.calls[0][0].menu_ref).toBe("Open");
+    } finally {
+        observe.mockRestore();
+        act.mockRestore();
+    }
 });

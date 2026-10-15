@@ -27,6 +27,7 @@ export class NativeMenuSession {
         app: string;
         query?: string;
         top_menu?: string;
+        menu_bar_only?: boolean;
         limit: number;
         timeout_ms?: number;
         signal?: AbortSignal;
@@ -36,7 +37,13 @@ export class NativeMenuSession {
         }
         const stopSee = prof.start("menu-see");
         const result = await this.native.run({
-            args: ["menu-see", "--app", options.app, ...(options.top_menu ? ["--menu", options.top_menu] : [])],
+            args: [
+                "menu-see",
+                "--app",
+                options.app,
+                ...(options.top_menu ? ["--menu", options.top_menu] : []),
+                ...(options.menu_bar_only ? ["--menu-bar-only"] : []),
+            ],
             timeoutMs: options.timeout_ms ?? 10000,
             signal: options.signal,
         });

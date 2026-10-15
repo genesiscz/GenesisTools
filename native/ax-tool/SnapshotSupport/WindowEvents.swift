@@ -109,6 +109,26 @@ public final class WindowEventFactory {
         return event
     }
 
+    /// A plain CGEvent mouse event (`CGEvent(mouseEventSource:mouseType:mouseCursorPosition:mouseButton:)`) at
+    /// the global `point`, with the window number fields and the window-local location set. The second
+    /// right-click delivery, for a view that ignores the NSEvent-built `mouse` event. The window-local location
+    /// is required: without it the event opened nothing on a background SwiftUI fixture (2026-10-15), because
+    /// the app is not under the real pointer. Posted with `postToPid`, it never moves the pointer: only a post
+    /// at the HID or session tap does.
+    public func pidMouse(type: CGEventType, button: CGMouseButton, point: CGPoint, clickCount: Int) throws -> CGEvent {
+        guard point.x.isFinite, point.y.isFinite, bounds.contains(point),
+              let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
+            throw WindowEventError.unavailable("mouse point is outside snapshot window \(windowID); no event dispatched")
+        }
+        setLocation(event, snapshotWindowPoint(point, in: bounds))
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+        // WebKit's CoreGraphicsSPI.h names this private field kCGSEventWindowIDField.
+        event.setIntegerValueField(CGEventField(rawValue: 51)!, value: Int64(windowID))
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowID))
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowID))
+        return event
+    }
+
     public func mouse(type: NSEvent.EventType, point: CGPoint, clickCount: Int) throws -> CGEvent {
         // Split from the bounds check on purpose: Int(Double.nan) traps, so a non-finite point must
         // never reach the formatter that describes the rectangle.

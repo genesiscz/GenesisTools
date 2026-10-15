@@ -10,6 +10,14 @@ private func menuArguments(_ command: String) throws -> [String:String] {
     var index = 0
     while index < input.count {
         if input[index] == "--no-cursor" { index += 1; continue }
+        if command == "menu-see", input[index] == "--menu-bar-only" {
+            guard parsed["--menu-bar-only"] == nil else {
+                throw SnapshotError.invalid("duplicate menu argument: --menu-bar-only")
+            }
+            parsed["--menu-bar-only"] = "true"
+            index += 1
+            continue
+        }
         guard values.contains(input[index]), index + 1 < input.count, parsed[input[index]] == nil else {
             throw SnapshotError.invalid("invalid or duplicate menu argument: " + input[index])
         }
@@ -31,12 +39,20 @@ private struct MenuBarHierarchy: HierarchySource {
 }
 /// The app's open context menu, looked for only while the window server shows a menu window for the
 /// app, so a plain menu-bar read stays one cheap call. A menu-bar menu is a menu window too, but
-/// `findOpenContextMenu` never enters the bar, so that case falls through to the bar.
-private func openContextMenu(_ pid: pid_t) -> AXUIElement? {
+/// `findOpenContextMenu` never enters the bar, so that case falls through to the bar. The caller's
+/// 3 s deadline covers discovery and hydration, with each read at most 0.5 s, so a slow app
+/// answers or refuses well inside the wrapper's 30 s timeout (review of #530).
+/// One menu read's budget: discovery and hydration share it, and every read gets a fresh one, so the
+/// act-time revalidation is not starved by the observation that came before it.
+private func menuReadSource() -> DeadlineHierarchySource {
+    DeadlineHierarchySource(LiveHierarchySource(), deadline: ProcessInfo.processInfo.systemUptime + 3)
+}
+
+private func openContextMenu(_ pid: pid_t, source: DeadlineHierarchySource) -> AXUIElement? {
     let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
     guard !menuWindowIDs(in: windows, pid: pid).isEmpty else { return nil }
 
-    return findOpenContextMenu(app: AXUIElementCreateApplication(pid), source: LiveHierarchySource())
+    return findOpenContextMenu(app: AXUIElementCreateApplication(pid), source: source, expired: source.expired)
 }
 
 /// 🛑 `see --scope menu` listed only the menu bar, so a context menu that `act --button right` had just
@@ -44,11 +60,15 @@ private func openContextMenu(_ pid: pid_t) -> AXUIElement? {
 /// open it is the menu this app is tracking, and the bar cannot be used anyway, so it is listed
 /// instead of the bar. A context-menu token re-finds the open menu at act time and refuses when it
 /// closed, rather than falling back to the bar and pressing a bar row by the same index.
-private func menuTree(_ pid: pid_t, depth: Int, rootTitle: String?,
-                      contextMenu: Bool? = nil) throws -> (tree: ObservedTreeData, contextMenu: Bool) {
+private func menuTree(_ pid: pid_t, depth: Int, rootTitle: String?, contextMenu: Bool? = nil,
+                      source: DeadlineHierarchySource) throws -> (tree: ObservedTreeData, contextMenu: Bool) {
     if rootTitle == nil, contextMenu != false {
-        if let menu = openContextMenu(pid) {
-            return (try buildObservedTree(root: menu, source: LiveHierarchySource(), depth: depth, scope: "menu"), true)
+        if let menu = openContextMenu(pid, source: source) {
+            return (try buildObservedTree(root: menu, source: source, depth: depth, scope: "menu", expired: source.expired), true)
+        }
+
+        guard !source.expired() else {
+            throw ObservedTreeError("context-menu observation budget ran out; inspect again")
         }
 
         if contextMenu == true {
@@ -97,8 +117,9 @@ func cmdMenu(_ command: String) {
             try token.validate(pid:pid,launch:launch,digest:token.digest,element:index,count:4000,now:Date().timeIntervalSince1970)
         }
         let rootTitle = token?.rootTitle ?? input["--menu"]
+        let contextMenu: Bool? = input["--menu-bar-only"] == "true" ? false : token.map { $0.contextMenu == true }
         let observed = try menuTree(pid, depth: token?.depth ?? 40, rootTitle: rootTitle,
-                                    contextMenu: token.map { $0.contextMenu == true })
+                                    contextMenu: contextMenu, source: menuReadSource())
         let tree = observed.tree
         if command == "menu-see" {
             let token = MenuSnapshotToken(pid:pid,launch:launch,depth:40,digest:tree.digest,created:Date().timeIntervalSince1970,
@@ -141,7 +162,8 @@ func cmdMenu(_ command: String) {
             } else {
                 ActionCursor.emit("press", point: nil)
             }
-            let fresh = try menuTree(pid, depth: token.depth, rootTitle: rootTitle, contextMenu: token.contextMenu == true).tree
+            let fresh = try menuTree(pid, depth: token.depth, rootTitle: rootTitle,
+                                     contextMenu: token.contextMenu == true, source: menuReadSource()).tree
             _ = try token.validate(pid: pid, launch: observedLaunch(pid), digest: fresh.digest,
                 element: index, count: fresh.elements.count, now: Date().timeIntervalSince1970)
             // Same rule as the outer guard: a press that must open a tracking menu needs the key

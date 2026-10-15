@@ -14,6 +14,8 @@ Actions: get, press, click, move, drag, set, perform, focus, scroll, type, key, 
 
 This detects changes in observable state, not replacement of otherwise indistinguishable anonymous controls. It cannot lock the desktop against concurrent changes. The full workflow and examples are in `src/control/README.md` and the macos-control skill. Legacy commands retain their existing targeting; mouse/focus `snapshot`/`restore` is a separate API.
 
+`menu-see --app APP` lists an open context menu when one is present, otherwise the menu bar. Inventory callers can use `menu-see --app APP --menu-bar-only` to list menu-bar titles even while a context menu is open. `--menu TITLE` reads one exact menu-bar subtree. Each context-menu read has its own 3-second budget shared by discovery and hydration, including the fresh read before a menu action.
+
 ## Background coordinate clicks
 
 `act --action click --background --coords X,Y` takes global screen points within a current snapshot's window, as an alternative to `--element N`. It performs app-scoped hit testing and sends events to the target PID and window without warping the hardware cursor or explicitly activating the app. Drag uses --to X,Y; right-click uses --button right; background delivery depends on the receiving app accepting the event. The tool does not explicitly activate or raise the app, but a foreground target may still change its own key window. Refresh and verify both the effect and any focus changes the receiving app chooses to make.

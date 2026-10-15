@@ -34,10 +34,9 @@ export function createMenuCandidates(app: string, signal: AbortSignal): MenuCand
 
             const stop = prof.start("menu-see");
             try {
-                // `menu-see` without --menu lists only the menu bar titles; the items live one
-                // level down, so each top menu is read in turn. One observation per top menu is
-                // the price of offering "File > New Tab" as a real choosable row.
-                const bar = await session.observe({ app, limit: 40, signal });
+                // Inventory always starts at the menu bar, even while a context menu is open.
+                // Each top menu is then read in turn to offer rows such as "File > New Tab".
+                const bar = await session.observe({ app, menu_bar_only: true, limit: 40, signal });
                 // Depth 1 only: the bar's own root row also has a one-element path and an empty
                 // title, and asking for a top menu titled "" fails the whole read (seen on Calculator).
                 const titles = [

@@ -27,7 +27,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       ACTION: get|press|click|move|drag|set|perform|focus|scroll|type|key|select|paste
                       set: --value TEXT; perform: --ax-action AXName; type: --text TEXT (single line, max 256 UTF-16 units); key: --keys cmd,a
                       click: --button left|right|middle; --double. --button right is always background and never
-                             activates: AXShowMenu when the element offers it, else a window-addressed right click
+                             activates: a window-addressed right click, then one posted to the pid, then AXShowMenu
                       drag: --to x,y [--duration 0.1–5]; left-button only, destination in the snapshot window
                       click/move/drag/scroll: --coords x,y replaces --element; --background skips explicit activation and pointer movement
                       move sends a window-addressed hover event; named cursor storage is provided by tools control cursor
