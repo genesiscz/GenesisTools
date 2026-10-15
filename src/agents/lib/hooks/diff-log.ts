@@ -369,33 +369,43 @@ function readChunk(
 }
 
 /**
- * Reads `file` from the end until every selected call has its command, a line is older than
- * `floor`, or the start of the file. Each read is one fixed chunk. Only lines that name a
- * still-wanted call are parsed.
+ * The calls whose message holds a selected background task's blocks and has not been read yet.
+ * Only a task that printed something: its flusher's message is then not empty.
+ */
+function pendingFlushers(calls: Map<string, DiffLogEntry>): Set<string> {
+    return new Set(
+        [...calls.values()].flatMap((entry) =>
+            entry.flushedBy && entry.task && entry.decision === "emitted" && !entry.blocks ? [entry.flushedBy] : []
+        )
+    );
+}
+
+/**
+ * Reads `file` from the end until every selected call has its command and every pending flusher
+ * its message, a line is older than `floor`, or the start of the file. Each read is one fixed
+ * chunk. Only lines that name a still-wanted call or flusher are parsed. Both sets are shared
+ * across the session's files, because a subagent's call can flush a task the main transcript ran.
  */
 function hydrateTail({
     file,
     calls,
     agent,
     wanted,
+    flushers,
     floor,
 }: {
     file: string;
     calls: Map<string, DiffLogEntry>;
     agent: string | undefined;
     wanted: Set<string>;
+    flushers: Set<string>;
     floor: number;
 }): { parsed: number; linesSeen: number; widestRead: number } {
     let parsed = 0;
     let linesSeen = 0;
     let widestRead = 0;
     let fd: number;
-    // A background task's blocks are in the message of the later call that printed them.
-    const flushers = new Set(
-        [...calls.values()].flatMap((entry) =>
-            entry.flushedBy && wanted.has(entry.toolUseId) ? [entry.flushedBy] : []
-        )
-    );
+    const searching = () => wanted.size > 0 || flushers.size > 0;
 
     try {
         fd = openSync(file, "r");
@@ -407,7 +417,7 @@ function hydrateTail({
         let end = fstatSync(fd).size;
         let held: Buffer = Buffer.alloc(0);
 
-        while (wanted.size > 0 && end > 0) {
+        while (searching() && end > 0) {
             const chunk = readChunk(fd, end, held);
             held = chunk.held;
             widestRead = Math.max(widestRead, chunk.read);
@@ -435,7 +445,11 @@ function hydrateTail({
                 parsed += 1;
 
                 try {
-                    readRow({ row: SafeJSON.parse(line, { strict: true }), calls, agent });
+                    const printed = readRow({ row: SafeJSON.parse(line, { strict: true }), calls, agent });
+
+                    if (printed) {
+                        flushers.delete(printed);
+                    }
                 } catch {
                     // The line names a selected call and is not one JSON value.
                 }
@@ -444,12 +458,12 @@ function hydrateTail({
                     wanted.delete(id);
                 }
 
-                if (wanted.size === 0) {
+                if (!searching()) {
                     break;
                 }
             }
 
-            if (aged || chunk.done || wanted.size === 0) {
+            if (aged || chunk.done || !searching()) {
                 break;
             }
 
@@ -511,8 +525,9 @@ function field(value: unknown, key: string): unknown {
 
 /**
  * Fills the transcript fields of Claude entries in place. The main transcript is read from the
- * end, and a subagent file is opened only when a selected call still has no command and the file
- * was modified inside the horizon. Returns how much was opened, so a bound can be tested.
+ * end, and a subagent file is opened only when a selected call still has no command, or a selected
+ * background task's flusher no message, and the file was modified inside the horizon. Returns how
+ * much was opened, so a bound can be tested.
  */
 export function extendFromTranscripts(entries: DiffLogEntry[]): {
     files: number;
@@ -546,25 +561,26 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): {
         }
 
         const wanted = new Set(calls.keys());
+        const flushers = pendingFlushers(calls);
         const floor = oldestAt(calls) - TRANSCRIPT_HORIZON_MS;
-        const mainCounts = hydrateTail({ file: main, calls, agent: undefined, wanted, floor });
+        const mainCounts = hydrateTail({ file: main, calls, agent: undefined, wanted, flushers, floor });
         files += 1;
         parsed += mainCounts.parsed;
         linesSeen += mainCounts.linesSeen;
         widestRead = Math.max(widestRead, mainCounts.widestRead);
 
-        if (wanted.size === 0) {
+        if (wanted.size === 0 && flushers.size === 0) {
             continue;
         }
 
         for (const file of recentSubagents(main, floor)) {
-            const counts = hydrateTail({ file, calls, agent: basename(file, ".jsonl"), wanted, floor });
+            const counts = hydrateTail({ file, calls, agent: basename(file, ".jsonl"), wanted, flushers, floor });
             files += 1;
             parsed += counts.parsed;
             linesSeen += counts.linesSeen;
             widestRead = Math.max(widestRead, counts.widestRead);
 
-            if (wanted.size === 0) {
+            if (wanted.size === 0 && flushers.size === 0) {
                 break;
             }
         }
@@ -581,7 +597,7 @@ function readRow({
     row: unknown;
     calls: Map<string, DiffLogEntry>;
     agent: string | undefined;
-}): void {
+}): string | undefined {
     const content = field(field(row, "message"), "content");
 
     for (const item of Array.isArray(content) ? content : []) {
@@ -629,14 +645,14 @@ function readRow({
         const flushed = [...calls.values()].filter((item) => item.flushedBy === id && item.task && !item.blocks);
 
         if (stdout.length === 0 || ((!entry || entry.blocks) && flushed.length === 0)) {
-            return;
+            return undefined;
         }
 
         try {
             const message = text(field(SafeJSON.parse(stdout, { strict: true }), "systemMessage"));
 
             if (message.length === 0) {
-                return;
+                return undefined;
             }
 
             const read = readMessage(message);
@@ -655,10 +671,14 @@ function readRow({
                     item.notes = part.notes;
                 }
             }
+
+            return id;
         } catch {
             // Another hook's output on the same event.
         }
     }
+
+    return undefined;
 }
 
 function localTime(at: string): string {

@@ -3971,6 +3971,50 @@ describe("tools agents hooks diff log", () => {
                 expect(early.command).toContain("EARLY-COMMAND");
                 // Each read stays one 64 KiB chunk. Growing the window made the next read 256 KiB.
                 expect(earlyStats.widestRead).toBeLessThanOrEqual(64 * 1024);
+
+                // A background task run in the main transcript and printed by a subagent's later call:
+                // its blocks are in that subagent's transcript, read after the task's command is found.
+                const flushedSession = "gt-bound-flushed";
+                const now = new Date().toISOString();
+
+                writeFileSync(
+                    join(project, `${flushedSession}.jsonl`),
+                    `${toolLine("toolu_task", "bun /x/long.ts", now)}\n`
+                );
+                mkdirSync(join(project, flushedSession, "subagents"), { recursive: true });
+
+                const message = [
+                    "background task bgflush ended (bun /x/long.ts):",
+                    "Added src/flushed.ts (+1 -0)",
+                    "     1 +flushed",
+                ].join("\n");
+
+                writeFileSync(
+                    join(project, flushedSession, "subagents", "agent-flusher.jsonl"),
+                    `${SafeJSON.stringify({
+                        type: "attachment",
+                        timestamp: now,
+                        attachment: {
+                            type: "hook_success",
+                            hookEvent: "PostToolUse",
+                            toolUseID: "toolu_flusher",
+                            stdout: SafeJSON.stringify({ systemMessage: message }),
+                        },
+                    })}\n`
+                );
+
+                const flushed: DiffLogEntry = {
+                    ...entry,
+                    session: flushedSession,
+                    toolUseId: "toolu_task",
+                    task: "bgflush",
+                    flushedBy: "toolu_flusher",
+                };
+
+                extendFromTranscripts([flushed]);
+
+                expect(flushed.command).toContain("bun /x/long.ts");
+                expect(flushed.blocks?.map((block) => block.path)).toEqual(["src/flushed.ts"]);
             });
         } finally {
             rmSync(home, { recursive: true, force: true });
