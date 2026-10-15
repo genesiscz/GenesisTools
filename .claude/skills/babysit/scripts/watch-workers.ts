@@ -8,6 +8,11 @@
  * Grok has one stream per turn: the script polls `tools grok status` and tails each running turn.
  *
  * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180] [--run <dir>]…
+ *        [--tools all|commands|none]
+ *
+ * --tools sets which tool calls print: `commands` (the default) prints shell commands only, where a commit, a push or an
+ * install shows, and counts the rest at the end of the turn; `all` prints every call. One Grok round printed 40 file
+ * reads and greps in its first five minutes, and eight workers at once buried the turn ends and stalls (2026-10-15).
  *
  * With --run, each line also names the PR and round the worker was last steered to (from the run's ledger): a worker
  * keeps its first PR's name across later PRs, so "bs-compress turn 13" read as the compress PR taking 13 turns when
@@ -21,11 +26,29 @@ import { readEvents } from "./ledger";
 const args = process.argv.slice(2);
 const stallIndex = args.indexOf("--stall-s");
 const STALL_MS = (stallIndex >= 0 ? Number(args[stallIndex + 1]) : 180) * 1000;
+const toolsIndex = args.indexOf("--tools");
+const TOOLS = toolsIndex >= 0 ? args[toolsIndex + 1] : "commands";
+
+if (!["all", "commands", "none"].includes(TOOLS)) {
+    console.error(`--tools takes all, commands or none, got ${TOOLS}`);
+    process.exit(2);
+}
+
+/** Shell tool names across backends: Grok `run_terminal_command`, Codex `exec_command` / `shell` / `exec`. */
+const SHELL_TOOL = /^(run_terminal_command|exec_command|shell|exec|bash)\b/i;
 const workers = args
     .filter((arg) => /^(grok|codex):/.test(arg))
     .map((spec) => {
         const [backend, name] = spec.split(":") as ["grok" | "codex", string];
-        return { backend, name, label: `${backend}:${name}`, lastAt: Date.now(), running: false, stallSaid: false };
+        return {
+            backend,
+            name,
+            label: `${backend}:${name}`,
+            lastAt: Date.now(),
+            running: false,
+            stallSaid: false,
+            hiddenTools: 0,
+        };
     });
 type Worker = (typeof workers)[number];
 
@@ -46,6 +69,14 @@ function currentTask(name: string): string {
 const say = (w: Worker, text: string) =>
     console.log(`[${w.label}${currentTask(w.name)}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
 const MARKERS = /^(▶|✔|✖|⏸|■|⚠|🛑|❓)/u;
+
+/** The count of the tool calls `--tools` kept quiet, once per turn end. */
+function flushHidden(w: Worker): void {
+    if (w.hiddenTools > 0) {
+        say(w, `${w.hiddenTools} more tool call(s) not printed (--tools ${TOOLS})`);
+        w.hiddenTools = 0;
+    }
+}
 
 export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Promise<number> {
     const child = Bun.spawn(cmd, { cwd: process.cwd(), stdout: "pipe", stderr: "pipe", detached: true });
@@ -86,7 +117,13 @@ export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Pro
                 w.stallSaid = false;
 
                 if (line.startsWith("🔧")) {
-                    say(w, `tool ${line.slice(2).trim()}`);
+                    const call = line.slice(2).trim();
+
+                    if (TOOLS === "all" || (TOOLS === "commands" && SHELL_TOOL.test(call))) {
+                        say(w, `tool ${call}`);
+                    } else {
+                        w.hiddenTools++;
+                    }
                 } else if (line.startsWith("↩") && line.includes("FAILED")) {
                     say(w, line);
                 } else if (MARKERS.test(line)) {
@@ -144,6 +181,7 @@ async function watchGrok(w: Worker): Promise<void> {
                 "--thoughts",
                 "none",
             ]);
+            flushHidden(w);
             const end = await grokStatus(w);
             say(w, `turn ${end?.turns ?? "?"} ENDED exit=${end?.exitCode ?? "?"}`);
             w.running = false;
