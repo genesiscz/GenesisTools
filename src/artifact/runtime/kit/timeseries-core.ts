@@ -825,6 +825,42 @@ export function clusterMarkers(xs: readonly number[], minGap: number): MarkerClu
     return out;
 }
 
+/**
+ * Marker kinds that are on: the viewer's explicit choice wins, then `initial`
+ * (the kinds a chart shows by default; every kind when it is not given).
+ */
+export function visibleMarkerKinds(
+    kinds: readonly string[],
+    initial: readonly string[] | undefined,
+    overrides: Readonly<Record<string, boolean>>
+): Set<string> {
+    return new Set(kinds.filter((k) => overrides[k] ?? (initial ? initial.includes(k) : true)));
+}
+
+// ─── Text ───
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'", nbsp: " " };
+
+/**
+ * Detail text without markup that would print raw: XML or HTML-looking tags and
+ * comments are removed and common entities decoded. Line breaks are kept.
+ */
+export function stripTags(text: string): string {
+    return text
+        .replace(/<!--[\s\S]*?-->/g, " ")
+        .replace(/<\/?[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/?>/g, " ")
+        .replace(/&(amp|lt|gt|quot|apos|#39|nbsp);/g, (_, name: string) => ENTITIES[name] ?? "")
+        .replace(/[ \t]+/g, " ")
+        .replace(/ *\n */g, "\n")
+        .replace(/\n{2,}/g, "\n")
+        .trim();
+}
+
+/** One-paragraph plain text for a compact line: tags stripped, every run of whitespace collapsed. */
+export function plainText(text: string): string {
+    return stripTags(text).replace(/\s+/g, " ").trim();
+}
+
 // ─── Panels ───
 
 export interface PanelSeriesInput {
@@ -841,6 +877,8 @@ export interface PanelAxis {
 
 export interface PanelSpec {
     key: string;
+    /** Group the panel belongs to (`key` adds a suffix when a group spills into a second panel). */
+    group: string;
     axes: PanelAxis[];
     seriesIds: string[];
 }
@@ -853,7 +891,11 @@ export const NO_UNIT = "value";
  * at most two axes, so a third unit spills into another panel. Split: one panel
  * per `group` (default: unit), again at most two units per panel.
  */
-export function assignPanels(series: readonly PanelSeriesInput[], layout: "combined" | "split"): PanelSpec[] {
+export function assignPanels(
+    series: readonly PanelSeriesInput[],
+    layout: "combined" | "split",
+    groupOrder: readonly string[] = []
+): PanelSpec[] {
     const groups = new Map<string, PanelSeriesInput[]>();
 
     for (const s of series) {
@@ -885,13 +927,28 @@ export function assignPanels(series: readonly PanelSeriesInput[], layout: "combi
             }));
             panels.push({
                 key: i === 0 ? key : `${key}:${i / 2}`,
+                group: key,
                 axes,
                 seriesIds: axes.flatMap((a) => a.seriesIds),
             });
         }
     }
 
-    return panels;
+    return orderPanels(panels, groupOrder);
+}
+
+/**
+ * Sort panels by the position of their group in `order`; groups not listed keep
+ * their first-appearance order after the listed ones (the sort is stable).
+ */
+export function orderPanels<T extends { group: string }>(panels: readonly T[], order: readonly string[]): T[] {
+    const rank = (g: string) => {
+        const i = order.indexOf(g);
+
+        return i === -1 ? order.length : i;
+    };
+
+    return [...panels].sort((a, b) => rank(a.group) - rank(b.group));
 }
 
 // ─── CSV ───
@@ -941,8 +998,10 @@ export interface TsViewState {
     /** Units drawn on a log axis. */
     log: string[];
     normalize: boolean;
-    /** Marker kinds turned off. */
-    hiddenMarkers: string[];
+    /** Explicit on/off per marker kind, only where the viewer changed it. */
+    markers: Record<string, boolean>;
+    /** Tooltip lists every panel's values, not only the panel under the pointer. */
+    allValues: boolean;
     /** Span lanes turned off. */
     hiddenLanes: string[];
     lanesOpen: boolean;
@@ -950,7 +1009,16 @@ export interface TsViewState {
 }
 
 export function emptyViewState(): TsViewState {
-    return { series: {}, log: [], normalize: false, hiddenMarkers: [], hiddenLanes: [], lanesOpen: true, table: false };
+    return {
+        series: {},
+        log: [],
+        normalize: false,
+        markers: {},
+        allValues: false,
+        hiddenLanes: [],
+        lanesOpen: true,
+        table: false,
+    };
 }
 
 const list = (items: readonly string[]) => items.map(encodeURIComponent).join(",");
@@ -994,8 +1062,14 @@ export function encodeViewState(state: TsViewState): string {
         p.set("n", "1");
     }
 
-    if (state.hiddenMarkers.length) {
-        p.set("m", list(state.hiddenMarkers));
+    const kinds = Object.entries(state.markers).map(([k, v]) => `${v ? "+" : "-"}${encodeURIComponent(k)}`);
+
+    if (kinds.length) {
+        p.set("k", kinds.join(","));
+    }
+
+    if (state.allValues) {
+        p.set("a", "1");
     }
 
     if (state.hiddenLanes.length) {
@@ -1040,7 +1114,20 @@ export function decodeViewState(text: string): TsViewState {
 
     state.log = unlist(p.get("g"));
     state.normalize = p.get("n") === "1";
-    state.hiddenMarkers = unlist(p.get("m"));
+    // "m" is the older form: a list of hidden kinds.
+    for (const kind of unlist(p.get("m"))) {
+        state.markers[kind] = false;
+    }
+
+    for (const item of unlist(p.get("k"))) {
+        const sign = item[0];
+
+        if (sign === "+" || sign === "-") {
+            state.markers[item.slice(1)] = sign === "+";
+        }
+    }
+
+    state.allValues = p.get("a") === "1";
     state.hiddenLanes = unlist(p.get("x"));
     state.lanesOpen = p.get("lc") !== "1";
     state.table = p.get("t") === "1";

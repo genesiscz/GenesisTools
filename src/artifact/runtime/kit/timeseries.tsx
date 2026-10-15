@@ -11,13 +11,13 @@ import {
     useState,
 } from "react";
 import { TONE_COLOR } from "./charts";
-import { Md } from "./md";
 import type { Tone } from "./primitives";
 import {
     assignPanels,
     clampRange,
     clusterMarkers,
     DAY,
+    DEFAULT_LANE,
     decimate,
     decodeViewState,
     emptyViewState,
@@ -35,11 +35,14 @@ import {
     NO_UNIT,
     nearestIndex,
     niceScale,
+    type PanelSpec,
     panRange,
+    plainText,
     rangeAround,
     readHashState,
     SECOND,
     stackPoints,
+    stripTags,
     type TimeTick,
     type TsPoint,
     type TsRange,
@@ -47,6 +50,7 @@ import {
     timeTicks,
     toCsv,
     valueAt,
+    visibleMarkerKinds,
     writeHashState,
     zoomRange,
 } from "./timeseries-core";
@@ -107,12 +111,24 @@ export interface TsUnitConfig {
     log?: boolean;
 }
 
+export interface TsGroup {
+    /** Matches `TsSeries.group` (or the unit, for series without a group). */
+    id: string;
+    /** Panel title in split layout. */
+    label: string;
+    /** Height of this panel (px); wins over `height`. */
+    height?: number;
+}
+
 export interface TimeSeriesProps {
     /** Persists the viewer's choices (series on/off, layout, range) in localStorage and the URL hash. */
     id?: string;
     title?: string;
+    /** May be empty when `spans` are given: the chart is then an activity timeline (marker band and lanes). */
     series: TsSeries[];
     markers?: TsMarker[];
+    /** Marker kinds shown at first; the other kinds start off but stay in the toolbar. Default: every kind. */
+    markerKinds?: string[];
     spans?: TsSpan[];
     /** Initial visible range; default = all data. */
     range?: [number, number];
@@ -125,8 +141,10 @@ export interface TimeSeriesProps {
     /** Charts with the same syncId share the viewport and the crosshair. */
     syncId?: string;
     units?: Record<string, TsUnitConfig>;
-    /** Height cap of the span lanes area (px, default 220). */
+    /** Height cap of the span lanes area (px, default 220; the main height of a chart without series). */
     lanesHeight?: number;
+    /** Panel titles, order and heights for the split layout. Default: group id as title, first-appearance order. */
+    groups?: TsGroup[];
     /** Show the overview brush strip (default true). */
     brush?: boolean;
 }
@@ -217,7 +235,10 @@ const GUTTER_MIN = 76;
 const GUTTER_RIGHT_AXIS = 60;
 const GUTTER_RIGHT = 14;
 const MARKER_BAND = 26;
-const PANEL_GAP = 12;
+const PANEL_GAP = 16;
+/** Title, units and legend row above each panel's plot. */
+const PANEL_HEADER = 24;
+const PANEL_PAD = 6;
 const TIME_AXIS = 24;
 const LANE_GAP = 6;
 const BRUSH_HEIGHT = 40;
@@ -263,6 +284,9 @@ interface SeriesFrame {
 
 interface PanelFrame {
     key: string;
+    /** Top of the panel block (its header row); the plot starts at `top`. */
+    blockTop: number;
+    title: string;
     top: number;
     height: number;
     axes: AxisFrame[];
@@ -599,9 +623,24 @@ function drawMain(
     ctx.textBaseline = "middle";
 
     for (const panel of frame.panels) {
+        // Each panel is its own block: a framed card holding the header row and the plot.
         ctx.save();
         ctx.fillStyle = theme.panel;
-        ctx.globalAlpha = 0.45;
+        ctx.globalAlpha = 0.55;
+        roundRect(
+            ctx,
+            0.5,
+            panel.blockTop + 0.5,
+            frame.width - 1,
+            panel.top + panel.height + PANEL_PAD - panel.blockTop - 1,
+            6
+        );
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = theme.border;
+        ctx.stroke();
+        ctx.fillStyle = theme.bg;
+        ctx.globalAlpha = 0.35;
         ctx.fillRect(plotLeft, panel.top, plotWidth, panel.height);
         ctx.globalAlpha = 1;
         ctx.strokeStyle = theme.border;
@@ -713,7 +752,8 @@ function drawMain(
         const bandMid = frame.markerTop + frame.markerHeight / 2;
         ctx.save();
         ctx.beginPath();
-        ctx.rect(plotLeft - 8, frame.markerTop, plotWidth + 16, frame.panelsBottom - frame.markerTop);
+        const linesBottom = frame.panels.length ? frame.panelsBottom : frame.lanesTop + frame.lanesHeight;
+        ctx.rect(plotLeft - 8, frame.markerTop, plotWidth + 16, linesBottom - frame.markerTop);
         ctx.clip();
         ctx.setLineDash([2, 3]);
         ctx.lineWidth = 1;
@@ -725,7 +765,7 @@ function drawMain(
             ctx.globalAlpha = 0.2;
             ctx.beginPath();
             ctx.moveTo(x, frame.markerTop + frame.markerHeight);
-            ctx.lineTo(x, frame.panelsBottom);
+            ctx.lineTo(x, linesBottom);
             ctx.stroke();
         }
 
@@ -849,13 +889,13 @@ const NO_MARKERS: TsMarker[] = [];
 const NO_SPANS: TsSpan[] = [];
 
 type Hover =
-    | { region: "panel"; x: number; y: number; t: number }
+    | { region: "panel"; x: number; y: number; t: number; panel: string | null }
     | { region: "marker"; x: number; y: number; cluster: number }
     | { region: "span"; x: number; y: number; span: number }
     | { region: "none"; x: number; y: number };
 
 type Pin =
-    | { kind: "time"; t: number; y: number }
+    | { kind: "time"; t: number; y: number; panel: string | null }
     | { kind: "markers"; items: number[]; t: number; y: number }
     | { kind: "span"; span: number; y: number };
 
@@ -933,6 +973,8 @@ export function TimeSeries({
     units,
     lanesHeight = 220,
     brush = true,
+    groups,
+    markerKinds: initialMarkerKinds,
 }: TimeSeriesProps) {
     const instanceId = useId();
     const rootRef = useRef<HTMLDivElement>(null);
@@ -953,6 +995,26 @@ export function TimeSeries({
     const [boxMode, setBoxMode] = useState(false);
     const [drag, setDrag] = useState<DragState | null>(null);
     const [copied, setCopied] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
+    const timelineOnly = series.length === 0;
+    // A focused chart (1 to 3 series, one unit) keeps its view options in a "⋯" menu so it reads as a plain chart.
+    const compact = timelineOnly || (series.length <= 3 && new Set(series.map((s) => s.unit ?? NO_UNIT)).size === 1);
+
+    useEffect(() => {
+        if (!menuOpen) {
+            return;
+        }
+
+        const close = (e: PointerEvent) => {
+            if (!menuRef.current?.contains(e.target as Node)) {
+                setMenuOpen(false);
+            }
+        };
+        document.addEventListener("pointerdown", close);
+
+        return () => document.removeEventListener("pointerdown", close);
+    }, [menuOpen]);
 
     const layout = saved.layout ?? initialLayout;
     const logUnits = useMemo(() => {
@@ -977,7 +1039,7 @@ export function TimeSeries({
         () => new Set(series.filter((s) => saved.series[s.id] ?? !s.hidden).map((s) => s.id)),
         [series, saved.series]
     );
-    const hiddenMarkerKinds = useMemo(() => new Set(saved.hiddenMarkers), [saved.hiddenMarkers]);
+
     const hiddenLanes = useMemo(() => new Set(saved.hiddenLanes), [saved.hiddenLanes]);
 
     const update = useCallback((patch: (s: TsViewState) => TsViewState) => setSaved((prev) => patch(prev)), []);
@@ -1090,6 +1152,10 @@ export function TimeSeries({
 
     const seriesColor = useMemo(() => new Map(series.map((s, i) => [s.id, cssColor(s, i)])), [series]);
     const markerKinds = useMemo(() => [...new Set(markers.map((m) => m.kind))], [markers]);
+    const shownMarkerKinds = useMemo(
+        () => visibleMarkerKinds(markerKinds, initialMarkerKinds, saved.markers),
+        [markerKinds, initialMarkerKinds, saved.markers]
+    );
     const markerKindColor = useMemo(() => {
         const map = new Map<string, string>();
 
@@ -1189,21 +1255,42 @@ export function TimeSeries({
         const unitOf = (s: TsSeries) => (normalize ? "% of max" : (s.unit ?? NO_UNIT));
         const specs = assignPanels(
             visible.map((s) => ({ id: s.id, unit: unitOf(s), group: s.group ?? s.unit ?? NO_UNIT })),
-            layout
+            layout,
+            (groups ?? []).map((g) => g.id)
         );
+        const timelineOnly = series.length === 0;
         const hasRight = specs.some((p) => p.axes.length > 1);
         const plotLeft = gutterLeft;
         const plotRight = width - (hasRight ? GUTTER_RIGHT_AXIS : GUTTER_RIGHT);
         const plotWidth = Math.max(10, plotRight - plotLeft);
-        const visibleMarkers = sortedMarkerIdx.filter((i) => !hiddenMarkerKinds.has(markers[i].kind));
-        const markerHeight = markers.length ? MARKER_BAND : 0;
-        const panelHeight = height ?? (specs.length <= 1 ? 300 : 170);
+        const visibleMarkers = sortedMarkerIdx.filter((i) => shownMarkerKinds.has(markers[i].kind));
+        const markerHeight = shownMarkerKinds.size ? MARKER_BAND : 0;
+        const defaultHeight = height ?? (specs.length <= 1 ? 260 : 160);
         const byId = new Map(series.map((s, i) => [s.id, { s, i }]));
         let y = markerHeight;
         const panels: PanelFrame[] = [];
 
-        for (const spec of specs.length ? specs : [{ key: "empty", axes: [], seriesIds: [] }]) {
-            const panel: PanelFrame = { key: spec.key, top: y, height: panelHeight, axes: [], series: [] };
+        const placeholder: PanelSpec[] = timelineOnly
+            ? []
+            : [{ key: "empty", group: "empty", axes: [], seriesIds: [] }];
+
+        for (const spec of specs.length ? specs : placeholder) {
+            const group = groups?.find((g) => g.id === spec.group);
+            const panelHeight = group?.height ?? defaultHeight;
+            const title =
+                layout === "combined" || spec.key === "empty"
+                    ? ""
+                    : (group?.label ?? units?.[spec.group]?.label ?? spec.group);
+            const blockTop = y + (panels.length ? PANEL_GAP : 4);
+            const panel: PanelFrame = {
+                key: spec.key,
+                blockTop,
+                title,
+                top: blockTop + PANEL_HEADER,
+                height: panelHeight,
+                axes: [],
+                series: [],
+            };
 
             for (const ax of spec.axes) {
                 const cfg = units?.[ax.unit];
@@ -1295,10 +1382,10 @@ export function TimeSeries({
             }
 
             panels.push(panel);
-            y += panelHeight + PANEL_GAP;
+            y = panel.top + panelHeight + PANEL_PAD;
         }
 
-        const panelsBottom = y - PANEL_GAP;
+        const panelsBottom = y;
         const axisTop = panelsBottom;
         const lanesTop = axisTop + TIME_AXIS;
         const lanes: LaneFrame[] = [];
@@ -1309,7 +1396,10 @@ export function TimeSeries({
             const totalRows = shown.reduce((n, l) => n + l.rows, 0);
             const rowHeight = Math.max(
                 4,
-                Math.min(16, Math.floor((lanesHeight - shown.length * LANE_GAP) / Math.max(1, totalRows)) - 2)
+                Math.min(
+                    timelineOnly ? 22 : 16,
+                    Math.floor((lanesHeight - shown.length * LANE_GAP) / Math.max(1, totalRows)) - 2
+                )
             );
             let ly = lanesTop;
 
@@ -1367,8 +1457,9 @@ export function TimeSeries({
         saved.normalize,
         saved.lanesOpen,
         layout,
+        groups,
         sortedMarkerIdx,
-        hiddenMarkerKinds,
+        shownMarkerKinds,
         markers,
         height,
         units,
@@ -1403,6 +1494,8 @@ export function TimeSeries({
     }, [frame, themeTick, markers, spans, markerColor, markerGlyph, spanColor]);
 
     const crosshairT = hover?.region === "panel" ? hover.t : remoteHover;
+    // Value dots go on the panel under the pointer ("*" = every panel); a synced chart shows only its line.
+    const dotPanel = hover?.region === "panel" ? (saved.allValues ? "*" : hover.panel) : null;
 
     useEffect(() => {
         const canvas = overlayRef.current;
@@ -1448,6 +1541,10 @@ export function TimeSeries({
             const maxGap = ((frame.view[1] - frame.view[0]) / frame.plotWidth) * 40;
 
             for (const panel of frame.panels) {
+                if (dotPanel === null || (dotPanel !== "*" && dotPanel !== panel.key)) {
+                    continue;
+                }
+
                 for (const sf of panel.series) {
                     let v: number | null = null;
                     let t = crosshairT;
@@ -1491,7 +1588,7 @@ export function TimeSeries({
             ctx.strokeRect(x0 + 0.5, frame.panelsTop + 0.5, x1 - x0 - 1, frame.panelsBottom - frame.panelsTop - 1);
             ctx.globalAlpha = 1;
         }
-    }, [frame, crosshairT, pin, drag, themeTick]);
+    }, [frame, crosshairT, dotPanel, pin, drag, themeTick]);
 
     // ─── Hit testing ───
 
@@ -1541,7 +1638,9 @@ export function TimeSeries({
             }
 
             if (x >= frame.plotLeft && x <= frame.plotRight && y >= frame.panelsTop && y <= frame.axisTop + TIME_AXIS) {
-                return { region: "panel", x, y, t: toT(frame, x) };
+                const panel = frame.panels.find((p) => y >= p.blockTop && y <= p.top + p.height + PANEL_PAD);
+
+                return { region: "panel", x, y, t: toT(frame, x), panel: panel?.key ?? null };
             }
 
             return { region: "none", x, y };
@@ -1670,7 +1769,11 @@ export function TimeSeries({
         const h = hitTest(x, y);
 
         if (h.region === "panel") {
-            setPin(pin?.kind === "time" && Math.abs(toX(frame, pin.t) - x) < 4 ? null : { kind: "time", t: h.t, y });
+            setPin(
+                pin?.kind === "time" && Math.abs(toX(frame, pin.t) - x) < 4
+                    ? null
+                    : { kind: "time", t: h.t, y, panel: h.panel }
+            );
         } else if (h.region === "marker") {
             const items = frame.clusters[h.cluster].items.map((k) => frame.markerOrder[k]);
             setPin({ kind: "markers", items, t: markers[items[0]].t, y });
@@ -1735,6 +1838,19 @@ export function TimeSeries({
             }
 
             return { ...prev, series: next };
+        });
+    };
+
+    const toggleMarkerKind = (kind: string) => {
+        update((prev) => {
+            const next = { ...prev.markers, [kind]: !shownMarkerKinds.has(kind) };
+            const byDefault = initialMarkerKinds ? initialMarkerKinds.includes(kind) : true;
+
+            if (next[kind] === byDefault) {
+                delete next[kind];
+            }
+
+            return { ...prev, markers: next };
         });
     };
 
@@ -1849,6 +1965,12 @@ export function TimeSeries({
         }
 
         for (const panel of frame.panels) {
+            const heading = [panel.title, ...panel.axes.map((a) => a.label)].filter(Boolean).join("  ");
+            ctx.textAlign = "left";
+            ctx.fillStyle = theme.text;
+            ctx.fillText(heading, 10, panel.blockTop + 13 + head);
+            ctx.fillStyle = theme.dim;
+
             for (const axis of panel.axes) {
                 ctx.textAlign = axis.side === "left" ? "right" : "left";
                 const x = axis.side === "left" ? frame.plotLeft - 6 : frame.plotRight + 6;
@@ -1895,24 +2017,26 @@ export function TimeSeries({
 
     const msPerPx = frame ? (frame.view[1] - frame.view[0]) / frame.plotWidth : 0;
 
-    const seriesRows = (t: number) =>
-        (frame?.panels ?? []).flatMap((panel) =>
-            panel.series.map((sf) => {
-                const s = sf.s;
-                let v: number | null = null;
+    const seriesRows = (t: number, scope: string | null) =>
+        (frame?.panels ?? [])
+            .filter((panel) => saved.allValues || scope === null || panel.key === scope)
+            .flatMap((panel) =>
+                panel.series.map((sf) => {
+                    const s = sf.s;
+                    let v: number | null = null;
 
-                if (sf.kind === "step") {
-                    v = valueAt(s.points, t);
-                } else {
-                    const i = nearestIndex(s.points, t, msPerPx * 40);
-                    v = i >= 0 ? s.points[i][1] : null;
-                }
+                    if (sf.kind === "step") {
+                        v = valueAt(s.points, t);
+                    } else {
+                        const i = nearestIndex(s.points, t, msPerPx * 40);
+                        v = i >= 0 ? s.points[i][1] : null;
+                    }
 
-                const fmt = units?.[s.unit ?? ""]?.format ?? formatForUnit(s.unit);
+                    const fmt = units?.[s.unit ?? ""]?.format ?? formatForUnit(s.unit);
 
-                return { s, color: sf.color, v, text: v === null ? "no data" : fmt(v) };
-            })
-        );
+                    return { s, color: sf.color, v, text: v === null ? "no data" : fmt(v) };
+                })
+            );
 
     const nearestMarker = (t: number) => {
         let best: number | null = null;
@@ -1929,6 +2053,30 @@ export function TimeSeries({
 
         return best;
     };
+
+    /** One compact line: glyph, kind, time, label. */
+    const markerLine = (i: number) => {
+        const m = markers[i];
+
+        return (
+            <div className="flex min-w-0 items-baseline gap-2">
+                <Swatch color={markerColor(m)} glyph={markerGlyph(m.kind)} />
+                <span className="shrink-0 text-[0.7rem] text-dim">{m.kind}</span>
+                <span className="shrink-0 font-mono text-[0.7rem] text-dim">
+                    {formatTime(m.t, timeZone, "seconds")}
+                </span>
+                <span className="truncate text-ink">{plainText(m.label)}</span>
+            </div>
+        );
+    };
+
+    /** Detail as plain text: three lines while hovering, the whole text once pinned. */
+    const detailText = (detail: string, full: boolean) =>
+        full ? (
+            <div className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap text-xs text-dim">{stripTags(detail)}</div>
+        ) : (
+            <div className="mt-0.5 line-clamp-3 text-xs text-dim">{plainText(detail)}</div>
+        );
 
     const markerList = (items: number[], interactive: boolean) => {
         const shown = items.slice(0, 10);
@@ -1949,7 +2097,7 @@ export function TimeSeries({
                                 <span className="text-[0.7rem] text-dim">{m.kind}</span>
                             </div>
                             {m.detail && (items.length === 1 || interactive) ? (
-                                <Md className="mt-0.5 pl-4 text-xs! text-dim">{m.detail}</Md>
+                                <div className="pl-4">{detailText(m.detail, interactive)}</div>
                             ) : null}
                         </div>
                     );
@@ -1961,7 +2109,7 @@ export function TimeSeries({
         );
     };
 
-    const spanBody = (index: number) => {
+    const spanBody = (index: number, interactive: boolean) => {
         const sp = spans[index];
 
         return (
@@ -1977,15 +2125,15 @@ export function TimeSeries({
                 <div className="font-mono text-[0.7rem] text-dim">
                     {formatTime(sp.start, timeZone, "full")} to {formatTime(sp.end, timeZone, "seconds")}
                 </div>
-                {sp.detail ? <Md className="mt-1 text-xs! text-dim">{sp.detail}</Md> : null}
+                {sp.detail ? detailText(sp.detail, interactive) : null}
             </div>
         );
     };
 
-    const timeBody = (t: number) => {
-        const rows = seriesRows(t);
+    const timeBody = (t: number, scope: string | null) => {
+        const rows = seriesRows(t, scope);
         const pinT = pin?.kind === "time" && hover?.region === "panel" ? pin.t : null;
-        const pinRows = pinT !== null ? seriesRows(pinT) : null;
+        const pinRows = pinT !== null ? seriesRows(pinT, scope) : null;
         const mi = nearestMarker(t);
 
         return (
@@ -2026,9 +2174,7 @@ export function TimeSeries({
                         })}
                     </tbody>
                 </table>
-                {mi !== null ? (
-                    <div className="mt-1 border-t border-line pt-1 text-xs">{markerList([mi], false)}</div>
-                ) : null}
+                {mi !== null ? <div className="mt-1 border-t border-line pt-1 text-xs">{markerLine(mi)}</div> : null}
             </div>
         );
     };
@@ -2065,7 +2211,7 @@ export function TimeSeries({
                 pinnedTip = tooltipBox(
                     x,
                     pin.y,
-                    timeBody(pin.t),
+                    timeBody(pin.t, pin.panel),
                     true,
                     <Button onClick={() => setView(rangeAround(pin.t, (view[1] - view[0]) / 4, bounds))}>
                         Zoom here
@@ -2097,7 +2243,7 @@ export function TimeSeries({
             pinnedTip = tooltipBox(
                 Math.min(Math.max(toX(frame, sp.start), frame.plotLeft), frame.plotRight),
                 pin.y,
-                spanBody(pin.span),
+                spanBody(pin.span, true),
                 true,
                 <Button onClick={() => setView([sp.start - pad, sp.end + pad])}>Zoom to span</Button>
             );
@@ -2108,7 +2254,7 @@ export function TimeSeries({
 
     if (hover && frame && !drag) {
         if (hover.region === "panel" && !(pin?.kind === "time" && Math.abs(toX(frame, pin.t) - hover.x) < 3)) {
-            hoverTip = tooltipBox(hover.x, hover.y, timeBody(hover.t), false);
+            hoverTip = tooltipBox(hover.x, hover.y, timeBody(hover.t, hover.panel), false);
         } else if (hover.region === "marker") {
             hoverTip = tooltipBox(
                 hover.x,
@@ -2120,7 +2266,7 @@ export function TimeSeries({
                 false
             );
         } else if (hover.region === "span" && !(pin?.kind === "span" && pin.span === hover.span)) {
-            hoverTip = tooltipBox(hover.x, hover.y, spanBody(hover.span), false);
+            hoverTip = tooltipBox(hover.x, hover.y, spanBody(hover.span, false), false);
         }
     }
 
@@ -2192,10 +2338,27 @@ export function TimeSeries({
             ctx.stroke();
         }
 
+        if (series.length === 0) {
+            // An activity timeline has no series to sketch: draw the spans as thin bars, one row per lane.
+            const rowH = Math.max(2, Math.floor((BRUSH_HEIGHT - 8) / Math.max(1, laneOrder.length)));
+
+            for (const sp of spans) {
+                const row = Math.max(0, laneOrder.indexOf(sp.lane ?? DEFAULT_LANE));
+                ctx.fillStyle = theme.resolve(spanColor(sp));
+                ctx.globalAlpha = 0.7;
+                ctx.fillRect(
+                    bx(sp.start),
+                    6 + row * rowH,
+                    Math.max(1, bx(sp.end) - bx(sp.start)),
+                    Math.max(1, rowH - 1)
+                );
+            }
+        }
+
         ctx.globalAlpha = 0.7;
 
         for (const m of markers) {
-            if (hiddenMarkerKinds.has(m.kind)) {
+            if (!shownMarkerKinds.has(m.kind)) {
                 continue;
             }
 
@@ -2204,7 +2367,19 @@ export function TimeSeries({
         }
 
         ctx.globalAlpha = 1;
-    }, [overview, width, bounds, themeTick, markers, markerColor, hiddenMarkerKinds]);
+    }, [
+        overview,
+        width,
+        bounds,
+        themeTick,
+        markers,
+        markerColor,
+        shownMarkerKinds,
+        series.length,
+        spans,
+        laneOrder,
+        spanColor,
+    ]);
 
     const brushDrag = useRef<{ mode: "move" | "left" | "right"; startX: number; startView: TsRange } | null>(null);
     const brushPlotWidth = overview?.[0]?.plotWidth ?? Math.max(10, width - gutterLeft - GUTTER_RIGHT);
@@ -2257,6 +2432,89 @@ export function TimeSeries({
 
     // ─── Render ───
 
+    const viewControls = (
+        <>
+            <div
+                role="radiogroup"
+                aria-label="Layout"
+                className="inline-flex overflow-hidden rounded-card border border-line"
+            >
+                {(["combined", "split"] as const).map((l) => (
+                    <button
+                        key={l}
+                        type="button"
+                        role="radio"
+                        aria-checked={layout === l}
+                        onClick={() => update((prev) => ({ ...prev, layout: l }))}
+                        className={
+                            layout === l
+                                ? "bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent"
+                                : "px-2 py-0.5 text-xs text-dim hover:bg-panel hover:text-ink"
+                        }
+                    >
+                        {l === "combined" ? "Combined" : "Split"}
+                    </button>
+                ))}
+            </div>
+            <Button
+                active={saved.normalize}
+                pressed={saved.normalize}
+                onClick={() => update((prev) => ({ ...prev, normalize: !prev.normalize }))}
+                title="Scale every series to percent of its own maximum in view, so unlike units share one panel"
+            >
+                % of max
+            </Button>
+            {!saved.normalize
+                ? visibleUnits.map((u) => (
+                      <Button
+                          key={u}
+                          active={logUnits.has(u)}
+                          pressed={logUnits.has(u)}
+                          onClick={() => toggleLog(u)}
+                          title={`Log scale for ${units?.[u]?.label ?? u}`}
+                      >
+                          log {units?.[u]?.label ?? u}
+                      </Button>
+                  ))
+                : null}
+            <Button
+                active={saved.allValues}
+                pressed={saved.allValues}
+                onClick={() => update((prev) => ({ ...prev, allValues: !prev.allValues }))}
+                title="List the values of every panel in the tooltip, not only the panel under the pointer"
+            >
+                All values
+            </Button>
+        </>
+    );
+    const exportControls = (
+        <>
+            {timelineOnly ? null : (
+                <>
+                    <Button
+                        active={saved.table}
+                        pressed={saved.table}
+                        onClick={() => update((prev) => ({ ...prev, table: !prev.table }))}
+                        title="Show the visible data as a table"
+                    >
+                        Table
+                    </Button>
+                    <Button onClick={exportCsv} title="Download the visible range as CSV">
+                        CSV
+                    </Button>
+                </>
+            )}
+            <Button onClick={exportPng} title="Download the chart as PNG">
+                PNG
+            </Button>
+            {id ? (
+                <Button onClick={() => void copyLink()} title="Copy a link that opens this exact view">
+                    {copied ? "Copied" : "Link"}
+                </Button>
+            ) : null}
+        </>
+    );
+
     const spanText = formatDurationShort(view[1] - view[0]);
     const isFull = view[0] <= bounds[0] && view[1] >= bounds[1];
     const activePreset = isFull
@@ -2269,6 +2527,27 @@ export function TimeSeries({
         markers.length
     } markers, ${spans.length} spans. Plus and minus zoom, arrow keys pan, 0 resets.`;
 
+    const optionsMenu = (
+        <div ref={menuRef} className="relative">
+            <Button
+                active={menuOpen}
+                pressed={menuOpen}
+                onClick={() => setMenuOpen((o) => !o)}
+                title="View options and export"
+            >
+                ⋯
+            </Button>
+            {menuOpen ? (
+                <div
+                    role="menu"
+                    className="absolute right-0 top-full z-20 mt-1 flex w-max max-w-[300px] flex-col gap-2 rounded-card border border-line bg-panel p-2 shadow-lg"
+                >
+                    {timelineOnly ? null : <div className="flex flex-wrap gap-1">{viewControls}</div>}
+                    <div className="flex flex-wrap gap-1">{exportControls}</div>
+                </div>
+            ) : null}
+        </div>
+    );
     return (
         <div
             ref={rootRef}
@@ -2313,10 +2592,11 @@ export function TimeSeries({
                     >
                         Select
                     </Button>
+                    {compact ? optionsMenu : null}
                 </div>
             </div>
 
-            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <div className={`mb-2 flex flex-wrap items-center gap-1.5 ${timelineOnly ? "hidden" : ""}`}>
                 {series.map((s) => {
                     const on = visibleIds.has(s.id);
                     const color = seriesColor.get(s.id) ?? "var(--dim)";
@@ -2342,53 +2622,11 @@ export function TimeSeries({
                 })}
             </div>
 
-            <div className="mb-2 flex flex-wrap items-center gap-1">
-                <div
-                    role="radiogroup"
-                    aria-label="Layout"
-                    className="inline-flex overflow-hidden rounded-card border border-line"
-                >
-                    {(["combined", "split"] as const).map((l) => (
-                        <button
-                            key={l}
-                            type="button"
-                            role="radio"
-                            aria-checked={layout === l}
-                            onClick={() => update((prev) => ({ ...prev, layout: l }))}
-                            className={
-                                layout === l
-                                    ? "bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent"
-                                    : "px-2 py-0.5 text-xs text-dim hover:bg-panel hover:text-ink"
-                            }
-                        >
-                            {l === "combined" ? "Combined" : "Split"}
-                        </button>
-                    ))}
-                </div>
-                <Button
-                    active={saved.normalize}
-                    pressed={saved.normalize}
-                    onClick={() => update((prev) => ({ ...prev, normalize: !prev.normalize }))}
-                    title="Scale every series to percent of its own maximum in view, so unlike units share one panel"
-                >
-                    % of max
-                </Button>
-                {!saved.normalize
-                    ? visibleUnits.map((u) => (
-                          <Button
-                              key={u}
-                              active={logUnits.has(u)}
-                              pressed={logUnits.has(u)}
-                              onClick={() => toggleLog(u)}
-                              title={`Log scale for ${units?.[u]?.label ?? u}`}
-                          >
-                              log {units?.[u]?.label ?? u}
-                          </Button>
-                      ))
-                    : null}
-                {markerKinds.length ? <span className="mx-1 h-4 w-px bg-line" /> : null}
+            <div
+                className={`mb-2 flex flex-wrap items-center gap-1 ${compact && !markerKinds.length && !spans.length ? "hidden" : ""}`}
+            >
                 {markerKinds.map((kind) => {
-                    const on = !hiddenMarkerKinds.has(kind);
+                    const on = shownMarkerKinds.has(kind);
                     const count = markers.filter((m) => m.kind === kind).length;
 
                     return (
@@ -2396,9 +2634,7 @@ export function TimeSeries({
                             key={kind}
                             pressed={on}
                             active={false}
-                            onClick={() =>
-                                update((prev) => ({ ...prev, hiddenMarkers: toggleIn(prev.hiddenMarkers, kind) }))
-                            }
+                            onClick={() => toggleMarkerKind(kind)}
                             title={`${on ? "Hide" : "Show"} ${kind} markers`}
                         >
                             <span className={`inline-flex items-center gap-1.5 ${on ? "" : "line-through opacity-50"}`}>
@@ -2408,8 +2644,8 @@ export function TimeSeries({
                         </Button>
                     );
                 })}
-                {spans.length ? <span className="mx-1 h-4 w-px bg-line" /> : null}
-                {spans.length ? (
+                {spans.length && markerKinds.length ? <span className="mx-1 h-4 w-px bg-line" /> : null}
+                {spans.length && !timelineOnly ? (
                     <Button
                         active={saved.lanesOpen}
                         pressed={saved.lanesOpen}
@@ -2419,7 +2655,7 @@ export function TimeSeries({
                         Lanes {saved.lanesOpen ? "▾" : "▸"}
                     </Button>
                 ) : null}
-                {saved.lanesOpen
+                {saved.lanesOpen || timelineOnly
                     ? laneLayout.map((l) => {
                           const on = !hiddenLanes.has(l.name);
 
@@ -2439,29 +2675,15 @@ export function TimeSeries({
                           );
                       })
                     : null}
-                <div className="ml-auto flex flex-wrap items-center gap-1">
-                    <Button
-                        active={saved.table}
-                        pressed={saved.table}
-                        onClick={() => update((prev) => ({ ...prev, table: !prev.table }))}
-                        title="Show the visible data as a table"
-                    >
-                        Table
-                    </Button>
-                    <Button onClick={exportCsv} title="Download the visible range as CSV">
-                        CSV
-                    </Button>
-                    <Button onClick={exportPng} title="Download the chart as PNG">
-                        PNG
-                    </Button>
-                    {id ? (
-                        <Button onClick={() => void copyLink()} title="Copy a link that opens this exact view">
-                            {copied ? "Copied" : "Link"}
-                        </Button>
-                    ) : null}
-                </div>
+                {compact ? null : (
+                    <>
+                        <span className="mx-1 h-4 w-px bg-line" />
+                        {viewControls}
+                        <div className="ml-auto flex flex-wrap items-center gap-1">{exportControls}</div>
+                    </>
+                )}
             </div>
-            {layout === "combined" && unitsCount > 2 && !saved.normalize ? (
+            {!compact && layout === "combined" && unitsCount > 2 && !saved.normalize ? (
                 <div className="mb-1 text-[0.7rem] text-dim">
                     {unitsCount} units in view: one panel holds two axes, so the rest moved to extra panels. Use % of
                     max to overlay everything.
@@ -2490,7 +2712,8 @@ export function TimeSeries({
                         {lane.name}
                     </div>
                 ))}
-                {frame && visibleSeries.length === 0 ? (
+                {frame ? <PanelHeaders frame={frame} showLegend={frame.panels.length > 1} /> : null}
+                {frame && visibleSeries.length === 0 && !timelineOnly ? (
                     <div className="absolute inset-x-0 top-1/3 text-center text-sm text-dim">
                         Every series is off. Click a chip above to show one.
                     </div>
@@ -2545,12 +2768,55 @@ export function TimeSeries({
                 </div>
             ) : null}
 
-            <div className="mt-1 text-[0.68rem] text-dim">
+            <div className={`mt-1 text-[0.68rem] text-dim ${compact ? "hidden" : ""}`}>
                 Wheel or pinch zooms, drag pans, Shift-drag selects, double-click resets, click pins the tooltip.
             </div>
 
             {saved.table ? <VisibleTable series={visibleSeries} view={view} timeZone={timeZone} units={units} /> : null}
         </div>
+    );
+}
+
+/** Header row of each panel block: title, the units of its axes, and (with several panels) its own legend. */
+function PanelHeaders({ frame, showLegend }: { frame: Frame; showLegend: boolean }) {
+    return (
+        <>
+            {frame.panels.map((panel) => {
+                const left = panel.axes.find((a) => a.side === "left");
+                const right = panel.axes.find((a) => a.side === "right");
+
+                return (
+                    <div
+                        key={panel.key}
+                        aria-hidden="true"
+                        className="pointer-events-none absolute flex items-center gap-3 overflow-hidden whitespace-nowrap text-[0.7rem]"
+                        style={{ top: panel.blockTop + 4, left: 10, right: 10, height: PANEL_HEADER - 6 }}
+                    >
+                        {panel.title ? <span className="font-semibold text-ink">{panel.title}</span> : null}
+                        {left ? (
+                            <span className="text-dim">
+                                {left.label}
+                                {left.log ? " (log)" : ""}
+                            </span>
+                        ) : null}
+                        {showLegend
+                            ? panel.series.map((sf) => (
+                                  <span key={sf.s.id} className="inline-flex items-center gap-1 text-dim">
+                                      <Swatch color={sf.color} dashed={sf.s.dashed} />
+                                      {sf.s.label}
+                                  </span>
+                              ))
+                            : null}
+                        {right ? (
+                            <span className="ml-auto text-dim">
+                                {right.label}
+                                {right.log ? " (log)" : ""} (right axis)
+                            </span>
+                        ) : null}
+                    </div>
+                );
+            })}
+        </>
     );
 }
 
@@ -2563,17 +2829,6 @@ function AxisLabels({ frame }: { frame: Frame }) {
 
                     return (
                         <div key={`${panel.key}-${axis.unit}`} aria-hidden="true">
-                            <div
-                                className="pointer-events-none absolute max-w-[40%] truncate rounded-sm bg-canvas/70 px-1 text-[0.65rem] font-medium leading-4 text-dim"
-                                style={
-                                    left
-                                        ? { top: panel.top + 2, left: frame.plotLeft + 4 }
-                                        : { top: panel.top + 2, right: frame.width - frame.plotRight + 4 }
-                                }
-                            >
-                                {axis.label}
-                                {axis.log ? " (log)" : ""}
-                            </div>
                             {axis.ticks.map((v) => {
                                 const y = toY(panel, axis, v);
 

@@ -20,14 +20,18 @@ import {
     MINUTE,
     nearestIndex,
     niceScale,
+    orderPanels,
     packRows,
+    plainText,
     readHashState,
     stackPoints,
+    stripTags,
     type TsPoint,
     timeTicks,
     toCsv,
     tzOffset,
     valueAt,
+    visibleMarkerKinds,
     writeHashState,
     zoomRange,
 } from "./timeseries-core";
@@ -224,6 +228,54 @@ describe("lanes, markers, stacks, panels", () => {
     });
 });
 
+describe("split rework: text, marker kinds, group order", () => {
+    test("stripTags removes XML and HTML-looking tags and comments but keeps text and line breaks", () => {
+        const raw =
+            "<task-notification>\n  <status>done</status>\n</task-notification>\nRan <b>3</b> &amp; ok <!-- x -->";
+
+        expect(stripTags(raw)).toBe("done\nRan 3 & ok");
+        expect(stripTags("a < b and c > d")).toBe("a < b and c > d");
+    });
+
+    test("plainText collapses whitespace into one line", () => {
+        expect(plainText("<p>one</p>\n\n  two\tthree")).toBe("one two three");
+    });
+
+    test("visibleMarkerKinds: the viewer's choice wins, then the initial list, then every kind", () => {
+        const kinds = ["prompt", "compaction", "wake"];
+
+        expect([...visibleMarkerKinds(kinds, undefined, {})]).toEqual(kinds);
+        expect([...visibleMarkerKinds(kinds, ["prompt", "compaction"], {})]).toEqual(["prompt", "compaction"]);
+        expect([...visibleMarkerKinds(kinds, ["prompt"], { wake: true, prompt: false })]).toEqual(["wake"]);
+        expect(visibleMarkerKinds(kinds, [], {}).size).toBe(0);
+    });
+
+    test("orderPanels follows the groups list and keeps unlisted groups after it in their order", () => {
+        const panels = [{ group: "cost" }, { group: "context" }, { group: "extra" }, { group: "cache" }];
+
+        expect(orderPanels(panels, ["context", "cache"]).map((p) => p.group)).toEqual([
+            "context",
+            "cache",
+            "cost",
+            "extra",
+        ]);
+        expect(
+            assignPanels(
+                [
+                    { id: "a", unit: "usd", group: "cost" },
+                    { id: "b", unit: "tokens", group: "context" },
+                ],
+                "split",
+                ["context"]
+            ).map((p) => p.key)
+        ).toEqual(["context", "cost"]);
+    });
+
+    test("the old hidden-markers form still decodes", () => {
+        expect(decodeViewState("m=wake%2Cprompt").markers).toEqual({ wake: false, prompt: false });
+    });
+});
+
 describe("csv and state", () => {
     test("toCsv writes one row per time with blanks for missing samples", () => {
         const csv = toCsv(
@@ -251,7 +303,8 @@ describe("csv and state", () => {
             range: [100, 200] as [number, number],
             log: ["tokens"],
             normalize: true,
-            hiddenMarkers: ["wake"],
+            markers: { wake: false, prompt: true },
+            allValues: true,
             lanesOpen: false,
         };
         const encoded = encodeViewState(state);
@@ -303,6 +356,32 @@ describe("shared URL hash (Tabs + charts)", () => {
 });
 
 describe("TimeSeries render", () => {
+    test("a chart with spans and no series renders as an activity timeline with a compact menu", async () => {
+        const dom = await mountDom(
+            <TimeSeries
+                series={[]}
+                markers={[
+                    { t: T0, label: "go", kind: "prompt" },
+                    { t: T0 + MINUTE, label: "c", kind: "compaction" },
+                ]}
+                markerKinds={["prompt"]}
+                spans={[{ start: T0, end: T0 + 10 * MINUTE, label: "agent", kind: "agent", lane: "agents" }]}
+            />
+        );
+        const buttons = [...dom.container.querySelectorAll("button")];
+        const kindButton = (k: string) => buttons.find((b) => b.textContent?.startsWith(k));
+
+        expect(kindButton("prompt")?.getAttribute("aria-pressed")).toBe("true");
+        expect(kindButton("compaction")?.getAttribute("aria-pressed")).toBe("false");
+        expect(buttons.some((b) => b.textContent === "Split")).toBe(false);
+
+        await dom.click(buttons.find((b) => b.textContent === "⋯"));
+
+        expect(dom.container.querySelector("[role=menu]")?.textContent).toContain("PNG");
+
+        await dom.unmount();
+    });
+
     test("renders chips and toggles, and the layout switch updates", async () => {
         const series = [
             { id: "ctx", label: "Context", unit: "tokens", points: sawtooth(50, 30) },
