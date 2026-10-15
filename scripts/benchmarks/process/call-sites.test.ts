@@ -150,6 +150,32 @@ describe("no call site starts ps, lsof or pgrep itself", () => {
     }
 });
 
+test("a sample that does not answer within its deadline is killed and recorded as that site's error", async () => {
+    const site = CALL_SITES.find((candidate) => runsHere(candidate));
+    expect(site).toBeDefined();
+    const started = Date.now();
+    const run = Bun.spawnSync(
+        [
+            "bun",
+            join(import.meta.dir, "call-sites-bench.ts"),
+            "--site",
+            site?.id ?? "",
+            "--runs",
+            "1",
+            "--deadline-ms",
+            "1",
+        ],
+        { env: process.env, stdout: "pipe", stderr: "pipe" }
+    );
+    const text = run.stdout.toString();
+
+    // The run still reaches its report: the wedged site is a row, not a hang.
+    expect(run.exitCode).toBe(0);
+    expect(text).toContain("1 error(s)");
+    expect(text).toContain("no answer within");
+    expect(Date.now() - started).toBeLessThan(30_000);
+});
+
 test("the stack check tells a layer spawn from a caller's own", async () => {
     const { readProcess } = await import("@genesiscz/utils/process/processes");
     const own = await toolSpawns(() =>

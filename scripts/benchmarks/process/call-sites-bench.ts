@@ -9,6 +9,7 @@
  *   bun scripts/benchmarks/process/call-sites-bench.ts --runs 3 --compare
  * One site, or a few:
  *   bun scripts/benchmarks/process/call-sites-bench.ts --site say-caller-chain,port-scanner-listeners --runs 5
+ * A sample that does not answer in 60 s is killed and shown as that site's error (`--deadline-ms` changes it).
  * The registry:
  *   bun scripts/benchmarks/process/call-sites-bench.ts --list
  */
@@ -47,6 +48,8 @@ function flag(name: string): string | undefined {
 }
 
 const runs = Math.max(1, Number(flag("--runs") ?? 3));
+/** The slowest site answers in under 2 s; a sample past this is a wedged reader, killed and recorded as an error. */
+const deadlineMs = Math.max(1, Number(flag("--deadline-ms") ?? 60_000));
 const only = flag("--site")
     ?.split(",")
     .map((id) => id.trim());
@@ -82,6 +85,8 @@ async function sample(site: CallSite): Promise<Sample> {
         cwd: REPO,
         stdout: "pipe",
         stderr: "pipe",
+        timeout: deadlineMs,
+        killSignal: "SIGKILL",
     });
     const [stdout, stderr, code] = await Promise.all([
         new Response(proc.stdout).text(),
@@ -92,6 +97,10 @@ async function sample(site: CallSite): Promise<Sample> {
         .split("\n")
         .reverse()
         .find((candidate) => candidate.startsWith(SAMPLE_MARKER));
+
+    if (proc.signalCode === "SIGKILL" && !line) {
+        throw new Error(`no answer within ${deadlineMs} ms`);
+    }
 
     if (code !== 0 || !line) {
         const reason = stderr.trim().split("\n").find(Boolean) ?? `exit ${code}`;
