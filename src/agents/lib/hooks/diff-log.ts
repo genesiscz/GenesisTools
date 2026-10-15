@@ -238,9 +238,12 @@ function transcriptOf(session: string): string | null {
     return null;
 }
 
-/** First window, then four times larger, and never past this. A transcript is read from the end. */
+/**
+ * The first window; each later one is four times larger. A transcript is read from the end until the
+ * horizon or its start, never to a byte cap: a cap left the command of an older selected call empty
+ * once more than that many bytes of newer turns followed it.
+ */
 const TAIL_START_BYTES = 64 * 1024;
-const TAIL_MAX_BYTES = 8 * 1024 * 1024;
 /**
  * How far before the oldest selected call a command line may still belong to it. The call's own
  * log row is written when the command ends, and a command can run for hours, so a short slack
@@ -353,12 +356,11 @@ function hydrateTail({
 
         covered = edge.lines.length;
 
-        if (aged || edge.wholeFile || wanted.size === 0 || maxBytes >= TAIL_MAX_BYTES) {
+        if (aged || edge.wholeFile || wanted.size === 0) {
             break;
         }
 
-        const grown = maxBytes * 4;
-        maxBytes = grown > TAIL_MAX_BYTES ? TAIL_MAX_BYTES : grown;
+        maxBytes *= 4;
     }
 
     return { parsed, linesSeen };

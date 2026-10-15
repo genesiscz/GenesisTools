@@ -3758,6 +3758,22 @@ describe("tools agents hooks diff log", () => {
 
                 expect(hiddenStats.files).toBe(1);
                 expect(hidden.command).toBeUndefined();
+
+                // More than 8 MiB of newer turns after the call, all inside the horizon: still found.
+                const long = "gt-bound-long";
+                const filler = Array.from({ length: 9_000 }, (_, index) =>
+                    toolLine(`toolu_filler_${index}`, `echo ${"x".repeat(1_000)}`, new Date().toISOString())
+                );
+
+                writeFileSync(
+                    join(project, `${long}.jsonl`),
+                    `${toolLine("toolu_early", "echo EARLY-COMMAND", new Date().toISOString())}\n${filler.join("\n")}\n`
+                );
+
+                const early: DiffLogEntry = { ...entry, session: long, toolUseId: "toolu_early" };
+
+                extendFromTranscripts([early]);
+                expect(early.command).toContain("EARLY-COMMAND");
             });
         } finally {
             rmSync(home, { recursive: true, force: true });

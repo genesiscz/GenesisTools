@@ -411,9 +411,9 @@ function fitDecision(decision: DiffDecision, room: number | undefined): DiffDeci
 
 /** Headings plus messages, in the order `composePostDiff` joins them. */
 export function deferredMessageParts(flushed: DiffDecision[]): string[] {
-    return flushed
-        .filter((item) => item.message && item.task)
-        .map((item) => `${deferredTaskHeading(item.task as NonNullable<DiffDecision["task"]>)}${item.message}`);
+    return flushed.flatMap((item) =>
+        item.message && item.task ? [`${deferredTaskHeading(item.task)}${item.message}`] : []
+    );
 }
 
 /**
