@@ -282,7 +282,7 @@ public struct LiveWidgetView: View {
                 model.showSettings?()
             }
             .accessibilityLabel("Widget settings")
-            IconButton(systemName: "xmark", tooltip: "Collapse (Esc)", action: model.collapse)
+            IconButton(systemName: "xmark", tooltip: WidgetKeymap.hint("Collapse", WidgetKeymap.collapse), action: model.collapse)
                 .accessibilityLabel("Collapse widget")
         }
     }
@@ -860,7 +860,7 @@ public struct LiveWidgetView: View {
                     _ = model.pasteMedia()
                 } label: {
                     Image(systemName: "clipboard")
-                }.instantTooltip("Paste image or video (⌘V)").accessibilityLabel("Paste media")
+                }.instantTooltip(WidgetKeymap.hint("Paste image or video", WidgetKeymap.paste)).accessibilityLabel("Paste media")
                 Button(action: model.capture) { Image(systemName: "camera") }.instantTooltip("Capture a screenshot")
                     .accessibilityLabel("Capture screenshot")
                 Button(action: model.toggleVoice) {
@@ -871,7 +871,7 @@ public struct LiveWidgetView: View {
                 .foregroundStyle(model.voiceActive ? .red : .secondary)
                 .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
                 Spacer()
-                Text("⌘V media · Esc close").font(.system(size: 9)).foregroundStyle(.tertiary)
+                Text(WidgetKeymap.mediaFooter).font(.system(size: 9)).foregroundStyle(.tertiary)
             }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.genHoverIcon())
         }
         .padding(11).background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 13))

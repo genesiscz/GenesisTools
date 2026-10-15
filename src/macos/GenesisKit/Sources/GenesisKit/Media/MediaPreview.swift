@@ -172,15 +172,21 @@ public enum MediaPreviewKeyboard {
     @MainActor
     public static func handle(keyCode: UInt16, editingText: Bool) -> Bool {
         guard let state = MediaPreviewState.active, state.isOpen else { return false }
-        switch keyCode {
-        case 53:
+        let stroke = KeyStroke(keyCode: keyCode, character: "", modifiers: [])
+        guard let id = WidgetKeymap.shared.commands(for: stroke, in: [WidgetKeymap.previewScope]).first?.id else {
+            return false
+        }
+        switch id {
+        case WidgetKeymap.previewClose:
+            // Space stays with a text field. Esc closes the preview even then.
+            if editingText,
+               WidgetKeymap.shared.matchingChord(WidgetKeymap.previewClose, stroke, pass: .position)?.key == .code(49) {
+                return false
+            }
             state.dismiss()
-        case 49 where !editingText:
-            state.dismiss()
-        case 123 where !editingText:
-            state.step(-1)
-        case 124 where !editingText:
-            state.step(1)
+        case WidgetKeymap.previewPrevious, WidgetKeymap.previewNext:
+            if editingText { return false }
+            state.step(id == WidgetKeymap.previewNext ? 1 : -1)
         default:
             return false
         }
@@ -311,7 +317,7 @@ private struct MediaPreviewOverlay: View {
             }
             IconButton(systemName: "folder", tooltip: "Show in Finder") { PathOpener.reveal(item.path) }
             IconButton(systemName: "arrow.up.forward.app", tooltip: "Open in its app") { PathOpener.open(item.path) }
-            IconButton(systemName: "xmark", tooltip: "Close preview (Esc)") { state.dismiss() }
+            IconButton(systemName: "xmark", tooltip: WidgetKeymap.hint("Close preview", WidgetKeymap.previewClose)) { state.dismiss() }
                 .accessibilityIdentifier("media-preview-close")
         }
         .foregroundStyle(.primary)
@@ -320,9 +326,9 @@ private struct MediaPreviewOverlay: View {
 
     private var stepButtons: some View {
         HStack {
-            stepButton(systemName: "chevron.left", tooltip: "Previous (←)") { state.step(-1) }
+            stepButton(systemName: "chevron.left", tooltip: WidgetKeymap.hint("Previous", WidgetKeymap.previewPrevious)) { state.step(-1) }
             Spacer()
-            stepButton(systemName: "chevron.right", tooltip: "Next (→)") { state.step(1) }
+            stepButton(systemName: "chevron.right", tooltip: WidgetKeymap.hint("Next", WidgetKeymap.previewNext)) { state.step(1) }
         }
         .padding(.horizontal, 2)
     }

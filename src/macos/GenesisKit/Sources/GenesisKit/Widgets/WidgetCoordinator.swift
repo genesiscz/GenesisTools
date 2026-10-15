@@ -645,7 +645,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let active = WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)
         let moduleID = selectedModule(for: active)?.id
         let isAgent = moduleID == "agents"
-        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "v" {
+        if let stroke = KeyStroke(event),
+           WidgetKeymap.shared.commands(for: stroke, in: [.window]).contains(where: { $0.id == WidgetKeymap.paste }) {
             if isAgent { return model.pasteMedia() ? nil : event }
             if ["capture", "shelf"].contains(moduleID ?? ""), !(panel.firstResponder is NSTextView) {
                 shelf?.paste(asImages: moduleID == "capture")
@@ -688,12 +689,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// it is modal, so the key goes on to its own controls (a video's) and never to the inbox under it, where a
     /// number would answer the decision behind the picture and j/k would change the session.
     static func panelKey(keyCode: UInt16, characters: String, context: PanelKeyContext) -> PanelKey {
+        let stroke = KeyStroke(keyCode: keyCode, character: characters, modifiers: [])
         guard !context.previewOpen else { return .pass }
-        if keyCode == 53 { return .collapse }
+        let ids = WidgetKeymap.shared.commands(for: stroke, in: [.window]).map(\.id)
+        if ids.contains(WidgetKeymap.collapse) { return .collapse }
         guard context.agents, !context.editingText else { return .pass }
-        if characters == "j" { return .previous }
-        if characters == "k" { return .next }
-        if let number = AgentWidgetKeyboard.choiceNumber(keyCode: keyCode, characters: characters),
+        if ids.contains(WidgetKeymap.previous) { return .previous }
+        if ids.contains(WidgetKeymap.next) { return .next }
+        if let number = WidgetKeymap.choiceNumber(in: ids),
            let card = context.answering, number <= card.choices.count
         {
             return .choose(card.choices[number - 1].id)
