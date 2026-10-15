@@ -26,8 +26,16 @@ final class ClickyAndSessionsKeymapTests: XCTestCase {
         XCTAssertEqual(keys.commands(for: next, in: [.window]).map(\.id), [SessionsKeymap.nextPrompt])
     }
 
-    /// Without the host flag the transcript registers the prompt keys and reload. With it, none of them.
-    func testTheHostFlagLeavesPromptAndReloadUnregistered() {
+    /// Option-Command on key 33 types "ú" on Czech and matches the alt Previous Prompt.
+    func testOptionCommandOnKey33IsTheAltPreviousPrompt() {
+        let keys = Keymap(library: SessionsKeymap.library, store: nil, layout: czech)
+        let previous = KeyStroke(keyCode: 33, character: "ú", modifiers: [.option, .command])
+        XCTAssertEqual(keys.commands(for: previous, in: [.window]).map(\.id), [SessionsKeymap.previousPromptAlt])
+    }
+
+    /// Without the host flag the transcript registers Command for the prompts, and Reload.
+    /// With the flag it registers Option-Command for the prompts, and not the Command pair or Reload.
+    func testTheHostFlagRegistersTheAltPromptKeys() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 80), styleMask: [.titled],
                               backing: .buffered, defer: true)
         window.alphaValue = 0
@@ -49,12 +57,31 @@ final class ClickyAndSessionsKeymapTests: XCTestCase {
         let free = registered(hostOwns: false)
         XCTAssertTrue(free.contains(SessionsKeymap.previousPrompt), "without the flag, Command on key 33 is registered")
         XCTAssertTrue(free.contains(SessionsKeymap.nextPrompt))
+        XCTAssertFalse(free.contains(SessionsKeymap.previousPromptAlt))
+        XCTAssertFalse(free.contains(SessionsKeymap.nextPromptAlt))
         XCTAssertTrue(free.contains(SessionsKeymap.reload))
 
         let owned = registered(hostOwns: true)
+        XCTAssertTrue(owned.contains(SessionsKeymap.previousPromptAlt), "with the flag, Option-Command on key 33 is registered")
+        XCTAssertTrue(owned.contains(SessionsKeymap.nextPromptAlt))
         XCTAssertFalse(owned.contains(SessionsKeymap.previousPrompt))
         XCTAssertFalse(owned.contains(SessionsKeymap.nextPrompt))
         XCTAssertFalse(owned.contains(SessionsKeymap.reload))
+    }
+
+    func testTheHostFlagTooltipUsesTheAltKey() {
+        XCTAssertEqual(
+            SessionsKeymap.tooltip("Previous prompt", SessionsKeymap.previousPrompt, hostOwns: true),
+            SessionsKeymap.hint("Previous prompt", SessionsKeymap.previousPromptAlt))
+        XCTAssertEqual(
+            SessionsKeymap.tooltip("Next prompt", SessionsKeymap.nextPrompt, hostOwns: true),
+            SessionsKeymap.hint("Next prompt", SessionsKeymap.nextPromptAlt))
+        XCTAssertEqual(
+            SessionsKeymap.tooltip("Previous prompt", SessionsKeymap.previousPrompt, hostOwns: false),
+            SessionsKeymap.hint("Previous prompt", SessionsKeymap.previousPrompt))
+        XCTAssertEqual(
+            SessionsKeymap.tooltip("Reload the session and its transcript", SessionsKeymap.reload, hostOwns: true),
+            "Reload the session and its transcript")
     }
 }
 
