@@ -47,6 +47,7 @@ const KIT_FILES = [
     "sortable.tsx",
     "wizard.tsx",
     "editable.tsx",
+    "ledger.tsx",
     "index.ts",
 ];
 

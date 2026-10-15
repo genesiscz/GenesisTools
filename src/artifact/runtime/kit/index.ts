@@ -252,6 +252,22 @@ export {
     ganttSpanPx,
 } from "./gantt";
 export {
+    ChangeLedger,
+    type ChangeLedgerProps,
+    type DiffFieldsOptions,
+    diffFields,
+    type FieldChange,
+    FieldDiff,
+    type FieldDiffProps,
+    fieldChangeSentence,
+    formatLedgerValue,
+    type LedgerEntry,
+    type LedgerFormat,
+    type LedgerItem,
+    type LedgerValue,
+    ledgerCounts,
+} from "./ledger";
+export {
     type FilterChipItem,
     FilterChips,
     type FilterChipsProps,

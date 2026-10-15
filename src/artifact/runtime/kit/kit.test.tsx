@@ -11,6 +11,7 @@ import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { type EditableColumn, type EditableRow, EditableTable, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
+import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
 import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
 import { CodeBlock, Collapse, FilterChips, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
@@ -1409,6 +1410,100 @@ describe("EditableTable", () => {
         expect(editableTotal(COLUMNS[1], ROWS)).toBe(6.5);
         const dom = await mountDom(<EditableTable columns={COLUMNS} rows={ROWS} onChange={() => {}} />);
         expect(dom.container.querySelector('[data-total="hours"]')?.textContent).toBe("6.5");
+        await dom.unmount();
+    });
+});
+
+describe("ChangeLedger", () => {
+    test("diffFields: one changed and one added, inputs untouched, ignore drops a key, removed keeps from", () => {
+        const before = { a: 1, b: 2 };
+        const after = { a: 1, b: 3, c: 4 };
+
+        expect(diffFields(before, after)).toEqual([
+            { field: "b", kind: "changed", from: 2, to: 3 },
+            { field: "c", kind: "added", to: 4 },
+        ]);
+        expect(before).toEqual({ a: 1, b: 2 });
+        expect(after).toEqual({ a: 1, b: 3, c: 4 });
+        expect(diffFields(before, after, { ignore: ["c"] })).toEqual([{ field: "b", kind: "changed", from: 2, to: 3 }]);
+        expect(diffFields({ owner: "Ada", x: 1 }, { x: 1 })).toEqual([
+            { field: "owner", kind: "removed", from: "Ada" },
+        ]);
+    });
+
+    const changes = (n: number): FieldChange[] =>
+        Array.from({ length: n }, (_, i) => ({ field: `f${i}`, kind: "changed" as const, from: i, to: i + 1 }));
+
+    test("collapsed shows three counts, open shows one row per change with its sentence", async () => {
+        const entry: LedgerEntry = {
+            id: "run-1",
+            time: "2026-10-12T09:30:00Z",
+            title: "Sync from the issue tracker",
+            changes: [
+                { field: "status", kind: "changed", from: "open", to: "done" },
+                { field: "estimate", kind: "added", to: 8 },
+                { field: "owner", kind: "removed", from: "Ada" },
+            ],
+        };
+        const dom = await mountDom(<ChangeLedger entries={[entry]} />);
+        const counts = dom.container.querySelector("[data-ledger-counts]")?.textContent;
+
+        expect(counts).toContain("+1 added");
+        expect(counts).toContain("1 removed");
+        expect(counts).toContain("1 changed");
+        expect(dom.container.querySelector("time")?.getAttribute("dateTime")).toBe("2026-10-12T09:30:00.000Z");
+        expect(dom.container.querySelectorAll("[data-change]").length).toBe(3);
+        expect(dom.container.querySelector('[data-change="changed"] .sr-only')?.textContent).toBe(
+            "status changed from open to done"
+        );
+        await dom.unmount();
+    });
+
+    test("45 changes with maxChanges 20 show 20 rows and a Show all 45 button", async () => {
+        const dom = await mountDom(
+            <ChangeLedger entries={[{ id: "big", time: "today", title: "Bulk", open: true, changes: changes(45) }]} />
+        );
+
+        expect(dom.container.querySelectorAll("[data-change]").length).toBe(20);
+        const more = [...dom.container.querySelectorAll("button")].find((b) => b.textContent === "Show all 45");
+        expect(more).toBeTruthy();
+        await dom.click(more);
+        expect(dom.container.querySelectorAll("[data-change]").length).toBe(45);
+        await dom.unmount();
+    });
+
+    test("an open entry stays open when entries is a new array with the same ids", async () => {
+        const make = (): LedgerEntry[] => [
+            { id: "one", time: "t1", title: "One", changes: changes(1) },
+            { id: "two", time: "t2", title: "Two", changes: changes(2) },
+        ];
+        const dom = await mountDom(<ChangeLedger entries={make()} />);
+        const details = (): HTMLDetailsElement[] => [...dom.container.querySelectorAll("details")];
+        await dom.click([...dom.container.querySelectorAll("button")].find((b) => b.textContent === "Expand all"));
+        expect(details().map((d) => d.open)).toEqual([true, true]);
+
+        await dom.render(<ChangeLedger entries={make()} />);
+        expect(details().map((d) => d.open)).toEqual([true, true]);
+        await dom.unmount();
+    });
+
+    test("formatValue applies to both sides of a change", async () => {
+        const seen: string[] = [];
+        const dom = await mountDom(
+            <FieldDiff
+                changes={[{ field: "due", kind: "changed", from: "2026-10-01", to: "2026-10-09" }]}
+                formatValue={(field, value) => {
+                    seen.push(`${field}=${String(value)}`);
+
+                    return `<${String(value)}>`;
+                }}
+            />
+        );
+
+        expect(seen).toContain("due=2026-10-01");
+        expect(seen).toContain("due=2026-10-09");
+        expect(dom.container.textContent).toContain("<2026-10-01>");
+        expect(dom.container.textContent).toContain("<2026-10-09>");
         await dom.unmount();
     });
 });

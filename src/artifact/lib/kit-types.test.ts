@@ -27,6 +27,7 @@ describe("kit API declaration", () => {
             "SortableList(",
             "Wizard(",
             "EditableTable(",
+            "ChangeLedger(",
         ]) {
             expect(dts).toContain(name);
         }
