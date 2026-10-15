@@ -401,12 +401,14 @@ public struct FileTreeView: View {
     }
 
     public var body: some View {
+        let _ = RenderProbe.hit("tree.view")
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(changedOnly && git != nil ? Self.changedRows(model.rows, git ?? .none) : model.rows) { row in
                 FileTreeRowView(
                     row: row, selected: row.id == selected, icon: icon(row), style: style, model: model, actions: actions,
                     pulse: pulse?.id == row.id ? pulse : nil,
-                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false
+                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
+                    lines: git?.count(for: row.id)
                 )
                 .equatable()
             }
@@ -428,6 +430,8 @@ struct FileTreeRowView: View, Equatable {
     var change: GitChangeKind?
     /// A folder that holds changes: a dot at the row's end.
     var holdsChanges = false
+    /// Lines added and removed against HEAD (a folder's summed), drawn before the mark.
+    var lines: GitLineCount?
     @GenReduceMotion private var reduceMotion
     /// Resolve when the row is made: a font closure may capture mutable host settings, so
     /// asking both old and new closures during equality would lose the previous font.
@@ -456,10 +460,11 @@ struct FileTreeRowView: View, Equatable {
             && left.style.muted == right.style.muted && left.style.accent == right.style.accent
             && left.style.selection == right.style.selection && left.resolvedFont == right.resolvedFont
             && left.actions.revision == right.actions.revision
-            && left.change == right.change && left.holdsChanges == right.holdsChanges
+            && left.change == right.change && left.holdsChanges == right.holdsChanges && left.lines == right.lines
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("tree.row")
         let metrics = style.metrics
         Button {
             if row.isFolder {
@@ -491,6 +496,9 @@ struct FileTreeRowView: View, Equatable {
                     ProgressView().controlSize(.mini)
                 }
                 Spacer(minLength: 0)
+                if let lines, lines.additions + lines.deletions > 0 {
+                    GitLineCounts(additions: lines.additions, deletions: lines.deletions, size: max(9, metrics.icon - 2))
+                }
                 if let change {
                     GitChangeMark(change, size: metrics.icon)
                         .instantTooltip("Git: \(change.word)")

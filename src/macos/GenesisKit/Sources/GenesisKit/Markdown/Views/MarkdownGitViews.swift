@@ -18,6 +18,7 @@ struct MarkdownGitSidebar: View {
     @AppStorage("markdown.config.gitSidebarTab") private var tab = "file"
 
     var body: some View {
+        let _ = RenderProbe.hit("md.gitSidebar")
         VStack(alignment: .leading, spacing: 0) {
             GenSegmentedTabs("Git", items: [.init("file", "This file"), .init("repo", "Repository")], selection: $tab)
                 .frame(maxWidth: .infinity)
@@ -26,18 +27,22 @@ struct MarkdownGitSidebar: View {
             Rectangle().fill(model.theme.border).frame(height: 1)
             ScrollView {
                 Group {
-                    if let repo = repos.model(for: doc.folder) {
+                    switch repos.lookup(for: doc.folder) {
+                    case .pending:
+                        EmptyView()
+                    case .repo(let repo):
                         if tab == "file" {
                             fileTab
                         } else {
                             GitRepoPanel(
                                 repo: repo,
                                 log: repoLog,
+                                revealPath: GitQueries.relative(doc.url, to: repo.root),
                                 onOpenFile: { entry, staged in model.openChanges(entry, staged: staged, root: repo.root) },
                                 onOpenCommit: { model.openCommit($0, root: repo.root) }
                             )
                         }
-                    } else {
+                    case .none:
                         Text("This file is not in a git repository.")
                             .font(.system(size: 11))
                             .foregroundColor(model.theme.textSecondary)

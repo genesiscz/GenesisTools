@@ -107,6 +107,7 @@ struct MarkdownPathBar: View {
     static let trailingRoom: CGFloat = 96
 
     var body: some View {
+        let _ = RenderProbe.hit("md.pathBar")
         if let doc = model.selected {
             // The model publishes on every scroll (the active heading); the row draws again only when
             // the file or the theme changes.

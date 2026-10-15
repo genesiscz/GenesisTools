@@ -20,7 +20,7 @@ One target, folders by job. A file goes where its job is, not where its first ca
 | `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data) |
 | `Media/` | `MediaThumbnailView` (the picture of any image, video or document: off-main decode, file-identity cache, Retina pixel buckets, poster frame and length for a video, a named placeholder with Retry on failure, a click previews it) on `MediaThumbnailCache`; `.mediaPreviewHost()` + `MediaPreviewState` (an in-place Quick Look style preview over a surface, ← / → through the set) and `MediaPreviewKeyboard` (Esc / Space / arrows, for a window's key handler); `ImageViewer.present` (a window that grows from the picture's place: pinch / ⌘± / ⌘0 zoom anchored at the pointer, pan, ← / → through the source's pictures, "Compare with…" as a slider or side by side, same table row first; `ImageViewer.prefetch` on the first click; `ImageViewerSnapshot` renders any state off screen) and `MediaDataURL` (an embedded `data:image/` picture as a private temporary file) |
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`) |
-| `Diff/` | git and diffs for any host: `GenesisKitGTProvider` (the data source, swappable), `GitWorkingTreeSource` + `DiffScope`, `GitDiffView` + `GitScopePicker`, `GitFileDiffModel`, `GitRepos` (one status per repository, refreshed by git's own folder events), the file state badge and marks, the gutter (`GitGutterModel`, `GitHunks`, `GitHunkPopover`), history and commits (`GitHistoryModel`, `GitCommitList`, `GitRepoPanel`, `GitCommitView`), tree marks, agent blame |
+| `Diff/` | git and diffs for any host: `GenesisKitGTProvider` (the data source, swappable), `GitWorkingTreeSource` + `DiffScope`, `GitDiffView` + `GitScopePicker` + `GitCommitPicker` (popover choosers built when opened, `GitPickerChip`), `GitFileDiffModel`, `GitRepos` (one status per repository, refreshed by git's own folder events), the file state badge and marks, the gutter (`GitGutterModel`, `GitHunks`, `GitHunkPopover`), history and commits (`GitHistoryModel`, `GitCommitList`, `GitRepoPanel`, `GitCommitView`), tree marks, agent blame |
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
 | `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
@@ -784,7 +784,7 @@ MenuButtonPresenter.pop([
 
 #### `GenSegmentedTabs`
 
-A segmented choice that looks the same in every window. The native segmented `Picker` draws its selected segment in the accent color only while its window is key, so panels that are not key showed it gray. Here the selected segment always has the accent fill. Each segment is a real button with the row hover and the pointing-hand cursor. The type is generic over the selection id (`ID: Hashable`).
+A segmented choice that looks the same in every window. The native segmented `Picker` draws its selected segment in the accent color only while its window is key, so panels that are not key showed it gray. Here the selected segment always has the accent fill. Each segment is a real button with a hover fill (in the window's ink, so a light window shows it too) and the pointing-hand cursor. One pill marks the selection: a new selection slides it to the new segment and gives it that segment's width on the `GenMotion` curve, and Reduce Motion moves it at once. The titles are white exactly where the pill covers them on the way. The content the selection switches is the caller's and changes at once. The type is generic over the selection id (`ID: Hashable`).
 
 - `label: String`: the accessibility label of the whole control (the first, unlabeled parameter).
 - `items: [Item]`: the segments. `Item` is built as `Item(id, title)` and has the public properties `id: ID` and `title: String`.
@@ -1492,16 +1492,44 @@ layout). Also `baseBranch()`, `commits(limit:)`, `worktrees()`.
 
 `GitDiffView` draws files as the review window does (`PierreWebDiffRenderer`, the bundled @pierre/diffs page): split
 or unified, wrap, font size, and agent blame on hover. Without the page in the app (`PierreWebDiffRenderer.isBundled`)
-it says so. `GitScopePicker` is the Unstaged · Staged · Uncommitted · Last commit · Branch picker of one file's diff,
-with a commit menu for Last commit.
+it says so. `GitScopePicker` is the scope of one file's diff: a chip as wide as its label (`GitPickerChip`) that
+opens a popover with Unstaged · Staged · Uncommitted · Last commit · Branch, each with what it compares and, when the
+viewer passes them, its counts (`GitScopeStat`). Up, down, Return and 1 to 5 pick from the keyboard. For Last commit a
+`GitCommitPicker` chip sits beside it. Neither list is built until it opens.
 
 - `files: [DiffFile]`, `options: DiffViewOptions = DiffViewOptions()`.
 - `blame: AgentBlamePayload? = nil`: which session wrote the new side's lines; nil shows none.
 - `onBlameOpen: ((Int) -> Void)? = nil`: "Open session" on a blame, with the index into `blame.sources`.
-- Picker: `scope: Binding<GitFileScope>`, `commit: Binding<String?>`, `history: [GitCommit]`, `shown: GitCommit?`.
+- Picker: `scope: Binding<GitFileScope>`, `commit: Binding<String?>`, `history: [GitCommit]`, `shown: GitCommit?`,
+  `counts: [GitFileScope: GitScopeStat] = [:]`, `base: String? = nil` (Branch's base, for its label),
+  `details: GitCommitDetailsLoader? = nil` (reads the commits' line counts when the commit list opens).
+- `GitScopeStat.forFile(status:file:unsaved:current:phase:diff:)`: one file's counts from the repository's status
+  (unstaged and staged or clean) and the exact lines of the diff on screen. `GitScopeStat.clean` / `.changed` /
+  `GitScopeStat(additions:deletions:files:)` for a caller that knows more.
 
 ```swift
 GitDiffView(files: [file], options: DiffViewOptions(diffStyle: .unified, wrap: true))
+```
+
+#### `GitCommitPicker` / `.gitCommitPopover` / `GitCommitChoice`
+
+A commit chooser that opens as a popover: a filter field (words match the subject, the author or a tag; a word that
+starts the id matches the id), then per commit its subject, author, relative and absolute date, short id with a copy
+button on the highlighted row, and files and lines changed. Up and Down, Page Up and Page Down move, Return picks,
+Esc closes. Nothing of the list is built while it is closed (a SwiftUI `Menu` builds every item with the pane), and
+the open list builds only the rows on screen. What the choices lack (author, date, counts) is read when it opens by
+`GitCommitDetailsLoader`, one `git log --no-walk --numstat` for all of them.
+
+- `GitCommitPicker(choices:selection:title:details:onPick:)` with a `GitPickerChip` label (short id and subject), or
+  `label:` for your own.
+- `.gitCommitPopover(isPresented:choices:selection:title:details:onPick:)`: the same list from any view, for a host
+  that opens it from a menu item.
+- `GitCommitChoice(_ commit: GitCommit)`, `GitCommitChoice(_ commit: RepoCommit)`, or the memberwise init with
+  `badge` ("#3" for a push), `relative` ("3 hours ago") and `path` (the file whose own lines to count).
+
+```swift
+GitCommitPicker(choices: history.map { GitCommitChoice($0) }, selection: shown?.sha,
+                details: GitCommitDetailsLoader(folder: fileURL.deletingLastPathComponent())) { model.pick($0.sha) }
 ```
 
 #### `GitFileDiffModel`

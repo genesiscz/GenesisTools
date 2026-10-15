@@ -50,7 +50,34 @@ struct MarkdownDocumentsView: View {
         .accessibilityIdentifier("markdown-files-divider")
     }
 
+    @State private var gitDragStart: Double?
+
+    /// The git sidebar's left edge: the same divider, mirrored (a drag to the left widens the sidebar).
+    private var gitDivider: some View {
+        MarkdownSplitDivider(
+            line: NSColor(model.theme.border),
+            accent: NSColor(model.theme.accent),
+            onBegin: { gitDragStart = model.gitWidth },
+            onDrag: { dx in
+                model.gitWidth = MarkdownSidebarWidth.clamped((gitDragStart ?? model.gitWidth) - dx, fallback: MarkdownSidebarWidth.gitStandard)
+            },
+            onEnd: { gitDragStart = nil },
+            onReset: { model.gitWidth = MarkdownSidebarWidth.gitStandard },
+            onStep: { direction in
+                model.gitWidth = MarkdownSidebarWidth.clamped(
+                    model.gitWidth - Double(direction) * MarkdownSidebarWidth.keyboardStep,
+                    fallback: MarkdownSidebarWidth.gitStandard
+                )
+            },
+            label: "Git sidebar divider",
+            valueText: "\(Int(model.gitWidth)) points wide"
+        )
+        .frame(width: 6)
+        .accessibilityIdentifier("markdown-git-divider")
+    }
+
     var body: some View {
+        let _ = RenderProbe.hit("md.window")
         VStack(spacing: 0) {
             if let doc = model.selected {
                 MarkdownDocumentToolbar(doc: doc, model: model)
@@ -81,12 +108,18 @@ struct MarkdownDocumentsView: View {
                             .frame(width: 220)
                         Rectangle().fill(model.theme.border).frame(width: 1)
                     }
-                    MarkdownDocumentPane(doc: doc, model: model)
-                        .id(doc.id)
+                    // The old tab's page stays until the new one has rendered: no blank frame on a switch.
+                    GenRenderSwap(value: doc, id: \.id) { shown, ready in
+                        MarkdownDocumentPane(doc: shown, model: model, leaving: shown.id != model.selected?.id)
+                            .environment(\.genRenderReady, ready)
+                            .onAppear {
+                                if !MarkdownDocumentPane.waitsForPage(shown, model: model) { ready() }
+                            }
+                    }
                     if model.showGit && model.configuration.git {
-                        Rectangle().fill(model.theme.border).frame(width: 1)
+                        gitDivider
                         MarkdownGitSidebar(doc: doc, model: model)
-                            .frame(width: 280)
+                            .frame(width: model.gitWidth)
                     }
                 }
                 MarkdownStatusBar(doc: doc, model: model)
@@ -182,6 +215,7 @@ private struct MarkdownTabBar: View {
     @ObservedObject var configuration: GenesisKitMarkdownConfiguration
 
     var body: some View {
+        let _ = RenderProbe.hit("md.tabBar")
         Group {
             if configuration.wrapTabs {
                 MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
@@ -246,6 +280,7 @@ private struct MarkdownDocumentTab: View {
     @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
 
     var body: some View {
+        let _ = RenderProbe.hit("md.tab")
         let active = doc.id == model.selected?.id
         let preview = model.isPreview(doc)
         // A tab that previews on hover shows its path in the preview's header instead: a tooltip there
@@ -382,10 +417,21 @@ private struct MarkdownDocumentPane: View {
     @StateObject private var blame = AgentBlameModel()
     @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
 
-    init(doc: MarkdownDocument, model: MarkdownDocumentsModel) {
+    /// The tab being switched away from, on screen until the new tab's page has rendered: it owns no sheet, no find
+    /// panel and not the window's page proxy.
+    let leaving: Bool
+
+    init(doc: MarkdownDocument, model: MarkdownDocumentsModel, leaving: Bool = false) {
         self.doc = doc
         self.model = model
+        self.leaving = leaving
         _live = StateObject(wrappedValue: MarkdownLivePreview(doc.displayText))
+    }
+
+    /// Whether this tab shows a rendered page, so a tab switch waits for its render before it swaps.
+    static func waitsForPage(_ doc: MarkdownDocument, model: MarkdownDocumentsModel) -> Bool {
+        guard model.renderer == .web, !(doc.missing && !doc.isDirty), model.revisionView?.docID != doc.id else { return false }
+        return model.mode == .preview || model.mode == .split
     }
     /// The ratio when the drag started, so the pointer stays on the divider.
     @State private var dragStartRatio: Double?
@@ -395,18 +441,21 @@ private struct MarkdownDocumentPane: View {
     @State private var linkHoverOwner = UUID()
 
     var body: some View {
+        let _ = RenderProbe.hit("md.pane")
         VStack(spacing: 0) {
             if doc.hasDiskChange || doc.mergeConflicts > 0 || (doc.missing && doc.isDirty) {
                 MarkdownConflictBanner(doc: doc, model: model)
             }
             content
                 // ⌘F: a panel floating over the document's top right, below any banner.
-                .overlay { MarkdownFindOverlay(model: model) }
+                .overlay {
+                    if !leaving { MarkdownFindOverlay(model: model) }
+                }
         }
-        .sheet(isPresented: $model.compareOpen) {
+        .sheet(isPresented: leaving ? .constant(false) : $model.compareOpen) {
             MarkdownCompareSheet(doc: doc, model: model)
         }
-        .sheet(item: $model.commitSheet) { sheet in
+        .sheet(item: leaving ? .constant(nil) : $model.commitSheet) { sheet in
             MarkdownCommitSheetView(sheet: sheet, model: model)
         }
         .onAppear { live.reset(doc.displayText) }
@@ -543,7 +592,7 @@ private struct MarkdownDocumentPane: View {
                 onFindResult: { model.webFindResult(index: $0, count: $1) },
                 onLinkHover: { previewLink($0) },
                 zoom: model.zoom,
-                proxy: model.webProxy,
+                proxy: leaving ? nil : model.webProxy,
                 cssVariables: model.theme.cssVariables,
                 // In split view the divider owns the width, so the page fills
                 // its pane and its own column grips step aside.
@@ -609,6 +658,7 @@ private struct MarkdownDocumentPane: View {
             font: .monospacedSystemFont(ofSize: 12 * model.zoom, weight: .regular),
             textColor: NSColor(model.theme.text),
             background: NSColor(model.theme.page),
+            theme: model.theme,
             restoreScroll: model.scrollOffset(for: doc.id, pane: .source),
             onScroll: { model.rememberScroll($0, for: doc.id, pane: .source) },
             selection: model.sourceSelection,

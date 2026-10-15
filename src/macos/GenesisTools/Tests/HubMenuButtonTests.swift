@@ -54,18 +54,42 @@ final class HubMenuButtonTests: XCTestCase {
         var items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items
         XCTAssertEqual(items.map(\.title), [
             DiffScope.lastTurns(1).title, "Last Turns…", "", DiffScope.uncommitted.title, DiffScope.unstaged.title,
-            DiffScope.staged.title, "", "Committed", DiffScope.branch.title, "", "Worktree: tools", "Base: automatic",
+            DiffScope.staged.title, "", "No Commits Ahead of the Base", DiffScope.branch.title, "", "Worktree: tools", "Base: automatic",
         ])
         XCTAssertEqual(items.first?.title, DiffScope.lastTurns(1).title)
         XCTAssertEqual(items.first?.isEnabled, false, "no session: no turns to show")
         XCTAssertEqual(items.first { $0.title == DiffScope.uncommitted.title }?.state, .on)
-        XCTAssertEqual(items.first { $0.title == "Committed" }?.submenu?.items.first?.isEnabled, false)
+        XCTAssertEqual(items.first { $0.title == "No Commits Ahead of the Base" }?.isEnabled, false)
 
         let withSession = ReviewModel(repo: URL(fileURLWithPath: "/work/tools"), options: DiffViewOptions(), session: "session-a", renderer: NullRenderer())
         withSession.scope = .staged
         items = MenuButtonPresenter.menu(ScopeMenu.items(model: withSession)).items
         XCTAssertEqual(items.first?.isEnabled, true)
         XCTAssertEqual(items.filter { $0.state == .on }.map(\.title), [DiffScope.staged.title])
+    }
+
+    /// The commits are no longer a submenu of bare lines: one item opens the commit chooser (GenesisKit
+    /// `gitCommitPopover`), checked while the diff shows a commit.
+    func testPickACommitOpensTheChooserAndIsCheckedOnACommit() {
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/work/tools"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.commits = [
+            RepoCommit(sha: String(repeating: "a", count: 40), short: "aaaaaaa", subject: "Add the parser", when: "2 hours ago"),
+            RepoCommit(sha: String(repeating: "b", count: 40), short: "bbbbbbb", subject: "Fix the parser", when: "1 hour ago"),
+        ]
+        var opened = 0
+        var items = MenuButtonPresenter.menu(ScopeMenu.items(model: model) { opened += 1 }).items
+        let pick = items.first { $0.title == "Pick a Commit…" }
+        XCTAssertEqual(pick?.isEnabled, true)
+        XCTAssertEqual(pick?.state, .off)
+        XCTAssertNil(pick?.submenu, "the chooser is a popover built when it opens, not a submenu")
+        let menu = MenuButtonPresenter.menu(ScopeMenu.items(model: model) { opened += 1 })
+        menu.performActionForItem(at: menu.items.firstIndex { $0.title == "Pick a Commit…" } ?? -1)
+        XCTAssertEqual(opened, 1)
+
+        model.scope = .commit(sha: model.commits[1].sha, title: model.commits[1].subject)
+        items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items
+        XCTAssertEqual(items.first { $0.title == "Pick a Commit…" }?.state, .on)
+        XCTAssertEqual(GitCommitChoice(model.commits[0]).relative, "2 hours ago", "the git words show until the details arrive")
     }
 
     func testTheWorktreeAndBaseChoicesSwitchTheCheckoutAndTheBase() {

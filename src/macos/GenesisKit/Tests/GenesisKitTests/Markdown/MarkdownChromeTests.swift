@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -237,7 +238,8 @@ final class MarkdownChromeTests: XCTestCase {
         let plan = try file("notes/plan.md")
         let data = try file("notes/data.json", "{}")
         let code = try file("notes/tool.ts", "export {}")
-        _ = try file("notes/photo.png", "png")
+        let photo = try file("notes/photo.png", "png")
+        _ = try file("notes/archive.zip", "zip")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("notes/sub"), withIntermediateDirectories: true)
         let folder = dir.appendingPathComponent("notes")
         let text = "See [the plan][ref].\n\n[ref]: plan.md\n"
@@ -255,7 +257,8 @@ final class MarkdownChromeTests: XCTestCase {
         XCTAssertEqual(target("tool.ts"), code.path, "code the viewer can show")
         XCTAssertEqual(target("file://\(plan.path)"), plan.path)
 
-        XCTAssertNil(target("photo.png"), "not a file the viewer reads")
+        XCTAssertEqual(target("photo.png"), photo.path, "a picture previews as itself")
+        XCTAssertNil(target("archive.zip"), "not a file the viewer reads, and no picture")
         XCTAssertNil(target("sub"), "a folder")
         XCTAssertNil(target("missing.md"))
         XCTAssertNil(target("#Heading"), "a heading in this note")
@@ -282,10 +285,218 @@ final class MarkdownChromeTests: XCTestCase {
         controller.enter(owner: owner, url: dir, model: model, view: nil) { nil }
         XCTAssertNil(controller.request, "a folder has no preview")
 
+        let photo = try file("photo.png", "png")
+        controller.enter(owner: owner, url: photo, model: model, view: nil) { nil }
+        XCTAssertEqual(controller.request?.url, photo, "a picture has one")
+        controller.exit(owner: owner)
+
         model.configuration.hoverPreview = false
         controller.enter(owner: owner, url: plan, model: model, view: nil) { nil }
         XCTAssertNil(controller.request, "hover previews off")
         controller.hide()
+    }
+
+    // MARK: Hover preview of an image
+
+    /// 240 × 160: blue, with a yellow disc on the left. Invented.
+    static let svgFixture = """
+    <svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160">
+      <rect width="240" height="160" rx="16" fill="#2563eb"/>
+      <circle cx="60" cy="80" r="36" fill="#facc15"/>
+    </svg>
+    """
+
+    /// A 400 × 300 red PNG and the 240 × 160 SVG.
+    private func imageFixtures() throws -> (png: URL, svg: URL) {
+        let png = dir.appendingPathComponent("pictures/red.png")
+        try FileManager.default.createDirectory(at: png.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try MediaThumbnailCacheTests.writePNG(png, width: 400, height: 300, color: CGColor(srgbRed: 0.9, green: 0.1, blue: 0.1, alpha: 1))
+        return (png.standardizedFileURL, try file("pictures/badge.svg", Self.svgFixture))
+    }
+
+    /// The red, green and blue of `image` at a point given as fractions of its size, top left origin.
+    private func rgb(_ image: CGImage, x: CGFloat, y: CGFloat) throws -> (CGFloat, CGFloat, CGFloat) {
+        let rep = NSBitmapImageRep(cgImage: image)
+        let color = try XCTUnwrap(rep.colorAt(x: Int(CGFloat(rep.pixelsWide) * x), y: Int(CGFloat(rep.pixelsHigh) * y))?.usingColorSpace(.sRGB))
+        return (color.redComponent, color.greenComponent, color.blueComponent)
+    }
+
+    private func picture(_ url: URL, draft: String? = nil) async throws -> MediaThumbnail {
+        let result = await MarkdownHoverImage.picture(url: url, pixels: 1120, draft: draft)
+        guard case .ready(let thumbnail) = result else {
+            XCTFail("no picture of \(url.lastPathComponent): \(result)")
+            throw CancellationError()
+        }
+        return thumbnail
+    }
+
+    func testAnSVGAndAPNGPreviewAsTheirPicturesWithTheirSizeAndABrokenOneSaysWhatFailed() async throws {
+        let (png, svg) = try imageFixtures()
+        XCTAssertTrue(MarkdownHoverTarget.isPreviewable(png))
+        XCTAssertTrue(MarkdownHoverTarget.isPreviewable(svg))
+        XCTAssertFalse(MarkdownHoverImage.hasSource(png), "a raster picture has no code to show")
+        XCTAssertTrue(MarkdownHoverImage.hasSource(svg))
+
+        let raster = try await picture(png)
+        XCTAssertEqual(raster.sourceSize, CGSize(width: 400, height: 300))
+        XCTAssertFalse(raster.isIcon)
+        let vector = try await picture(svg)
+        XCTAssertEqual(vector.sourceSize, CGSize(width: 240, height: 160), "the SVG's own size")
+        XCTAssertGreaterThanOrEqual(vector.image.width, 1120, "drawn at the panel's pixels, not at its own 240")
+        let (r, g, b) = try rgb(vector.image, x: 0.5, y: 0.5)
+        XCTAssertTrue(b > 0.7 && r < 0.4 && g < 0.6, "the SVG's blue, got \(r) \(g) \(b)")
+        let (dr, dg, db) = try rgb(vector.image, x: 0.25, y: 0.5)
+        XCTAssertTrue(dr > 0.8 && dg > 0.6 && db < 0.4, "its yellow disc, got \(dr) \(dg) \(db)")
+
+        XCTAssertEqual(MarkdownHoverImage.caption(url: png, size: raster.sourceSize, bytes: nil), "PNG · 400 × 300 px")
+        XCTAssertTrue(MarkdownHoverImage.caption(url: svg, size: vector.sourceSize, bytes: 2048).hasPrefix("SVG · 240 × 160 px · "))
+
+        // An SVG open as a tab with unsaved edits: the picture of the draft, as the tab shows it.
+        let draft = try await picture(svg, draft: Self.svgFixture.replacingOccurrences(of: "#2563eb", with: "#16a34a"))
+        let (gr, gg, gb) = try rgb(draft.image, x: 0.5, y: 0.5)
+        XCTAssertTrue(gg > 0.5 && gr < 0.3 && gb < 0.5, "the draft's green, got \(gr) \(gg) \(gb)")
+
+        let brokenSVG = try file("pictures/broken.svg", "not an svg <<<")
+        guard case .failed(let svgReason) = await MarkdownHoverImage.picture(url: brokenSVG, pixels: 1120, draft: nil) else {
+            return XCTFail("a broken SVG has no picture")
+        }
+        XCTAssertEqual(svgReason, MediaThumbnailCache.unreadableSVG)
+        let brokenPNG = try file("pictures/broken.png", "not a png")
+        guard case .failed(let pngReason) = await MarkdownHoverImage.picture(url: brokenPNG, pixels: 1120, draft: nil) else {
+            return XCTFail("a broken PNG has no picture")
+        }
+        XCTAssertEqual(pngReason, "The image could not be read.")
+    }
+
+    /// The card in a panel that is never ordered front, rendered natively (a web view draws nothing here).
+    /// `clickable`: SwiftUI's buttons take a click only in a window that is ordered in (a probe on 2026-10-13: a
+    /// never-ordered window ignored it, the same panel ordered back took it, key or not), so the panel goes behind
+    /// every window, off every screen, transparent and blind to the real pointer.
+    private func hostedCard(_ url: URL, text: String, state: MarkdownHoverCardState, theme: MarkdownTheme,
+                            clickable: Bool = false) -> MarkdownHoverPanel
+    {
+        let panel = MarkdownHoverPanel(
+            contentRect: CGRect(x: 0, y: 0, width: 560, height: 440), styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+        if clickable {
+            panel.alphaValue = 0
+            panel.ignoresMouseEvents = true
+            panel.setFrameOrigin(CGPoint(x: -10000, y: -10000))
+            panel.orderBack(nil)
+            addTeardownBlock { @MainActor in panel.orderOut(nil) }
+        }
+        let card = MarkdownHoverCard(
+            content: MarkdownHoverPreviewController.content(url: url, text: text), theme: theme, renderer: .native,
+            zoom: 1, vaultRoot: nil, proxy: MarkdownWebProxy(), state: state)
+        let hosting = NSHostingView(rootView: card)
+        hosting.frame = panel.container.bounds
+        hosting.autoresizingMask = [.width, .height]
+        panel.container.addSubview(hosting)
+        return panel
+    }
+
+    private func settle(_ panel: NSPanel) async {
+        for _ in 0..<6 {
+            panel.contentView?.layoutSubtreeIfNeeded()
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    /// A press and release at `point` (window coordinates), delivered as the window server would.
+    private func click(_ panel: NSPanel, at point: CGPoint) throws {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                pressure: type == .leftMouseDown ? 1 : 0))
+            panel.sendEvent(event)
+        }
+    }
+
+    private func imageState(_ thumbnail: MediaThumbnail, source: Bool) -> MarkdownHoverCardState {
+        MarkdownHoverCardState(picture: .ready(thumbnail), bytes: 1234, hasSource: source) { .ready(thumbnail) }
+    }
+
+    func testTheSwitchShowsTheSVGCodeAndBackWhileAClickAnywhereElseOpensTheFile() async throws {
+        let (png, svg) = try imageFixtures()
+        let state = imageState(try await picture(svg), source: true)
+        let panel = hostedCard(svg, text: Self.svgFixture, state: state, theme: MarkdownTheme(palette: .genesis, contrast: .standard),
+                               clickable: true)
+        var opened = 0
+        panel.onClick = { opened += 1 }
+        await settle(panel)
+        XCTAssertEqual(MarkdownHoverMarker.rects(.picture, in: panel.container).count, 1, "the picture shows first")
+        XCTAssertFalse(state.showsPage)
+
+        let toggle = try XCTUnwrap(MarkdownHoverMarker.rects(.control, in: panel.container).first, "the switch is there")
+        try click(panel, at: CGPoint(x: toggle.midX, y: toggle.midY))
+        await settle(panel)
+        XCTAssertTrue(state.showsSource, "the switch got the click")
+        XCTAssertTrue(state.showsPage, "the page with the code shows")
+        XCTAssertTrue(MarkdownHoverMarker.rects(.picture, in: panel.container).isEmpty, "the picture is gone")
+        XCTAssertEqual(opened, 0, "a click on the switch does not open the file")
+
+        try click(panel, at: CGPoint(x: 40, y: 40))
+        XCTAssertEqual(opened, 1, "a click on the page opens the file")
+
+        let back = try XCTUnwrap(MarkdownHoverMarker.rects(.control, in: panel.container).first)
+        try click(panel, at: CGPoint(x: back.midX, y: back.midY))
+        await settle(panel)
+        XCTAssertFalse(state.showsSource)
+        XCTAssertEqual(MarkdownHoverMarker.rects(.picture, in: panel.container).count, 1, "and back to the picture")
+        XCTAssertEqual(opened, 1)
+
+        // A raster picture has no code: no switch, and a click views it.
+        let raster = hostedCard(png, text: "", state: imageState(try await picture(png), source: false), theme: MarkdownTheme(palette: .light, contrast: .standard))
+        await settle(raster)
+        XCTAssertTrue(MarkdownHoverMarker.rects(.control, in: raster.container).isEmpty, "no switch for a PNG")
+        XCTAssertEqual(MarkdownHoverMarker.rects(.picture, in: raster.container).count, 1)
+    }
+
+    func testThePictureIsDrawnOnTheCardInDarkAndLight() async throws {
+        let (png, svg) = try imageFixtures()
+        // GENESIS_HOVER_SHOTS=<folder> also saves each card as a PNG there, for a person to look at.
+        let shots = ProcessInfo.processInfo.environment["GENESIS_HOVER_SHOTS"].map { URL(fileURLWithPath: $0) }
+        let stamp: String = {
+            let format = DateFormatter()
+            format.dateFormat = "yyyy-MM-dd-HHmm"
+            return format.string(from: Date())
+        }()
+        func snapshot(_ panel: MarkdownHoverPanel, _ name: String) throws -> NSBitmapImageRep {
+            let view = panel.container
+            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: rep)
+            if let shots {
+                let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                try data.write(to: shots.appendingPathComponent("\(stamp)-markdown-hover-image-\(name).png"))
+            }
+            return rep
+        }
+        for theme in [MarkdownTheme(palette: .genesis, contrast: .standard), MarkdownTheme(palette: .light, contrast: .standard)] {
+            let shade = theme.isDark ? "dark" : "light"
+            for (name, url, blue) in [("svg", svg, true), ("png", png, false)] {
+                let state = imageState(try await picture(url), source: url == svg)
+                let panel = hostedCard(url, text: url == svg ? Self.svgFixture : "", state: state, theme: theme)
+                await settle(panel)
+                let rect = try XCTUnwrap(MarkdownHoverMarker.rects(.picture, in: panel.container).first)
+                let rep = try snapshot(panel, "\(name)-\(shade)")
+                let scale = CGFloat(rep.pixelsWide) / panel.container.bounds.width
+                let color = try XCTUnwrap(rep.colorAt(
+                    x: Int(rect.midX * scale), y: Int((panel.container.bounds.height - rect.midY) * scale))?.usingColorSpace(.sRGB))
+                if blue {
+                    XCTAssertTrue(color.blueComponent > 0.7 && color.redComponent < 0.4, "\(name) \(shade): the picture's blue, got \(color)")
+                } else {
+                    XCTAssertTrue(color.redComponent > 0.7 && color.greenComponent < 0.3, "\(name) \(shade): the picture's red, got \(color)")
+                }
+                if url == svg {
+                    state.toggleSource()
+                    await settle(panel)
+                    _ = try snapshot(panel, "svg-code-\(shade)")
+                }
+            }
+        }
     }
 
     // MARK: Contrast

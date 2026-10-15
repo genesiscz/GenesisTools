@@ -56,3 +56,20 @@ GenesisTools checkout.
   through the generic `runReport`.
 
 - The widget watcher (`hub widget watch`, another session's worktree): a full snapshot every 5 s (~15% CPU).
+
+## Markdown viewer (GenesisKit `Markdown/`, 2026-10-13 17:22)
+
+- Body probes (`RenderProbe.hit`) sit in the window, tab bar, tabs, document pane, toolbar, status bar, git sidebar,
+  file tree and its rows, outline, path bar, repository panel and the web view's `updateNSView`
+  (`md.*`, `git.*`, `tree.*`). They cost one Bool read while `GENESIS_RENDER_PROBE` is off.
+- Tab-switch bench: a hosted `MarkdownDocumentsView` with real notes (read only), file tree and git sidebar on;
+  per switch `RenderProbe.snapshot()`, `MainBusy.Meter`, `model.select(id)` plus `layoutSubtreeIfNeeded()` and
+  `displayIfNeeded()` for the synchronous part, then `RenderProbe.summary(since:)`. Watch the models with
+  `RenderProbe.watch`. Background windows miss focus and accessibility cost (see gotchas.md).
+- Testing the viewer never touches the user's windows: hosted never-ordered-front windows, `cacheDisplay` plus
+  `WKWebView.takeSnapshot`. Two apps run the viewer: GenesisTools (`--markdown`, relaunch with `open -g -n
+  ~/Applications/GenesisTools.app --args --markdown <file> --no-focus` after `bun run app`) and Genesis Markdown.app
+  (`GENESIS_KIT_PATH=<GenesisTools>/src/macos/GenesisKit bun scripts/install.ts` in GenesisPlayground; it relaunches
+  the viewer only if it was open).
+- Open (2026-10-13): warm spare web view and keep-until-rendered tab swap; the documents model's redundant publishes
+  on select; the repository panel's derived lists into a model.

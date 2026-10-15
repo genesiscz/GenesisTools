@@ -3,6 +3,37 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-13 18:18 — **Second pass on Martin's 15-item review, the transcript, the PRs view.**
+  - *"X new" scrolled down but not to the bottom.* The pill's own click counted as the reader's, so rows that
+    measured during the glide were not followed. The pill now chases the end for 2 s (eae978b26).
+  - *Split / Unified did nothing.* The page and Swift paths were correct; the controls were native segmented
+    `Picker`s. `GenSegmentedTabs` now (0f49adbed). A hosted page test first "reproduced" it falsely: a hidden page
+    gets no animation frames (see the swift skill's gotchas).
+  - *"This file is not in a git repository" flashed on open.* A tri-state lookup: pending shows nothing (5435005a9).
+  - *The rendered diff looked heavy and tables read as striped.* Strips in the bar column instead of backgrounds;
+    word marks stay (b24e9455d).
+  - *The repository panel lagged while scrolling.* An AppKit hover view per row from `instantTooltip` (75281f361),
+    after the lists moved off the main thread (7da16a1dd).
+  - *A tab switch showed a blank page.* `GenRenderSwap` keeps the old page until the new one rendered, in the viewer
+    and the hub's session switch (3c6033454, e2dbe79ca).
+  - *The PRs view showed "gt-clone: no gh/glab driver for /Users/…/GenesisTools".* A clone whose origin is a local
+    folder is not a hosted project: it is skipped quietly (1eb0848ad).
+
+- 2026-10-13 17:22 — **Markdown viewer, one day of review (GenesisKit `Markdown/`, PRs #499, #501).**
+  - *A note stuck at an empty preview.* The page sometimes missed a render. Every render now carries a tag the page
+    keeps; the host confirms it and sends again (0273fba64, ef6bde0ae).
+  - *Clicks on `[[ado/312798.analysis]]` did nothing.* The resolver read `.analysis` as a file extension and never
+    tried `.md`. Note names hold dots; try `<name>.md` whenever the literal path is no file (2bcecb1d2).
+  - *The git panel hung the window.* 3,416 rows, one button and tooltip each. Fold, page, lazy rows (ca5b6b5a6).
+  - *"This file / Repository" looked like two loose buttons.* A native segmented `Picker` in a window that is not key.
+    `GenSegmentedTabs` everywhere, not only in non-activating panels (ca5b6b5a6).
+  - *Change bars covered list numbers; changed table rows had none.* One column of bars in an overlay (21dfc1e44).
+  - *The window size was lost on every restart.* The autosave name was dropped by `NSWindowController.init`.
+  - *"This file is not in a git repository" flashed for a second* while the repository lookup ran: a pending lookup
+    and a negative answer were the same `nil`.
+  - *The page went blank on every tab switch:* a fresh web view per tab.
+  - *Tests wrote fixture folders and 5,000 entries into the user's notes vault* for a month (#500).
+
 - 2026-10-11 — **A fitted panel that grew or shrank with "Source and context" dropped frames (largest gaps 37–59
   ms), and the side panel cut off its own header while it shrank.** Two causes. The outline (a Core Animation
   mask) started at the click while the content (a SwiftUI animation) started a frame or two later, because the

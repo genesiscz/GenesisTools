@@ -88,5 +88,29 @@ final class GitHunksTests: XCTestCase {
             """)
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(bridge.clicks, [0])
+
+        // Every bar stands in one column left of the text: the list item's bar does not sit in the list's indent.
+        let column = try await web.evaluateJavaScript("""
+            (function(){var bars=Array.from(document.querySelectorAll('.gn-git-bar'));
+            var text=document.querySelector('#gn-article p').getBoundingClientRect().left;
+            return bars.map(function(b){return Math.round(b.getBoundingClientRect().left)+':'+(b.getBoundingClientRect().right<=text)}).join(',');})()
+            """) as? String
+        let bars = column?.split(separator: ",") ?? []
+        XCTAssertEqual(bars.count, 3, column ?? "nil")
+        XCTAssertEqual(Set(bars.map { $0.split(separator: ":")[0] }).count, 1, column ?? "nil")
+        XCTAssertTrue(bars.allSatisfy { $0.hasSuffix(":true") }, column ?? "nil")
+        // A click on a bar reports its change.
+        _ = try await web.evaluateJavaScript("document.querySelector('.gn-git-bar[data-k=\"added\"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(bridge.clicks, [0, 1])
+
+        // A changed table row gets a bar too (a row cannot hold a positioned ::before).
+        let table = "Intro.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"
+        _ = try await web.evaluateJavaScript("window.gnRender(\(MarkdownWebView.jsString(table)),[],false,null,{},false,3)")
+        _ = try await web.evaluateJavaScript("window.gnGitMarks([\(MarkdownWebView.GitMark(first: 4, last: 4, kind: .modified, index: 0).json)])")
+        let rowBar = try await web.evaluateJavaScript(
+            "(function(){var b=document.querySelector('.gn-git-bar');return b?Math.round(b.getBoundingClientRect().height):-1;})()"
+        ) as? Int
+        XCTAssertGreaterThan(rowBar ?? -1, 4)
     }
 }

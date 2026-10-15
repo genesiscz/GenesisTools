@@ -100,6 +100,7 @@ public actor MediaThumbnailCache {
     typealias Decoder = @Sendable (_ path: String, _ bucket: Int, _ kind: MediaKind) async -> MediaThumbnailResult
     private let decoder: Decoder
     static let tooLong = "The preview took too long to make."
+    static let unreadableSVG = "The SVG could not be read."
 
     public init(byteLimit: Int = 96 << 20, concurrency: Int = 3, deadline: Duration = .seconds(20)) {
         self.init(byteLimit: byteLimit, concurrency: concurrency, deadline: deadline) { path, bucket, kind in
@@ -388,11 +389,18 @@ public actor MediaThumbnailCache {
     static func decodeFile(path: String, bucket: Int, kind: MediaKind) async -> MediaThumbnailResult {
         switch kind {
         case .image:
-            if let image = decodeImage(path: path, bucket: bucket) { return .ready(image) }
-            // Quick Look reads a few formats ImageIO does not; its file-type icon is no picture of this one.
+            if isVector(path) {
+                // ImageIO reads no SVG. AppKit draws it here, in a few milliseconds (Quick Look takes ~160 ms).
+                if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe),
+                   let image = decodeSVG(data: data, bucket: bucket) { return .ready(image) }
+            } else if let image = decodeImage(path: path, bucket: bucket) {
+                return .ready(image)
+            }
+            // Quick Look reads a few formats ImageIO does not (and SVG that AppKit refuses, through WebKit); its
+            // file-type icon is no picture of this one.
             let fallback = await decodeDocument(path: path, bucket: bucket, kind: .image)
             if case .ready(let thumbnail) = fallback, thumbnail.isIcon {
-                return .failed("The image could not be read.")
+                return .failed(isVector(path) ? unreadableSVG : "The image could not be read.")
             }
             return fallback
         case .video: return await decodeVideo(path: path, bucket: bucket)
@@ -452,6 +460,34 @@ public actor MediaThumbnailCache {
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
         if sourceSize == .zero { sourceSize = CGSize(width: image.width, height: image.height) }
         return MediaThumbnail(image: image, kind: .image, sourceSize: sourceSize, duration: nil)
+    }
+
+    /// An SVG, by its extension: ImageIO reads none, AppKit does.
+    static func isVector(_ path: String) -> Bool {
+        (path as NSString).pathExtension.lowercased() == "svg"
+    }
+
+    /// An SVG drawn by AppKit's own renderer (CoreSVG, no web view, no script), at `bucket` pixels on
+    /// its long side: a vector has no pixel size to stop at, so it stops at `defaultCeiling`. Off the main thread, so
+    /// drawing it there only copies pixels. Its size in points is the picture's own size. nil when it cannot be read.
+    static func decodeSVG(data: Data, bucket: Int) -> MediaThumbnail? {
+        guard let image = NSImage(data: data), image.isValid else { return nil }
+        let size = image.size
+        guard size.width > 0, size.height > 0, size.width.isFinite, size.height.isFinite else { return nil }
+        let scale = CGFloat(min(bucket, defaultCeiling)) / max(size.width, size.height)
+        let width = max(1, Int((size.width * scale).rounded()))
+        let height = max(1, Int((size.height * scale).rounded()))
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        // The current graphics context belongs to this thread.
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        image.draw(in: CGRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.current = previous
+        guard let picture = context.makeImage() else { return nil }
+        return MediaThumbnail(image: picture, kind: .image, sourceSize: size, duration: nil)
     }
 
     private static func decodeVideo(path: String, bucket: Int) async -> MediaThumbnailResult {

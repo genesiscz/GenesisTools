@@ -109,16 +109,14 @@ public struct GitCommitView: View {
                                     .font(.system(size: 11.5, weight: picked == file.id ? .semibold : .regular))
                                     .lineLimit(1)
                                 Spacer(minLength: 4)
-                                Text(verbatim: "+\(file.additions) −\(file.deletions)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                                GitLineCounts(additions: file.additions, deletions: file.deletions, size: 10)
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(RowButtonStyle(cornerRadius: 5))
-                        .instantTooltip(file.path)
+                        .help(file.path)
                     }
                 }
                 .padding(6)

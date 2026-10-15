@@ -87,3 +87,14 @@ the bare `ai usage sessions --json --fresh` (all 2,404 transcripts) was not, and
 State: the metric (CPU ms), the statistic (median of N), the order, the load average, the input size, the check,
 both values, and the commit. Example: "cold row build 1,180 → 423 ms of CPU, median of 9 fresh processes per arm,
 BAABBA blocks of 4, load 37, 630 rows in both arms, 747458e06 → 2082e48f9." Then the cause in one sentence.
+
+## 8. Shell traps that make a run measure nothing (2026-10-13 17:22)
+
+- **zsh does not split an unquoted variable.** `T="a.test.ts b.test.ts"; bun run test $T` hands the wrapper one
+  filter, bun answers "The following filters did not match any test files", and the run "fails" or, worse, passes
+  with nothing run. Pass paths as separate words (an array, or the paths themselves). Read the test count, never
+  only the exit code.
+- **A pipe hides the usage text of a wrong command.** `git status --no-optional-locks | wc -l` counted the 25 lines
+  of git's usage message. Look at the output once before you count it.
+- **Count the real input.** A vault "with 25 changes" (`git status`, folded) was 3,416 entries with `-uall`, which
+  is what the code under test reads.

@@ -166,6 +166,7 @@ public struct SessionTranscriptList: View {
     @State private var promptCursor: Int?
     @State private var scrollTarget: ScrollRequest?
     @State private var didInitialScroll = false
+    @Environment(\.genRenderReady) private var renderReady
     /// Whether the reader is at the latest row; a live transcript follows new rows only then, never
     /// pulling a reader who scrolled up. Only a following chat (`followsLatest`) reads it, from scroll
     /// geometry, because a reply that grows pushes the end marker off screen while the reader is still at
@@ -699,6 +700,11 @@ public struct SessionTranscriptList: View {
                     }
                     .padding(14)
                 }
+            }
+            // In a `GenRenderSwap` (the hub's session switch): on screen once the first layout has placed the rows.
+            .onChange(of: didInitialScroll) { _, done in
+                guard done, let renderReady else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { renderReady() }
             }
             .onChange(of: anchor.atEnd) { _, atEnd in
                 if atEnd {

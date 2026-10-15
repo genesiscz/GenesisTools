@@ -2425,13 +2425,16 @@ struct SessionDetailView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                HubTranscriptPane(session: session, onShowChange: { path, line in
-                    model.showChange(path: path, line: line)
-                }, onOpenSubagent: { agent in
-                    model.openSubagent(sessionId: session.sessionId, agentId: agent.id)
-                }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
-                    .equatable()
-                    .id(session.id)
+                // The previous session's transcript stays until the new one has laid out its rows (GenRenderSwap).
+                GenRenderSwap(value: session, id: \.id) { shown, ready in
+                    HubTranscriptPane(session: shown, onShowChange: { path, line in
+                        model.showChange(path: path, line: line)
+                    }, onOpenSubagent: { agent in
+                        model.openSubagent(sessionId: shown.sessionId, agentId: agent.id)
+                    }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
+                        .equatable()
+                        .environment(\.genRenderReady, ready)
+                }
             }
         case .changes:
             HubChangesPane(model: model)

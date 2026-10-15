@@ -39,6 +39,7 @@ struct MarkdownStatusBar: View {
     @StateObject private var git = GitFileStateModel()
 
     var body: some View {
+        let _ = RenderProbe.hit("md.statusBar")
         let stats = doc.stats
         HStack(spacing: 10) {
             Text(stats.summary)

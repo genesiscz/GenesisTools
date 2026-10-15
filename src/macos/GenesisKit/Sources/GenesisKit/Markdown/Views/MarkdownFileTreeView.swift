@@ -79,6 +79,7 @@ struct MarkdownFileTreeView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("md.fileTree")
         let root = model.filesRootURL
         VStack(alignment: .leading, spacing: 0) {
             header(root)
@@ -161,7 +162,8 @@ struct MarkdownFileTreeView: View {
                 FileTreeRowView(
                     row: row, selected: row.id == selected, icon: FileTreeView.defaultIcon(row), style: style,
                     model: tree, actions: actions, pulse: pulse?.id == row.id ? pulse : nil,
-                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false
+                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
+                    lines: git?.count(for: row.id)
                 )
                 .equatable()
                 .markdownHoverPreview(row.isFolder ? nil : row.url, model: model)

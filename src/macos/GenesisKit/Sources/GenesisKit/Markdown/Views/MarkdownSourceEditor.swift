@@ -5,7 +5,8 @@
 //  The source view of the markdown window. SwiftUI's TextEditor gives no
 //  say over Tab, so this is an NSTextView: Tab / Shift+Tab indent and
 //  outdent the selected lines (SourceEditing), Enter continues a list item,
-//  and every edit stays on the undo stack.
+//  and every edit stays on the undo stack. The markdown is coloured as it is
+//  edited (MarkdownSourceHighlighter, the text storage's delegate).
 //
 
 import AppKit
@@ -189,6 +190,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     var font: NSFont
     var textColor: NSColor
     var background: NSColor
+    /// The palette of the markdown colours. nil: the palette whose page colour `background` is.
+    var theme: MarkdownTheme? = nil
     /// Where this document was left, applied once when the editor appears.
     var restoreScroll: Double? = nil
     /// Reports the editor's scroll position as it changes.
@@ -260,7 +263,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         scroll.drawsBackground = true
         context.coordinator.view = view
         context.coordinator.watchScroll(scroll)
-        apply(to: view, scroll: scroll)
+        if let storage = view.textStorage { context.coordinator.highlighter.attach(to: storage) }
+        apply(to: view, scroll: scroll, highlighter: context.coordinator.highlighter)
         view.string = text
         if let top = restoreScroll, top > 0 {
             // The text needs a layout pass before it can be scrolled.
@@ -276,7 +280,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NSTextView else { return }
         context.coordinator.parent = self
-        apply(to: view, scroll: scroll)
+        apply(to: view, scroll: scroll, highlighter: context.coordinator.highlighter)
         if let source = view as? SourceTextView, source.gitHunks != gitHunks {
             source.gitHunks = gitHunks
         }
@@ -318,12 +322,29 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     /// Assign only what actually changed. Every one of these setters marks the
     /// text view for redisplay, and `updateNSView` runs on each invalidation of
     /// the pane that owns the editor — which in split view is every scroll tick.
-    private func apply(to view: NSTextView, scroll: NSScrollView) {
-        if view.font != font { view.font = font }
-        if view.textColor != textColor { view.textColor = textColor }
+    /// The font and the text colour are compared with what the highlighter was
+    /// given, never read back from the view: the view answers with the first
+    /// character's attributes, which a heading on line 1 makes bold and coloured.
+    private func apply(to view: NSTextView, scroll: NSScrollView, highlighter: MarkdownSourceHighlighter) {
+        let look = MarkdownSourceHighlighter.Look(font: font, textColor: textColor, theme: resolvedTheme)
+        if highlighter.look != look {
+            // A plain text view sets these on every character; they seed what is typed into an empty editor, and
+            // the highlighter then colours every line again.
+            view.font = font
+            view.textColor = textColor
+            highlighter.setLook(look)
+        }
         if view.insertionPointColor != textColor { view.insertionPointColor = textColor }
         if view.backgroundColor != background { view.backgroundColor = background }
         if scroll.backgroundColor != background { scroll.backgroundColor = background }
+    }
+
+    /// `theme`, else the palette whose page `background` is, else Genesis on a dark background and Light on a light one.
+    private var resolvedTheme: MarkdownTheme {
+        if let theme { return theme }
+        if let palette = MarkdownTheme.palette(forPage: background) { return MarkdownTheme(palette: palette) }
+        let brightness = background.usingColorSpace(.sRGB)?.brightnessComponent ?? 0
+        return brightness > 0.5 ? .light : .genesis
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -331,6 +352,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MarkdownSourceEditor
         weak var view: NSTextView?
+        /// Colours the markdown; the text storage's delegate, which holds it weakly.
+        let highlighter = MarkdownSourceHighlighter()
         /// Our own stack, so undo does not depend on the window's manager.
         let undo = UndoManager()
         var lastSelection: MarkdownSourceSelection?

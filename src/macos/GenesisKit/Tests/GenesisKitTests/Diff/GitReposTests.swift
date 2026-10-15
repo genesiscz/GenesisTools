@@ -31,7 +31,7 @@ final class GitReposTests: XCTestCase {
         try git(["commit", "-q", "-m", "First"], in: repo)
         try "one\ntwo\n".write(to: note, atomically: true, encoding: .utf8)
 
-        XCTAssertNil(GitRepos.shared.model(for: repo), "the first ask only starts the lookup")
+        guard case .pending = GitRepos.shared.lookup(for: repo) else { return XCTFail("the first ask only starts the lookup") }
         await wait("the repository") { GitRepos.shared.model(for: repo) != nil }
         let model = try XCTUnwrap(GitRepos.shared.model(for: repo))
         await wait("the status") { model.status?.entry(for: note)?.unstaged == .modified }
@@ -108,13 +108,55 @@ final class GitReposTests: XCTestCase {
         XCTAssertEqual(tree.decorations, .none)
     }
 
+    func testTheRevealButtonFindsTheOpenFileInItsListFolderAndPage() {
+        func entry(_ path: String, untracked: Bool = false) -> GitStatusEntry {
+            GitStatusEntry(path: path, oldPath: nil, staged: nil, unstaged: untracked ? .untracked : .modified)
+        }
+        var lists = GitRepoPanelLists.Lists()
+        lists.changed = [entry("a.md"), entry("notes/b.md")]
+        lists.groups = [GitUntrackedGroup(folder: "drafts", files: (0..<150).map { entry("drafts/\($0).md", untracked: true) })]
+        let changed = GitRepoPanel.revealTarget(path: "notes/b.md", in: lists)
+        XCTAssertEqual(changed?.key, "changes")
+        XCTAssertNil(changed?.folder)
+        XCTAssertEqual(changed?.index, 1)
+        // Folded and past the first page of 100: the folder opens and the page grows.
+        let folded = GitRepoPanel.revealTarget(path: "drafts/120.md", in: lists)
+        XCTAssertEqual(folded?.key, "folder:drafts")
+        XCTAssertEqual(folded?.folder, "drafts")
+        XCTAssertEqual(folded?.index, 120)
+        XCTAssertNil(GitRepoPanel.revealTarget(path: "clean.md", in: lists), "a file with no change has no row")
+    }
+
+    func testTheTreeCountsSumEachFilesLinesIntoItsFolders() {
+        let output = "3\t1\tnotes/a.md\u{0}2\t0\tnotes/deep/b.md\u{0}-\t-\tpic.png\u{0}4\t4\t\u{0}old.md\u{0}notes/moved.md\u{0}"
+        let numstat = GitQueries.parseNumstatAll(output)
+        XCTAssertEqual(numstat["notes/a.md"], GitLineCount(additions: 3, deletions: 1))
+        XCTAssertEqual(numstat["pic.png"], GitLineCount(additions: 0, deletions: 0), "a binary file counts no lines")
+        XCTAssertEqual(numstat["notes/moved.md"], GitLineCount(additions: 4, deletions: 4), "a rename is keyed by its new path")
+        XCTAssertNil(numstat["old.md"])
+
+        let root = URL(fileURLWithPath: "/tmp/gk-counts-repo")
+        let status = GitRepoStatus(root: root, branch: "main", upstream: nil, ahead: 0, behind: 0, entries: [
+            GitStatusEntry(path: "notes/a.md", unstaged: .modified),
+            GitStatusEntry(path: "notes/deep/b.md", unstaged: .modified),
+            GitStatusEntry(path: "notes/new.md", unstaged: .untracked),
+        ])
+        let marks = status.decorations(under: root, numstat: numstat)
+        XCTAssertEqual(marks.count(for: "/tmp/gk-counts-repo/notes/a.md"), GitLineCount(additions: 3, deletions: 1))
+        XCTAssertEqual(marks.count(for: "/tmp/gk-counts-repo/notes/deep"), GitLineCount(additions: 2, deletions: 0))
+        XCTAssertEqual(marks.count(for: "/tmp/gk-counts-repo/notes"), GitLineCount(additions: 5, deletions: 1))
+        XCTAssertNil(marks.count(for: "/tmp/gk-counts-repo/notes/new.md"), "an untracked file has no numstat")
+    }
+
     func testAFolderOutsideARepositoryHasNoModel() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("norepo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let before = GitRepos.shared.revision
-        XCTAssertNil(GitRepos.shared.model(for: folder))
+        // Pending first, never "none": a view shows "not in a git repository" only for a known answer.
+        guard case .pending = GitRepos.shared.lookup(for: folder) else { return XCTFail("the first ask is pending") }
         await wait("the lookup") { GitRepos.shared.revision > before }
         XCTAssertNil(GitRepos.shared.model(for: folder))
+        guard case .none = GitRepos.shared.lookup(for: folder) else { return XCTFail("the answer is none") }
     }
 }

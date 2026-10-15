@@ -44,12 +44,18 @@ public enum GitChangeList {
     /// Untracked files folded the way `git status` folds them: under the shallowest folder that holds no tracked
     /// change. A folder that would hold a single file shows that file instead.
     public static func foldUntracked(_ entries: [GitStatusEntry]) -> (files: [GitStatusEntry], groups: [GitUntrackedGroup]) {
+        // Native slicing, not NSString path helpers: their NSPathStore2 strings hash and compare through Unicode
+        // normalization one character at a time, which dominated this fold on a vault of non-ASCII paths.
+        func parent(_ path: Substring) -> Substring? {
+            guard let slash = path.lastIndex(of: "/") else { return nil }
+            return path[..<slash]
+        }
         var changedFolders = Set<String>()
         for entry in entries where entry.unstaged != .untracked {
             for path in [entry.path, entry.oldPath].compactMap({ $0 }) {
-                var folder = (path as NSString).deletingLastPathComponent
-                while !folder.isEmpty, changedFolders.insert(folder).inserted {
-                    folder = (folder as NSString).deletingLastPathComponent
+                var folder = parent(Substring(path))
+                while let current = folder, !current.isEmpty, changedFolders.insert(String(current)).inserted {
+                    folder = parent(current)
                 }
             }
         }
@@ -107,13 +113,15 @@ public enum GitChangeList {
     }
 
     public static func sorted(_ groups: [GitUntrackedGroup], by order: GitChangeOrder, dates: [String: Date]) -> [GitUntrackedGroup] {
-        func newest(_ group: GitUntrackedGroup) -> Date {
-            group.files.compactMap { dates[$0.path] }.max() ?? .distantPast
+        // Once per group, not per comparison: one folder can hold thousands of files.
+        var newest: [String: Date] = [:]
+        if order == .lastUpdate {
+            for group in groups { newest[group.folder] = group.files.compactMap { dates[$0.path] }.max() ?? .distantPast }
         }
         return groups.sorted { lhs, rhs in
             switch order {
             case .lastUpdate:
-                let left = newest(lhs), right = newest(rhs)
+                let left = newest[lhs.folder] ?? .distantPast, right = newest[rhs.folder] ?? .distantPast
                 if left != right { return left > right }
             case .name:
                 let result = (lhs.folder as NSString).lastPathComponent.localizedStandardCompare((rhs.folder as NSString).lastPathComponent)
@@ -144,6 +152,8 @@ public enum GitChangeList {
 @MainActor
 final class GitChangeDates: ObservableObject {
     @Published private(set) var dates: [String: Date] = [:]
+    /// Bumped with every new set of dates, so the panel's derived lists know to sort again.
+    private(set) var version = 0
     private var loadedRoot: String?
     private var loadedGeneration = -1
 
@@ -164,7 +174,76 @@ final class GitChangeDates: ObservableObject {
 
     private func apply(_ result: [String: Date], generation: Int) {
         guard generation == loadedGeneration else { return }
+        version += 1
         dates = result
+    }
+}
+
+/// The panel's lists, derived off the main thread once per change of their inputs (status, file dates, order, filter,
+/// the untracked switch). Derived in the body, the fold and the sorts over a vault's thousands of entries ran on every
+/// render, five times per tab switch (the parent re-renders the panel with new closures).
+@MainActor
+final class GitRepoPanelLists: ObservableObject {
+    struct Lists: Sendable {
+        var staged: [GitStatusEntry] = []
+        var changed: [GitStatusEntry] = []
+        var loose: [GitStatusEntry] = []
+        /// Untracked folders, their files sorted.
+        var groups: [GitUntrackedGroup] = []
+        var newest: [String: Date] = [:]
+        var untrackedTotal = 0
+    }
+
+    struct Inputs: Equatable, Sendable {
+        var generation: Int
+        var datesVersion: Int
+        var order: GitChangeOrder
+        var filter: String
+        var untracked: Bool
+    }
+
+    @Published private(set) var lists = Lists()
+    private var inputs: Inputs?
+    private var ticket = 0
+
+    func update(_ inputs: Inputs, entries: [GitStatusEntry], dates: [String: Date]) {
+        guard inputs != self.inputs else { return }
+        self.inputs = inputs
+        ticket += 1
+        let ticket = ticket
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let lists = Self.derive(entries, dates: dates, inputs: inputs)
+            await self?.apply(lists, ticket: ticket)
+        }
+    }
+
+    private func apply(_ lists: Lists, ticket: Int) {
+        guard ticket == self.ticket else { return }
+        self.lists = lists
+    }
+
+    nonisolated static func derive(_ entries: [GitStatusEntry], dates: [String: Date], inputs: Inputs) -> Lists {
+        let filter = inputs.filter
+        var lists = Lists()
+        lists.staged = GitChangeList.sorted(
+            entries.filter { $0.staged != nil && GitChangeList.matches($0, filter) }, by: inputs.order, dates: dates, staged: true
+        )
+        lists.changed = GitChangeList.sorted(
+            entries.filter { $0.unstaged != nil && $0.unstaged != .untracked && GitChangeList.matches($0, filter) },
+            by: inputs.order, dates: dates, staged: false
+        )
+        guard inputs.untracked else { return lists }
+        let fold = GitChangeList.foldUntracked(entries)
+        lists.loose = GitChangeList.sorted(fold.files.filter { GitChangeList.matches($0, filter) }, by: inputs.order, dates: dates, staged: false)
+        let groups = fold.groups.compactMap { group -> GitUntrackedGroup? in
+            let files = group.files.filter { GitChangeList.matches($0, filter) }
+            guard !files.isEmpty else { return nil }
+            return GitUntrackedGroup(folder: group.folder, files: GitChangeList.sorted(files, by: inputs.order, dates: dates, staged: false))
+        }
+        lists.groups = GitChangeList.sorted(groups, by: inputs.order, dates: dates)
+        for group in lists.groups { lists.newest[group.folder] = group.files.compactMap { dates[$0.path] }.max() }
+        lists.untrackedTotal = lists.loose.count + lists.groups.reduce(0) { $0 + $1.files.count }
+        return lists
     }
 }
 
@@ -176,42 +255,54 @@ public struct GitRepoPanel: View {
     var onOpenCommit: (GitCommit) -> Void
 
     @StateObject private var dates = GitChangeDates()
+    @StateObject private var derived = GitRepoPanelLists()
     @AppStorage("genesiskit.gitRepoPanel.order") private var orderRaw = GitChangeOrder.lastUpdate.rawValue
     @AppStorage("genesiskit.gitRepoPanel.untracked") private var showUntracked = true
     @State private var filter = ""
     @State private var openFolders: Set<String> = []
     @State private var shown: [String: Int] = [:]
+    /// The row "Show the open file" picked, lit for a moment.
+    @State private var flash: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The open file, relative to the repository's root: the reveal button scrolls to its row.
+    var revealPath: String?
 
     /// Rows a list shows before "Show more".
     static let page = 100
 
-    public init(repo: GitRepoModel, log: GitHistoryModel, onOpenFile: @escaping (GitStatusEntry, Bool) -> Void,
-                onOpenCommit: @escaping (GitCommit) -> Void) {
+    public init(repo: GitRepoModel, log: GitHistoryModel, revealPath: String? = nil,
+                onOpenFile: @escaping (GitStatusEntry, Bool) -> Void, onOpenCommit: @escaping (GitCommit) -> Void) {
         self.repo = repo
         self.log = log
+        self.revealPath = revealPath
         self.onOpenFile = onOpenFile
         self.onOpenCommit = onOpenCommit
     }
 
     private var order: GitChangeOrder { GitChangeOrder(rawValue: orderRaw) ?? .lastUpdate }
 
+    private var inputs: GitRepoPanelLists.Inputs {
+        GitRepoPanelLists.Inputs(generation: repo.generation, datesVersion: dates.version, order: order, filter: filter, untracked: showUntracked)
+    }
+
     public var body: some View {
+        let _ = RenderProbe.hit("git.repoPanel")
+        ScrollViewReader { proxy in
+            panel(proxy)
+        }
+    }
+
+    private func panel(_ proxy: ScrollViewProxy) -> some View {
         LazyVStack(alignment: .leading, spacing: 1) {
             if let status = repo.status {
                 branch(status)
-                controls
+                controls(proxy)
                     .padding(.vertical, 6)
-                let staged = GitChangeList.sorted(
-                    status.staged.filter { GitChangeList.matches($0, filter) }, by: order, dates: dates.dates, staged: true
-                )
-                let changed = GitChangeList.sorted(
-                    status.unstaged.filter { $0.unstaged != .untracked && GitChangeList.matches($0, filter) },
-                    by: order, dates: dates.dates, staged: false
-                )
-                list("Staged", staged, key: "staged", staged: true)
-                list("Changes", changed, key: "changes", staged: false)
+                let lists = derived.lists
+                list("Staged", lists.staged, key: "staged", staged: true)
+                list("Changes", lists.changed, key: "changes", staged: false)
                 if showUntracked {
-                    untracked(status)
+                    untracked(lists)
                 }
                 if status.entries.isEmpty {
                     Text("No uncommitted changes.")
@@ -228,6 +319,9 @@ public struct GitRepoPanel: View {
         }
         .task(id: repo.generation) {
             dates.load(root: repo.root, entries: repo.status?.entries ?? [], generation: repo.generation)
+        }
+        .task(id: inputs) {
+            derived.update(inputs, entries: repo.status?.entries ?? [], dates: dates.dates)
         }
     }
 
@@ -247,7 +341,7 @@ public struct GitRepoPanel: View {
     }
 
     /// The sort button (a click takes the next order, a right-click lists them all), the filter, the untracked switch.
-    private var controls: some View {
+    private func controls(_ proxy: ScrollViewProxy) -> some View {
         HStack(spacing: 6) {
             Button {
                 orderRaw = order.next.rawValue
@@ -278,12 +372,60 @@ public struct GitRepoPanel: View {
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .font(.system(size: 11))
+            let listed = revealTarget(in: derived.lists) != nil
+            IconButton(systemName: "scope", tooltip: listed ? "Show the open file in the list" : "The open file has no changes here", size: 11) {
+                reveal(proxy)
+            }
+            .disabled(!listed)
+            .accessibilityIdentifier("git-repo-reveal")
             IconButton(
                 systemName: showUntracked ? "questionmark.folder.fill" : "questionmark.folder",
                 tooltip: showUntracked ? "Hide untracked files" : "Show untracked files",
                 size: 11,
                 tint: showUntracked ? .accentColor : nil
             ) { showUntracked.toggle() }
+        }
+    }
+
+    /// Where the open file's row is: its list's key, the folder it is folded in, and its place in that list.
+    private func revealTarget(in lists: GitRepoPanelLists.Lists) -> (key: String, folder: String?, index: Int)? {
+        revealPath.flatMap { Self.revealTarget(path: $0, in: lists) }
+    }
+
+    static func revealTarget(path: String, in lists: GitRepoPanelLists.Lists) -> (key: String, folder: String?, index: Int)? {
+        for (key, entries) in [("changes", lists.changed), ("staged", lists.staged), ("untracked", lists.loose)] {
+            if let index = entries.firstIndex(where: { $0.path == path }) {
+                return (key, nil, index)
+            }
+        }
+        for group in lists.groups {
+            if let index = group.files.firstIndex(where: { $0.path == path }) {
+                return ("folder:" + group.folder, group.folder, index)
+            }
+        }
+        return nil
+    }
+
+    /// Opens the open file's folder and page when needed, scrolls its row to the middle and lights it for a moment.
+    private func reveal(_ proxy: ScrollViewProxy) {
+        guard let path = revealPath, let target = revealTarget(in: derived.lists) else { return }
+        if let folder = target.folder {
+            openFolders.insert(folder)
+        }
+        if target.index >= shown[target.key] ?? Self.page {
+            shown[target.key] = (target.index / Self.page + 1) * Self.page
+        }
+        let id = target.key + ":" + path
+        // On the next turn: a folder just opened or a page just grown has no row to scroll to yet.
+        DispatchQueue.main.async {
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+            flash = id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                guard flash == id else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.4)) { flash = nil }
+            }
         }
     }
 
@@ -295,51 +437,39 @@ public struct GitRepoPanel: View {
                 .padding(.top, 6)
             let limit = shown[key] ?? Self.page
             ForEach(entries.prefix(limit)) { entry in
-                row(entry, staged: staged, indent: 0)
+                row(entry, staged: staged, indent: 0, id: key + ":" + entry.path)
             }
             more(key: key, total: entries.count, limit: limit, indent: 0)
         }
     }
 
     @ViewBuilder
-    private func untracked(_ status: GitRepoStatus) -> some View {
-        let fold = GitChangeList.foldUntracked(status.entries)
-        let files = GitChangeList.sorted(fold.files.filter { GitChangeList.matches($0, filter) }, by: order, dates: dates.dates, staged: false)
-        let groups = GitChangeList.sorted(
-            fold.groups.compactMap { group -> GitUntrackedGroup? in
-                let files = group.files.filter { GitChangeList.matches($0, filter) }
-                return files.isEmpty ? nil : GitUntrackedGroup(folder: group.folder, files: files)
-            },
-            by: order,
-            dates: dates.dates
-        )
-        let total = files.count + groups.reduce(0) { $0 + $1.files.count }
-        if total > 0 {
-            Text(verbatim: "Untracked · \(total)")
+    private func untracked(_ lists: GitRepoPanelLists.Lists) -> some View {
+        if lists.untrackedTotal > 0 {
+            Text(verbatim: "Untracked · \(lists.untrackedTotal)")
                 .kicker()
                 .padding(.top, 6)
-            ForEach(groups) { group in
-                folderRow(group)
+            ForEach(lists.groups) { group in
+                folderRow(group, newest: lists.newest[group.folder])
                 if openFolders.contains(group.folder) || !filter.isEmpty {
                     let key = "folder:" + group.folder
                     let limit = shown[key] ?? Self.page
-                    ForEach(GitChangeList.sorted(group.files, by: order, dates: dates.dates, staged: false).prefix(limit)) { entry in
-                        row(entry, staged: false, indent: 16)
+                    ForEach(group.files.prefix(limit)) { entry in
+                        row(entry, staged: false, indent: 16, id: key + ":" + entry.path)
                     }
                     more(key: key, total: group.files.count, limit: limit, indent: 16)
                 }
             }
             let limit = shown["untracked"] ?? Self.page
-            ForEach(files.prefix(limit)) { entry in
-                row(entry, staged: false, indent: 0)
+            ForEach(lists.loose.prefix(limit)) { entry in
+                row(entry, staged: false, indent: 0, id: "untracked:" + entry.path)
             }
-            more(key: "untracked", total: files.count, limit: limit, indent: 0)
+            more(key: "untracked", total: lists.loose.count, limit: limit, indent: 0)
         }
     }
 
-    private func folderRow(_ group: GitUntrackedGroup) -> some View {
+    private func folderRow(_ group: GitUntrackedGroup, newest: Date?) -> some View {
         let open = openFolders.contains(group.folder) || !filter.isEmpty
-        let newest = group.files.compactMap { dates.dates[$0.path] }.max()
         return Button {
             if openFolders.contains(group.folder) {
                 openFolders.remove(group.folder)
@@ -377,10 +507,12 @@ public struct GitRepoPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 5))
-        .instantTooltip(group.folder + "/")
+        // The system tooltip, not `instantTooltip`: that one puts an AppKit hover view on every row, and scrolling the
+        // list made and dropped one per row (Martin, 2026-10-13: the panel lagged while scrolling).
+        .help(group.folder + "/")
     }
 
-    private func row(_ entry: GitStatusEntry, staged: Bool, indent: CGFloat) -> some View {
+    private func row(_ entry: GitStatusEntry, staged: Bool, indent: CGFloat, id: String) -> some View {
         Button {
             onOpenFile(entry, staged)
         } label: {
@@ -407,7 +539,9 @@ public struct GitRepoPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 5))
-        .instantTooltip(entry.path)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(flash == id ? 0.3 : 0)))
+        .help(entry.path)
+        .id(id)
     }
 
     private func age(_ date: Date) -> some View {

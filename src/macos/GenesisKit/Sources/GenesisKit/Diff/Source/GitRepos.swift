@@ -22,14 +22,34 @@ public final class GitRepos: ObservableObject {
     private var roots: [String: String] = [:]
     private var looking = Set<String>()
 
+    /// What is known about the repository holding a folder. A view shows "not in a git repository" only for
+    /// `.none`: while the lookup runs the answer is not known, and showing the negative one flashed it on every
+    /// open (Martin, 2026-10-13).
+    public enum Lookup {
+        case pending
+        case none
+        case repo(GitRepoModel)
+
+        public var model: GitRepoModel? {
+            if case .repo(let model) = self { return model }
+            return nil
+        }
+    }
+
     /// The repository holding `folder`. nil while it is looked up (the answer bumps `revision`) and for a folder
-    /// outside any repository.
+    /// outside any repository; `lookup(for:)` tells the two apart.
     public func model(for folder: URL) -> GitRepoModel? {
+        lookup(for: folder).model
+    }
+
+    /// The repository holding `folder`, a folder outside any repository, or a lookup still running (it starts one).
+    public func lookup(for folder: URL) -> Lookup {
         let key = folder.standardizedFileURL.path
         if let root = roots[key] {
-            return root.isEmpty ? nil : models[root]
+            guard !root.isEmpty, let model = models[root] else { return .none }
+            return .repo(model)
         }
-        guard looking.insert(key).inserted else { return nil }
+        guard looking.insert(key).inserted else { return .pending }
         let provider = GenesisKitGT.provider
         DispatchQueue.global(qos: .utility).async {
             let root = GitQueries(provider: provider).root(of: folder)
@@ -48,7 +68,7 @@ public final class GitRepos: ObservableObject {
                 self.revision += 1
             }
         }
-        return nil
+        return .pending
     }
 
     /// The repository of a file that was just saved, refreshed now rather than on its next git event.
@@ -235,9 +255,26 @@ public final class GitTreeDecorationsModel: ObservableObject {
         follower.follow(folder: root)
     }
 
+    private var counts: [String: GitLineCount] = [:]
+    private var ticket = 0
+
+    /// The marks at once (with the last counts), then the line counts from one `git diff --numstat` off the main thread.
     private func update() {
-        guard let root, let status = GitRepos.shared.model(for: root)?.status else { return }
-        let fresh = status.decorations(under: root)
-        if fresh != decorations { decorations = fresh }
+        guard let root, let repo = GitRepos.shared.model(for: root), let status = repo.status else { return }
+        let marked = status.decorations(under: root, numstat: counts)
+        if marked != decorations { decorations = marked }
+        ticket += 1
+        let ticket = ticket
+        let provider = GenesisKitGT.provider
+        let repoRoot = repo.root
+        DispatchQueue.global(qos: .utility).async {
+            let counts = GitQueries(provider: provider).numstat(in: repoRoot)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.ticket == ticket, self.root == root else { return }
+                self.counts = counts
+                let fresh = status.decorations(under: root, numstat: counts)
+                if fresh != self.decorations { self.decorations = fresh }
+            }
+        }
     }
 }

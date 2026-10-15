@@ -132,9 +132,14 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertEqual(olds, ["pair:The quick brown fox.", "gone:Gone paragraph."])
         let words = try await strings("Array.from(document.querySelectorAll('mark.gn-ins,mark.gn-del')).map(function(e){return e.className+':'+e.textContent})")
         XCTAssertEqual(words, ["gn-del:brown", "gn-del:fox.", "gn-ins:red", "gn-ins:fox", "gn-ins:jumps."])
+        // Strips in the bar column, one per change; a changed block itself carries no background.
+        let strips = try await strings("Array.from(document.querySelectorAll('.gn-git-bar')).map(function(e){return e.getAttribute('data-k')})")
+        XCTAssertEqual(strips.sorted(), ["added", "modified", "removed", "removed"])
+        let background = try await web.evaluateJavaScript("getComputedStyle(document.querySelector('.gn-diff-mod')).backgroundColor") as? String
+        XCTAssertEqual(background, "rgba(0, 0, 0, 0)")
         // A second diff replaces the first instead of stacking on it.
         _ = try await web.evaluateJavaScript("window.gnDiff([])")
-        let left = try await web.evaluateJavaScript("document.querySelectorAll('.gn-diff-old,.gn-diff-mod,.gn-diff-add,mark.gn-ins').length") as? Int
+        let left = try await web.evaluateJavaScript("document.querySelectorAll('.gn-diff-old,.gn-diff-mod,.gn-diff-add,mark.gn-ins,.gn-git-bar').length") as? Int
         XCTAssertEqual(left, 0)
     }
 }

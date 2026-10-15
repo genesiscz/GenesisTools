@@ -35,6 +35,18 @@ final class MarkdownRecentsTests: XCTestCase {
         UserDefaults.standard.removePersistentDomain(forName: suite)
     }
 
+    func testTheGitSidebarWidthIsKeptAndClamped() throws {
+        let suite = "gitwidth.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let model = MarkdownDocumentsModel(defaults: defaults)
+        XCTAssertEqual(model.gitWidth, MarkdownSidebarWidth.gitStandard)
+        model.gitWidth = 420
+        XCTAssertEqual(MarkdownDocumentsModel(defaults: defaults).gitWidth, 420)
+        defaults.set(9999.0, forKey: "markdownWindow.gitWidth")
+        XCTAssertEqual(MarkdownDocumentsModel(defaults: defaults).gitWidth, MarkdownSidebarWidth.maximum)
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
+
     func testTheListKeepsAtMostFortyAndAReopenMovesToTheTop() {
         var recents = MarkdownRecents()
         for index in 0 ..< 45 { recents.opened(URL(fileURLWithPath: "/notes/\(index).md")) }

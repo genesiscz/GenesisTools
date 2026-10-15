@@ -138,6 +138,32 @@ struct GitQueries {
         return status
     }
 
+    /// Every tracked file's lines against HEAD, repo-relative; empty for a repository without commits.
+    func numstat(in root: URL) -> [String: GitLineCount] {
+        guard let output = try? run(["--no-optional-locks", "diff", "--numstat", "-z", "HEAD"], in: root) else { return [:] }
+        return Self.parseNumstatAll(output)
+    }
+
+    /// `git diff --numstat -z`: `add\tdel\tpath\0`, a rename `add\tdel\t\0old\0new\0` (keyed by the new path).
+    /// Binary files report `-`, counted as 0.
+    static func parseNumstatAll(_ output: String) -> [String: GitLineCount] {
+        var counts: [String: GitLineCount] = [:]
+        var fields = output.split(separator: "\0", omittingEmptySubsequences: false)[...]
+        while let record = fields.popFirst() {
+            let parts = record.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count == 3 else { continue }
+            let lines = GitLineCount(additions: Int(parts[0]) ?? 0, deletions: Int(parts[1]) ?? 0)
+            if parts[2].isEmpty {
+                _ = fields.popFirst()
+                guard let new = fields.popFirst(), !new.isEmpty else { continue }
+                counts[String(new)] = lines
+            } else {
+                counts[String(parts[2])] = lines
+            }
+        }
+        return counts
+    }
+
     /// `git diff --numstat` for one path: `add\tdel\tpath`. Binary files report `-`.
     static func parseNumstat(_ output: String) -> (additions: Int, deletions: Int)? {
         guard let line = output.split(separator: "\n").first else { return nil }

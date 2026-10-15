@@ -2474,9 +2474,12 @@ private struct ScopeLink: View {
     }
 }
 
-/// Codex's review source menu: what the diff compares.
+/// Codex's review source menu: what the diff compares. Its label is the chip the markdown viewer's scope picker shows
+/// (GenesisKit `GitPickerChip`); "Pick a Commit…" opens the commit chooser (`gitCommitPopover`), with each commit's
+/// author, date and line counts, a filter and the keyboard.
 struct ScopeMenu: View {
     @ObservedObject var model: ReviewModel
+    @State private var pickingCommit = false
 
     var body: some View {
         // Its own width when that fits, so the totals sit beside it; it shrinks in a narrow pane instead
@@ -2484,35 +2487,37 @@ struct ScopeMenu: View {
         // ("feature/next…chore/abc-123456-repo-cleanup") is wider than the whole diff pane at 1000 pt.
         // A drawn `MenuButton` shrinks like the text in it. The `Menu` it replaces needed a ViewThatFits of
         // its own for that, and both ViewThatFits built new pop-up buttons on every measurement of the header.
-        MenuButton(items: { ScopeMenu.items(model: model) }) {
-            HStack(spacing: 4) {
-                Text(label)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(ReviewPalette.dim)
-            }
+        MenuButton(items: { ScopeMenu.items(model: model) { pickingCommit = true } }) {
+            GitPickerChip(systemImage: model.scope.symbol, title: chip.title, detail: chip.detail, monospacedTitle: chip.monospaced)
         }
         .frame(minWidth: 80, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .instantTooltip("What this diff compares: \(label)")
+        // The list exists only while it is open: a closed chooser builds nothing (GenesisKit GitCommitPicker.swift).
+        .gitCommitPopover(isPresented: $pickingCommit, choices: model.commits.map { GitCommitChoice($0) }, selection: shownCommit,
+                          title: "Commits ahead of \(model.base ?? "the base")", details: GitCommitDetailsLoader(folder: model.repo)) { choice in
+            model.setScope(.commit(sha: choice.sha, title: choice.subject))
+        }
     }
 
-    /// The scope choices at the moment of the click.
+    /// The commit the diff shows now, for the chooser's check.
+    private var shownCommit: String? {
+        if case .commit(let sha, _) = model.scope { return sha }
+        return nil
+    }
+
+    /// The scope choices at the moment of the click; `pickCommit` opens the commit chooser.
     @MainActor
-    static func items(model: ReviewModel) -> [MenuButtonItem] {
+    static func items(model: ReviewModel, pickCommit: @escaping () -> Void = {}) -> [MenuButtonItem] {
         // Always offered with a session: a turn without changes is an empty panel that the next turn
         // fills, not a greyed-out item.
         let turns = model.session != nil && model.remoteHead == nil
-        let committed: [MenuButtonItem] = model.commits.isEmpty
-            ? [.note("No commits ahead of the base")]
-            : model.commits.map { commit in
-                .action("\(commit.short)  \(commit.subject)  ·  \(commit.when)") {
-                    model.setScope(.commit(sha: commit.sha, title: commit.subject))
-                }
-            }
+        let onCommit: Bool = {
+            if case .commit = model.scope { return true }
+            return false
+        }()
+        let committed: MenuButtonItem = .action(model.commits.isEmpty ? "No Commits Ahead of the Base" : "Pick a Commit…",
+                                                checked: onCommit, enabled: !model.commits.isEmpty, run: pickCommit)
         let prItem: [MenuButtonItem] = model.prScope.map { scope in
             [.action("PR \(model.prLabel)", checked: model.scope == scope) { model.setScope(scope) }]
         } ?? []
@@ -2528,7 +2533,7 @@ struct ScopeMenu: View {
             scopeItem(.unstaged, model: model),
             scopeItem(.staged, model: model),
             .divider,
-            .submenu("Committed", committed),
+            committed,
             scopeItem(.branch, model: model),
         ] + prItem + versions + [.divider, worktreeMenu(model: model), baseMenu(model: model)]
     }
@@ -2564,6 +2569,15 @@ struct ScopeMenu: View {
         case .branch: return "Branch vs \(model.base ?? "base")"
         case .commit(let sha, let title): return "\(sha.prefix(7)) \(title.prefix(40))"
         default: return model.scope.title
+        }
+    }
+
+    /// The chip's parts: the scope, then what it is against or which commit it is.
+    private var chip: (title: String, detail: String?, monospaced: Bool) {
+        switch model.scope {
+        case .branch: return ("Branch", "vs \(model.base ?? "base")", false)
+        case .commit(let sha, let title): return (String(sha.prefix(7)), title, true)
+        default: return (model.scope.title, nil, false)
         }
     }
 

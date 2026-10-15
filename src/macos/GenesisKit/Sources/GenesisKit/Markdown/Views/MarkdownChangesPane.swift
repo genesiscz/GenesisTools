@@ -34,9 +34,12 @@ struct MarkdownChangesPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if repos.model(for: doc.folder) == nil {
+            switch repos.lookup(for: doc.folder) {
+            case .pending:
+                Color.clear
+            case .none:
                 notInGit
-            } else {
+            case .repo:
                 header
                 Rectangle().fill(model.theme.border).frame(height: 1)
                 content
@@ -79,33 +82,26 @@ struct MarkdownChangesPane: View {
                     scope: Binding(get: { currentScope }, set: { model.changesScope = $0 }),
                     commit: $model.changesCommit,
                     history: diff.history,
-                    shown: diff.commit
+                    shown: diff.commit,
+                    counts: GitScopeStat.forFile(status: repos.model(for: doc.folder)?.status, file: doc.url, unsaved: doc.isDirty,
+                                                 current: currentScope, phase: diff.phase, diff: diff.file),
+                    details: GitCommitDetailsLoader(folder: doc.folder)
                 )
             }
             if let file = diff.file {
-                Text(verbatim: "+\(file.additions) −\(file.deletions)")
-                    .font(GenTypography.mono(10.5))
-                    .foregroundColor(model.theme.textSecondary)
+                GitLineCounts(additions: file.additions, deletions: file.deletions, size: 10.5)
             }
             Spacer(minLength: 8)
             if isNote {
-                Picker("View", selection: $rendered) {
-                    Text("Rendered").tag(true)
-                    Text("Lines").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                // GenSegmentedTabs, not a segmented Picker: the native control drew as loose buttons outside the key
+                // window, and its clicks on Split / Unified did not reach the diff (Martin, 2026-10-13).
+                GenSegmentedTabs("View", items: [.init(true, "Rendered"), .init(false, "Lines")], selection: $rendered, minSegmentWidth: 58)
                 .fixedSize()
                 .instantTooltip("Rendered: the note with its changes marked · Lines: the source diff")
                 .accessibilityIdentifier("markdown-changes-rendered")
             }
             if !isNote || !rendered {
-                Picker("Layout", selection: $unified) {
-                    Text("Split").tag(false)
-                    Text("Unified").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                GenSegmentedTabs("Layout", items: [.init(false, "Split"), .init(true, "Unified")], selection: $unified, minSegmentWidth: 54)
                 .fixedSize()
                 .accessibilityIdentifier("markdown-changes-layout")
             }

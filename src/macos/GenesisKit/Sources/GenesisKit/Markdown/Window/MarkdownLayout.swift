@@ -91,13 +91,15 @@ enum MarkdownSplit {
 /// How wide the file sidebar may be. A stored 0 (never dragged) or a hand-edited value lands on the standard width.
 enum MarkdownSidebarWidth {
     static let standard: Double = 230
+    /// The git sidebar starts wider: a file row carries its folder and its age.
+    static let gitStandard: Double = 280
     static let minimum: Double = 160
     static let maximum: Double = 560
     /// One arrow-key or VoiceOver step.
     static let keyboardStep: Double = 20
 
-    static func clamped(_ width: Double) -> Double {
-        guard width > 0 else { return standard }
+    static func clamped(_ width: Double, fallback: Double = standard) -> Double {
+        guard width > 0 else { return fallback }
         return min(max(width, minimum), maximum)
     }
 }

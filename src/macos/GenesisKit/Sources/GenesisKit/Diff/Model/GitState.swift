@@ -171,13 +171,15 @@ public struct GitRepoStatus: Equatable, Sendable {
 
     /// The decorations spelled under `treeRoot` as a file tree spells its paths: git names the repository by its
     /// real path (`/private/tmp`, a resolved link), a tree by the path it was given.
-    public func decorations(under treeRoot: URL) -> GitTreeDecorations {
+    /// `numstat`: repo-relative path to its lines against HEAD; each file's count is summed into its folders.
+    public func decorations(under treeRoot: URL, numstat: [String: GitLineCount] = [:]) -> GitTreeDecorations {
         // Both sides through the same real path: Foundation's own link resolution drops /private, `realpath` keeps it.
         let given = treeRoot.standardizedFileURL.path
         let givenReal = GitWorkingTreeSource.realPath(given)
         let rootReal = GitWorkingTreeSource.realPath(root.standardizedFileURL.path)
         var files: [String: GitChangeKind] = [:]
         var folders = Set<String>()
+        var counts: [String: GitLineCount] = [:]
         for entry in entries {
             guard let kind = entry.shown else { continue }
             let real = rootReal + "/" + entry.path
@@ -188,8 +190,16 @@ public struct GitRepoStatus: Equatable, Sendable {
             while folder.count > given.count, folders.insert(folder).inserted {
                 folder = (folder as NSString).deletingLastPathComponent
             }
+            guard let lines = numstat[entry.path] else { continue }
+            counts[spelled] = lines
+            var parent = (spelled as NSString).deletingLastPathComponent
+            while parent.count > given.count {
+                let sum = counts[parent] ?? GitLineCount(additions: 0, deletions: 0)
+                counts[parent] = GitLineCount(additions: sum.additions + lines.additions, deletions: sum.deletions + lines.deletions)
+                parent = (parent as NSString).deletingLastPathComponent
+            }
         }
-        return GitTreeDecorations(files: files, folders: folders)
+        return GitTreeDecorations(files: files, folders: folders, counts: counts)
     }
 
     /// The change to show for each absolute path, and a mark for each folder that holds one: what a file tree
@@ -212,17 +222,32 @@ public struct GitRepoStatus: Equatable, Sendable {
 }
 
 /// What a file tree marks: a change per file path and the folders that hold changes (absolute paths).
+/// Lines added and removed against HEAD (`git diff --numstat`); a folder's is the sum of its files'.
+public struct GitLineCount: Equatable, Sendable {
+    public var additions: Int
+    public var deletions: Int
+
+    public init(additions: Int, deletions: Int) {
+        self.additions = additions
+        self.deletions = deletions
+    }
+}
+
 public struct GitTreeDecorations: Equatable, Sendable {
     public var files: [String: GitChangeKind]
     public var folders: Set<String>
+    /// Per file and per folder, absolute as the tree spells them. Untracked files have none (no numstat).
+    public var counts: [String: GitLineCount]
 
-    public init(files: [String: GitChangeKind] = [:], folders: Set<String> = []) {
+    public init(files: [String: GitChangeKind] = [:], folders: Set<String> = [], counts: [String: GitLineCount] = [:]) {
         self.files = files
         self.folders = folders
+        self.counts = counts
     }
 
     public static let none = GitTreeDecorations()
 
     public func change(for path: String) -> GitChangeKind? { files[path] }
     public func holdsChanges(_ folder: String) -> Bool { folders.contains(folder) }
+    public func count(for path: String) -> GitLineCount? { counts[path] }
 }

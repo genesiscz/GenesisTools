@@ -184,6 +184,25 @@ struct MarkdownWebView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
+        // A spare page made in a quiet moment, its scripts already loaded: creating a web view here ran on the main
+        // thread on every tab switch (39% of a switch's main-thread time) and left the page blank until the template
+        // loaded. Without a spare, build one as before.
+        context.coordinator.renderReady = context.environment.genRenderReady
+        if let spare = MarkdownWebSpare.shared.take(for: context.coordinator) {
+            let web = spare.web
+            web.onDropFiles = { [weak coordinator = context.coordinator] urls in
+                coordinator?.parent.onDropFiles?(urls)
+            }
+            context.coordinator.web = web
+            context.coordinator.observeConfiguration()
+            proxy?.web = web
+            if spare.ready {
+                context.coordinator.becameReady("spare")
+            } else {
+                context.coordinator.armReadyWatchdog()
+            }
+            return web
+        }
         let config = Self.configuration(for: context.coordinator)
         let web = MarkdownDropWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
@@ -198,6 +217,7 @@ struct MarkdownWebView: NSViewRepresentable {
         proxy?.web = web
         web.loadHTMLString(Self.template, baseURL: URL(string: "\(Self.assetScheme)://asset/"))
         context.coordinator.armReadyWatchdog()
+        MarkdownWebSpare.shared.prepareSoon()
         return web
     }
 
@@ -214,6 +234,7 @@ struct MarkdownWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ web: WKWebView, context: Context) {
+        let _ = RenderProbe.hit("md.webView.update")
         let c = context.coordinator
         c.parent = self
         if abs(web.pageZoom - CGFloat(zoom)) > 0.001 {
@@ -227,6 +248,7 @@ struct MarkdownWebView: NSViewRepresentable {
             }
             c.lastMagnifyKey = magnifyKey
         }
+        c.renderReady = context.environment.genRenderReady
         if proxy?.web !== web {
             proxy?.web = web
         }
@@ -370,6 +392,8 @@ struct MarkdownWebView: NSViewRepresentable {
         var parent: MarkdownWebView
         weak var web: WKWebView?
         var ready = false
+        /// The enclosing `GenRenderSwap`'s signal: called when a render has built the page.
+        var renderReady: GenRenderReady?
         var pending: String?
         var lastMarkdown: String?
         var lastScrollTarget: String?
@@ -397,8 +421,9 @@ struct MarkdownWebView: NSViewRepresentable {
             eval("window.gnGitMarks([\(lastGitMarks.map(\.json).joined(separator: ","))])")
         }
         var lastMediaContext: MarkdownMedia.Context?
-        /// The images and JSON files the current document may load.
-        let media = MarkdownMediaRegistry()
+        /// The images and JSON files the current document may load. A spare page brings its own (its media scheme
+        /// handler was bound to it when the page was made).
+        var media = MarkdownMediaRegistry()
 
         /// The page extras last sent to the page; nil until the first update.
         var lastPageExtras: PageExtras?
@@ -489,9 +514,11 @@ struct MarkdownWebView: NSViewRepresentable {
             let mediaJSON = (try? JSONSerialization.data(withJSONObject: map)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
             web?.evaluateJavaScript(
                 "window.gnRender(\(MarkdownWebView.jsString(body)),\(props),\(editable),\(vocabulary),\(mediaJSON),\(parent.lineNumbers),\(tag))"
-            ) { _, error in
+            ) { [weak self] _, error in
                 if let error {
                     MarkdownWebView.report("render \(tag) call failed: \(error.localizedDescription)")
+                } else {
+                    self?.renderReady?()
                 }
             }
             confirmRender(tag)
@@ -946,14 +973,16 @@ mark.gn-find-current{background:rgba(250,204,21,.75);color:#0c0e10;}
 .gn-prop:hover .gn-prop-remove{opacity:1;} .gn-prop-remove:hover{color:var(--dd-text);background:var(--dd-bg-elevated);}
 .gn-props-add{margin:4px 0 0 4px;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font:inherit;font-size:.92em;padding:3px 6px;border-radius:4px;}
 .gn-render-error{margin:24px 0;padding:12px 14px;border:1px solid rgba(248,113,113,.5);border-radius:8px;background:rgba(248,113,113,.08);color:var(--dd-text);font-size:.95em;}
-[data-gn-git]{position:relative;}
-[data-gn-git]::before{content:'';position:absolute;left:-16px;top:2px;bottom:2px;width:3px;border-radius:2px;}
-[data-gn-git="added"]::before{background:rgba(89,217,140,.9);}
-[data-gn-git="modified"]::before{background:rgba(115,166,255,.95);}
-[data-gn-git="deleted"]::before{top:-5px;bottom:auto;width:0;height:0;border-radius:0;border-left:6px solid rgba(255,89,89,.95);border-top:4px solid transparent;border-bottom:4px solid transparent;}
-.gn-diff-add{background:rgba(89,217,140,.11);box-shadow:0 0 0 4px rgba(89,217,140,.11);border-radius:3px;}
-.gn-diff-mod{background:rgba(115,166,255,.09);box-shadow:0 0 0 4px rgba(115,166,255,.09);border-radius:3px;}
-.gn-diff-old{background:rgba(255,89,89,.08);box-shadow:0 0 0 4px rgba(255,89,89,.08);border-radius:3px;margin:10px 0;opacity:.8;}
+#gn-git-layer{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2;}
+.gn-git-bar{position:absolute;width:3px;border-radius:2px;pointer-events:auto;cursor:pointer;}
+.gn-git-bar::after{content:'';position:absolute;left:-5px;right:-5px;top:0;bottom:0;}
+.gn-git-bar[data-k="added"]{background:rgba(89,217,140,.9);}
+.gn-git-bar[data-k="modified"]{background:rgba(115,166,255,.95);}
+.gn-git-bar[data-k="deleted"]{width:0;height:0;border-radius:0;border-left:6px solid rgba(255,89,89,.95);border-top:4px solid transparent;border-bottom:4px solid transparent;}
+.gn-git-bar[data-k="removed"]{background:rgba(255,89,89,.9);}
+.gn-git-bar[data-i^="d"]{pointer-events:none;cursor:default;}
+.gn-git-bar[data-i^="d"]::after{display:none;}
+.gn-diff-old{margin:10px 0;opacity:.75;}
 .gn-diff-old:not(.gn-diff-pair) *{text-decoration:line-through;text-decoration-color:rgba(255,89,89,.75);}
 .gn-diff-old>:first-child{margin-top:0;}.gn-diff-old>:last-child{margin-bottom:0;}
 mark.gn-del{background:rgba(255,89,89,.32);color:inherit;text-decoration:line-through;border-radius:2px;}
@@ -1101,7 +1130,7 @@ md.renderer.rules.fence=function(tokens,idx){
 // the matching block at the top. Same idea as VS Code's markdown preview.
 (function(){
   var LINED=['paragraph_open','heading_open','blockquote_open','bullet_list_open',
-             'ordered_list_open','list_item_open','table_open','hr','html_block'];
+             'ordered_list_open','list_item_open','table_open','tr_open','hr','html_block'];
   for(var i=0;i<LINED.length;i++){(function(name){
     var base=md.renderer.rules[name];
     md.renderer.rules[name]=function(tokens,idx,options,env,self){
@@ -1985,14 +2014,20 @@ function gnWrapRanges(root,ranges,cls){
   }
 }
 function gnApplyDiff(){
-  var art=document.getElementById('gn-article');if(!art||!gnDiffList.length)return;
+  var art=document.getElementById('gn-article');if(!art)return;
+  if(!gnDiffList.length){gnLayoutGit();return;}
   var spans=gnBlocks(art);
   for(var h=0;h<gnDiffList.length;h++){
     var d=gnDiffList[h],hit=[],anchor=null,j;
     if(d.k!=='deleted'){
       var cand=[];for(j=0;j<spans.length;j++){if(spans[j].s<=d.b&&spans[j].e>d.a)cand.push(spans[j].n);}
       hit=gnInnermost(cand);
-      for(j=0;j<hit.length;j++)hit[j].classList.add(d.k==='added'?'gn-diff-add':'gn-diff-mod');
+      // A strip in the bar column, no background: a whole changed block reads by its strip, a changed word by its
+      // mark, and a table's changed rows got a background each, which read as odd and even rows (Martin, 2026-10-13).
+      for(j=0;j<hit.length;j++){
+        hit[j].classList.add(d.k==='added'?'gn-diff-add':'gn-diff-mod');
+        hit[j].setAttribute('data-gn-diff',d.k==='added'?'added':'modified');hit[j].setAttribute('data-gn-diff-i',String(h));
+      }
       anchor=hit[0]||null;
     }else{
       var after=null;for(j=0;j<spans.length;j++){if(spans[j].s>=d.a&&(!after||spans[j].s<after.s))after=spans[j];}
@@ -2000,6 +2035,7 @@ function gnApplyDiff(){
     }
     if(!d.old)continue;
     var box=document.createElement('div');box.className='gn-diff-old';
+    box.setAttribute('data-gn-diff','removed');box.setAttribute('data-gn-diff-i',h+'o');
     box.appendChild(gnSanitize(md.render(d.old)));
     if(anchor&&anchor.parentNode)anchor.parentNode.insertBefore(box,anchor);else art.appendChild(box);
     // One paragraph for one paragraph: word marks on both, no struck-through block.
@@ -2008,6 +2044,7 @@ function gnApplyDiff(){
       if(wd){box.classList.add('gn-diff-pair');gnWrapRanges(box,wd.del,'gn-del');gnWrapRanges(hit[0],wd.ins,'gn-ins');}
     }
   }
+  gnLayoutGit();
 }
 // Bars beside the blocks that differ from HEAD (Swift's GitMark list): a block whose source lines overlap a change
 // gets the change's kind, the innermost such block as gnApplyHL picks them. A removal marks the first block at or
@@ -2018,7 +2055,7 @@ function gnApplyGit(){
   var art=document.getElementById('gn-article');if(!art)return;
   var old=art.querySelectorAll('[data-gn-git]');
   for(var i=0;i<old.length;i++){old[i].removeAttribute('data-gn-git');old[i].removeAttribute('data-gn-git-i');}
-  if(!gnGit.length)return;
+  if(!gnGit.length){gnLayoutGit();return;}
   var nodes=art.querySelectorAll('[data-line]'),spans=[];
   for(var j=0;j<nodes.length;j++){
     var s=parseInt(nodes[j].getAttribute('data-line'),10),e=parseInt(nodes[j].getAttribute('data-line-end'),10);
@@ -2037,8 +2074,49 @@ function gnApplyGit(){
       if(inner&&!cand[j].hasAttribute('data-gn-git')){cand[j].setAttribute('data-gn-git',m.k);cand[j].setAttribute('data-gn-git-i',String(m.i));}
     }
   }
+  gnLayoutGit();
+}
+// The bars: one per change, in one column 16 px left of the text, spanning every block the change touches. A bar on
+// the block itself stood inside a list's indent over the item number, and a table row cannot hold a positioned
+// ::before. A resize of the article (pictures, diagrams, the reading width) places them again.
+var gnGitObserved=false;
+function gnLayoutGit(){
+  var art=document.getElementById('gn-article'),col=document.getElementById('gn-column');if(!art||!col)return;
+  var layer=document.getElementById('gn-git-layer');
+  if(!layer){layer=document.createElement('div');layer.id='gn-git-layer';col.appendChild(layer);}
+  if(!gnGitObserved&&window.ResizeObserver){
+    gnGitObserved=true;
+    new ResizeObserver(function(){requestAnimationFrame(gnLayoutGit);}).observe(art);
+  }
+  layer.textContent='';
+  // Git marks (Swift's list, clickable) and the rendered diff's marks (index "d…", not clickable) share the column.
+  var marked=art.querySelectorAll('[data-gn-git],[data-gn-diff]');if(!marked.length)return;
+  var c=col.getBoundingClientRect(),a=art.getBoundingClientRect();
+  var x=a.left+(parseFloat(getComputedStyle(art).paddingLeft)||0)-c.left-16,groups={},order=[];
+  for(var i=0;i<marked.length;i++){
+    var el=marked[i],git=el.hasAttribute('data-gn-git'),r=el.getBoundingClientRect();
+    var idx=git?el.getAttribute('data-gn-git-i'):'d'+el.getAttribute('data-gn-diff-i');
+    if(!r.width&&!r.height)continue;
+    var g=groups[idx];
+    if(!g){g=groups[idx]={k:git?el.getAttribute('data-gn-git'):el.getAttribute('data-gn-diff'),t:r.top,b:r.bottom};order.push(idx);}
+    else{g.t=Math.min(g.t,r.top);g.b=Math.max(g.b,r.bottom);}
+  }
+  for(var j=0;j<order.length;j++){
+    var gg=groups[order[j]],bar=document.createElement('div');
+    bar.className='gn-git-bar';bar.setAttribute('data-k',gg.k);bar.setAttribute('data-i',order[j]);
+    bar.style.left=x+'px';
+    if(gg.k==='deleted'){bar.style.top=(gg.t-c.top-5)+'px';}
+    else{bar.style.top=(gg.t-c.top+2)+'px';bar.style.height=Math.max(4,gg.b-gg.t-4)+'px';}
+    layer.appendChild(bar);
+  }
 }
 document.addEventListener('click',function(e){
+  var bar=e.target&&e.target.closest?e.target.closest('.gn-git-bar'):null;
+  if(bar){
+    var br=bar.getBoundingClientRect();e.preventDefault();e.stopPropagation();
+    gnPost({type:'gitMark',index:parseInt(bar.getAttribute('data-i'),10),rect:{x:br.left-2,y:br.top,w:8,h:Math.max(br.height,8)}});
+    return;
+  }
   var el=e.target&&e.target.closest?e.target.closest('[data-gn-git]'):null;if(!el)return;
   var r=el.getBoundingClientRect();if(e.clientX>r.left)return;
   e.preventDefault();e.stopPropagation();

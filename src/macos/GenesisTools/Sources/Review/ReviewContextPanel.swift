@@ -104,7 +104,7 @@ struct ReviewContextPanelView: View {
     }
 }
 
-/// The commits ahead of the base (the scope menu's "Committed" list, kept open): a row shows that
+/// The commits ahead of the base (the scope menu's commit chooser, kept open): a row shows that
 /// commit alone. "Whole branch" is the scope menu's Branch: every commit together plus what is not
 /// committed yet (`DiffScope.branch` diffs the merge base against the working tree), and its row says so.
 private struct ReviewCommitsList: View {

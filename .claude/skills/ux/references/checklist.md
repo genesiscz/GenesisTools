@@ -46,3 +46,23 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - New data appears without a reload; the view does not jump when it arrives.
 - Every setting has a control, writes the key its reader reads, takes effect live and survives a restart.
 - Reduce Motion and Reduce Transparency are honoured.
+
+## Loading, swaps and diffs (Martin, 2026-10-13 17:22)
+- A pending lookup never shows its negative answer ("not in a git repository", "no results"): show nothing or a
+  quiet placeholder until the answer is known. Keep "loading" and "none" as different states in the model.
+- Switching what a pane shows (a tab, a session) keeps the old content on screen until the new one has rendered,
+  then swaps with a short transition; never a blank frame in between. One generic container, used by every host.
+- The window keeps its size and place across restarts; verify with a restart, not by reading the code.
+- Diffs: a whole added or removed block gets a left strip, not a background; inside a changed line, highlight only
+  the changed words (and keep the strip). No full-row backgrounds that read as odd/even striping in tables.
+  `+N` green and `−N` red wherever counts appear.
+- Choosers with more than a few items (commits, versions) are popovers with details and search, built when opened;
+  never a system menu that builds every item up front.
+- Segmented tabs animate the selection pill to the new segment and show a hover fill on inactive ones
+  (`GenMotion`, instant under Reduce Motion).
+- A list of changes offers "reveal the open file" and shows `+/−` per file and folder where the counts are known.
+- A control that sits inside a scrolling list (a pill, a "Latest" button) is not the reader's own input: it must not
+  trip the list's "the reader is scrolling or clicking" guards. Test it with a real posted click, not a direct call.
+- Dense rows carry no instant tooltip each; the row's own text says it, and `.help` covers a cut-off path.
+- A list of hosted projects quietly leaves out what is not hosted (a clone of a local folder, no remote); an error
+  banner is for a project that should work and does not.

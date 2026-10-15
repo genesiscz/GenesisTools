@@ -41,6 +41,7 @@ struct MarkdownOutlineView: View {
     var items: [MarkdownOutline.Item] { MarkdownOutline.items(of: doc.displayText) }
 
     var body: some View {
+        let _ = RenderProbe.hit("md.outline")
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text("OUTLINE")

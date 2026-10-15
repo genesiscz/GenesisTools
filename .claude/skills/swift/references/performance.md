@@ -193,3 +193,63 @@ Key the cache by file identity (`stat`: inode, size, mtime), bucket pixel sizes 
 
 ## From the widget motion stream (2026-10-10, 417458101)
 "a computed property that filters or searches ~1000 elements, read in a layout pass, is paid once per panel per frame; store it when its inputs change". The measured share here was 25% of busy main-thread time.
+
+## From the GenesisKit markdown viewer (2026-10-13 17:22)
+
+### Thousands of rows: fold, page, then lazy
+- A git panel listed every untracked file of a notes vault (3,416 rows) and hung the key window (see gotchas.md).
+  Fold untracked files under the shallowest folder that holds no other change (as `git status` does without
+  `-uall`), show 100 rows per list with "Show more", and put the rows in a `LazyVStack`. **Measured:** first layout
+  of the panel on the real 3,416-entry repository 0.039–0.053 s in a hosted window.
+
+### Precompute sort keys; never derive lists in a body
+- A comparator that recomputed a group's newest modification date on every comparison cost O(n log n × group size)
+  (one folder held 2,786 files), and the panel's body re-ran it 5 times per tab switch because its parent
+  re-rendered. Compute derived lists once per change of their inputs (status generation, dates, order, filter) in a
+  model, with keys computed once per element, and let the body read the result.
+
+### Count publishes as well as bodies
+- `RenderProbe.watch(model, "name")` (GenesisKit `Perf/RenderProbeWatch.swift`) counts every `objectWillChange` as
+  `publish.name`, next to the `RenderProbe.hit` body counts, so a summary says which model fired and which bodies
+  ran because of it. **Measured (baseline, 2026-10-13):** one tab switch in the markdown viewer published the
+  documents model 10 times and ran the git repository panel 5 times, the git sidebar 5, the status bar 4, each tab
+  twice; 70–90 ms synchronous, 140–380 ms main-thread busy (`MainBusy.Meter`), load average 23, hosted window
+  without an accessibility client. Recipe: the bench in genesistools.md.
+
+### A fresh web view per tab is a blank frame per tab
+- A pane keyed by `.id(document.id)` that owns a `WKWebView` creates the web view and loads the whole template
+  (markdown-it, highlight.js, mermaid) on every tab switch and every Source → Split: creation on the main thread, then
+  a blank page until the first render. Keep a warm spare and keep the old content on screen until the new page
+  confirms its render (see "Never create a WKWebView on a click").
+
+### Page overlays: one column, union rectangles, a resize observer
+- Change bars drawn as `::before` on each marked block land inside a list's indent (over the item numbers) and do not
+  appear at all on table rows (a `tr` cannot hold a positioned pseudo-element). Draw them in one absolutely
+  positioned layer inside the reading column: one bar per change spanning the union of its blocks' rectangles, all at
+  one x, re-placed by a `ResizeObserver` on the article. For row-precise marks give markdown-it's `tr_open` a source
+  line like the other block tokens.
+
+## Second pass on the markdown viewer (2026-10-13 18:18)
+
+### Sample from inside the bench
+- `sample <pid>` from the shell missed the bench: the test prints its lines only at exit, so a shell loop that waits
+  for the first line samples nothing. Start `/usr/bin/sample <getpid()> 8 -file <out>` with `Process` inside the bench
+  (`BENCH_SAMPLE=<path>`), then rank the main thread's own frames. It named the costs at once:
+  `MarkdownWebView.makeNSView` 182 of 466 samples (39%, the web view per tab), `GitRepoPanel.body` 55 (the fold and
+  sorts in the body), `GitFileStateModel.state.setter` 67 (a publish that re-ran the panel).
+
+### Results of the fixes (tab-switch bench, same notes, load average 17 to 25)
+- Warm spare page (`MarkdownWebSpare`): synchronous part of a switch 30–98 ms, was 56–109 ms.
+- Repository panel lists derived off the main thread (`GitRepoPanelLists`) and the group sort keyed once.
+- `select` publishes 3 times, was 10.
+- Keeping the old page until the new one renders (`GenRenderSwap`) doubles `md.pane` bodies during the swap (two panes
+  observe the model for up to 0.6 s) and raised main-thread busy per switch to 267–324 ms; the longest pass stayed
+  55–97 ms and no frame is blank. A pane that must not re-render while it leaves needs its own model.
+
+### Keep the old content until the new one has rendered
+- `GenRenderSwap(value:id:timeout:)` (GenesisKit `Controls/GenRenderSwap.swift`): the old content stays on top while
+  the new one builds underneath, then fades out in 0.14 s (at once under Reduce Motion). The content signals with the
+  `ready` it is handed, or through `@Environment(\.genRenderReady)` deeper down: the markdown page after its render
+  call returns, the transcript after its first layout. A content with nothing to wait for calls `ready` on appear; the
+  timeout (0.6 s) covers one that never signals. The leaving copy must give up shared things (sheets, find panels,
+  the window's web proxy): the viewer passes `leaving` to its pane.

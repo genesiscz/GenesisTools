@@ -174,3 +174,60 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - A shared singleton that presents UI (`PermissionCenter`) uses a recording presenter in a test process and never calls `NSApp.activate` there, or the test run takes the user's keyboard.
 - Static stored properties are not allowed in a generic type's nested class (`OverlayScrollViewport<Content>.Viewport`); use a computed one.
 - "cannot find type X in scope" for a type whose file exists, with an `emit-module command failed`: look for "No space left on device" further down the log. A full disk breaks emit-module first.
+
+## From the GenesisKit markdown viewer — 2026-10-13 17:22
+
+- **`NSWindowController.init(window:)` drops the window's frame autosave name.** It hands the window the controller's
+  own `windowFrameAutosaveName`, which is empty, so `window.setFrameAutosaveName(...)` called before `super.init`
+  is silently gone: no `NSWindow Frame <name>` key is ever written and every launch opens at the default size. Set
+  `windowFrameAutosaveName` on the controller after `super.init`. Probed: the controller's setter restores a saved
+  frame without overwriting it, and a later resize is saved. Test: assert `window.frameAutosaveName` after init
+  (it read `""` before the fix). Check `defaults read <bundle id> | rg "NSWindow Frame"` when a size is not kept.
+- **Every script that builds a package depending on GenesisKit by path needs `--disable-build-manifest-caching`,**
+  not only `bun run app`: the Genesis install failed with "cannot find 'GitRepoPanel' in scope" right after a new
+  kit file, because its `swift build -c release` reused the old plan.
+- **A list that only looks heavy in the key window.** 3,416 rows (a vault's `git status -uall`: 20 modified, 3,396
+  untracked), each a `Button` with `RowButtonStyle` and `.instantTooltip`, hung the real window at 99% main-thread
+  CPU inside `AccessibilityNode.updateFocusResponder` → `ViewRendererHost.focusResponder(for:)`, with
+  `swift_conformsToProtocol` / `_dyld_find_protocol_conformance_on_disk` at the top of the stack. A hosted test
+  window (not key, no accessibility client) showed 0.01 s CPU for the same view: do not trust a background bench for
+  focus or accessibility cost. Fix the shape instead: fold, page, lazy rows (see performance.md).
+- **`git --no-optional-locks` is a git option, not a `status` option.** `git status --no-optional-locks` prints the
+  usage text; a pipe into `wc -l` then "counted" 25 entries. Put it before the subcommand.
+- **Git reports real paths** (`/private/tmp/...`), Foundation's `resolvingSymlinksInPath` drops `/private`: compare
+  with one real-path function on both sides, or tree marks come out empty.
+- **Never spin `RunLoop.main` inside an async `@MainActor` test.** It blocks WebKit's main-queue callbacks and the
+  page never answers; `await Task.sleep` instead.
+- **A test sandbox must cover every config read from outside the tool's own home.** The test preload moved
+  `~/.genesis-tools`, but the vault lookup fell back to Obsidian's own `obsidian.json` in the real home, so the
+  question tests wrote fixture folders and about 5,000 entries into the user's vault for a month. Point every such
+  override (`OBSIDIAN_CONFIG_DIR`) at an empty temp folder in the preload, and make the override exclusive (a miss
+  must not fall through to the real file). After any test run that touches a user-data sink, check the target.
+- **Pictures of a hosted window with a web view:** `cacheDisplay` does not capture `WKWebView` (out of process);
+  composite `WKWebView.takeSnapshot` into the bitmap at the web view's frame.
+
+## From the GenesisKit markdown viewer, second pass (2026-10-13 18:18)
+
+- **A page in a window that is never shown is a hidden page: it gets no `requestAnimationFrame`.** pierre (the diff
+  page) lays a changed diff out in an animation frame, so a hosted test saw `setOptions({diffStyle})` do nothing and
+  "reproduced" a bug that the visible app does not have. `document.visibilityState` reads `hidden` in a borderless
+  window, in an alpha-0 window below the desktop, and with WebKit's window-occlusion detection turned off. Check
+  `visibilityState` and a probe `requestAnimationFrame` before you trust a page test; to test frame-driven work, add a
+  `WKUserScript` at document start that maps `requestAnimationFrame` to `setTimeout(…, 16)`, then `reload()` (the
+  renderers here send their state again on the page's `ready`). `GitDiffViewLayoutTests` does this.
+- **A control drawn inside a list's frame is "inside the list" for a local event monitor.** The transcript's
+  "N new" pill sits in the list's overlay, so its own click counted as the reader's click, and for 1.5 s every
+  growth was treated as the reader's own and never followed: the glide stopped short of the end. A control that moves
+  the viewport on the reader's behalf clears that state itself (`TranscriptScrollAnchor.scrollToEnd`).
+- **`.instantTooltip` on every row of a dense list puts one AppKit hover view (a tracking area) on every row.**
+  Scrolling a `LazyVStack` then creates and drops one per row. Rows that show their own text take `.help` (the system
+  tooltip, no view); `instantTooltip` stays for icon buttons and controls.
+- **An `@Published` assignment publishes even when the value does not change.** `select(id)` set ten properties
+  and published ten times per tab switch, each re-running every observer. Assign only what changes
+  (`if x != nil { x = nil }`): 10 → 3 publishes, measured with `RenderProbe.watch`.
+- **`NSString` path helpers are slow on non-ASCII paths.** `deletingLastPathComponent` returns `NSPathStore2`
+  strings that hash and compare through Unicode normalization one character at a time; a fold over 3,416 Czech
+  vault paths spent most of its samples there. Slice `Substring` at the last `/` instead.
+- **Swift 6 `@MainActor` class + `DispatchQueue.main.async { self… }` compiles only because the package is in Swift 5
+  mode** (`swift-tools-version: 5.9`). New async hops in GenesisKit follow the file's existing pattern; do not mix
+  `Task.detached` and GCD in one model.

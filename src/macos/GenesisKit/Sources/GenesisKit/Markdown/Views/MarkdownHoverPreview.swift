@@ -10,6 +10,8 @@
 //  `hoverPreviewDelay` opens it next to the anchor (`MarkdownHoverPlacement`); leaving the anchor hides
 //  it after a short grace, unless the pointer went into the panel, where the reader can scroll. A click
 //  in the panel opens the note as a tab. While a preview is up, the next anchor shows at once.
+//  An image file shows its picture, an SVG with a switch to its source (`MarkdownHoverImage.swift`); a click
+//  on a picture that is no text file opens it in the image viewer.
 //  Idle cost: nothing. No timer runs while no pointer rests on an anchor, and a sensor view exists only
 //  while one does.
 //
@@ -136,8 +138,9 @@ enum MarkdownHoverPlacement {
 enum MarkdownHoverTarget {
     /// The local note or readable file a link in a note points at, resolved the way
     /// `MarkdownDocumentsModel.follow` resolves a click on it (reference definitions, `file:` paths,
-    /// wikilinks against the vault, `:20` line suffixes). nil for a web address or any other scheme, a
-    /// heading in the same note, a folder, a missing file, and a file the viewer cannot show.
+    /// wikilinks against the vault, `:20` line suffixes), or the picture it points at. nil for a web address
+    /// or any other scheme, a heading in the same note, a folder, a missing file, and a file the viewer
+    /// cannot show that is no picture either.
     static func url(forLink href: String, folder: URL, text: String, vaultRoot: String?) -> URL? {
         var target = href.trimmingCharacters(in: .whitespacesAndNewlines)
         // A link the page resolved against its own base (`a.href`) still names a path in the vault.
@@ -162,14 +165,14 @@ enum MarkdownHoverTarget {
         switch MarkdownLinkRoute.decide(url, fragment: fragment) {
         case let .note(note, _, _)?: return note
         case let .viewer(file, _)?: return file
-        case let .choose(file, _)?: return FileTree.isReadable(file) ? file : nil
+        case let .choose(file, _)?: return FileTree.isReadable(file) || MarkdownHoverImage.isImage(file) ? file : nil
         case .folder?, nil: return nil
         }
     }
 
-    /// Whether `url` has anything to preview: a note or a file the viewer reads.
+    /// Whether `url` has anything to preview: a note, a file the viewer reads, or a picture.
     static func isPreviewable(_ url: URL) -> Bool {
-        !MarkdownLinkRoute.isFolder(url) && FileTree.isReadable(url)
+        !MarkdownLinkRoute.isFolder(url) && (FileTree.isReadable(url) || MarkdownHoverImage.isImage(url))
     }
 }
 
@@ -188,6 +191,9 @@ final class MarkdownHoverPreviewController {
     static let warmDelay: TimeInterval = 0.08
     /// The most of a file a preview reads: a preview is the top of the note.
     static let readLimit = 256 * 1024
+    /// How long the panel waits for a picture before it opens without one: most decode well within it, so
+    /// the panel opens on the picture; a slower one shows that it loads and arrives in place.
+    static let pictureWait: Duration = .milliseconds(350)
 
     struct Request {
         let owner: UUID
@@ -212,6 +218,9 @@ final class MarkdownHoverPreviewController {
     private var token = 0
     private var panel: MarkdownHoverPanel?
     private var hosting: NSHostingView<MarkdownHoverCard>?
+    /// The shown preview's own state (an image's picture, the switch to its source) and what it shows.
+    private var state: MarkdownHoverCardState?
+    private var shownContent: MarkdownHoverContent?
     /// The card's own web view: export and print stay on the window's.
     private let proxy = MarkdownWebProxy()
     private var resignObserver: NSObjectProtocol?
@@ -262,6 +271,8 @@ final class MarkdownHoverPreviewController {
         token += 1
         request = nil
         shown = nil
+        state = nil
+        shownContent = nil
         pointerInPanel = false
         panel?.orderOut(nil)
         if let resignObserver {
@@ -309,8 +320,34 @@ final class MarkdownHoverPreviewController {
             hide()
             return
         }
+        let url = shown.url
+        // A picture that is no text file has no tab: the image viewer opens it, grown from the preview.
+        if MarkdownHoverImage.isImage(url), !FileTree.isReadable(url) {
+            let origin = panel.flatMap { pictureOrigin(in: $0) }
+            let request = ImageViewerRequest(
+                ownerID: ObjectIdentifier(self), items: [ImageViewerItem(id: url.path, path: url.path)],
+                selectedID: url.path, origin: origin, background: Self.viewerBackground(model.theme),
+                level: shown.view?.window?.level ?? .normal, screen: panel?.screen)
+            hide()
+            ImageViewer.present(request)
+            return
+        }
         hide()
-        model.open([shown.url])
+        model.open([url])
+    }
+
+    /// Where the picture is on screen, for the image viewer to grow from; nil while none is drawn.
+    private func pictureOrigin(in panel: MarkdownHoverPanel) -> ImageViewerOrigin? {
+        guard let rect = MarkdownHoverMarker.rects(.picture, in: panel.container).last, !rect.isEmpty else { return nil }
+        return ImageViewerOrigin(rect: panel.convertToScreen(rect), clip: panel.frame)
+    }
+
+    /// The page's colour behind the viewer when it is dark; the viewer stays dark under the light theme.
+    private static func viewerBackground(_ theme: MarkdownTheme) -> NSColor {
+        guard theme.isDark else { return ImageViewerRequest.defaultBackground }
+        let hex = theme.pageHex
+        return NSColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+                       blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
     // MARK: Showing
@@ -320,6 +357,17 @@ final class MarkdownHoverPreviewController {
         guard let request, let model = request.model, allowed(request) else { return }
         let token = token
         let url = request.url
+        if MarkdownHoverImage.isImage(url) {
+            // The same picture again while it is up (the pointer went into the panel and back): it stays as it
+            // is, the reader's switch to the source included.
+            if isShowing, let state, state.picture != nil, let content = shownContent, content.url == url {
+                show(request, content: content, state: state, token: token)
+                return
+            }
+            let doc = model.docs.first(where: { $0.url == url })
+            presentImage(request, model: model, draft: doc?.displayText, dirty: doc?.isDirty == true, token: token)
+            return
+        }
         if let doc = model.docs.first(where: { $0.url == url }) {
             // An open tab: its draft, as the tab shows it, and nothing read from disk.
             show(request, content: Self.content(url: url, text: doc.displayText), token: token)
@@ -332,6 +380,36 @@ final class MarkdownHoverPreviewController {
             }.value
             guard let self, self.token == token, let content else { return }
             self.show(request, content: content, token: token)
+        }
+    }
+
+    /// An image file: the picture, decoded off the main thread, and an SVG's source under it (an open tab's
+    /// draft, as the tab shows it). The panel waits `pictureWait` for the picture, then opens without it and
+    /// takes it in place when it comes.
+    private func presentImage(_ request: Request, model: MarkdownDocumentsModel, draft: String?, dirty: Bool, token: Int) {
+        let url = request.url
+        let hasSource = MarkdownHoverImage.hasSource(url)
+        let scale = request.view?.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let pixels = MarkdownHoverImage.pixels(for: model.configuration.hoverPreviewSize, scale: scale)
+        let pictureDraft = dirty && hasSource ? draft : nil
+        let limit = Self.readLimit
+        Task { @MainActor [weak self] in
+            let decode = Task { await MarkdownHoverImage.picture(url: url, pixels: pixels, draft: pictureDraft) }
+            let (content, bytes) = await Task.detached(priority: .userInitiated) { () -> (MarkdownHoverContent, Int64?) in
+                let source = hasSource ? (draft ?? Self.readText(url, limit: limit)) : nil
+                return (Self.content(url: url, text: source ?? ""), MediaFileIdentity.current(url.path)?.size)
+            }.value
+            let early = await MediaThumbnailCache.firstResult(of: decode, within: Self.pictureWait)
+            guard let self, self.token == token else { return }
+            let state = MarkdownHoverCardState(picture: early ?? .loading, bytes: bytes, hasSource: hasSource) {
+                await MarkdownHoverImage.picture(url: url, pixels: pixels, draft: pictureDraft, reload: true)
+            }
+            self.show(request, content: content, state: state, token: token)
+            guard early == nil else { return }
+            // The wait gave up on the first ask; this one joins its decode, or finds the picture cached.
+            let late = await MarkdownHoverImage.picture(url: url, pixels: pixels, draft: pictureDraft)
+            guard self.state === state, case .loading? = state.picture else { return }
+            state.picture = late
         }
     }
 
@@ -354,23 +432,27 @@ final class MarkdownHoverPreviewController {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private func show(_ request: Request, content: MarkdownHoverContent, token: Int) {
+    private func show(_ request: Request, content: MarkdownHoverContent, state: MarkdownHoverCardState? = nil, token: Int) {
         guard allowed(request), let model = request.model, let anchor = request.anchor(),
               let visible = MarkdownHoverPlacement.visibleFrame(for: anchor),
               let frame = MarkdownHoverPlacement.frame(size: model.configuration.hoverPreviewSize, anchor: anchor, visible: visible)
         else { return }
         let theme = model.theme
+        let state = state ?? MarkdownHoverCardState()
         let card = MarkdownHoverCard(
             content: content,
             theme: theme,
             renderer: model.renderer,
             zoom: model.zoom,
             vaultRoot: GenesisKit.host?.markdownVaultRoot,
-            proxy: proxy
+            proxy: proxy,
+            state: state
         )
         let panel = panel ?? makePanel()
         panel.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         let changed = !panel.isVisible || shown?.url != content.url
+        self.state = state
+        shownContent = content
         if let hosting {
             hosting.rootView = card
         } else {
@@ -465,10 +547,13 @@ struct MarkdownHoverContent: Equatable, Sendable {
 }
 
 /// The floating panel. It never becomes key, so the window keeps the keyboard. A click anywhere in it
-/// opens the note; the scroll wheel reaches the page, so the reader can scroll the preview.
+/// opens the note, except on a control the card marks (the source switch, Retry), which gets the click;
+/// the scroll wheel reaches the page, so the reader can scroll the preview.
 final class MarkdownHoverPanel: NSPanel {
     var onClick: (() -> Void)?
     let container = MarkdownHoverContainer()
+    /// A press that began on a control: its drag and release go to the control too.
+    private var pressingControl = false
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
@@ -483,8 +568,18 @@ final class MarkdownHoverPanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            onClick?()
-        case .leftMouseUp, .leftMouseDragged, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
+            if container.control(at: event.locationInWindow) {
+                pressingControl = true
+                super.sendEvent(event)
+            } else {
+                pressingControl = false
+                onClick?()
+            }
+        case .leftMouseUp, .leftMouseDragged:
+            guard pressingControl else { break }
+            if event.type == .leftMouseUp { pressingControl = false }
+            super.sendEvent(event)
+        case .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
             // Read-only: no selection, no link, no context menu inside the preview.
             break
         default:
@@ -508,9 +603,15 @@ final class MarkdownHoverContainer: NSView {
 
     override func mouseEntered(with event: NSEvent) { onPointer?(true) }
     override func mouseExited(with event: NSEvent) { onPointer?(false) }
+
+    /// Whether a control the card marks (`MarkdownHoverMarker`) is under `point`, in window coordinates.
+    func control(at point: NSPoint) -> Bool {
+        MarkdownHoverMarker.rects(.control, in: self).contains { $0.contains(point) }
+    }
 }
 
-/// The preview itself: which file, then the note, read-only, in the window's renderer and palette.
+/// The preview itself: which file, then the note, read-only, in the window's renderer and palette; an
+/// image file's picture over it.
 struct MarkdownHoverCard: View {
     let content: MarkdownHoverContent
     let theme: MarkdownTheme
@@ -518,6 +619,8 @@ struct MarkdownHoverCard: View {
     let zoom: Double
     let vaultRoot: String?
     let proxy: MarkdownWebProxy
+    /// An image file's picture and the switch to its source; a note's state holds neither.
+    @ObservedObject var state: MarkdownHoverCardState
 
     static let cornerRadius: CGFloat = 10
 
@@ -525,7 +628,19 @@ struct MarkdownHoverCard: View {
         VStack(spacing: 0) {
             header
             Rectangle().fill(theme.border).frame(height: 1)
-            page
+            ZStack {
+                // The page stays in place under a picture: the card's one web view is never torn down (making
+                // another costs 140 ms to 1.2 s on the main thread), and an SVG's source is rendered there already.
+                page
+                    .opacity(state.showsPage ? 1 : 0)
+                    .allowsHitTesting(state.showsPage)
+                    .accessibilityHidden(!state.showsPage)
+                if let picture = state.picture, !state.showsSource {
+                    MarkdownHoverPicturePane(url: content.url, picture: picture, bytes: state.bytes, theme: theme) {
+                        state.retry()
+                    }
+                }
+            }
         }
         .background(theme.page)
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
@@ -540,7 +655,7 @@ struct MarkdownHoverCard: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: DocumentPreview.presentation(for: content.url) == .markdown ? "doc.text" : "doc.plaintext")
+            Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
             Text(MarkdownDocument.title(for: content.url))
@@ -553,7 +668,11 @@ struct MarkdownHoverCard: View {
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer(minLength: 8)
-            Text("Click to open")
+            if state.hasSource, state.picture != nil {
+                MarkdownHoverSourceToggle(showsSource: state.showsSource, theme: theme) { state.toggleSource() }
+            }
+            // A text file opens as a tab; a picture that is no text file opens in the image viewer.
+            Text(FileTree.isReadable(content.url) ? "Click to open" : "Click to view")
                 .font(.system(size: 10))
                 .foregroundStyle(theme.textMuted)
                 .fixedSize()
@@ -561,6 +680,11 @@ struct MarkdownHoverCard: View {
         .padding(.horizontal, 12)
         .frame(height: 30)
         .background(theme.chrome)
+    }
+
+    private var icon: String {
+        if state.picture != nil { return "photo" }
+        return DocumentPreview.presentation(for: content.url) == .markdown ? "doc.text" : "doc.plaintext"
     }
 
     @ViewBuilder

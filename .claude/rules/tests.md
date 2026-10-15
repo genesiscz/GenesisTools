@@ -31,3 +31,11 @@ This exists because inside a **git worktree** any `bunx` call creates a partial 
 - **Red today, green yesterday, no relevant commit: check the calendar.** A dated fixture crosses a window when one input still resolves against the real clock: `--since=N days ago` for git, `find -mtime`, `date -v-7d`. Derive every cutoff from the injected `now`.
 - **`bun test --timeout` bounds a test body only.** A hang at module scope (an import that never settles) blocks forever. The signal is the wrapper's `[test] suite complete` line missing. Do not grep bun's own "Ran N tests across M files": it prints once per process, and `bun run test` runs two.
 - **`src/utils/profile/profile.test.ts` can poison itself:** its guard probe can leave `~/.genesis-tools/logs/__profiler_guard_probe__.log` behind, and every later run then fails on any branch. Check for that file before you blame a branch.
+- **The test sandbox covers only `~/.genesis-tools`; every config a tool reads from elsewhere needs its own override in
+  the preload.** The vault lookup fell back to Obsidian's own `obsidian.json` in the real home, so the question tests
+  wrote `<fixture>/Questions/<date>.md` folders and about 5,000 entries into the user's notes vault for a month
+  (`preload-test-sandbox.ts` now points `OBSIDIAN_CONFIG_DIR` at an empty folder, and the override is exclusive; PR
+  #500, 2026-10-13 17:30). A new tool that reads another app's config (an editor, a browser profile, a notes app)
+  gets the same treatment, and after a run of a suite with a user-data sink, check the target folder.
+- **zsh does not split an unquoted variable:** `bun run test $PATHS` with several paths in one variable runs nothing
+  ("filters did not match"). Pass the paths as separate words and read the pass count.

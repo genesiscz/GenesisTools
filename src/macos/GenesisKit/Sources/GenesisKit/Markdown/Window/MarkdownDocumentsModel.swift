@@ -19,6 +19,7 @@ private let markdownGitKey = "markdownWindow.git"
 private let markdownRecentsKey = "markdownWindow.recents"
 private let markdownFilesRootKey = "markdownWindow.filesRoot"
 private let markdownFilesWidthKey = "markdownWindow.filesWidth"
+private let markdownGitWidthKey = "markdownWindow.gitWidth"
 private let markdownZoomKey = "markdownWindow.zoom"
 private let markdownFloatKey = "markdownWindow.float"
 private let markdownThemeKey = "markdownWindow.theme"
@@ -64,6 +65,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// The file sidebar's width in points, dragged at its right edge and remembered between launches.
     @Published var filesWidth: Double = MarkdownSidebarWidth.standard {
         didSet { defaults.set(filesWidth, forKey: markdownFilesWidthKey) }
+    }
+    /// The git sidebar's width; its left edge drags like the file sidebar's right edge.
+    @Published var gitWidth: Double = MarkdownSidebarWidth.gitStandard {
+        didSet { defaults.set(gitWidth, forKey: markdownGitWidthKey) }
     }
     /// Folder the file sidebar is rooted at. Empty means "follow the open
     /// document", which is what a reader expects the first time they open it.
@@ -243,6 +248,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         }
         filesRoot = defaults.string(forKey: markdownFilesRootKey) ?? ""
         filesWidth = MarkdownSidebarWidth.clamped(defaults.double(forKey: markdownFilesWidthKey))
+        gitWidth = MarkdownSidebarWidth.clamped(defaults.double(forKey: markdownGitWidthKey), fallback: MarkdownSidebarWidth.gitStandard)
     }
 
     var mode: MarkdownViewMode {
@@ -630,17 +636,19 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// dropped on every switch; otherwise the new tab jumps to a heading of the
     /// old one that happens to share a slug.
     func select(_ id: String?) {
+        // An @Published assignment publishes even when the value does not change, and every publish re-runs every view
+        // that observes the model: a tab switch published 10 times. Assign only what changes.
         if id != selectedId {
-            revisionView = nil
-            revisionCompare = nil
+            if revisionView != nil { revisionView = nil }
+            if revisionCompare != nil { revisionCompare = nil }
+            selectedId = id
         }
-        selectedId = id
-        scrollTarget = nil
-        lineTarget = nil
-        lineHighlight = nil
-        activeSectionSlug = nil
-        findIndex = 0
-        findCount = 0
+        if scrollTarget != nil { scrollTarget = nil }
+        if lineTarget != nil { lineTarget = nil }
+        if lineHighlight != nil { lineHighlight = nil }
+        if activeSectionSlug != nil { activeSectionSlug = nil }
+        if findIndex != 0 { findIndex = 0 }
+        if findCount != 0 { findCount = 0 }
         if findOpen {
             search()
         }

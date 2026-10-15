@@ -87,6 +87,7 @@ struct MarkdownDocumentToolbar: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("md.toolbar")
         HStack(spacing: 10) {
             // The buttons with their names while the row has room for them, else icons only
             // (`GenesisKitMarkdownConfiguration.toolbarLabels`). Their priority puts them ahead of the
