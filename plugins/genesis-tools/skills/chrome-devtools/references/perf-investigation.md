@@ -31,9 +31,15 @@ tools chrome-devtools perf load https://app.example.com/dashboard --runs 3 --cpu
 ```
 
 Read, in order: blocking total, the `byInvoker` groups (`Response.json.then`, `TimerHandler:setTimeout`,
-`event-listener:onclick`, `classic-script`, `rendering`), the worst frames with their script location
-(`/static/js/710.f9e49e56.chunk.js:95812 fn`), CLS (session window), max lag, marks (ms since the
+`event-listener:onclick`, `classic-script`, `rendering`, `untracked (no script, before render)`), the worst
+frames with their script location (`/static/js/710.f9e49e56.chunk.js:95812 fn`), CLS (session window), max lag, marks (ms since the
 navigation, 50 ms resolution). `--network slow-4g|fast-4g|3g|offline` adds network presets.
+A frame with no script is `rendering` only when its render phase is most of it; otherwise it is `untracked`:
+main-thread time before the render phase that LoAF gives to no script (scripts under 5 ms, garbage collection,
+a DevTools call such as `Profiler.stop` from another session). A script-less worst frame prints its render and
+style+layout milliseconds.
+A yellow ⚠ line names each reason the numbers may be invalid. A page that went hidden (a background tab) runs its
+timers about once a second, so max lag then counts only the visible time and reads `max lag N ms while visible`.
 `--runs > 1` prints p50/p90/min/max. One run is an observation, not a result.
 The last line names the source-map lookup for the worst frame, with the full script URL
 (`which source line: tools ts sourcemaps resolve <url>:<offset>`); section 10 explains it.

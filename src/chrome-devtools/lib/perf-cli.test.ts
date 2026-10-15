@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PerfSnapshot } from "@genesiscz/utils/chrome-devtools/perf";
+import { summarizePerf } from "@genesiscz/utils/chrome-devtools/summaries";
+import { summaryLines } from "../commands/perf.ts";
 import {
     applyReplacements,
     applyVariantRewrites,
@@ -205,6 +207,34 @@ describe("perfMetrics", () => {
             "mark:a",
             "mark:z",
         ]);
+    });
+
+    test("lag while the page was hidden is background throttling: max lag leaves it out and says so", () => {
+        // Recorded: the tab went hidden at 116000 and its timers then ran once a second.
+        const hidden = snapshot({
+            visibleThroughout: false,
+            hiddenSpans: [[116_000, 120_000]],
+            lags: [
+                [40_000, 120],
+                [116_026.3, 949.6],
+                [117_025.9, 949.7],
+            ],
+        });
+        expect(perfMetrics(hidden).maxLagMs).toBe(120);
+        const summary = summarizePerf(hidden);
+        expect(summary.maxLagMs).toBe(120);
+        expect(summary.hiddenMs).toBe(4000);
+        const text = summaryLines(summary, []).join("\n");
+        expect(text).toContain("max lag 120 ms while visible");
+        expect(text).toContain("hidden (a background tab) for 4000 ms from page time 116000 ms");
+
+        // A snapshot saved before hiddenSpans existed keeps every lag, and still prints why the numbers are suspect.
+        const older = snapshot({ visibleThroughout: false, lags: hidden.lags });
+        expect(summarizePerf(older).maxLagMs).toBe(950);
+        expect(summaryLines(summarizePerf(older), []).join("\n")).toContain("does not say when");
+        expect(summaryLines(summarizePerf(snapshot({ unsupported: ["event"] })), []).join("\n")).toContain(
+            "this browser does not report: event"
+        );
     });
 });
 

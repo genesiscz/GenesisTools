@@ -63,9 +63,41 @@ export function invokerKind(script: Pick<LoafScript, "invoker" | "invokerType">)
     }
 }
 
-/** The script that cost the frame the most, or null for a frame with no script (style, layout, paint). */
+/** The script that cost the frame the most, or null for a frame no script of 5 ms or more accounts for. */
 export function topScript(frame: LoafFrame): LoafScript | null {
     return frame.scripts[0] ?? null;
+}
+
+/** The kind of a script-less frame whose time passed before its render phase: not style, layout or paint. */
+export const UNTRACKED_KIND = "untracked (no script, before render)";
+
+/** Milliseconds from a phase start (`renderStart`, `styleAndLayoutStart`) to the frame's end; 0 when it did not run. */
+function phaseMs(frame: LoafFrame, phaseStart: number): number {
+    return phaseStart > 0 ? Math.max(0, frame.start + frame.duration - phaseStart) : 0;
+}
+
+/** The render phase: `renderStart` to the frame's end (style, layout, paint and the rAF callbacks). */
+export function renderPhaseMs(frame: LoafFrame): number {
+    return phaseMs(frame, frame.renderStart);
+}
+
+/** Style and layout: `styleAndLayoutStart` to the frame's end. */
+export function styleAndLayoutMs(frame: LoafFrame): number {
+    return phaseMs(frame, frame.styleAndLayoutStart);
+}
+
+/**
+ * The kind of a frame: its most expensive script's kind, or for a frame with no script, `rendering` when the render
+ * phase is most of it and `UNTRACKED_KIND` otherwise. Untracked time is main-thread work LoAF attributes to no script:
+ * scripts under 5 ms, garbage collection, parsing, or a DevTools call such as `Profiler.stop` serializing a profile.
+ */
+export function frameKind(frame: LoafFrame): string {
+    const top = topScript(frame);
+    if (top) {
+        return invokerKind(top);
+    }
+
+    return renderPhaseMs(frame) > frame.duration / 2 ? "rendering" : UNTRACKED_KIND;
 }
 
 /** `path/to/chunk.js:12345 fnName` for a script, with the origin cut off. */
@@ -103,12 +135,12 @@ export interface InvokerGroup {
     sources: Array<{ location: string; ms: number }>;
 }
 
-/** Attributes each frame to its most expensive script's kind (a frame without scripts is `rendering`). */
+/** Attributes each frame to its `frameKind`: its most expensive script's kind, `rendering` or `UNTRACKED_KIND`. */
 export function groupByInvoker(frames: LoafFrame[]): InvokerGroup[] {
     const groups = new Map<string, { frames: LoafFrame[]; sources: Map<string, number> }>();
     for (const frame of frames) {
         const top = topScript(frame);
-        const kind = top ? invokerKind(top) : "rendering";
+        const kind = frameKind(frame);
         const group = groups.get(kind) ?? { frames: [], sources: new Map<string, number>() };
         groups.set(kind, group);
         group.frames.push(frame);
@@ -145,6 +177,9 @@ export interface WorstFrame {
     /** The full script URL and character offset, when the script came over http(s): what a source-map lookup takes. */
     source: { url: string; offset: number } | null;
     forcedLayoutMs: number;
+    /** The render phase (`renderPhaseMs`), so a script-less frame shows whether rendering really took its time. */
+    renderMs: number;
+    styleAndLayoutMs: number;
 }
 
 export function topFrames(frames: LoafFrame[], count = 5): WorstFrame[] {
@@ -157,13 +192,15 @@ export function topFrames(frames: LoafFrame[], count = 5): WorstFrame[] {
                 start: frame.start,
                 duration: frame.duration,
                 blockingDuration: frame.blockingDuration,
-                kind: top ? invokerKind(top) : "rendering",
+                kind: frameKind(frame),
                 location: top ? scriptLocation(top) : null,
                 source:
                     top && /^https?:\/\//.test(top.sourceURL) && top.sourceCharPosition >= 0
                         ? { url: top.sourceURL, offset: top.sourceCharPosition }
                         : null,
                 forcedLayoutMs: top?.forcedStyleAndLayoutDuration ?? 0,
+                renderMs: renderPhaseMs(frame),
+                styleAndLayoutMs: styleAndLayoutMs(frame),
             };
         });
 }
@@ -220,14 +257,51 @@ export interface PerfSummary {
     longtasks: { count: number; totalMs: number; worstMs: number };
     cls: number;
     inp: number | null;
+    /** The longest lag while the page was visible (`visibleMaxLagMs`). */
     maxLagMs: number;
+    /** Milliseconds the page spent hidden; 0 when it stayed visible or the snapshot does not say. */
+    hiddenMs: number;
     marks: Record<string, number>;
     unsupported: string[];
     /** Reasons the numbers may be invalid (a hidden tab, unsupported entry types). */
     warnings: string[];
 }
 
+/** Whether a lag `[start, ms]` overlaps a range the page spent hidden. */
+function overlapsHidden([start, late]: [number, number], spans: Array<[number, number]>): boolean {
+    return spans.some(([from, to]) => start < to && start + late > from);
+}
+
+/**
+ * The longest main-thread lag while the page was visible. A hidden tab runs its timers about once a second, which
+ * the lag sampler would report as ~950 ms lags that are background throttling, not lag.
+ */
+export function visibleMaxLagMs(snapshot: Pick<PerfSnapshot, "lags" | "hiddenSpans">): number {
+    const spans = snapshot.hiddenSpans ?? [];
+    const visible = snapshot.lags.filter((lag) => !overlapsHidden(lag, spans));
+    return Math.round(Math.max(0, ...visible.map((lag) => lag[1])));
+}
+
+/** Why a measurement of a page that was hidden part of the time is suspect; nothing when it stayed visible. */
+function hiddenWarnings(snapshot: PerfSnapshot, hiddenMs: number): string[] {
+    const spans = snapshot.hiddenSpans ?? [];
+    if (spans.length > 0) {
+        return [
+            `the page was hidden (a background tab) for ${hiddenMs} ms from page time ${Math.round(spans[0][0])} ms: its timers were throttled, so max lag counts only the visible time, while frames and long tasks still include the hidden part`,
+        ];
+    }
+
+    if (snapshot.visibleThroughout === false) {
+        return [
+            "the page was hidden (a background tab) during the measurement: timers are throttled and frames skipped, so these numbers are not valid, and this snapshot does not say when, so max lag includes the throttled timers",
+        ];
+    }
+
+    return [];
+}
+
 export function summarizePerf(snapshot: PerfSnapshot, worstCount = 5): PerfSummary {
+    const hiddenMs = Math.round((snapshot.hiddenSpans ?? []).reduce((sum, [from, to]) => sum + (to - from), 0));
     return {
         url: snapshot.url,
         frames: frameTotals(snapshot.frames),
@@ -240,15 +314,12 @@ export function summarizePerf(snapshot: PerfSnapshot, worstCount = 5): PerfSumma
         },
         cls: cumulativeLayoutShift(snapshot.shifts),
         inp: interactionToNextPaint(snapshot.events),
-        maxLagMs: Math.round(Math.max(0, ...snapshot.lags.map((lag) => lag[1]))),
+        maxLagMs: visibleMaxLagMs(snapshot),
+        hiddenMs,
         marks: snapshot.marks,
         unsupported: snapshot.unsupported,
         warnings: [
-            ...(snapshot.visibleThroughout === false
-                ? [
-                      "the page was hidden (a background tab) during the measurement: timers are throttled and frames skipped, so these numbers are not valid",
-                  ]
-                : []),
+            ...hiddenWarnings(snapshot, hiddenMs),
             ...(snapshot.unsupported.length > 0
                 ? [`this browser does not report: ${snapshot.unsupported.join(", ")}`]
                 : []),

@@ -432,6 +432,8 @@ export interface PerfSnapshot {
     unsupported: string[];
     /** The page was visible the whole time (a hidden tab throttles timers and skips frames). */
     visibleThroughout: boolean;
+    /** Page-time ranges `[from, to]` the page spent hidden. Absent in snapshots saved before 2026-10-13. */
+    hiddenSpans?: Array<[number, number]>;
     navigation: { domContentLoaded: number; load: number } | null;
     resources: ResourceTiming[];
 }
@@ -459,6 +461,22 @@ export function collectPerf(args: CollectPerfArgs): PerfSnapshot | { error: stri
 
         return picked;
     };
+
+    // When the page was hidden, so lag from its throttled background timers can be left out.
+    const hiddenSpans: Array<[number, number]> = [];
+    let hiddenSince: number | null = state.visibility.atInstall === "visible" ? null : state.installedAt;
+    for (const [at, visibility] of state.visibility.changes) {
+        if (visibility === "visible" && hiddenSince !== null) {
+            hiddenSpans.push([hiddenSince, at]);
+            hiddenSince = null;
+        } else if (visibility !== "visible" && hiddenSince === null) {
+            hiddenSince = at;
+        }
+    }
+
+    if (hiddenSince !== null) {
+        hiddenSpans.push([hiddenSince, Math.round(performance.now())]);
+    }
 
     const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
     const wanted = args.resources ?? [];
@@ -491,6 +509,7 @@ export function collectPerf(args: CollectPerfArgs): PerfSnapshot | { error: stri
             state.visibility.atInstall === "visible" &&
             document.visibilityState === "visible" &&
             state.visibility.changes.every((change) => change[1] === "visible"),
+        hiddenSpans,
         navigation: nav
             ? { domContentLoaded: Math.round(nav.domContentLoadedEventEnd), load: Math.round(nav.loadEventEnd) }
             : null,

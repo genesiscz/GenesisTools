@@ -15,6 +15,7 @@ import {
     disposePerfObservers,
     installPerfObservers,
     type LoafFrame,
+    type PerfSnapshot,
     resetPerfMarks,
 } from "./in-page/perf-observers.ts";
 import { spaNavigate } from "./in-page/spa-navigate.ts";
@@ -33,6 +34,7 @@ import {
     interactionToNextPaint,
     invokerKind,
     topFrames,
+    UNTRACKED_KIND,
 } from "./summaries.ts";
 import {
     activeDisplayIndex,
@@ -165,6 +167,52 @@ describe("in-page functions", () => {
         expect(run(disposePerfObservers, {})).toEqual({ disposed: false });
     });
 
+    test("collectPerf records when the page was hidden, also when it still is", () => {
+        const listeners = new Set<() => void>();
+        let now = 1000;
+        const document = {
+            visibilityState: "visible",
+            addEventListener: (_event: string, listener: () => void) => listeners.add(listener),
+            removeEventListener: (_event: string, listener: () => void) => listeners.delete(listener),
+        };
+        class FakeObserver {
+            static supportedEntryTypes: string[] = [];
+        }
+        const page: Record<string, unknown> = {
+            performance: { now: () => now, getEntriesByType: () => [] },
+            PerformanceObserver: FakeObserver,
+            document,
+            location: { pathname: "/", href: "https://app.example.com/" },
+            setInterval: () => 1,
+            clearInterval: () => undefined,
+        };
+        page.window = page;
+        const run = (fn: (arg: never) => unknown, arg: unknown) => {
+            page.arg = arg;
+            return runInNewContext(`(${fn.toString()})(arg)`, page);
+        };
+        const turn = (visibility: string, at: number) => {
+            now = at;
+            document.visibilityState = visibility;
+            for (const listener of listeners) {
+                listener();
+            }
+        };
+
+        run(installPerfObservers, { activeMs: 100_000 });
+        turn("hidden", 2000);
+        turn("visible", 5000);
+        turn("hidden", 8000);
+        now = 9000;
+        const snapshot = run(collectPerf, {}) as PerfSnapshot;
+
+        expect(snapshot.visibleThroughout).toBe(false);
+        expect(snapshot.hiddenSpans).toEqual([
+            [2000, 5000],
+            [8000, 9000],
+        ]);
+    });
+
     test("reactFind matches several structured matchers in one walk and exposes the live owner", () => {
         const client = { getQueryCache: () => "cache" };
         const store = { getState: () => ({}) };
@@ -264,7 +312,7 @@ describe("perf summaries", () => {
             frame(100, 450, "Response.json.then", "resolve-promise", "https://app.example.com/static/js/api.js"),
             frame(700, 120, "Response.json.then", "resolve-promise", "https://app.example.com/static/js/api.js"),
             frame(900, 300, "TimerHandler:setTimeout", "user-callback", "https://app.example.com/static/js/a.js"),
-            frame(1300, 60, "", ""),
+            { ...frame(1300, 60, "", ""), renderStart: 1310, styleAndLayoutStart: 1320 },
         ];
         const groups = groupByInvoker(frames);
         expect(groups.map((group) => [group.kind, group.frames, group.totalMs])).toEqual([
@@ -276,6 +324,44 @@ describe("perf summaries", () => {
         expect(topFrames(frames, 1)[0]).toMatchObject({ duration: 450, kind: "Response.json.then" });
         expect(topFrames(frames, 1)[0].source).toEqual({ url: "https://app.example.com/static/js/api.js", offset: 42 });
         expect(topFrames(frames, 4)[3].source).toBeNull();
+    });
+
+    test("a frame with no script is rendering only when its render phase is most of it", () => {
+        // A recorded frame: 889 ms passed before renderStart with no script, while another session's Profiler.stop ran.
+        const beforeRender: LoafFrame = {
+            start: 58263.4,
+            duration: 890,
+            blockingDuration: 0,
+            renderStart: 59152.7,
+            styleAndLayoutStart: 59153.4,
+            scripts: [],
+        };
+        const rendered: LoafFrame = {
+            ...beforeRender,
+            start: 59700.1,
+            duration: 53.5,
+            renderStart: 59721,
+            styleAndLayoutStart: 59721.2,
+        };
+        const neverRendered: LoafFrame = {
+            ...beforeRender,
+            start: 60000,
+            duration: 120,
+            renderStart: 0,
+            styleAndLayoutStart: 0,
+        };
+        const frames = [beforeRender, rendered, neverRendered];
+
+        expect(groupByInvoker(frames).map((group) => [group.kind, group.frames, group.totalMs])).toEqual([
+            [UNTRACKED_KIND, 2, 1010],
+            ["rendering", 1, 54],
+        ]);
+        const [worst] = topFrames(frames, 1);
+        expect(worst.kind).toBe(UNTRACKED_KIND);
+        expect(worst.renderMs).toBeCloseTo(0.7, 5);
+        expect(worst.styleAndLayoutMs).toBeCloseTo(0, 5);
+        expect(topFrames([rendered], 1)[0]).toMatchObject({ kind: "rendering" });
+        expect(topFrames([rendered], 1)[0].renderMs).toBeCloseTo(32.6, 5);
     });
 
     test("CLS takes the largest session window and skips input-driven shifts", () => {

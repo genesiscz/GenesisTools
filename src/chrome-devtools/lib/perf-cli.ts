@@ -3,7 +3,7 @@ import type { CdpLike } from "@genesiscz/utils/chrome-devtools/cdp-like";
 import { NETWORK_PRESET_NAMES, type NetworkConditions } from "@genesiscz/utils/chrome-devtools/emulate";
 import { globToRegExp } from "@genesiscz/utils/chrome-devtools/intercept";
 import type { PerfMark, PerfSnapshot } from "@genesiscz/utils/chrome-devtools/perf";
-import { cumulativeLayoutShift, frameTotals } from "@genesiscz/utils/chrome-devtools/summaries";
+import { cumulativeLayoutShift, frameTotals, visibleMaxLagMs } from "@genesiscz/utils/chrome-devtools/summaries";
 import { z } from "zod";
 
 /** Commander collector for a repeatable option: `--mark a --mark b` → `["a", "b"]`. Commas stay inside a value. */
@@ -253,7 +253,7 @@ export function perfMetrics(snapshot: PerfSnapshot): Record<string, number> {
         totalFrameMs: totals.totalMs,
         worstFrameMs: totals.worstMs,
         framesOver200: totals.over200,
-        maxLagMs: Math.round(Math.max(0, ...snapshot.lags.map((lag) => lag[1]))),
+        maxLagMs: visibleMaxLagMs(snapshot),
         cls: cumulativeLayoutShift(snapshot.shifts),
     };
     for (const [name, ms] of Object.entries(snapshot.marks)) {

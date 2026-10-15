@@ -161,12 +161,12 @@ function sourceHint(summaries: PerfSummary[]): string | null {
         return null;
     }
 
-    // The worst frame overall may be rendering with no script, so name the frame this lookup is for.
+    // The worst frame overall may have no script, so name the frame this lookup is for.
     return `which source line (longest frame with a script: ${ms(worst.duration)} ${worst.kind}): ${toolCommand("ts", "sourcemaps", "resolve", `${worst.source.url}:${worst.source.offset}`)} (add --build <dir> when the site publishes no maps)`;
 }
 
 /** The compact per-run (or per-recording) block: blocking, worst frame, invokers, long tasks, CLS, lag, marks. */
-function summaryLines(summary: PerfSummary, marks: PerfMark[]): string[] {
+export function summaryLines(summary: PerfSummary, marks: PerfMark[]): string[] {
     const lines: string[] = [];
     const frames = summary.frames;
     lines.push(
@@ -175,7 +175,7 @@ function summaryLines(summary: PerfSummary, marks: PerfMark[]): string[] {
     const worst = summary.worst[0];
     if (worst) {
         lines.push(
-            `  worst ${pc.bold(ms(worst.duration))}  ${worst.kind}${worst.location ? `  ${pc.dim(worst.location)}` : ""}${worst.forcedLayoutMs > 0 ? `  (forced layout ${ms(worst.forcedLayoutMs)})` : ""}`
+            `  worst ${pc.bold(ms(worst.duration))}  ${worst.kind}${worst.location ? `  ${pc.dim(worst.location)}` : `  (render ${ms(worst.renderMs)}, style+layout ${ms(worst.styleAndLayoutMs)})`}${worst.forcedLayoutMs > 0 ? `  (forced layout ${ms(worst.forcedLayoutMs)})` : ""}`
         );
     }
 
@@ -188,7 +188,7 @@ function summaryLines(summary: PerfSummary, marks: PerfMark[]): string[] {
     }
 
     lines.push(
-        `  long tasks ${summary.longtasks.count} (${ms(summary.longtasks.totalMs)}, worst ${ms(summary.longtasks.worstMs)}) · CLS ${summary.cls.toFixed(3)} · max lag ${ms(summary.maxLagMs)}`
+        `  long tasks ${summary.longtasks.count} (${ms(summary.longtasks.totalMs)}, worst ${ms(summary.longtasks.worstMs)}) · CLS ${summary.cls.toFixed(3)} · max lag ${ms(summary.maxLagMs)}${summary.hiddenMs > 0 ? " while visible" : ""}`
     );
     if (marks.length > 0) {
         const reached = marks
@@ -200,8 +200,8 @@ function summaryLines(summary: PerfSummary, marks: PerfMark[]): string[] {
         );
     }
 
-    if (summary.unsupported.length > 0) {
-        lines.push(pc.yellow(`  unsupported here: ${summary.unsupported.join(", ")}`));
+    for (const warning of summary.warnings) {
+        lines.push(pc.yellow(`  ⚠ ${warning}`));
     }
 
     return lines;
