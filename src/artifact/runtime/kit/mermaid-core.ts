@@ -40,11 +40,84 @@ export const MERMAID_ERROR_CLASS = "akit-mermaid-error";
 let source: MermaidSource = {};
 let pending: Promise<MermaidApi> | null = null;
 let counter = 0;
+/** The scheme mermaid was last initialized for. */
+let themedFor: "light" | "dark" | null = null;
+const watchedDocuments = new WeakSet<Document>();
 
 /** Change where mermaid comes from. Resets the loaded instance, so call it before the first render. */
 export function configureMermaid(next: MermaidSource): void {
     source = { ...next };
     pending = null;
+}
+
+// ─── Colour scheme ───
+// These live here, not in theme.tsx, because this file must stay import-free
+// (page.html inlines it) and still has to follow a scheme flip. theme.tsx and
+// chartjs.tsx import them from here, so there is one copy.
+
+/**
+ * The scheme the page renders in right now. `data-theme` on the root wins;
+ * otherwise the root's `color-scheme`, and for `light dark` (the auto
+ * template) the system preference. Reading `color-scheme` alone is wrong
+ * there: it says "light dark" whatever the system shows.
+ */
+export function resolvedColorScheme(): "light" | "dark" {
+    const root = document.documentElement;
+    const forced = root.getAttribute("data-theme");
+
+    if (forced === "light" || forced === "dark") {
+        return forced;
+    }
+
+    const declared = getComputedStyle(root).getPropertyValue("color-scheme").trim();
+    const hasLight = declared.includes("light");
+    const hasDark = declared.includes("dark");
+
+    if (hasLight && hasDark) {
+        return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+    }
+
+    return hasLight ? "light" : "dark";
+}
+
+/** Call `listener` when the system scheme or the root's data-theme changes. Returns the unsubscribe. */
+export function onColorSchemeChange(listener: () => void): () => void {
+    const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    media?.addEventListener("change", listener);
+    const observer = typeof MutationObserver === "function" ? new MutationObserver(listener) : null;
+    observer?.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    return () => {
+        media?.removeEventListener("change", listener);
+        observer?.disconnect();
+    };
+}
+
+/**
+ * A theme token as a concrete colour. A token written with `light-dark()` or
+ * `color-mix()` reads back from getPropertyValue as that unresolved text, so it
+ * is resolved through a hidden probe element, which the browser computes for
+ * the current scheme. Plain values (a hex colour) skip the probe.
+ */
+export function resolveCssColor(name: string): string {
+    const root = document.documentElement;
+    const raw = getComputedStyle(root).getPropertyValue(name).trim();
+
+    if (!/^(light-dark|color-mix|var)\(/.test(raw)) {
+        return raw;
+    }
+
+    const probe = document.createElement("span");
+    probe.style.display = "none";
+    probe.style.color = `var(${name})`;
+    root.appendChild(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+
+    // A browser answers rgb(), color() or oklch(); anything else (no layout engine) keeps the raw text.
+    return /^(rgb|color|oklch|oklab|#)/.test(resolved) ? resolved : raw;
 }
 
 /**
@@ -54,7 +127,7 @@ export function configureMermaid(next: MermaidSource): void {
  */
 export function mermaidThemeVariables(): Record<string, string | boolean> {
     const css = getComputedStyle(document.documentElement);
-    const token = (name: string): string => css.getPropertyValue(name).trim();
+    const token = (name: string): string => resolveCssColor(name);
     const bg = token("--bg");
     const panel = token("--panel");
     const border = token("--border");
@@ -63,7 +136,7 @@ export function mermaidThemeVariables(): Record<string, string | boolean> {
     const accent = token("--accent");
     const warn = token("--warn");
     const candidates: Record<string, string> = {
-        fontFamily: token("--font-body"),
+        fontFamily: css.getPropertyValue("--font-body").trim(),
         background: bg,
         mainBkg: panel,
         primaryColor: panel,
@@ -103,7 +176,7 @@ export function mermaidThemeVariables(): Record<string, string | boolean> {
         attributeBackgroundColorEven: bg,
     };
     const variables: Record<string, string | boolean> = {
-        darkMode: css.getPropertyValue("color-scheme").trim() !== "light",
+        darkMode: resolvedColorScheme() === "dark",
     };
 
     for (const [key, value] of Object.entries(candidates)) {
@@ -139,6 +212,7 @@ export function loadMermaid(): Promise<MermaidApi> {
         pending = load()
             .then((api) => {
                 api.initialize(mermaidConfig());
+                themedFor = resolvedColorScheme();
 
                 return api;
             })
@@ -151,9 +225,20 @@ export function loadMermaid(): Promise<MermaidApi> {
     return pending;
 }
 
+/** Re-initialize mermaid when the page scheme changed since it was last themed, so the next render recolours. */
+function retheme(api: MermaidApi): void {
+    const scheme = resolvedColorScheme();
+
+    if (scheme !== themedFor) {
+        api.initialize(mermaidConfig());
+        themedFor = scheme;
+    }
+}
+
 /** Render one diagram to SVG markup (already sanitized by mermaid). */
 export async function renderMermaidSvg(text: string): Promise<MermaidRenderResult> {
     const api = await loadMermaid();
+    retheme(api);
     counter += 1;
 
     return api.render(`akit-mermaid-${counter}`, text);
@@ -206,13 +291,18 @@ export async function hydrateMermaidFences(root: ParentNode): Promise<number> {
     }
 
     let rendered = 0;
+    retheme(api);
+    watchFrames();
 
     for (const pre of targets) {
         try {
             counter += 1;
-            const { svg, bindFunctions } = await api.render(`akit-mermaid-${counter}`, pre.textContent ?? "");
+            const text = pre.textContent ?? "";
+            const { svg, bindFunctions } = await api.render(`akit-mermaid-${counter}`, text);
             const frame = document.createElement("div");
             frame.className = MERMAID_FRAME_CLASS;
+            // Kept so a colour-scheme flip can render the diagram again.
+            frame.dataset.mermaidSource = text;
             frame.innerHTML = svg;
             bindFunctions?.(frame);
             pre.replaceWith(frame);
@@ -223,4 +313,47 @@ export async function hydrateMermaidFences(root: ParentNode): Promise<number> {
     }
 
     return rendered;
+}
+
+/** Render every hydrated fence under `root` again with the current theme. Returns how many re-rendered. */
+export async function rethemeMermaidFrames(root: ParentNode = document): Promise<number> {
+    const frames = [...root.querySelectorAll<HTMLElement>(`.${MERMAID_FRAME_CLASS}[data-mermaid-source]`)];
+
+    if (frames.length === 0) {
+        return 0;
+    }
+
+    const api = await loadMermaid();
+    retheme(api);
+    let rendered = 0;
+
+    for (const frame of frames) {
+        try {
+            counter += 1;
+            const { svg, bindFunctions } = await api.render(
+                `akit-mermaid-${counter}`,
+                frame.dataset.mermaidSource ?? ""
+            );
+            frame.innerHTML = svg;
+            bindFunctions?.(frame);
+            rendered += 1;
+        } catch (err) {
+            frame.dataset.mermaid = "error";
+            frame.title = errorMessage(err);
+        }
+    }
+
+    return rendered;
+}
+
+/** One document-wide watcher: hydrated fences recolour when the scheme flips. */
+function watchFrames(): void {
+    if (watchedDocuments.has(document)) {
+        return;
+    }
+
+    watchedDocuments.add(document);
+    onColorSchemeChange(() => {
+        void rethemeMermaidFrames(document);
+    });
 }

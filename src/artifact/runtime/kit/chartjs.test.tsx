@@ -143,6 +143,19 @@ describe("ChartJs", () => {
         await dom.unmount();
     });
 
+    test("a colour-scheme flip re-resolves the theme and updates the live chart", async () => {
+        calls.length = 0;
+        const dom = await mountDom(<ChartJs config={barConfig([1])} />);
+        const root = dom.window.document.documentElement;
+        root.setAttribute("data-theme", "light");
+        // MutationObserver callbacks run as microtasks.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        expect(calls.length).toBe(1);
+        expect(calls[0].updates).toBe(1);
+        await dom.unmount();
+    });
+
     test("the canvas carries an accessible name", async () => {
         calls.length = 0;
         const dom = await mountDom(<ChartJs config={barConfig([1])} />);

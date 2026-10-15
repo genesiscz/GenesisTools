@@ -39,6 +39,7 @@ export async function mountDom(node: ReactNode, url = "http://localhost/"): Prom
         Element: dom.window.Element,
         Node: dom.window.Node,
         HTMLInputElement: dom.window.HTMLInputElement,
+        MutationObserver: dom.window.MutationObserver,
         IS_REACT_ACT_ENVIRONMENT: true,
     });
 

@@ -7,7 +7,15 @@ import { logger } from "@genesiscz/utils/logger";
 import { build as viteBuild } from "vite";
 import { renderMarkdown } from "./markdown";
 import { mdPageExtras } from "./page-extras";
-import { escapeHtml, loadTemplate, loadThemeCss, renderTemplate, resolveTemplateDir } from "./templates";
+import {
+    escapeHtml,
+    loadTemplate,
+    loadThemeCss,
+    renderTemplate,
+    resolveTemplateDir,
+    THEME_PREPAINT_SCRIPT,
+    themeCssPath,
+} from "./templates";
 import { basePlugins, baseResolve, cacheDirFor, RUNTIME_DIR } from "./vite";
 
 const EMBED_EXTENSIONS = new Set([".md", ".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".geojson"]);
@@ -512,15 +520,21 @@ async function buildHtmlEntry(dir: string, entryRel: string, entryAbs: string): 
  * styles) is generated in the tool's cache dir, so the artifact stays ONE file
  * with no folder scaffolding.
  */
-async function buildTsxEntry(dir: string, entryRel: string, entryAbs: string): Promise<string> {
+async function buildTsxEntry(dir: string, entryRel: string, entryAbs: string, templateDir?: string): Promise<string> {
     const title = basename(entryRel).replace(/\.(tsx|jsx)$/, "");
     const tmpRoot = join(cacheDirFor(dir), "tsx-entry");
     const stylesAbs = join(RUNTIME_DIR, "styles.css");
     mkdirSync(tmpRoot, { recursive: true });
+    // The fallback tokens in styles.css ARE the default template, so only another
+    // template (`--template auto`, a custom dir) adds its theme.css and the
+    // pre-paint script that applies a stored ThemeToggle choice.
+    const themed = templateDir !== undefined && resolve(templateDir) !== resolveTemplateDir(undefined);
+    const relPath = (abs: string): string =>
+        SafeJSON.stringify(relative(tmpRoot, abs).split(sep).join("/"), { strict: true });
     // Tailwind's automatic source detection is rooted at tmpRoot here, so the
     // artifact dir must be registered explicitly or entry-only classes drop.
-    const buildCss = `@import ${SafeJSON.stringify(relative(tmpRoot, stylesAbs).split(sep).join("/"), { strict: true })};
-@source ${SafeJSON.stringify(relative(tmpRoot, dir).split(sep).join("/"), { strict: true })};
+    const buildCss = `@import ${relPath(stylesAbs)};
+${themed && templateDir ? `@import ${relPath(themeCssPath(templateDir))};\n` : ""}@source ${relPath(dir)};
 `;
     await Bun.write(join(tmpRoot, "build.css"), buildCss);
     await Bun.write(
@@ -540,7 +554,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(React.createEl
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-</head>
+${themed ? `${THEME_PREPAINT_SCRIPT}\n` : ""}</head>
 <body>
 <div id="root"></div>
 <script type="module" src="./mount.tsx"></script>
@@ -591,7 +605,7 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
 
     if (isTsxEntry(entryRel)) {
         bundled = true;
-        html = await buildTsxEntry(dir, entryRel, entryAbs);
+        html = await buildTsxEntry(dir, entryRel, entryAbs, options.templateDir);
     } else if (isMdEntry(entryRel)) {
         bundled = true;
         html = buildMdEntry(dir, entryAbs, options.templateDir ?? resolveTemplateDir(undefined));

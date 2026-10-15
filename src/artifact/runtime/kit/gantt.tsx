@@ -11,6 +11,7 @@ import {
 import { SERIES_COLOR } from "./charts";
 import { readableTextOn } from "./color";
 import { TONE_TEXT, TONE_VAR, type Tone } from "./primitives";
+import { useColorSchemeTick } from "./theme";
 import { type TooltipContent, useTooltip } from "./tooltip";
 
 /**
@@ -367,6 +368,8 @@ export function Gantt({
     const [announce, setAnnounce] = useState("");
     const itemRefs = useRef(new Map<number, HTMLElement>());
     const focusNext = useRef(false);
+    // Re-render on a scheme flip, so the in-bar text re-picks its colour against the new fills.
+    useColorSchemeTick();
 
     const rows: Row[] = milestones.map((milestone) => ({ kind: "milestone", milestone }));
     lanes.forEach((lane, laneIndex) => {

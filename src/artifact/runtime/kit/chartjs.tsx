@@ -1,5 +1,6 @@
 import { Chart, type ChartConfiguration, registerables } from "chart.js";
 import { useEffect, useRef } from "react";
+import { onColorSchemeChange, resolveCssColor } from "./mermaid-core";
 
 export type { ChartConfiguration } from "chart.js";
 
@@ -33,9 +34,9 @@ function themeChartColors(): ThemeChartColors {
         return {};
     }
 
-    const css = getComputedStyle(document.documentElement);
-    const color = css.getPropertyValue("--dim").trim();
-    const borderColor = css.getPropertyValue("--border").trim();
+    // Resolved through a probe: a light-dark() token reads back as unresolved text.
+    const color = resolveCssColor("--dim");
+    const borderColor = resolveCssColor("--border");
 
     return { ...(color ? { color } : {}), ...(borderColor ? { borderColor } : {}) };
 }
@@ -102,6 +103,23 @@ export function ChartJs({ config, height = 320, ariaLabel }: ChartJsProps) {
         chart.options = { ...themeRef.current, ...config.options };
         chart.update();
     }, [config]);
+
+    // A colour-scheme flip (the auto template, ThemeToggle) re-resolves the theme and repaints in place.
+    useEffect(
+        () =>
+            onColorSchemeChange(() => {
+                const chart = chartRef.current;
+
+                if (!chart) {
+                    return;
+                }
+
+                themeRef.current = themeChartColors();
+                chart.options = { ...themeRef.current, ...configRef.current.options };
+                chart.update();
+            }),
+        []
+    );
 
     return (
         <div className="relative" style={{ height }}>

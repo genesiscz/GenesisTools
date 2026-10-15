@@ -1,5 +1,11 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { MERMAID_ERROR_CLASS, MERMAID_FRAME_CLASS, type MermaidRenderResult, renderMermaidSvg } from "./mermaid-core";
+import {
+    MERMAID_ERROR_CLASS,
+    MERMAID_FRAME_CLASS,
+    type MermaidRenderResult,
+    onColorSchemeChange,
+    renderMermaidSvg,
+} from "./mermaid-core";
 
 /**
  * Diagram surfaces. `Mermaid` renders mermaid source (flowchart, sequence,
@@ -115,10 +121,17 @@ export function Mermaid({ chart, caption, zoom = true, maxHeight, className }: M
     const [state, setState] = useState<MermaidState>({});
     const [copied, setCopied] = useState(false);
     const frameRef = useRef<HTMLDivElement>(null);
+    // Bumped on a colour-scheme flip, so the diagram renders again in the new colours.
+    const [scheme, setScheme] = useState(0);
+
+    useEffect(() => onColorSchemeChange(() => setScheme((n) => n + 1)), []);
 
     useEffect(() => {
         let cancelled = false;
-        setState({});
+        // A re-render for a scheme flip keeps the old SVG until the new one lands.
+        if (scheme === 0) {
+            setState({});
+        }
         renderMermaidSvg(chart)
             .then(({ svg, bindFunctions }) => {
                 if (!cancelled) {
@@ -134,7 +147,7 @@ export function Mermaid({ chart, caption, zoom = true, maxHeight, className }: M
         return () => {
             cancelled = true;
         };
-    }, [chart]);
+    }, [chart, scheme]);
 
     useEffect(() => {
         if (state.svg && state.bind && frameRef.current) {

@@ -251,6 +251,19 @@ export {
     TONE_VAR,
 } from "./primitives";
 export {
+    onColorSchemeChange,
+    readThemeMode,
+    resolveCssColor,
+    resolvedColorScheme,
+    THEME_STORAGE_KEY,
+    type ThemeMode,
+    ThemeToggle,
+    type ThemeToggleProps,
+    useColorSchemeTick,
+    useTheme,
+    writeThemeMode,
+} from "./theme";
+export {
     placeTooltip,
     TOOLTIP_ID,
     Tooltip,

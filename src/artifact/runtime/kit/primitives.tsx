@@ -54,7 +54,7 @@ export interface PageProps {
     width?: string;
 }
 
-/** Root wrapper: dark canvas, sane typography. Wrap every artifact in one Page. */
+/** Root wrapper: the template canvas (dark by default; the auto template follows the system), sane typography. Wrap every artifact in one Page. */
 export function Page({ children, width = "max-w-6xl" }: PageProps) {
     return (
         <div className="min-h-dvh bg-canvas px-4 py-8 font-sans text-ink sm:px-6">

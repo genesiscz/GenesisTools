@@ -428,7 +428,7 @@ program
     .option("--max-embed <mb>", "per-file cap for embedded sibling data files", "5")
     .option("--max-embed-total <mb>", "cap on the embedded sibling data files taken together", "32")
     .option("--embed <scope>", "referenced (only files the entry names) or tree (every sibling data file)")
-    .option("-t, --template <name>", "theme for a markdown entry's page chrome")
+    .option("-t, --template <name>", "theme: a markdown entry's page chrome, or a .tsx build's tokens (e.g. auto)")
     .option("--watch", "stay running and rebuild on every source change")
     .action(
         async (

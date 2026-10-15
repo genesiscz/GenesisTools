@@ -10,6 +10,14 @@ export { escapeHtml };
 
 export type TemplateFile = "catalog.html" | "page.html" | "tsx.html";
 
+/**
+ * Applies a stored ThemeToggle choice (`THEME_STORAGE_KEY` in kit/theme.tsx)
+ * before the first frame, so a reload never flashes the other scheme. The
+ * shipped chrome pages carry the same line literally; a test keeps them equal.
+ */
+export const THEME_PREPAINT_SCRIPT =
+    '<script>try{var t=localStorage.getItem("artifact-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>';
+
 const SHIPPED_TEMPLATES_DIR = join(RUNTIME_DIR, "templates");
 const DEFAULT_TEMPLATE = "default";
 

@@ -2,7 +2,9 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parsePatch } from "diff";
-import { contrastRatio, readableTextOn } from "./color";
+import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
+import { SERIES_COLOR } from "./charts";
+import { contrastRatio, parseCssColor, readableTextOn } from "./color";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
@@ -13,6 +15,7 @@ import { CodeBlock, Collapse, FilterChips, SegmentedControl, StatGrid, statDelta
 import { matchRoute } from "./router";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
+import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
 import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
 
@@ -993,5 +996,99 @@ describe("CapacityGrid", () => {
         expect(sizing(over)).toBe(sizing(ok));
         expect(over?.style.outline).toContain("1.5px");
         expect(over?.style.outlineOffset).toBe("-1.5px");
+    });
+});
+
+describe("auto theme", () => {
+    const TONES = ["--dim", "--ok", "--warn", "--err", "--info"];
+
+    test("contrast holds in both schemes: text 7:1, dim and tones 4.5:1 on bg and panel", () => {
+        for (const scheme of ["light", "dark"] as const) {
+            const token = (name: string): string => templateToken("auto", name, scheme);
+
+            for (const surface of ["--bg", "--panel"]) {
+                expect({ scheme, surface, ratio: contrastRatio(token("--text"), token(surface)) >= 7 }).toEqual({
+                    scheme,
+                    surface,
+                    ratio: true,
+                });
+
+                for (const tone of TONES) {
+                    expect({ scheme, surface, tone, ok: contrastRatio(token(tone), token(surface)) >= 4.5 }).toEqual({
+                        scheme,
+                        surface,
+                        tone,
+                        ok: true,
+                    });
+                }
+            }
+        }
+    });
+
+    test("the auto palette is cobalt by day and graphite by night", () => {
+        for (const name of ["--bg", "--panel", "--text", "--dim", "--accent", "--ok", "--warn", "--err", "--info"]) {
+            expect(templateToken("auto", name, "light")).toBe(templateToken("cobalt", name));
+            expect(templateToken("auto", name, "dark")).toBe(templateToken("default", name));
+        }
+    });
+
+    test("SERIES_COLOR has 8 entries and neighbours stay apart in both schemes", () => {
+        expect(SERIES_COLOR.length).toBe(8);
+
+        for (const scheme of ["light", "dark"] as const) {
+            const colours = SERIES_COLOR.map((_, i) => {
+                const raw = stylesToken(`--series-${i + 1}`);
+                const pair = raw.match(/^light-dark\(\s*([^,]+),\s*([^)]+)\)$/);
+
+                return parseCssColor((scheme === "light" ? pair?.[1] : pair?.[2]) ?? "");
+            });
+
+            for (let i = 1; i < colours.length; i += 1) {
+                const a = colours[i - 1];
+                const b = colours[i];
+                expect(a && b).toBeTruthy();
+                const distance = a && b ? Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b) : 0;
+                expect(distance).toBeGreaterThan(60);
+            }
+        }
+    });
+
+    test("the chrome pages carry the pre-paint script, keyed on THEME_STORAGE_KEY", () => {
+        expect(THEME_PREPAINT_SCRIPT).toContain(`"${THEME_STORAGE_KEY}"`);
+
+        for (const page of ["tsx.html", "page.html", "catalog.html"]) {
+            const html = readFileSync(join(import.meta.dir, "..", "templates", "default", page), "utf8");
+            expect(html).toContain(THEME_PREPAINT_SCRIPT);
+        }
+    });
+
+    test("data-theme wins over the system, and ThemeToggle writes it and the stored choice", async () => {
+        const dom = await mountDom(<ThemeToggle />);
+        const root = dom.window.document.documentElement;
+        const light = [...dom.container.querySelectorAll('[role="radio"]')].find((b) => b.textContent === "Light");
+        await dom.click(light);
+
+        expect(root.getAttribute("data-theme")).toBe("light");
+        expect(dom.window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+        expect(resolvedColorScheme()).toBe("light");
+        expect(light?.getAttribute("aria-checked")).toBe("true");
+
+        const system = [...dom.container.querySelectorAll('[role="radio"]')].find((b) => b.textContent === "System");
+        await dom.click(system);
+        expect(root.hasAttribute("data-theme")).toBe(false);
+        expect(dom.window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+        await dom.unmount();
+    });
+
+    test("a fenced diagram renders again after a scheme flip", async () => {
+        const dom = await mountDom(<Md>{"```mermaid\ngraph TD; Q-->R\n```\n"}</Md>);
+        await settle();
+        const before = mermaidRendered.length;
+        dom.window.document.documentElement.setAttribute("data-theme", "light");
+        await settle();
+
+        expect(mermaidRendered.length).toBeGreaterThan(before);
+        expect(dom.container.querySelector("[data-mermaid-source]")).not.toBeNull();
+        await dom.unmount();
     });
 });

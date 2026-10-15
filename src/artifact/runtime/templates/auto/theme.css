@@ -1,0 +1,25 @@
+/* auto: follows the system, cobalt paper by day and graphite by night. */
+/* Each token is written once with light-dark(): the light half is cobalt, the dark half is graphite.
+   data-theme on the root element (ThemeToggle, or the pre-paint script) overrides the system. */
+:root {
+    color-scheme: light dark;
+    --bg: light-dark(#f6f7f9, #0d0f13);
+    --panel: light-dark(#ffffff, #151920);
+    --border: light-dark(#dbe0e8, #252b36);
+    --text: light-dark(#101725, #e2e6ec);
+    --dim: light-dark(#5b6675, #8a93a4);
+    --accent: light-dark(#1d4ed8, #4dd0b1);
+    --ok: light-dark(#1a6b47, #5ed6a4);
+    --warn: light-dark(#8a5510, #e8b45c);
+    --err: light-dark(#a52a2a, #f0737e);
+    --info: light-dark(#1d4ed8, #6cb6f0);
+    --radius: 8px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}
+:root[data-theme="light"] {
+    color-scheme: light;
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+}
