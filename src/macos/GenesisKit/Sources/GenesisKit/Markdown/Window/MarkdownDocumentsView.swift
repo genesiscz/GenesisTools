@@ -188,18 +188,20 @@ private struct MarkdownTabBar: View {
 
     var body: some View {
         let _ = RenderProbe.hit("md.tabBar")
+        // Read once per pass: `selected` searches the tabs, and asking it per tab made a pass N² (2026-10-15).
+        let selectedID = model.selected?.id
         Group {
             if configuration.wrapTabs {
                 MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
                     ForEach(model.docs) { doc in
-                        tab(doc)
+                        tab(doc, selectedID: selectedID)
                     }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                strip
+                strip(selectedID: selectedID)
             }
         }
         .contentShape(Rectangle())
@@ -212,9 +214,9 @@ private struct MarkdownTabBar: View {
     /// A tab gets the few model values it shows. It does not observe the model, so an unrelated publish (the
     /// preview's section, a find count) skips all tab bodies: with 24 tabs each publish re-ran 24 of them
     /// (2026-10-14, MarkdownTreeLagBenchTests: 480 tab bodies for 20 section changes).
-    private func tab(_ doc: MarkdownDocument) -> some View {
+    private func tab(_ doc: MarkdownDocument, selectedID: String?) -> some View {
         MarkdownDocumentTab(
-            doc: doc, model: model, active: doc.id == model.selected?.id, preview: model.isPreview(doc),
+            doc: doc, model: model, active: doc.id == selectedID, preview: model.isPreview(doc),
             fill: model.theme.fill
         )
         .equatable()
@@ -223,12 +225,12 @@ private struct MarkdownTabBar: View {
     /// A newly opened or switched-to tab can sit past the edge of an
     /// overflowing strip, so the strip follows the selection. A nil anchor
     /// scrolls the least amount that shows the whole tab.
-    private var strip: some View {
+    private func strip(selectedID: String?) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
                     ForEach(model.docs) { doc in
-                        tab(doc)
+                        tab(doc, selectedID: selectedID)
                             .id(doc.id)
                     }
                 }
@@ -236,7 +238,7 @@ private struct MarkdownTabBar: View {
                 .padding(.top, 6)
                 .padding(.bottom, 6)
             }
-            .onChange(of: model.selected?.id, initial: true) { _, id in
+            .onChange(of: selectedID, initial: true) { _, id in
                 guard let id else { return }
                 proxy.scrollTo(id, anchor: nil)
             }

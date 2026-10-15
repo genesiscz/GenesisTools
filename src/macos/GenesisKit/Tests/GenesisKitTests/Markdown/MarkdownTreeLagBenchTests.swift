@@ -18,10 +18,14 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
             throw XCTSkip("set MARKDOWN_TREE_BENCH to a folder (the vault's ČEZ folder reproduces the report)")
         }
         let root = URL(fileURLWithPath: rootPath)
-        let notes = try Self.notes(in: root, limit: 24, last: env["MARKDOWN_TREE_BENCH_NOTE"])
+        let tabs = Int(env["MARKDOWN_TREE_BENCH_TABS"] ?? "") ?? 24
+        let notes = try Self.notes(in: root, limit: tabs, last: env["MARKDOWN_TREE_BENCH_NOTE"])
         let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-tree-bench-\(UUID().uuidString)")!)
         model.filesRoot = root.path
         model.showFiles = true
+        // A configuration of its own: the shared one writes the test process's defaults, which other tests read.
+        model.configuration = GenesisKitMarkdownConfiguration(defaults: UserDefaults(suiteName: "md-tree-bench-config-\(UUID().uuidString)")!)
+        model.configuration.wrapTabs = env["MARKDOWN_TREE_BENCH_WRAP"] == "1"
         model.open(notes)
 
         let window = NSWindow(
@@ -77,6 +81,10 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
 
         // A click in the tree on an open note selects its tab: alternate between the last two tabs.
         start = RenderProbe.snapshot()
+        if let mark = env["MARKDOWN_TREE_BENCH_SELECT_MARK"] {
+            FileManager.default.createFile(atPath: mark, contents: Data("\(ProcessInfo.processInfo.processIdentifier)".utf8))
+            Self.settle(window, seconds: 0.5)
+        }
         let selectMeter = MainBusy.Meter()
         selectMeter.start()
         let ids = model.docs.suffix(2).map(\.id)
@@ -88,6 +96,20 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         let selecting = selectMeter.stop()
         let selectBodies = RenderProbe.summary(since: start)
 
+        // The reader drags the window's edge: ten frame changes of 40 pt.
+        start = RenderProbe.snapshot()
+        let resizeMeter = MainBusy.Meter()
+        resizeMeter.start()
+        let frame = window.frame
+        for step in 0..<10 {
+            var next = frame
+            next.size.width += step % 2 == 0 ? 40 : 0
+            window.setFrame(next, display: true)
+            Self.settle(window, seconds: 0.05)
+        }
+        let resizing = resizeMeter.stop()
+        let resizeBodies = RenderProbe.summary(since: start)
+
         let report = """
         tree bench: \(notes.count) tabs, tree document height \(rows) pt
           \(sections) active-section changes: busy \(Int(section.busyMs)) ms, longest \(Int(section.longestMs)) ms, \(section.passes) passes
@@ -96,6 +118,8 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
             bodies: \(scrollBodies)
           \(selections) tab selections: busy \(Int(selecting.busyMs)) ms, longest \(Int(selecting.longestMs)) ms, \(selecting.passes) passes
             bodies: \(selectBodies)
+          10 window resizes: busy \(Int(resizing.busyMs)) ms, longest \(Int(resizing.longestMs)) ms, \(resizing.passes) passes
+            bodies: \(resizeBodies)
         """
         print(report)
         if let out = env["MARKDOWN_TREE_BENCH_OUT"] {

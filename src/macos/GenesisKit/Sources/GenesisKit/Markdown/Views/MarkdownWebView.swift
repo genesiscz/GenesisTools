@@ -221,6 +221,18 @@ struct MarkdownWebView: NSViewRepresentable {
         return web
     }
 
+    /// A page leaving the window: its coordinator lets go of it, and it waits as the next spare
+    /// (`MarkdownWebSpare.recycle`), so the next tab switch renders into a loaded page instead of building one.
+    static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
+        coordinator.web = nil
+        if coordinator.parent.proxy?.web === web {
+            coordinator.parent.proxy?.web = nil
+        }
+        if let page = web as? MarkdownDropWebView {
+            MarkdownWebSpare.shared.recycle(page, media: coordinator.media)
+        }
+    }
+
     /// Transparent, so the SwiftUI vault background shows through the margins, and pinch to zoom: a pinch magnifies the
     /// page around the fingers, past the column width, so a screenshot can be read up close (a two-finger double tap
     /// goes back). The A / 100% / A zoom is text size (`pageZoom`); it reflows, and images stay at the column width.

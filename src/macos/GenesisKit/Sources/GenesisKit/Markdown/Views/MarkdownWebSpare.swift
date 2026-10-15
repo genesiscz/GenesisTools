@@ -49,6 +49,32 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
         return taken
     }
 
+    /// A page that left the window becomes the spare when none is waiting: its scripts are loaded, so the next tab
+    /// switch renders into it at once. Building a web view on the click was 8 of the 38 stalls over 500 ms on
+    /// 2026-10-15 (580 to 1799 ms each, a burst of opened tabs). Its marks, line highlight and scroll go first; the
+    /// next pane's render replaces the article before the window shows it (`GenRenderSwap` waits for that render).
+    func recycle(_ page: MarkdownDropWebView, media: MarkdownMediaRegistry) {
+        guard Self.enabled, web == nil, !page.isLoading else { return }
+        page.removeFromSuperview()
+        let controller = page.configuration.userContentController
+        controller.removeScriptMessageHandler(forName: "bridge")
+        controller.add(self, name: "bridge")
+        page.navigationDelegate = self
+        page.onDropFiles = nil
+        page.magnification = 1
+        // What a pane sets only when it has one (a column width, marks, a line highlight) must not carry over.
+        page.evaluateJavaScript(
+            "window.gnDiff([]);window.gnGitMarks([]);window.gnHighlightLines(null);window.gnWidth(null);window.scrollTo(0,0);"
+        )
+        web = page
+        self.media = media
+        ready = true
+        recycled += 1
+    }
+
+    /// Pages taken back by `recycle` (tests and the log read it).
+    private(set) var recycled = 0
+
     /// Makes the next spare a moment from now, once.
     func prepareSoon(after delay: TimeInterval = 1.5) {
         guard Self.enabled, web == nil, !scheduled else { return }

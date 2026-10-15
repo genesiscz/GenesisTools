@@ -1,0 +1,81 @@
+import AppKit
+@testable import GenesisKit
+import WebKit
+import XCTest
+
+/// The viewer's speed fixes of 2026-10-15: native path ids, the sidebar reveal's glide, and a page that
+/// leaves the window kept as the next spare.
+@MainActor
+final class MarkdownViewerSpeedTests: XCTestCase {
+    private func isNative(_ string: String) -> Bool {
+        string.utf8.withContiguousStorageIfAvailable { _ in true } ?? false
+    }
+
+    /// A non-ASCII path from `URL.path` is a bridged NSString; the document keeps a native copy.
+    func testADocumentKeepsItsPathAsANativeString() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ČEZ-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("Návrh.md")
+        try "# Návrh".write(to: url, atomically: true, encoding: .utf8)
+        let doc = MarkdownDocument(url: url)
+        XCTAssertEqual(doc.id, url.path)
+        XCTAssertTrue(isNative(doc.id), "the id is native UTF-8")
+        XCTAssertTrue(isNative(doc.title))
+        XCTAssertEqual(doc.title, "Návrh")
+    }
+
+    func testAFolderListingHandsOutNativePaths() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Složka-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Účty"), withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        try "x".write(to: dir.appendingPathComponent("Žádost.md"), atomically: true, encoding: .utf8)
+        let entries = FileTreeListing.entries(of: dir.path)
+        XCTAssertEqual(entries.map(\.name), ["Účty", "Žádost.md"])
+        XCTAssertTrue(entries.allSatisfy { isNative($0.path) && isNative($0.name) })
+    }
+
+    func testTheGlideCentresARowByItsIndexAndStaysInsideTheDocument() {
+        // 1,000 rows of 20 pt plus 4 pt padding above and below, a 600 pt sidebar.
+        let height: CGFloat = 1000 * 20 + 8
+        XCTAssertEqual(MarkdownTreeScroll.centeredOrigin(index: 500, count: 1000, documentHeight: height, visibleHeight: 600),
+                       4 + 500.5 * 20 - 300)
+        XCTAssertEqual(MarkdownTreeScroll.centeredOrigin(index: 2, count: 1000, documentHeight: height, visibleHeight: 600), 0,
+                       "a row near the top cannot be centred above the document")
+        XCTAssertEqual(MarkdownTreeScroll.centeredOrigin(index: 999, count: 1000, documentHeight: height, visibleHeight: 600),
+                       height - 600, "nor one near the end below it")
+    }
+
+    func testAFarGlideCoversOnlyTheLastScreenAndEasesInAndOut() {
+        XCTAssertEqual(MarkdownTreeScroll.glideStart(from: 0, to: 10_000, visibleHeight: 600), 9_400)
+        XCTAssertEqual(MarkdownTreeScroll.glideStart(from: 10_000, to: 0, visibleHeight: 600), 600)
+        XCTAssertEqual(MarkdownTreeScroll.glideStart(from: 100, to: 800, visibleHeight: 600), 100, "a near row glides all the way")
+        XCTAssertEqual(MarkdownTreeScroll.eased(0), 0)
+        XCTAssertEqual(MarkdownTreeScroll.eased(0.5), 0.5)
+        XCTAssertEqual(MarkdownTreeScroll.eased(1), 1)
+        XCTAssertLessThan(MarkdownTreeScroll.eased(0.1), 0.1, "slow at the start")
+        XCTAssertGreaterThan(MarkdownTreeScroll.eased(0.9), 0.9, "slow at the end")
+    }
+
+    /// The page a pane gives back is the next spare: the next take gets it at once, already loaded.
+    func testAPageThatLeavesTheWindowIsTheNextSpare() throws {
+        let spare = MarkdownWebSpare()
+        let page = MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let host = NSView(frame: .zero)
+        host.addSubview(page)
+        spare.recycle(page, media: MarkdownMediaRegistry())
+        XCTAssertNil(page.superview, "it leaves its old pane")
+        XCTAssertEqual(spare.recycled, 1)
+        let view = MarkdownWebView(
+            markdown: "# Doc\n", scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
+            onWikilink: { _ in }, onActiveSection: { _ in }
+        )
+        let taken = try XCTUnwrap(spare.take(for: MarkdownWebView.Coordinator(view)))
+        XCTAssertTrue(taken.web === page)
+        XCTAssertTrue(taken.ready, "a recycled page needs no load")
+        // A second page while the slot is full is let go, not kept.
+        spare.recycle(MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration()), media: MarkdownMediaRegistry())
+        spare.recycle(MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration()), media: MarkdownMediaRegistry())
+        XCTAssertEqual(spare.recycled, 2)
+    }
+}

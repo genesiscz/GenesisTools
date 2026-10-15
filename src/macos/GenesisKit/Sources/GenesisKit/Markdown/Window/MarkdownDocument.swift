@@ -46,8 +46,10 @@ final class MarkdownDocument: ObservableObject, Identifiable {
     /// with the inode, so the folder is watched too and re-arms it.
     private var folderSource: DispatchSourceFileSystemObject?
 
-    nonisolated var id: String { url.path }
-    var title: String { Self.title(for: url) }
+    /// The path, stored once and native (`String.nativeUTF8`): the tab bar, the selection and every lookup by id compare
+    /// it, and `url.path` built a new bridged string on each read (2026-10-15: N tabs cost N² of them per tab bar pass).
+    nonisolated let id: String
+    let title: String
 
     /// A note is its bare name (`Plan.md` is "Plan"); every other file keeps its
     /// extension, so `package.json`, `sample.json` and `file.ts` stay apart from
@@ -179,6 +181,8 @@ final class MarkdownDocument: ObservableObject, Identifiable {
 
     init(url: URL) {
         self.url = url
+        id = url.path.nativeUTF8
+        title = Self.title(for: url).nativeUTF8
         reload()
         watch()
         watchFolder()
