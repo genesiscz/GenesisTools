@@ -395,6 +395,15 @@ select-phase mark file for `sample`).
   (`MarkdownWebSpare.recycle` from `dismantleNSView`). Reset what a pane sets only when it has one (marks, line
   highlight, column width); the render-tag check compares equality, so the old tag cannot confirm a new render.
 
+### A value the reader changes while scrolling
+- The page reports the heading on screen as the reader scrolls. As a `@Published` of the window-wide model, each
+  report re-ran every body that observes the model (nine views). Give such a value its own `ObservableObject`, observed
+  only by the view that shows it, and keep a forwarding property so the writers do not change (`MarkdownSectionSpy`).
+- A body that parses the whole document (the outline) runs on every publish of a model it observes. Cache the result
+  per text (`MarkdownOutlineCache`); comparing a string with the one it came from is cheap.
+- **Measured** (100 tabs, outline open, a 164 KB note, debug, two rounds): 20 heading changes 1685 / 928 → 293 / 301
+  ms busy, the longest pass 490 / 47 → 10 / 12 ms; tab switches 2372 / 1917 → 1176 / 1160 ms.
+
 ### Check the build configuration first
 - The installed app at 04:01 was a DEBUG build (`start:debug`; same size as the worktree's debug product, no release
   product there). Before profiling a user's lag, compare the installed binary with the build products.
