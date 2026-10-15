@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getCachedPlan } from "@app/macos/lib/clones/cache";
 import { getPreset, presetsPath } from "@app/macos/lib/clones/presets";
 import { type ClonesConfig, storage } from "@app/macos/lib/clones/store";
+import { byKeys, contractShapeMismatches, readKitFixtureJson } from "@app/macos/lib/kit-fixtures";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 // A finished plan registers the daemon tasks. Keep the real `tools daemon`
@@ -134,6 +135,44 @@ describe("createReclaimCommand", () => {
             expect(names).toContain("macos-clones-cache-prune");
         } finally {
             rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("returns JSON envelopes for apply and preset selector errors before execution", async () => {
+        const cases = [
+            ["apply", "--format", "json"],
+            ["apply", "--dir", tmpdir(), "--min-real", "bad", "--format", "json"],
+            ["apply", "--dir", tmpdir(), "--targets", "--format", "jsonl"],
+            ["apply", "--dir", tmpdir(), "--keep-partners", "unknown-fixture", "--format", "json"],
+            ["apply", "--dir", tmpdir(), "--rewrite-stores", "unknown-fixture", "--format", "json"],
+            ["presets", "save", "invalid-fixture", "--json"],
+        ];
+        for (const args of cases) {
+            const result = await run(args);
+            expect(result.code).toBeGreaterThan(0);
+            expect(SafeJSON.parse(result.out, { strict: true })).toMatchObject({
+                error: { kind: "invalid-arguments" },
+            });
+        }
+    });
+
+    it("returns a JSON envelope when apply cannot find the requested repository", async () => {
+        const root = mkdtempSync(join(tmpdir(), "clones-no-repo-"));
+        try {
+            const result = await run([
+                "apply",
+                "--dir",
+                root,
+                "--worktrees-of",
+                "missing-fixture",
+                "--format",
+                "json",
+                "--no-daemon",
+            ]);
+            expect(result.code).toBe(1);
+            expect(SafeJSON.parse(result.out, { strict: true })).toMatchObject({ error: { kind: "repo-not-found" } });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 
@@ -389,6 +428,96 @@ describe("createReclaimCommand", () => {
             expect(listed.out).toContain("TARGETS");
             expect(listed.out).toContain("boxed");
             expect(listed.out).toContain("─");
+        } finally {
+            if (existsSync(presetsPath())) {
+                rmSync(presetsPath());
+            }
+
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("reclaim JSON contracts", () => {
+    it("apply without --yes prints a confirm-required envelope on stdout as well as the stderr hint", async () => {
+        const outer = twoTrees();
+        try {
+            const res = await run([
+                "apply",
+                "--dir",
+                outer,
+                "--targets",
+                "node_modules",
+                "--min-real",
+                "1024",
+                "--no-daemon",
+                "--format",
+                "json",
+            ]);
+            const envelope = SafeJSON.parse(res.out) as { error: { kind: string; command: string; sets: number } };
+
+            expect(res.code).toBe(1);
+            expect(res.err).toContain("--yes");
+            expect(envelope.error).toMatchObject({ kind: "confirm-required", command: "reclaim apply", sets: 1 });
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it.skipIf(process.platform !== "darwin")(
+        "apply --yes --format json carries the plan totals beside the measured report",
+        async () => {
+            const outer = twoTrees();
+            try {
+                const res = await run([
+                    "apply",
+                    "--dir",
+                    outer,
+                    "--targets",
+                    "node_modules",
+                    "--min-real",
+                    "1024",
+                    "--no-daemon",
+                    "--yes",
+                    "--format",
+                    "json",
+                ]);
+                const report = SafeJSON.parse(res.out) as Record<string, unknown> & {
+                    state: string;
+                    plan: { runId: string; sets: number; totalFreeable: number; totalFreeableUpTo: number };
+                };
+
+                expect(res.code).toBe(0);
+                expect(report.state).toBe("applied");
+                expect(report.plan.sets).toBe(1);
+                expect(typeof report.plan.runId).toBe("string");
+                expect(report.plan.totalFreeableUpTo).toBeGreaterThanOrEqual(report.plan.totalFreeable);
+                // An op's keys depend on what it did (a clone records its hashes after, a skip does not), and the
+                // plan cache's age exists only on a hit.
+                expect(
+                    contractShapeMismatches(report, readKitFixtureJson("contract-clones-apply-result.json"), {
+                        kinds: { "$.ops[]": byKeys("op", "status") },
+                        optionalKeys: { "$.planCache": ["ageMs"] },
+                    })
+                ).toEqual([]);
+            } finally {
+                rmSync(outer, { recursive: true, force: true });
+            }
+        }
+    );
+
+    it("presets save and rm print JSON with --json, and an unknown preset prints an envelope", async () => {
+        const outer = twoTrees();
+        try {
+            const saved = await run(["presets", "save", "json-one", "--dir", outer, "--targets", "vendor", "--json"]);
+            expect((SafeJSON.parse(saved.out) as { preset: { id: string } }).preset.id).toBe("json-one");
+
+            const removed = await run(["presets", "rm", "json-one", "--json"]);
+            expect(SafeJSON.parse(removed.out)).toEqual({ removed: "json-one" });
+
+            const missing = await run(["presets", "rm", "json-one", "--json"]);
+            expect(missing.code).toBe(1);
+            expect((SafeJSON.parse(missing.out) as { error: { kind: string } }).error.kind).toBe("unknown-preset");
         } finally {
             if (existsSync(presetsPath())) {
                 rmSync(presetsPath());

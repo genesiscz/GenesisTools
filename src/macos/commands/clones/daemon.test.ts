@@ -1,11 +1,12 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const registerSpy = mock(async () => true);
 const unregisterSpy = mock(async () => true);
 mock.module("@app/daemon/lib/register", () => ({
     registerTask: registerSpy,
     unregisterTask: unregisterSpy,
-    isTaskRegistered: mock(async () => false),
+    isTaskRegistered: mock(async () => true),
 }));
 
 const { createDaemonCommand } = await import("@app/macos/commands/clones/daemon");
@@ -30,5 +31,36 @@ describe("createDaemonCommand", () => {
         expect(arg.command).toMatch(/^'\/.+' run '\/.+\/scan-daemon\.ts'$/);
         expect(arg.command).toContain("scan-daemon.ts");
         expect(arg.every).toBe("every day at 03:00");
+    });
+
+    it("enable --json tells newly written tasks apart from the registered state", async () => {
+        let out = "";
+        const spy = spyOn(process.stdout, "write").mockImplementation(
+            (
+                chunk: string | Uint8Array,
+                encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                callback?: (error?: Error | null) => void
+            ) => {
+                out += String(chunk);
+                const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                cb?.();
+                return true;
+            }
+        );
+
+        try {
+            await createDaemonCommand().parseAsync(["node", "daemon", "enable", "--json"], { from: "node" });
+        } finally {
+            spy.mockRestore();
+        }
+
+        const parsed = SafeJSON.parse(out) as {
+            enabled: boolean;
+            newlyRegistered: { scan: boolean; prune: boolean };
+            registered: { scan: boolean; prune: boolean };
+        };
+        expect(parsed.enabled).toBe(true);
+        expect(typeof parsed.newlyRegistered.scan).toBe("boolean");
+        expect(parsed.registered).toEqual({ scan: true, prune: true });
     });
 });

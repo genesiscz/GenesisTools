@@ -31,8 +31,10 @@ import {
     type ReclaimPlan,
     type ReclaimSelector,
 } from "@app/macos/lib/clones/reclaim";
+import { emitClonesError } from "@app/macos/lib/clones/render/envelope";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { freeBytesLine } from "@app/macos/lib/clones/render/table";
+import type { ProcessReport } from "@app/macos/lib/clones/render/types";
 import { resolveSelector, type SelectorError } from "@app/macos/lib/clones/selector";
 import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -64,6 +66,7 @@ interface ReclaimOpts {
     exclude: string[];
     minReal: string;
     format?: string;
+    json?: boolean;
     save?: string;
     yes?: boolean;
     /** commander `--no-cache` → false. Undefined when the verb has no such flag. */
@@ -119,9 +122,26 @@ function applyOutputFlags(cmd: Command): Command {
 
 /** Print the exact message each selector failure used to print, and set the
  *  exit code that goes with it. */
-function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subcommand: string[]): void {
+/** The JSON envelope for a refused selector flag; a table run prints nothing here and keeps its stderr lines. */
+function emitInvalidArguments(opts: ReclaimOpts, subcommand: string[], message: string): Promise<void> {
+    return emitClonesError({
+        format: opts.json ? "json" : opts.format,
+        kind: "invalid-arguments",
+        message,
+        command: subcommand.slice(2).join(" "),
+    });
+}
+
+async function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subcommand: string[]): Promise<void> {
+    const message =
+        error.kind === "no-dirs"
+            ? "Nothing to search. Pass a directory, or --dir <path>."
+            : error.kind === "unknown-keep-partners"
+              ? `Unknown --keep-partners: ${error.given.join(", ")}`
+              : `--min-real must be a positive whole number of bytes, got "${opts.minReal}".`;
+    await emitInvalidArguments(opts, subcommand, message);
     if (error.kind === "no-dirs") {
-        console.error("Nothing to search. Pass a directory, or --dir <path>.");
+        console.error(message);
         console.error(suggestCommand("tools macos clones", { add: ["--dir", process.cwd()], subcommand }));
         process.exitCode = 2;
         return;
@@ -138,7 +158,7 @@ function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subcommand
         return;
     }
 
-    console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+    console.error(message);
     console.error(suggestCommand("tools macos clones", { add: ["--min-real", String(DEFAULT_MIN_REAL)], subcommand }));
     process.exitCode = 1;
 }
@@ -147,7 +167,7 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
     const subcommand = ["macos", "clones", "reclaim", ...verb];
     const dirs = [...dirsArg, ...opts.dir];
     if (dirs.length === 0) {
-        reportSelectorError({ kind: "no-dirs" }, opts, subcommand);
+        await reportSelectorError({ kind: "no-dirs" }, opts, subcommand);
         return null;
     }
 
@@ -159,6 +179,7 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         subcommand,
     });
     if (targets === null) {
+        await emitInvalidArguments(opts, subcommand, "Invalid --targets selection");
         return null;
     }
 
@@ -170,6 +191,7 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         subcommand,
     });
     if (keepPartners === null) {
+        await emitInvalidArguments(opts, subcommand, "Invalid --keep-partners selection");
         return null;
     }
 
@@ -181,12 +203,14 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         subcommand,
     });
     if (rewriteStores === null) {
+        await emitInvalidArguments(opts, subcommand, "Invalid --rewrite-stores selection");
         return null;
     }
 
     const isRewritable = (s: string): s is KeepPartnerId => (REWRITABLE_STORE_IDS as readonly string[]).includes(s);
     const unknownStore = rewriteStores.find((s) => !isRewritable(s));
     if (unknownStore !== undefined) {
+        await emitInvalidArguments(opts, subcommand, `Unknown --rewrite-stores: ${unknownStore}`);
         console.error(
             suggestEnumFlag("tools macos clones", "--rewrite-stores", REWRITABLE_STORE_IDS, {
                 subcommand,
@@ -206,7 +230,7 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         minReal: opts.minReal,
     });
     if ("error" in resolved) {
-        reportSelectorError(resolved.error, opts, subcommand);
+        await reportSelectorError(resolved.error, opts, subcommand);
         return null;
     }
 
@@ -329,6 +353,12 @@ async function runPlan({
         }
 
         if (result.status === "repo-not-found") {
+            await emitClonesError({
+                format: opts.json ? "json" : opts.format,
+                kind: "repo-not-found",
+                message: result.error.message,
+                command: ["reclaim", ...verb].join(" "),
+            });
             console.error(result.error.message);
             if (result.error.candidates.length > 0) {
                 console.error(`Repositories found: ${result.error.candidates.join(", ")}`);
@@ -397,8 +427,33 @@ function createPlanCommand(): Command {
     return cmd;
 }
 
+/** The plan's projection, carried inside the apply JSON so a caller sees promised and measured side by side. */
+export interface ApplyPlanSummary {
+    runId: string;
+    totalReclaimable: number;
+    totalFreeable: number;
+    totalFreeableUpTo: number;
+    sets: number;
+}
+
+export type ApplyJsonReport = ProcessReport & { plan: ApplyPlanSummary };
+
+export function applyJsonReport(report: ProcessReport, plan: ReclaimPlan): ApplyJsonReport {
+    return {
+        ...report,
+        plan: {
+            runId: plan.runId,
+            totalReclaimable: plan.totalReclaimable,
+            totalFreeable: plan.totalFreeable,
+            totalFreeableUpTo: plan.totalFreeableUpTo,
+            sets: plan.sets.length,
+        },
+    };
+}
+
 /** Confirm + clone. Returns the exit code. */
 async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): Promise<number> {
+    const command = ["reclaim", ...verb].join(" ");
     if (plan.sets.length === 0) {
         await printLn(renderPlan(plan, opts.format));
         return 0;
@@ -417,6 +472,13 @@ async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): 
             return 0;
         }
     } else if (!opts.yes) {
+        await emitClonesError({
+            format: opts.format,
+            kind: "confirm-required",
+            message: "reclaim apply requires confirmation. In non-interactive mode pass --yes.",
+            command,
+            extra: { sets: plan.sets.length, totalFreeable: plan.totalFreeable, planRunId: plan.runId },
+        });
         console.error("reclaim apply requires confirmation. In non-interactive mode pass --yes.");
         console.error(
             suggestCommand("tools macos clones", {
@@ -429,17 +491,38 @@ async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): 
 
     const applied = applyReclaimPlan(plan);
     if (applied.status === "integrity") {
-        console.error(`INTEGRITY ABORT: ${applied.message}`);
+        const message = `INTEGRITY ABORT: ${applied.message}`;
+        await emitClonesError({
+            format: opts.format,
+            kind: "integrity",
+            message,
+            command,
+            extra: { planRunId: plan.runId },
+        });
+        console.error(message);
         return 1;
     }
 
     if (applied.status === "clone-unsupported") {
-        console.error(`Cannot apply: ${applied.message}`);
+        const message = `Cannot apply: ${applied.message}`;
+        await emitClonesError({
+            format: opts.format,
+            kind: "clone-unsupported",
+            message,
+            command,
+            extra: { planRunId: plan.runId },
+        });
+        console.error(message);
         return 1;
     }
 
     const fmt = resolveFormat(opts.format);
-    await printLn(resolveRenderer(fmt).processReport(applied.report));
+    if (fmt === "table") {
+        await printLn(resolveRenderer(fmt).processReport(applied.report));
+    } else {
+        const report = applyJsonReport(applied.report, plan);
+        await printLn(fmt === "jsonl" ? SafeJSON.stringify(report) : SafeJSON.stringify(report, null, 2));
+    }
     if (fmt === "table") {
         // The three numbers side by side: what the plan promised, what the
         // kernel said each copy held privately, and what statfs saw.
@@ -503,6 +586,18 @@ function renderPresetTable(presets: Preset[]): string {
     return table.toString();
 }
 
+async function unknownPreset(id: string, command: string, json: boolean): Promise<void> {
+    const known = listPresets().map((x) => x.id);
+    await emitClonesError({
+        format: json ? "json" : "table",
+        kind: "unknown-preset",
+        message: `Unknown preset "${id}".`,
+        command,
+        extra: { presetId: id, known },
+    });
+    console.error(`Unknown preset "${id}".${known.length > 0 ? ` Known presets: ${known.join(", ")}` : ""}`);
+}
+
 function createPresetsCommand(): Command {
     const group = new Command("presets").description("Saved reclaim selectors");
 
@@ -528,11 +623,11 @@ function createPresetsCommand(): Command {
     group
         .command("show")
         .argument("<id>", "Preset id")
-        .description("Print one preset")
+        .description("Print one preset (always JSON)")
         .action(async (id: string) => {
             const preset = getPreset(id);
             if (preset === null) {
-                console.error(`Unknown preset "${id}".`);
+                await unknownPreset(id, "reclaim presets show", true);
                 process.exit(1);
             }
 
@@ -540,29 +635,33 @@ function createPresetsCommand(): Command {
         });
 
     const save = new Command("save").argument("<id>", "Preset id").description("Save a selector without scanning");
-    applySelectorFlags(save).action(async (id: string, dirsArg: string[], opts: ReclaimOpts) => {
-        const selector = await selectorFrom(dirsArg ?? [], opts, ["presets", "save", id]);
-        if (selector === null) {
-            return;
-        }
+    applySelectorFlags(save)
+        .option("--json", "print {preset} as JSON")
+        .action(async (id: string, dirsArg: string[], opts: ReclaimOpts & { json?: boolean }) => {
+            const selector = await selectorFrom(dirsArg ?? [], opts, ["presets", "save", id]);
+            if (selector === null) {
+                return;
+            }
 
-        savePreset(presetFromSelector(id, selector));
-        await printLn(`Saved preset ${id}.`);
-        process.exitCode = 0;
-    });
+            const preset = presetFromSelector(id, selector);
+            savePreset(preset);
+            await printLn(opts.json ? SafeJSON.stringify({ preset }, null, 2) : `Saved preset ${id}.`);
+            process.exitCode = 0;
+        });
     group.addCommand(save);
 
     group
         .command("rm")
         .argument("<id>", "Preset id")
         .description("Delete one preset")
-        .action(async (id: string) => {
+        .option("--json", "print {removed} as JSON")
+        .action(async (id: string, opts: { json?: boolean }) => {
             if (!removePreset(id)) {
-                console.error(`Unknown preset "${id}".`);
+                await unknownPreset(id, "reclaim presets rm", Boolean(opts.json));
                 process.exit(1);
             }
 
-            await printLn(`Removed preset ${id}.`);
+            await printLn(opts.json ? SafeJSON.stringify({ removed: id }, null, 2) : `Removed preset ${id}.`);
         });
 
     group
@@ -586,10 +685,7 @@ function createPresetsCommand(): Command {
             ) => {
                 const preset = getPreset(id);
                 if (preset === null) {
-                    const known = listPresets().map((x) => x.id);
-                    console.error(
-                        `Unknown preset "${id}".${known.length > 0 ? ` Known presets: ${known.join(", ")}` : ""}`
-                    );
+                    await unknownPreset(id, "reclaim presets auto", Boolean(opts.json));
                     process.exitCode = 1;
                     return;
                 }
@@ -644,12 +740,7 @@ function createPresetsCommand(): Command {
             applyLogLevel(opts);
             const preset = getPreset(id);
             if (preset === null) {
-                console.error(`Unknown preset "${id}".`);
-                const known = listPresets().map((x) => x.id);
-                if (known.length > 0) {
-                    console.error(`Known presets: ${known.join(", ")}`);
-                }
-
+                await unknownPreset(id, "reclaim presets run", resolveFormat(opts.format) !== "table");
                 process.exit(1);
             }
 

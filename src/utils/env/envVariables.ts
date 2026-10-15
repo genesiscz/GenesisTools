@@ -353,16 +353,33 @@ export const env = {
 
     doctor: {
         /**
-         * Extra roots for the dev-caches analyzer's node_modules sweep, colon
-         * separated, `~` allowed. The built-in list is deliberately generic
-         * (`~/Projects`, `~/dev`, …); a developer whose checkouts live somewhere
-         * else names it here rather than in a public source file.
+         * Extra checkout roots for the dev-caches and temp-leaks analyzers, colon
+         * separated, `~` allowed. Roots are otherwise discovered from the git
+         * checkouts under `~` (src/doctor/lib/dev-roots.ts); name one here when
+         * the walk does not reach it.
          */
         getDevCacheRoots: () =>
             getTrimmed("GENESIS_TOOLS_DEV_CACHE_ROOTS")
                 ?.split(":")
                 .map((root) => root.trim())
                 .filter((root) => root.length > 0) ?? [],
+        /**
+         * The scratch root coding agents write into, one folder per project and
+         * then per session (for example `/tmp/cc`). Unset: the temp-leaks
+         * scratch rules are off, because no standard tool writes such a root.
+         */
+        getAgentScratchRoot: () => getTrimmed("GENESIS_TOOLS_AGENT_SCRATCH_ROOT"),
+        /**
+         * Folder names under `/tmp` that hold items moved aside instead of
+         * deleted, colon separated, `*` matching any run of characters (for
+         * example `disk-reclaim-*`). GenesisTools' own move-aside folders are
+         * always included; unset adds none.
+         */
+        getMovedAsideGlobs: () =>
+            getTrimmed("GENESIS_TOOLS_MOVED_ASIDE_GLOBS")
+                ?.split(":")
+                .map((glob) => glob.trim())
+                .filter((glob) => glob.length > 0) ?? [],
     },
 
     jenkins: {

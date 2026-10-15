@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOptimizeCommand } from "@app/macos/commands/clones/optimize";
+import { contractShapeMismatches, readKitFixtureJson } from "@app/macos/lib/kit-fixtures";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("createOptimizeCommand (dry-run default)", () => {
@@ -425,6 +426,110 @@ describe("optimize selector flags", () => {
             expect(res.err).toContain("no-such-repo-xyz");
         } finally {
             rmSync(outer, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("optimize --rollback JSON errors", () => {
+    async function capture(argv: string[]): Promise<{ out: string; err: string; code: number | undefined }> {
+        let out = "";
+        const errs: string[] = [];
+        const origErr = console.error;
+        const origExit = process.exit;
+        let code: number | undefined;
+        const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+            (
+                chunk: string | Uint8Array,
+                encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                callback?: (error?: Error | null) => void
+            ) => {
+                out += String(chunk);
+                const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                cb?.();
+                return true;
+            }
+        );
+        console.error = (...x: unknown[]) => errs.push(x.join(" "));
+        process.exit = ((c?: number) => {
+            code = c;
+            throw new Error("__exit__");
+        }) as typeof process.exit;
+        try {
+            await createOptimizeCommand().parseAsync(["node", "optimize", ...argv], { from: "node" });
+        } catch (e) {
+            if (!(e instanceof Error) || e.message !== "__exit__") {
+                throw e;
+            }
+        } finally {
+            stdoutSpy.mockRestore();
+            console.error = origErr;
+            process.exit = origExit;
+        }
+
+        return { out, err: errs.join("\n"), code };
+    }
+
+    function recordedClone(bytes: number): { id: string; dir: string } {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-rollback-"));
+        const replace = join(dir, "copy.bin");
+        writeFileSync(replace, "x");
+        const id = newProcessId();
+        const at = new Date().toISOString();
+        writeMeta({ id, state: "applied", roots: [dir], startedAt: at, endedAt: at, planCacheHit: false });
+        appendOp(id, {
+            seq: 1,
+            ts: at,
+            op: "clone",
+            status: "ok",
+            bytes,
+            keep: join(dir, "keep.bin"),
+            replace,
+            modeBefore: 0o644,
+            mtimeBeforeMs: 1,
+            sha256Before: "deadbeef",
+            sha256After: "deadbeef",
+        });
+        return { id, dir };
+    }
+
+    it("an unknown process prints an unknown-process envelope on stdout", async () => {
+        const res = await capture(["--rollback", "--process", "definitely-not-real-zzz", "--format", "json"]);
+        const envelope = SafeJSON.parse(res.out) as { error: { kind: string; closest: string[]; command: string } };
+
+        expect(res.code).toBe(1);
+        expect(envelope.error.kind).toBe("unknown-process");
+        expect(envelope.error.command).toBe("optimize --rollback");
+        expect(Array.isArray(envelope.error.closest)).toBe(true);
+    });
+
+    it("a missing --yes prints a confirm-required envelope and rolls nothing back", async () => {
+        const { id, dir } = recordedClone(10);
+        try {
+            const res = await capture(["--rollback", "--process", id, "--format", "json"]);
+            expect(res.code).toBe(1);
+            expect((SafeJSON.parse(res.out) as { error: { kind: string } }).error.kind).toBe("confirm-required");
+            expect(readProcess(id)?.state).toBe("applied");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("too little free space prints a rollback-space envelope with the bytes, matching the frozen fixture", async () => {
+        const { id, dir } = recordedClone(Number.MAX_SAFE_INTEGER);
+        try {
+            const res = await capture(["--rollback", "--process", id, "--yes", "--format", "json"]);
+            const envelope = SafeJSON.parse(res.out) as { error: Record<string, unknown> };
+
+            expect(res.code).toBe(1);
+            expect(envelope.error.kind).toBe("rollback-space");
+            expect(envelope.error.required).toBe(Number.MAX_SAFE_INTEGER);
+            expect(typeof envelope.error.available).toBe("number");
+            expect(
+                contractShapeMismatches(envelope, readKitFixtureJson("contract-clones-error-envelope.json"))
+            ).toEqual([]);
+            expect(readProcess(id)?.state).toBe("applied");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 });
