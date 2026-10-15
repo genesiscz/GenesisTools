@@ -69,8 +69,11 @@ export function appendSessionCmuxRef(
     appendFileSync(refsPath, `${SafeJSON.stringify({ ...entry, at: entry.at ?? Date.now() })}\n`, "utf8");
 }
 
-/** Entries older than this are treated as gone — the pane is long closed. */
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Entries older than this are treated as gone — the pane is long closed. `tools cmux journal compact` drops the
+ * same lines, so a compacted journal answers every reader as before.
+ */
+export const CMUX_REFS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * The journal is append-only and only the NEWEST record per session wins, so
@@ -140,7 +143,7 @@ export function loadAllSessionCmuxRefs(
         return refs;
     }
 
-    const cutoff = (options.beforeMs ?? Date.now()) - MAX_AGE_MS;
+    const cutoff = (options.beforeMs ?? Date.now()) - CMUX_REFS_MAX_AGE_MS;
 
     for (const line of raw.split("\n")) {
         if (!line.trim()) {
@@ -244,7 +247,7 @@ const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{
  * history index on 2026-09-14 found 4 Codex and 6 Grok sessions with v4-shaped ids
  * (pre-switchover Codex rollouts from 2025/09, and Grok worktree/subagent sessions), and
  * this rule claims every one of them for Claude. None is in the cmux journal today, and
- * `MAX_AGE_MS` keeps ordinary reads inside the tagged era, but `loadSurfaceSessions({
+ * `CMUX_REFS_MAX_AGE_MS` keeps ordinary reads inside the tagged era, but `loadSurfaceSessions({
  * beforeMs })` walks the journal historically and can still reach one.
  *
  * Which of the two v7 agents wrote a record cannot be proven from the id either, so a v7
