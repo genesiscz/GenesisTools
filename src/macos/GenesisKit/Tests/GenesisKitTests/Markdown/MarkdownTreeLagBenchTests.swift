@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 @testable import GenesisKit
 import SwiftUI
 import XCTest
@@ -29,6 +30,19 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         if env["MARKDOWN_TREE_BENCH_OUTLINE"] == "1" {
             model.showOutline = true
         }
+        // Experiments: the native renderer instead of the web page, and the window without its file sidebar.
+        if env["MARKDOWN_TREE_BENCH_NATIVE"] == "1" {
+            // The renderer is remembered in the process's defaults: put back what was there.
+            let rendererKey = "markdownWindow.renderer"
+            let before = UserDefaults.standard.object(forKey: rendererKey)
+            model.rendererRaw = MarkdownRenderer.native.rawValue
+            addTeardownBlock {
+                if let before { UserDefaults.standard.set(before, forKey: rendererKey) } else { UserDefaults.standard.removeObject(forKey: rendererKey) }
+            }
+        }
+        if env["MARKDOWN_TREE_BENCH_FILES"] == "0" {
+            model.showFiles = false
+        }
         model.open(notes)
 
         let window = NSWindow(
@@ -48,8 +62,8 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         }
         Self.settle(window, seconds: 3)
 
-        let tree = try XCTUnwrap(Self.treeScroll(in: window), "the file tree's scroll view")
-        let rows = Int(tree.documentView?.frame.height ?? 0)
+        let tree = model.showFiles ? try XCTUnwrap(Self.treeScroll(in: window), "the file tree's scroll view") : nil
+        let rows = Int(tree?.documentView?.frame.height ?? 0)
         RenderProbe.enabled = true
         defer { RenderProbe.enabled = false }
 
@@ -75,6 +89,7 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         scrollMeter.start()
         for step in 1...40 {
             let y = CGFloat(step) * 30
+            guard let tree else { break }
             tree.contentView.scroll(to: NSPoint(x: 0, y: y))
             tree.reflectScrolledClipView(tree.contentView)
             Self.settle(window, seconds: 0.02)
@@ -88,16 +103,36 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
             FileManager.default.createFile(atPath: mark, contents: Data("\(ProcessInfo.processInfo.processIdentifier)".utf8))
             Self.settle(window, seconds: 0.5)
         }
+        // MARKDOWN_TREE_BENCH_PUBLISHERS=1: which setter published, for every publish of the model, the configuration
+        // and the two tabs during the switches (the first frame of ours below Combine).
+        var publishes: [String: Int] = [:]
+        var watches: [AnyCancellable] = []
+        if env["MARKDOWN_TREE_BENCH_PUBLISHERS"] == "1" {
+            func note(_ source: String) {
+                let frame = Thread.callStackSymbols.dropFirst(2).first { line in
+                    (line.contains("GenesisKit")) && !line.contains("Combine") && !line.contains("TreeLagBench")
+                } ?? "?"
+                let symbol = frame.split(separator: " ").dropFirst(3).first.map(String.init) ?? frame
+                publishes["\(source) \(symbol)", default: 0] += 1
+            }
+            watches.append(model.objectWillChange.sink { _ in note("model") })
+            watches.append(model.configuration.objectWillChange.sink { _ in note("configuration") })
+            for doc in model.docs.suffix(2) { watches.append(doc.objectWillChange.sink { _ in note("doc") }) }
+        }
         let selectMeter = MainBusy.Meter()
         selectMeter.start()
         let ids = model.docs.suffix(2).map(\.id)
         let selections = Int(env["MARKDOWN_TREE_BENCH_SELECTS"] ?? "") ?? 10
+        // MARKDOWN_TREE_BENCH_SELECT_GAP: seconds between switches (0.1); 0.5 lets each switch's fade finish, as a reader's.
+        let gap = Double(env["MARKDOWN_TREE_BENCH_SELECT_GAP"] ?? "") ?? 0.1
         for step in 0..<selections {
             model.select(ids[step % 2])
-            Self.settle(window, seconds: 0.1)
+            Self.settle(window, seconds: gap)
         }
         let selecting = selectMeter.stop()
         let selectBodies = RenderProbe.summary(since: start)
+        watches.removeAll()
+        let publishReport = publishes.sorted { $0.value > $1.value }.map { "    \($0.value)x \($0.key)" }.joined(separator: "\n")
 
         // The reader drags the window's edge: ten frame changes of 40 pt.
         start = RenderProbe.snapshot()
@@ -121,6 +156,7 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
             bodies: \(scrollBodies)
           \(selections) tab selections: busy \(Int(selecting.busyMs)) ms, longest \(Int(selecting.longestMs)) ms, \(selecting.passes) passes
             bodies: \(selectBodies)
+        \(publishReport)
           10 window resizes: busy \(Int(resizing.busyMs)) ms, longest \(Int(resizing.longestMs)) ms, \(resizing.passes) passes
             bodies: \(resizeBodies)
         """
