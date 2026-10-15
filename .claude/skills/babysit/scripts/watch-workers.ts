@@ -184,12 +184,12 @@ async function watchGrok(w: Worker): Promise<void> {
         if (status?.running) {
             w.running = true;
 
-            if (status.turns !== w.seenTurn) {
-                w.seenTurn = status.turns;
-                w.seen.clear();
-            }
+            // The set is never cleared: at a new turn's start the tail still reads the turn before it, and a cleared
+            // set printed that whole turn again (#521 turn 2 and 3, 2026-10-15). A repeated line of a later turn is
+            // the price, and the turn's own RUNNING and ENDED lines always print.
+            w.seenTurn = status.turns;
 
-            sayOnce(w, `turn ${status.turns} RUNNING`);
+            say(w, `turn ${status.turns} RUNNING`);
             await pump(w, [
                 process.execPath,
                 "run",
