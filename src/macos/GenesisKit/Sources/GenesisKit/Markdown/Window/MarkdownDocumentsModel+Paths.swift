@@ -35,16 +35,12 @@ struct MarkdownSidebarPulse: Equatable {
 
 /// How "Show in Sidebar" reaches an item: the row inside the tree, or a new root.
 enum MarkdownSidebarReveal {
-    /// The deepest row a reveal opens folders down to. A note five folders below the root would open
-    /// five levels of folders and indent its row past half a narrow sidebar, so it re-roots instead.
-    static let maxDepth = 4
-
     enum Plan: Equatable {
         /// The row is in the tree, `depth` folders below the root (0: a child of the root).
         case row(depth: Int)
         /// The item is the root itself.
         case root
-        /// Outside the root, or deeper than `maxDepth`: the tree re-roots at this folder (its path).
+        /// Outside the root: the tree re-roots at this folder (its path), and the item's row is revealed in it.
         case reRoot(String)
     }
 
@@ -59,15 +55,24 @@ enum MarkdownSidebarReveal {
         return below.isEmpty ? nil : below.count - 1
     }
 
-    static func plan(_ item: URL, isFolder: Bool, root: URL, maxDepth: Int = maxDepth) -> Plan {
+    /// Under the root, at any depth: the row (every folder above it opens). Martin, 2026-10-15: a re-root for a deep
+    /// note was "Navigate in Sidebar", not "Show in Sidebar", which should open the folders and glide to the row.
+    /// Outside the root: the deepest folder holding both the old root and the item, so the tree keeps its place, when
+    /// that folder is at least two levels below the home folder; else the item's own folder.
+    static func plan(_ item: URL, isFolder: Bool, root: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Plan {
         let item = item.standardizedFileURL
         if item.path == root.standardizedFileURL.path {
             return .root
         }
-        guard let depth = depth(of: item, under: root), depth <= maxDepth else {
-            return .reRoot((isFolder ? item : item.deletingLastPathComponent()).path)
+        if let depth = depth(of: item, under: root) {
+            return .row(depth: depth)
         }
-        return .row(depth: depth)
+        let own = (isFolder ? item : item.deletingLastPathComponent()).path
+        let shared = zip(root.standardizedFileURL.pathComponents, item.pathComponents).prefix { $0 == $1 }.map(\.0)
+        let homeDepth = home.standardizedFileURL.pathComponents.count
+        guard shared.count >= homeDepth + 2,
+              shared.prefix(homeDepth) == home.standardizedFileURL.pathComponents[...] else { return .reRoot(own) }
+        return .reRoot(NSString.path(withComponents: shared))
     }
 
     /// Where the sidebar header's New File… / New Folder… create: the folder the tree last revealed,

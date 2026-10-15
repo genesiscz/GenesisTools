@@ -20,7 +20,9 @@ import AppKit
 /// divider drag changes the size smoothly without re-laying the rows at every fraction.
 enum MarkdownTreeFont {
     static let pointsPerStep: Double = 60
-    static let maxGrowth: Double = 4
+    /// The most the width adds to the base size. Martin, 2026-10-15, at +4 (17 pt on a wide sidebar): "doesn't have
+    /// to max that big"; his reference showed rows of about 21 pt, 11.5 to 13 pt text.
+    static let maxGrowth: Double = 1.5
     /// The smallest size the fit shrinks to. Below it a name is cut instead, because smaller text stops
     /// being readable before a long name stops being cut.
     static let minimum: Double = 10.5

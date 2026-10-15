@@ -83,6 +83,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// Folder the file sidebar is rooted at. Empty means "follow the open
     /// document", which is what a reader expects the first time they open it.
     @Published var filesRoot: String = "" {
+        willSet {
+            // The place the tree leaves, for Back (`MarkdownTreeHistory`). Not while Back or Forward itself moves it.
+            if !restoringTreePlace, newValue != filesRoot, let place = treePlace?() { treeHistory.record(place) }
+        }
         didSet { defaults.set(filesRoot, forKey: markdownFilesRootKey) }
     }
 
@@ -146,10 +150,10 @@ final class MarkdownDocumentsModel: ObservableObject {
         return nil
     }
 
-    /// The file sidebar, open, with `item` (a folder or a file) shown ("Show in Sidebar"). Inside the
-    /// tree its folders open, the row scrolls into view and pulses. Outside the root, more than
-    /// `MarkdownSidebarReveal.maxDepth` folders down, or with `navigate` ("Navigate in Sidebar"), the
-    /// tree re-roots at the folder (a file: its folder) and its header pulses instead.
+    /// The file sidebar, open, with `item` (a folder or a file) shown ("Show in Sidebar"). Its folders open, the
+    /// row glides into view and pulses; outside the root the tree first re-roots (`MarkdownSidebarReveal.plan`).
+    /// With `navigate` ("Navigate in Sidebar") the tree re-roots at the folder (a file: its folder) and its header
+    /// pulses instead.
     func revealInSidebar(_ item: URL, navigate: Bool = false) {
         let item = item.standardizedFileURL
         showFiles = true
@@ -165,7 +169,8 @@ final class MarkdownDocumentsModel: ObservableObject {
             revealPulse = MarkdownSidebarPulse(target: .header, token: revealToken)
         case .reRoot(let folder):
             filesRoot = folder
-            revealPulse = MarkdownSidebarPulse(target: .header, token: revealToken)
+            // "Show in Sidebar" lands on the row in the new root as well; "Navigate in Sidebar" lights the header.
+            revealPulse = MarkdownSidebarPulse(target: navigate || item.path == folder ? .header : .row(item.path), token: revealToken)
         }
         revealTarget = item
         GenesisKit.log("markdown: sidebar reveal \(item.path) navigate=\(navigate) -> \(plan)")
@@ -178,6 +183,37 @@ final class MarkdownDocumentsModel: ObservableObject {
         let picked = presentFolderMenu(folder, pathMenu(for: folder, kind: .folder))
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         GenesisKit.log("markdown: folder link \(folder.path), menu open \(ms) ms, picked=\(picked)")
+    }
+
+    /// The file sidebar's back and forward (`MarkdownTreeHistory`). The tree view supplies its place (`treePlace`)
+    /// and applies the one asked for (`pendingTreePlace`): the open folders and the scroll offset live there.
+    let treeHistory = MarkdownTreeHistory()
+    var treePlace: (() -> MarkdownTreePlace)?
+    @Published private(set) var pendingTreePlace: MarkdownTreePlace?
+    private var restoringTreePlace = false
+
+    func treeBack() {
+        guard let current = treePlace?(), let place = treeHistory.goBack(from: current) else { return }
+        restoreTreePlace(place)
+    }
+
+    func treeForward() {
+        guard let current = treePlace?(), let place = treeHistory.goForward(from: current) else { return }
+        restoreTreePlace(place)
+    }
+
+    private func restoreTreePlace(_ place: MarkdownTreePlace) {
+        showFiles = true
+        restoringTreePlace = true
+        filesRoot = place.root
+        restoringTreePlace = false
+        pendingTreePlace = place
+        GenesisKit.log("markdown: sidebar history -> \(place.root.isEmpty ? "(follows document)" : place.root), \(place.expanded.count) open folders")
+    }
+
+    /// The tree took the place back.
+    func treePlaceRestored() {
+        pendingTreePlace = nil
     }
 
     /// Walk the sidebar up one folder. Pins the result, so it stays there when

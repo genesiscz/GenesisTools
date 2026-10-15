@@ -56,17 +56,23 @@ final class MarkdownSidebarRevealTests: XCTestCase {
         XCTAssertNil(MarkdownSidebarReveal.depth(of: URL(fileURLWithPath: "/Users/alice/vaultx/a.md"), under: root))
     }
 
-    func testARowUpToFourFoldersDownStaysInTheTreeAndDeeperReRoots() {
+    func testARowAtAnyDepthUnderTheRootStaysInTheTree() {
         XCTAssertEqual(MarkdownSidebarReveal.plan(url("a.md"), isFolder: false, root: root), .row(depth: 0))
         XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/x.md"), isFolder: false, root: root), .row(depth: 4))
-        XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/e/x.md"), isFolder: false, root: root), .reRoot(url("a/b/c/d/e").path))
-        XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/e"), isFolder: true, root: root), .row(depth: 4))
-        XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/e/f"), isFolder: true, root: root), .reRoot(url("a/b/c/d/e/f").path))
+        XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/e/f/g/x.md"), isFolder: false, root: root), .row(depth: 7))
+        XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/e/f"), isFolder: true, root: root), .row(depth: 5))
     }
 
-    func testOutsideTheRootReRootsAndTheRootItselfOnlyPulses() {
-        let outside = URL(fileURLWithPath: "/Users/alice/other/x.md")
-        XCTAssertEqual(MarkdownSidebarReveal.plan(outside, isFolder: false, root: root), .reRoot("/Users/alice/other"))
+    func testOutsideTheRootReRootsAtTheSharedFolderAndTheRootItselfOnlyPulses() {
+        let home = URL(fileURLWithPath: "/Users/alice")
+        let vault = URL(fileURLWithPath: "/Users/alice/Projects/Brain/Work")
+        // Shared folder two levels below home: the tree keeps its place.
+        XCTAssertEqual(MarkdownSidebarReveal.plan(URL(fileURLWithPath: "/Users/alice/Projects/Brain/Tools/n/x.md"), isFolder: false,
+                                                  root: vault, home: home), .reRoot("/Users/alice/Projects/Brain"))
+        // Shared folder too shallow (home itself or one level below): the item's own folder.
+        XCTAssertEqual(MarkdownSidebarReveal.plan(URL(fileURLWithPath: "/Users/alice/other/x.md"), isFolder: false, root: root, home: home),
+                       .reRoot("/Users/alice/other"))
+        XCTAssertEqual(MarkdownSidebarReveal.plan(URL(fileURLWithPath: "/tmp/x/y.md"), isFolder: false, root: vault, home: home), .reRoot("/tmp/x"))
         XCTAssertEqual(MarkdownSidebarReveal.plan(root, isFolder: true, root: root), .root)
     }
 
@@ -83,7 +89,7 @@ final class MarkdownSidebarRevealTests: XCTestCase {
         XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: standard, scales: true), 13)
         XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: standard + 30, scales: true), 13.5)
         XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: standard + 60, scales: true), 14)
-        XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: MarkdownSidebarWidth.maximum, scales: true), 17)
+        XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: MarkdownSidebarWidth.maximum, scales: true), 14.5)
         XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: MarkdownSidebarWidth.minimum, scales: true), 13, "never below the base")
         XCTAssertEqual(MarkdownTreeFont.size(base: 13, width: MarkdownSidebarWidth.maximum, scales: false), 13)
     }
@@ -113,7 +119,7 @@ final class MarkdownPathVerbsTests: XCTestCase {
 
     private func url(_ path: String) -> URL { root.appendingPathComponent(path).standardizedFileURL }
 
-    func testShowInSidebarPulsesARowInTheTreeAndReRootsForADeepOne() {
+    func testShowInSidebarKeepsTheRootAndPulsesTheRowAtAnyDepth() {
         let token = model.revealToken
         model.revealInSidebar(url("a/plan.md"))
         XCTAssertTrue(model.showFiles)
@@ -122,8 +128,8 @@ final class MarkdownPathVerbsTests: XCTestCase {
         XCTAssertEqual(model.revealToken, token + 1)
 
         model.revealInSidebar(url("a/b/c/d/e/deep.md"))
-        XCTAssertEqual(model.filesRoot, url("a/b/c/d/e").path, "five folders down: the tree goes to the folder")
-        XCTAssertEqual(model.revealPulse?.target, .header)
+        XCTAssertEqual(model.filesRoot, root.path, "five folders down: the root stays, the folders open")
+        XCTAssertEqual(model.revealPulse?.target, .row(url("a/b/c/d/e/deep.md").path))
         XCTAssertEqual(model.revealTarget?.path, url("a/b/c/d/e/deep.md").path)
     }
 

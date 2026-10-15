@@ -486,6 +486,48 @@ private struct MarkdownDocumentPane: View {
         .onDisappear { MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner) }
     }
 
+    /// The file's path under "File is gone" or "Not a text file": a click opens it in its default app, its folder in
+    /// Finder, or the folder in the sidebar (Martin, 2026-10-15).
+    private var pathButton: some View {
+        let folder = doc.url.deletingLastPathComponent()
+        return PathMenuButton(entries: {
+            PathMenu.entries(for: doc.url, kind: .file, actions: [.openInDefaultApp],
+                             handlers: model.pathHandlers(for: doc.url, kind: .file))
+                + PathMenu.entries(for: folder, kind: .folder, actions: [.openInFinder, .navigateInSidebar],
+                                   handlers: model.pathHandlers(for: folder, kind: .folder))
+        }) {
+            Text(doc.url.path)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .underline()
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip("Open, show in Finder or navigate to the folder")
+        .accessibilityIdentifier("markdown-missing-path")
+    }
+
+    /// A file that is not text: a picture is drawn to fit the pane; anything else names the file.
+    @ViewBuilder
+    private var binaryView: some View {
+        if MarkdownHoverImage.isImage(doc.url), let image = NSImage(contentsOf: doc.url) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel(doc.url.lastPathComponent)
+                .accessibilityIdentifier("markdown-binary-image")
+        } else {
+            VStack(spacing: 8) {
+                Text("Not a text file")
+                    .font(.headline)
+                pathButton
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         // A deleted or renamed file with unsaved edits keeps its draft on
@@ -495,11 +537,11 @@ private struct MarkdownDocumentPane: View {
             VStack(spacing: 8) {
                 Text("File is gone")
                     .font(.headline)
-                Text(doc.url.path)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                pathButton
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if doc.binary {
+            binaryView
         } else if let revision = model.revisionView, revision.docID == doc.id {
             VStack(spacing: 0) {
                 MarkdownRevisionBanner(revision: revision, doc: doc, model: model)

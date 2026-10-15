@@ -128,6 +128,18 @@ public final class FileTreeModel: ObservableObject {
         expanded.contains(path)
     }
 
+    /// Every open folder, for a host that saves the tree's place (the viewer's back and forward).
+    public var expandedFolders: Set<String> { expanded }
+
+    /// Opens exactly `folders` (reading the ones not read yet) and closes the rest: a saved place comes back as it was.
+    public func restoreExpanded(_ folders: Set<String>) {
+        expanded = folders
+        for path in folders where children[path] == nil && !loading.contains(path) {
+            load(path)
+        }
+        rebuild()
+    }
+
     public func setRoot(_ url: URL) {
         let next = url.standardizedFileURL
         guard next.path != root.path || (children[next.path] == nil && !loading.contains(next.path)) else { return }

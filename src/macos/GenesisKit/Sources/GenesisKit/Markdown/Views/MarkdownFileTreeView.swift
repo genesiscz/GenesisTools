@@ -48,10 +48,14 @@ struct MarkdownFileTreeView: View {
     /// The tree's AppKit scroll view, so a reveal can glide to a row SwiftUI has not laid out yet.
     @State private var scrollBox = MarkdownTreeScrollBox()
     @State private var headerPulse: FileTreePulse?
+    /// A place from Back or Forward whose scroll offset waits for its folders' rows (`applyPendingPlaceScroll`).
+    @State private var pendingPlaceScroll: Double?
+    @ObservedObject private var history: MarkdownTreeHistory
     @GenReduceMotion private var reduceMotion
 
     init(model: MarkdownDocumentsModel, gitTree: GitTreeDecorationsModel? = nil) {
         self.model = model
+        _history = ObservedObject(wrappedValue: model.treeHistory)
         _config = ObservedObject(wrappedValue: model.configuration)
         _gitTree = StateObject(wrappedValue: gitTree ?? GitTreeDecorationsModel())
     }
@@ -125,7 +129,10 @@ struct MarkdownFileTreeView: View {
                     }
                 }
                 .onChange(of: model.revealToken) { _, _ in handleReveal(proxy) }
-                .onChange(of: tree.rows) { _, _ in scrollToPending(proxy) }
+                .onChange(of: tree.rows) { _, _ in
+                    scrollToPending(proxy)
+                    applyPendingPlaceScroll(force: false)
+                }
             }
         }
         .background(model.theme.chrome)
@@ -139,6 +146,14 @@ struct MarkdownFileTreeView: View {
             revealSelected(root)
             search.setRoot(root)
             applySearchRequest()
+            let model = model, tree = tree, scrollBox = scrollBox
+            model.treePlace = {
+                MarkdownTreePlace(root: model.filesRoot, expanded: tree.expandedFolders,
+                                  scrollY: Double(scrollBox.scrollView?.contentView.bounds.origin.y ?? 0))
+            }
+        }
+        .onChange(of: model.pendingTreePlace) { _, place in
+            if let place { restore(place) }
         }
         .onDisappear { scrollBox.cancelGlide() }
         .onChange(of: model.selectedId) { _, _ in
@@ -151,7 +166,8 @@ struct MarkdownFileTreeView: View {
         .onChange(of: root) { _, _ in
             followGit()
             tree.setRoot(model.filesRootURL)
-            revealSelected(model.filesRootURL)
+            // Back or Forward puts its own folders and offset back (`restore`); the open document must not move them.
+            if model.pendingTreePlace == nil { revealSelected(model.filesRootURL) }
             search.setRoot(model.filesRootURL)
         }
         .onReceive(NotificationCenter.default.publisher(for: .markdownTabFileChanged, object: model)) { _ in
@@ -441,6 +457,60 @@ struct MarkdownFileTreeView: View {
         )
     }
 
+    /// A saved place's name for the back and forward tooltips.
+    static func placeName(_ place: MarkdownTreePlace) -> String {
+        place.root.isEmpty ? "the open document's folder" : (place.root as NSString).lastPathComponent
+    }
+
+    /// Back or Forward: the root, exactly the folders that were open, then the scroll offset once their rows are in.
+    private func restore(_ place: MarkdownTreePlace) {
+        scrollBox.cancelGlide()
+        pendingRow = nil
+        if searchOpen { closeSearch() }
+        let root = model.filesRootURL
+        tree.setRoot(root)
+        search.setRoot(root)
+        tree.restoreExpanded(place.expanded)
+        pendingPlaceScroll = place.scrollY
+        applyPendingPlaceScroll(force: false)
+        // Folders read off the main thread may never make the list tall enough (one was deleted): place it anyway.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { applyPendingPlaceScroll(force: true) }
+    }
+
+    /// The saved offset, once the rows can hold it. It is set a run-loop turn later, after the table has taken the new
+    /// rows (a reload in the same pass put the list back at its top), and checked once more a moment later.
+    private func applyPendingPlaceScroll(force: Bool) {
+        guard let y = pendingPlaceScroll, let scroll = scrollBox.scrollView else { return }
+        scroll.window?.contentView?.layoutSubtreeIfNeeded()
+        guard force || Self.maxScroll(scroll) >= y - 1 else { return }
+        pendingPlaceScroll = nil
+        let rows = tree.rows.count
+        DispatchQueue.main.async {
+            Self.place(scroll, at: y)
+            GenesisKit.log("markdown: sidebar place scroll \(Int(y)) (max \(Int(Self.maxScroll(scroll))), forced \(force), rows \(rows))")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                let now = scroll.contentView.bounds.origin.y
+                if abs(now - y) > 2, Self.maxScroll(scroll) >= y - 1 {
+                    GenesisKit.log("markdown: sidebar place scroll moved to \(Int(now)) after restore, set \(Int(y)) again")
+                    Self.place(scroll, at: y)
+                }
+                model.treePlaceRestored()
+            }
+        }
+    }
+
+    private static func maxScroll(_ scroll: NSScrollView) -> Double {
+        scroll.window?.contentView?.layoutSubtreeIfNeeded()
+        return Double((scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.height + scroll.contentInsets.bottom)
+    }
+
+    private static func place(_ scroll: NSScrollView, at y: Double) {
+        let clip = scroll.contentView
+        let top = -Double(scroll.contentInsets.top)
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(max(y, top), max(maxScroll(scroll), top))))
+        scroll.reflectScrolledClipView(clip)
+    }
+
     /// Where the header's New File… / New Folder… create.
     private var newItemFolder: URL {
         let revealedFolder = revealed.map { URL(fileURLWithPath: $0) }.flatMap { MarkdownLinkRoute.isFolder($0) ? $0 : nil }
@@ -449,32 +519,62 @@ struct MarkdownFileTreeView: View {
         )
     }
 
+    /// One of the header's small glyph buttons (back, forward, up).
+    private func headerButton(_ symbol: String, enabled: Bool = true, id: String, tip: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(enabled ? model.theme.textSecondary : model.theme.textMuted.opacity(0.45))
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .disabled(!enabled)
+        .accessibilityIdentifier(id)
+        .instantTooltip(tip)
+    }
+
     private func header(_ root: URL) -> some View {
         HStack(spacing: 6) {
-            Button {
-                model.filesRootUp()
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(model.theme.textSecondary)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
+            HStack(spacing: 2) {
+                headerButton("chevron.left", enabled: history.canGoBack, id: "markdown-files-back",
+                             tip: history.back.last.map { "Back to \(Self.placeName($0))" } ?? "Back") { model.treeBack() }
+                headerButton("chevron.right", enabled: history.canGoForward, id: "markdown-files-forward",
+                             tip: history.forward.last.map { "Forward to \(Self.placeName($0))" } ?? "Forward") { model.treeForward() }
+                headerButton("arrow.up", id: "markdown-files-up",
+                             tip: "Up to \(root.deletingLastPathComponent().lastPathComponent)") { model.filesRootUp() }
             }
-            .buttonStyle(.genHoverPlain())
-            .accessibilityIdentifier("markdown-files-up")
-            .instantTooltip("Up to \(root.deletingLastPathComponent().lastPathComponent)")
 
-            Text(root.lastPathComponent.isEmpty ? "/" : root.lastPathComponent)
-                .font(GenTypography.mono(9.5, weight: .semibold))
-                .foregroundColor(model.theme.text)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                // "Navigate in Sidebar", or a reveal that re-rooted the tree: the new root lights up.
-                .fileTreePulse(headerPulse, color: model.theme.accent, cornerRadius: 4)
-                .instantTooltip(root.path)
-                .accessibilityIdentifier("markdown-files-root")
+            // The folder the tree shows: a folder glyph in the accent and its name, with the folder above it muted,
+            // so it reads as "you are here" rather than as one more button label (Martin, 2026-10-15).
+            HStack(spacing: 4) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(model.theme.accent)
+                if !root.deletingLastPathComponent().lastPathComponent.isEmpty, root.path != "/" {
+                    Text(root.deletingLastPathComponent().lastPathComponent + " /")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(model.theme.textMuted)
+                        .lineLimit(1)
+                        .layoutPriority(0)
+                }
+                Text(root.lastPathComponent.isEmpty ? "/" : root.lastPathComponent)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(model.theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 5).fill(model.theme.accent.opacity(0.10)))
+            // "Navigate in Sidebar", or a reveal that re-rooted the tree: the new root lights up.
+            .fileTreePulse(headerPulse, color: model.theme.accent, cornerRadius: 5)
+            .instantTooltip(root.path)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Folder \(root.lastPathComponent)")
+            .accessibilityIdentifier("markdown-files-root")
 
             Spacer(minLength: 0)
 

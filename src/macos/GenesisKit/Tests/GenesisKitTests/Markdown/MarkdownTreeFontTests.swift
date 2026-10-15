@@ -69,7 +69,7 @@ final class MarkdownTreeFontFitTests: XCTestCase {
             )
         }
         XCTAssertEqual(fitted(short, width: MarkdownSidebarWidth.standard), 13)
-        XCTAssertEqual(fitted(short, width: MarkdownSidebarWidth.maximum), 17, "four points over the base is the most")
+        XCTAssertEqual(fitted(short, width: MarkdownSidebarWidth.maximum), 14.5, "a point and a half over the base is the most")
     }
 
     func testTheTextIsTheLargestQuarterPointAtWhichEveryNameFits() {
@@ -145,7 +145,7 @@ final class MarkdownTreeFontFitTests: XCTestCase {
     func testABaseUnderTheMinimumIsKeptAndAnEmptyListGetsTheCeiling() {
         let long: [Item] = [(String(repeating: "x", count: 120), 0)]
         XCTAssertEqual(fitted(long, width: MarkdownSidebarWidth.standard, base: 9), 9, "the user asked for less than the floor")
-        XCTAssertEqual(fitted([], width: MarkdownSidebarWidth.maximum), 17)
+        XCTAssertEqual(fitted([], width: MarkdownSidebarWidth.maximum), 14.5)
     }
 
     func testTheCacheMeasuresAListOnceAndEachNameOnce() {

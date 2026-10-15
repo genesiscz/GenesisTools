@@ -28,6 +28,9 @@ final class MarkdownDocument: ObservableObject, Identifiable {
         didSet { cachedStats = nil }
     }
     @Published private(set) var missing = false
+    /// The file is on disk but is not UTF-8 text (a picture opened from a link or `genesis open`). It is shown, not
+    /// edited, and it is not "gone": before, a PNG read as text failed and the tab said "File is gone".
+    @Published private(set) var binary = false
     /// Unsaved edits. nil = nothing typed since the last load or save.
     @Published private(set) var draft: String? {
         didSet { cachedStats = nil }
@@ -195,10 +198,13 @@ final class MarkdownDocument: ObservableObject, Identifiable {
 
     func reload() {
         guard let loaded = try? String(contentsOf: url, encoding: .utf8) else {
-            missing = true
+            binary = FileManager.default.fileExists(atPath: url.path)
+            missing = !binary
+            if binary { readAttributes() }
             return
         }
         missing = false
+        binary = false
         readAttributes()
         // The app's own save, or a touch without a content change: nothing
         // to report. Content, not mtime, is what tells an own write from an
