@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
     appendFileSync,
     chmodSync,
@@ -29,7 +29,14 @@ import {
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { scanWithC } from "../engine";
-import { applySnapshotRetention, buildIndex, defaultMinFreeBytes, progressEvent, sweepOrphanTempFiles } from "./build";
+import {
+    applySnapshotRetention,
+    buildIndex,
+    defaultMinFreeBytes,
+    INDEX_DEFAULTS,
+    progressEvent,
+    sweepOrphanTempFiles,
+} from "./build";
 import { indexTaskStatus } from "./daemon-task";
 import { openIndexDbForWrite, setMeta, sweepDeadScans } from "./db";
 import { attributeToLeaves, diffIndex } from "./diff";
@@ -39,6 +46,7 @@ import { withIndexLock } from "./store";
 import type { DiffRowOut, DirRow, IndexEvent } from "./types";
 import { errorEvent, IndexError } from "./types";
 import { updateIndex } from "./update";
+import * as indexWalk from "./walk";
 import { runIndexWalk, type WalkOptions } from "./walk";
 
 const KB = 1024;
@@ -577,6 +585,213 @@ describeOnDarwin("du index: snapshots, tombstones and diff", () => {
     });
 });
 
+// Include the native walker in a fixture harness so its logical root can be "/"
+// without reading the real filesystem root, and its retained capacity is observable.
+const INDEX_HARNESS = `
+#include <fcntl.h>
+#include <stdarg.h>
+#include <string.h>
+static const char *fixture_root;
+static int fixture_open(const char *path, int flags, ...);
+#define open fixture_open
+#define main clonesize_main
+#include ${SafeJSON.stringify(join(import.meta.dir, "../../native/clonesize.c"))}
+#undef main
+#undef open
+static int fixture_open(const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list args; va_start(args, flags); mode = va_arg(args, int); va_end(args);
+    }
+    return open(strcmp(path, "/") == 0 ? fixture_root : path, flags, mode);
+}
+static int mount_listed(const char *mp) {
+    for (int i = 0; i < g_nforeign; i++)
+        if (strcmp(g_foreign_mounts[i], mp) == 0) return 1;
+    return 0;
+}
+
+/** Exit 0 when a root of "/" registers every foreign mount and a scratch dir registers none outside itself. */
+static int foreign_mounts_cover_root(const char *scratch) {
+    struct statfs rootfs;
+    if (statfs("/", &rootfs) < 0) return 2;
+    reset_foreign_mounts();
+    add_foreign_mounts("/");
+    struct statfs *mnts = NULL;
+    int n = getmntinfo(&mnts, MNT_NOWAIT);
+    if (n <= 0) return 2;
+    int foreign = 0, missing = 0;
+    for (int i = 0; i < n; i++) {
+        const char *mp = mnts[i].f_mntonname;
+        if (mnts[i].f_fsid.val[0] == rootfs.f_fsid.val[0] &&
+            mnts[i].f_fsid.val[1] == rootfs.f_fsid.val[1]) continue;
+        if (strcmp(mp, "/") == 0) continue;
+        foreign++;
+        if (foreign <= MAX_FOREIGN_MOUNTS && !mount_listed(mp)) missing++;
+    }
+    reset_foreign_mounts();
+    add_foreign_mounts(scratch);
+    size_t slen = strlen(scratch);
+    int leaked = 0;
+    for (int i = 0; i < g_nforeign; i++) {
+        const char *mp = g_foreign_mounts[i];
+        if (!(strncmp(mp, scratch, slen) == 0 && mp[slen] == '/')) leaked++;
+    }
+    printf("foreign=%d missing=%d leaked=%d\\n", foreign, missing, leaked);
+    return (foreign > 0 && missing == 0 && leaked == 0) ? 0 : 4;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[2], "foreign") == 0) return foreign_mounts_cover_root(argv[1]);
+    if (argc != 4) return 2;
+    fixture_root = argv[1];
+    int root_mode = strcmp(argv[2], "root") == 0;
+    const char *logical_root = root_mode ? "/" : fixture_root;
+    g_idx_private = 0;
+    g_idx_big_floor = 0;
+    g_idx_big_limit = strtoull(argv[3], NULL, 10);
+    if (root_mode) {
+        g_excludes[g_nexcludes++] = "/excluded";
+        g_foreign_mounts[g_nforeign++] = "/mounted";
+    }
+    idx_setup_attrlist();
+    idx_intern(-1, logical_root, 1, 0, 0);
+    IdxOut worker = { .mtx = PTHREAD_MUTEX_INITIALIZER, .state = 1 };
+    if (idx_process_dir(&worker, logical_root, 0)) return 3;
+    printf("retained=%zu capacity=%zu\\n", worker.nbig, worker.capbig);
+    for (int i = 1; i < g_inn; i++) printf("node=%s flags=%u\\n", inode(i)->name, inode(i)->flags);
+    for (int i = 0; i < g_qn; i++) printf("queued=%s\\n", g_q[i].path);
+    for (size_t i = 0; i < worker.nbig; i++) printf("file=%s\\n", worker.big[i].path);
+    return 0;
+}
+`;
+
+describeOnDarwin("du index: root paths and bounded collection", () => {
+    let base: string;
+    let harness: string;
+
+    beforeAll(async () => {
+        base = realpathSync(mkdtempSync(join(tmpdir(), "gt-index-collector-")));
+        const source = join(base, "harness.c");
+        harness = join(base, "harness");
+        writeFileSync(source, INDEX_HARNESS);
+        const compile = Bun.spawn(["clang", "-O2", "-pthread", source, "-o", harness], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: env.getProcessEnv(),
+        });
+        const stderr = await new Response(compile.stderr).text();
+        expect({ code: await compile.exited, stderr }).toEqual({ code: 0, stderr: "" });
+    });
+
+    afterAll(() => rmSync(base, { recursive: true, force: true }));
+
+    async function inspect(root: string, mode: string, limit: number): Promise<string[]> {
+        const proc = Bun.spawn([harness, root, mode, String(limit)], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: env.getProcessEnv(),
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+        return stdout.trim().split("\n");
+    }
+
+    it("canonicalizes root children before exclusions, mount guards, queueing and big-file storage", async () => {
+        const root = join(base, "root");
+        for (const name of ["excluded", "mounted", "kept"]) {
+            mkdirSync(join(root, name), { recursive: true });
+        }
+        write(join(root, "big.bin"), 4096);
+        const lines = await inspect(root, "root", 16);
+        expect(lines.filter((line) => line.startsWith("node=")).sort()).toEqual([
+            "node=kept flags=0",
+            "node=mounted flags=8",
+        ]);
+        expect(lines.filter((line) => line.startsWith("queued="))).toEqual(["queued=/kept"]);
+        expect(lines.filter((line) => line.startsWith("file="))).toEqual(["file=/big.bin"]);
+    });
+
+    it("registers every foreign mount for a scan rooted at / and none that sit outside a scratch dir", async () => {
+        const scratch = join(base, "foreign-scratch");
+        mkdirSync(scratch);
+        const proc = Bun.spawn([harness, scratch, "foreign"], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: env.getProcessEnv(),
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        expect({ code, stderr, stdout: stdout.trim() }).toEqual({
+            code: 0,
+            stderr: "",
+            stdout: expect.stringMatching(/^foreign=[1-9]\d* missing=0 leaked=0$/),
+        });
+    });
+
+    it.each([0, 1, 7, 80])("retains at most %i candidates even when every file qualifies", async (limit) => {
+        const root = join(base, `bounded-${limit}`);
+        mkdirSync(root);
+        const paths = Array.from({ length: 128 }, (_, i) => join(root, `file-${String(i).padStart(3, "0")}.bin`));
+        for (const [i, path] of paths.entries()) {
+            write(path, 4096 * (1 + (i % 11)));
+        }
+        const lines = await inspect(root, "heap", limit);
+        expect(lines[0]).toBe(`retained=${limit} capacity=${limit}`);
+        const expected = paths
+            .map((path) => ({ path, allocated: lstatSync(path).blocks * 512 }))
+            .sort((a, b) => b.allocated - a.allocated || Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)))
+            .slice(0, limit)
+            .map(({ path }) => `file=${path}`)
+            .sort();
+        expect(lines.filter((line) => line.startsWith("file=")).sort()).toEqual(expected);
+    });
+
+    it("merges workers into the exact global top K while preserving qualifying totals at limit zero", async () => {
+        const root = join(base, "merge");
+        const files: Array<{ path: string; allocated: number }> = [];
+        for (let d = 0; d < 8; d++) {
+            const dir = join(root, `dir-${d}`);
+            mkdirSync(dir, { recursive: true });
+            for (let i = 0; i < 20; i++) {
+                const path = join(dir, `file-${i}.bin`);
+                write(path, 4096 * (1 + ((d * 7 + i) % 13)));
+                files.push({ path, allocated: lstatSync(path).blocks * 512 });
+            }
+        }
+        const ranked = files.sort(
+            (a, b) => b.allocated - a.allocated || Buffer.compare(Buffer.from(a.path), Buffer.from(b.path))
+        );
+        for (const limit of [0, 1, 7, 200]) {
+            const walk = await runIndexWalk({
+                root,
+                threads: 4,
+                minDirBytes: 0,
+                bigFileFloor: 0,
+                bigFileLimit: limit,
+                private: false,
+                excludes: [],
+                includeCloud: false,
+            });
+            expect(walk.big.map((file) => file.p)).toEqual(
+                ranked
+                    .slice(0, limit)
+                    .map((file) => file.path)
+                    .sort()
+            );
+            expect(walk.end.big_total).toBe(files.length);
+            expect(walk.nodes[0].a).toBe(files.reduce((sum, file) => sum + file.allocated, 0));
+        }
+    });
+});
+
 describeOnDarwin("du index: review regressions (2026-10-13 CLI review)", () => {
     let base: string;
 
@@ -600,6 +815,115 @@ describeOnDarwin("du index: review regressions (2026-10-13 CLI review)", () => {
             ...extra,
         };
     }
+
+    it.each([0, 2])("persists big-file limit %i through updates and the nightly task", async (limit) => {
+        const toolsHome = join(base, `limit-${limit}`);
+        const db = join(toolsHome, ".genesis-tools", "du", "index.db");
+        const root = join(base, `limit-tree-${limit}`);
+        for (const name of ["a", "b"]) {
+            mkdirSync(join(root, name), { recursive: true });
+            for (let i = 0; i < 4; i++) {
+                write(join(root, name, `file-${i}`), (i + 1) * 4096);
+            }
+        }
+        await buildIndex({ db, root, ...OPTS, minDirBytes: 0, bigFileFloor: 0, bigFileLimit: limit });
+        const check = new Database(db);
+        try {
+            expect(check.query("SELECT value FROM meta WHERE key = 'big_file_limit'").get()).toEqual({
+                value: String(limit),
+            });
+            for (const name of ["a", "b"]) {
+                write(join(root, name, "new-big"), 64 * KB);
+                await updateIndex({ db, paths: [join(root, name)], minFreeBytes: 0 });
+                expect(check.query("SELECT COUNT(*) AS n FROM big_files").get()).toEqual({ n: limit });
+            }
+            const preload = join(toolsHome, "nightly-preload.ts");
+            writeFileSync(
+                preload,
+                `import { mock } from "bun:test";
+                mock.module(${SafeJSON.stringify(join(import.meta.dir, "build.ts"))}, () => ({
+                    INDEX_DEFAULTS: ${SafeJSON.stringify(INDEX_DEFAULTS)},
+                    buildIndex: async (opts) => ({ bigFileLimit: opts.bigFileLimit })
+                }));`
+            );
+            const nightly = async () => {
+                const proc = Bun.spawn(
+                    [process.execPath, "--preload", preload, join(import.meta.dir, "index-daemon.ts")],
+                    {
+                        env: { ...env.getProcessEnv(), GENESIS_TOOLS_HOME: toolsHome },
+                        stdout: "pipe",
+                        stderr: "pipe",
+                    }
+                );
+                const [stdout, stderr, code] = await Promise.all([
+                    new Response(proc.stdout).text(),
+                    new Response(proc.stderr).text(),
+                    proc.exited,
+                ]);
+                expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+                return SafeJSON.parse(stdout, { strict: true });
+            };
+            expect(await nightly()).toEqual({ bigFileLimit: limit });
+            // Databases built before this key existed retain the documented default.
+            check.run("DELETE FROM meta WHERE key = 'big_file_limit'");
+            expect(await nightly()).toEqual({ bigFileLimit: INDEX_DEFAULTS.bigFileLimit });
+            await updateIndex({ db, paths: [root], recursive: true, minFreeBytes: 0 });
+            expect(check.query("SELECT COUNT(*) AS n FROM big_files").get()).toEqual({ n: 10 });
+        } finally {
+            check.close();
+        }
+    });
+
+    it("forwards update walk progress and blocked events", async () => {
+        const root = join(base, "update-events");
+        mkdirSync(root);
+        write(join(root, "file"), 4096);
+        const db = join(base, "update-events.db");
+        await buildIndex({ db, root, ...OPTS });
+        const events: IndexEvent[] = [];
+        const progress = { files: 1, dirs: 1, bytes: 4096, elapsed_ms: 500, dir: root };
+        const original = indexWalk.runIndexWalk;
+        const walk = spyOn(indexWalk, "runIndexWalk").mockImplementation(async (options) => {
+            options.onProgress?.(progress);
+            options.onBlocked?.({ path: join(root, "unreadable"), waited_ms: 1000 });
+            return original(options);
+        });
+        try {
+            await updateIndex({ db, paths: [root], minFreeBytes: 0, emit: (event) => events.push(event) });
+            expect(events).toContainEqual(progressEvent(progress));
+            expect(events).toContainEqual({
+                type: "blocked",
+                phase: "walk",
+                path: join(root, "unreadable"),
+                waited_ms: 1000,
+            });
+            expectBuildEvents(
+                events.filter((event) => event.type === "progress" || event.type === "blocked"),
+                ["progress", "blocked"]
+            );
+        } finally {
+            walk.mockRestore();
+        }
+    });
+
+    it("reports a formerly stored directory folded by a rebuild as approximately shrunk", async () => {
+        const root = join(base, "folded-live");
+        mkdirSync(join(root, "shrunk"), { recursive: true });
+        const file = join(root, "shrunk", "data.bin");
+        write(file, 200 * KB);
+        const db = join(base, "folded-live.db");
+        const first = await buildIndex({ db, root, ...OPTS, snapshotFloor: 0 });
+        truncateSync(file, 20 * KB);
+        await buildIndex({ db, root, ...OPTS, snapshotFloor: 0 });
+        const diff = diffIndex({ db, from: String(first.scan_id), attribute: "all" });
+        expect(diff.rows.find((row) => row.path === join(root, "shrunk"))).toMatchObject({
+            before: 200 * KB,
+            after: null,
+            delta: -100 * KB,
+            status: "shrunk",
+            approx: true,
+        });
+    });
 
     it("preserves recursive intent across a locked queue and a normal drain", async () => {
         const root = join(base, "queued-recursive");
@@ -782,6 +1106,47 @@ describeOnDarwin("du index: review regressions (2026-10-13 CLI review)", () => {
         expect(Date.now() - started).toBeLessThan(15_000);
         expect(walk.end.workers).toBeLessThanOrEqual(4);
         expect(walk.end.blocked).toBeGreaterThanOrEqual(2);
+    });
+
+    it("bounds flagged children by the remaining query limit without duplicates", async () => {
+        const root = join(base, "flagged-limit");
+        for (const name of [
+            "a-match",
+            "normal",
+            ...Array.from({ length: 100 }, (_, i) => `flag-${String(i).padStart(3, "0")}`),
+        ]) {
+            mkdirSync(join(root, name), { recursive: true });
+        }
+        write(join(root, "a-match", "data.bin"), 200 * KB);
+        write(join(root, "normal", "data.bin"), 200 * KB);
+        const db = join(base, "flagged-limit.db");
+        await buildIndex({ db, root, ...OPTS, minDirBytes: 0 });
+        const writer = openIndexDbForWrite(db);
+        try {
+            writer.run("UPDATE dirs SET flags = 32 WHERE name LIKE 'flag-%' OR name = 'a-match'");
+        } finally {
+            writer.close();
+        }
+        for (const limit of [0, 1, 2, 4, 150]) {
+            const result = queryPath({ db, minBytes: 100 * KB, limit });
+            if (!result.found) {
+                throw new Error("fixture root missing");
+            }
+            expect(result.children).toHaveLength(Math.min(limit, 102));
+            expect(new Set(result.children.map((child) => child.name)).size).toBe(result.children.length);
+            expect(result.truncated).toBe(limit < 102);
+            if (limit === 4) {
+                expect(result.children.map((child) => child.name)).toEqual([
+                    "a-match",
+                    "normal",
+                    "flag-000",
+                    "flag-001",
+                ]);
+            }
+        }
+        const onlyFlags = queryPath({ db, changedSince: Math.floor(Date.now() / 1000) + 60, limit: 1 });
+        expect(onlyFlags.found && onlyFlags.children.map((child) => child.name)).toEqual(["a-match"]);
+        expect(onlyFlags.found && onlyFlags.truncated).toBe(true);
     });
 
     it("M7: query and info report blocked folders, and a blocked child is listed even below --min-bytes", async () => {

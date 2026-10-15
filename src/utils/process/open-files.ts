@@ -22,6 +22,11 @@ export interface OpenFilesQuery {
     files?: string[];
     /** Directories walked recursively (`lsof +D`). Missing directories are dropped. */
     directories?: string[];
+    /**
+     * Kill `lsof` after this many milliseconds. A kill, a timeout, or any status other than 0 or 1 is
+     * `"unknown"`, never an empty list: exit 1 is the normal "nothing is open" answer.
+     */
+    timeoutMs?: number;
 }
 
 function lsofBinary(): string | undefined {
@@ -68,9 +73,11 @@ export function openFiles(query: OpenFilesQuery): OpenFilesResult {
         env: env.getProcessEnv(),
         stdout: "pipe",
         stderr: "pipe",
+        timeout: query.timeoutMs,
     });
     const stderr = child.stderr.toString().trim();
 
+    // Exit 1 is "nothing matched". A timeout leaves no 0/1 status, and that must stay "unknown".
     if ((child.exitCode !== 0 && child.exitCode !== 1) || stderr) {
         logger.warn({ exitCode: child.exitCode, stderr }, "lsof did not answer cleanly; treating as unknown");
         return "unknown";
@@ -94,6 +101,46 @@ export function openFiles(query: OpenFilesQuery): OpenFilesResult {
     }
 
     return handles;
+}
+
+/** Pids per path. `"unknown"` stays null: an empty map would read as "nothing is open". */
+export function pidsByPath(result: OpenFilesResult): Map<string, number[]> | null {
+    if (result === "unknown") {
+        return null;
+    }
+
+    const open = new Map<string, number[]>();
+
+    for (const handle of result) {
+        const pids = open.get(handle.path);
+
+        if (pids) {
+            if (!pids.includes(handle.pid)) {
+                pids.push(handle.pid);
+            }
+        } else {
+            open.set(handle.path, [handle.pid]);
+        }
+    }
+
+    return open;
+}
+
+/** The pids in `result`, once each. `"unknown"` stays null, as in {@link pidsByPath}. */
+export function pidsOf(result: OpenFilesResult): number[] | null {
+    if (result === "unknown") {
+        return null;
+    }
+
+    const pids: number[] = [];
+
+    for (const handle of result) {
+        if (!pids.includes(handle.pid)) {
+            pids.push(handle.pid);
+        }
+    }
+
+    return pids;
 }
 
 /** The path the kernel shows for an open file: symlinks resolved, as `/proc` links are. */

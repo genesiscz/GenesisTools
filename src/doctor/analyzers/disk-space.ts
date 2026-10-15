@@ -16,6 +16,7 @@ import type {
     ExecutorContext,
     Finding,
 } from "@app/doctor/lib/types";
+import { openFiles, pidsByPath } from "@genesiscz/utils/process/open-files";
 
 interface SizedPath {
     path: string;
@@ -33,7 +34,7 @@ export interface DiskSpaceOptions {
     gate?: ScanGateReader;
     /** Smallest allocated size the large-file rule lists (default 500 MB; tests lower it). */
     largeFileMinBytes?: number;
-    /** Which candidate files a process holds open (default: one `lsof`; tests inject it). */
+    /** Which candidate files a process holds open (default: the process layer; tests inject it). */
     openFiles?: OpenFilesReader;
 }
 
@@ -95,32 +96,29 @@ export function cloudSyncOf(path: string, home: string): CloudSync | null {
 /** Which of the paths a process holds open; null when that could not be learned (every path then counts as open). */
 export type OpenFilesReader = (paths: string[]) => Promise<Map<string, number[]> | null>;
 
-/** One `lsof` for every candidate: which of these files a process holds open (deleting one frees nothing). */
+/** Finder can sit on a prompt. The act lock must not wait forever. */
+const EMPTY_TRASH_TIMEOUT_MS = 120_000;
+
+/** Empty the Finder Trash. A timeout is a failed item, never a success. */
+export async function emptyFinderTrash(finding: Pick<Finding, "id" | "reclaimableBytes">): Promise<ActionResult> {
+    const res = await run("osascript", ["-e", 'tell application "Finder" to empty trash'], {
+        timeoutMs: EMPTY_TRASH_TIMEOUT_MS,
+    });
+    const failed = res.timedOut || res.status !== 0;
+
+    return {
+        findingId: finding.id,
+        actionId: "empty-trash",
+        status: failed ? "failed" : "ok",
+        ...(res.timedOut ? { error: "timed out" } : {}),
+        // A Trash that was not emptied freed nothing.
+        actualReclaimedBytes: failed ? 0 : finding.reclaimableBytes,
+    };
+}
+
+/** Which of these files a process holds open. Null when the answer is unknown (a delete then stays blocked). */
 async function lsofOpenFiles(paths: string[]): Promise<Map<string, number[]> | null> {
-    const open = new Map<string, number[]>();
-
-    if (paths.length === 0) {
-        return open;
-    }
-
-    const res = await run("lsof", ["-F", "pn", "--", ...paths], { timeoutMs: 15_000 });
-
-    // lsof exits 1 when none of the files is open; a timeout or any other status means the answer is unknown.
-    if (res.timedOut || (res.status !== 0 && res.status !== 1)) {
-        return null;
-    }
-    let pid = 0;
-
-    for (const line of res.stdout.split("\n")) {
-        if (line.startsWith("p")) {
-            pid = Number.parseInt(line.slice(1), 10);
-        } else if (line.startsWith("n") && Number.isFinite(pid)) {
-            const file = line.slice(1);
-            open.set(file, [...(open.get(file) ?? []), pid]);
-        }
-    }
-
-    return open;
+    return pidsByPath(openFiles({ files: paths, timeoutMs: 15_000 }));
 }
 
 export function parseTmutilOutput(raw: string): string[] {
@@ -429,16 +427,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
                     label: "Empty Trash permanently",
                     confirm: "yesno",
                     kind: "command",
-                    execute: async (_ctx, finding): Promise<ActionResult> => {
-                        const res = await run("osascript", ["-e", 'tell application "Finder" to empty trash']);
-
-                        return {
-                            findingId: finding.id,
-                            actionId: "empty-trash",
-                            status: res.status === 0 ? "ok" : "failed",
-                            actualReclaimedBytes: finding.reclaimableBytes,
-                        };
-                    },
+                    execute: async (_ctx, finding): Promise<ActionResult> => emptyFinderTrash(finding),
                 },
             ],
             metadata: { path: trash },
@@ -446,7 +435,7 @@ export class DiskSpaceAnalyzer extends Analyzer {
     }
 
     private async *findTimeMachineSnapshots(): AsyncIterable<Finding> {
-        const tmRes = await run("tmutil", ["listlocalsnapshots", "/"]);
+        const tmRes = await run("tmutil", ["listlocalsnapshots", "/"], { timeoutMs: 15_000 });
         const snapshots = tmRes.status === 0 ? parseTmutilOutput(tmRes.stdout) : [];
 
         if (snapshots.length === 0) {
@@ -466,15 +455,25 @@ export class DiskSpaceAnalyzer extends Analyzer {
                     confirm: "yesno",
                     kind: "command",
                     execute: async (_ctx, finding): Promise<ActionResult> => {
+                        const failed: string[] = [];
                         for (const snapshot of snapshots) {
-                            await run("tmutil", ["deletelocalsnapshots", localSnapshotName(snapshot)]);
+                            const result = await run("tmutil", ["deletelocalsnapshots", localSnapshotName(snapshot)], {
+                                timeoutMs: 120_000,
+                            });
+                            if (result.timedOut || result.status !== 0) {
+                                const reason = result.timedOut ? "timed out" : `exit ${result.status}`;
+                                failed.push(
+                                    `${snapshot}: ${reason}${result.stderr.trim() ? `: ${result.stderr.trim()}` : ""}`
+                                );
+                            }
                         }
 
                         return {
                             findingId: finding.id,
                             actionId: "delete-snapshots",
-                            status: "ok",
-                            metadata: { count: snapshots.length },
+                            status: failed.length > 0 ? "failed" : "ok",
+                            ...(failed.length > 0 ? { error: failed.join("; ") } : {}),
+                            metadata: { count: snapshots.length, deleted: snapshots.length - failed.length, failed },
                         };
                     },
                 },

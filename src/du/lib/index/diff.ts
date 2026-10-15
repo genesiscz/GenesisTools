@@ -108,7 +108,8 @@ export function diffIndex(opts: DiffOptions): DiffResult {
         const fromSnap = pickSnapshot(all, opts.from, now, toSnap?.id);
         const floor = Math.max(
             fromSnap.floor_bytes,
-            toSnap?.floor_bytes ?? Number(getMeta(db, "snapshot_floor") ?? INDEX_DEFAULTS.snapshotFloor)
+            toSnap?.floor_bytes ?? Number(getMeta(db, "snapshot_floor") ?? INDEX_DEFAULTS.snapshotFloor),
+            live ? Number(getMeta(db, "min_dir_bytes") ?? INDEX_DEFAULTS.minDirBytes) : 0
         );
 
         const fromRows = sideMap(
@@ -174,16 +175,16 @@ export function diffIndex(opts: DiffOptions): DiffResult {
                 continue;
             }
 
-            // Current tombstones say nothing about existence at a historical snapshot's floor.
-            const gone = live;
+            // A missing row can be folded below the storage floor, including in the live index.
+            // Tombstones alone do not prove deletion; keep that side unknown rather than inventing zero bytes.
             rows.push({
                 path: pathOf(id),
                 before: before.alloc_bytes,
-                after: gone ? 0 : null,
-                delta: gone ? -before.alloc_bytes : Math.min(0, floor - before.alloc_bytes),
-                status: gone ? "gone" : "shrunk",
+                after: null,
+                delta: Math.min(0, floor - before.alloc_bytes),
+                status: "shrunk",
                 files_delta: -before.files,
-                approx: !gone,
+                approx: true,
             });
         }
 

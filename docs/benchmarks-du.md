@@ -1265,3 +1265,60 @@ The benchmark launcher also ran three `index-c-noprivate` rounds on an isolated 
 reported `alloc=4096 files=1`, exit 0 and 2 MB peak RSS. CPU and wall values rounded to 0.00 s; this checks launcher
 and environment inheritance, not scan performance. Load was 10.41 / 11.77 / 13.24. The full native benchmark matrix
 was not repeated because no C walk code changed.
+
+## 2026-10-14 — PR #515 round 2: canonical root paths and bounded big-file collection
+
+The native index walker joins children without adding a second separator to `/`. Each worker keeps a heap of at
+most `bigFileLimit` entries, and the merge uses the same bound. A zero limit allocates no candidate records or paths;
+`big_total` still counts all qualifying files. Allocation bytes descending and path ascending remain the selection order.
+
+Both `timeout 600 src/du/native/bench.sh 515-r2-before` and `timeout 600 src/du/native/bench.sh 515-r2-after` completed
+with exit 0. These are the standard warmup/run counts and the same worktree/dependency targets:
+
+| case | before wall | after wall | before system CPU | after system CPU |
+|---|---:|---:|---:|---:|
+| T1 flat | 4.153 s | 3.676 s | 54.917 s | 39.022 s |
+| T1 depth2 | 3.948 s | 4.616 s | 53.931 s | 48.943 s |
+| T2 flat | 4.179 s | 4.574 s | 53.508 s | 51.645 s |
+| T2 depth2 | 4.632 s | 4.361 s | 53.676 s | 48.107 s |
+| T1 cache-cold | 4.247 s | 4.010 s | 57.748 s | 46.761 s |
+| T1 cache-warm | 0.4861 s | 0.3832 s | 5.8423 s | 4.1337 s |
+
+Load averages started at 5.03 / 7.94 / 9.57 and ended at 26.62 / 15.80 / 12.52 before; after started at
+24.00 / 12.38 / 11.41 and ended at 39.11 / 24.81 / 16.70. Other test suites/builds were active. The flat/depth
+modes do not use the changed index collector, and the working tree gained code and logs between measurements:
+90,544 versus 90,561 files scanned. These numbers are a harness record, not evidence of a speedup or byte parity.
+
+For byte parity, both binaries scanned one unchanged invented fixture: 4,096 files across eight directories,
+4–16 KiB per file, one worker, no private-size query, directory floor 0 and big-file floor 0. Directory rows,
+big-file rows and end totals were identical at limits 0, 7 and 50,000 (only `walk_ms` was excluded). All runs exited 0.
+At load 12.66 / 17.49 / 15.49, `/usr/bin/time -l` reported these peak resident sizes:
+
+| limit | before RSS | after RSS | returned big files |
+|---|---:|---:|---:|
+| 0 | 2,785,280 B | 1,851,392 B | 0 |
+| 7 | 2,768,896 B | 1,867,776 B | 7 |
+| 50,000 | 3,489,792 B | 3,506,176 B | 4,096 |
+
+CPU times rounded to 0.00 s on this small fixture; single-run RSS values are descriptive, not a statistical claim.
+The regression harness directly observes worker count and capacity at limits 0, 1, 7 and 80 over 128 qualifying
+files, and a multi-worker test compares the global result with an independent allocated-byte/path sort. A redirected
+fixture root tests `/` exclusions, mount guards, queued paths and stored file paths without walking the real root.
+
+## 2026-10-15 — PR #515 round 1: a scan rooted at `/` skips foreign mounts
+
+`add_foreign_mounts` treated a root of `/` (`tlen` 1) like any longer root. The check `mp[tlen] == '/'` then reads
+the second character, so a mount such as `/Volumes/Backup` looked outside `/` and the walk could enter that volume.
+A root of `/` now treats every other absolute mount as inside it. A longer root still needs the boundary slash, so
+`/Users` does not include `/UsersExtra`.
+
+This changes what a `/` scan counts. `skipped_mounts` gains every mount whose filesystem id differs from `/`. Totals
+for a `/` scan are not required to match the old binary. A scan whose root is not `/` keeps the same containment, so
+its totals stay the same.
+
+The index harness compiles `clonesize.c` with `clang -O2 -pthread` and runs the `foreign` mode. That mode calls
+`add_foreign_mounts("/")` against the live mount table: every different-fsid mount other than `/` is registered, up
+to the 512 cap, and a scratch directory registers nothing outside itself. `bun scripts/test.ts src/du/lib/index/index.test.ts`
+(with the two other touched suites) exited 0: 101 pass, 0 fail. The foreign check requires `foreign>=1`, `missing=0`
+and `leaked=0`. `src/du/native/bench.sh` was not run. The change is the mount list for root `/`, and a bench must not
+walk `/`.

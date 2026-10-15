@@ -369,6 +369,7 @@ export async function buildIndex(opts: BuildOptions): Promise<BuildResult> {
                         private: withPrivate ? "1" : "0",
                         min_dir_bytes: String(minDirBytes),
                         big_file_floor: String(bigFileFloor),
+                        big_file_limit: String(bigFileLimit),
                         snapshot_floor: String(snapshotFloor),
                         excludes: SafeJSON.stringify(excludes),
                         include_cloud: opts.includeCloud === true ? "1" : "0",

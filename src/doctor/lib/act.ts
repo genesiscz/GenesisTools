@@ -545,7 +545,7 @@ async function runUnderLock(args: {
                 checkedAt = Date.now();
             }
 
-            const late = lateRefusal({ p, analyzer, home, inUse, current });
+            const late = lateRefusal({ p, analyzer, opts, home, inUse, current });
 
             if (late) {
                 p.item.status = "refused";
@@ -632,11 +632,11 @@ async function runUnderLock(args: {
     }
 }
 
-/** What changed between the first guard and an item's turn: the finding vanished, its paths changed, an owner started,
- *  or a path turned into a link or moved out of the allow roots. */
+/** Revalidate the full authorization against the latest finding before consuming it. */
 function lateRefusal(args: {
     p: Passing;
     analyzer: Analyzer;
+    opts: ActOptions;
     home: string;
     inUse: InUseProbe;
     current: Map<string, Finding>;
@@ -652,29 +652,16 @@ function lateRefusal(args: {
         return { reason: "stale", error: "the finding's paths changed before its turn" };
     }
 
-    const blockers = metadataBlockers(fresh);
+    const verdict = judge({ ...args, finding: fresh });
+    Object.assign(p.item, verdict.item);
 
-    if (blockers.length > 0) {
-        return { reason: "in-use", blockers };
+    if (!verdict.pass) {
+        return { reason: verdict.item.reason ?? "unknown-action" };
     }
 
-    if (p.action.kind !== "remove-path") {
-        return null;
-    }
-
-    const guard = guardPaths({
-        paths: p.paths,
-        allowRoots: args.analyzer.allowRoots(),
-        home: args.home,
-        analyzerId: args.analyzer.id,
-    });
-
-    if (!guard.ok) {
-        return { reason: "outside-allowlist", error: guard.error };
-    }
-
-    const busy = args.inUse.blockersFor([...p.paths, ...guard.realPaths]);
-    return busy.length > 0 ? { reason: "in-use", blockers: busy } : null;
+    // Keep the result array's item reference, but execute only the newly authorized action and finding.
+    Object.assign(p, verdict.pass, { item: p.item });
+    return null;
 }
 
 function judge(args: { finding: Finding; analyzer: Analyzer; opts: ActOptions; home: string; inUse: InUseProbe }): {

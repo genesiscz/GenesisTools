@@ -37,6 +37,7 @@ async function main(): Promise<void> {
             private: meta.private !== "0",
             minDirBytes: Number(meta.min_dir_bytes ?? INDEX_DEFAULTS.minDirBytes),
             bigFileFloor: Number(meta.big_file_floor ?? INDEX_DEFAULTS.bigFileFloor),
+            bigFileLimit: Number(meta.big_file_limit ?? INDEX_DEFAULTS.bigFileLimit),
             snapshotFloor: Number(meta.snapshot_floor ?? INDEX_DEFAULTS.snapshotFloor),
             excludes: SafeJSON.parse(meta.excludes ?? "[]", { strict: true }) as string[],
             includeCloud: meta.include_cloud === "1",

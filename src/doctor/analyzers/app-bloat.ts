@@ -28,6 +28,7 @@ import type {
 } from "@app/doctor/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { openFiles, pidsOf } from "@genesiscz/utils/process/open-files";
 
 export const APP_BLOAT_ANALYZER_ID = "app-bloat";
 
@@ -127,18 +128,9 @@ function metadata(base: ReclaimMetadataInput): ReclaimMetadata {
     return { owner: null, ...base };
 }
 
-/** The pids holding `path` open; null when lsof could not tell (a timeout, or a status other than 0 or 1). */
+/** The pids holding `path` open. Null when that could not be learned (a timeout or any other failed read). */
 async function lsofWriters(path: string): Promise<number[] | null> {
-    const res = await run("lsof", ["-t", "--", path], { timeoutMs: 10_000 });
-
-    if (res.timedOut || (res.status !== 0 && res.status !== 1)) {
-        return null;
-    }
-
-    return res.stdout
-        .split("\n")
-        .map((line) => Number.parseInt(line.trim(), 10))
-        .filter((pid) => Number.isFinite(pid));
+    return pidsOf(openFiles({ files: [path], timeoutMs: 10_000 }));
 }
 
 async function plutilJson(path: string): Promise<Record<string, unknown> | null> {
@@ -542,6 +534,8 @@ export class AppBloatAnalyzer extends Analyzer {
                     allocated += size.allocatedBytes;
                     apparent += size.apparentBytes;
                     complete = complete && size.complete;
+                } else {
+                    complete = false;
                 }
             }
 
@@ -601,9 +595,11 @@ export class AppBloatAnalyzer extends Analyzer {
         let allocated = 0;
         let apparent = 0;
         let newest = 0;
+        let complete = true;
 
         for (const dir of dead) {
             const size = measurePath(dir, this.options.budget);
+            complete = complete && size?.complete === true;
 
             if (size) {
                 allocated += size.allocatedBytes;
@@ -617,20 +613,20 @@ export class AppBloatAnalyzer extends Analyzer {
         yield {
             id: `${this.id}:cursor-workspace-storage-dead`,
             analyzerId: this.id,
-            title: `Cursor state of ${dead.length} deleted project(s) · ${formatBytes(allocated)}`,
+            title: `Cursor state of ${dead.length} deleted project(s) · ${complete ? formatBytes(allocated) : "size not measured"}`,
             detail: `Chat state of projects whose folder is gone: ${targets.map((t) => basename(t.folder)).join(", ")}. It does not come back.`,
             severity: "cautious",
-            reclaimableBytes: allocated,
+            ...(complete ? { reclaimableBytes: allocated } : {}),
             actions: [this.remover("Delete the dead workspace state", { typed: true })],
             metadata: metadata({
                 kind: "cursor-workspace-storage-dead",
                 paths: dead,
-                allocatedBytes: allocated,
-                apparentBytes: apparent,
-                ageDays: ageDaysOf(newest, c.now),
+                allocatedBytes: complete ? allocated : null,
+                apparentBytes: complete ? apparent : null,
+                ageDays: complete ? ageDaysOf(newest, c.now) : null,
                 requires: { absentProcesses: ["Cursor"] },
                 regenerates: false,
-                sizeKnown: true,
+                sizeKnown: complete,
                 ...(blockers.length > 0 ? { blockers } : {}),
                 targets,
             }),
@@ -839,7 +835,7 @@ export class AppBloatAnalyzer extends Analyzer {
                 detail: "Deletes the user-data disk only; the AVD definition stays and boots fresh.",
                 severity: "cautious",
                 reclaimableBytes: allocated,
-                actions: [this.remover("Delete the emulator user data")],
+                actions: [this.remover("Delete the emulator user data", { typed: true })],
                 metadata: metadata({
                     kind: "android-avd",
                     paths: [avd.disk],
@@ -847,7 +843,7 @@ export class AppBloatAnalyzer extends Analyzer {
                     apparentBytes: avd.stat.size,
                     ageDays: ageDaysOf(avd.stat.mtimeMs, c.now),
                     requires: { absentProcesses: ["emulator", "qemu-system-aarch64", "qemu-system-x86_64"] },
-                    regenerates: true,
+                    regenerates: false,
                     sizeKnown: true,
                     ...(blockers.length > 0 ? { blockers } : {}),
                     keptAvd: newest.name,

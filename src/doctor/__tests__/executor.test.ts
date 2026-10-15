@@ -1,8 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { Analyzer } from "@app/doctor/lib/analyzer";
 import { executeActions } from "@app/doctor/lib/executor";
 import { HISTORY_FILE } from "@app/doctor/lib/paths";
 import type { Action, ActionResult, Finding, Severity } from "@app/doctor/lib/types";
+import { runPlain } from "@app/doctor/ui/plain";
+import * as plainFindings from "@app/doctor/ui/plain/findings";
+import { executeSelected } from "@app/doctor/ui/tui/App";
+import { useEngineStore } from "@app/doctor/ui/tui/stores/engine-store";
+import * as trashStaging from "@genesiscz/utils/prompts/clack/trash-staging";
 
 let originalHistory: string | null;
 let runId: string;
@@ -114,6 +121,116 @@ describe("executor", () => {
         expect(ran).toBe(true);
         expect(results[0]?.status).toBe("ok");
     });
+
+    it.each(["metadata", "severity"])("refuses %s blockers before direct execution", async (kind) => {
+        const found = finding("guarded", kind === "severity" ? "blocked" : "cautious");
+        found.metadata = { blockers: kind === "metadata" ? ["fixture file has an open writer"] : [] };
+        const selected = action("delete", "Delete");
+        const consume = spyOn(selected, "execute").mockImplementation(async () => {
+            throw new Error("irreversible execution reached");
+        });
+        try {
+            const results = await executeActions({
+                runId,
+                dryRun: false,
+                items: [{ finding: found, action: selected }],
+            });
+            expect(consume).not.toHaveBeenCalled();
+            expect(results[0]).toMatchObject({ status: "skipped", metadata: { blocked: true } });
+            if (kind === "metadata") {
+                expect(results[0]?.error).toContain("fixture file has an open writer");
+            }
+        } finally {
+            consume.mockRestore();
+        }
+    });
+
+    for (const route of ["plain", "tui"] as const) {
+        it.each(["metadata", "severity", "late-metadata", "allowed"])(
+            `${route} Trash staging guards %s at the consuming call`,
+            async (kind) => {
+                const found = finding("trash-fixture", kind === "severity" ? "blocked" : "cautious");
+                found.metadata = {
+                    path: "/invented-fixture/cache",
+                    blockers: kind === "metadata" ? ["fixture open writer"] : [],
+                };
+                const selected = { ...action("stage-trash", "Trash"), staged: true };
+                found.actions = [selected];
+                const trigger = finding("earlier-direct-action");
+                trigger.actions = [
+                    action("change-state", "Change state", async () => {
+                        found.metadata = { ...found.metadata, blockers: ["writer appeared during the earlier action"] };
+                        return {};
+                    }),
+                ];
+                const choices = kind === "late-metadata" ? [trigger, found] : [found];
+                const pick = spyOn(plainFindings, "selectFindings").mockResolvedValue(choices);
+                const confirm = spyOn(plainFindings, "confirmActions").mockResolvedValue(
+                    choices.map((entry) => ({ finding: entry, action: entry.actions[0] }))
+                );
+                const consume = spyOn(
+                    trashStaging,
+                    route === "plain" ? "stageAndConfirm" : "stageItems"
+                ).mockImplementation(async () => {
+                    throw new Error("irreversible Trash call reached");
+                });
+                try {
+                    const dispatch = async () => {
+                        if (route === "tui") {
+                            const store = useEngineStore.getState();
+                            store.reset("stub");
+                            for (const entry of choices) {
+                                store.applyEvent({
+                                    type: "finding",
+                                    analyzerId: "stub",
+                                    finding: entry,
+                                    fromCache: false,
+                                });
+                                store.toggleFinding(entry.id);
+                            }
+                            await executeSelected({ runId, dryRun: false });
+                            return;
+                        }
+                        const analyzer = new (class extends Analyzer {
+                            readonly id = "stub";
+                            readonly name = "Fixture";
+                            readonly icon = "F";
+                            readonly category = "disk";
+                            protected async *run(): AsyncIterable<Finding> {
+                                yield* choices;
+                            }
+                        })();
+                        await runPlain({
+                            analyzers: [analyzer],
+                            only: ["stub"],
+                            runId,
+                            thorough: false,
+                            fresh: true,
+                            dryRun: false,
+                        });
+                    };
+                    if (kind === "allowed") {
+                        await expect(dispatch()).rejects.toThrow("irreversible Trash call reached");
+                        expect(consume).toHaveBeenCalledTimes(1);
+                        const staged = [
+                            { id: found.id, path: "/invented-fixture/cache", bytes: 100, label: found.title },
+                        ];
+                        expect(consume.mock.calls[0]?.[0]).toEqual(
+                            route === "plain" ? { items: staged, summaryTitle: "Staged for permanent delete" } : staged
+                        );
+                    } else {
+                        await dispatch();
+                        expect(consume).not.toHaveBeenCalled();
+                    }
+                } finally {
+                    consume.mockRestore();
+                    confirm.mockRestore();
+                    pick.mockRestore();
+                    useEngineStore.getState().reset("");
+                }
+            }
+        );
+    }
 
     it("marks failures", async () => {
         const found = finding("f1");

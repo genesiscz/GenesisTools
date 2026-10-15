@@ -1,4 +1,5 @@
-import { batchCwd, capture, PS_COLUMNS_SPEC, parsePsTable, processBasename } from "@genesiscz/utils/process/ps";
+import { type ProcessEntry, listProcesses as readProcessTable } from "@genesiscz/utils/process/processes";
+import { batchCwd, processBasename } from "@genesiscz/utils/process/ps";
 
 export interface ProcInfo {
     pid: number;
@@ -19,18 +20,25 @@ export type ProcessSnapshot = { ok: true; procs: ProcInfo[] } | { ok: false; err
 
 let memo: { at: number; rows: Promise<ProcInfo[]> } | null = null;
 
-async function readTable(): Promise<ProcInfo[]> {
-    const result = await capture("ps", ["-axo", PS_COLUMNS_SPEC], { timeoutMs: 10_000 });
-    const rows = parsePsTable(result.stdout);
-
-    if (result.status !== 0 || result.timedOut || rows.length === 0) {
-        throw new Error(`ps -axo failed (status ${result.status}${result.timedOut ? ", timed out" : ""})`);
+/** The kernel table as {@link ProcInfo}. An empty table is a failed read: it must not look like "nothing runs". */
+export function toProcInfo(entries: ProcessEntry[]): ProcInfo[] {
+    if (entries.length === 0) {
+        throw new Error("process table could not be read");
     }
 
-    return rows.map((row) => ({ pid: row.pid, ppid: row.ppid, command: row.command, startedAt: row.startTime }));
+    return entries.map((entry) => ({
+        pid: entry.pid,
+        ppid: entry.ppid,
+        command: entry.command ?? entry.name,
+        startedAt: entry.startMs === null ? null : new Date(entry.startMs),
+    }));
 }
 
-/** Every process, from one `ps -axo` call, shared by all analyzers of a run for 5 s. A failure is not memoised. */
+async function readTable(): Promise<ProcInfo[]> {
+    return toProcInfo(readProcessTable({ commands: true, otherUsers: true }));
+}
+
+/** Every process, from one process-table read, shared by all analyzers of a run for 5 s. A failure is not memoised. */
 export async function listProcesses(): Promise<ProcInfo[]> {
     const now = Date.now();
 

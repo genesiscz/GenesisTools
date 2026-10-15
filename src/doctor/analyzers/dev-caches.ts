@@ -15,7 +15,14 @@ import { guardPaths } from "@app/doctor/lib/path-guard";
 import { run, runInherit } from "@app/doctor/lib/run";
 import { readScanGate, type ScanGateReader } from "@app/doctor/lib/scan-gate";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
-import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
+import type {
+    Action,
+    ActionResult,
+    AnalyzerCategory,
+    AnalyzerContext,
+    ExecutorContext,
+    Finding,
+} from "@app/doctor/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import pLimit from "p-limit";
@@ -90,8 +97,11 @@ export class DevCachesAnalyzer extends Analyzer {
         return this.options.home ?? homedir();
     }
 
+    private cachedRoots: string[] | null = null;
+
     private roots(): string[] {
-        return (this.options.roots ?? devRoots(this.home)).filter(existsSync);
+        this.cachedRoots ??= this.options.roots ?? devRoots(this.home);
+        return this.cachedRoots.filter(existsSync);
     }
 
     override allowRoots(): string[] {
@@ -526,29 +536,46 @@ function simulatorActions(args: {
     return actions;
 }
 
+/** One hung `simctl delete` must not hold the act lock for the rest of the group. */
+const SIMCTL_DELETE_TIMEOUT_MS = 120_000;
+
+/** Delete each simulator. A timeout counts as a failed device and fails the item. */
+export async function deleteSimulators(
+    devices: Pick<SimDevice, "udid">[],
+    actionId: string,
+    findingId: string
+): Promise<ActionResult> {
+    let failed = 0;
+    let timedOut = false;
+
+    for (const dev of devices) {
+        const res = await run("xcrun", ["simctl", "delete", dev.udid], { timeoutMs: SIMCTL_DELETE_TIMEOUT_MS });
+
+        if (res.timedOut) {
+            timedOut = true;
+        }
+
+        if (res.timedOut || res.status !== 0) {
+            failed++;
+        }
+    }
+
+    return {
+        findingId,
+        actionId,
+        status: failed === 0 ? "ok" : "failed",
+        ...(timedOut ? { error: "timed out" } : {}),
+        metadata: { count: devices.length, failed },
+    };
+}
+
 function deleteSimulatorsAction(id: string, label: string, devices: SimDevice[]): Action {
     return {
         id,
         label,
         confirm: "yesno",
         kind: "command",
-        execute: async (_ctx, finding) => {
-            let failed = 0;
-
-            for (const dev of devices) {
-                const res = await run("xcrun", ["simctl", "delete", dev.udid]);
-                if (res.status !== 0) {
-                    failed++;
-                }
-            }
-
-            return {
-                findingId: finding.id,
-                actionId: id,
-                status: failed === 0 ? "ok" : "failed",
-                metadata: { count: devices.length, failed },
-            };
-        },
+        execute: async (_ctx, finding) => deleteSimulators(devices, id, finding.id),
     };
 }
 

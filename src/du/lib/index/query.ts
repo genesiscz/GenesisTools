@@ -174,17 +174,18 @@ export function queryPath(opts: QueryOptions): QueryFound | QueryNotFound {
                 .all(...params);
             truncated = rows.length > limit;
             const kept = rows.slice(0, limit);
-            // A flagged child (denied, incomplete, skipped, blocked) carries no bytes, so the
-            // filters and the limit would hide it; it is always listed, after the others.
+            // Attention flags bypass size/time filters, but share the response budget.
+            // Exclude selected rows in SQL before the limit so duplicates cannot consume the remaining slots.
+            const remaining = Math.max(0, limit - kept.length);
             const flagged = db
-                .query<DirRow, [number]>(
-                    `SELECT * FROM dirs WHERE parent_id = ? AND (flags & ${GONE}) = 0 AND (flags & ${ATTENTION_FLAGS}) != 0 ORDER BY name`
+                .query<DirRow, [number, string, number]>(
+                    `SELECT * FROM dirs WHERE parent_id = ? AND (flags & ${GONE}) = 0 AND (flags & ${ATTENTION_FLAGS}) != 0
+                     AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY name LIMIT ?`
                 )
-                .all(row.id);
-            for (const f of flagged) {
-                if (!kept.some((k) => k.id === f.id)) {
-                    kept.push(f);
-                }
+                .all(row.id, SafeJSON.stringify(kept.map((child) => child.id)), remaining + 1);
+            truncated ||= flagged.length > remaining;
+            for (const f of flagged.slice(0, remaining)) {
+                kept.push(f);
             }
             const counts = storedChildCounts(
                 db,

@@ -1,6 +1,6 @@
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { Engine } from "@app/doctor/lib/engine";
-import { executeActions } from "@app/doctor/lib/executor";
+import { executeActions, unblockedActions } from "@app/doctor/lib/executor";
 import { writeRunSummary } from "@app/doctor/lib/history";
 import { formatBytes, sumBytes } from "@app/doctor/lib/size";
 import type { ActionResult, EngineEvent, Finding } from "@app/doctor/lib/types";
@@ -33,29 +33,24 @@ function stagedPathFor(finding: Finding): string | null {
 }
 
 function splitStagedActions(items: SelectedAction[]): {
-    stagedItems: StageItem[];
+    stagedActions: SelectedAction[];
     directItems: SelectedAction[];
 } {
-    const stagedItems: StageItem[] = [];
+    const stagedActions: SelectedAction[] = [];
     const directItems: SelectedAction[] = [];
 
     for (const item of items) {
         const path = item.action.staged ? stagedPathFor(item.finding) : null;
 
         if (path) {
-            stagedItems.push({
-                id: item.finding.id,
-                path,
-                bytes: item.finding.reclaimableBytes ?? 0,
-                label: item.finding.title,
-            });
+            stagedActions.push(item);
             continue;
         }
 
         directItems.push(item);
     }
 
-    return { stagedItems, directItems };
+    return { stagedActions, directItems };
 }
 
 export async function runPlain(opts: PlainRunOpts): Promise<void> {
@@ -110,7 +105,7 @@ export async function runPlain(opts: PlainRunOpts): Promise<void> {
         return;
     }
 
-    const { stagedItems, directItems } = splitStagedActions(toExecute);
+    const { stagedActions, directItems } = splitStagedActions(toExecute);
     let executedResults: ActionResult[] = [];
 
     if (directItems.length > 0) {
@@ -120,6 +115,12 @@ export async function runPlain(opts: PlainRunOpts): Promise<void> {
             items: directItems,
         });
     }
+
+    // Direct actions may have changed a finding while they ran. Check staging only at its turn.
+    const stagedItems = unblockedActions(stagedActions).flatMap(({ finding }): StageItem[] => {
+        const path = stagedPathFor(finding);
+        return path ? [{ id: finding.id, path, bytes: finding.reclaimableBytes ?? 0, label: finding.title }] : [];
+    });
 
     if (stagedItems.length > 0 && opts.dryRun) {
         p.log.info(`Dry run: would stage ${stagedItems.length} item(s) in Trash.`);

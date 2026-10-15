@@ -1,7 +1,6 @@
-import { basename } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { freeDiskSpace } from "@genesiscz/utils/fs/disk-usage";
-import { run } from "./run";
+import { listProcesses, readProcessUsages } from "@genesiscz/utils/process/processes";
 
 /** Free space under this: no walk (a walk can fail halfway on a full volume). The Disk Manager's critical tier. */
 export const SCAN_GATE_FLOOR_BYTES = 1024 * 1024 * 1024;
@@ -24,16 +23,21 @@ export type ScanGateReader = () => Promise<ScanGateState>;
 let memo: { at: number; state: Promise<ScanGateState> } | null = null;
 let lastState: ScanGateState | null = null;
 
-export function parseFseventsdRss(psOutput: string): number | null {
-    for (const line of psOutput.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(.+)$/);
+/** The largest resident size among rows named `name`. Null when none of them reported one. */
+export function hottestRss(rows: Array<{ name: string; rssBytes: number | null }>, name: string): number | null {
+    let hottest: number | null = null;
 
-        if (match && basename(match[2]!.trim()) === "fseventsd") {
-            return Number.parseInt(match[1]!, 10) * 1024;
+    for (const row of rows) {
+        if (row.name !== name || row.rssBytes === null) {
+            continue;
+        }
+
+        if (hottest === null || row.rssBytes > hottest) {
+            hottest = row.rssBytes;
         }
     }
 
-    return null;
+    return hottest;
 }
 
 export function evaluateScanGate(input: {
@@ -69,12 +73,19 @@ async function probe(): Promise<ScanGateState> {
         availableBytes = null;
     }
 
-    const ps = await run("ps", ["-axo", "rss=,comm="], { timeoutMs: 5_000 });
-    const fseventsdRssBytes = ps.status === 0 ? parseFseventsdRss(ps.stdout) : null;
+    const daemons = listProcesses({ commands: false }).filter((entry) => entry.name === "fseventsd");
+    const usages = readProcessUsages(
+        daemons.map((entry) => entry.pid),
+        { otherUsers: true }
+    );
+    const fseventsdRssBytes = hottestRss(
+        daemons.map((entry) => ({ name: entry.name, rssBytes: usages.get(entry.pid)?.rssBytes ?? null })),
+        "fseventsd"
+    );
     return evaluateScanGate({ availableBytes, fseventsdRssBytes });
 }
 
-/** The gate for this process, read at most once per 10 s (one `statfs` and one `ps`). */
+/** The gate for this process, read at most once per 10 s (one `statfs` and one process-table read). */
 export async function readScanGate(): Promise<ScanGateState> {
     const now = Date.now();
 

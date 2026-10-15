@@ -373,6 +373,40 @@ describe("optimize selector flags", () => {
         };
     }
 
+    it.each(["json", "jsonl", "auto", "table"])("reports selector failures in %s", async (format) => {
+        const outer = fixture();
+        const tty = process.stdout.isTTY;
+        process.stdout.isTTY = false;
+        try {
+            const proj = join(outer, "proj");
+            for (const apply of [false, true]) {
+                for (const [flags, kind] of [
+                    [["--dir", proj, "--node-modules"], "invalid-arguments"],
+                    [["--dir", proj, "--include", "node_modules"], "invalid-arguments"],
+                    [["--dir", proj, "--targets"], "invalid-arguments"],
+                    [["--worktrees-of", "missing-fixture-repo"], "repo-not-found"],
+                    [["--min-real", "not-a-number"], "invalid-arguments"],
+                ] as const) {
+                    const res = await capture([proj, ...flags, "--format", format, ...(apply ? ["--apply"] : [])]);
+                    expect(res.code).toBe(1);
+                    if (format === "table") {
+                        expect(res.out).toBe("");
+                    } else {
+                        expect(SafeJSON.parse(res.out, { strict: true })).toMatchObject({
+                            error: { kind, command: apply ? "optimize --apply" : "optimize" },
+                        });
+                        if (format === "jsonl") {
+                            expect(res.out.trim().split("\n")).toHaveLength(1);
+                        }
+                    }
+                }
+            }
+        } finally {
+            process.stdout.isTTY = tty;
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("--targets without --dir narrows the scan instead of being ignored", async () => {
         const outer = fixture();
         try {

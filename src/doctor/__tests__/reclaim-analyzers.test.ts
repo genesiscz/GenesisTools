@@ -6,9 +6,11 @@ import {
     mkdirSync,
     mkdtempSync,
     openSync,
+    readFileSync,
     realpathSync,
     rmSync,
     statSync,
+    symlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
@@ -16,14 +18,16 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppBloatAnalyzer } from "@app/doctor/analyzers/app-bloat";
-import { dockerFindingId } from "@app/doctor/analyzers/dev-caches";
-import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
+import { deleteSimulators, dockerFindingId } from "@app/doctor/analyzers/dev-caches";
+import { DiskSpaceAnalyzer, emptyFinderTrash } from "@app/doctor/analyzers/disk-space";
 import { TempLeaksAnalyzer, tmpPrefix } from "@app/doctor/analyzers/temp-leaks";
 import { runAct } from "@app/doctor/lib/act";
+import * as measurements from "@app/doctor/lib/fs-measure";
 import { measurePath, measurePaths } from "@app/doctor/lib/fs-measure";
 import { vmDataReason } from "@app/doctor/lib/path-guard";
-import type { ProcInfo } from "@app/doctor/lib/processes";
-import { evaluateScanGate, parseFseventsdRss, recordScanGate, type ScanGateState } from "@app/doctor/lib/scan-gate";
+import { type ProcInfo, toProcInfo } from "@app/doctor/lib/processes";
+import * as doctorRun from "@app/doctor/lib/run";
+import { evaluateScanGate, hottestRss, recordScanGate, type ScanGateState } from "@app/doctor/lib/scan-gate";
 import type { AnalyzerContext, Finding } from "@app/doctor/lib/types";
 import { buildJsonDocument, toJsonFinding } from "@app/doctor/ui/json";
 import {
@@ -37,6 +41,47 @@ import * as diskUsage from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("measurement safety", () => {
+    it.each(["entries", "deadline", "zero"])("bounds empty-directory discovery by %s", (bound) => {
+        const root = mkdtempSync(join(tmpdir(), "doctor-empty-budget-"));
+        let nested = root;
+        for (let i = 0; i < 40; i++) {
+            nested = join(nested, `d${i}`);
+            mkdirSync(nested);
+        }
+        const entered = new Set<string>();
+        const original = diskUsage.walkFiles;
+        let now = Date.now();
+        const clock = spyOn(Date, "now").mockImplementation(() => now);
+        const walk = spyOn(diskUsage, "walkFiles").mockImplementation(function* (path, options) {
+            yield* original(path, {
+                ...options,
+                onDirEntered: (dir) => {
+                    if (bound === "deadline" && !entered.has(dir)) {
+                        now += 10;
+                    }
+                    entered.add(dir);
+                    options?.onDirEntered?.(dir);
+                },
+            });
+        });
+        try {
+            const size = measurePath(
+                root,
+                bound === "deadline" ? { deadlineMs: 25 } : { maxEntries: bound === "zero" ? 0 : 3 }
+            );
+            expect(size).toMatchObject({ complete: false, entries: 0 });
+            expect(entered.size).toBe(bound === "zero" ? 0 : 3);
+            entered.clear();
+            const complete = measurePath(root, { maxEntries: 100, deadlineMs: 10_000 });
+            expect(complete).toMatchObject({ complete: true, entries: 0 });
+            expect(entered.size).toBe(41);
+        } finally {
+            walk.mockRestore();
+            clock.mockRestore();
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("marks traversal errors and unreadable aggregate paths incomplete", () => {
         const dir = mkdtempSync(join(tmpdir(), "doctor-measure-errors-"));
         const walk = spyOn(diskUsage, "walkFiles").mockImplementation(function* (path, options) {
@@ -49,6 +94,20 @@ describe("measurement safety", () => {
                 complete: false,
                 freeableFloorBytes: null,
             });
+        } finally {
+            walk.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("marks an unreadable nested directory mtime incomplete", () => {
+        const dir = mkdtempSync(join(tmpdir(), "doctor-directory-mtime-"));
+        const walk = spyOn(diskUsage, "walkFiles").mockImplementation(function* (path, options) {
+            options?.onDirEntered?.(join(path, "vanished-directory"));
+            yield { path: join(path, "seen"), logical: 100, allocated: 100, privateSize: 10, mtimeNs: 0n };
+        });
+        try {
+            expect(measurePath(dir)).toMatchObject({ complete: false, errors: 1 });
         } finally {
             walk.mockRestore();
             rmSync(dir, { recursive: true, force: true });
@@ -177,10 +236,91 @@ describe("scan gate", () => {
         expect(HOT_GATE.reasons).toHaveLength(2);
     });
 
-    it("reads fseventsd resident memory from ps", () => {
-        const ps =
-            "  1234 /usr/sbin/cfprefsd\n 30000 /System/Library/Frameworks/CoreServices.framework/Versions/A/Support/fseventsd\n";
-        expect(parseFseventsdRss(ps)).toBe(30000 * 1024);
+    it("uses the hottest fseventsd resident size, and ignores every other name", () => {
+        const rows = [
+            { name: "cfprefsd", rssBytes: 1234 },
+            { name: "fseventsd", rssBytes: 30_000 * 1024 },
+            { name: "fseventsd", rssBytes: 1024 },
+            { name: "fseventsd", rssBytes: null },
+        ];
+        expect(hottestRss(rows, "fseventsd")).toBe(30_000 * 1024);
+        expect(hottestRss(rows, "missing")).toBeNull();
+    });
+
+    it("an empty process table is a failed read, not an idle machine", () => {
+        expect(() => toProcInfo([])).toThrow("process table could not be read");
+        expect(
+            toProcInfo([
+                {
+                    pid: 4,
+                    ppid: 1,
+                    pgid: 4,
+                    uid: 0,
+                    name: "fseventsd",
+                    command: null,
+                    tty: null,
+                    startMs: 1_700_000_000_000,
+                    zombie: false,
+                    state: "S",
+                },
+            ])
+        ).toEqual([
+            {
+                pid: 4,
+                ppid: 1,
+                command: "fseventsd",
+                startedAt: new Date(1_700_000_000_000),
+            },
+        ]);
+    });
+});
+
+describe("process tools stay in the process layer", () => {
+    it("doctor does not spawn ps or lsof itself", () => {
+        const root = join(import.meta.dir, "..");
+        const files = ["lib/scan-gate.ts", "lib/processes.ts", "analyzers/disk-space.ts", "analyzers/app-bloat.ts"];
+
+        for (const file of files) {
+            const source = readFileSync(join(root, file), "utf8");
+            expect(source).not.toMatch(/\b(?:capture|run)\(\s*["'](?:ps|lsof|pgrep)["']/);
+        }
+    });
+});
+
+describe("act commands that must not wait forever", () => {
+    it("fails empty trash and a simulator delete when the command does not exit", async () => {
+        const realRun = doctorRun.run;
+        const seen: number[] = [];
+        const run = spyOn(doctorRun, "run").mockImplementation(async (cmd, args = [], opts = {}) => {
+            seen.push(opts.timeoutMs ?? 0);
+
+            if (cmd === "osascript" || (cmd === "xcrun" && args[1] === "delete")) {
+                return realRun("/bin/sleep", ["30"], { timeoutMs: 200 });
+            }
+
+            throw new Error(`unexpected command ${cmd} ${args.join(" ")}`);
+        });
+
+        try {
+            const trash = await emptyFinderTrash({ id: "disk-trash", reclaimableBytes: 10 });
+            const sims = await deleteSimulators([{ udid: "FIXTURE-UDID" }], "delete-unavailable", "dev-simulators");
+
+            expect(seen).toEqual([120_000, 120_000]);
+            expect(trash).toMatchObject({
+                status: "failed",
+                error: "timed out",
+                actionId: "empty-trash",
+                actualReclaimedBytes: 0,
+            });
+            expect(sims).toMatchObject({
+                status: "failed",
+                error: "timed out",
+                actionId: "delete-unavailable",
+                metadata: { count: 1, failed: 1 },
+            });
+        } finally {
+            run.mockRestore();
+        }
     });
 });
 
@@ -290,6 +430,125 @@ describe("temp-leaks", () => {
         expect(worktrees[0]?.actions).toEqual([]);
         expectMatchesContract(sessions[0]);
     });
+
+    it.each(["empty", "symlink", "symlink-only"])(
+        "keeps scratch children containing a nested %s git marker",
+        async (kind) => {
+            const now = Date.now();
+            const cc = join(root, `nested-${kind}`, "cc");
+            const session = join(cc, "Shop", "5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71");
+            const child = join(session, "scratch");
+            const checkout = join(child, "checkout");
+            const marker = join(checkout, ".git");
+            file(join(checkout, "work.txt"), 4096);
+            file(join(session, "safe.txt"), 4096);
+            if (kind === "symlink") {
+                symlinkSync(join(root, "missing-git-dir"), marker);
+            } else {
+                mkdirSync(marker);
+                if (kind === "symlink-only") {
+                    symlinkSync(join(root, "missing-head"), join(marker, "HEAD"));
+                }
+                touch(marker, 6 * DAY, now);
+            }
+            for (const path of [join(checkout, "work.txt"), join(session, "safe.txt"), checkout, child, session]) {
+                touch(path, 6 * DAY, now);
+            }
+            const findings = await all(
+                new TempLeaksAnalyzer({
+                    xDir: null,
+                    tmpDir: null,
+                    ccRoot: cc,
+                    tmpRoot: join(root, "none"),
+                    repoRoots: [],
+                    now: () => now,
+                    processes: async () => [],
+                    cwds: () => new Map(),
+                    gate: async () => OPEN_GATE,
+                    thresholds: { scratchMinBytes: 1 },
+                })
+            );
+            const finding = findings.find((entry) => entry.metadata?.kind === "tmp-cc-session");
+            expect(finding?.metadata?.paths).toEqual([join(session, "safe.txt")]);
+            expect(finding?.metadata?.excluded).toContainEqual({
+                path: child,
+                reason: expect.stringContaining("git checkout"),
+            });
+        }
+    );
+
+    it.each(["scratch", "tmpdir"])(
+        "recent empty nested directories keep a %s tree out of stale removal",
+        async (kind) => {
+            const now = Date.now();
+            const base = join(root, `directory-activity-${kind}`);
+            const cc = join(base, "cc");
+            const session = join(cc, "Shop", "5d2c9e1a-7b44-4c1e-9a0f-2f6b1d3e8c71");
+            const tmp = join(base, "tmp");
+            const tree = kind === "scratch" ? join(session, "data") : join(tmp, "gt-fixture-Ab123");
+            const deep = join(tree, "nested");
+            const empty = join(deep, "empty");
+            mkdirSync(empty, { recursive: true });
+            const data = file(join(tree, "old.bin"), 8192);
+            for (const path of [data, empty, deep, tree, ...(kind === "scratch" ? [session] : [])]) {
+                touch(path, 6 * DAY, now);
+            }
+            const analyzer = new TempLeaksAnalyzer({
+                xDir: null,
+                tmpDir: kind === "tmpdir" ? tmp : null,
+                ccRoot: kind === "scratch" ? cc : join(base, "absent-cc"),
+                tmpRoot: join(base, "absent-tmp"),
+                repoRoots: [],
+                now: () => now,
+                processes: async () => [],
+                cwds: () => new Map(),
+                gate: async () => OPEN_GATE,
+                thresholds: { scratchMinBytes: 1, tmpdirGroupMinBytes: 1 },
+            });
+            const old = (await all(analyzer)).find(
+                (finding) => Array.isArray(finding.metadata?.paths) && finding.metadata.paths.includes(tree)
+            );
+            expect(old).toBeDefined();
+            touch(empty, 0, now);
+
+            const consumer = {
+                remove: async () => {
+                    throw new Error("recent tree reached irreversible removal");
+                },
+            };
+            const removal = spyOn(consumer, "remove");
+            try {
+                const result = await runAct(
+                    {
+                        actionId: old!.actions[0].id,
+                        analyzerId: analyzer.id,
+                        ids: [old!.id],
+                        method: "delete",
+                        yes: true,
+                        confirm: ["DELETE"],
+                        dryRun: false,
+                        argv: [],
+                    },
+                    {
+                        analyzers: [analyzer],
+                        home: root,
+                        manifestsDir: join(base, "manifests"),
+                        lockPath: join(base, "act.lock"),
+                        processes: async () => [],
+                        cwds: () => new Map(),
+                        statfs: () => null,
+                        appendHistory: async () => {},
+                        remove: consumer.remove,
+                    }
+                );
+                expect(result.result.items[0]).toMatchObject({ status: "refused", reason: "not-found" });
+                expect(removal).not.toHaveBeenCalled();
+                expect(measurePath(tree)?.newestMtimeMs).toBeGreaterThanOrEqual(now - 1);
+            } finally {
+                removal.mockRestore();
+            }
+        }
+    );
 
     it("an errored scratch walk never reaches the irreversible remover", async () => {
         const now = Date.now();
@@ -655,6 +914,52 @@ describe("review fixes: app-bloat", () => {
         }
     });
 
+    it("marks unreadable old cursor-agent versions unknown", async () => {
+        const versions = join(home2, ".local", "share", "cursor-agent", "versions");
+        const old = join(versions, "2026.01.01-aaa");
+        file(join(old, "cursor-agent"), 4096);
+        file(join(versions, "2026.10.01-bbb", "cursor-agent"), 4096);
+        const original = measurements.measurePath;
+        const probe = spyOn(measurements, "measurePath").mockImplementation((path, budget) =>
+            path === old ? null : original(path, budget)
+        );
+        try {
+            const finding = (await all(bloat())).find((entry) => entry.id === "app-bloat:cursor-agent-versions:cli");
+            expect(finding?.metadata?.paths).toContain(old);
+            expect(finding?.metadata).toMatchObject({ sizeKnown: false, allocatedBytes: null, apparentBytes: null });
+            expect(finding?.reclaimableBytes).toBeUndefined();
+        } finally {
+            probe.mockRestore();
+        }
+    });
+
+    it.each(["incomplete", "missing"] as const)("keeps a %s dead-workspace measurement unknown", async (mode) => {
+        const projects = join(home2, "projects");
+        mkdirSync(projects, { recursive: true });
+        const target = workspace(`measure-${mode}`, join(projects, `deleted-${mode}`));
+        const measured = measurePath(target);
+        expect(measured).not.toBeNull();
+        const original = measurements.measurePath;
+        const probe = spyOn(measurements, "measurePath").mockImplementation((path, budget) =>
+            path === target
+                ? mode === "missing" || !measured
+                    ? null
+                    : { ...measured, complete: false }
+                : original(path, budget)
+        );
+        try {
+            const dead = (await all(bloat())).find(
+                (finding) => finding.metadata?.kind === "cursor-workspace-storage-dead"
+            );
+            expect(dead?.metadata?.paths).toContain(target);
+            expect(dead?.metadata).toMatchObject({ sizeKnown: false, allocatedBytes: null, apparentBytes: null });
+            expect(dead?.reclaimableBytes).toBeUndefined();
+            expect(dead?.title).toContain("size not measured");
+        } finally {
+            probe.mockRestore();
+        }
+    });
+
     it("M3 the Playwright and cursor-agent checks ignore the act process itself and an idle MCP server", async () => {
         const cache = join(home2, "Library", "Caches", "ms-playwright");
         file(join(cache, "chromium-1", "chrome"), 8192);
@@ -699,32 +1004,59 @@ describe("review fixes: app-bloat", () => {
         expect(agent[0]?.metadata?.blockers).toEqual([expect.stringContaining("cursor-agent")]);
     });
 
-    it("M4 the Android emulator user data passes the act path guard", async () => {
-        const avd = join(home2, ".android", "avd");
-        file(join(avd, "old.avd", "userdata-qemu.img.qcow2"), 8192);
-        file(join(avd, "new.avd", "userdata-qemu.img.qcow2"), 8192);
-        touch(join(avd, "old.avd", "userdata-qemu.img.qcow2"), 20 * DAY, now);
-        const run = await runAct(
-            {
-                actionId: "delete-app-cache",
-                analyzerId: "app-bloat",
-                ids: ["app-bloat:android-avd:old.avd"],
-                method: "delete",
-                yes: true,
-                confirm: [],
-                dryRun: true,
-                argv: [],
-            },
-            {
-                analyzers: [bloat()],
-                home: home2,
-                processes: async () => [{ pid: 1, command: "/sbin/launchd", startedAt: null }],
-                cwds: () => new Map(),
+    it.each([{ confirm: [] }, { confirm: ["delete"] }, { confirm: ["DELETE"] }])(
+        "Android user data needs the exact typed confirmation %j",
+        async ({ confirm }) => {
+            const avd = join(home2, ".android", "avd");
+            file(join(avd, "old.avd", "userdata-qemu.img.qcow2"), 8192);
+            file(join(avd, "new.avd", "userdata-qemu.img.qcow2"), 8192);
+            touch(join(avd, "old.avd", "userdata-qemu.img.qcow2"), 20 * DAY, now);
+            const consumer = {
+                remove: async () => {
+                    throw new Error("authorized Android removal reached");
+                },
+            };
+            const removal = spyOn(consumer, "remove");
+            try {
+                const run = await runAct(
+                    {
+                        actionId: "delete-app-cache",
+                        analyzerId: "app-bloat",
+                        ids: ["app-bloat:android-avd:old.avd"],
+                        method: "delete",
+                        yes: true,
+                        confirm: [...confirm],
+                        dryRun: false,
+                        argv: [],
+                    },
+                    {
+                        analyzers: [bloat()],
+                        home: home2,
+                        processes: async () => [],
+                        cwds: () => new Map(),
+                        manifestsDir: join(home2, "manifests"),
+                        lockPath: join(home2, "act.lock"),
+                        statfs: () => null,
+                        appendHistory: async () => {},
+                        remove: consumer.remove,
+                    }
+                );
+                if (confirm.some((phrase) => phrase === "DELETE")) {
+                    expect(removal).toHaveBeenCalledTimes(1);
+                    expect(run.result.items[0]?.error).toContain("authorized Android removal reached");
+                } else {
+                    expect(run.result.items[0]).toMatchObject({
+                        status: "refused",
+                        reason: "confirm-required",
+                        expectedPhrase: "DELETE",
+                    });
+                    expect(removal).not.toHaveBeenCalled();
+                }
+            } finally {
+                removal.mockRestore();
             }
-        );
-
-        expect(run.result.items[0]).toMatchObject({ status: "skipped" });
-    });
+        }
+    );
 
     it("M2 a failed process list blocks every rule that needs it instead of dropping the blockers", async () => {
         const bundle = join(home2, "Library", "Application Support", "Claude", "vm_bundles", "claudevm.bundle");

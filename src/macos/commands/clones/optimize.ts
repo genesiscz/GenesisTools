@@ -77,6 +77,15 @@ export function dryRunReport(roots: string[], sets: DuplicateSet[]): ProcessRepo
     };
 }
 
+function invalidArguments(opts: OptimizeOpts, message: string): Promise<void> {
+    return emitClonesError({
+        format: opts.format,
+        kind: "invalid-arguments",
+        message,
+        command: opts.apply ? "optimize --apply" : "optimize",
+    });
+}
+
 async function missingProcess(format: string | undefined, command: string): Promise<void> {
     const message = `${command} requires --process <id>.`;
     await emitClonesError({ format, kind: "missing-process", message, command });
@@ -233,9 +242,9 @@ export function createOptimizeCommand(): Command {
                 // that IS node_modules, so it would drop nearly everything.
                 const kindInInclude = include.find((g) => (TARGET_KIND_VALUES as readonly string[]).includes(g));
                 if (kindInInclude !== undefined) {
-                    console.error(
-                        `--include ${kindInInclude} filters FILE paths; to pick which trees to scan under --dir use --targets.`
-                    );
+                    const message = `--include ${kindInInclude} filters FILE paths; to pick which trees to scan under --dir use --targets.`;
+                    await invalidArguments(opts, message);
+                    console.error(message);
                     console.error(
                         suggestCommand("tools macos clones", {
                             remove: ["--include"],
@@ -250,7 +259,9 @@ export function createOptimizeCommand(): Command {
                     // Discovery already returns install trees, so expanding
                     // them again finds nothing — yet `nodeModules: true` went
                     // into the cache key and made it lie about the scan.
-                    console.error("--node-modules cannot be combined with --dir / --targets / --worktrees-of.");
+                    const message = "--node-modules cannot be combined with --dir / --targets / --worktrees-of.";
+                    await invalidArguments(opts, message);
+                    console.error(message);
                     console.error(
                         suggestCommand("tools macos clones", {
                             remove: ["--node-modules"],
@@ -271,6 +282,7 @@ export function createOptimizeCommand(): Command {
                     subcommand: ["macos", "clones", "optimize"],
                 });
                 if (resolvedTargets === null) {
+                    await invalidArguments(opts, "Invalid --targets selection");
                     return;
                 }
 
@@ -289,6 +301,13 @@ export function createOptimizeCommand(): Command {
                     }
                 } catch (err) {
                     if (err instanceof RepoNotFoundError) {
+                        await emitClonesError({
+                            format: opts.format,
+                            kind: "repo-not-found",
+                            message: err.message,
+                            command: opts.apply ? "optimize --apply" : "optimize",
+                            extra: { candidates: err.candidates },
+                        });
                         console.error(err.message);
                         if (err.candidates.length > 0) {
                             console.error(`Repositories found: ${err.candidates.join(", ")}`);
@@ -318,7 +337,9 @@ export function createOptimizeCommand(): Command {
 
             const minReal = parseMinReal(opts.minReal);
             if (minReal === null) {
-                console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+                const message = `--min-real must be a positive whole number of bytes, got "${opts.minReal}".`;
+                await invalidArguments(opts, message);
+                console.error(message);
                 process.exitCode = 1;
                 return;
             }

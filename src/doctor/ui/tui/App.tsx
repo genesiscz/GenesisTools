@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { Engine } from "@app/doctor/lib/engine";
-import { executeActions } from "@app/doctor/lib/executor";
+import { executeActions, unblockedActions } from "@app/doctor/lib/executor";
 import type { Action, EngineEvent, Finding } from "@app/doctor/lib/types";
 import { logger } from "@genesiscz/utils/logger";
 import { emptyTrash, type StageItem, stageItems } from "@genesiscz/utils/prompts/clack/trash-staging";
@@ -170,7 +170,7 @@ interface SelectedAction {
     action: Action;
 }
 
-async function executeSelected(opts: RuntimeOpts): Promise<void> {
+export async function executeSelected(opts: RuntimeOpts): Promise<void> {
     const store = useEngineStore.getState();
 
     if (store.phase === "acting") {
@@ -254,7 +254,7 @@ async function confirmSelectedActions(findings: Finding[]): Promise<SelectedActi
 }
 
 async function stageSelectedActions(items: SelectedAction[], dryRun: boolean): Promise<void> {
-    const stagedItems = items
+    const stagedItems = unblockedActions(items)
         .map((item) => toStageItem(item.finding))
         .filter((item): item is StageItem => Boolean(item));
 

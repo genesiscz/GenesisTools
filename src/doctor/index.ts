@@ -194,7 +194,11 @@ program
     .option("--json", "Print one result object (the default)")
     .action(async (actionId: string, opts: Parameters<typeof runActCli>[1]) => {
         const argv = ["doctor", ...process.argv.slice(Math.max(0, process.argv.indexOf("act")))];
-        process.exitCode = await runActCli(actionId, opts, argv);
+        process.exitCode = await runActCli(
+            actionId,
+            { ...opts, dryRun: Boolean(opts.dryRun || program.opts<RootOpts>().dryRun) },
+            argv
+        );
     });
 
 program

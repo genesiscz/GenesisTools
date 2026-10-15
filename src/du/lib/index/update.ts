@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { assertDiskFree, defaultMinFreeBytes, INDEX_DEFAULTS } from "./build";
+import { assertDiskFree, defaultMinFreeBytes, INDEX_DEFAULTS, progressEvent } from "./build";
 import { dbBytes, getMeta, openIndexDbForWrite, setMeta, sweepDeadScans } from "./db";
 import { DIR_FLAGS, SCHEMA_VERSION } from "./schema";
 import {
@@ -370,6 +370,7 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
         const includeCloud = getMeta(db, "include_cloud") === "1";
         const minDirBytes = Number(getMeta(db, "min_dir_bytes") ?? INDEX_DEFAULTS.minDirBytes);
         const bigFileFloor = Number(getMeta(db, "big_file_floor") ?? INDEX_DEFAULTS.bigFileFloor);
+        const bigFileLimit = Number(getMeta(db, "big_file_limit") ?? INDEX_DEFAULTS.bigFileLimit);
         const fsid = getMeta(db, "volume_fsid");
 
         const queueReadAt = now();
@@ -454,13 +455,16 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
                     threads,
                     minDirBytes,
                     bigFileFloor,
-                    bigFileLimit: INDEX_DEFAULTS.bigFileLimit,
+                    bigFileLimit,
                     private: withPrivate,
                     excludes,
                     includeCloud,
                     keepFile,
                     stallSeconds: opts.stallSeconds,
                     signal: opts.signal,
+                    onProgress: (progress) => emit(progressEvent(progress)),
+                    onBlocked: (blocked) =>
+                        emit({ type: "blocked", phase: "walk", path: blocked.path, waited_ms: blocked.waited_ms }),
                 });
                 const rootErr = walk.end.root_errno;
                 if (rootErr === ENOENT || rootErr === ENOTDIR) {
@@ -522,6 +526,10 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
                 touched.push(...applied.touched);
             }
 
+            db.run(
+                "DELETE FROM big_files WHERE path NOT IN (SELECT path FROM big_files ORDER BY alloc_bytes DESC, path LIMIT ?)",
+                [bigFileLimit]
+            );
             gcTombstones(db);
             // Throws `inconsistent`, which rolls the whole update back.
             assertConsistent(db, touched);

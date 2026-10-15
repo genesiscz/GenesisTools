@@ -1,5 +1,6 @@
 import { lstatSync, type Stats } from "node:fs";
 import { filePrivateSize, resolvePrivateSize, type WalkError, walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import { logger } from "@genesiscz/utils/logger";
 
 const BLOCK_SIZE = 512;
 
@@ -22,6 +23,7 @@ export interface PathSize {
 }
 
 export interface MeasureBudget {
+    /** Total entered directories and yielded files, including the root directory. */
     maxEntries?: number;
     deadlineMs?: number;
     /** Called for every file the walk sees, so a caller can look for markers (a worktree's `.git` file). */
@@ -84,28 +86,61 @@ function measureDir(root: string, rootMtimeMs: number, budget: MeasureBudget): P
     let entries = 0;
     let newest = rootMtimeMs;
     let complete = true;
-
-    for (const entry of walkFiles(root, { onError: (err) => errors.push(err) })) {
-        entries += 1;
-        allocated += entry.allocated;
-        apparent += entry.logical;
-        const mtimeMs = Number(entry.mtimeNs / 1_000_000n);
-
-        if (mtimeMs > newest) {
-            newest = mtimeMs;
-        }
-
-        budget.onFile?.(entry.path);
-        const priv = resolvePrivateSize(entry);
-
-        if (priv !== null) {
-            privateSeen = true;
-            privateSum += priv;
-        }
-
-        if (entries >= maxEntries || ((entries & 255) === 0 && Date.now() > deadline)) {
+    let directoryErrors = 0;
+    let visited = 0;
+    const withinBudget = (): boolean => {
+        if (visited >= maxEntries || Date.now() >= deadline) {
             complete = false;
-            break;
+            return false;
+        }
+
+        return true;
+    };
+
+    if (withinBudget()) {
+        for (const entry of walkFiles(root, {
+            onError: (err) => errors.push(err),
+            shouldEnter: withinBudget,
+            onDirEntered: (dir) => {
+                visited++;
+                if (!withinBudget()) {
+                    return;
+                }
+
+                try {
+                    newest = Math.max(newest, lstatSync(dir).mtimeMs);
+                } catch (err) {
+                    directoryErrors++;
+                    complete = false;
+                    logger.debug({ dir, err }, "cannot measure directory activity; tree is incomplete");
+                }
+            },
+        })) {
+            if (!withinBudget()) {
+                break;
+            }
+
+            visited++;
+            entries += 1;
+            allocated += entry.allocated;
+            apparent += entry.logical;
+            const mtimeMs = Number(entry.mtimeNs / 1_000_000n);
+
+            if (mtimeMs > newest) {
+                newest = mtimeMs;
+            }
+
+            budget.onFile?.(entry.path);
+            const priv = resolvePrivateSize(entry);
+
+            if (priv !== null) {
+                privateSeen = true;
+                privateSum += priv;
+            }
+
+            if (!withinBudget()) {
+                break;
+            }
         }
     }
 
@@ -119,7 +154,7 @@ function measureDir(root: string, rootMtimeMs: number, budget: MeasureBudget): P
         entries,
         newestMtimeMs: newest,
         complete: complete && errors.length === 0,
-        errors: errors.length,
+        errors: errors.length + directoryErrors,
     };
 }
 

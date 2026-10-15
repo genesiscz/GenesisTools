@@ -3,7 +3,7 @@ import { closeSync, existsSync, linkSync, mkdtempSync, openSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as linux from "./linux-proc";
-import { openFiles } from "./open-files";
+import { openFiles, pidsByPath, pidsOf } from "./open-files";
 import * as os from "./os";
 
 const hasLsof = Bun.which("lsof") !== null || existsSync("/usr/sbin/lsof");
@@ -114,6 +114,46 @@ describe("openFiles", () => {
         test("a process whose descriptors cannot be read is left out as lsof leaves it out, the rest still answer", () => {
             expect(ask([self, 4242, 4243], { [self]: [], 4242: null, 4243: null })).toEqual([]);
         });
+    });
+
+    test("a timeout is unknown, and exit 1 with no stderr is a clear empty answer", () => {
+        const root = mkdtempSync(join(tmpdir(), "open-files-"));
+        const path = join(root, "file.txt");
+        writeFileSync(path, "x");
+        const spawn = spyOn(Bun, "spawnSync");
+
+        try {
+            spawn.mockReturnValueOnce({
+                exitCode: null,
+                stdout: Buffer.from(""),
+                stderr: Buffer.from(""),
+                success: false,
+            } as unknown as ReturnType<typeof Bun.spawnSync>);
+            expect(openFiles({ files: [path], timeoutMs: 15_000 })).toBe("unknown");
+            expect(spawn.mock.calls[0]?.[1]).toMatchObject({ timeout: 15_000 });
+
+            spawn.mockReturnValueOnce({
+                exitCode: 1,
+                stdout: Buffer.from(""),
+                stderr: Buffer.from(""),
+                success: false,
+            } as unknown as ReturnType<typeof Bun.spawnSync>);
+            expect(openFiles({ files: [path] })).toEqual([]);
+            expect(pidsByPath("unknown")).toBeNull();
+            expect(pidsOf("unknown")).toBeNull();
+            expect(pidsByPath([])).toEqual(new Map());
+            expect(pidsOf([])).toEqual([]);
+            const handles = [{ pid: 7, command: "writer", path }];
+            expect(pidsByPath(handles)?.get(path)).toEqual([7]);
+            expect(
+                pidsOf([
+                    { pid: 7, command: "writer", path },
+                    { pid: 7, command: "writer", path: `${path}.2` },
+                ])
+            ).toEqual([7]);
+        } finally {
+            spawn.mockRestore();
+        }
     });
 
     test.skipIf(!hasLsof)("reports a clear result once the handle is closed", () => {

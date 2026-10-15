@@ -1,4 +1,4 @@
-import { type Dirent, existsSync, lstatSync, readdirSync, realpathSync, type Stats } from "node:fs";
+import { type Dirent, existsSync, lstatSync, opendirSync, readdirSync, realpathSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
@@ -162,6 +162,52 @@ function safeLstat(path: string): Stats | null {
     } catch {
         return null;
     }
+}
+
+/** Scratch deletion needs positive proof that no nested git marker is present, even an empty or linked one. */
+function scratchRepositoryBlocker(root: string): string | null {
+    const stat = safeLstat(root);
+    if (!stat) {
+        return "could not inspect scratch entry for git repositories";
+    }
+    if (!stat.isDirectory()) {
+        return null;
+    }
+    const pending = [root];
+    const deadline = Date.now() + 4_000;
+    let entries = 0;
+    while (pending.length > 0) {
+        const dir = pending.pop();
+        if (!dir) {
+            break;
+        }
+        try {
+            const handle = opendirSync(dir);
+            try {
+                for (;;) {
+                    if (entries >= 200_000 || Date.now() >= deadline) {
+                        return "git repository check did not complete within its budget";
+                    }
+                    const entry = handle.readSync();
+                    if (!entry) {
+                        break;
+                    }
+                    entries++;
+                    if (entry.name === ".git") {
+                        return "holds a git checkout or worktree (it may have local commits): remove it through git";
+                    }
+                    if (entry.isDirectory()) {
+                        pending.push(join(dir, entry.name));
+                    }
+                }
+            } finally {
+                handle.closeSync();
+            }
+        } catch (error) {
+            return `could not inspect scratch folder ${dir} for git repositories: ${String(error)}`;
+        }
+    }
+    return null;
 }
 
 /** A `*` glob against one folder name, whole-name match. */
@@ -839,27 +885,12 @@ export class TempLeaksAnalyzer extends Analyzer {
                 let complete = true;
 
                 for (const path of paths) {
-                    let nestedRepo = false;
-                    const size = measurePath(
-                        path,
-                        this.budget({
-                            maxEntries: 200_000,
-                            deadlineMs: 4_000,
-                            onFile: (file) => {
-                                if (basename(file) === ".git" || file.includes("/.git/")) {
-                                    nestedRepo = true;
-                                }
-                            },
-                        })
-                    );
-
-                    if (nestedRepo) {
-                        excluded.push({
-                            path,
-                            reason: "holds a git checkout or worktree (it may have local commits): remove it through git",
-                        });
+                    const repositoryBlocker = scratchRepositoryBlocker(path);
+                    if (repositoryBlocker) {
+                        excluded.push({ path, reason: repositoryBlocker });
                         continue;
                     }
+                    const size = measurePath(path, this.budget({ maxEntries: 200_000, deadlineMs: 4_000 }));
 
                     kept.push(path);
 

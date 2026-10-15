@@ -1,11 +1,32 @@
 import { logger } from "@genesiscz/utils/logger";
 import { appendHistory } from "./history";
+import { metadataBlockers } from "./remove-action";
 import type { Action, ActionResult, ExecutorContext, Finding } from "./types";
 
 export interface ExecuteOpts {
     runId: string;
     dryRun: boolean;
     items: Array<{ finding: Finding; action: Action }>;
+}
+
+/** Shared by direct execution and both interactive Trash staging routes. */
+function findingBlockers(finding: Finding): string[] {
+    const blockers = metadataBlockers(finding);
+    return finding.severity === "blocked"
+        ? [finding.blacklistReason ?? "this finding must not be acted on", ...blockers]
+        : blockers;
+}
+
+export function unblockedActions(items: ExecuteOpts["items"]): ExecuteOpts["items"] {
+    return items.filter(({ finding, action }) => {
+        const blockers = findingBlockers(finding);
+        if (blockers.length === 0) {
+            return true;
+        }
+
+        logger.warn({ findingId: finding.id, actionId: action.id, blockers }, "finding blocked: action refused");
+        return false;
+    });
 }
 
 export async function executeActions(opts: ExecuteOpts): Promise<ActionResult[]> {
@@ -34,13 +55,14 @@ export async function executeActions(opts: ExecuteOpts): Promise<ActionResult[]>
 }
 
 export async function runOne(ctx: ExecutorContext, finding: Finding, action: Action): Promise<ActionResult> {
-    if (finding.severity === "blocked") {
+    const blockers = findingBlockers(finding);
+    if (blockers.length > 0) {
         return {
             findingId: finding.id,
             actionId: action.id,
             status: "skipped",
-            error: `blocked: ${finding.blacklistReason ?? "this finding must not be acted on"}`,
-            metadata: { blocked: true },
+            error: `blocked: ${blockers.join("; ")}`,
+            metadata: { blocked: true, blockers },
         };
     }
 

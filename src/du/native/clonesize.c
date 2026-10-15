@@ -944,7 +944,14 @@ static void add_foreign_mounts(const char *target) {
             mnts[i].f_fsid.val[1] == root.f_fsid.val[1]) continue;   // same filesystem
 
         // Spelling 1: the mount path as reported, when it sits inside the scan root.
-        int inside = strncmp(mp, target, tlen) == 0 && mp[tlen] == '/';
+        // A root of "/" has tlen 1. `mp[tlen] == '/'` then asks whether the second
+        // character is a slash, so `/Volumes/Backup` (second character `V`) looks
+        // outside the root and the walk counts another volume. Every other absolute
+        // mount is inside "/"; every longer root still needs the boundary slash, so
+        // `/Users` does not swallow `/UsersExtra`.
+        int inside = tlen == 1 && target[0] == '/'
+            ? mp[0] == '/' && mp[1] != '\0'
+            : strncmp(mp, target, tlen) == 0 && mp[tlen] == '/';
         if (inside) {
             char *c = strdup(mp);
             if (c) g_foreign_mounts[g_nforeign++] = c;
@@ -2186,7 +2193,7 @@ typedef struct { char *path; int node; uint64_t dlen, alloc, fileid; int64_t mti
 // to state 2 (given up) while it sits outside the lock in open() or
 // getattrlistbulk(). A given-up worker then touches nothing shared ever again.
 typedef struct {
-    IdxBig *big; size_t nbig, capbig; uint64_t dirs;
+    IdxBig *big; size_t nbig, capbig, big_total; uint64_t dirs;
     pthread_mutex_t mtx;
     int state;              // 0 idle, 1 working on `path`, 2 given up by the watchdog
     double beat;            // now_s() of the worker's last progress
@@ -2393,6 +2400,58 @@ static int idx_claim(IdxOut *t) {
     return 1;
 }
 
+/** Canonical roots may already end in a separator (notably "/"). */
+static char *idx_child_path(const char *dirpath, const char *name) {
+    size_t pl = strlen(dirpath), nl = strlen(name);
+    size_t sep = pl > 0 && dirpath[pl - 1] != '/';
+    char *full = malloc(pl + sep + nl + 1);
+    if (!full) { perror("malloc index path"); exit(1); }
+    memcpy(full, dirpath, pl);
+    if (sep) full[pl] = '/';
+    memcpy(full + pl + sep, name, nl + 1);
+    return full;
+}
+
+static int cmp_idxbig_alloc_desc(const void *a, const void *b);
+
+/** Retain the best K entries in a heap with the worst retained entry at its root.
+ *  Takes ownership of candidate.path, freeing discarded paths immediately. Used
+ *  by each worker and again by the merge, so neither stage retains the corpus. */
+static void idx_big_offer(IdxOut *t, IdxBig candidate) {
+    if (!g_idx_big_limit || (t->nbig == g_idx_big_limit && cmp_idxbig_alloc_desc(&candidate, &t->big[0]) >= 0)) {
+        free(candidate.path);
+        return;
+    }
+    if (t->nbig < g_idx_big_limit) {
+        if (t->nbig == t->capbig) {
+            size_t cap = t->capbig ? t->capbig * 2 : 64;
+            if (cap > g_idx_big_limit) cap = (size_t)g_idx_big_limit;
+            t->big = realloc(t->big, cap * sizeof(IdxBig));
+            if (!t->big) { perror("realloc index big"); exit(1); }
+            t->capbig = cap;
+        }
+        size_t pos = t->nbig++;
+        while (pos > 0) {
+            size_t parent = (pos - 1) / 2;
+            if (cmp_idxbig_alloc_desc(&candidate, &t->big[parent]) <= 0) break;
+            t->big[pos] = t->big[parent];
+            pos = parent;
+        }
+        t->big[pos] = candidate;
+        return;
+    }
+    free(t->big[0].path);
+    size_t pos = 0;
+    while (pos * 2 + 1 < t->nbig) {
+        size_t child = pos * 2 + 1;
+        if (child + 1 < t->nbig && cmp_idxbig_alloc_desc(&t->big[child + 1], &t->big[child]) > 0) child++;
+        if (cmp_idxbig_alloc_desc(&candidate, &t->big[child]) >= 0) break;
+        t->big[pos] = t->big[child];
+        pos = child;
+    }
+    t->big[pos] = candidate;
+}
+
 // Entry layout: the --bigfiles layout, plus privatesize at offset 80 when private is on.
 // Returns 1 when the watchdog gave the directory up (the worker must then exit).
 static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
@@ -2457,10 +2516,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
             if (objtype == VDIR) {
                 if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
                 if (g_idx_region && node == 0 && idx_keep_match(name, fileid)) { idx_note_kept(name); continue; }
-                size_t pl = strlen(dirpath), nl = strlen(name);
-                char *sub = malloc(pl + 1 + nl + 1);
-                if (!sub) { perror("malloc index dir"); exit(1); }
-                memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
+                char *sub = idx_child_path(dirpath, name);
                 if (g_nexcludes && idx_user_excluded(sub)) { free(sub); continue; }
                 uint32_t fl = 0;
                 if (g_nforeign && idx_in_list(sub, g_foreign_mounts, g_nforeign)) fl = IDX_F_MOUNT;
@@ -2486,18 +2542,16 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
             if ((uint64_t)dlen > max_file) max_file = (uint64_t)dlen;
             if (mtime > newest) newest = mtime;
             if ((uint64_t)dlen >= g_idx_big_floor) {
-                if (t->nbig == t->capbig) {
-                    t->capbig = t->capbig ? t->capbig * 2 : 64;
-                    t->big = realloc(t->big, t->capbig * sizeof(IdxBig));
-                    if (!t->big) { perror("realloc index big"); exit(1); }
-                }
-                size_t pl = strlen(dirpath), nl = strlen(name);
-                char *full = malloc(pl + 1 + nl + 1);
-                if (!full) { perror("malloc index bigpath"); exit(1); }
-                memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
-                IdxBig *b = &t->big[t->nbig++];
-                b->path = full; b->node = node; b->dlen = (uint64_t)dlen; b->alloc = (uint64_t)alloc;
-                b->fileid = fileid; b->mtime_ms = mtime * 1000 + mnsec / 1000000; b->nlink = nlink;
+                t->big_total++;
+                if (!g_idx_big_limit) continue;
+                // A smaller allocation cannot enter a full heap; equal sizes still compare the path tie-breaker.
+                if (t->nbig == g_idx_big_limit && (uint64_t)alloc < t->big[0].alloc) continue;
+                IdxBig candidate = {
+                    .path = idx_child_path(dirpath, name), .node = node, .dlen = (uint64_t)dlen,
+                    .alloc = (uint64_t)alloc, .fileid = fileid, .mtime_ms = mtime * 1000 + mnsec / 1000000,
+                    .nlink = nlink
+                };
+                idx_big_offer(t, candidate);
             }
         }
         pthread_mutex_unlock(&t->mtx);
@@ -2803,21 +2857,20 @@ static int run_index(const char *root, int nthreads) {
     }
     for (int id = 0; id < nn; id++) stored += inode(id)->stored;
 
-    // A given-up worker's list is complete up to its stall: it only appends under its lock.
+    // Given-up workers cannot touch shared state again. Merge their bounded heaps,
+    // transferring path ownership instead of making a second corpus-sized array.
     size_t nbig = 0;
-    for (int i = 0; i < nw; i++) nbig += g_idx_outs[i]->nbig;
-    IdxBig *big = malloc((nbig ? nbig : 1) * sizeof(IdxBig));
-    if (!big) { perror("malloc index big"); exit(1); }
-    size_t k = 0;
+    IdxOut merged = {0};
     for (int i = 0; i < nw; i++) {
-        for (size_t j = 0; j < g_idx_outs[i]->nbig; j++) big[k++] = g_idx_outs[i]->big[j];
+        IdxOut *worker = g_idx_outs[i];
+        nbig += worker->big_total;
+        for (size_t j = 0; j < worker->nbig; j++) idx_big_offer(&merged, worker->big[j]);
+        free(worker->big);
+        worker->big = NULL;
     }
-    size_t emit_big = nbig;
-    if (nbig > g_idx_big_limit) {
-        qsort(big, nbig, sizeof(IdxBig), cmp_idxbig_alloc_desc);
-        emit_big = (size_t)g_idx_big_limit;
-    }
-    qsort(big, emit_big, sizeof(IdxBig), cmp_idxbig_path);
+    IdxBig *big = merged.big;
+    size_t emit_big = merged.nbig;
+    if (emit_big > 1) qsort(big, emit_big, sizeof(IdxBig), cmp_idxbig_path);
 
     static char obuf[1 << 20];
     setvbuf(stdout, obuf, _IOFBF, sizeof obuf);
@@ -2833,7 +2886,9 @@ static int run_index(const char *root, int nthreads) {
                owner, pesc, (unsigned long long)big[i].dlen, (unsigned long long)big[i].alloc,
                (unsigned long long)big[i].fileid, (long long)big[i].mtime_ms, big[i].nlink);
         free(pesc);
+        free(big[i].path);
     }
+    free(big);
     for (size_t i = 0; i < g_idx_nkept; i++) {
         char *nesc = json_escape(g_idx_kept[i]);
         printf("{\"t\":\"k\",\"n\":\"%s\"}\n", nesc);

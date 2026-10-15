@@ -33,6 +33,7 @@ import {
     readKitFixtureJson,
     readKitFixtureLines,
 } from "@app/macos/lib/kit-fixtures";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "doctor-act-")));
@@ -186,6 +187,38 @@ beforeEach(() => {
 });
 
 describe("doctor act guards", () => {
+    it("honors dry-run before act as well as after it", async () => {
+        const preload = join(dir, "capture-act.ts");
+        writeFileSync(
+            preload,
+            `import { mock } from "bun:test";
+            mock.module(${SafeJSON.stringify(join(import.meta.dir, "../ui/act.ts"))}, () => ({
+                runActCli: async (_id, opts) => { console.log(JSON.stringify({ dryRun: opts.dryRun })); return 0; }
+            }));`
+        );
+        for (const flags of [
+            ["--dry-run", "act", "delete-cache"],
+            ["act", "delete-cache", "--dry-run"],
+            ["act", "delete-cache"],
+        ]) {
+            const proc = Bun.spawn(
+                [process.execPath, "--preload", preload, join(import.meta.dir, "../index.ts"), ...flags],
+                {
+                    stdout: "pipe",
+                    stderr: "pipe",
+                    env: { ...env.getProcessEnv(), GENESIS_TOOLS_HOME: join(dir, "tools-home") },
+                }
+            );
+            const [stdout, stderr, code] = await Promise.all([
+                new Response(proc.stdout).text(),
+                new Response(proc.stderr).text(),
+                proc.exited,
+            ]);
+            expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+            expect(SafeJSON.parse(stdout, { strict: true })).toEqual({ dryRun: flags.includes("--dry-run") });
+        }
+    });
+
     it.each(["delete", "trash"] as const)("guards each path again during a multi-path %s", async (method) => {
         for (const changed of ["git", "link", "busy"] as const) {
             const first = folder(join(allowed, `first-${method}-${changed}`));
@@ -222,6 +255,55 @@ describe("doctor act guards", () => {
             expect(result.exitCode).toBe(1);
             expect(consumed).toEqual([first]);
             expect(result.result.items[0].error).toContain("Refusing removal");
+        }
+    });
+
+    it.each(["permission", "timeout", "ok"])("reports snapshot deletion %s through the act result", async (mode) => {
+        const snapshots = [
+            "com.apple.TimeMachine.2026-01-01-010000.local",
+            "com.apple.TimeMachine.2026-01-02-010000.local",
+        ];
+        const command = spyOn(commands, "run").mockImplementation(async (cmd, args = []) => {
+            if (cmd !== "tmutil") {
+                throw new Error(`unexpected command ${cmd}`);
+            }
+            if (args[0] === "listlocalsnapshots") {
+                return { status: 0, stdout: snapshots.join("\n"), stderr: "", timedOut: false };
+            }
+            if (args[0] !== "deletelocalsnapshots") {
+                throw new Error("unexpected tmutil operation");
+            }
+            const failing = args[1] === "2026-01-02-010000" && mode !== "ok";
+            return {
+                status: failing ? 1 : 0,
+                stdout: "",
+                stderr: failing ? "fixture deletion refused" : "",
+                timedOut: failing && mode === "timeout",
+            };
+        });
+        try {
+            const result = await runAct(
+                opts(["disk-tm-snapshots"], {
+                    actionId: "delete-snapshots",
+                    analyzerId: "disk-space",
+                    method: undefined,
+                }),
+                deps(new DiskSpaceAnalyzer({ home }), { processes: async () => [], cwds: () => new Map() })
+            );
+            expect(result.exitCode).toBe(mode === "ok" ? 0 : 1);
+            expect(result.result.items[0].status).toBe(mode === "ok" ? "ok" : "failed");
+            const deletions = command.mock.calls.filter(([, args]) => args?.[0] === "deletelocalsnapshots");
+            expect(deletions).toHaveLength(2);
+            expect(deletions.every(([, , options]) => (options?.timeoutMs ?? 0) > 0)).toBe(true);
+            if (mode !== "ok") {
+                expect(result.result.items[0].error).toContain(snapshots[1]);
+                expect(result.result.items[0].error).toContain(
+                    mode === "timeout" ? "timed out" : "fixture deletion refused"
+                );
+                expect(history[0].status).toBe("failed");
+            }
+        } finally {
+            command.mockRestore();
         }
     });
 
@@ -453,6 +535,67 @@ describe("doctor act guards", () => {
 });
 
 describe("doctor act order of work", () => {
+    it.each(["blocked", "action", "confirm", "bytes", "method", "fresh-action"] as const)(
+        "revalidates %s after a long first removal",
+        async (change) => {
+            const first = folder(join(allowed, "first"));
+            const second = folder(join(allowed, "second"));
+            let refreshed = false;
+            const analyzer = new FixtureAnalyzer([allowed], home, () => [
+                { id: "f:first", paths: [first] },
+                {
+                    id: "f:second",
+                    paths: [second],
+                    ...(refreshed && change === "blocked" ? { severity: "blocked" as const } : {}),
+                    ...(refreshed && change === "confirm" ? { confirm: "typed" as const } : {}),
+                    ...(refreshed && change === "bytes" ? { bytes: 100_000 } : {}),
+                    action: refreshed
+                        ? change === "action"
+                            ? { id: "different-action" }
+                            : change === "method"
+                              ? { method: "trash" }
+                              : { recreateEmpty: change === "fresh-action" }
+                        : {},
+                },
+            ]);
+            let now = Date.now();
+            const clock = spyOn(Date, "now").mockImplementation(() => now);
+            const removed: string[] = [];
+            try {
+                const result = await runAct(
+                    opts(["f:first", "f:second"], { expect: new Map([["f:second", 4096]]) }),
+                    deps(analyzer, {
+                        processes: async () => [],
+                        cwds: () => new Map(),
+                        remove: async (path) => {
+                            removed.push(path);
+                            await realRemove(path);
+                            refreshed = true;
+                            now += 31_000;
+                        },
+                    })
+                );
+                expect(analyzer.rechecks).toBe(2);
+                expect(removed).toEqual(change === "fresh-action" ? [first, second] : [first]);
+                expect(existsSync(second)).toBe(true);
+                const reason = (
+                    {
+                        blocked: "blocked",
+                        action: "unknown-action",
+                        confirm: "confirm-required",
+                        bytes: "stale",
+                        method: "method-conflict",
+                        "fresh-action": undefined,
+                    } as const
+                )[change];
+                expect(result.result.items[1].reason).toBe(reason);
+                expect(result.result.items[1].status).toBe(change === "fresh-action" ? "ok" : "refused");
+            } finally {
+                clock.mockRestore();
+            }
+        }
+    );
+
     it("writes and fsyncs the manifest plan before the first delete, then logs each item", async () => {
         const target = folder(join(allowed, "ms-playwright"));
         const analyzer = new FixtureAnalyzer([allowed], home, () => [
