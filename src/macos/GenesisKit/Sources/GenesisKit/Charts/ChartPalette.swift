@@ -64,9 +64,24 @@ public enum ChartPalette {
             + 0.0722 * channel(rgb.blueComponent)
     }
 
-    /// Text that reads on `fill`: near-black on light fills, near-white on the rest.
+    /// Pick by contrast after compositing the ink onto the label's actual fill.
     static func ink(on fill: NSColor) -> Color {
-        luminance(fill) > 0.42 ? Color.black.opacity(0.82) : Color.white.opacity(0.95)
+        let rgb = fill.usingColorSpace(.sRGB) ?? .gray
+        let background = luminance(rgb)
+        func contrast(white: CGFloat, alpha: CGFloat) -> Double {
+            let composed = NSColor(srgbRed: white * alpha + rgb.redComponent * (1 - alpha),
+                                   green: white * alpha + rgb.greenComponent * (1 - alpha),
+                                   blue: white * alpha + rgb.blueComponent * (1 - alpha), alpha: 1)
+            let foreground = luminance(composed)
+            return (max(background, foreground) + 0.05) / (min(background, foreground) + 0.05)
+        }
+        let dark = contrast(white: 0, alpha: 0.82)
+        let light = contrast(white: 1, alpha: 0.95)
+        if max(dark, light) >= 4.5 {
+            return dark >= light ? Color.black.opacity(0.82) : Color.white.opacity(0.95)
+        }
+        // Around the crossover neither translucent candidate meets normal-text contrast.
+        return contrast(white: 0, alpha: 1) >= contrast(white: 1, alpha: 1) ? .black : .white
     }
 
     /// The health ramp: green at 1, amber in the middle, red at 0, blended smoothly between.

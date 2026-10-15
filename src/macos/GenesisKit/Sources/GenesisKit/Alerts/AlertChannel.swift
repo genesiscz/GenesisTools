@@ -88,6 +88,15 @@ public final class AlertDispatcher {
 
     public func dispatch(_ events: [AlertEvent]) {
         for event in events {
+            if event.kind == .escalated, let previous = event.previousTier {
+                let retired = matrix.channels(for: previous.id)
+                    .subtracting(matrix.channels(for: event.tier?.id))
+                let clear = AlertEvent(kind: .cleared, tier: nil, previousTier: previous,
+                                       value: event.value, date: event.date, notifies: false, suppression: nil)
+                for channel in channels where retired.contains(channel.id) && (!channel.interrupts || channel.receivesRecovery) {
+                    channel.deliver(clear)
+                }
+            }
             for channel in targets(for: event) { channel.deliver(event) }
         }
     }

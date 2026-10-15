@@ -185,7 +185,12 @@ public final class VolumeSpaceMonitor: ObservableObject {
     public var configuration: Configuration {
         didSet {
             guard configuration != oldValue else { return }
-            sampler.update(configuration)
+            if configuration.volumePath != oldValue.volumePath {
+                volumeGeneration &+= 1
+                sample = nil
+                endSettling()
+            }
+            sampler.update(configuration, generation: volumeGeneration)
             if running, configuration.watchesWorkspace != oldValue.watchesWorkspace {
                 if configuration.watchesWorkspace { observeWorkspace() } else { observers.removeAll() }
             }
@@ -195,6 +200,7 @@ public final class VolumeSpaceMonitor: ObservableObject {
     private let sampler: VolumeSampler
     private let observers = WorkspaceObservers()
     private var settleGeneration = 0
+    private var volumeGeneration = 0
     /// The main actor's own copy, so no main-actor call waits on the queue that runs `statfs` (a network volume
     /// whose server went away can hold it for tens of seconds).
     private var running = false
@@ -202,10 +208,10 @@ public final class VolumeSpaceMonitor: ObservableObject {
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
         sampler = VolumeSampler(configuration: configuration)
-        sampler.publish = { [weak self] reading in
+        sampler.publish = { [weak self] reading, generation in
             Task { @MainActor [weak self] in
                 guard let self, self.running else { return }
-                self.receive(reading)
+                self.receive(reading, generation: generation)
             }
         }
     }
@@ -248,14 +254,20 @@ public final class VolumeSpaceMonitor: ObservableObject {
     /// figure is visible, not on a timer. nil when the volume cannot be read.
     @discardableResult
     public func refreshDetailed() async -> VolumeSample? {
-        let path = configuration.volumePath
-        let level = sample?.lowDiskLevel ?? .unknown
-        let reading = await Task.detached(priority: .utility) { () -> VolumeSample? in
-            guard var reading = try? Self.read(path: path, level: level) else { return nil }
-            reading.importantUsage = Self.readImportantUsage(path: path)
-            return reading
-        }.value
-        if let reading { receive(reading, force: true) }
+        await refreshDetailed { path, level in
+            await Task.detached(priority: .utility) { () -> VolumeSample? in
+                guard var reading = try? Self.read(path: path, level: level) else { return nil }
+                reading.importantUsage = Self.readImportantUsage(path: path)
+                return reading
+            }.value
+        }
+    }
+
+    func refreshDetailed(read: @Sendable (String, VolumeLowDiskLevel) async -> VolumeSample?) async -> VolumeSample? {
+        let generation = volumeGeneration
+        let reading = await read(configuration.volumePath, sample?.lowDiskLevel ?? .unknown)
+        guard generation == volumeGeneration else { return nil }
+        if let reading { receive(reading, generation: generation, force: true) }
         return reading
     }
 
@@ -264,6 +276,7 @@ public final class VolumeSpaceMonitor: ObservableObject {
         guard let base = baseline ?? sample else { return }
         settleGeneration &+= 1
         let generation = settleGeneration
+        let volumeGeneration = volumeGeneration
         let schedule = configuration.settleSchedule.sorted()
         settling = SpaceSettling(label: label, started: Date(), baselineAvailable: base.available,
                                  latestAvailable: base.available, checksDone: 0, checksTotal: schedule.count,
@@ -275,7 +288,7 @@ public final class VolumeSpaceMonitor: ObservableObject {
                 progress.checksDone = index + 1
                 progress.finished = index + 1 >= schedule.count
                 if self.settling != progress { self.settling = progress }
-                self.receive(reading)
+                self.receive(reading, generation: volumeGeneration)
             }
         }
     }
@@ -286,7 +299,8 @@ public final class VolumeSpaceMonitor: ObservableObject {
         if settling != nil { settling = nil }
     }
 
-    private func receive(_ reading: VolumeSample, force: Bool = false) {
+    func receive(_ reading: VolumeSample, generation: Int, force: Bool = false) {
+        guard generation == volumeGeneration, reading.volumePath == configuration.volumePath else { return }
         var next = reading
         if next.importantUsage == nil, let sample, sample.volumePath == next.volumePath,
            let important = sample.importantUsage {
@@ -379,7 +393,8 @@ final class VolumeSampler: @unchecked Sendable {
     private var running = false
     private var level: VolumeLowDiskLevel = .unknown
     private var settleToken = 0
-    var publish: (@Sendable (VolumeSample) -> Void)?
+    private var generation = 0
+    var publish: (@Sendable (VolumeSample, Int) -> Void)?
 
     init(configuration: VolumeSpaceMonitor.Configuration) {
         self.configuration = configuration
@@ -412,8 +427,9 @@ final class VolumeSampler: @unchecked Sendable {
         }
     }
 
-    func update(_ configuration: VolumeSpaceMonitor.Configuration) {
+    func update(_ configuration: VolumeSpaceMonitor.Configuration, generation: Int) {
         queue.async { [self] in
+            self.generation = generation
             let restartEvents = configuration.watchesLowDiskEvents != self.configuration.watchesLowDiskEvents
             self.configuration = configuration
             guard running else { return }
@@ -469,7 +485,7 @@ final class VolumeSampler: @unchecked Sendable {
             schedule(interval: configuration.farInterval)
             return
         }
-        publish?(reading)
+        publish?(reading, generation)
         schedule(interval: configuration.interval(forAvailable: reading.available))
     }
 

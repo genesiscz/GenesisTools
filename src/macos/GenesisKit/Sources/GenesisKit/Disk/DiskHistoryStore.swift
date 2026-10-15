@@ -206,7 +206,6 @@ public actor DiskHistoryStore {
 
     private func load() throws {
         guard !loaded else { return }
-        loaded = true
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let samples: (values: [DiskHistoryPoint], broken: Bool) = parse(samplesURL)
         points = samples.values
@@ -219,6 +218,7 @@ public actor DiskHistoryStore {
         } else if eventsBroken {
             health = .unreadable(eventsURL.path)
         }
+        loaded = true
     }
 
     /// Only a missing file is an empty history. A read error (permissions, I/O, a file not downloaded) and a

@@ -33,6 +33,42 @@ final class FakeCameraDriver: CameraSessionDriving, @unchecked Sendable {
 }
 
 final class CameraSourceTests: XCTestCase {
+    func testConcurrentModesLeaveTheDriverInTheLastDesiredMode() {
+        let driver = FakeCameraDriver()
+        let source = makeSource(driver)
+        for _ in 0..<100 {
+            DispatchQueue.concurrentPerform(iterations: 32) { index in
+                source.setMode(index.isMultiple(of: 2) ? .off : .continuous(fps: 2))
+            }
+            source.syncOnSessionQueue()
+            XCTAssertEqual(driver.isRunning, source.mode.usesCamera)
+        }
+        source.setMode(.off)
+        source.syncOnSessionQueue()
+        XCTAssertFalse(driver.isRunning)
+    }
+
+    func testAnIntervalTickDoesNotRestartAnUnfinishedBurst() throws {
+        let driver = FakeCameraDriver()
+        let source = makeSource(driver)
+        let frames = Frames()
+        source.onFrame = { _ in frames.add() }
+        source.setMode(.interval(every: 60, frames: 2))
+        source.syncOnSessionQueue()
+        let buffer = try pixelBuffer()
+        source.handleFrame(buffer, at: 100)
+        XCTAssertEqual(frames.value, 1)
+        // The timer fires again before enough frames arrived: it must preserve the remaining count.
+        source.syncOnSessionQueue { source.startBurst(frames: 2) }
+        source.handleFrame(buffer, at: 101)
+        source.syncOnSessionQueue()
+        XCTAssertEqual(frames.value, 2)
+        XCTAssertFalse(driver.isRunning, "the original burst finishes instead of restarting at each tick")
+        XCTAssertEqual(source.state, .waiting)
+        source.setMode(.off)
+        source.syncOnSessionQueue()
+    }
+
     private func pixelBuffer() throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         CVPixelBufferCreate(nil, 64, 48, kCVPixelFormatType_32BGRA, nil, &buffer)
@@ -103,6 +139,101 @@ final class CameraSourceTests: XCTestCase {
         source.refresh()
         source.syncOnSessionQueue()
         XCTAssertTrue(driver.isRunning)
+    }
+
+    func testDelayedRetriesCannotRestartASupersedingTransitionOrRecoveredFrame() throws {
+        let driver = FakeCameraDriver()
+        let source = makeSource(driver)
+        var pending: [DispatchWorkItem] = []
+        defer {
+            pending.forEach { $0.cancel() }
+            source.stop()
+            source.syncOnSessionQueue()
+        }
+        func schedule() -> DispatchWorkItem {
+            var item: DispatchWorkItem!
+            source.syncOnSessionQueue { item = source.scheduleRestart(after: 3600) }
+            pending.append(item)
+            return item
+        }
+        source.setMode(.continuous(fps: 2))
+        source.syncOnSessionQueue()
+        let transitions: [() -> Void] = [
+            { source.refresh() },
+            { source.select(.device(id: "replacement-fixture-camera")) },
+            { source.setMode(.continuous(fps: 10)) },
+        ]
+        for transition in transitions {
+            let stale = schedule()
+            transition()
+            source.syncOnSessionQueue()
+            let starts = driver.startCount
+            source.syncOnSessionQueue { stale.perform() }
+            XCTAssertEqual(driver.startCount, starts, "an old retry cannot undo a newer transition")
+        }
+        let recovered = schedule()
+        source.handleFrame(try pixelBuffer(), at: ProcessInfo.processInfo.systemUptime + 1)
+        let starts = driver.startCount
+        source.syncOnSessionQueue { recovered.perform() }
+        XCTAssertEqual(driver.startCount, starts, "a delivered frame invalidates the retry")
+        let older = schedule()
+        let latest = schedule()
+        source.syncOnSessionQueue { older.perform() }
+        XCTAssertEqual(driver.startCount, starts, "newer retry requests supersede older ones")
+        source.syncOnSessionQueue { latest.perform() }
+        XCTAssertEqual(driver.startCount, starts + 1, "the current retry still runs")
+        XCTAssertTrue(driver.isRunning)
+    }
+
+    func testExplicitModeRequestsRenewTheBudgetAfterACappedFailure() {
+        for fps in [2.0, 10.0] {
+            let driver = FakeCameraDriver()
+            let source = makeSource(driver)
+            source.setMode(.continuous(fps: 2))
+            source.syncOnSessionQueue()
+            var now = ProcessInfo.processInfo.systemUptime
+            for _ in 0...CameraFrameSource.maximumRestarts {
+                now += 60
+                source.syncOnSessionQueue { source.checkWatchdog(now: now) }
+            }
+            XCTAssertFalse(driver.isRunning)
+            let before = driver.startCount
+            source.setMode(.continuous(fps: fps)) // Both the same mode and a changed mode are explicit retries.
+            source.syncOnSessionQueue()
+            XCTAssertTrue(driver.isRunning)
+            XCTAssertEqual(driver.startCount, before + 1)
+            for _ in 0..<CameraFrameSource.maximumRestarts {
+                now += 60
+                source.syncOnSessionQueue { source.checkWatchdog(now: now) }
+                XCTAssertTrue(driver.isRunning, "the explicit retry has its own recovery budget")
+            }
+            now += 60
+            source.syncOnSessionQueue { source.checkWatchdog(now: now) }
+            XCTAssertFalse(driver.isRunning, "automatic recovery is still capped")
+            XCTAssertEqual(driver.startCount, before + 1 + CameraFrameSource.maximumRestarts)
+            source.stop()
+            source.syncOnSessionQueue()
+        }
+    }
+
+    func testEqualModeRequestsWhileRunningDoNotResetTheRestartBudget() {
+        let driver = FakeCameraDriver()
+        let source = makeSource(driver)
+        source.setMode(.continuous(fps: 2))
+        source.syncOnSessionQueue()
+        var now = ProcessInfo.processInfo.systemUptime
+        for _ in 0...CameraFrameSource.maximumRestarts {
+            let before = driver.startCount
+            source.setMode(.continuous(fps: 2))
+            source.syncOnSessionQueue()
+            XCTAssertEqual(driver.startCount, before, "an ordinary equal mode remains a no-op")
+            now += 60
+            source.syncOnSessionQueue { source.checkWatchdog(now: now) }
+        }
+        XCTAssertFalse(driver.isRunning)
+        XCTAssertEqual(driver.startCount, 1 + CameraFrameSource.maximumRestarts)
+        source.stop()
+        source.syncOnSessionQueue()
     }
 
     func testADeliveredFrameResetsTheRestartCount() throws {

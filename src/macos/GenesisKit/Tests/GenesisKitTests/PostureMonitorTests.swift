@@ -176,6 +176,44 @@ final class PostureMonitorTests: XCTestCase {
         XCTAssertTrue(PostureMonitor.covers(both, headphones: true))
     }
 
+    func testConcurrentHistorySwapsPreserveCreditedRows() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("posture-swap-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = PostureHistoryStore(directory: directory.appendingPathComponent("first"))
+        let second = PostureHistoryStore(directory: directory.appendingPathComponent("second"))
+        let now = Date(timeIntervalSince1970: 1_800_000_010)
+        let clock = ClockBox()
+        let core = PostureCore(configuration: .init(timing: .init(resumeGrace: 0)),
+                               engine: NoEngine(), camera: nil, history: first, feed: PoseSampleFeed(),
+                               wallClock: {
+                                   clock.now += 1 // Only ingest advances this clock, under the core's lock.
+                                   return now.addingTimeInterval(clock.now)
+                               })
+        core.setBaseline(try baseline(), at: 0)
+        core.control(enabled: true, hasBaseline: true, userPause: nil, gateReasons: [],
+                     cameraIssue: nil, usesCamera: true, at: 0)
+        core.ingest(postureSample(time: 0))
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            for index in 1...400 { core.ingest(postureSample(time: Double(index))) }
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global().async {
+            for index in 0..<400 { core.setHistory(index.isMultiple(of: 2) ? second : first) }
+            group.leave()
+        }
+        XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+        core.flushHistory()
+        first.flush()
+        second.flush()
+        let a = await first.summary(for: now)
+        let b = await second.summary(for: now)
+        XCTAssertEqual(a.upright + b.upright, 400, accuracy: 0.1)
+        core.shutdown()
+    }
+
     func testHistoryCountsUprightSlouchAndAlerts() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("posture-monitor-\(UUID().uuidString)")
         let store = PostureHistoryStore(directory: dir)

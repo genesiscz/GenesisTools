@@ -103,6 +103,20 @@ final class PostureCalibrationTests: XCTestCase {
 }
 
 final class PostureHistoryTests: XCTestCase {
+    func testClearReportsDirectoryEnumerationFailure() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("posture-clear-\(UUID())")
+        try Data("not a directory".utf8).write(to: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PostureHistoryStore(directory: directory)
+        let completed = expectation(description: "clear reports failure")
+        store.clear { error in
+            XCTAssertNotNil(error)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 5)
+        XCTAssertEqual(try String(contentsOf: directory, encoding: .utf8), "not a directory")
+    }
+
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/Prague")!

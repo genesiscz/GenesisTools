@@ -274,7 +274,11 @@ public struct AlertPolicy: Codable, Equatable, Sendable {
         }
 
         if rank(next) > rank(current), confirmSamples > 1 || confirmDuration > 0 {
-            // A worse tier waits for confirmation; the count and the clock run while the value stays worse.
+            // Each candidate tier must earn its own consecutive samples and confirmation duration.
+            if state.pendingTierID != next?.id {
+                state.pendingCount = 0
+                state.pendingSince = date
+            }
             state.pendingTierID = next?.id
             state.pendingCount += 1
             let since = state.pendingSince ?? date

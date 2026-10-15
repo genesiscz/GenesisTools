@@ -95,27 +95,27 @@ final class PostureCore: @unchecked Sendable {
 
     /// A new baseline judges from scratch: a slouch or a pending one measured against the old one ends.
     func setBaseline(_ baseline: PostureBaseline?, at time: TimeInterval) {
-        let rows = locked { () -> [PostureEvent] in
+        let (store, rows) = locked { () -> [PostureEvent] in
             self.baseline = baseline
             smoother.reset()
             lastScore = nil
             return machine.restartPosture(at: time)
         }
-        history?.append(rows)
+        store?.append(rows)
     }
 
     /// Holds scoring while a calibration sheet is open: readings still reach the feed and a collection,
     /// but none is judged. Both edges start the posture afresh, so the slouch the sheet asks for never
     /// becomes an episode, and one in progress when the sheet opened does not outlive it.
     func holdScoring(_ hold: Bool, at time: TimeInterval) {
-        let rows = locked { () -> [PostureEvent] in
+        let (store, rows) = locked { () -> [PostureEvent] in
             guard hold != scoringHeld else { return [] }
             scoringHeld = hold
             smoother.reset()
             lastScore = nil
             return machine.restartPosture(at: time)
         }
-        history?.append(rows)
+        store?.append(rows)
     }
 
     /// Swaps the history store; the open minute goes to the old one first.
@@ -131,7 +131,7 @@ final class PostureCore: @unchecked Sendable {
     func control(enabled: Bool, hasBaseline: Bool, userPause: PosturePause?, gateReasons: Set<ActivityPauseReason>,
                  cameraIssue: PostureCameraIssue?, usesCamera: Bool, at time: TimeInterval) {
         var failed: (Collector, PostureCameraIssue)?
-        let rows = locked { () -> [PostureEvent] in
+        let (store, rows) = locked { () -> [PostureEvent] in
             let events = machine.setControl(enabled: enabled, hasBaseline: hasBaseline, userPause: .some(userPause),
                                             gateReasons: gateReasons, cameraIssue: .some(cameraIssue),
                                             usesCamera: usesCamera, at: time)
@@ -146,7 +146,7 @@ final class PostureCore: @unchecked Sendable {
             }
             return events
         }
-        history?.append(rows)
+        store?.append(rows)
         if let (collector, issue) = failed {
             collector.continuation.resume(throwing: PostureCalibrationError.cameraUnavailable(issue, collected: collector.samples))
         }
@@ -181,7 +181,7 @@ final class PostureCore: @unchecked Sendable {
         var finished: Collector?
         var good = false
         var score: PostureScore?
-        let rows = locked { () -> [PostureEvent] in
+        let (store, rows) = locked { () -> [PostureEvent] in
             if var collecting = collector {
                 if sample.hasPerson, !sample.lowLight { collecting.samples.append(sample) }
                 if collecting.samples.count >= collecting.count {
@@ -215,7 +215,7 @@ final class PostureCore: @unchecked Sendable {
             good = machine.state == .monitoring && !machine.isConfirming && (score?.isClear ?? false)
             return step.events
         }
-        history?.append(rows)
+        store?.append(rows)
         if let finished { finished.continuation.resume(returning: finished.samples) }
         if feed.wantsSamples {
             DispatchQueue.main.async { [feed] in
@@ -300,15 +300,15 @@ final class PostureCore: @unchecked Sendable {
 
     /// Runs `body` under the lock, then, still under the lock, hands the changed camera mode to the
     /// camera and the changed snapshot (with `body`'s events) to `publish`. Returns the history rows
-    /// `body` produced, for the caller to write after the unlock.
+    /// `body` produced together with their destination, for the caller to write after the unlock.
     @discardableResult
-    private func locked(_ body: () -> [PostureEvent]) -> [PostureMinute] {
+    private func locked(_ body: () -> [PostureEvent]) -> (PostureHistoryStore?, [PostureMinute]) {
         lock.lock()
         defer { lock.unlock() }
         let events = body()
         guard !shutDown else {
             pendingRows = []
-            return []
+            return (history, [])
         }
         let state = machine.state
         let slouching = state == .slouching
@@ -336,6 +336,6 @@ final class PostureCore: @unchecked Sendable {
         }
         let rows = pendingRows
         pendingRows = []
-        return rows
+        return (history, rows)
     }
 }

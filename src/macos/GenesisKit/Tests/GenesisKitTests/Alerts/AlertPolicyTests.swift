@@ -219,6 +219,20 @@ final class AlertPolicyTests: XCTestCase {
         XCTAssertEqual(run(policy, [(6, 12 * gb)], state: &state).map(\.kind), [.cleared], "recovery is at once")
     }
 
+    func testChangingThePendingTierRestartsItsCountAndDuration() {
+        var policy = diskPolicy(repeatInterval: nil)
+        policy.confirmSamples = 2
+        policy.confirmDuration = 300
+        var state = AlertState()
+        XCTAssertTrue(run(policy, [(0, 9 * gb), (4, 9 * gb), (5, 0.5 * gb)], state: &state).isEmpty)
+        XCTAssertEqual(state.pendingTierID, "critical")
+        XCTAssertEqual(state.pendingCount, 1)
+        XCTAssertEqual(state.pendingSince, at(5))
+        XCTAssertTrue(run(policy, [(9, 0.5 * gb)], state: &state).isEmpty)
+        XCTAssertEqual(run(policy, [(10, 0.5 * gb)], state: &state).map(\.kind), [.raised])
+        XCTAssertEqual(state.tierID, "critical")
+    }
+
     func testConfirmationByDurationWaitsForTheValueToStayPastTheThreshold() {
         var policy = diskPolicy(repeatInterval: nil)
         policy.confirmDuration = 300
@@ -299,6 +313,26 @@ final class AlertDispatcherTests: XCTestCase {
         dispatcher.matrix.set(false, tierID: "warn", channelID: "banner")
         dispatcher.dispatch([event(.reminder, tier: "warn", notifies: true)])
         XCTAssertEqual(banner.delivered.count, 1)
+    }
+
+    func testEscalationClearsOnlyTheRetiredStatefulRoutes() {
+        let old = RecoveryChannel(id: "old")
+        let shared = RecoveryChannel(id: "shared")
+        let next = RecoveryChannel(id: "next")
+        let sound = RecordingChannel(id: "sound", interrupts: true)
+        let matrix = AlertChannelMatrix(routes: [
+            "warn": ["old", "shared", "sound"], "critical": ["shared", "next"],
+        ])
+        let dispatcher = AlertDispatcher(channels: [old, shared, next, sound], matrix: matrix)
+        dispatcher.dispatch([event(.raised, tier: "warn", notifies: true),
+                             event(.escalated, tier: "critical", previous: "warn", notifies: true),
+                             event(.cleared, tier: nil, previous: "critical", notifies: false)])
+        XCTAssertEqual(old.delivered.map(\.kind), [.raised, .cleared])
+        XCTAssertNil(old.delivered.last?.tier)
+        XCTAssertEqual(old.delivered.last?.notifies, false)
+        XCTAssertEqual(shared.delivered.map(\.kind), [.raised, .escalated, .cleared])
+        XCTAssertEqual(next.delivered.map(\.kind), [.escalated, .cleared])
+        XCTAssertEqual(sound.delivered.map(\.kind), [.raised])
     }
 
     func testAddingAChannelWithTheSameIdReplacesIt() {

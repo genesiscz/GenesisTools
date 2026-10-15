@@ -189,7 +189,13 @@ public final class PostureHistoryStore: @unchecked Sendable {
     public func clear(completion: (@Sendable (Error?) -> Void)? = nil) {
         queue.async {
             var firstError: Error?
-            let names = (try? FileManager.default.contentsOfDirectory(atPath: self.directory.path)) ?? []
+            let names: [String]
+            do {
+                names = try FileManager.default.contentsOfDirectory(atPath: self.directory.path)
+            } catch {
+                completion?(error)
+                return
+            }
             for name in names where name.hasPrefix("posture-") && name.hasSuffix(".jsonl") {
                 do {
                     try FileManager.default.removeItem(at: self.directory.appendingPathComponent(name))

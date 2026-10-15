@@ -38,6 +38,45 @@ enum ChartFixtures {
 
 @MainActor
 final class KitChartsTests: XCTestCase {
+    func testDonutDataChangesClearInvalidHoverAndNotifyOnce() {
+        let kept = DonutSegment(id: "kept", value: 10, color: .blue, label: "Kept")
+        let hoveredSlice = DonutSegment(id: "hovered", value: 20, color: .red, label: "Hovered")
+        var hovered: String? = hoveredSlice.id
+        var reported: [String?] = []
+        DonutLayout.reconcileHover(&hovered, in: [kept, hoveredSlice]) { reported.append($0) }
+        XCTAssertEqual(hovered, hoveredSlice.id)
+        XCTAssertTrue(reported.isEmpty)
+        // Rendering must ignore stale focus before the data-change callback updates stored hover.
+        XCTAssertNil(DonutLayout.drawableID(hovered, in: [kept]))
+        DonutLayout.reconcileHover(&hovered, in: [kept]) { reported.append($0) }
+        XCTAssertNil(hovered)
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertNil(reported[0])
+        DonutLayout.reconcileHover(&hovered, in: [kept]) { reported.append($0) }
+        XCTAssertEqual(reported.count, 1)
+        for value in [0.0, -1, Double.nan, Double.infinity] {
+            hovered = hoveredSlice.id
+            let invalid = DonutSegment(id: hoveredSlice.id, value: value, color: .red, label: "No arc")
+            XCTAssertNil(DonutLayout.drawableID(hovered, in: [kept, invalid]))
+            DonutLayout.reconcileHover(&hovered, in: [kept, invalid]) { reported.append($0) }
+            XCTAssertNil(hovered, "a retained ID without a drawable arc is not a hover")
+        }
+        XCTAssertEqual(reported.count, 5)
+    }
+
+    func testDonutAccessibilityAndCenterExcludeNonFiniteSegments() {
+        let values: [Double] = [.infinity, .nan, -.infinity, -1, 0, 25, 75]
+        let segments = values.enumerated().map {
+            DonutSegment(id: "\($0.offset)", value: $0.element, color: .blue, label: "Slice")
+        }
+        let visible = DonutLayout.visibleSegments(segments)
+        XCTAssertEqual(visible.map(\.value), [25, 75])
+        let total = DonutLayout.total(segments)
+        XCTAssertEqual(total, 100)
+        XCTAssertEqual(visible.map { Int(($0.value / total * 100).rounded()) }, [25, 75])
+        XCTAssertEqual(DonutLayout.arcs(values, gap: 0).map(\.index), [5, 6])
+    }
+
     // MARK: Squarified layout
 
     private func randomValues(_ count: Int, seed: UInt64) -> [Double] {
@@ -306,6 +345,27 @@ final class KitChartsTests: XCTestCase {
         // FocusSparkline still draws counts from zero to the peak.
         let focus = FocusSparkline(samples: [0, 5, 10]).path(in: CGRect(x: 0, y: 0, width: 20, height: 10))
         XCTAssertEqual(focus.boundingRect, CGRect(x: 0, y: 0, width: 20, height: 10))
+    }
+
+    func testLabelInkMeetsContrastOnMediumAndCategoricalFills() throws {
+        let greys = (0...100).map { step in
+            let value = Double(step) / 100
+            return NSColor(srgbRed: value, green: value, blue: value, alpha: 1)
+        }
+        let hues = ChartPalette.components.map { NSColor(srgbRed: $0.0, green: $0.1, blue: $0.2, alpha: 1) }
+        for fill in greys + hues {
+            let ink = try XCTUnwrap(NSColor(ChartPalette.ink(on: fill)).usingColorSpace(.sRGB))
+            let alpha = ink.alphaComponent
+            let composed = NSColor(srgbRed: ink.redComponent * alpha + fill.redComponent * (1 - alpha),
+                                   green: ink.greenComponent * alpha + fill.greenComponent * (1 - alpha),
+                                   blue: ink.blueComponent * alpha + fill.blueComponent * (1 - alpha), alpha: 1)
+            let foreground = ChartPalette.luminance(composed)
+            let background = ChartPalette.luminance(fill)
+            let contrast = (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
+            XCTAssertGreaterThanOrEqual(contrast, 4.5, "fill \(fill)")
+        }
+        let middle = NSColor(srgbRed: 0.58, green: 0.58, blue: 0.58, alpha: 1)
+        XCTAssertEqual(ChartPalette.ink(on: middle), Color.black.opacity(0.82))
     }
 
     func testTheHealthRampRunsFromRedThroughAmberToGreen() throws {

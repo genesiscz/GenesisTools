@@ -154,6 +154,7 @@ public final class BigFileRadar: @unchecked Sendable {
     private var removalHandler: (@Sendable ([String]) -> Void)?
     private var stats = 0
     private var listings = 0
+    private var entryReads = 0
 
     public init(configuration: Configuration = Configuration(), onHits: @escaping @Sendable ([RadarHit]) -> Void) {
         config = configuration
@@ -229,6 +230,7 @@ public final class BigFileRadar: @unchecked Sendable {
     /// `lstat` calls and folder listings so far, for tests.
     var statCount: Int { onQueue { stats } }
     var folderReads: Int { onQueue { listings } }
+    var directoryEntryReads: Int { onQueue { entryReads } }
 
     private func process(_ batch: FileEventBatch, now: Date) -> (found: [RadarHit], removed: [String]) {
         var candidates: [String] = []
@@ -267,6 +269,7 @@ public final class BigFileRadar: @unchecked Sendable {
             }
         }
         for root in batch.rescanRoots {
+            guard !isIgnored(root), !isIgnored(root + "/") else { continue }
             for path in tracked.keys where path.hasPrefix(root == "/" ? "/" : root + "/") { add(path) }
             for path in recent.map(\.path) where path.hasPrefix(root == "/" ? "/" : root + "/") { add(path) }
             for child in entries(of: root) { add(child) }
@@ -361,7 +364,10 @@ public final class BigFileRadar: @unchecked Sendable {
         defer { closedir(directory) }
         var result: [String] = []
         let base = folder.hasSuffix("/") ? folder : folder + "/"
-        while result.count < config.maxDirectoryEntries, let entry = readdir(directory) {
+        var examined = 0
+        while examined < config.maxDirectoryEntries, let entry = readdir(directory) {
+            examined += 1
+            entryReads += 1
             let name = withUnsafePointer(to: entry.pointee.d_name) {
                 $0.withMemoryRebound(to: CChar.self, capacity: Int(entry.pointee.d_namlen) + 1) { String(cString: $0) }
             }

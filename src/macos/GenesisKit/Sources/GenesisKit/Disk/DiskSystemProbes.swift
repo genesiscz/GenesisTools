@@ -97,7 +97,10 @@ public struct FseventsdGate: Equatable, Sendable {
         if let last = history.last, last.pid != reading.pid { history = [] }
         history.append(reading)
         let horizon = max(growthWindow, cpuWindow)
-        history.removeAll { reading.date.timeIntervalSince($0.date) > horizon }
+        // Keep the newest predecessor too: uneven sampling rarely lands exactly on the cutoff.
+        if let boundary = history.lastIndex(where: { reading.date.timeIntervalSince($0.date) >= horizon }) {
+            history.removeFirst(boundary)
+        }
         return isHot
     }
 

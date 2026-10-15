@@ -19,6 +19,26 @@ public struct DonutSegment: Identifiable, Equatable {
 /// The angles of a donut's slices: radians clockwise from twelve o'clock, a `gap` between neighbours, nothing for a
 /// slice of zero or negative value. One slice alone is a whole ring with no gap.
 public enum DonutLayout {
+    static func visibleSegments(_ segments: [DonutSegment]) -> [DonutSegment] {
+        segments.filter { $0.value.isFinite && $0.value > 0 }
+    }
+
+    static func drawableID(_ id: String?, in segments: [DonutSegment]) -> String? {
+        guard let id, segments.contains(where: { $0.id == id && $0.value.isFinite && $0.value > 0 }) else { return nil }
+        return id
+    }
+
+    static func reconcileHover(_ id: inout String?, in segments: [DonutSegment], onHover: ((String?) -> Void)?) {
+        let valid = drawableID(id, in: segments)
+        guard id != valid else { return }
+        id = valid
+        onHover?(valid)
+    }
+
+    static func total(_ segments: [DonutSegment]) -> Double {
+        visibleSegments(segments).reduce(0) { $0 + $1.value }
+    }
+
     public struct Arc: Equatable, Sendable {
         public let index: Int
         public let startAngle: Double
@@ -99,16 +119,17 @@ public struct SegmentedDonut<Center: View>: View {
             let inner = max(1, outer - Double(lineWidth))
             let arcs = DonutLayout.arcs(segments.map(\.value), gap: gapAngle.radians)
             // A selection that names no slice (the data changed under it) selects nothing, rather than dimming all.
-            let selected = segments.contains { $0.id == selection } ? selection : nil
-            let focus = hovered ?? selected
+            let selected = DonutLayout.drawableID(selection, in: segments)
+            let activeHover = DonutLayout.drawableID(hovered, in: segments)
+            let focus = activeHover ?? selected
             let shown = segments.first { $0.id == focus }
-            let total = segments.reduce(0) { $0 + max(0, $1.value.isFinite ? $1.value : 0) }
+            let total = DonutLayout.total(segments)
             ZStack {
                 Canvas { context, _ in
                     for arc in arcs {
                         let segment = segments[arc.index]
                         let isFocus = segment.id == focus
-                        let lift = segment.id == selected || segment.id == hovered ? Double(raise) : 0
+                        let lift = segment.id == selected || segment.id == activeHover ? Double(raise) : 0
                         let path = Self.band(
                             center: middle, inner: inner + lift * 0.25, outer: outer + lift, start: arc.startAngle,
                             end: arc.endAngle)
@@ -144,10 +165,13 @@ public struct SegmentedDonut<Center: View>: View {
                 let id = index.map { segments[$0].id }
                 selection = id == selection ? nil : id
             })
-            .pointerCursor(hovered != nil)
+            .onChange(of: segments) { _, updated in
+                DonutLayout.reconcileHover(&hovered, in: updated, onHover: onHover)
+            }
+            .pointerCursor(activeHover != nil)
             .accessibilityElement(children: .contain)
             .accessibilityChildren {
-                ForEach(segments.filter { $0.value > 0 }) { segment in
+                ForEach(DonutLayout.visibleSegments(segments)) { segment in
                     let share = "\(Int((total > 0 ? segment.value / total * 100 : 0).rounded())) percent"
                     Text(verbatim: segment.label)
                         .accessibilityLabel(segment.label)
@@ -184,7 +208,7 @@ public extension SegmentedDonut where Center == DonutCenterLabel {
         identifier: String = "donut", selection: Binding<String?> = .constant(nil), title: String,
         valueText: @escaping (Double) -> String, onHover: ((String?) -> Void)? = nil
     ) {
-        let total = segments.reduce(0) { $0 + max(0, $1.value) }
+        let total = DonutLayout.total(segments)
         self.init(
             segments: segments, lineWidth: lineWidth, gapAngle: gapAngle, identifier: identifier,
             selection: selection, onHover: onHover, valueText: valueText

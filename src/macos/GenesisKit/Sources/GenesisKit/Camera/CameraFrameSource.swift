@@ -98,6 +98,8 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
     private var lastDelivered: TimeInterval = 0
     /// Restarts since the last delivered frame.
     private var restartAttempts = 0
+    /// Invalidates retries whose failure was superseded by a transition, frame or newer retry.
+    private var restartGeneration = 0
 
     // Session queue only.
     private var selection: CameraSelection
@@ -161,13 +163,21 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
     // MARK: - Control
 
     public func setMode(_ mode: CameraCaptureMode) {
-        let changed = lock.withLock { () -> Bool in
-            guard desiredMode != mode else { return false }
+        lock.withLock {
+            let cappedFailure: Bool
+            if case .failed = currentState {
+                cappedFailure = restartAttempts > Self.maximumRestarts
+            } else {
+                cappedFailure = false
+            }
+            guard desiredMode != mode || cappedFailure else { return }
             desiredMode = mode
-            return true
+            // Queue the transition before another caller can publish a newer desired mode.
+            sessionQueue.async {
+                self.lock.withLock { self.restartAttempts = 0 }
+                self.apply(mode)
+            }
         }
-        guard changed else { return }
-        sessionQueue.async { self.apply(mode) }
     }
 
     /// Switches camera. Takes effect at once when the camera runs.
@@ -219,7 +229,10 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
         burstDeadline?.cancel()
         burstDeadline = nil
         // Whatever ran before is over: a burst that ends from here on is ignored.
-        lock.withLock { burstID = 0 }
+        lock.withLock {
+            burstID = 0
+            restartGeneration &+= 1
+        }
         switch mode {
         case .off:
             turnOff()
@@ -284,8 +297,8 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
         }
     }
 
-    private func startBurst(frames: Int) {
-        guard mode.usesCamera, prepare() else { return }
+    func startBurst(frames: Int) {
+        guard lock.withLock({ burstID == 0 }), mode.usesCamera, prepare() else { return }
         let id = lock.withLock { () -> Int in
             nextBurstID += 1
             burstID = nextBurstID
@@ -353,7 +366,10 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
             watchdog = nil
             intervalTimer?.cancel()
             intervalTimer = nil
-            lock.withLock { phase = .idle }
+            lock.withLock {
+                phase = .idle
+                restartGeneration &+= 1
+            }
             driver.stop()
             publish(.failed(reason))
             return
@@ -362,11 +378,19 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
         apply(mode)
     }
 
-    private func scheduleRestart(after seconds: TimeInterval) {
-        sessionQueue.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, mode.usesCamera else { return }
+    /// Session queue only. Returning the work item lets tests exercise a delayed retry without sleeping.
+    @discardableResult
+    func scheduleRestart(after seconds: TimeInterval) -> DispatchWorkItem {
+        let generation = lock.withLock {
+            restartGeneration &+= 1
+            return restartGeneration
+        }
+        let retry = DispatchWorkItem { [weak self] in
+            guard let self, self.lock.withLock({ self.restartGeneration == generation && self.desiredMode.usesCamera }) else { return }
             restart(reason: "The camera did not start.")
         }
+        sessionQueue.asyncAfter(deadline: .now() + seconds, execute: retry)
+        return retry
     }
 
     private func driverEvent(_ event: CameraDriverEvent) {
@@ -440,6 +464,7 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
                 guard throttle.admit(now) else { return .drop }
                 lastDelivered = now
                 restartAttempts = 0
+                restartGeneration &+= 1
                 return .deliver(burst: nil, last: false)
             case .burstWarmup:
                 luma = PixelLuma.mean(pixelBuffer)
@@ -451,6 +476,7 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
                 guard throttle.admit(now) else { return .drop }
                 lastDelivered = now
                 restartAttempts = 0
+                restartGeneration &+= 1
                 burstRemaining -= 1
                 let last = burstRemaining <= 0
                 if last { phase = .idle }

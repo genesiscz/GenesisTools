@@ -88,11 +88,19 @@ public final class ActivityGate: ObservableObject {
     nonisolated(unsafe) private var idleMonitors: [Any] = []
     private var cameraObservation: NSKeyValueObservation?
     private var cameraID: String?
+    private let readEventReasons: (Set<ActivityPauseReason>) -> Set<ActivityPauseReason>
+    private static let eventReasons: Set<ActivityPauseReason> = [.systemSleep, .screensAsleep, .screenSaver, .sessionInactive]
     private var screenDebounce: DispatchWorkItem?
     private var fullScreenDebounce: DispatchWorkItem?
 
-    public init(idleThreshold: TimeInterval? = nil) {
+    public convenience init(idleThreshold: TimeInterval? = nil) {
+        self.init(idleThreshold: idleThreshold, readEventReasons: Self.currentEventReasons)
+    }
+
+    init(idleThreshold: TimeInterval? = nil,
+         readEventReasons: @escaping (Set<ActivityPauseReason>) -> Set<ActivityPauseReason>) {
         self.idleThreshold = idleThreshold
+        self.readEventReasons = readEventReasons
     }
 
     deinit {
@@ -160,7 +168,10 @@ public final class ActivityGate: ObservableObject {
             MainActor.assumeIsolated { self?.set(.lowPowerMode, ProcessInfo.processInfo.isLowPowerModeEnabled) }
         })
         installPowerSource()
+        let current = readEventReasons(reasons)
+        for reason in Self.eventReasons { set(reason, current.contains(reason)) }
         refreshAll()
+        observeCamera(uniqueID: cameraID)
         armIdle()
         if watchesFullScreenApps { scheduleFullScreenCheck() }
     }
@@ -204,6 +215,41 @@ public final class ActivityGate: ObservableObject {
     }
 
     // MARK: - Reading the system
+
+    /// Reconcile notifications missed while stopped. Preserve a previous reason if its query fails.
+    private static func currentEventReasons(_ previous: Set<ActivityPauseReason>) -> Set<ActivityPauseReason> {
+        var current = previous.intersection(eventReasons)
+        current.remove(.systemSleep) // This process is executing again.
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+           let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool {
+            if onConsole { current.remove(.sessionInactive) } else { current.insert(.sessionInactive) }
+        }
+        var count: UInt32 = 0
+        if CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 {
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            if CGGetOnlineDisplayList(count, &displays, &count) == .success {
+                if displays.prefix(Int(count)).allSatisfy({ CGDisplayIsAsleep($0) != 0 }) {
+                    current.insert(.screensAsleep)
+                } else {
+                    current.remove(.screensAsleep)
+                }
+            }
+        }
+        let engines = Set(NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier == "com.apple.ScreenSaver.Engine"
+                || $0.bundleIdentifier == "com.apple.ScreenSaver.Engine.legacyScreenSaver"
+        }.map(\.processIdentifier))
+        if engines.isEmpty {
+            current.remove(.screenSaver)
+        } else if let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] {
+            let visible = windows.contains { info in
+                (info[kCGWindowOwnerPID as String] as? pid_t).map { engines.contains($0) } ?? false
+            }
+            if visible { current.insert(.screenSaver) } else { current.remove(.screenSaver) }
+        }
+        return current
+    }
 
     /// Whether the Mac runs on battery right now (IOKit power sources).
     public nonisolated static func isOnBattery() -> Bool {
@@ -264,7 +310,7 @@ public final class ActivityGate: ObservableObject {
 
     // MARK: - Internals
 
-    private func set(_ reason: ActivityPauseReason, _ on: Bool) {
+    func set(_ reason: ActivityPauseReason, _ on: Bool) {
         var next = reasons
         if on { next.insert(reason) } else { next.remove(reason) }
         guard next != reasons else { return }

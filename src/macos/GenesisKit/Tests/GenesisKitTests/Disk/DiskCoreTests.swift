@@ -66,6 +66,35 @@ final class VolumeSpaceTests: XCTestCase {
 
 @MainActor
 final class VolumeSpaceMonitorTests: XCTestCase {
+    func testDetailedAndQueuedSamplesAreDiscardedAfterSwitchingVolumes() async {
+        let monitor = VolumeSpaceMonitor(configuration: .init(volumePath: "/fixture-a", watchesWorkspace: false))
+        let entered = expectation(description: "detailed read entered")
+        let release = AsyncStream<Void>.makeStream()
+        let stale = VolumeSample(volumePath: "/fixture-a", total: 100, free: 50, available: 50, date: Date())
+        var published = 0
+        monitor.onSample = { _ in published += 1 }
+        let pending = Task {
+            await monitor.refreshDetailed { _, _ in
+                entered.fulfill()
+                for await _ in release.stream { break }
+                return stale
+            }
+        }
+        await fulfillment(of: [entered], timeout: 5)
+        monitor.configuration.volumePath = "/fixture-b"
+        monitor.configuration.volumePath = "/fixture-a" // Same path again is still a different request generation.
+        release.continuation.yield(())
+        release.continuation.finish()
+        let result = await pending.value
+        XCTAssertNil(result)
+        monitor.receive(stale, generation: 0)
+        XCTAssertNil(monitor.sample)
+        XCTAssertEqual(published, 0)
+        monitor.receive(stale, generation: 2)
+        XCTAssertEqual(monitor.sample, stale)
+        XCTAssertEqual(published, 1)
+    }
+
     private func waitUntil(_ message: String, timeout: TimeInterval = 5, _ condition: () -> Bool) async {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
@@ -188,6 +217,22 @@ final class SpaceForecasterTests: XCTestCase {
 }
 
 final class DiskHistoryStoreTests: XCTestCase {
+    func testFailedInitializationRetriesLoadingBeforeCompaction() async throws {
+        try Data("temporarily obstructed".utf8).write(to: directory)
+        let store = DiskHistoryStore(directory: directory)
+        do {
+            _ = try await store.points()
+            XCTFail("a file is not a history directory")
+        } catch {}
+        try FileManager.default.removeItem(at: directory)
+        let original = DiskHistoryStore(directory: directory)
+        let reading = sample(0, 1234)
+        try await original.append(reading)
+        try await store.compact(now: reading.date)
+        let points = try await DiskHistoryStore(directory: directory).points()
+        XCTAssertEqual(points, [DiskHistoryPoint(reading)])
+    }
+
     private var directory: URL!
 
     override func setUpWithError() throws {
@@ -287,6 +332,28 @@ final class DiskHistoryStoreTests: XCTestCase {
 }
 
 final class BigFileRadarTests: XCTestCase {
+    func testDirectoryBudgetCountsDirectoriesAndSymlinks() throws {
+        for index in 0..<20 {
+            let folder = directory.appendingPathComponent("folder-\(index)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("link-\(index)"),
+                                                       withDestinationURL: folder)
+        }
+        let radar = BigFileRadar(configuration: .init(maxDirectoryEntries: 3)) { _ in }
+        XCTAssertTrue(radar.processNow(FileEventBatch(rescanRoots: [directory.path])).isEmpty)
+        XCTAssertEqual(radar.directoryEntryReads, 3)
+        XCTAssertEqual(radar.statCount, 0)
+    }
+
+    func testAnIgnoredRescanRootIsNeverRead() throws {
+        let radar = radar(ignore: ["*/node_modules/*"])
+        _ = try write("node_modules/large.bin", bytes: 2_000_000)
+        let ignored = directory.appendingPathComponent("node_modules").path
+        XCTAssertTrue(radar.processNow(FileEventBatch(rescanRoots: [ignored])).isEmpty)
+        XCTAssertEqual(radar.folderReads, 0)
+        XCTAssertEqual(radar.statCount, 0)
+    }
+
     private var directory: URL!
 
     override func setUpWithError() throws {
@@ -404,6 +471,17 @@ final class BigFileRadarTests: XCTestCase {
 }
 
 final class DiskSystemProbeTests: XCTestCase {
+    func testCPUWindowKeepsItsReferenceWithUnevenSampling() {
+        var gate = FseventsdGate(growthWindow: 60, cpuLimit: 1.5, cpuWindow: 600)
+        for index in 0...30 {
+            let seconds = Double(index * 61)
+            let hot = gate.update(FseventsdHealth(pid: 340, rssBytes: 1000, cpuSeconds: seconds * 2,
+                                                 date: Date(timeIntervalSince1970: seconds)))
+            XCTAssertEqual(hot, index >= 10)
+            XCTAssertLessThanOrEqual(gate.history.count, 11)
+        }
+    }
+
     func testTheFreeSpaceDefaultMatchesTheDesign() {
         let policy = AlertPolicy.freeSpace()
         XCTAssertEqual(policy.orderedTiers.map(\.id), ["watch", "low", "critical"])

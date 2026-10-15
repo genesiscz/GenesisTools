@@ -2,6 +2,42 @@ import XCTest
 @testable import GenesisKit
 
 final class CameraLogicTests: XCTestCase {
+    @MainActor
+    func testRestartingActivityGateRefreshesTheSavedCamera() {
+        let gate = ActivityGate()
+        gate.observeCamera(uniqueID: "missing-fixture-camera")
+        gate.start()
+        gate.set(.cameraInUse, true) // Last observation before stopping.
+        gate.stop()
+        XCTAssertTrue(gate.reasons.contains(.cameraInUse))
+        gate.start() // The saved device is no longer present/in use.
+        defer { gate.stop() }
+        XCTAssertFalse(gate.reasons.contains(.cameraInUse))
+    }
+
+    @MainActor
+    func testRestartReconcilesPauseReasonsMissedWhileStopped() {
+        let transient: Set<ActivityPauseReason> = [.screensAsleep, .screenSaver, .sessionInactive]
+        var current = transient
+        let gate = ActivityGate(readEventReasons: { _ in current })
+        gate.start()
+        XCTAssertTrue(transient.isSubset(of: gate.reasons))
+        gate.set(.user, true)
+        gate.set(.systemSleep, true)
+        gate.stop()
+        // Resume notifications occur while there are no observers.
+        current = []
+        gate.start()
+        XCTAssertTrue(gate.reasons.isDisjoint(with: transient.union([.systemSleep])))
+        XCTAssertTrue(gate.reasons.contains(.user), "reconciliation only owns the system event reasons")
+        gate.stop()
+        // A restart while the conditions still apply must retain the pause.
+        current = transient
+        gate.start()
+        defer { gate.stop() }
+        XCTAssertTrue(transient.isSubset(of: gate.reasons))
+    }
+
     func testWarmupWaitsForTheMinimumThenForStableBrightness() {
         var warmup = CameraWarmup()
         var time = 0.0
