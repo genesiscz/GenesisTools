@@ -467,6 +467,15 @@ describe("independent review brief", () => {
             expect(text).toContain(postMerge ? "gh pr diff 498" : "git diff origin/master...HEAD");
         }
     });
+
+    test("a fresh PR's brief says the bots review next to it, not that they found nothing", () => {
+        const input = { pr: 498, title: "t", wt: "/w", base: "master", scratch: "/s", postMerge: false, swift: false };
+        const fresh = reviewBrief({ ...input, fresh: true });
+        expect(fresh).toContain("was just opened");
+        expect(fresh).not.toContain("found nothing more");
+        expect(fresh).not.toContain("already answered");
+        expect(reviewBrief(input)).toContain("found nothing more");
+    });
 });
 describe("planted-regression summary", () => {
     test("reads bun counts and the XCTest total, and says so when there is none", () => {
