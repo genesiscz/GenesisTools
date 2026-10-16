@@ -113,6 +113,11 @@ the stop point. After the confirmation period, state the plan in one line and pr
 
 ## 4. Brief and dispatch
 
+A Codex worker's sandbox has no network, so `tools github review` and `gh` fail inside it (2026-10-16: two round 2
+fixers stopped before their first edit). Before every spawn or steer of a round, run
+`bun .claude/skills/babysit/scripts/fetch-threads.ts --run <dir> --pr <N> --round <R>`: it writes the threads (listed
+and expanded, with Thread IDs), the review bodies and the bot PR comments into the worktree, and the brief points there.
+
 Two brief forms. **Self-fetch** (the default since 2026-10-14):
 `bun .claude/skills/babysit/scripts/fill-brief.ts --run <dir> --pr <N> --round <R> --model "<label>" --scopes "<a, b>"
 [--swift] [--judge <findings.md>]` fills [references/brief-self-fetch.md](references/brief-self-fetch.md): the worker

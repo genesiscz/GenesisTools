@@ -14,8 +14,12 @@ reruns your checks, and pushes. Quality is judged, not speed.
 - Commit subject: `fix({{SCOPES}}): #{{PR}} followup - <what the round fixes, short>`. The commit-msg hook checks the
   scopes; if it prints a corrected subject, commit with that.
 
-## 1. Fetch the open threads yourself (read-only)
+## 1. Read the open threads (read-only)
 
+- The lead fetched them for you, because a sandboxed worker has no network: `.claude/work/babysit/{{PR}}-r{{ROUND}}-threads.md`
+  (every unresolved thread, listed with its Thread ID and then expanded), `{{PR}}-r{{ROUND}}-review-bodies.md` and
+  `{{PR}}-r{{ROUND}}-pr-comments.md` in the same folder. Work from those files and do not call GitHub. Only when the
+  files are missing and your shell has network, fetch them yourself as below.
 - `tools github review {{PR}} --llm -u -s bs-{{PR}}-r{{ROUND}}` lists every unresolved thread from every reviewer
   (eve-bot-lovinka, coderabbitai, humans). Never filter by reviewer.
 - Expand EVERY listed thread: `tools github review expand t1,t2,… -s bs-{{PR}}-r{{ROUND}}` (no PR number in this

@@ -15,6 +15,7 @@ import {
     watchApprovals,
 } from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
+import { threadRefs } from "./fetch-threads";
 import { PRE_PUSH_GUARDS, postingExitCode } from "./integrate";
 import { summarize, testEvidence } from "./plant";
 import { hitsInAddedLines, probeAddedLines } from "./probe";
@@ -96,6 +97,13 @@ describe("read-only chains", () => {
         expect(chainSegments("rg 'a;b|c' src && pwd")).toEqual(["rg 'a;b|c' src", "pwd"]);
         expect(chainSegments("echo 'x > y'")).toEqual(["echo 'x > y'"]);
         expect(chainSegments("cat a 2>&1")).toBeNull();
+    });
+});
+
+describe("fetch-threads", () => {
+    test("reads each thread ref once, in numeric order", () => {
+        expect(threadRefs("t10 a\nt2 b\nt1 c\nsee t2 again; not5 or at3x")).toEqual(["t1", "t2", "t10"]);
+        expect(threadRefs("Stats: 0 threads")).toEqual([]);
     });
 });
 
