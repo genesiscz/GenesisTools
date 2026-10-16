@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
+import { spawnDetached } from "@genesiscz/utils/DashboardApp/detach";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -136,14 +136,17 @@ program
             if (opts.detach) {
                 const logPath = join(tmpdir(), `artifact-serve-${opts.port}.log`);
                 const argvRest = process.argv.slice(1).filter((a) => a !== "--detach");
-                const child = Bun.spawn([process.execPath, ...argvRest, "--no-open"], {
-                    stdout: Bun.file(logPath),
-                    stderr: Bun.file(logPath),
-                    env: env.getProcessEnv(),
+                // Emptied first: an older run's URL line in the same log would read as this server's.
+                writeFileSync(logPath, "");
+                // Its own session (setsid): a Codex or agent shell kills the command's whole process group when the
+                // command returns, and a plain child died with it (2026-10-16: empty log, no server, a 404).
+                const child = spawnDetached({ cmd: [process.execPath, ...argvRest, "--no-open"], logFile: logPath });
+                let exitCode: number | null = null;
+                void child.exited.then((exit) => {
+                    exitCode = exit.code ?? 1;
                 });
-                child.unref();
                 const readLog = () => (existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
-                const outcome = await waitForServedUrl({ readLog, exitCode: () => child.exitCode });
+                const outcome = await waitForServedUrl({ readLog, exitCode: () => exitCode });
 
                 if (outcome.kind === "serving") {
                     const moved = outcome.port !== Number.parseInt(opts.port, 10);
