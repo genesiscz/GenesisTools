@@ -25,11 +25,14 @@ export function parseSwiftBuildProgress(line: string): SwiftBuildProgress | null
     return { done: Number(done), total: Number(total), action, subject };
 }
 
+/**
+ * No percentage: SwiftPM finds more steps while it builds (a cold app build went 760 -> 1088 steps), so a percentage
+ * fell from 97% to 69% on a real build and read as going backwards. Counts of a growing total read honestly.
+ */
 export function formatSwiftBuildProgress(progress: SwiftBuildProgress, elapsedMs: number): string {
-    const percent = progress.total > 0 ? Math.min(100, Math.floor((progress.done / progress.total) * 100)) : 0;
     const seconds = Math.floor(elapsedMs / 1000);
     const subject = progress.subject ? ` ${progress.subject}` : "";
-    return `swift build ${progress.done}/${progress.total} (${percent}%) ${progress.action}${subject}, ${seconds} s`;
+    return `swift build step ${progress.done} of ${progress.total}: ${progress.action}${subject}, ${seconds} s`;
 }
 
 /**

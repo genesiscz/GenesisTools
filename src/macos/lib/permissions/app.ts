@@ -408,7 +408,7 @@ export function stampAppToolsPath(template: string, toolsPath: string): string {
 export interface BuildAppOptions {
     onStep?: (message: string) => void;
     /**
-     * Live progress of the long `swift build` step, e.g. "swift build 180/430 (41%) Compiling HubAgents.swift, 14 s".
+     * Live progress of the long `swift build` step, e.g. "swift build step 180 of 430: Compiling HubAgents.swift, 14 s".
      * Without it the build prints nothing between its steps, which looks like a hang on a cold build.
      */
     onProgress?: (message: string) => void;

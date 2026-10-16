@@ -613,8 +613,8 @@ describe("swift build progress", () => {
         feed("[200/400] Compiling GenesisTools C.swift");
 
         expect(shown).toEqual([
-            "swift build 1/400 (0%) Compiling A.swift, 0 s",
-            "swift build 200/400 (50%) Compiling C.swift, 1 s",
+            "swift build step 1 of 400: Compiling A.swift, 0 s",
+            "swift build step 200 of 400: Compiling C.swift, 1 s",
         ]);
     });
 
