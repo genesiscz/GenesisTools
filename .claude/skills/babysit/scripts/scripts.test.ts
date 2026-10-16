@@ -90,6 +90,16 @@ describe("read-only chains", () => {
     });
 });
 
+describe("reviewer reads", () => {
+    test("the scratch folder by its absolute path, and the ts readers", () => {
+        expect(allowedCommand(entry, `mkdir -p ${entry.cwd}/.claude/work/babysit`)).toBe(true);
+        expect(allowedCommand(entry, "mkdir -p /tmp/elsewhere")).toBe(false);
+        expect(readOnlyChain(entry, "./tools ts skeleton src/a.ts --top-level")).toBe(true);
+        expect(readOnlyChain(entry, "tools ts duplicates src --recommend")).toBe(false);
+        expect(readOnlyChain(entry, "./tools github review 5 --respond x")).toBe(false);
+    });
+});
+
 describe("sed stays a reader", () => {
     test("a second script after the range is refused", () => {
         expect(readOnlyChain(entry, "sed -n 1,9p src/a.ts")).toBe(true);
