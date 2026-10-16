@@ -649,6 +649,24 @@ describe("applySetting", () => {
         expect(loadHooksConfig(path).mods.fullDiff).toBe(false);
     });
 
+    it("mods.idleCompact* are set, checked and loaded", () => {
+        expect(DEFAULT_HOOKS_CONFIG.mods.idleCompactMinutes).toBe(56);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompact", "false").mods.idleCompact).toBe(false);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinutes", "50").mods.idleCompactMinutes).toBe(50);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinTokens", "0").mods.idleCompactMinTokens).toBe(0);
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinutes", "60")).toThrow("1 to 59");
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-idle-")), "hooks.json");
+
+        writeFileSync(path, SafeJSON.stringify({ mods: { idleCompactMinutes: 75, idleCompactMinTokens: 1000 } }));
+        expect(loadHooksConfig(path).mods).toEqual({
+            fullDiff: true,
+            idleCompact: true,
+            idleCompactMinutes: 56,
+            idleCompactMinTokens: 1000,
+        });
+    });
+
     it("reads the mods plugin's row from claude plugin list --json", () => {
         const listed = SafeJSON.stringify([
             { id: "other@somewhere", enabled: true },

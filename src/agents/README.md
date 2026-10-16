@@ -214,7 +214,18 @@ diff element under the call's row, so the 10,000-character message limit no long
 session needs `/reload-plugins`. `tools agents hooks mods` shows whether it is installed;
 `tools agents hooks config set mods.fullDiff false --write` turns it off without an uninstall (the mod reads
 the hooks file). It draws nothing while `diff.fullDiff` is `off`. The mod API is early access in Claude Code
-(2.1.287 and later), so a release can change it; the mod then draws nothing and the hook message is unchanged. A file or a whole folder moved with `mv` or
+(2.1.287 and later), so a release can change it; the mod then draws nothing and the hook message is unchanged.
+
+**The idle-compaction mod.** The same plugin compacts an idle Claude session 56 minutes after its last turn
+(`mods.idleCompactMinutes`, 1 to 59), while the 1-hour prompt cache is still warm, so the next prompt does not
+pay for the whole context again. Claude Code's own idle compaction tries once at 54 minutes and gives up at its
+first refused check (a rate-limit warning on the last reply is enough); the mod does not run that check, so a
+compaction can be spent while the account is in its warning. It skips a session that compacted after its last
+turn, a context under `mods.idleCompactMinTokens` (200,000) and a session with no screen (`claude -p`), and it
+appends a notice that starts `Compacted while idle`. `tools agents hooks config set mods.idleCompact false --write`
+turns it off, also for a timer already armed. A reload of the mod drops the timer until the next turn ends.
+
+A file or a whole folder moved with `mv` or
 `git mv` is one line, `old/ → new/ (284 files)`, when the new copies match the old ones byte for byte
 (up to 4,000 files; a file over 4 MiB is not compared).
 

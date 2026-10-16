@@ -26,8 +26,8 @@
         },
         {
             "name": "genesis-tools-mods",
-            "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row. Install with: tools agents hooks mods install --write.",
-            "version": "1.0.0",
+            "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row, and compacts an idle session before its 1-hour prompt cache expires. Install with: tools agents hooks mods install --write.",
+            "version": "1.1.0",
             "author": {
                 "name": "GenesisTools"
             },

@@ -69,6 +69,7 @@ export const SETTABLE_KEYS = [
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
     "agentsTalk.hint",
     "mods.fullDiff",
+    "mods.<idleCompact|idleCompactMinutes|idleCompactMinTokens>",
 ] as const;
 
 /** One `decisions.*` key. The stop hook takes off|warn|block; `harnesses` a comma list. */
@@ -421,8 +422,24 @@ export function applySetting(
         return next;
     }
 
-    if (key === "mods.fullDiff") {
-        next.mods = { ...config.mods, fullDiff: asBoolean(key, value) };
+    if (key === "mods.fullDiff" || key === "mods.idleCompact") {
+        next.mods = { ...config.mods, [key.slice("mods.".length)]: asBoolean(key, value) };
+        return next;
+    }
+
+    if (key === "mods.idleCompactMinutes") {
+        const minutes = asCount(key, value);
+
+        if (minutes > 59) {
+            throw new Error(`${key} takes 1 to 59: at 60 the 1-hour prompt cache has expired`);
+        }
+
+        next.mods = { ...config.mods, idleCompactMinutes: minutes };
+        return next;
+    }
+
+    if (key === "mods.idleCompactMinTokens") {
+        next.mods = { ...config.mods, idleCompactMinTokens: asCount(key, value, 0) };
         return next;
     }
 

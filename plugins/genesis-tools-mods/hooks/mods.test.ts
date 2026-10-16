@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { IDLE_COMPACT_DEFAULTS, IDLE_NOTICE, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
 import { fullDiffEnabled, sectionsOf, sectionsOfCalls } from "./sections";
 
 const NOTE = [
@@ -74,5 +75,41 @@ describe("the full-diff mod's note reader", () => {
         expect(fullDiffEnabled('{"mods":{"fullDiff":"no"}}')).toBe(true);
         expect(fullDiffEnabled('{"mods":{"fullDiff":false}}')).toBe(false);
         expect(fullDiffEnabled('{"diff":{}}')).toBe(true);
+    });
+});
+
+describe("idle compaction", () => {
+    it("reads its settings from the mods section and keeps the default for a bad value", () => {
+        expect(idleCompactSettings(undefined)).toEqual(IDLE_COMPACT_DEFAULTS);
+        expect(idleCompactSettings("not json")).toEqual(IDLE_COMPACT_DEFAULTS);
+        expect(
+            idleCompactSettings(
+                JSON.stringify({ mods: { idleCompact: false, idleCompactMinutes: 50, idleCompactMinTokens: 0 } })
+            )
+        ).toEqual({ enabled: false, minutes: 50, minTokens: 0 });
+        // 60 minutes or more would fire after the cache expired.
+        expect(idleCompactSettings(JSON.stringify({ mods: { idleCompactMinutes: 60, idleCompact: "no" } }))).toEqual(
+            IDLE_COMPACT_DEFAULTS
+        );
+    });
+
+    it("compacts only when on, drawn and over the floor", () => {
+        const settings = { enabled: true, minutes: 56, minTokens: 200_000 };
+
+        expect(idleCompactSkip({ settings, surfaces: 1, tokens: 300_000 })).toBeUndefined();
+        expect(idleCompactSkip({ settings: { ...settings, enabled: false }, surfaces: 1, tokens: 300_000 })).toBe(
+            "mods.idleCompact is off"
+        );
+        expect(idleCompactSkip({ settings, surfaces: 0, tokens: 300_000 })).toContain("no surface");
+        expect(idleCompactSkip({ settings, surfaces: 1, tokens: 199_999 })).toContain("under the floor");
+        expect(idleCompactSkip({ settings, surfaces: 1, tokens: undefined })).toContain("unknown");
+    });
+
+    it("writes a notice that starts with the text the session scan counts", () => {
+        const text = idleNotice({ minutes: 56, tokensBefore: 550_000, tokensAfter: 40_000 });
+
+        expect(text.startsWith(IDLE_NOTICE)).toBe(true);
+        expect(text).toContain("550,000 to 40,000 tokens");
+        expect(idleNotice({ minutes: 56, tokensBefore: undefined, tokensAfter: 1 })).not.toContain("tokens)");
     });
 });

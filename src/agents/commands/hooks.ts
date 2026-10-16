@@ -715,7 +715,8 @@ export function registerHooksCommands(program: Command): void {
 
 /**
  * `hooks mods`: the Claude Code mods of this repository (the `genesis-tools-mods` plugin). They share the
- * hooks file: `mods.fullDiff` switches the full-diff mod, which reads the diff hook's `hook-diffs` notes.
+ * hooks file: `mods.fullDiff` switches the full-diff mod, which reads the diff hook's `hook-diffs` notes, and
+ * `mods.idleCompact` the idle-compaction mod.
  */
 function registerMods(hooks: Command): void {
     const mods = hooks
@@ -752,6 +753,9 @@ function registerMods(hooks: Command): void {
             }
 
             ui.raw(`mods.fullDiff: ${config.mods.fullDiff ? pc.green("on") : pc.dim("off")}`);
+            ui.raw(
+                `mods.idleCompact: ${config.mods.idleCompact ? pc.green("on") : pc.dim("off")}${pc.dim(` · after ${config.mods.idleCompactMinutes} min · floor ${config.mods.idleCompactMinTokens} tokens`)}`
+            );
 
             if (config.mods.fullDiff && fullDiff === "off") {
                 ui.raw(pc.yellow(`diff.fullDiff is off, so no call has a full-diff note for the mod to draw.`));

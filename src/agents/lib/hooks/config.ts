@@ -272,6 +272,15 @@ export interface ModsConfig {
      * under the call's row. Reads `hook-diffs/<call>.md`, so it needs `diff.fullDiff` not `off`.
      */
     fullDiff: boolean;
+    /**
+     * Compact an idle Claude session `idleCompactMinutes` after its last turn, before the 1-hour prompt
+     * cache expires, when the engine's own idle compaction did not (it gives up at its first refused gate,
+     * such as a rate-limit warning). Skips a context under `idleCompactMinTokens`.
+     */
+    idleCompact: boolean;
+    /** 1 to 59: after the engine's own try at 54 minutes, before the cache expires at 60. */
+    idleCompactMinutes: number;
+    idleCompactMinTokens: number;
 }
 
 /**
@@ -417,7 +426,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
     agentsTalk: { hint: true },
-    mods: { fullDiff: true },
+    mods: { fullDiff: true, idleCompact: true, idleCompactMinutes: 56, idleCompactMinTokens: 200_000 },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
     // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
@@ -974,7 +983,7 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
         diff: mergeDiff(stored.diff),
         decisions: mergeDecisions(stored.decisions),
         agentsTalk: { hint: boolOr(stored.agentsTalk?.hint, DEFAULT_HOOKS_CONFIG.agentsTalk.hint) },
-        mods: { fullDiff: boolOr(stored.mods?.fullDiff, DEFAULT_HOOKS_CONFIG.mods.fullDiff) },
+        mods: mergeMods(stored.mods),
         unpushed: mergeUnpushed(stored.unpushed),
         shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
         logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),
@@ -990,6 +999,28 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
 const STOP_HOOK_MODES: readonly DecisionStopHook[] = ["off", "warn", "block"];
 
 /** Field by field, like `diff`: a stored value of the wrong type falls back to the default. */
+function mergeMods(stored: Partial<ModsConfig> | undefined): ModsConfig {
+    const base = DEFAULT_HOOKS_CONFIG.mods;
+    const minutes = countOr({
+        field: "mods.idleCompactMinutes",
+        value: stored?.idleCompactMinutes,
+        fallback: base.idleCompactMinutes,
+    });
+
+    return {
+        fullDiff: boolOr(stored?.fullDiff, base.fullDiff),
+        idleCompact: boolOr(stored?.idleCompact, base.idleCompact),
+        // The mod reads the file itself and drops 60 or more the same way.
+        idleCompactMinutes: minutes < 60 ? minutes : base.idleCompactMinutes,
+        idleCompactMinTokens: countOr({
+            field: "mods.idleCompactMinTokens",
+            value: stored?.idleCompactMinTokens,
+            fallback: base.idleCompactMinTokens,
+            min: 0,
+        }),
+    };
+}
+
 function mergeUnpushed(stored: Partial<UnpushedConfig> | undefined): UnpushedConfig {
     const base = DEFAULT_HOOKS_CONFIG.unpushed;
 
