@@ -45,13 +45,23 @@ function defaultVerify(): string {
         "   - `./node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo --noEmit` (not `bunx tsgo`: it hangs in /tmp worktrees)",
         "   - `bunx biome check <each changed file>`",
         "   - `bun run lint:rules` and `bun scripts/ci/check-tool-commands.ts`",
-        ...(has("--swift")
+        ...(has("--swift") && codexWorker()
+            ? [
+                  "   - Swift: write the change and its test, but do NOT run `swift build` or `swift test`: the Codex sandbox cannot write clang's module cache (`~/.cache/clang/ModuleCache`), so every attempt fails. Read the area rule files for the package first. Name the Swift tests you added in your report; the lead builds and runs them after your commit.",
+              ]
+            : []),
+        ...(has("--swift") && !codexWorker()
             ? [
                   "   - Swift: build and test the package that holds the changed Swift files (`swift build`, then `swift test --filter <the suites you touched>`, in the folder with its Package.swift). Read the area rule files for the package first. Never launch, quit or touch the user's running apps or windows; no screenshots of the user's screen. One heavy Swift build at a time on this Mac: before each `swift build` or `swift test`, wait until no other one runs (`timeout 1800 sh -c 'while ps -axo comm= | grep -Eq \"/(swift-build|swift-test|swift-package|swift-frontend|xctest)$\"; do sleep 20; done'`; it matches executable paths, because `pgrep -x` misses a build whose process name reads swift-package and `pgrep -f swift` matches this waiting shell itself).",
               ]
             : []),
     ].join("\n");
 }
+/** Codex workers (GPT models) run in a sandbox that cannot build Swift (2026-10-16: #533 round 1 stopped on it). */
+function codexWorker(): boolean {
+    return /gpt|sol|astra|luna|codex/i.test(flag("--model") ?? "GPT-6.1 Sol");
+}
+
 const judgeSection = judgeFile
     ? `## The lead's judge findings on your earlier commit (fix these in this round too)\n\n${readFileSync(judgeFile, "utf8").trim()}\n\nTreat each like a review finding: fix it, test it where behaviour changes, and add one reply item per finding with no threadId and reviewer "lead".\n\n`
     : "";
