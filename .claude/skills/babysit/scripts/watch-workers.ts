@@ -134,6 +134,19 @@ export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Pro
                 w.lastAt = Date.now();
                 w.stallSaid = false;
 
+                // A session-long Codex tail spans idle time between turns: only a started turn can stall
+                // (2026-10-14: an idle worker raised "STALL: no event for 308 s").
+                if (/^▶ turn\b/u.test(line)) {
+                    w.running = true;
+                } else if (/^(✔|✖|⏸|■) turn\b/u.test(line)) {
+                    w.running = false;
+
+                    // A Grok tail also replays finished turns' end lines; watchGrok prints the count at the real end.
+                    if (w.backend === "codex") {
+                        flushHidden(w);
+                    }
+                }
+
                 if (line.startsWith("🔧")) {
                     const call = line.slice(2).trim();
 
