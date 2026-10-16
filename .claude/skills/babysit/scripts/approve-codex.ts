@@ -146,11 +146,22 @@ const READERS: Record<string, (args: string[]) => boolean> = {
     gh: (args) =>
         (args[0] === "pr" && ["view", "diff", "checks", "list"].includes(args[1] ?? "")) ||
         (args[0] === "api" && !args.some((arg) => /^(-X|--method|-f|-F|--field|--raw-field|--input)/.test(arg))),
-    tools: (args) =>
+    tools: toolsReader,
+    "./tools": toolsReader,
+};
+
+/** `tools github review` without its write verbs, and `tools ts skeleton|duplicates|refactors`, which only read. */
+function toolsReader(args: string[]): boolean {
+    if (args[0] === "ts") {
+        return ["skeleton", "duplicates", "refactors"].includes(args[1] ?? "") && !args.includes("--recommend");
+    }
+
+    return (
         args[0] === "github" &&
         args[1] === "review" &&
-        !args.some((arg) => /^-?-?(respond|resolve|reply|unresolve)$/.test(arg)),
-};
+        !args.some((arg) => /^-?-?(respond|resolve|reply|unresolve)$/.test(arg))
+    );
+}
 
 /**
  * Splits a chain on unquoted `;`, `&&`, `||`, `|` and newlines. Null when it holds anything else that is not a plain
@@ -292,7 +303,13 @@ export function allowedCommand(entry: RunEntry, command: string): boolean {
         );
     }
 
-    if (words.length === 3 && words[0] === "mkdir" && words[1] === "-p" && words[2] === ".claude/work/babysit") {
+    // The babysit scratch folder, relative or as its absolute path (reviewers write the absolute one from the brief).
+    if (
+        words.length === 3 &&
+        words[0] === "mkdir" &&
+        words[1] === "-p" &&
+        resolve(entry.cwd, words[2]) === resolve(entry.cwd, ".claude/work/babysit")
+    ) {
         return true;
     }
 
