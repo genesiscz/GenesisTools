@@ -51,6 +51,8 @@ export function registerCmuxCommand(program: Command): void {
         .description("Scroll a session's transcript view to the text (ctrl+o, then its / search), then raise its tab")
         .option("--decision <n>", "Find where ❓ DECISION <n> was first asked (implies --at oldest)")
         .option("--at [where]", "oldest (the first match) or newest (the latest, the default for text)")
+        .option("--link", "Print a link that runs this search when clicked; a text link is minted on this Mac")
+        .option("--uses <n>", "With --link: how many clicks a minted text link works for", "1")
         .option("--no-activate", "Focus the tab without bringing the cmux app to the front")
         .option("--first", "Take the best match instead of failing when several panes match")
         .option("--include-self", "Also consider the pane this command runs in (excluded by default)")

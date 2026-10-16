@@ -172,6 +172,30 @@ describe("route", () => {
         expect(route("https://jev/special", own).kind).toBe("open");
     });
 
+    test("an ask route that trusts minted links asks for a raw click only", () => {
+        const custom: RouterConfig = {
+            ...config,
+            routes: [
+                {
+                    pattern: "https?://links\\.example\\.test/find/([a-z]+)",
+                    action: { type: "run", argv: ["tools", "find", "$1", "{q}"], approval: "ask", trustMinted: true },
+                },
+                {
+                    pattern: "https?://links\\.example\\.test/plain/([a-z]+)",
+                    action: { type: "run", argv: ["tools", "plain", "$1"], approval: "ask" },
+                },
+            ],
+        };
+        const decide = (url: string, minted: boolean) => {
+            const decision = route(url, custom, true, false, minted);
+            return decision.kind === "run" ? decision.needsApproval : null;
+        };
+
+        expect(decide("https://links.example.test/find/abc?q=hi", false)).toBe(true);
+        expect(decide("https://links.example.test/find/abc?q=hi", true)).toBe(false);
+        expect(decide("https://links.example.test/plain/abc", true)).toBe(true);
+    });
+
     test("a raw cmux launch asks and names the prompt; a minted one does not", () => {
         const custom: RouterConfig = {
             ...config,

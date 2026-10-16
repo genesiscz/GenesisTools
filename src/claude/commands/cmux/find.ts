@@ -1,4 +1,6 @@
 import { type FindOutcome, findInTranscript, type TranscriptIO } from "@app/claude/lib/cmux/transcript-find";
+import { mintLink } from "@genesiscz/utils/browser-router/links";
+import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
@@ -12,6 +14,8 @@ const { log } = logger.scoped("claude-cmux-find");
 export interface FindOptions {
     decision?: string;
     at?: string | true;
+    link?: boolean;
+    uses?: string;
     activate?: boolean;
     first?: boolean;
     includeSelf?: boolean;
@@ -51,6 +55,53 @@ function needle(text: string | undefined, decision: string | undefined): string 
 }
 
 /**
+ * The link instead of the search. A decision link carries no free text and routes as it is; a text link
+ * is minted, because the text route shows the confirmation card for any link this Mac did not mint.
+ */
+async function printFindLink({
+    session,
+    text,
+    decision,
+    at,
+    uses,
+}: {
+    session: string;
+    text: string;
+    decision?: string;
+    at?: "oldest" | "newest";
+    uses: number;
+}): Promise<void> {
+    const found = decision
+        ? routerLink({
+              preset: "claude-find",
+              action: "decision",
+              data: { session, decision: Number(decision) },
+              fallback: () => "",
+          })
+        : routerLink({
+              preset: "claude-find",
+              action: "text",
+              data: { session, q: text, ...(at ? { at } : {}) },
+              fallback: () => "",
+          });
+
+    if (!found.link) {
+        throw new Error(`no find link on this Mac: ${found.error?.message} (${found.error?.reason})`);
+    }
+
+    const label = decision ? `show DECISION ${decision} in chat` : `show "${text}" in chat`;
+
+    if (decision) {
+        out.println(`[${label}](${found.link})`);
+        return;
+    }
+
+    const host = new URL(found.link).host;
+    const minted = await mintLink({ target: found.link, uses, label, linkHost: host });
+    out.println(minted.markdown);
+}
+
+/**
  * Searches the session's transcript view while its tab stays where it is, and raises the tab only
  * after a hit, so a miss never moves the user's cmux view.
  */
@@ -64,6 +115,17 @@ export async function findCommand(session: string, text: string | undefined, opt
         if (at !== undefined && !picked) {
             out.error(suggestEnumFlag("tools claude cmux find", "--at", AT, { given: at }));
             process.exitCode = 1;
+            return;
+        }
+
+        if (opts.link) {
+            const uses = Number(opts.uses ?? "1");
+
+            if (!Number.isInteger(uses) || uses < 1) {
+                throw new Error(`--uses must be a positive integer (got "${opts.uses}")`);
+            }
+
+            await printFindLink({ session, text: query, decision: opts.decision, at: picked, uses });
             return;
         }
 

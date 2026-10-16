@@ -579,7 +579,10 @@ function applyAction(
             open === null
                 ? []
                 : forward(config.defaultBrowser, parseOpenTarget(open).href, raw, "route", routeIndex).openArguments;
-        const asks = launch?.prompt ? !(trusted && action.trustMinted === true) : action.approval === "ask";
+        // A prompt always asks; so does an `ask` route. A link minted on this Mac skips the card when its
+        // route trusts minted links, because only this Mac can mint one, wherever it is clicked.
+        const asks =
+            (Boolean(launch?.prompt) || action.approval === "ask") && !(trusted && action.trustMinted === true);
 
         return {
             kind: "run",

@@ -199,11 +199,14 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             id: "claude-find",
             title: "Find in a Claude chat",
             kind: "installable",
-            // Approval allow: the command types only into the transcript view's search bar, after the screen
-            // proves that view is open, and strips control characters from the text; it never submits a prompt.
+            // The command types only into the transcript view's search bar, after the screen proves that view
+            // is open, and strips control characters; it never submits a prompt. The decision route carries no
+            // free text and runs at once. The text route asks, except for a link minted on this Mac
+            // (`tools claude cmux find <session> <text> --link`), so a link from anywhere else shows the card.
             description:
                 "https://<link host>/claude/find/<session>/decision/<n> scrolls that live Claude session to where " +
-                "DECISION <n> was first asked; /claude/find/<session>?q=<text>&at=oldest|newest finds any text. " +
+                "DECISION <n> was first asked; /claude/find/<session>?q=<text>&at=oldest|newest finds any text " +
+                "(asks first unless minted here with tools claude cmux find --link). " +
                 "It opens the transcript view (ctrl+o) and searches there, then raises the tab.",
             enabledIf: ["claude:installed", "cmux:installed"],
             needsLinkHost: true,
@@ -229,7 +232,8 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                     action: {
                         type: "run",
                         argv: ["tools", "claude", "cmux", "find", "$1", "{q}", "--at", "{at}"],
-                        approval: "allow",
+                        approval: "ask",
+                        trustMinted: true,
                         notify: "Finding {q}",
                     },
                 },
