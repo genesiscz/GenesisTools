@@ -18,12 +18,12 @@
  * keeps its first PR's name across later PRs, so "bs-compress turn 13" read as the compress PR taking 13 turns when
  * it was #516 round 3 (2026-10-14).
  */
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { turnLogPath } from "@genesiscz/utils/grok/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readEvents } from "./ledger";
+import { type LedgerEvent, ledgerPath, readEvents } from "./ledger";
 
 const args = process.argv.slice(2);
 const stallIndex = args.indexOf("--stall-s");
@@ -60,16 +60,58 @@ type Worker = (typeof workers)[number];
 // and a watcher reading one ledger kept naming its first PR and round (2026-10-14, bs-gp "#94 r1" on round 2).
 const runDirs = args.filter((_, i) => args[i - 1] === "--run");
 
-/** ` #516 r3` for the worker's latest steer or spawn across the runs' ledgers; empty without --run or a match. */
-function currentTask(name: string): string {
-    const last = runDirs
-        .flatMap((dir) => readEvents(dir))
-        .filter((event) => event.worker === name && (event.kind === "steer" || event.kind === "spawn"))
-        .sort((a, b) => a.at.localeCompare(b.at))
-        .at(-1);
-    return last?.pr ? ` #${last.pr}${last.round ? ` r${last.round}` : ""}` : "";
+/** Parse each ledger only when its metadata changes, and keep only its latest task per worker. */
+export function createTaskLookup({
+    dirs,
+    read = readEvents,
+}: {
+    dirs: string[];
+    read?: typeof readEvents;
+}): (name: string) => string {
+    const cache = new Map<string, { stamp: string; tasks: Map<string, LedgerEvent> }>();
+    return (name) => {
+        let latest: LedgerEvent | undefined;
+
+        for (const dir of dirs) {
+            let stamp = "";
+
+            try {
+                const stat = statSync(ledgerPath(dir));
+                stamp = [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+            } catch (error) {
+                if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+                    throw error;
+                }
+            }
+
+            let cached = cache.get(dir);
+            if (!cached || cached.stamp !== stamp) {
+                const tasks = new Map<string, LedgerEvent>();
+
+                for (const event of stamp ? read(dir) : []) {
+                    if (event.worker && (event.kind === "steer" || event.kind === "spawn")) {
+                        const previous = tasks.get(event.worker);
+                        if (!previous || previous.at <= event.at) {
+                            tasks.set(event.worker, event);
+                        }
+                    }
+                }
+
+                cached = { stamp, tasks };
+                cache.set(dir, cached);
+            }
+
+            const task = cached.tasks.get(name);
+            if (task && (!latest || latest.at <= task.at)) {
+                latest = task;
+            }
+        }
+
+        return latest?.pr ? " #" + latest.pr + (latest.round ? " r" + latest.round : "") : "";
+    };
 }
 
+const currentTask = createTaskLookup({ dirs: runDirs });
 const say = (w: Worker, text: string) =>
     console.log(`[${w.label}${currentTask(w.name)}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
 

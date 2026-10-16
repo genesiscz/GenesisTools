@@ -17,10 +17,15 @@ import {
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
 import { threadRefs } from "./fetch-threads";
 import { PRE_PUSH_GUARDS, postingExitCode } from "./integrate";
+import { recordLandingPush } from "./land";
+import { appendEvent, readEvents } from "./ledger";
+import { continueVersionPick } from "./pick-unified";
 import { summarize, testEvidence } from "./plant";
 import { hitsInAddedLines, probeAddedLines } from "./probe";
 import { reviewBrief } from "./review-brief";
 import { loadRun, runPaths } from "./run";
+import { trySwiftSlot } from "./swift-slot";
+import { typecheckPackage } from "./swift-typecheck";
 import { openPaths } from "./tmp-reclaim";
 import {
     conflictedFiles,
@@ -30,7 +35,7 @@ import {
     resolveVersionConflicts,
     resolveVersionText,
 } from "./versions";
-import { pump } from "./watch-workers";
+import { createTaskLookup, pump } from "./watch-workers";
 
 const entry: RunEntry = {
     name: "fixture",
@@ -884,5 +889,216 @@ describe("round 1 regression guards", () => {
         expect(result.stdout.toString()).toContain("VERIFY: fixture check passed");
         expect(result.stdout.toString()).toContain("OPEN: fixture concern");
         expect(result.stdout.toString()).toContain("# Diff HEAD..HEAD");
+    });
+});
+
+describe("round 2 regression guards", () => {
+    test("log redirects approve one literal scratch path and reject shell execution", () => {
+        for (const destination of [
+            ".claude/work/babysit/x;touch${IFS}/tmp/babysit-owned",
+            ".claude/work/babysit/x;pwd",
+            ".claude/work/babysit/$(pwd)",
+            ".claude/work/babysit/\x60pwd\x60".replaceAll("\\x60", String.fromCharCode(96)),
+            ".claude/work/babysit/x|pwd",
+            ".claude/work/babysit/x&pwd",
+            ".claude/work/babysit/x\npwd",
+            ".claude/work/babysit/*",
+            ".claude/work/babysit/x outside",
+            "'../outside.log'",
+        ]) {
+            expect(allowedCommand(entry, "pwd > " + destination + " 2>&1")).toBe(false);
+        }
+        expect(allowedCommand(entry, "pwd > .claude/work/babysit/x.log 2>&1")).toBe(true);
+        expect(
+            allowedCommand(entry, "timeout 600 bunx biome check src/a.ts > '.claude/work/babysit/with space.log' 2>&1")
+        ).toBe(true);
+        expect(allowedCommand(entry, "touch outside > .claude/work/babysit/x.log 2>&1")).toBe(false);
+    });
+
+    test("Swift slot has one owner for concurrent stale-file contenders and releases on exit", async () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-slot-"));
+        const lock = join(dir, "slot.lock");
+        fs.writeFileSync(lock, "99999999");
+        const module = join(import.meta.dir, "swift-slot.ts");
+        const code =
+            "const { trySwiftSlot } = await import(" +
+            SafeJSON.stringify(module) +
+            "); const release = trySwiftSlot(" +
+            SafeJSON.stringify(lock) +
+            '); console.log(release ? "held" : "busy"); if (release) { for await (const _ of Bun.stdin.stream()) { break; } }';
+        const children = [0, 1].map(() =>
+            Bun.spawn([process.execPath, "-e", code], {
+                stdin: "pipe",
+                stdout: "pipe",
+                stderr: "pipe",
+                env: process.env,
+            })
+        );
+        try {
+            const results = await Promise.all(
+                children.map(async (child) => {
+                    const first = await child.stdout.getReader().read();
+                    return new TextDecoder().decode(first.value).trim();
+                })
+            );
+            expect(results.sort()).toEqual(["busy", "held"]);
+            expect(trySwiftSlot(lock)).toBeNull();
+        } finally {
+            for (const child of children) {
+                child.stdin.end("release\n");
+            }
+            await Promise.all(children.map((child) => child.exited));
+        }
+        const release = trySwiftSlot(lock);
+        expect(release).not.toBeNull();
+        release?.();
+        release?.();
+        expect(fs.readFileSync(lock, "utf8")).toBe("99999999");
+        // The old unlink/read race cannot arise: missing files are created and no PID file is read.
+        const fresh = trySwiftSlot(join(dir, "missing.lock"));
+        expect(fresh).not.toBeNull();
+        fresh?.();
+    });
+
+    test("standalone Swift library, executable and test commands share the package identity", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-swift-"));
+        const pkg = join(dir, "Fixture-Kit");
+        fs.mkdirSync(pkg);
+        fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "fixture/repo", main: dir }));
+        fs.writeFileSync(
+            join(pkg, "Package.swift"),
+            'let package = Package(name: "Fixture", targets: [.target(name: "Kit"), .executableTarget(name: "App"), .testTarget(name: "KitTests")])'
+        );
+        for (const target of ["Sources/Kit", "Sources/App", "Tests/KitTests"]) {
+            fs.mkdirSync(join(pkg, target), { recursive: true });
+            fs.writeFileSync(join(pkg, target, "Fixture.swift"), "package func fixture() {}\n");
+        }
+        const original = Bun.spawnSync;
+        const success = original([process.execPath, "-e", ""], { stdout: "pipe", stderr: "pipe", env: process.env });
+        const commands: string[][] = [];
+        const spawn = spyOn(Bun, "spawnSync").mockImplementation((command) => {
+            const words = Array.from(command, String);
+            if (words[0] === "xcrun" && words[1] === "swiftc") {
+                commands.push(words);
+                const good =
+                    words.includes("-package-name") && words[words.indexOf("-package-name") + 1] === "fixture_kit";
+                return {
+                    ...success,
+                    exitCode: good ? 0 : 1,
+                    stderr: Buffer.from(good ? "" : "fixture.swift:1: error: package name required"),
+                };
+            }
+            return { ...success, stdout: Buffer.from(dir) };
+        });
+        const argv = process.argv;
+        process.argv = [
+            process.execPath,
+            "swift-typecheck.ts",
+            "--package",
+            pkg,
+            "--run",
+            dir,
+            "--out",
+            join(dir, "out"),
+            "--deps",
+            dir,
+        ];
+        try {
+            expect(typecheckPackage()).toBe(0);
+            expect(commands).toHaveLength(3);
+            expect(commands.filter((words) => words.includes("-emit-module"))).toHaveLength(1);
+            expect(commands.filter((words) => words.includes("-typecheck"))).toHaveLength(2);
+        } finally {
+            spawn.mockRestore();
+            process.argv = argv;
+        }
+    });
+
+    test("worker attribution parses unchanged ledgers once, and refreshes changed or removed ledgers", () => {
+        const dirs = [0, 1].map(() => fs.mkdtempSync(join(tmpdir(), "babysit-task-")));
+        appendEvent(dirs[0], { kind: "spawn", worker: "worker", pr: 1, round: 1, at: "2026-01-01T00:00:00Z" });
+        appendEvent(dirs[1], { kind: "steer", worker: "worker", pr: 2, round: 2, at: "2026-01-01T01:00:00Z" });
+        let reads = 0;
+        const lookup = createTaskLookup({
+            dirs,
+            read: (dir) => {
+                reads++;
+                return readEvents(dir);
+            },
+        });
+        for (let n = 0; n < 100; n++) {
+            expect(lookup("worker")).toBe(" #2 r2");
+            expect(lookup("missing")).toBe("");
+        }
+        expect(reads).toBe(2);
+        appendEvent(dirs[0], { kind: "steer", worker: "worker", pr: 3, round: 1, at: "2026-01-01T02:00:00Z" });
+        expect(lookup("worker")).toBe(" #3 r1");
+        expect(reads).toBe(3);
+        fs.renameSync(join(dirs[0], "ledger.jsonl"), join(dirs[0], "saved.jsonl"));
+        expect(lookup("worker")).toBe(" #2 r2");
+        expect(reads).toBe(3);
+    });
+
+    test("failed continuations never skip nonempty picks or hide skip failures", () => {
+        let empty = false;
+        let continuation = 1;
+        let skip = 0;
+        let state = 0;
+        let unmerged = "";
+        const calls: string[] = [];
+        const git = (args: string[]) => {
+            calls.push(args.join(" "));
+            if (args[1] === "--continue") {
+                return { code: continuation, out: "commit failed" };
+            }
+            if (args[1] === "--skip") {
+                return { code: skip, out: "skip diagnostic" };
+            }
+            if (args[0] === "rev-parse") {
+                return { code: state, out: "fixture-sha" };
+            }
+            if (args[0] === "ls-files") {
+                return { code: 0, out: unmerged };
+            }
+            return { code: empty ? 0 : 1, out: "" };
+        };
+        expect(continueVersionPick(git)).toEqual({ code: 1, out: "commit failed" });
+        expect(calls).not.toContain("cherry-pick --skip");
+        empty = true;
+        expect(continueVersionPick(git).skipped).toBe(true);
+        skip = 1;
+        expect(continueVersionPick(git)).toEqual({ code: 1, out: "commit failedskip diagnostic" });
+        calls.length = 0;
+        state = 1;
+        expect(continueVersionPick(git).code).toBe(1);
+        expect(calls).not.toContain("cherry-pick --skip");
+        state = 0;
+        unmerged = "unmerged fixture";
+        expect(continueVersionPick(git).code).toBe(1);
+        expect(calls).not.toContain("cherry-pick --skip");
+        continuation = 0;
+        calls.length = 0;
+        expect(continueVersionPick(git).code).toBe(0);
+        expect(calls).toEqual(["cherry-pick --continue"]);
+    });
+
+    test("landing push is recorded before any later merge failure, and failed pushes record nothing", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-land-"));
+        const options = {
+            run: dir,
+            pr: 536,
+            branch: "fixture",
+            oldHead: "before",
+            newHead: "after",
+            result: { code: 0, out: "pushed" },
+        };
+        recordLandingPush(options);
+        expect(readEvents(dir)).toMatchObject([
+            { kind: "push", pr: 536, meta: { branch: "fixture", from: "before", to: "after", source: "land.ts" } },
+        ]);
+        expect(() => recordLandingPush({ ...options, result: { code: 1, out: "push rejected" } })).toThrow(
+            "push rejected"
+        );
+        expect(readEvents(dir)).toHaveLength(1);
     });
 });

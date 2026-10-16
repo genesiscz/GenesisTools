@@ -327,9 +327,10 @@ export function allowedCommand(entry: RunEntry, command: string): boolean {
 
     // A check whose output goes to the scratch folder (`<check> > .claude/work/babysit/x.log 2>&1`), or that runs
     // under `timeout <s>`, is the same check: the fixers write every verify log there (2026-10-16, #537 round 1).
-    const logged = /^(.*\S)\s+>\s*(\S+)\s+2>&1$/.exec(command);
+    const logged = /^(.*\S)\s+>\s*(.+?)\s+2>&1$/.exec(command);
+    const destination = logged ? strictShellWords(logged[2]) : null;
 
-    if (logged && inScratch(entry, logged[2]) && !/[<>]/.test(logged[1])) {
+    if (logged && destination?.length === 1 && inScratch(entry, destination[0]) && !/[<>]/.test(logged[1])) {
         return allowedCommand(entry, logged[1]);
     }
 
