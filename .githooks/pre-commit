@@ -19,8 +19,13 @@ unset GIT_DIR
 # biome re-staged its fixes, so a commit carried the unfixed copy and CI's
 # biome step went red on an import order the hook had already corrected
 # (PR #346, run 33681440922). So the index is formatted on its own: every
-# staged blob biome touched goes through biome on stdin and the result is
-# written back as a blob. The commit gets biome(staged copy) and nothing else.
+# staged blob biome touched is written to a hidden sibling file, biome fixes
+# that file, and the result is written back as a blob. The commit gets
+# biome(staged copy) and nothing else.
+# Not through --stdin-file-path: biome 2.5.11 prints stdin output through its
+# console, which swaps ✔ ✖ ⚠ ℹ for √ × ! i, so commits had their marks
+# rewritten (send.ts in 2a5ca4a31, fetch-threads.ts in 60e35fa33). The sibling
+# keeps the file's folder, so the same biome.json and includes apply.
 # A bare `git add` here would also sweep in the file's unstaged hunks and
 # whatever an editor or a parallel agent wrote while biome was running.
 biome_staged() {
@@ -43,14 +48,16 @@ biome_staged() {
         # other failure, a parse error in the staged copy or a broken config,
         # aborts the commit through set -e.
         case "$(git diff --cached --numstat -- "$f")" in -*) continue ;; esac
-        git show ":./$f" | bunx biome check --write --stdin-file-path="$f" > "$fixed"
-        # biome prints NOTHING (exit 0, a files/missingHandler note on stderr) for a path it has no handler for that
-        # is not on disk: a Swift or Markdown file staged and then moved or deleted. Writing that back committed the
-        # file empty (2026-10-13). Empty output for a non-empty staged blob is never a format result, so the staged
-        # blob stays.
-        if [ ! -s "$fixed" ] && [ "$(git cat-file -s ":./$f")" -gt 0 ]; then
-            continue
+        # Its folder is gone (staged, then moved away): the staged blob stays as it is.
+        [ -d "$(dirname "$f")" ] || continue
+        sibling="$(dirname "$f")/.biome-staged.$$.$(basename "$f")"
+        git show ":./$f" > "$sibling"
+        if ! bunx biome check --write --no-errors-on-unmatched "$sibling" > /dev/null; then
+            rm -f "$sibling"
+            exit 1
         fi
+        mv "$sibling" "$fixed"
+        # A type biome has no handler for (Swift, Markdown) comes back as the staged copy, so it writes the same blob.
         blob=$(git hash-object -w -- "$fixed")
         case "$entry" in *" $blob "*) continue ;; esac
         git update-index --cacheinfo "$mode,$blob,$full"

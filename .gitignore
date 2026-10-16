@@ -261,3 +261,6 @@ src/utils/agent-harness/oracle/bridge/bin/
 
 # Opt-in test-worker log (GENESIS_TOOLS_TEST_WORKER_LOG=1, read by scripts/test-worker-log.ts)
 test-worker-log.jsonl
+
+# The pre-commit hook's sibling copy of a staged file; a killed hook can leave one behind
+.biome-staged.*

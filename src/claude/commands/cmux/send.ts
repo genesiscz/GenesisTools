@@ -362,7 +362,7 @@ function report({ opts, query, target, surfaceId, enter, source }: SendReport): 
     }
 
     out.printlnErr(
-        `${pc.green("√")} sent to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
+        `${pc.green("✔")} sent to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
             pc.dim(`${surfaceId} (matched on ${describeMatch(target)})`)
     );
 }
