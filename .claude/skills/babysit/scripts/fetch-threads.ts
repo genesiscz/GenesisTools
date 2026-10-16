@@ -85,6 +85,6 @@ if (import.meta.main) {
     writeFileSync(join(dir, `${pr}-r${round}-pr-comments.md`), botComments.join("\n"));
 
     console.log(
-        `√ #${pr} round ${round}: ${refs.length} threads, ${bodies.length} review bodies, ${botComments.length} bot comments in ${dir}`
+        `✔ #${pr} round ${round}: ${refs.length} threads, ${bodies.length} review bodies, ${botComments.length} bot comments in ${dir}`
     );
 }
