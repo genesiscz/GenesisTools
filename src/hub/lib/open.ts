@@ -50,6 +50,8 @@ export interface OpenHubOptions {
     /** With `build: false`: an app older than its Swift sources still opens (a browser click must not wait on a build). */
     staleOk?: boolean;
     onStep?: (message: string) => void;
+    /** Live progress of the app build's `swift build` step (`BuildAppOptions.onProgress`). */
+    onProgress?: (message: string) => void;
 }
 
 export interface OpenHubResult {
@@ -174,7 +176,7 @@ export async function openHub(options: OpenHubOptions): Promise<OpenHubResult> {
 
         options.onStep?.(`${reason}: building it (about a minute on a cold build)`);
         logger.info({ reason }, "hub open: building GenesisTools.app");
-        await buildApp({ onStep: options.onStep });
+        await buildApp({ onStep: options.onStep, onProgress: options.onProgress });
         built = true;
     }
 

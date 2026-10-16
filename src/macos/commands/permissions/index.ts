@@ -17,6 +17,7 @@ import { buildApp, describeSource } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
 import type { LocalNetworkAnswer, OldBuild } from "../../lib/permissions/local-network";
 import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
+import { createBuildProgressDisplay } from "../../lib/permissions/swift-progress";
 
 const PANES = Object.keys(SETTINGS_PANES);
 
@@ -210,7 +211,16 @@ export function registerPermissionsCommand(program: Command): void {
         .description("Build, sign and install ~/Applications/GenesisTools.app (Swift toolchain required)")
         .option("--no-relaunch", "Leave the settings, hub, review, widget and Clicky faces closed after the reap")
         .action(async (options: { relaunch: boolean }) => {
-            const result = await buildApp({ onStep: (message) => ui.info(message), relaunch: options.relaunch });
+            const progress = createBuildProgressDisplay({
+                step: (message) => ui.info(message),
+                spinner: () => out.spinner(),
+                interactive: isInteractive(),
+            });
+            const result = await buildApp({
+                onStep: progress.onStep,
+                onProgress: progress.onProgress,
+                relaunch: options.relaunch,
+            }).finally(progress.finish);
             ui.ok(`${result.bundlePath}`);
             ui.kv("signed", result.signature.adhoc ? "ad-hoc" : result.signature.authority, 8);
 

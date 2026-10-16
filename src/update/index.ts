@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { genesisToolsMcpRegistration, installGenesisToolsMcp } from "@app/genesis-tools-mcp/lib/mcp-install";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
@@ -360,7 +361,14 @@ async function refreshGenesisApp(): Promise<void> {
     out.println(pc.dim("\n  Rebuilding GenesisTools.app (its sources changed in this update)..."));
 
     try {
-        const result = await buildApp({ onStep: (message) => out.println(pc.dim(`    ${message}`)) });
+        const progress = createBuildProgressDisplay({
+            step: (message) => out.println(pc.dim(`    ${message}`)),
+            spinner: () => out.spinner(),
+            interactive: isInteractive(),
+        });
+        const result = await buildApp({ onStep: progress.onStep, onProgress: progress.onProgress }).finally(
+            progress.finish
+        );
 
         out.println(
             pc.green(

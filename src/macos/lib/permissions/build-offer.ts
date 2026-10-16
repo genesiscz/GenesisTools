@@ -8,6 +8,7 @@ import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { buildApp } from "./app";
+import { createBuildProgressDisplay } from "./swift-progress";
 
 /**
  * Tools whose first command in an interactive terminal may offer to build GenesisTools.app
@@ -101,7 +102,7 @@ export interface BuildOfferDeps {
     readXcodeNoticeAt: () => number | undefined;
     writeXcodeNoticeAt: (atMs: number) => void;
     confirmBuild: () => Promise<boolean>;
-    build: (onStep: (message: string) => void) => Promise<void>;
+    build: (onStep: (message: string) => void, onProgress: (message: string) => void) => Promise<void>;
     log: (message: string) => void;
     now: () => number;
 }
@@ -145,7 +146,9 @@ export async function maybeOfferGenesisAppBuild(deps: BuildOfferDeps): Promise<v
     }
 
     try {
-        await deps.build((message) => deps.log(message));
+        // stderr, under a tool that is about to run: plain progress lines, never a spinner on stdout.
+        const progress = createBuildProgressDisplay({ step: deps.log, interactive: false });
+        await deps.build(progress.onStep, progress.onProgress);
     } catch (error) {
         logger.warn({ error }, "build-offer: GenesisTools.app build failed");
         deps.log(
@@ -262,8 +265,8 @@ export function createRealBuildOfferDeps(): BuildOfferDeps {
             });
             return answer === true;
         },
-        build: async (onStep) => {
-            await buildApp({ onStep });
+        build: async (onStep, onProgress) => {
+            await buildApp({ onStep, onProgress });
         },
         log: (message) => {
             process.stderr.write(`\n  ${message}\n`);

@@ -12,6 +12,7 @@ import {
     readAppFaceProcesses,
     readRunningExecutableInodes,
     runningExecutableInodes,
+    runStreaming,
     stampAppToolsPath,
 } from "./app";
 import {
@@ -24,6 +25,12 @@ import {
     shouldAsk,
     writeOfferStateTo,
 } from "./build-offer";
+import {
+    createBuildProgressDisplay,
+    createSwiftProgressReporter,
+    PLAIN_PROGRESS_EVERY_MS,
+    parseSwiftBuildProgress,
+} from "./swift-progress";
 
 describe("readAppFaceProcesses", () => {
     it("lists the faces oldest first, so they start again in the order they first started", () => {
@@ -567,5 +574,111 @@ describe("maybeOfferGenesisAppBuild", () => {
 
         expect(calls).toEqual(["log", "confirmBuild", "build", "log"]);
         expect(logs.at(-1)).toContain("swift build failed");
+    });
+});
+
+// `tools hub` sat silent through the whole cold `swift build` (about a minute) and looked stuck: the build ran under
+// `Bun.spawnSync` and its output was read only at the end.
+describe("swift build progress", () => {
+    it("reads SwiftPM's step lines and keeps the file name", () => {
+        expect(parseSwiftBuildProgress("[180/430] Compiling GenesisTools HubAgents.swift")).toEqual({
+            done: 180,
+            total: 430,
+            action: "Compiling",
+            subject: "HubAgents.swift",
+        });
+        expect(parseSwiftBuildProgress("[430/430] Linking GenesisTools")?.subject).toBe("GenesisTools");
+        expect(parseSwiftBuildProgress("[3/9] Write-swift-version")).toMatchObject({
+            action: "Write-swift-version",
+            subject: "",
+        });
+        expect(parseSwiftBuildProgress("Building for debugging...")).toBeNull();
+        expect(parseSwiftBuildProgress("/x/Foo.swift:3:1: warning: [1/2] is not progress")).toBeNull();
+    });
+
+    it("reports the first step at once and then at most once per interval", () => {
+        let clock = 0;
+        const shown: string[] = [];
+        const feed = createSwiftProgressReporter(
+            (message) => shown.push(message),
+            1000,
+            () => clock
+        );
+
+        feed("[1/400] Compiling GenesisKit A.swift");
+        clock = 500;
+        feed("[2/400] Compiling GenesisKit B.swift");
+        feed("warning: something");
+        clock = 1500;
+        feed("[200/400] Compiling GenesisTools C.swift");
+
+        expect(shown).toEqual([
+            "swift build 1/400 (0%) Compiling A.swift, 0 s",
+            "swift build 200/400 (50%) Compiling C.swift, 1 s",
+        ]);
+    });
+
+    it("in a terminal: one spinner line that the next step and finish stop on its last message", () => {
+        const events: string[] = [];
+        const spinner = {
+            start: (message?: string) => events.push(`start ${message}`),
+            message: (message?: string) => events.push(`message ${message}`),
+            stop: (message?: string) => events.push(`stop ${message}`),
+        };
+        const display = createBuildProgressDisplay({
+            step: (message) => events.push(`step ${message}`),
+            spinner: () => spinner,
+            interactive: true,
+        });
+
+        display.onStep("swift build (optimized, incremental)");
+        display.onProgress("swift build 1/4 (25%) Compiling A.swift, 0 s");
+        display.onProgress("swift build 3/4 (75%) Compiling C.swift, 2 s");
+        display.onStep("assemble bundle");
+        display.finish();
+
+        expect(events).toEqual([
+            "step swift build (optimized, incremental)",
+            "start swift build 1/4 (25%) Compiling A.swift, 0 s",
+            "message swift build 3/4 (75%) Compiling C.swift, 2 s",
+            "stop swift build 3/4 (75%) Compiling C.swift, 2 s",
+            "step assemble bundle",
+        ]);
+    });
+
+    it("outside a terminal: a plain line, then the next only after the plain interval", () => {
+        let clock = 0;
+        const lines: string[] = [];
+        const display = createBuildProgressDisplay({
+            step: (message) => lines.push(message),
+            interactive: false,
+            now: () => clock,
+        });
+
+        display.onProgress("p1");
+        clock = PLAIN_PROGRESS_EVERY_MS - 1;
+        display.onProgress("p2");
+        clock = PLAIN_PROGRESS_EVERY_MS;
+        display.onProgress("p3");
+        display.finish();
+
+        expect(lines).toEqual(["p1", "p3"]);
+    });
+
+    it("hands each line over while the process still runs, and keeps the whole output", async () => {
+        const seen: { line: string; at: number }[] = [];
+        const script =
+            'console.log("[1/2] Compiling A a.swift"); setTimeout(() => console.error("[2/2] Linking App"), 400);';
+        const result = await runStreaming([process.execPath, "-e", script], undefined, (line) =>
+            seen.push({ line, at: performance.now() })
+        );
+        const exitedAt = performance.now();
+
+        expect(result.code).toBe(0);
+        expect(result.stdout).toContain("[1/2] Compiling A a.swift");
+        expect(result.stderr).toContain("[2/2] Linking App");
+        expect(seen.map((entry) => entry.line)).toEqual(["[1/2] Compiling A a.swift", "[2/2] Linking App"]);
+        // The first line came before the process ended, not in one batch after it.
+        expect(exitedAt - (seen[0]?.at ?? exitedAt)).toBeGreaterThan(250);
     });
 });

@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
+import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -200,6 +201,12 @@ program
                 return;
             }
 
+            const progress = createBuildProgressDisplay({
+                step: (message) => out.log.step(message),
+                spinner: () => out.spinner(),
+                interactive: isInteractive(),
+            });
+
             try {
                 const opened = await openHub({
                     mode,
@@ -219,10 +226,13 @@ program
                     handoff: opts.handoff,
                     activate: opts.activate,
                     build: opts.build,
-                    onStep: (message) => out.log.step(message),
+                    onStep: progress.onStep,
+                    onProgress: progress.onProgress,
                 });
+                progress.finish();
                 out.log.success(`Hub opened${opened.built ? " (app rebuilt first)" : ""}`);
             } catch (error) {
+                progress.finish();
                 out.log.error(String(error instanceof Error ? error.message : error));
                 process.exitCode = 1;
             }

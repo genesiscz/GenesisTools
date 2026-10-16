@@ -38,6 +38,7 @@ import {
     unpackClickyLibrary,
 } from "../clicky-library";
 import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
+import { createSwiftProgressReporter } from "./swift-progress";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
 /** GenesisKit's markdown renderer (markdown-it, highlight.js, mermaid); the viewer reads Contents/Resources/webview first. */
@@ -112,6 +113,51 @@ export interface AppStatus {
 export type CodesignIdentity =
     | { kind: "developer-id" | "apple-development" | "custom"; name: string }
     | { kind: "adhoc" };
+
+/** Reads a stream to its end, handing each finished line (`\n` or `\r`) to `onLine` while it arrives. */
+async function readLines(stream: ReadableStream<Uint8Array>, onLine?: (line: string) => void): Promise<string> {
+    const decoder = new TextDecoder();
+    let text = "";
+    let pending = "";
+
+    for await (const chunk of stream) {
+        const piece = decoder.decode(chunk, { stream: true });
+        text += piece;
+        pending += piece;
+        const lines = pending.split(/\r\n|\n|\r/);
+        pending = lines.pop() ?? "";
+
+        for (const line of lines) {
+            onLine?.(line);
+        }
+    }
+
+    const rest = decoder.decode();
+    text += rest;
+    pending += rest;
+
+    if (pending) {
+        onLine?.(pending);
+    }
+
+    return text;
+}
+
+/** Like `run`, but the event loop stays free and `onLine` sees every stdout and stderr line while the process runs. */
+export async function runStreaming(
+    cmd: string[],
+    cwd: string | undefined,
+    onLine: (line: string) => void
+): Promise<{ code: number; stdout: string; stderr: string }> {
+    logger.debug({ cmd, cwd }, "permissions app: spawn (streaming)");
+    const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([
+        readLines(proc.stdout, onLine),
+        readLines(proc.stderr, onLine),
+        proc.exited,
+    ]);
+    return { code, stdout, stderr };
+}
 
 function run(cmd: string[], cwd?: string): { code: number; stdout: string; stderr: string } {
     logger.debug({ cmd, cwd }, "permissions app: spawn");
@@ -361,6 +407,11 @@ export function stampAppToolsPath(template: string, toolsPath: string): string {
  */
 export interface BuildAppOptions {
     onStep?: (message: string) => void;
+    /**
+     * Live progress of the long `swift build` step, e.g. "swift build 180/430 (41%) Compiling HubAgents.swift, 14 s".
+     * Without it the build prints nothing between its steps, which looks like a hang on a cold build.
+     */
+    onProgress?: (message: string) => void;
     /** false leaves the reaped faces (settings, hub, review, widget, Clicky) closed (`--no-relaunch`); default true. */
     relaunch?: boolean;
 }
@@ -436,7 +487,7 @@ export function timedSteps(report: (message: string) => void, now: () => number 
 async function buildAppLocked(options?: BuildAppOptions): Promise<BuildResult> {
     const timer = timedSteps(options?.onStep ?? (() => {}));
     try {
-        return await buildAppSteps(timer.step, options?.relaunch !== false);
+        return await buildAppSteps(timer.step, options?.relaunch !== false, options);
     } finally {
         const summary = timer.summary();
         logger.info({ summary }, "GenesisTools.app build timings");
@@ -444,7 +495,11 @@ async function buildAppLocked(options?: BuildAppOptions): Promise<BuildResult> {
     }
 }
 
-async function buildAppSteps(step: (message: string) => void, relaunch: boolean): Promise<BuildResult> {
+async function buildAppSteps(
+    step: (message: string) => void,
+    relaunch: boolean,
+    options?: BuildAppOptions
+): Promise<BuildResult> {
     if (process.platform !== "darwin") {
         throw new Error("GenesisTools.app can only be built on macOS.");
     }
@@ -471,7 +526,8 @@ async function buildAppSteps(step: (message: string) => void, relaunch: boolean)
             ? "swift build (optimized; Swift files added or removed, fresh build manifest)"
             : "swift build (optimized, incremental)"
     );
-    const build = run(
+    const reportProgress = options?.onProgress ? createSwiftProgressReporter(options.onProgress, 1000) : () => {};
+    const build = await runStreaming(
         [
             "swift",
             "build",
@@ -483,7 +539,8 @@ async function buildAppSteps(step: (message: string) => void, relaunch: boolean)
             APP_SCRATCH_PATH,
             ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
         ],
-        APP_SOURCE_DIR
+        APP_SOURCE_DIR,
+        reportProgress
     );
 
     if (build.code !== 0) {
