@@ -15,10 +15,11 @@
  * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session>
  */
 import { readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { strictShellWords } from "@app/codex/lib/bus-approval";
 import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { reviewScratch } from "./run";
 
 export interface RunEntry {
     name: string;
@@ -26,6 +27,10 @@ export interface RunEntry {
     scope: string[];
     subject: string;
     verify: string[];
+    role?: string;
+    pr?: number;
+    /** A second scratch folder outside the worktree: a reviewer's probe folder, which its brief names. */
+    scratch?: string;
 }
 
 const inScope = (entry: RunEntry, path: string) => {
@@ -43,8 +48,10 @@ const inScope = (entry: RunEntry, path: string) => {
 
 /** A path inside the worktree's babysit scratch folder (where the briefs put reply files and verify logs). */
 const inScratch = (entry: RunEntry, path: string) => {
-    const scratch = resolve(entry.cwd, ".claude/work/babysit");
-    return resolve(entry.cwd, path).startsWith(scratch + sep);
+    const target = resolve(entry.cwd, path);
+    return [resolve(entry.cwd, ".claude/work/babysit"), ...(entry.scratch ? [resolve(entry.scratch)] : [])].some(
+        (scratch) => target.startsWith(scratch + sep)
+    );
 };
 
 const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"];
@@ -309,7 +316,9 @@ export function fableReplaceCommand(entry: RunEntry, command: string): boolean {
         .filter(Boolean)
         .every((pair) => {
             const [key, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
-            return FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\//.test(value) && !value.includes("..");
+            // Plain path characters only: `TMPDIR=/tmp/cc/x$(touch${IFS}y)` passed a prefix check and the shell ran the
+            // substitution (2026-10-16, #536 round 3 review).
+            return FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\/[\w./-]+$/.test(value) && !value.includes("..");
         });
     const targets = match[4]
         .split("\n")
@@ -536,7 +545,10 @@ async function main(): Promise<void> {
         process.exit(2);
     }
 
-    await watchApprovals({ entry });
+    // A reviewer writes its probes and logs to the folder review-brief names; the driver approves those writes too.
+    const scratch =
+        entry.scratch ?? (entry.role === "review" && entry.pr ? reviewScratch(dirname(runPath), entry.pr) : undefined);
+    await watchApprovals({ entry: { ...entry, scratch } });
 }
 
 if (import.meta.main) {

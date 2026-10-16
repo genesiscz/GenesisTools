@@ -111,3 +111,8 @@ export function loadRun(dir = flag("--run") ?? process.env.BABYSIT_RUN): RunCard
 export function worktreeFor(run: RunCard, pr: string | number): string {
     return join(run.worktrees, `bs-${pr}`);
 }
+
+/** A reviewer's probe folder, beside the run folder: its brief names it and the approval driver accepts writes there. */
+export function reviewScratch(runDir: string, pr: string | number): string {
+    return join(runDir, "..", `review-${pr}`);
+}

@@ -11,9 +11,10 @@
  * Hand-edited copies of this text sent a reviewer to another PR's description (2026-10-14: a sed pass left
  * `gh pr view 504` in the #498 and #500 briefs), so every PR reference comes from one value here.
  */
+
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { flag, has, loadRun } from "./run";
+import { flag, has, loadRun, reviewScratch } from "./run";
 
 export interface ReviewBriefInput {
     pr: number;
@@ -90,7 +91,7 @@ if (import.meta.main) {
             title,
             wt,
             base: flag("--base") ?? "master",
-            scratch: join(run.dir, "..", `review-${pr}`),
+            scratch: reviewScratch(run.dir, pr),
             postMerge: has("--post-merge"),
             swift: has("--swift"),
             fresh: has("--fresh"),

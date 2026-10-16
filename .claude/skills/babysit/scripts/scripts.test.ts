@@ -165,9 +165,30 @@ describe("fixer edits through fable-replace", () => {
             `TMPDIR=/Users/x bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`,
             `bun /tmp/evil/cli.ts <<'FR'\n${spec("src/a.ts")}\nFR`,
             `bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR\nrm -rf src`,
+            `TMPDIR=/tmp/cc/p/s/x$(touch\${IFS}/tmp/cc/p/s/owned) bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`,
+            `GENESIS_TOOLS_HOME=/tmp/cc/p/s/\`id\` bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`,
         ]) {
             expect({ command, ok: allowedCommand(entry, command) }).toEqual({ command, ok: false });
         }
+    });
+});
+
+describe("reviewer probe folder", () => {
+    test("a reviewer's logged check may write to its own probe folder, never a sibling or a parent", () => {
+        const reviewer: RunEntry = { ...entry, role: "review", pr: 5, scratch: "/tmp/cc/p/s/review-5" };
+        const check = "timeout 600 bun scripts/test.ts src/a.test.ts";
+        expect(allowedCommand(reviewer, `${check} > /tmp/cc/p/s/review-5/t.log 2>&1`)).toBe(true);
+        for (const destination of [
+            "/tmp/cc/p/s/review-50/t.log",
+            "/tmp/cc/p/s/review-5/../t.log",
+            "/tmp/cc/p/s/t.log",
+        ]) {
+            expect({ destination, ok: allowedCommand(reviewer, `${check} > ${destination} 2>&1`) }).toEqual({
+                destination,
+                ok: false,
+            });
+        }
+        expect(allowedCommand(entry, `${check} > /tmp/cc/p/s/review-5/t.log 2>&1`)).toBe(false);
     });
 });
 
