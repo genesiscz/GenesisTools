@@ -23,6 +23,7 @@ export interface CmuxHierarchyWindow {
     workspaces: CmuxHierarchyWorkspace[];
 }
 
+/** Group snapshot workspaces, panes and surfaces under their owning windows, with a fallback for single-window snapshots. */
 export function buildCmuxHierarchy(snapshot: CmuxLiveSnapshot): CmuxHierarchyWindow[] {
     // Windows come from list-windows in allWindows mode; a single-window snapshot
     // (older cmux, or the default mode) collapses into one synthetic window that

@@ -531,6 +531,7 @@ export function baselineStartFor(
     return baseline?.sessionId === deliveredTo && baseline.turnStartedAt !== null ? baseline.turnStartedAt : undefined;
 }
 
+/** Wait on a native transcript and emit the requested reply text only after the answering turn completes. */
 export async function waitCommand(alias: TurnProvider, query: string, options: WaitOptions): Promise<void> {
     try {
         const { timeoutSeconds, last, stallTimeoutMs } = parseWaitFlags(options);
@@ -604,7 +605,7 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
                 answeredBeforeWatch: alreadyAnswered,
             });
 
-            if (last !== undefined || (report.outcome === "done" && printFinal)) {
+            if (report.outcome === "done" && (last !== undefined || printFinal)) {
                 const texts = extras.lastMessages ?? (report.lastText ? [report.lastText] : []);
                 out.println(texts.join("\n\n---\n\n"));
             }
@@ -630,6 +631,7 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
     }
 }
 
+/** Register transcript waiting, output controls and distinct timeout or stall exit statuses for one provider. */
 export function registerAgentWaitCommand(program: Command, alias: TurnProvider): Command {
     return program
         .command("wait <session>")

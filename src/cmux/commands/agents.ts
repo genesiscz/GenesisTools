@@ -277,7 +277,7 @@ async function runSessionClose(query: string, options: CloseFlags): Promise<void
 
 async function runSessionList(options: { agent?: string; all?: boolean; json?: boolean }): Promise<void> {
     const wanted = (agent: string) => !options.agent || agent === options.agent;
-    const inventory = await sessionInventory();
+    const inventory = await sessionInventory({ readScreen: false });
     const open = inventory.recorded.filter((record) => wanted(record.agent));
     const adoptable = options.all ? inventory.adoptable.filter((session) => wanted(session.agent)) : [];
 

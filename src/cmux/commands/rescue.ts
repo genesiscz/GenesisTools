@@ -53,6 +53,7 @@ export function registerRescueCommand(parent: Command): void {
         });
 }
 
+/** Capture a cached offline recovery profile, confirm the restart, then restore the reopened tabs in place. */
 export async function runRescue(name: string, flags: RescueFlags, deps: RescueDeps = defaultDeps): Promise<void> {
     p.intro(pc.bgRed(pc.white(" cmux rescue ")));
 
@@ -68,7 +69,8 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
     p.log.step("Capturing offline profile (autosave + process table)…");
     // The same preparation the restore applies: title inference, one tab per session, no model pins.
     const profile = await prepareProfileForRestore(
-        await captureOfflineProfile({ name, note: `rescue capture (cmux was ${health.state})` })
+        await captureOfflineProfile({ name, note: `rescue capture (cmux was ${health.state})` }),
+        { cached: true }
     );
 
     const detail = renderProfileCommandDetail(profile);

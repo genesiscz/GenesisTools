@@ -183,6 +183,7 @@ function seenAt(session: SurfaceSessionInfo): number {
     return session.at ?? Number.POSITIVE_INFINITY;
 }
 
+/** Choose a surface-journal candidate consistent with the provider and time of the tab's last captured command. */
 export function pickSurfaceSession(
     info: SurfaceSessionInfo | undefined,
     typed?: Pick<CapturedCommand, "command" | "atMs">
@@ -467,6 +468,7 @@ function isSimpleAgentCommand(command: string): boolean {
     return quote === undefined;
 }
 
+/** Recognize simple supported agent launches, including configured Claude aliases and tool wrappers. */
 export function isAgentLauncher(command: string): boolean {
     const trimmed = command.trim();
 
@@ -523,7 +525,7 @@ export function journalReplayCommand(
         }
 
         return {
-            command: resumeCommandLine(kind, sessionId),
+            command: resumeCommandLine(kind, sessionId, session?.provider === kind ? session.account : undefined),
             drift: [`cmux's own restore named ${kind} session ${sessionId} for this tab`],
         };
     }
@@ -549,6 +551,11 @@ export function journalReplayCommand(
             drift: [
                 `the surface journal saw ${session.provider} session ${session.sessionId} in this tab after \`${typed}\` started, so the tab resumes that session`,
                 ...(flags.kept.length > 0 ? [`kept ${session.provider}'s own flags: ${flags.kept.join(" ")}`] : []),
+                ...(flags.unresolved.length > 0
+                    ? [
+                          `dropped ${flags.unresolved.join(", ")}: unresolved shell expansion; the captured text has no concrete argv value`,
+                      ]
+                    : []),
                 ...(flags.dropped.length > 0
                     ? [
                           `dropped ${flags.dropped.join(" ")}: not a ${session.provider} flag a resume may carry (a model, a resume, or the wrapper's own)`,
@@ -561,6 +568,7 @@ export function journalReplayCommand(
     return { command: journal.command, drift: [] };
 }
 
+/** Identify the provider named by an agent launcher or supported tool wrapper; return undefined for other commands. */
 export function agentKindFromLauncher(command: string): AccountProviderAlias | undefined {
     const trimmed = command.trim();
     const wrapper = toolsRunLauncher(trimmed);

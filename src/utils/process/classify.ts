@@ -73,7 +73,11 @@ function agentOf(command: string): AgentProvider | null {
         return "cursor-agent";
     }
 
-    if (name === "grok" || /\bgrok-cli\/dist\/index\.m?js\b/.test(command)) {
+    if (
+        name === "grok" ||
+        /^grok-\d+(?:\.\d+)*(?:-[\w-]+)?$/.test(name) ||
+        /\bgrok-cli\/dist\/index\.m?js\b/.test(command)
+    ) {
         return "grok";
     }
 

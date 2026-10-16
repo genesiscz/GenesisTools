@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { commandTokenIndex, commandWord, scanShell, splitPipeline, tokenize } from "./scan";
+import { commandTokenIndex, commandWord, lastSimpleCommandOnLine, scanShell, splitPipeline, tokenize } from "./scan";
+
+describe("lastSimpleCommandOnLine", () => {
+    it("retains fully quoted commands and ignores comment-only trailing spans", () => {
+        const command = '"/opt/my launcher" "--permission-mode" "plan"';
+        expect(lastSimpleCommandOnLine(`echo --no-chrome&&${command}; # ignored | text`)).toBe(command);
+        expect(lastSimpleCommandOnLine(`printf data|&${command}`)).toBe(command);
+        expect(lastSimpleCommandOnLine(command)).toBe(command);
+        expect(lastSimpleCommandOnLine('# "launcher" --chrome')).toBe("");
+    });
+});
 
 describe("scanShell", () => {
     it("keeps the original command beside the cleaned one", () => {

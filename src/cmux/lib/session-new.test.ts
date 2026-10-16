@@ -2,7 +2,9 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as transcripts from "@genesiscz/utils/ai/transcripts/resolve";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -865,4 +867,38 @@ test("budgets come from the poller's cache slice of the agent's provider, and an
     ]);
     expect(budgets[1].note).toContain("cached 3h 0m ago");
     expect(budgetsFromCache({ provider: "anthropic-sub", accounts: [], cache: null, now })).toEqual([]);
+});
+
+test("list omits screen probes while status retains held-message detection and tolerates failed reads", async () => {
+    const live = {
+        sessionId: "fixture-id",
+        agent: "claude" as const,
+        cwd: "/fixture",
+        surface: {
+            id: "surface-id",
+            ref: "surface:1",
+            title: "fixture",
+            workspace: "workspace:1",
+            workspaceId: "workspace-id",
+            workspaceTitle: "fixture",
+            window: "window:1",
+            tty: "ttys001",
+        },
+    };
+    const resolve = spyOn(transcripts, "resolveTranscript").mockRejectedValue(new Error("fixture transcript missing"));
+    const screen = spyOn(cmuxCli, "runCmux").mockResolvedValue({ code: 0, stdout: "2 held messages", stderr: "" });
+    try {
+        const listed = await inventory.sessionInventory({ live: [live], records: [], readScreen: false });
+        expect(screen).not.toHaveBeenCalled();
+        expect(listed.adoptable[0].state).toBe("unknown");
+        expect((await inventory.sessionInventory({ live: [live], records: [] })).adoptable[0].state).toBe(
+            "held-message"
+        );
+        expect(screen).toHaveBeenCalledTimes(1);
+        screen.mockResolvedValue({ code: 1, stdout: "", stderr: "unavailable" });
+        expect((await inventory.readSessionDetails(live)).state).toBe("unknown");
+    } finally {
+        screen.mockRestore();
+        resolve.mockRestore();
+    }
 });

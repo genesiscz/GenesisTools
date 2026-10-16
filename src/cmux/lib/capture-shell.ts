@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 
+/** Render the shell-journal integration with quoted recorder paths and configurable Bun selection. */
 export function renderCaptureShell(
     options: { bunPath?: string; recorderPath?: string; directory?: string; preferPathBun?: boolean } = {}
 ): string {

@@ -332,6 +332,7 @@ export async function resolveSessionWindow(
  */
 export const CMUX_IDENTITY_ENV = ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CMUX_PANEL_ID", "CMUX_TAB_ID"] as const;
 
+/** Start an agent in a new terminal or tmux-backed tab and record the created session through the supplied IO. */
 export async function startDevSession(input: SessionNewRequest, io: SessionNewIO): Promise<SessionNewResult> {
     const cwd = resolveSessionRepo(input.repo, input.home, input.cwd, io.repoFs);
     const run = agentRunCommand({
@@ -470,6 +471,7 @@ export function liveRepoFs(): RepoFs {
     };
 }
 
+/** Bind session creation to live cmux controls, tmux operations, repository checks and terminal-readiness guards. */
 export function liveSessionIO(): SessionNewIO {
     return {
         focusedWindow: async () => (await focusedPlace()).window_id,

@@ -69,6 +69,7 @@ async function finalizeAttach(
     return { workspaceId, paneId, surfaceId, tmuxSessionName };
 }
 
+/** Attach an existing tmux session at the requested cmux destination, preserving explicit focus behavior. */
 export async function attachTmuxToCmux({
     tmuxSessionName,
     target,

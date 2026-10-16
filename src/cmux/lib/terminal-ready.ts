@@ -24,6 +24,7 @@ const AGENT_UI = /Claude Code|OpenAI Codex|(?:^|\n)\s*Grok(?:\s+CLI|\s+v?\d|\s*$
 /** What a terminal's last line shows: an empty shell prompt, a shell prompt with typed text, or anything else. */
 export type PromptState = { kind: "empty" } | { kind: "typed"; text: string } | { kind: "unknown" };
 
+/** Classify the last visible line as an empty shell prompt, typed prompt or unknown terminal state without trusting agent UI glyphs. */
 export function classifyPrompt(screen: string): PromptState {
     const clean = stripAnsi(screen);
     const last =
@@ -49,10 +50,12 @@ export function classifyPrompt(screen: string): PromptState {
     return { kind: "unknown" };
 }
 
+/** Accept only terminal text classified as an empty shell prompt for command replay. */
 export function isShellPromptReady(text: string): boolean {
     return classifyPrompt(text).kind === "empty";
 }
 
+/** Wait within a deadline for target terminal text, optionally activating an unavailable surface when explicitly allowed. */
 export async function waitForTerminalText({
     workspaceId,
     surfaceId,

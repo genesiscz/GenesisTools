@@ -51,10 +51,12 @@ export async function focusCmuxSurface({ surfaceId, sendRpc = rpc }: FocusCmuxSu
 
 // Every id here is the cmux UUID, which is what the live snapshot and the layout carry as `id`.
 // cmux takes a UUID wherever it takes a ref, and unlike `surface:N` it survives a relaunch.
+/** Build a tab rename command scoped by workspace and surface UUIDs. */
 export function buildRenameTabArgs(workspaceId: string, surfaceId: string, title: string): string[] {
     return ["rename-tab", "--workspace", workspaceId, "--surface", surfaceId, title];
 }
 
+/** Build a workspace rename command with an explicit workspace UUID. */
 export function buildRenameWorkspaceArgs(workspaceId: string, title: string): string[] {
     return ["rename-workspace", "--workspace", workspaceId, title];
 }

@@ -54,6 +54,37 @@ describe("cmux socket RPC params", () => {
             cliSpy.mockRestore();
         }
     });
+    test.each([undefined, ""])("paneList rejects a missing UUID echo (%s) even when the ref matches", async (echo) => {
+        const asked = "abcdefab-1111-4111-8111-111111111105";
+        const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue({
+            workspace_id: echo,
+            workspace_ref: "workspace:5",
+            panes: [],
+        });
+        try {
+            await expect(socket.paneList(asked)).rejects.toThrow(asked);
+        } finally {
+            cliSpy.mockRestore();
+        }
+    });
+
+    test.each([undefined, ""])("paneList rejects a missing workspace ref echo (%s)", async (echo) => {
+        const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue({ workspace_ref: echo, panes: [] });
+        try {
+            await expect(socket.paneList("workspace:5")).rejects.toThrow("workspace:5");
+        } finally {
+            cliSpy.mockRestore();
+        }
+    });
+
+    test("bare workspace indices remain uncheckable, while matching UUID echoes are case-insensitive", () => {
+        expect(() => socket.assertLayoutIsFor("5", { workspace_ref: "" })).not.toThrow();
+        const asked = "abcdefab-1111-4111-8111-111111111105";
+        expect(() =>
+            socket.assertLayoutIsFor(asked, { workspace_id: asked.toUpperCase(), workspace_ref: "workspace:5" })
+        ).not.toThrow();
+    });
+
     afterEach(() => {
         socket.resetSocketPathCache();
     });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resumeArgv } from "@genesiscz/utils/agent-sessions/resume-argv";
@@ -90,6 +90,62 @@ describe("record-session-cmux heartbeat", () => {
             "TEST-SURFACE",
             "TEST-SURFACE",
         ]);
+    });
+
+    test.each(["identify", "set"])("a failed %s is retried before the journal heartbeat expires", async (failure) => {
+        const bin = join(home, "bin");
+        const calls = join(home, "calls");
+        await mkdir(bin, { recursive: true });
+        await writeFile(
+            join(bin, "cmux"),
+            `#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_DIR/calls"
+case "$*" in
+  *identify*)
+    if [ "$FIXTURE_FAILURE" = identify ] && [ ! -f "$FIXTURE_DIR/failed" ]; then
+      : > "$FIXTURE_DIR/failed"
+      exit 1
+    fi
+    printf '%s\\n' '{"caller":{"surface_id":"6A7AC7A4-E510-4A41-85DE-080C21078EA7"}}'
+    ;;
+  'surface resume set '*)
+    if [ "$FIXTURE_FAILURE" = set ] && [ ! -f "$FIXTURE_DIR/failed" ]; then
+      : > "$FIXTURE_DIR/failed"
+      exit 1
+    fi
+    ;;
+  'surface resume clear '*) ;;
+  *) exit 1 ;;
+esac
+`,
+            { mode: 0o755 }
+        );
+        const fixtureEnv = {
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            FIXTURE_DIR: home,
+            FIXTURE_FAILURE: failure,
+            CMUX_SURFACE_ID: "6a7ac7a4-e510-4a41-85de-080c21078ea7",
+        };
+        const sessionId = "11111111-aaaa-bbbb-cccc-000000000001";
+        expect(await runHook(start, fixtureEnv)).toBe(0);
+        expect(await runHook(prompt(sessionId), fixtureEnv)).toBe(0);
+        const retried = (await readFile(calls, "utf8")).trim().split("\n");
+        expect(retried.filter((line) => line.includes("identify"))).toHaveLength(2);
+        expect(retried.filter((line) => line.startsWith("surface resume set"))).toHaveLength(failure === "set" ? 2 : 1);
+        expect(await readJournal()).toHaveLength(1);
+        expect(await runHook(prompt(sessionId), fixtureEnv)).toBe(0);
+        expect((await readFile(calls, "utf8")).trim().split("\n")).toEqual(retried);
+        expect(
+            await runHook(
+                SafeJSON.stringify({
+                    session_id: sessionId,
+                    hook_event_name: "SessionEnd",
+                    reason: "prompt_input_exit",
+                }),
+                fixtureEnv
+            )
+        ).toBe(0);
+        expect((await readFile(calls, "utf8")).trim().split("\n").at(-1)).toContain("surface resume clear");
     });
 
     test("a prompt after the heartbeat writes again", async () => {
@@ -241,8 +297,89 @@ describe("record-session-cmux: which agent owns the tab", () => {
     });
 });
 
+test("publishes the resume-binding hooks with a newer, consistent plugin version", async () => {
+    const root = findProjectRoot(import.meta.dir) ?? process.cwd();
+    const plugin: { version: string } = SafeJSON.parse(
+        await readFile(join(root, "plugins/genesis-tools/.claude-plugin/plugin.json"), "utf8")
+    );
+    const marketplace: { version: string; plugins: Array<{ name: string; version: string }> } = SafeJSON.parse(
+        await readFile(join(root, ".claude-plugin/marketplace.json"), "utf8")
+    );
+    // 1.0.107 predates the SessionEnd hook and per-surface resume bindings.
+    expect(Bun.semver.satisfies(plugin.version, ">1.0.107")).toBe(true);
+    expect(marketplace.version).toBe(plugin.version);
+    expect(marketplace.plugins.find((entry) => entry.name === "genesis-tools")?.version).toBe(plugin.version);
+});
+
 describe("record-session-cmux: the cmux resume binding", () => {
     const SURFACE = "6A7AC7A4-E510-4A41-85DE-080C21078EA7";
+
+    test("overlapping starts retain both surfaces so either session can clear its binding", () => {
+        const firstSurface = "aaaaaaaa-0000-4000-8000-000000000003";
+        const secondSurface = "bbbbbbbb-0000-4000-8000-000000000004";
+        const firstSession = "aaaaaaaa-1111-4111-8111-000000000003";
+        const secondSession = "bbbbbbbb-2222-4222-8222-000000000004";
+        const calls: string[][] = [];
+        const run = (args: string[]) => {
+            calls.push(args);
+            return true;
+        };
+        const base = { harness: "claude" as const, cwd: "/tmp/app", now: 1_000 };
+        expect(
+            syncResumeBinding({
+                ...base,
+                surfaceId: firstSurface,
+                sessionId: firstSession,
+                run: (args) => {
+                    calls.push(args);
+                    expect(
+                        syncResumeBinding({ ...base, surfaceId: secondSurface, sessionId: secondSession, run })
+                    ).toBe(true);
+                    return true;
+                },
+            })
+        ).toBe(true);
+        expect(clearResumeBinding({ surfaceId: secondSurface, sessionId: secondSession, run })).toBe(true);
+        expect(clearResumeBinding({ surfaceId: firstSurface, sessionId: firstSession, run })).toBe(true);
+        expect(calls.filter((args) => args[2] === "clear").map((args) => args.at(-1))).toEqual([
+            secondSurface,
+            firstSurface,
+        ]);
+    });
+
+    test("normalizes legacy uppercase keys and clears a lowercase exit without clearing another session", async () => {
+        const sessionId = "cccccccc-3333-4333-8333-333333333333";
+        const directory = join(process.env.GENESIS_TOOLS_HOME ?? "", ".genesis-tools", "claude-code");
+        await mkdir(directory, { recursive: true });
+        const stateFile = join(directory, "cmux-bindings.json");
+        const argv = resumeArgv("claude", sessionId, "work");
+        await writeFile(
+            stateFile,
+            SafeJSON.stringify({ [SURFACE]: { sessionId, command: argv.join(" "), at: 1_000 } })
+        );
+        const calls: string[][] = [];
+        const run = (args: string[]) => {
+            calls.push(args);
+            return true;
+        };
+
+        expect(
+            syncResumeBinding({
+                surfaceId: SURFACE.toLowerCase(),
+                harness: "claude",
+                sessionId,
+                account: "work",
+                cwd: "/tmp/app",
+                now: 2_000,
+                run,
+            })
+        ).toBe(false);
+        expect(calls).toHaveLength(0);
+        expect(clearResumeBinding({ surfaceId: SURFACE.toLowerCase(), sessionId: "wrong-session", run })).toBe(false);
+        expect(clearResumeBinding({ surfaceId: SURFACE.toLowerCase(), sessionId, run })).toBe(true);
+        expect(calls).toEqual([["surface", "resume", "clear", "--surface", SURFACE.toLowerCase()]]);
+        expect(clearResumeBinding({ surfaceId: SURFACE.toLowerCase(), sessionId, run })).toBe(false);
+    });
 
     test("is set once per session and command, set again for a new session, and cleared only by its session", () => {
         const calls: string[][] = [];

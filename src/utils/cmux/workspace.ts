@@ -58,6 +58,7 @@ export function buildWorkspaceCreateArgs(opts: BackgroundWorkspaceArgs): string[
     return args;
 }
 
+/** Create a workspace and apply its requested title using the returned workspace UUID. */
 export async function createWorkspaceWithName(opts: {
     name?: string;
     cwd?: string;
@@ -139,6 +140,7 @@ export async function ensureWorkspaceTitle(
     return "failed";
 }
 
+/** Reuse an exact workspace-name match or create the named workspace and return its UUID. */
 export async function ensureWorkspaceByName(name: string, cwd?: string): Promise<string> {
     const existing = await findWorkspaceByName(name);
 
@@ -178,10 +180,12 @@ export function anchorFromLayout(workspace: string, layout: PaneListResponse): {
     return { paneId: focused.id, surfaceId };
 }
 
+/** Resolve a terminal anchor from the target workspace's validated pane layout for subsequent split operations. */
 export async function pickAnchorSurface(workspaceId: string): Promise<{ paneId: string; surfaceId: string }> {
     return anchorFromLayout(workspaceId, await paneList(workspaceId));
 }
 
+/** Create a right-hand terminal split from the target workspace's anchor and return the created UUIDs. */
 export async function openSplitInWorkspace(workspaceId: string): Promise<OpenSplitResult> {
     return withFocusedWorkspace(workspaceId, async () => {
         const { surfaceId } = await pickAnchorSurface(workspaceId);
@@ -202,6 +206,7 @@ export async function openSplitInWorkspace(workspaceId: string): Promise<OpenSpl
     });
 }
 
+/** Create a terminal tab inside an explicitly identified workspace and pane, returning its surface UUID. */
 export async function openSurfaceInPane(workspaceId: string, paneId: string): Promise<{ surfaceId: string }> {
     return withFocusedWorkspace(workspaceId, async () => {
         const created = await runCmuxJSON<Pick<SurfaceSplitResult, "surface_id">>([
@@ -223,6 +228,7 @@ async function sendShellCommand(workspaceId: string, surfaceId: string, command:
     await runCmuxOk(["send", "--workspace", workspaceId, "--surface", surfaceId, payload]);
 }
 
+/** Replace the target terminal shell with a quoted attachment to the named tmux session. */
 export async function sendAttachCommand({
     workspaceId,
     surfaceId,
@@ -235,6 +241,7 @@ export async function sendAttachCommand({
     await sendShellCommand(workspaceId, surfaceId, `exec tmux attach-session -t ${shellQuote(tmuxSessionName)}`);
 }
 
+/** Start or attach a tmux session from a stable bootstrap directory while giving the session its requested cwd. */
 export async function sendNewSessionCommand({
     workspaceId,
     surfaceId,
@@ -255,10 +262,12 @@ export async function sendNewSessionCommand({
     );
 }
 
+/** Rename only the terminal tab identified by its workspace and surface UUIDs. */
 export async function renameSurfaceTab(workspaceId: string, surfaceId: string, title: string): Promise<void> {
     await runCmuxOk(["rename-tab", "--workspace", workspaceId, "--surface", surfaceId, title]);
 }
 
+/** Reject a missing or non-terminal surface before sending commands to the requested pane. */
 export async function assertTerminalSurface(workspaceId: string, paneId: string, surfaceId: string): Promise<void> {
     const surfaces = await runCmuxJSON<{ surfaces?: Array<{ id?: string; ref?: string; type?: string }> }>([
         "list-pane-surfaces",

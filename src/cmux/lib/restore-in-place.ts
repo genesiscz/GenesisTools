@@ -9,6 +9,7 @@ import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/uti
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyCommand } from "@genesiscz/utils/process/classify";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import pc from "picocolors";
@@ -83,6 +84,8 @@ export interface InPlaceLiveState {
     idleTtys: Set<string>;
     /** tty → the agent running there, for busy ttys. */
     ttyAgents: Map<string, TtyAgent>;
+    /** Every recognized running session id → its tty or `(no tty)`, including agents sharing a tty. */
+    runningSessions: Map<string, string>;
     /** Surface UUID (lower case) → the text the terminal shows now. */
     screens: Map<string, string>;
     /** The surface UUID (lower case) of the tab running this restore. It is never typed into. */
@@ -121,20 +124,48 @@ export function idleShellTtys(processes: ProcessEntry[], uid: number): Set<strin
     return idle;
 }
 
+function liveAgent(entry: ProcessEntry, uid: number): TtyAgent | undefined {
+    if (entry.uid !== uid || entry.zombie || !entry.command) {
+        return undefined;
+    }
+
+    const agent = classifyCommand(entry.command);
+    if (
+        (agent.kind === "agent" || agent.kind === "wrapper") &&
+        (agent.provider === "claude" || agent.provider === "grok" || agent.provider === "codex")
+    ) {
+        return { kind: agent.provider, sessionId: agent.sessionId ?? undefined };
+    }
+
+    return undefined;
+}
+
+/** Index all recognized running sessions for duplicate-resume checks, including interpreter, shared-tty and headless launches. */
+export function runningAgentSessions(processes: ProcessEntry[], uid: number): Map<string, string> {
+    const sessions = new Map<string, string>();
+
+    for (const entry of processes) {
+        const agent = liveAgent(entry, uid);
+        if (agent?.sessionId) {
+            sessions.set(agent.sessionId.toLowerCase(), entry.tty ?? "(no tty)");
+        }
+    }
+
+    return sessions;
+}
+
 /** The agent each busy tty runs, from the first agent command line on it (`/…/grok -r <id>`, `claude --resume <id>`). */
 export function agentsOnTtys(processes: ProcessEntry[], uid: number): Map<string, TtyAgent> {
     const agents = new Map<string, TtyAgent>();
 
     for (const entry of processes) {
-        if (!entry.tty || entry.uid !== uid || entry.zombie || !entry.command || agents.has(entry.tty)) {
+        if (!entry.tty || agents.has(entry.tty)) {
             continue;
         }
 
-        const command = entry.command.replace(/^\S*\/(?=(?:claude|grok|codex)(?:\s|$))/, "");
-        const kind = agentKindFromLauncher(command);
-
-        if (kind && /^(?:claude|grok|codex)(?:\s|$)/.test(command)) {
-            agents.set(entry.tty, { kind, sessionId: resumeTargetFromCommand(command) });
+        const agent = liveAgent(entry, uid);
+        if (agent) {
+            agents.set(entry.tty, agent);
         }
     }
 
@@ -160,13 +191,7 @@ interface Decision {
 
 /** The tty that runs this agent session now, in any tab. */
 function ttyRunning(sessionId: string, state: InPlaceLiveState): string | undefined {
-    for (const [tty, agent] of state.ttyAgents) {
-        if (agent.sessionId === sessionId) {
-            return tty;
-        }
-    }
-
-    return undefined;
+    return state.runningSessions.get(sessionId.toLowerCase());
 }
 
 function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPlaceLiveState): Decision {
@@ -356,8 +381,8 @@ async function unstartedSurfaces(workspaceIds: Iterable<string>): Promise<Set<st
     return unstarted;
 }
 
-/** The live tabs, which ttys are idle or run an agent, and every tab's screen. Nothing here changes focus. */
-export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
+/** Read tab and process ownership without changing focus; optionally read only the target surface's screen. */
+export async function readInPlaceLiveState(options: { surfaceId?: string } = {}): Promise<InPlaceLiveState> {
     const tree = await liveTree();
     const uid = process.getuid?.() ?? -1;
     const processes = listProcesses();
@@ -399,7 +424,7 @@ export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
             windowRef: tab.window,
         });
 
-        if (id === callerId) {
+        if (id === callerId || (options.surfaceId !== undefined && id !== cmuxIdKey(options.surfaceId))) {
             continue;
         }
 
@@ -417,6 +442,7 @@ export async function readInPlaceLiveState(): Promise<InPlaceLiveState> {
         tabs,
         idleTtys: idleShellTtys(processes, uid),
         ttyAgents: agentsOnTtys(processes, uid),
+        runningSessions: runningAgentSessions(processes, uid),
         screens,
         callerId,
     };
@@ -532,13 +558,16 @@ function recordResumedSession(step: InPlaceStep): void {
 export async function runInPlaceRestore(
     steps: InPlaceStep[],
     opts: Pick<RestoreOptions, "enter" | "replay"> & { runCommands: boolean },
-    events: { onStep?: (step: InPlaceStep, index: number, total: number) => void } = {}
+    events: {
+        onStep?: (step: InPlaceStep, index: number, total: number) => void;
+        read?: () => Promise<InPlaceLiveState>;
+    } = {}
 ): Promise<string[]> {
     const planned = steps.filter((step) => !step.skip && step.live);
     const failures: string[] = [];
 
     for (const [index, step] of planned.entries()) {
-        const live = step.live;
+        let live = step.live;
 
         if (!live) {
             continue;
@@ -548,7 +577,37 @@ export async function runInPlaceRestore(
         events.onStep?.(step, index + 1, planned.length);
 
         try {
-            await prepareTab(step);
+            const read = events.read ?? (() => readInPlaceLiveState({ surfaceId: step.surface.surface_id }));
+            const refresh = async (): Promise<InPlaceStep> => {
+                const state = await read();
+                const current = state.tabs.get(cmuxIdKey(step.surface.surface_id ?? ""));
+                return {
+                    ...step,
+                    live: current,
+                    skip: undefined,
+                    prepare: undefined,
+                    prepareNote: undefined,
+                    retry: undefined,
+                    ...decide(step.surface, current, state),
+                };
+            };
+            const current = await refresh();
+
+            if (current.skip || !current.live || current.live.tty !== live.tty) {
+                failures.push(`${step.title}: ${current.skip ?? "the tab's tty changed since planning"}`);
+                continue;
+            }
+
+            live = current.live;
+            await prepareTab({ live, prepare: current.prepare });
+            const ready = await refresh();
+
+            if (ready.skip || !ready.live || ready.live.tty !== live.tty || ready.prepare) {
+                failures.push(`${step.title}: ${ready.skip ?? "the tab changed before replay"}`);
+                continue;
+            }
+
+            live = ready.live;
 
             // The tab already shows its own shell. Printing the captured screen back would only
             // duplicate it, so the screen is left out and the tab gets the cd and the command.
@@ -573,7 +632,7 @@ export async function runInPlaceRestore(
 
             // Only a resume that ran puts the session in the tab; a typed, unsubmitted command does not.
             if (enter && opts.replay) {
-                recordResumedSession(step);
+                recordResumedSession({ ...step, live });
             }
         } catch (error) {
             logger.warn({ error, surface: live.id }, "[restore-in-place] tab not restored");

@@ -571,6 +571,31 @@ export function splitPipeline(statement: Span): Span[] {
     return splitWithOffsets(normalized, /\|/);
 }
 
+const SIMPLE_COMMAND_SEPARATOR = new RegExp(`${STATEMENT_SEPARATOR.source}|\\|&?`, "g");
+
+/** Select the last outer simple command on the first shell line, retaining quoted executable and argument text. */
+export function lastSimpleCommandOnLine(command: string): string {
+    const line = command.split("\n")[0] ?? "";
+    const outer = splitSubstitutions(stripShellNoise(line))[0]?.text ?? "";
+    let start = 0;
+    let last = "";
+    const remember = (end: number) => {
+        // Use untrimmed syntax boundaries: a quoted launcher or even the whole command can be blank in the mask.
+        const text = line.slice(start, end).trim();
+        if (text && !text.startsWith("#")) {
+            last = text;
+        }
+    };
+
+    for (const separator of outer.matchAll(SIMPLE_COMMAND_SEPARATOR)) {
+        remember(separator.index);
+        start = separator.index + separator[0].length;
+    }
+
+    remember(line.length);
+    return last;
+}
+
 const EXECUTABLE_SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 const MAX_EXECUTABLE_BODY_DEPTH = 4;
 

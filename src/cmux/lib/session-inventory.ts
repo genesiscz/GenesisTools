@@ -20,7 +20,11 @@ export type ListedAgentSession = Omit<SessionCreatedRecord, "createdBy"> &
         createdBy: SessionCreatedRecord["createdBy"] | "adopted";
     };
 
-export async function readSessionDetails(live: LiveAgentSurface): Promise<SessionDetails> {
+/** Read transcript activity and optionally inspect the terminal for held messages; unavailable evidence remains unknown. */
+export async function readSessionDetails(
+    live: LiveAgentSurface,
+    options: { readScreen?: boolean } = {}
+): Promise<SessionDetails> {
     const details: SessionDetails = {
         title: live.surface.title,
         state: "unknown",
@@ -42,9 +46,10 @@ export async function readSessionDetails(live: LiveAgentSurface): Promise<Sessio
 
     // Held peer messages are terminal UI state, not a completed transcript turn.
     // Read by UUID only: a ref names whichever tab holds that number now.
-    const screen = live.surface.id
-        ? await runCmux(["read-screen", "--surface", live.surface.id, "--lines", "8"], { timeoutMs: 1500 })
-        : null;
+    const screen =
+        options.readScreen !== false && live.surface.id
+            ? await runCmux(["read-screen", "--surface", live.surface.id, "--lines", "8"], { timeoutMs: 1500 })
+            : null;
     if (screen?.code === 0 && /(?:^|\n)[^\n]*\b\d+\s+held messages?\b/i.test(screen.stdout)) {
         details.state = "held-message";
     }
@@ -56,6 +61,7 @@ export async function sessionInventory(
     options: {
         records?: SessionCreatedRecord[];
         live?: LiveAgentSurface[];
+        readScreen?: boolean;
         details?: (live: LiveAgentSurface) => Promise<SessionDetails>;
     } = {}
 ): Promise<{ recorded: ListedAgentSession[]; adoptable: ListedAgentSession[] }> {
@@ -66,7 +72,9 @@ export async function sessionInventory(
         concurrency: 4,
         fn: async (entry) => ({
             entry,
-            details: await (options.details ?? readSessionDetails)(entry),
+            details: await (options.details
+                ? options.details(entry)
+                : readSessionDetails(entry, { readScreen: options.readScreen })),
         }),
     });
     const enriched = [...results.values()];

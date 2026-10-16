@@ -67,6 +67,10 @@ describe("anchorFromLayout", () => {
         );
     });
 
+    test.each([undefined, ""])("refuses to expose surface UUIDs when the workspace UUID echo is missing (%s)", (id) => {
+        expect(() => anchorFromLayout(WORKSPACE, layout({ workspace_id: id }))).toThrow(WORKSPACE);
+    });
+
     test("compares UUIDs without regard to case", () => {
         expect(anchorFromLayout(WORKSPACE.toLowerCase(), layout()).surfaceId).toBe(SURFACE);
     });

@@ -26,7 +26,7 @@ export function shellWords(input: string): Word[] {
             i++;
         }
 
-        if (i >= input.length) {
+        if (i >= input.length || input[i] === "#") {
             break;
         }
 

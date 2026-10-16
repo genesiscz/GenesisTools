@@ -57,6 +57,8 @@ const HOME = process.env.GENESIS_TOOLS_HOME || homedir();
 const REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-refs.jsonl");
 /** surface UUID → the resume binding this hook last gave cmux for that tab. */
 const BINDINGS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-bindings.json");
+/** Independent surface records prevent concurrent hooks in different tabs from overwriting each other's state. */
+const BINDINGS_DIR = join(HOME, ".genesis-tools", "claude-code", "cmux-bindings");
 /** A binding is set again after this long, in case cmux replaced it with a record of its own since. */
 const BINDING_REFRESH_MS = 30 * 60_000;
 /** Where each session last wrote its journal line: a prompt in the same tab within the heartbeat writes nothing. */
@@ -150,17 +152,56 @@ interface BindingState {
 function readBindings(): Record<string, BindingState> {
     try {
         const parsed: unknown = SafeJSON.parse(readFileSync(BINDINGS_PATH, "utf8"));
-        return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, BindingState>) : {};
+        if (typeof parsed !== "object" || parsed === null) {
+            return {};
+        }
+
+        return Object.fromEntries(
+            Object.entries(parsed as Record<string, BindingState>).map(([key, binding]) => [
+                key.trim().toLowerCase(),
+                binding,
+            ])
+        );
     } catch {
         return {};
     }
 }
 
-function writeBindings(state: Record<string, BindingState>): void {
-    mkdirSync(join(HOME, ".genesis-tools", "claude-code"), { recursive: true });
-    const temporary = `${BINDINGS_PATH}.${process.pid}.tmp`;
-    writeFileSync(temporary, SafeJSON.stringify(state), "utf8");
-    renameSync(temporary, BINDINGS_PATH);
+function bindingPath(surfaceId: string): string {
+    return join(BINDINGS_DIR, `${encodeURIComponent(surfaceId.trim().toLowerCase())}.json`);
+}
+
+function readBinding(surfaceId: string): BindingState | null {
+    const file = bindingPath(surfaceId);
+
+    if (!existsSync(file)) {
+        return readBindings()[surfaceId.trim().toLowerCase()] ?? null;
+    }
+
+    try {
+        // A null record marks a deliberate clear and must not fall back to the legacy shared file.
+        return SafeJSON.parse(readFileSync(file, "utf8")) as BindingState | null;
+    } catch {
+        return null;
+    }
+}
+
+function writeBinding(surfaceId: string, binding: BindingState | null): void {
+    mkdirSync(BINDINGS_DIR, { recursive: true });
+    const file = bindingPath(surfaceId);
+    const temporary = `${file}.${process.pid}.tmp`;
+    writeFileSync(temporary, SafeJSON.stringify(binding), "utf8");
+    renameSync(temporary, file);
+}
+
+function bindingIsCurrent(input: { surfaceId: string; sessionId: string; command: string; now: number }): boolean {
+    const known = readBinding(input.surfaceId);
+    return (
+        known !== null &&
+        known.sessionId === input.sessionId &&
+        known.command === input.command &&
+        input.now - known.at < BINDING_REFRESH_MS
+    );
 }
 
 interface LastWrite {
@@ -220,15 +261,7 @@ export function syncResumeBinding(input: {
     const now = input.now ?? Date.now();
     const argv = resumeArgv(input.harness, input.sessionId, input.account);
     const command = argv.join(" ");
-    const state = readBindings();
-    const known = state[input.surfaceId];
-
-    if (
-        known &&
-        known.sessionId === input.sessionId &&
-        known.command === command &&
-        now - known.at < BINDING_REFRESH_MS
-    ) {
+    if (bindingIsCurrent({ surfaceId: input.surfaceId, sessionId: input.sessionId, command, now })) {
         return false;
     }
 
@@ -256,7 +289,7 @@ export function syncResumeBinding(input: {
         return false;
     }
 
-    writeBindings({ ...state, [input.surfaceId]: { sessionId: input.sessionId, command, at: now } });
+    writeBinding(input.surfaceId, { sessionId: input.sessionId, command, at: now });
     return true;
 }
 
@@ -266,9 +299,7 @@ export function clearResumeBinding(input: {
     sessionId: string;
     run?: (args: string[]) => boolean;
 }): boolean {
-    const state = readBindings();
-
-    if (state[input.surfaceId]?.sessionId !== input.sessionId) {
+    if (readBinding(input.surfaceId)?.sessionId !== input.sessionId) {
         return false;
     }
 
@@ -276,8 +307,7 @@ export function clearResumeBinding(input: {
         return false;
     }
 
-    const { [input.surfaceId]: _cleared, ...rest } = state;
-    writeBindings(rest);
+    writeBinding(input.surfaceId, null);
     return true;
 }
 
@@ -321,7 +351,20 @@ function main(raw: string): void {
     const ending = event === "SessionEnd";
     const place = `${surfaceId ?? ""}\n${tmuxPane ?? ""}`;
 
-    if (event === "UserPromptSubmit" && recordedRecently({ sessionId, place })) {
+    const recent = event === "UserPromptSubmit" && recordedRecently({ sessionId, place });
+    const cwd = input.cwd || process.cwd();
+    const account = process.env[accountEnvVarFor(harness)] || undefined;
+
+    if (
+        recent &&
+        (!surfaceId ||
+            bindingIsCurrent({
+                surfaceId,
+                sessionId,
+                command: resumeArgv(harness, sessionId, account).join(" "),
+                now: Date.now(),
+            }))
+    ) {
         return;
     }
 
@@ -331,6 +374,18 @@ function main(raw: string): void {
     }
 
     const caller = surfaceId && !ending ? identifyRefs() : {};
+    const syncBinding = () => {
+        if (caller.surface_id) {
+            syncResumeBinding({ surfaceId: caller.surface_id, harness, sessionId, cwd, account });
+        }
+    };
+
+    // A retry repairs the binding without appending another unchanged journal record.
+    if (recent) {
+        syncBinding();
+        return;
+    }
+
     const entry = {
         sessionId,
         // Absent means claude, so every record written before this field keeps its meaning.
@@ -345,7 +400,7 @@ function main(raw: string): void {
         surfaceRef: caller.surface_ref ?? null,
         windowRef: caller.window_ref ?? null,
         tmuxPane,
-        cwd: input.cwd || process.cwd(),
+        cwd,
         at: Date.now(),
         // The user ended this session (`/exit`): readers must not resume it in this tab.
         ...(ending ? { ended: true } : {}),
@@ -371,16 +426,7 @@ function main(raw: string): void {
         return;
     }
 
-    // identify answered: this process talks to the cmux that shows the tab.
-    if (caller.surface_id) {
-        syncResumeBinding({
-            surfaceId: caller.surface_id,
-            harness,
-            sessionId,
-            cwd: entry.cwd,
-            account: process.env[accountEnvVarFor(harness)] || undefined,
-        });
-    }
+    syncBinding();
 }
 
 if (import.meta.main) {

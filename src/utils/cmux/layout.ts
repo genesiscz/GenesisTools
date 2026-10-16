@@ -161,6 +161,7 @@ async function fetchWorkspacePanes(
     );
 }
 
+/** Read all windows and their pane layouts, optionally including screen text, without changing the focused workspace. */
 export async function fetchCmuxFullLayout(options: FetchCmuxLayoutOptions = {}): Promise<CmuxLayoutTree> {
     const fetchedAt = new Date().toISOString();
 

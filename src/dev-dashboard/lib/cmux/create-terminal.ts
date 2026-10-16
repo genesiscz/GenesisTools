@@ -11,6 +11,7 @@ import {
 } from "@genesiscz/utils/cmux/workspace";
 import { logger } from "@genesiscz/utils/logger";
 
+/** Open a tmux-backed terminal in the dashboard workspace and return its cmux and tmux identities. */
 export async function createDevDashboardTerminal(opts: { cwd?: string } = {}): Promise<AttachTmuxResult> {
     const cwd = opts.cwd ?? process.cwd();
     const tmuxSessionName = makeCmuxTmuxSessionName();

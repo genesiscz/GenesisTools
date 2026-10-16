@@ -638,6 +638,29 @@ describe("journalReplayCommand", () => {
         expect(resolved.drift[1]).toContain("dropped --fast");
     });
 
+    test("an unresolved alias flag is omitted with an explicit drift note, while literal flags survive", () => {
+        const resolved = journalReplayCommand(
+            { command: 'ffff --add-dir "$PROJECT_DIR" --chrome', atMs: 1_000 },
+            session
+        );
+        expect(resolved.command).not.toContain("--add-dir");
+        expect(resolved.command).toContain("--chrome");
+        expect(resolved.drift.join("\n")).toContain("unresolved shell expansion");
+        expect(resolved.drift.join("\n")).toContain("--add-dir $PROJECT_DIR");
+    });
+
+    test("a quoted launcher preserves the plan-mode restriction on the recovered resume", () => {
+        const resolved = journalReplayCommand(
+            {
+                command: '"/opt/my launcher" --permission-mode plan --chrome',
+                atMs: 1_000,
+            },
+            session
+        );
+        expect(resolved.command).toContain("--permission-mode plan --chrome");
+        expect(resolved.drift).toContain("kept claude's own flags: --permission-mode plan --chrome");
+    });
+
     test("an unknown launcher keeps the agent's own flags on the resume, never the model", () => {
         const resolved = journalReplayCommand(
             { command: "myclaude --dangerously-skip-permissions --model opus", atMs: 1_000 },
@@ -680,6 +703,14 @@ describe("journalReplayCommand with cmux's own restore line", () => {
 
         expect(resolved.command).toBe(`tools claude start work -- --resume ${CLAUDE_ID}`);
         expect(resolved.drift[0]).toContain(`cmux's own restore typed \`cmux restore grok ${GROK_ID}\``);
+    });
+
+    test.each(["grok", "codex", "claude"] as const)("a matching %s session retains its journal account", (provider) => {
+        const session = { sessionId: GROK_ID, provider, account: "work", at: 1_000 };
+        const result = journalReplayCommand({ command: `cmux restore ${provider} ${GROK_ID}`, atMs: 2_000 }, session);
+        const native =
+            provider === "grok" ? `-r ${GROK_ID}` : provider === "codex" ? `resume ${GROK_ID}` : `--resume ${GROK_ID}`;
+        expect(result.command).toBe(`tools ${provider} ${provider === "claude" ? "start" : "run"} work -- ${native}`);
     });
 
     test("with no other journal session the line becomes the agent's own resume", () => {

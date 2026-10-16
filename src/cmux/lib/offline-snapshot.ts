@@ -177,6 +177,7 @@ export function buildOfflineProfile(
     };
 }
 
+/** Reconstruct pane geometry and replayable surfaces from autosave panels, journals and cached screens without cmux RPCs. */
 export function buildOfflinePanes(
     workspace: AutosaveWorkspace,
     frame: { x: number; y: number; width: number; height: number },
@@ -295,6 +296,12 @@ export function buildOfflinePanes(
                     command_source: captured ? "shell-journal" : "offline",
                     command_original: captured && derived.command !== captured.command ? captured.command : undefined,
                     resume: { kind: nativeKind, sessionId: nativeSessionId },
+                    // Process-derived native metadata may be stale; the tab's own journal or binding must agree.
+                    resume_evidence:
+                        (session?.provider === nativeKind && session.sessionId === nativeSessionId) ||
+                        (binding?.kind === nativeKind && binding.checkpointId === nativeSessionId)
+                            ? "journal"
+                            : undefined,
                     drift: [
                         `resume target recovered from cmux autosave (${nativeKind})`,
                         ...(capturedReplay?.drift ?? []),

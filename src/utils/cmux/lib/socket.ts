@@ -184,6 +184,7 @@ export interface PaneListResponse {
     container_frame: { width: number; height: number };
 }
 
+/** Read pane geometry through the CLI and reject a response belonging to another workspace. */
 export async function paneList(workspace: string): Promise<PaneListResponse> {
     // Raw pane.list can ignore workspace and return the focused workspace. The
     // CLI honors the target and now preserves the geometry used by restore.
@@ -205,15 +206,15 @@ export function assertLayoutIsFor(
     workspace: string,
     layout: Pick<PaneListResponse, "workspace_id" | "workspace_ref">
 ): void {
-    const echoed = isCmuxUuid(workspace)
-        ? layout.workspace_id
-        : workspace.startsWith("workspace:")
-          ? layout.workspace_ref
-          : undefined;
+    const byUuid = isCmuxUuid(workspace);
+    if (!byUuid && !workspace.startsWith("workspace:")) {
+        return;
+    }
 
-    if (echoed && !sameCmuxId(echoed, workspace)) {
+    const echoed = byUuid ? layout.workspace_id : layout.workspace_ref;
+    if (!echoed || !sameCmuxId(echoed, workspace)) {
         throw new Error(
-            `cmux answered pane.list for ${layout.workspace_ref ?? echoed} when asked about ${workspace} — ` +
+            `cmux answered pane.list for ${layout.workspace_ref || echoed || "(missing workspace identity)"} when asked about ${workspace} — ` +
                 `select the workspace before asking for its panes`
         );
     }

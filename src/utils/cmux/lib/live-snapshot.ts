@@ -306,8 +306,17 @@ async function fetchOnePane({
 }): Promise<CmuxLivePane> {
     const rawSurfaces =
         (await surfacesFor)(workspace, paneId(pane)) ??
-        (await runJson<SurfaceListRpc>(["list-pane-surfaces", "--workspace", workspace, "--pane", paneId(pane)]))
-            .surfaces ??
+        (
+            await runJson<SurfaceListRpc>([
+                "list-pane-surfaces",
+                "--id-format",
+                "both",
+                "--workspace",
+                workspace,
+                "--pane",
+                paneId(pane),
+            ])
+        ).surfaces ??
         [];
     const anyMarkedSelected = rawSurfaces.some(
         (surface) => surface.selected_in_pane === true || surface.selected === true
@@ -364,7 +373,7 @@ async function fetchWorkspacePanes(
     surfaces: Promise<SurfaceLookup>
 ): Promise<CmuxLivePane[]> {
     const id = workspaceId(rawWorkspace);
-    const paneResponse = await runJson<PaneListRpc>(["list-panes", "--workspace", id]);
+    const paneResponse = await runJson<PaneListRpc>(["list-panes", "--id-format", "both", "--workspace", id]);
     const windowId = paneResponse.window_id;
     const windowRef = paneResponse.window_ref;
     const rawPanes = paneResponse.panes ?? [];
@@ -439,6 +448,7 @@ export async function fetchCmuxLiveSnapshotWithRunner<T>(
     return Promise.all(workspaces.map((ws, index) => fetchWorkspace(ws, index)));
 }
 
+/** Capture background workspace and terminal state with UUIDs, bounded RPCs and the requested preview detail. */
 export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<CmuxLiveSnapshot> {
     const runJson = deps.runJson ?? runCmuxJSON;
     const run = deps.run ?? runCmux;
@@ -472,11 +482,19 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
         let workspaceLists: WorkspaceListRpc[];
 
         if (deps.allWindows) {
-            const rawWindows = await prof.measureAsync("list-windows", () => firstCall<WindowRpc[]>(["list-windows"]));
+            const rawWindows = await prof.measureAsync("list-windows", () =>
+                firstCall<WindowRpc[]>(["list-windows", "--id-format", "both"])
+            );
             workspaceLists = await prof.measureAsync("list-workspaces", () =>
                 Promise.all(
                     rawWindows.map((w) =>
-                        runJson<WorkspaceListRpc>(["list-workspaces", "--window", w.id ?? String(w.index ?? 0)])
+                        runJson<WorkspaceListRpc>([
+                            "list-workspaces",
+                            "--id-format",
+                            "both",
+                            "--window",
+                            w.id ?? String(w.index ?? 0),
+                        ])
                     )
                 )
             );
@@ -489,7 +507,9 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
             }));
         } else {
             workspaceLists = [
-                await prof.measureAsync("list-workspaces", () => firstCall<WorkspaceListRpc>(["list-workspaces"])),
+                await prof.measureAsync("list-workspaces", () =>
+                    firstCall<WorkspaceListRpc>(["list-workspaces", "--id-format", "both"])
+                ),
             ];
         }
 

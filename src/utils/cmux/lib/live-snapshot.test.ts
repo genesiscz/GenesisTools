@@ -11,6 +11,50 @@ describe("fetchCmuxLiveSnapshot", () => {
      * band. Peak in-flight is the property the test is actually about, and a
      * sequential implementation reports 1 however fast the machine is.
      */
+    test("requests UUIDs on enumeration and joins the tree without a redundant surface lookup", async () => {
+        const calls: string[][] = [];
+        const runJson = async <T>(args: string[]): Promise<T> => {
+            calls.push(args);
+            const both = args.includes("--id-format") && args.includes("both");
+            if (args[0] === "list-workspaces") {
+                return { workspaces: [{ ref: "workspace:1", ...(both ? { id: "workspace-id" } : {}) }] } as T;
+            }
+            if (args[0] === "list-panes") {
+                return { panes: [{ ref: "pane:1", ...(both ? { id: "pane-id" } : {}) }] } as T;
+            }
+            if (args.includes("tree")) {
+                return {
+                    windows: [
+                        {
+                            workspaces: [
+                                {
+                                    id: "workspace-id",
+                                    panes: [
+                                        {
+                                            id: "pane-id",
+                                            surfaces: [{ id: "surface-id", ref: "surface:1", type: "terminal" }],
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                } as T;
+            }
+            throw new Error("tree should supply this pane's surfaces");
+        };
+        const snapshot = await fetchCmuxLiveSnapshot({
+            runJson,
+            run: async () => ({ code: 0, stdout: "", stderr: "" }),
+            previews: "none",
+        });
+        expect(snapshot.available).toBe(true);
+        expect(snapshot.workspaces[0].id).toBe("workspace-id");
+        expect(snapshot.panes[0].id).toBe("pane-id");
+        expect(snapshot.panes[0].surfaces[0].id).toBe("surface-id");
+        expect(calls.some((args) => args[0] === "list-pane-surfaces")).toBe(false);
+    });
+
     test("fetches all workspaces in parallel, not sequentially", async () => {
         let inFlight = 0;
         let peakInFlight = 0;
@@ -97,8 +141,8 @@ describe("fetchCmuxLiveSnapshot", () => {
 
         expect(calls.filter((args) => args[0] === "list-windows")).toHaveLength(1);
         expect(calls.filter((args) => args[0] === "list-workspaces")).toEqual([
-            ["list-workspaces", "--window", "win-a"],
-            ["list-workspaces", "--window", "win-b"],
+            ["list-workspaces", "--id-format", "both", "--window", "win-a"],
+            ["list-workspaces", "--id-format", "both", "--window", "win-b"],
         ]);
         expect(snapshot.windows?.map((window) => [window.id, window.ref, window.key])).toEqual([
             ["win-a", "window:1", true],
@@ -322,7 +366,7 @@ describe("fetchCmuxLiveSnapshot", () => {
 
         expect(calls.filter((args) => args.includes("tree"))).toEqual([["--id-format", "both", "tree", "--all"]]);
         expect(calls.filter((args) => args[0] === "list-pane-surfaces")).toEqual([
-            ["list-pane-surfaces", "--workspace", "workspace:1", "--pane", "pane:2"],
+            ["list-pane-surfaces", "--id-format", "both", "--workspace", "workspace:1", "--pane", "pane:2"],
         ]);
         const [first, second] = snapshot.panes;
         expect(

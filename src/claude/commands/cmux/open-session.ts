@@ -39,6 +39,7 @@ export function resolveTarget(opts: OpenSessionOptions): OpenSessionTarget | str
     return "--pane and --surface need the owning --workspace";
 }
 
+/** Open a saved session at the requested cmux destination and render the resulting UUIDs or a CLI error. */
 export async function openSessionCommand(sessionId: string, opts: OpenSessionOptions): Promise<void> {
     const target = resolveTarget(opts);
 

@@ -28,6 +28,15 @@ describe("classifyCommand", () => {
         expect(classifyCommand("/usr/local/bin/grok").provider).toBe("grok");
     });
 
+    test("a versioned Grok binary is an agent, while grok-proxy remains a tool", () => {
+        expect(classifyCommand(`/opt/bin/grok-1.0.52-maco -r ${S1}`)).toMatchObject({
+            kind: "agent",
+            provider: "grok",
+            sessionId: S1,
+        });
+        expect(classifyCommand("grok-proxy up").kind).toBe("other");
+    });
+
     test("apps and scripts that only share a name are not agents", () => {
         expect(classifyCommand("/Applications/Grok Bot.app/Contents/MacOS/Grok Bot").kind).toBe("other");
         expect(classifyCommand(`${HOME}/.bun/bin/bun ${HOME}/.grok/grok-proxy.ts up`).kind).toBe("other");

@@ -211,6 +211,7 @@ export function agentsOnTtyNow(tty: string): Set<SessionAgentId> {
     return new Set(SESSION_AGENT_IDS.filter((agent) => own.some((entry) => ttyRunsAgent(entry.command ?? "", agent))));
 }
 
+/** Discover running native sessions by joining background cmux state, journals, tmux clients and current processes. */
 export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
     const tree = await liveTree();
     const pins = await loadPins({ readOnly: true });
@@ -264,6 +265,7 @@ export async function liveAdoptableSessions(): Promise<AdoptedSession[]> {
     return found;
 }
 
+/** Bind session-close operations to live cmux, process and transcript readers while retaining the supplied session store. */
 export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
     return {
         store,

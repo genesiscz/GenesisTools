@@ -1,7 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { setCcRunAliases } from "@app/cmux/lib/command-capture";
+import * as restore from "@app/cmux/lib/restore";
+import * as liveSessions from "@app/cmux/lib/session-close-live";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
+import * as processes from "@genesiscz/utils/process/processes";
 import { filterReplayByAgents, isMissingEnumFlag, parseAgentList, parseRestoreSource } from "./restore-after-restart";
 import {
     agentsOnTtys,
@@ -10,6 +14,7 @@ import {
     type LiveTab,
     planInPlaceRestore,
     planInPlaceSettled,
+    runInPlaceRestore,
 } from "./restore-in-place";
 
 describe("parseRestoreSource", () => {
@@ -247,6 +252,11 @@ describe("planInPlaceRestore", () => {
     );
     const state = {
         tabs,
+        runningSessions: new Map<string, string>([
+            ["99999999-9999-4999-8999-999999999999", "ttys03"],
+            [GROK_STALE, "ttys010"],
+            [GROK_RIGHT, "ttys011"],
+        ]),
         idleTtys: new Set(["ttys01", "ttys02", "ttys04", "ttys05", "ttys06", "ttys07", "ttys08"]),
         ttyAgents: new Map([
             ["ttys03", { kind: "claude" as const, sessionId: "99999999-9999-4999-8999-999999999999" }],
@@ -317,6 +327,201 @@ describe("planInPlaceRestore", () => {
         expect(unknown[0]?.skip).toContain("not a shell prompt this restore knows");
     });
 
+    test.each(["busy", "elsewhere", "safe", "changed-before-replay"])(
+        "revalidates live ownership at execution: %s",
+        async (change) => {
+            const initial = planInPlaceRestore(liveProfile([tab(1, "target", `claude --resume ${CLAUDE_ID}`)]), {
+                ...state,
+                screens: new Map([...state.screens, [uuid(1), `${PROMPT}unfinished command`]]),
+            });
+            expect(initial[0].prepare).toBe("clear-prompt");
+            const current: InPlaceLiveState = {
+                ...state,
+                idleTtys: change === "busy" ? new Set() : state.idleTtys,
+                runningSessions: change === "elsewhere" ? new Map([[CLAUDE_ID, "ttys099"]]) : state.runningSessions,
+                ttyAgents:
+                    change === "elsewhere"
+                        ? new Map([["ttys099", { kind: "claude", sessionId: CLAUDE_ID }]])
+                        : state.ttyAgents,
+            };
+            const replay = spyOn(restore, "replayTerminal").mockResolvedValue(undefined);
+            const keys = spyOn(cmuxCli, "runCmuxOk").mockRejectedValue(new Error("no key may be sent"));
+            let reads = 0;
+            try {
+                const failures = await runInPlaceRestore(
+                    initial,
+                    { enter: false, replay: true, runCommands: false },
+                    {
+                        read: async () => {
+                            reads++;
+                            return change === "changed-before-replay" && reads > 1
+                                ? { ...current, idleTtys: new Set() }
+                                : current;
+                        },
+                    }
+                );
+                expect(replay).toHaveBeenCalledTimes(change === "safe" ? 1 : 0);
+                expect(keys).not.toHaveBeenCalled();
+                expect(failures).toHaveLength(change === "safe" ? 0 : 1);
+                if (change === "busy" || change === "changed-before-replay") {
+                    expect(failures[0]).toContain("a program already runs here");
+                }
+                if (change === "elsewhere") {
+                    expect(failures[0]).toContain("already runs on ttys099");
+                }
+            } finally {
+                replay.mockRestore();
+                keys.mockRestore();
+            }
+        }
+    );
+
+    test("two restored tabs read only their own screens in a larger window", async () => {
+        const steps = planInPlaceRestore(
+            liveProfile([
+                tab(1, "first", `claude --resume ${CLAUDE_ID}`),
+                tab(2, "second", `claude --resume ${CLAUDE_ID}`),
+            ]),
+            state
+        );
+        const tree = spyOn(liveSessions, "liveTree").mockResolvedValue({
+            caller: "surface:104",
+            callerId: uuid(4),
+            surfaces: new Map(
+                [...tabs.values()].map((live) => [
+                    live.ref,
+                    {
+                        ...live,
+                        workspace: live.workspaceRef,
+                        workspaceTitle: "triage",
+                        window: live.windowRef,
+                    },
+                ])
+            ),
+        });
+        const ps = spyOn(processes, "listProcesses").mockReturnValue(
+            [...tabs.values()].map((live, index) => ({
+                pid: index + 1,
+                ppid: 0,
+                pgid: index + 1,
+                uid: process.getuid?.() ?? -1,
+                name: "zsh",
+                command: "zsh",
+                tty: live.tty,
+                startMs: null,
+                zombie: false,
+                state: "S",
+            }))
+        );
+        const health = spyOn(cmuxCli, "runCmuxJSON").mockResolvedValue({ surfaces: [] });
+        const reads: string[] = [];
+        const screen = spyOn(cmuxCli, "runCmux").mockImplementation(async (args) => {
+            if (args[0] !== "read-screen") {
+                throw new Error("unexpected cmux call");
+            }
+            reads.push(args[args.indexOf("--surface") + 1]);
+            return { code: 0, stdout: PROMPT, stderr: "" };
+        });
+        const replay = spyOn(restore, "replayTerminal").mockResolvedValue(undefined);
+        const keys = spyOn(cmuxCli, "runCmuxOk").mockRejectedValue(new Error("no preparation keys expected"));
+        try {
+            expect(await runInPlaceRestore(steps, { enter: false, replay: true, runCommands: false })).toEqual([]);
+            expect(reads).toEqual([
+                uuid(1).toUpperCase(),
+                uuid(1).toUpperCase(),
+                uuid(2).toUpperCase(),
+                uuid(2).toUpperCase(),
+            ]);
+            expect(tree).toHaveBeenCalledTimes(4);
+            expect(ps).toHaveBeenCalledTimes(4);
+            expect(replay).toHaveBeenCalledTimes(2);
+            expect(keys).not.toHaveBeenCalled();
+        } finally {
+            keys.mockRestore();
+            replay.mockRestore();
+            screen.mockRestore();
+            health.mockRestore();
+            ps.mockRestore();
+            tree.mockRestore();
+        }
+    });
+
+    test.each([
+        {
+            form: "node",
+            command: `node /opt/node_modules/@openai/codex/bin/codex.js resume ${CLAUDE_ID}`,
+            blocked: true,
+        },
+        { form: "second-on-tty", command: `codex resume ${CLAUDE_ID}`, blocked: true },
+        { form: "versioned-codex", command: `/opt/bin/codex-aarch64-apple-darwin resume ${CLAUDE_ID}`, blocked: true },
+        { form: "versioned-grok", command: `/opt/bin/grok-1.0.52-maco -r ${CLAUDE_ID}`, blocked: true },
+        { form: "no-tty", command: `codex resume ${CLAUDE_ID}`, blocked: true },
+        { form: "other-user", command: `codex resume ${CLAUDE_ID}`, blocked: false },
+        { form: "zombie", command: `codex resume ${CLAUDE_ID}`, blocked: false },
+    ])("execution checks every running session: $form", async ({ form, command, blocked }) => {
+        const steps = planInPlaceRestore(liveProfile([tab(1, "target", `codex resume ${CLAUDE_ID}`)]), state);
+        const target = tabs.get(uuid(1));
+        if (!target) {
+            throw new Error("missing target fixture");
+        }
+        const tree = spyOn(liveSessions, "liveTree").mockResolvedValue({
+            caller: null,
+            callerId: null,
+            surfaces: new Map([
+                [
+                    target.ref,
+                    { ...target, workspace: target.workspaceRef, workspaceTitle: "triage", window: target.windowRef },
+                ],
+            ]),
+        });
+        const uid = process.getuid?.() ?? -1;
+        const proc = (tty: string, cmd: string, pid: number) => ({
+            pid,
+            ppid: 0,
+            pgid: pid,
+            uid,
+            name: "fixture",
+            command: cmd,
+            tty,
+            startMs: null,
+            zombie: false,
+            state: "S",
+        });
+        const running = proc("ttys099", command, 3);
+        const ps = spyOn(processes, "listProcesses").mockReturnValue([
+            { ...proc("ttys01", "zsh", 1), name: "zsh" },
+            ...(form === "second-on-tty" ? [proc("ttys099", `grok -r ${GROK_BUSY}`, 2)] : []),
+            {
+                ...running,
+                tty: form === "no-tty" ? null : running.tty,
+                uid: form === "other-user" ? uid + 1 : uid,
+                zombie: form === "zombie",
+            },
+        ]);
+        const health = spyOn(cmuxCli, "runCmuxJSON").mockResolvedValue({ surfaces: [] });
+        const screen = spyOn(cmuxCli, "runCmux").mockResolvedValue({ code: 0, stdout: PROMPT, stderr: "" });
+        const replay = spyOn(restore, "replayTerminal").mockResolvedValue(undefined);
+        const keys = spyOn(cmuxCli, "runCmuxOk").mockRejectedValue(new Error("no preparation keys expected"));
+        try {
+            const failures = await runInPlaceRestore(steps, { enter: false, replay: true, runCommands: false });
+            expect(replay).toHaveBeenCalledTimes(blocked ? 0 : 1);
+            expect(failures).toHaveLength(blocked ? 1 : 0);
+            if (blocked) {
+                expect(failures[0]).toContain(
+                    form === "no-tty" ? "already runs on (no tty)" : "already runs on ttys099"
+                );
+            }
+            expect(keys).not.toHaveBeenCalled();
+        } finally {
+            keys.mockRestore();
+            replay.mockRestore();
+            screen.mockRestore();
+            health.mockRestore();
+            ps.mockRestore();
+            tree.mockRestore();
+        }
+    });
+
     test("a stale agent that already opened its session is never quit", () => {
         const opened = { ...state, screens: new Map([...state.screens, [uuid(10), "grok ready ❯"]]) };
         const step = planInPlaceRestore(liveProfile(surfaces), opened).find((s) => s.title === "stale grok");
@@ -330,6 +535,7 @@ describe("planInPlaceRestore", () => {
         const elsewhere = {
             ...state,
             ttyAgents: new Map([...state.ttyAgents, ["ttys099", { kind: "claude" as const, sessionId: CLAUDE_ID }]]),
+            runningSessions: new Map([...state.runningSessions, [CLAUDE_ID, "ttys099"]]),
         };
         const step = planInPlaceRestore(liveProfile(surfaces), elsewhere).find((s) => s.title === "alias");
 

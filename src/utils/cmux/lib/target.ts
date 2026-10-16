@@ -33,10 +33,12 @@ export function surfaceTargetArgs(surface: string, workspace?: string): string[]
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Recognize UUID-form cmux identities without accepting display refs. */
 export function isCmuxUuid(value: string): boolean {
     return UUID_RE.test(value);
 }
 
+/** Recognize surface identities that do not need a workspace qualifier: UUIDs and explicit surface or tab refs. */
 export function isSelfIdentifyingSurface(surface: string): boolean {
     return isCmuxUuid(surface) || surface.startsWith("surface:") || surface.startsWith("tab:");
 }
@@ -53,6 +55,7 @@ export function cmuxIdKey(id: string): string {
     return id.trim().toLowerCase();
 }
 
+/** Compare present cmux identities case-insensitively so environment and CLI UUID casing can differ. */
 export function sameCmuxId(a: string | undefined, b: string | undefined): boolean {
     return a !== undefined && b !== undefined && a.toLowerCase() === b.toLowerCase();
 }

@@ -8,7 +8,7 @@ const SHELL_PROGRAMS: ReadonlySet<string> = new Set(["zsh", "bash", "sh", "fish"
 /** The program a command line or process name runs: the base name of its first word, without a login shell's `-`. */
 export function programName(command: string): string {
     const first = command.trim().split(/\s+/, 1)[0] ?? "";
-    return (first.split("/").pop() ?? first).replace(/^-/, "");
+    return (first.split(/[/\\]/).pop() ?? first).replace(/^-/, "");
 }
 
 /**

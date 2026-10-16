@@ -140,6 +140,20 @@ describe("replayCommandForSurface", () => {
         expect(result?.command).toBe(`grok -r ${GROK_ID}`);
     });
 
+    test.each(["grok", "codex"] as const)("infers a %s resume in the matched session's account", (kind) => {
+        const hit: ReplayCatalogSession = {
+            kind,
+            sessionId: GROK_ID,
+            cwd: "/Users/me/Projects/shop",
+            title: "fix captured sessions",
+            account: "work",
+        };
+        const result = replayCommandForSurface(terminal(`${hit.title} - ${kind}`), catalog([hit]));
+        expect(result.command).toBe(`tools ${kind} run work -- ${kind === "codex" ? "resume" : "-r"} ${GROK_ID}`);
+        expect(result.evidence).toBe("title");
+        expect(result.drift.join("\n")).toContain(hit.title);
+    });
+
     test("replaces a stale process-table grok -r that belongs to another pane", () => {
         const result = replayCommandForSurface(
             terminal("PRs merged into release/2026-09-03 - grok", {

@@ -11,6 +11,7 @@ import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve
 import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import * as nativeTitles from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
+import * as turnWait from "@genesiscz/utils/ai/transcripts/turn-wait";
 import {
     DEFAULT_TURN_LIMIT,
     type SliceOptions,
@@ -161,57 +162,63 @@ describe("wait requested messages at every outcome", () => {
         { outcome: "running", quiet: true, stream: false, code: 124 },
         { outcome: "running", quiet: false, stream: false, code: 124 },
         { outcome: "stalled", quiet: true, stream: false, code: 3 },
-    ])("prints --last 2 for $outcome (quiet=$quiet, stream=$stream)", async ({ outcome, quiet, stream, code }) => {
-        const dir = mkdtempSync(join(tmpdir(), "wait-last-"));
-        const file = join(dir, "fixture.jsonl");
-        const timestamp = new Date(Date.now() - 2_000).toISOString();
-        const records = [
-            { type: "user", timestamp, message: { role: "user", content: "first prompt" } },
-            {
-                type: "assistant",
-                timestamp,
-                message: {
-                    id: "first",
-                    role: "assistant",
-                    content: [{ type: "text", text: "first answer" }],
-                    stop_reason: "end_turn",
+    ])(
+        "gates --last 2 on completion for $outcome (quiet=$quiet, stream=$stream)",
+        async ({ outcome, quiet, stream, code }) => {
+            const dir = mkdtempSync(join(tmpdir(), "wait-last-"));
+            const file = join(dir, "fixture.jsonl");
+            const timestamp = new Date(Date.now() - 2_000).toISOString();
+            const records = [
+                { type: "user", timestamp, message: { role: "user", content: "first prompt" } },
+                {
+                    type: "assistant",
+                    timestamp,
+                    message: {
+                        id: "first",
+                        role: "assistant",
+                        content: [{ type: "text", text: "first answer" }],
+                        stop_reason: "end_turn",
+                    },
                 },
-            },
-            { type: "user", timestamp, message: { role: "user", content: "second prompt" } },
-            {
-                type: "assistant",
-                timestamp,
-                message: {
-                    id: "second",
-                    role: "assistant",
-                    content: [{ type: "text", text: "latest answer" }],
-                    stop_reason: outcome === "idle" ? "end_turn" : null,
+                { type: "user", timestamp, message: { role: "user", content: "second prompt" } },
+                {
+                    type: "assistant",
+                    timestamp,
+                    message: {
+                        id: "second",
+                        role: "assistant",
+                        content: [{ type: "text", text: "latest answer" }],
+                        stop_reason: outcome === "idle" ? "end_turn" : null,
+                    },
                 },
-            },
-        ];
-        writeFileSync(file, records.map((record) => SafeJSON.stringify(record, { strict: true })).join("\n") + "\n");
-        if (outcome === "stalled") {
-            utimesSync(file, new Date(timestamp), new Date(timestamp));
-        }
+            ];
+            writeFileSync(
+                file,
+                records.map((record) => SafeJSON.stringify(record, { strict: true })).join("\n") + "\n"
+            );
+            if (outcome === "stalled") {
+                utimesSync(file, new Date(timestamp), new Date(timestamp));
+            }
 
-        const printed: string[] = [];
-        spyOn(out, "println").mockImplementation((text) => {
-            printed.push(String(text));
-        });
-        try {
-            await waitCommand("claude", file, {
-                last: "2",
-                quiet,
-                stream,
-                timeout: "0.02",
-                stallTimeout: outcome === "stalled" ? "0.001" : "0",
+            const printed: string[] = [];
+            spyOn(out, "println").mockImplementation((text) => {
+                printed.push(String(text));
             });
-            expect(process.exitCode).toBe(code);
-            expect(printed.join("\n")).toBe("first answer\n\n---\n\nlatest answer");
-        } finally {
-            rmSync(dir, { recursive: true, force: true });
+            try {
+                await waitCommand("claude", file, {
+                    last: "2",
+                    quiet,
+                    stream,
+                    timeout: "0.02",
+                    stallTimeout: outcome === "stalled" ? "0.001" : "0",
+                });
+                expect(process.exitCode).toBe(code);
+                expect(printed.join("\n")).toBe(outcome === "idle" ? "first answer\n\n---\n\nlatest answer" : "");
+            } finally {
+                rmSync(dir, { recursive: true, force: true });
+            }
         }
-    });
+    );
 });
 
 describe("parseSeconds", () => {
@@ -649,6 +656,9 @@ describe("message --wait --stream on a reply that is already being written", () 
             return true;
         });
         const finish = setTimeout(() => appendFileSync(file, assistant(300, "second part", "end_turn")), 100);
+        // Bun 1.3 can lose later fs.watch events after another watcher closed. Keep the real watch and bound its fallback.
+        const watch = turnWait.watchTurn;
+        spyOn(turnWait, "watchTurn").mockImplementation((options) => watch({ ...options, pollMs: 100 }));
 
         try {
             await waitCommand("claude", file, { stream: true, sentAt, timeout: "10", stallTimeout: "0" });
@@ -706,6 +716,32 @@ describe("surface titles share the wait and message resolver", () => {
             await expect(resolveSessionTranscript(alias, "fixture-surface", false)).rejects.toThrow("matches 2");
         }
     );
+
+    it.each([false, true])("a native title wins over live substrings when worker=%s", async (worker) => {
+        const native = {
+            provider: "claude" as const,
+            source: "native" as const,
+            sessionId: "native-id",
+            filePath: "/fixture/native.jsonl",
+        };
+        spyOn(transcriptResolver, "resolveTranscript").mockImplementation(async (query) => {
+            if (query === native.filePath) {
+                return native;
+            }
+
+            if (worker) {
+                return { ...native, source: "worker", sessionId: "worker-id" };
+            }
+
+            throw new Error("no id match");
+        });
+        spyOn(nativeTitles, "findSessionsByTitle").mockReturnValue([
+            { sessionId: native.sessionId, title: "fixture", locator: native.filePath, mtime: 1 },
+        ]);
+        const live = spyOn(liveSessions, "liveAgentSurfacesNow").mockResolvedValue([]);
+        expect(await resolveSessionTranscript("claude", "fixture", false)).toEqual(native);
+        expect(live).not.toHaveBeenCalled();
+    });
 
     it("message --dry-run resolves its target without reaching delivery", async () => {
         const send = spyOn(delivery, "deliverMessage").mockImplementation(async () => {

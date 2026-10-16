@@ -138,6 +138,7 @@ function pickUnique(hits: ReplayCatalogSession[]): ReplayCatalogSession | undefi
     return undefined;
 }
 
+/** Select the best Grok session for the tab title and directory using the shared evidence ranking. */
 export function matchGrokSession(
     title: string,
     cwd: string | undefined,
@@ -146,6 +147,7 @@ export function matchGrokSession(
     return matchAgentSession("grok", title, cwd, sessions)?.session;
 }
 
+/** Select the best Claude session for the tab title and directory using the shared evidence ranking. */
 export function matchClaudeSession(
     title: string,
     cwd: string | undefined,
@@ -154,6 +156,7 @@ export function matchClaudeSession(
     return matchAgentSession("claude", title, cwd, sessions)?.session;
 }
 
+/** Select the best Codex session for the tab title and directory using the shared evidence ranking. */
 export function matchCodexSession(
     title: string,
     cwd: string | undefined,
@@ -265,6 +268,7 @@ function pinnedSessionForSurface(
     return { kind, sessionId, cwd: surface.cwd ?? "", title: surface.title };
 }
 
+/** Resolve a replay command from the surface journal, typed resume or catalog and report its evidence and drift. */
 export function replayCommandForSurface(
     surface: Pick<TerminalSurface, "title" | "cwd" | "command" | "command_source">,
     catalog: ReplayCatalog,
@@ -356,12 +360,6 @@ export function replayCommandForSurface(
         return { command: derived.command, drift: [...derived.drift, ...note], evidence };
     }
 
-    if (hit.kind === "grok" || hit.kind === "codex") {
-        const derived = deriveReplayCommand({ original: hit.kind, sessionId: hit.sessionId });
-
-        return { command: derived.command, drift: [...derived.drift, ...note], evidence };
-    }
-
     return {
         command: inferredResumeCommand(hit),
         drift: [`inferred ${hit.kind} resume ${hit.sessionId} from ${source}`],
@@ -369,6 +367,7 @@ export function replayCommandForSurface(
     };
 }
 
+/** Fill unresolved terminal replay commands while preserving explicit resumes and exact shell-journal commands. */
 export function withInferredReplayCommands(profile: Profile, catalog: ReplayCatalog): Profile {
     return mapTerminalSurfaces(profile, (surface) => {
         if (
@@ -616,6 +615,7 @@ export function loadCodexCatalog(
     return loadNativeCatalog({ kind: "codex", cwds, roots, cached: options.cached });
 }
 
+/** Read Claude replay candidates and account pins; cached mode avoids native history discovery and refresh. */
 export async function loadClaudeCatalog(options: { cached?: boolean } = {}): Promise<ReplayCatalogSession[]> {
     const pins = await loadPins({ readOnly: true });
     const out: ReplayCatalogSession[] = [];
@@ -691,6 +691,7 @@ export async function loadReplayCatalog(profile: Profile, options: { cached?: bo
     return { sessions: [...grok, ...claude, ...codex] };
 }
 
+/** Resolve replay targets, correct stale native bindings, deduplicate sessions and remove model pins before restore. */
 export async function prepareProfileForRestore(profile: Profile, options: { cached?: boolean } = {}): Promise<Profile> {
     const catalog = await loadReplayCatalog(profile, options);
     const corrected = correctNativeResumeBindings(profile, catalog);

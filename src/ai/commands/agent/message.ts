@@ -37,6 +37,7 @@ async function readText(parts: string[]): Promise<string> {
 
 const PRIORITIES: readonly PeerPriority[] = ["now", "next", "later"];
 
+/** Resolve and deliver text to a running session, or report the target without sending in dry-run mode. */
 export async function messageCommand(alias: TurnProvider, query: string, parts: string[], flags: MessageFlags) {
     const text = await readText(parts);
 
@@ -147,6 +148,7 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
     await out.flush();
 }
 
+/** Register provider-specific message delivery flags, including optional waiting for the reply. */
 export function registerAgentMessageCommand(program: Command, alias: TurnProvider): Command {
     return program
         .command("message <session> [text...]")

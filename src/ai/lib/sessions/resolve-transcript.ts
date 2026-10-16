@@ -96,6 +96,10 @@ export async function resolveSessionTranscript(
     }
 
     if (!resolved || resolved.source === "worker") {
+        resolved = (await resolveByTitle(alias, query, first)) ?? resolved;
+    }
+
+    if (!resolved || resolved.source === "worker") {
         const live = await liveAgentSurfacesNow().catch((error: unknown) => {
             log.debug({ error }, "cmux unavailable during session resolution");
             return [];
@@ -111,12 +115,6 @@ export async function resolveSessionTranscript(
         if (hit) {
             resolved = await resolveTranscript(hit.transcriptPath ?? hit.sessionId, {}, alias);
         }
-    }
-
-    // An 8+ character query also matches worker NAMES by substring, so a title can lose to a worker
-    // that merely contains it. A native session with that title wins.
-    if (!resolved || resolved.source === "worker") {
-        resolved = (await resolveByTitle(alias, query, first)) ?? resolved;
     }
 
     if (!resolved) {

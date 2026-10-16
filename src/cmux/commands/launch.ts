@@ -34,6 +34,7 @@ function blank(value: string | undefined): string | undefined {
     return trimmed ? trimmed : undefined;
 }
 
+/** Register quoted Claude launch generation and optional execution in a new cmux surface. */
 export function registerLaunchCommand(program: Command): void {
     program
         .command("launch")

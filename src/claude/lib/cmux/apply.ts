@@ -28,6 +28,7 @@ export interface ApplyOutcome {
     skipped: string[];
 }
 
+/** Materialize planned workspaces and replay their terminals while collecting per-pane restore failures. */
 export async function applyRestorePlan(
     plan: RestorePlan,
     opts: ApplyOptions,

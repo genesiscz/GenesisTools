@@ -86,6 +86,7 @@ export function capturedCommandsByPanelId(
     return aliases;
 }
 
+/** Collect shared process, journal and autosave evidence once for a capture; command collection can be disabled. */
 export async function buildCommandCaptureContext(options: { commands?: boolean } = {}): Promise<CommandCaptureContext> {
     const [tty, surfaceSessions] =
         options.commands === false
@@ -224,6 +225,7 @@ interface CollectedWorkspace extends WorkspaceEntry {
     window_id: string;
 }
 
+/** Capture the selected live layout and requested terminal history, screens and directories into a restorable profile. */
 export async function captureProfile(options: SnapshotOptions, progress: SnapshotProgress = {}): Promise<Profile> {
     const allWindows = await windowList();
     const allWorkspaces = await collectAllWorkspaces(allWindows);
@@ -322,6 +324,7 @@ interface IdentifyContext {
     callerSurfaceId?: string;
 }
 
+/** Read focused-workspace and caller-surface UUIDs; return no context when cmux identification is unavailable. */
 export async function getIdentifyContext(): Promise<IdentifyContext> {
     try {
         const identify = await runCmuxJSON<{
@@ -485,6 +488,7 @@ async function captureSurface(
     return surface.type === "terminal" && entry.id ? { ...surface, surface_id: entry.id } : surface;
 }
 
+/** Merge one terminal's live capture with UUID-keyed journals and cached evidence to select its replay command. */
 export function buildTerminalSurfaceSnapshot(input: {
     entry: SurfaceListEntry;
     captureCwd: boolean;

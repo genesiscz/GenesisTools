@@ -18,10 +18,12 @@ export interface FoundAgent extends AgentProcess {
     tty: string | null;
 }
 
+/** Accept only supported coding-agent harness names at untrusted input boundaries. */
 export function harnessNamed(value: unknown): Harness | null {
     return HARNESSES.find((harness) => harness === value) ?? null;
 }
 
+/** Identify a coding agent from its executable or Node CLI script, including versioned binary names. */
 export function agentNamed(command: string): Harness | null {
     const [program = "", script = ""] = command.trim().split(/\s+/, 2);
 

@@ -84,6 +84,7 @@ afterEach(() => {
 
 test("--dry-run never reaches the kill", async () => {
     await runRescue("rescue", { dryRun: true }, explodingDeps);
+    expect(agentReplay.prepareProfileForRestore).toHaveBeenCalledWith(expect.anything(), { cached: true });
 
     expect(killed).toEqual([]);
 });

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
 import type { AutosaveWorkspace } from "@app/cmux/lib/autosave";
 import { flattenLayout } from "@app/cmux/lib/autosave";
 import { buildOfflinePanes, buildOfflineProfile } from "@app/cmux/lib/offline-snapshot";
+import { planInPlaceRestore } from "@app/cmux/lib/restore-in-place";
+import { PROFILE_VERSION } from "@app/cmux/lib/types";
 
 const FRAME = { x: 0, y: 0, width: 1000, height: 800 };
 
@@ -72,6 +75,82 @@ describe("buildOfflinePanes", () => {
             command: expect.stringContaining("11111111-aaaa-bbbb-cccc-222222222222"),
         });
     });
+
+    test.each(["journal", "binding", "uncorroborated", "mismatched"])(
+        "offline native resume keeps trustworthy evidence through preparation and planning: %s",
+        async (evidence) => {
+            const ws = workspaceFixture();
+            const sessionId = "11111111-aaaa-bbbb-cccc-222222222222";
+            ws.panels[0].terminal = {
+                agent: { kind: "codex", sessionId },
+                ...(evidence === "binding"
+                    ? { resumeBinding: { kind: "codex" as const, checkpointId: sessionId } }
+                    : {}),
+            };
+            const panes = buildOfflinePanes(ws, FRAME, {
+                ttyCommands: new Map(),
+                surfaceSessions: new Map(
+                    evidence === "journal" || evidence === "mismatched"
+                        ? [
+                              [
+                                  "a",
+                                  {
+                                      provider: "codex",
+                                      sessionId: evidence === "journal" ? sessionId : "other-session",
+                                  },
+                              ],
+                          ]
+                        : []
+                ),
+            });
+            const profile = await prepareProfileForRestore(
+                {
+                    version: PROFILE_VERSION,
+                    name: "offline",
+                    scope: "all",
+                    captured_at: "2026-10-15T00:00:00Z",
+                    cmux_version: "test",
+                    windows: [
+                        {
+                            ref: "window:1",
+                            title: "test",
+                            container_frame: FRAME,
+                            workspaces: [{ ref: "workspace:1", title: "test", selected: true, panes }],
+                        },
+                    ],
+                },
+                { cached: true }
+            );
+            const steps = planInPlaceRestore(profile, {
+                tabs: new Map([
+                    [
+                        "a",
+                        {
+                            id: "a",
+                            workspaceId: "ws-id",
+                            tty: "ttys001",
+                            title: "test",
+                            ref: "surface:5",
+                            workspaceRef: "workspace:1",
+                            windowRef: "window:1",
+                        },
+                    ],
+                ]),
+                idleTtys: new Set(["ttys001"]),
+                ttyAgents: new Map(),
+                runningSessions: new Map(),
+                screens: new Map([["a", "➜  project "]]),
+            });
+            const step = steps[0];
+            if (evidence === "journal" || evidence === "binding") {
+                expect(step.surface.resume_evidence).toBe("journal");
+                expect(step.skip).toBeUndefined();
+            } else {
+                expect(step.surface.resume_evidence).toBeUndefined();
+                expect(step.skip).toContain("no evidence recorded");
+            }
+        }
+    );
 
     test("restores native session metadata despite an uninformative title", () => {
         const ws = workspaceFixture();

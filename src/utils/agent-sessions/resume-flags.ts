@@ -1,5 +1,6 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
+import { lastSimpleCommandOnLine } from "@genesiscz/utils/shell/scan";
 
 /** How a flag takes its value: none, a required next word (or `=value`), or only an `=value`. */
 type Arity = "none" | "value" | "optional";
@@ -92,13 +93,13 @@ const AGENT_FLAGS: Record<AccountProviderAlias, Record<string, Arity>> = {
     },
 };
 
-const SEPARATORS = new Set(["&&", "||", ";", "|", "&"]);
-
 export interface CarriedFlags {
     /** Argv words to append to the resume, in their typed order. */
     kept: string[];
     /** Flags the agent does not list, or a resume must not carry, as typed. */
     dropped: string[];
+    /** Recognized flags omitted because their shell expansions cannot be recovered as concrete argv. */
+    unresolved: string[];
 }
 
 /**
@@ -108,15 +109,15 @@ export interface CarriedFlags {
  * simple command counts, so `cd x && ffff --chrome` carries `--chrome`.
  */
 export function carryAgentFlags(kind: AccountProviderAlias, command: string): CarriedFlags {
-    const words = shellWords(command.split("\n")[0] ?? "").map((word) => word.value);
-    const lastSeparator = words.findLastIndex((word) => SEPARATORS.has(word));
-    const args = words.slice(lastSeparator + 1).slice(1);
+    const args = shellWords(lastSimpleCommandOnLine(command)).slice(1);
     const known = AGENT_FLAGS[kind];
     const kept: string[] = [];
     const dropped: string[] = [];
+    const unresolved: string[] = [];
 
     for (let index = 0; index < args.length; index++) {
-        const word = args[index] ?? "";
+        const argument = args[index];
+        const word = argument?.value ?? "";
 
         if (word === "--" || !word.startsWith("-")) {
             continue;
@@ -125,20 +126,29 @@ export function carryAgentFlags(kind: AccountProviderAlias, command: string): Ca
         const [name, inline] = word.startsWith("--") && word.includes("=") ? word.split(/=(.*)/s) : [word, undefined];
         const arity = known[name ?? ""];
         const next = args[index + 1];
-        const takesNext = inline === undefined && arity === "value" && next !== undefined && next !== "--";
+        const takesNext = inline === undefined && arity === "value" && next !== undefined && next.value !== "--";
 
         if (arity === undefined) {
             dropped.push(word);
             continue;
         }
 
+        if (argument?.dynamic || (takesNext && next.dynamic)) {
+            unresolved.push(takesNext ? `${word} ${next.value}` : word);
+            if (takesNext) {
+                index++;
+            }
+
+            continue;
+        }
+
         kept.push(word);
 
         if (takesNext) {
-            kept.push(next);
+            kept.push(next.value);
             index++;
         }
     }
 
-    return { kept, dropped };
+    return { kept, dropped, unresolved };
 }

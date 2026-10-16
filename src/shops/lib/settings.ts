@@ -294,6 +294,7 @@ function isFileNotFound(err: unknown): boolean {
 
 let _singleton: SettingsRepository | null = null;
 
+/** Return the shared shops settings repository rooted in the configured GenesisTools data directory. */
 export function getSettingsRepository(): SettingsRepository {
     if (!_singleton) {
         _singleton = new SettingsRepository(genesisToolsDir("shops", "settings"));

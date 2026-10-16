@@ -186,6 +186,7 @@ async function loadProfile(source: RestoreRestartSource, profileName?: string): 
     }
 }
 
+/** Register source selection, evidence-based session replay and optional in-place crash recovery. */
 export function registerRestoreAfterRestartCommand(program: Command): void {
     program
         .command("restore-after-restart")

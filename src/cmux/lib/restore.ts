@@ -61,6 +61,7 @@ export interface RestoreOutcome {
     }>;
 }
 
+/** Flatten per-workspace restore failures into messages that retain the workspace and pane context. */
 export function restoreFailureMessages(outcome: RestoreOutcome): string[] {
     return outcome.workspaces.flatMap((workspace) =>
         workspace.failures.map((failure) => `${workspace.title} / ${failure.pane}: ${failure.message}`)

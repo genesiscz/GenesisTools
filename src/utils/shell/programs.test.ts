@@ -10,6 +10,15 @@ describe("isShellProgram", () => {
         expect(isShellProgram("/usr/bin/login -pf me", { orLogin: true })).toBe(true);
     });
 
+    test("Windows and mixed path separators preserve shell and login detection", () => {
+        expect(programName(String.raw`C:\bin\bash -l`)).toBe("bash");
+        expect(isShellProgram(String.raw`C:\bin\bash -l`)).toBe(true);
+        expect(isShellProgram(String.raw`C:\bin/zsh -l`)).toBe(true);
+        expect(isShellProgram(String.raw`C:\bin\login -pf alice`)).toBe(false);
+        expect(isShellProgram(String.raw`C:\bin\login -pf alice`, { orLogin: true })).toBe(true);
+        expect(isShellProgram(String.raw`C:\bin\codex resume fixture`)).toBe(false);
+    });
+
     test("an agent or a command is not a shell, even when it names one in its arguments", () => {
         expect(isShellProgram("claude --resume x")).toBe(false);
         expect(isShellProgram("tmux new -s work zsh")).toBe(false);
