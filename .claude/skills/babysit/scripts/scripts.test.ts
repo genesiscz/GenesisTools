@@ -90,6 +90,14 @@ describe("read-only chains", () => {
     });
 });
 
+describe("negated tests", () => {
+    test("a test ! guard before a read", () => {
+        expect(readOnlyChain(entry, "test ! -f /x/AGENTS.md || cat /x/AGENTS.md")).toBe(true);
+        expect(readOnlyChain(entry, "! rm x")).toBe(false);
+        expect(readOnlyChain(entry, "test ! -f x || rm x")).toBe(false);
+    });
+});
+
 describe("fixer checks", () => {
     test("a verify command under timeout or logged to the scratch folder is the same command", () => {
         const configured = entry.verify[0];
@@ -376,13 +384,13 @@ test("monitor drains large stderr, preserves its label, and returns failures", a
             [
                 process.execPath,
                 "-e",
-                'await Bun.write(Bun.stderr, "diagnostic ".repeat(100000)); console.log("√ done"); process.exit(7)',
+                'await Bun.write(Bun.stderr, "diagnostic ".repeat(100000)); console.log("✔ done"); process.exit(7)',
             ],
             2000
         );
         expect(code).toBe(7);
         expect(output.some((line) => line.startsWith("[codex:fixture] stderr: diagnostic"))).toBe(true);
-        expect(output.some((line) => line.includes("√ done"))).toBe(true);
+        expect(output.some((line) => line.includes("✔ done"))).toBe(true);
         const expired = await pump(worker, [process.execPath, "-e", "setInterval(() => {}, 1000)"], 50);
         expect(expired).toBe(124);
     } finally {

@@ -239,7 +239,9 @@ export function readOnlyChain(entry: RunEntry, command: string): boolean {
     }
 
     return segments.every((segment) => {
-        const parsed = strictShellWords(segment);
+        // `test ! -f X || cat X` opens every worker's first command; the negation reads nothing, but the strict
+        // parser refuses a bare `!`, so it is dropped before parsing (only right after `test`).
+        const parsed = strictShellWords(segment.replace(/^test ! /, "test "));
 
         if (!parsed || parsed.length === 0) {
             return false;
