@@ -140,7 +140,8 @@ const READERS: Record<string, (args: string[]) => boolean> = {
             (arg) =>
                 arg.startsWith("--output") ||
                 arg === "--ext-diff" ||
-                arg === "-O" ||
+                // `-O<cmd>` attached runs the command as git grep's pager (a #536 reviewer's probe, 2026-10-16).
+                arg.startsWith("-O") ||
                 arg.startsWith("--open-files-in-pager")
         ),
     gh: (args) =>
