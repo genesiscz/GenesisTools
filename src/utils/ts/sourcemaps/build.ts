@@ -161,6 +161,23 @@ async function prepareWorktree(options: { repo: string; worktree: string; commit
     await git(options.worktree, ["checkout", "--detach", options.commit]);
 }
 
+async function stopBuild(proc: Subprocess): Promise<void> {
+    const signalGroup = (signal: NodeJS.Signals): void => {
+        try {
+            process.kill(-proc.pid, signal);
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
+                log.warn({ error, pid: proc.pid, signal }, "could not signal build process group");
+                proc.kill(signal);
+            }
+        }
+    };
+    signalGroup("SIGTERM");
+    // The shell may exit first while a child still holds the output pipes open.
+    await Bun.sleep(250);
+    signalGroup("SIGKILL");
+}
+
 /** The build itself; the caller holds the worktree lock. */
 async function buildLocked(input: {
     options: BuildAtCommitOptions;
@@ -193,12 +210,15 @@ async function buildLocked(input: {
     log.info({ commit, worktree, buildCmd: options.buildCmd }, "building");
     const proc = Bun.spawn(["sh", "-c", options.buildCmd], {
         cwd: worktree,
+        detached: true,
         env: { ...process.env, ...options.env },
         stdout: "pipe",
         stderr: "pipe",
     });
     held.processes.add(proc);
-    const abort = (): void => proc.kill();
+    const abort = (): void => {
+        void stopBuild(proc);
+    };
     options.signal?.addEventListener("abort", abort, { once: true });
     const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
         const decoder = new TextDecoder();
@@ -311,9 +331,7 @@ export async function releaseBuildWorktrees(options: { stop?: boolean } = {}): P
     held.stopping = options.stop === true;
     try {
         if (options.stop) {
-            for (const proc of held.processes) {
-                proc.kill();
-            }
+            await Promise.all([...held.processes].map(stopBuild));
         }
 
         await Promise.all(held.builds);

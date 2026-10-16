@@ -481,14 +481,16 @@ describe("buildAtCommit", () => {
         fixtureRepo(join(root, "repo"));
         const cache = new SourcemapCache("app", join(root, "cache"));
         const { promise: started, resolve: onStarted } = Promise.withResolvers<void>();
+        let childPid = 0;
         const building = buildAtCommit({
             cache,
             repo: join(root, "repo"),
             commit: "HEAD",
-            buildCmd: "echo started && exec sleep 30",
+            buildCmd: `sh -c 'trap "" TERM; echo child:$$; exec sleep 30'; echo finished`,
             outputDir: "out",
             onLine: (line) => {
-                if (line === "started") {
+                if (line.startsWith("child:")) {
+                    childPid = Number(line.slice("child:".length));
                     onStarted();
                 }
             },
@@ -501,6 +503,8 @@ describe("buildAtCommit", () => {
         expect((await removeBuildWorktree({ cache, worktree: managedWorktree(cache) })).outcome).toBe("busy");
 
         const released = await releaseBuildWorktrees({ stop: true });
+        expect(childPid).toBeGreaterThan(0);
+        expect(() => process.kill(childPid, 0)).toThrow();
         expect(String(await failed)).toContain("build command exited");
         expect(released.map((removal) => removal.outcome)).toEqual(["removed"]);
         expect(existsSync(managedWorktree(cache))).toBe(false);

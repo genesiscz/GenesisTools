@@ -1015,11 +1015,13 @@ export class ComputerUse {
         x,
         y,
         coordinateSpace,
+        allowOutside = false,
     }: {
         record: AppRecord;
         x: number;
         y: number;
         coordinateSpace: "image" | "screen";
+        allowOutside?: boolean;
     }) {
         const { window, screenshot } = record.snapshot;
         if (coordinateSpace === "image") {
@@ -1035,7 +1037,10 @@ export class ComputerUse {
             x = window.x + (x * window.width) / screenshot.width;
             y = window.y + (y * window.height) / screenshot.height;
         }
-        if (x < window.x || y < window.y || x >= window.x + window.width || y >= window.y + window.height) {
+        if (
+            !allowOutside &&
+            (x < window.x || y < window.y || x >= window.x + window.width || y >= window.y + window.height)
+        ) {
             throw new ComputerUseError("INVALID_POINT", "Point is outside the observed window.");
         }
         return `${x},${y}`;
@@ -1321,6 +1326,7 @@ export class ComputerUse {
                         x: options.to_x,
                         y: options.to_y,
                         coordinateSpace: options.coordinate_space,
+                        allowOutside: options.allow_outside,
                     }),
                     "--duration",
                     String(options.duration),

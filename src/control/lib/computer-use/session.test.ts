@@ -1238,6 +1238,37 @@ describe("independent Computer Use session", () => {
         );
         expect(calls).toHaveLength(3);
     });
+    test("allow_outside permits only the drag destination to leave the observed window", async () => {
+        const { computer, calls } = fixture();
+        const state = await computer.get_app_state({ app: "Fixture" });
+        const drag = {
+            app: "Fixture",
+            revision: state.revision,
+            coordinate_space: "screen" as const,
+            from_x: -400,
+            from_y: 150,
+            to_x: 100,
+            to_y: 150,
+        };
+        await expect(computer.drag(drag)).rejects.toThrow("outside the observed window");
+        await expect(computer.drag({ ...drag, allow_outside: true, from_x: 100 })).rejects.toThrow(
+            "outside the observed window"
+        );
+        await expect(
+            computer.drag({ ...drag, allow_outside: true, coordinate_space: "image", from_x: 200, to_x: 801 })
+        ).rejects.toThrow("outside the source screenshot");
+        await expect(computer.drag({ ...drag, allow_outside: true, to_x: Number.POSITIVE_INFINITY })).rejects.toThrow();
+        expect(calls).toHaveLength(1);
+        expect((await computer.drag({ ...drag, allow_outside: true })).ok).toBe(true);
+        expect(calls).toHaveLength(2);
+        expect(calls[1]).toContain("--allow-outside");
+        expect(calls[1].slice(calls[1].indexOf("--coords"), calls[1].indexOf("--coords") + 4)).toEqual([
+            "--coords",
+            "-400,150",
+            "--to",
+            "100,150",
+        ]);
+    });
     test("literal values, context selection and normalized secondary actions keep native argv separate", async () => {
         const { computer, calls } = fixture();
         let state = await computer.get_app_state({ app: "Fixture", image: false });
