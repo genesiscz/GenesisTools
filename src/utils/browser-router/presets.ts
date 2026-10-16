@@ -206,7 +206,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             description:
                 "https://<link host>/claude/find/<session>/decision/<n> scrolls that live Claude session to where " +
                 "DECISION <n> was first asked; /claude/find/<session>?q=<text>&at=oldest|newest finds any text " +
-                "(asks first unless minted here with tools claude cmux find --link). " +
+                `(asks first unless minted here with ${toolCommand("claude cmux find")} --link). ` +
                 "It opens the transcript view (ctrl+o) and searches there, then raises the tab.",
             enabledIf: ["claude:installed", "cmux:installed"],
             needsLinkHost: true,
