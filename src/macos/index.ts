@@ -87,6 +87,8 @@ const REGISTRARS: Record<string, () => Promise<(program: Command) => void>> = {
     swap: async () => (await import("@app/macos/commands/swap/index")).registerSwapCommand,
     "voice-memos": async () => (await import("@app/macos/commands/voice-memos/index")).registerVoiceMemosCommand,
     eslogger: async () => (await import("@app/macos/commands/eslogger/index")).registerEsloggerCommand,
+    "clicky-library": async () =>
+        (await import("@app/macos/commands/clicky-library/index")).registerClickyLibraryCommand,
 };
 
 const program = new Command();

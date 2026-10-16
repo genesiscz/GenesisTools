@@ -22,6 +22,14 @@ struct ClickySoundLibraryView: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
+                if !library.hasGenesisToolsPack {
+                    Button(library.downloading ? "Downloading…" : "Download sound pack") {
+                        Task { await library.downloadPack() }
+                    }
+                    .accessibilityIdentifier("clicky.library.download")
+                    .disabled(library.downloading)
+                    .instantTooltip("Download the GenesisTools sounds (about 10 MB) and add them as a library")
+                }
                 Button("Add folder…", action: library.addFolder)
                     .accessibilityIdentifier("clicky.library.add")
                     .disabled(library.choosingFolder)
@@ -67,7 +75,7 @@ struct ClickySoundLibraryView: View {
                     }
                 }
             } else {
-                Label("Choose an audio folder with a registry.json file. Nothing is downloaded automatically.", systemImage: "folder.badge.plus")
+                Label("Download the GenesisTools sound pack, or choose an audio folder with a registry.json file. Nothing is downloaded until you ask.", systemImage: "folder.badge.plus")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).padding(.vertical, 8)
             }

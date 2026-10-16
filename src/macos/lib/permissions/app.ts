@@ -34,6 +34,7 @@ import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/proce
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import * as p from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import {
     type ClickyLibraryPin,
     ClickyLibraryUnavailableError,
@@ -809,6 +810,46 @@ export async function signByHashes(options: {
         `codesign failed with every certificate named "${options.name}":\n${failures.join("\n")}\n` +
             "Remove the expired one in Keychain Access, or set GENESIS_TOOLS_CODESIGN_IDENTITY to the SHA-1 to use."
     );
+}
+
+/** The folder name doubles as the library's name in Clicky's Sound libraries list. */
+export const CLICKY_DOWNLOADED_FOLDER = "GenesisTools sounds";
+
+/**
+ * The "Download sound pack" button in Clicky's settings (`tools macos clicky-library download`): the same pinned
+ * release asset the build bundles, downloaded once, verified and unpacked OUTSIDE the signed bundle (writing into it
+ * would break the signature), so Clicky can add it as a library folder. A second call reuses the unpacked folder.
+ */
+export async function downloadClickyLibrary({
+    pinPath = join(APP_SOURCE_DIR, CLICKY_LIBRARY_PIN),
+    root = genesisToolsDir("app", "clicky-library"),
+    ensure = ensureClickyLibrary,
+    unpack = unpackClickyLibrary,
+}: {
+    pinPath?: string;
+    root?: string;
+    ensure?: typeof ensureClickyLibrary;
+    unpack?: typeof unpackClickyLibrary;
+} = {}): Promise<{ path: string; reused: boolean }> {
+    const pin = SafeJSON.parse(readFileSync(pinPath, "utf8"), { strict: true }) as ClickyLibraryPin;
+    const out = join(root, pin.sha256.slice(0, 16), CLICKY_DOWNLOADED_FOLDER);
+
+    if (existsSync(join(out, "registry.json"))) {
+        return { path: out, reused: true };
+    }
+
+    const source = await ensure(pin);
+    const actual = await unpack(source, out);
+
+    if (actual.sets !== pin.sets || actual.samples !== pin.samples) {
+        rmSync(out, { recursive: true, force: true });
+        throw new Error(
+            `Clicky library count mismatch: unpacked ${actual.sets} sets and ${actual.samples} samples; the pin says ${pin.sets} and ${pin.samples}.`
+        );
+    }
+
+    logger.info({ out, sets: actual.sets, samples: actual.samples }, "permissions app: Clicky library downloaded");
+    return { path: out, reused: false };
 }
 
 interface StageAndInstallOptions {

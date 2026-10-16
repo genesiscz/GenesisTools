@@ -8,6 +8,7 @@ import { ClickyLibraryUnavailableError, ensureClickyLibrary } from "../clicky-li
 import {
     assertFullXcodeToolchain,
     bundleClickyLibrary,
+    downloadClickyLibrary,
     pinnedRetiredBundles,
     readAppFaceProcesses,
     readRunningExecutableInodes,
@@ -58,6 +59,60 @@ describe("readAppFaceProcesses", () => {
             expect(readAppFaceProcesses().map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
         } finally {
             list.mockRestore();
+        }
+    });
+});
+
+describe("downloadClickyLibrary", () => {
+    it("unpacks the pinned pack outside the bundle once, then reuses the folder", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-clicky-download-"));
+        try {
+            const pinPath = join(root, "pin.json");
+            writeFileSync(
+                pinPath,
+                SafeJSON.stringify({ release: "fixture", sha256: "a".repeat(64), sets: 1, samples: 2 })
+            );
+            let downloads = 0;
+            const unpack = async (_source: string, out: string) => {
+                mkdirSync(out, { recursive: true });
+                writeFileSync(join(out, "registry.json"), "{}");
+                return { sets: 1, samples: 2 };
+            };
+            const ensure = async () => {
+                downloads++;
+                return "packed";
+            };
+            const first = await downloadClickyLibrary({ pinPath, root, ensure, unpack });
+            const second = await downloadClickyLibrary({ pinPath, root, ensure, unpack });
+            expect(first).toEqual({ path: join(root, "aaaaaaaaaaaaaaaa", "GenesisTools sounds"), reused: false });
+            expect(second).toEqual({ path: first.path, reused: true });
+            expect(downloads).toBe(1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("removes a pack whose counts do not match the pin", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-clicky-download-bad-"));
+        try {
+            const pinPath = join(root, "pin.json");
+            writeFileSync(
+                pinPath,
+                SafeJSON.stringify({ release: "fixture", sha256: "b".repeat(64), sets: 2, samples: 2 })
+            );
+            const result = downloadClickyLibrary({
+                pinPath,
+                root,
+                ensure: async () => "packed",
+                unpack: async (_source, out) => {
+                    mkdirSync(out, { recursive: true });
+                    return { sets: 1, samples: 2 };
+                },
+            });
+            await expect(result).rejects.toThrow("count mismatch");
+            expect(existsSync(join(root, "bbbbbbbbbbbbbbbb", "GenesisTools sounds"))).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 });

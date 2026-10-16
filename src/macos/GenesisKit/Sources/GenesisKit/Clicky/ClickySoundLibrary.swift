@@ -43,6 +43,7 @@ final class ClickySoundLibrary: ObservableObject {
     @Published private(set) var loading: ClickyPackReference?
     @Published private(set) var refreshing = false
     @Published private(set) var choosingFolder = false
+    @Published private(set) var downloading = false
     private var folderPanel: NSOpenPanel?
     @Published private(set) var error: String?
     @Published private(set) var active: ClickyActivePack?
@@ -88,6 +89,36 @@ final class ClickySoundLibrary: ObservableObject {
         }
         if bundled != nil {
             records.insert(ClickyLibraryRecord(id: Self.bundledID, displayName: "GenesisTools sounds", bookmark: Data()), at: 0)
+        }
+    }
+
+    /// The folder `tools macos clicky-library download` unpacks into (CLICKY_DOWNLOADED_FOLDER in permissions/app.ts);
+    /// its name is the library's name in the list.
+    static let downloadedFolderName = "GenesisTools sounds"
+
+    /// The GenesisTools pack is on the list: shipped in the bundle, or downloaded with the button.
+    var hasGenesisToolsPack: Bool {
+        records.contains { $0.id == Self.bundledID || $0.displayName == Self.downloadedFolderName }
+    }
+
+    /// A build no longer downloads the pack while Clicky is off on the Mac (2026-10-16), so the settings offer it here:
+    /// the CLI downloads, verifies and unpacks it outside the signed bundle, and the folder is added like any other.
+    func downloadPack() async {
+        guard !stopped, !downloading else { return }
+        downloading = true
+        defer { downloading = false }
+        do {
+            let bridge = ToolsBridge(binaryPath: ToolsBridge.resolveBinaryPath(configured: GenesisKit.host?.toolsBinaryPath))
+            let result = try await bridge.run(subcommand: "macos", args: ["clicky-library", "download", "--json"], timeoutSeconds: 300)
+            guard result.exitCode == 0 else {
+                let reason = result.stderr.split(separator: "\n").last.map(String.init) ?? "exit \(result.exitCode)"
+                throw ClickyPackError.invalid(reason)
+            }
+            struct Downloaded: Decodable { let path: String }
+            let downloaded = try JSONDecoder().decode(Downloaded.self, from: Data(result.stdout.utf8))
+            await register(URL(fileURLWithPath: downloaded.path, isDirectory: true))
+        } catch {
+            self.error = "Could not download the sound pack: \(error.localizedDescription)"
         }
     }
 
