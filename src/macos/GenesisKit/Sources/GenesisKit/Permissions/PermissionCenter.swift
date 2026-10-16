@@ -256,6 +256,10 @@ public final class PermissionCenter {
 
         let dialog = PermissionDialogModel(need: need, status: status, center: self)
         dialogs[need.kind] = dialog
+        GateAudit.write(gate: "privacy-permission", event: "prompted", [
+            "kind": need.kind.rawValue, "status": String(describing: status), "reason": need.reason,
+            "trigger": String(describing: need.trigger),
+        ])
         if let waiting = waitingElsewhere.removeValue(forKey: need.kind) {
             waiting.poll.cancel()
             waiting.needs.forEach(dialog.merge)
@@ -348,6 +352,10 @@ public final class PermissionCenter {
         presenter.close(open)
         let dialog = PermissionDialogModel(need: need, status: status, center: self)
         dialogs[need.kind] = dialog
+        GateAudit.write(gate: "privacy-permission", event: "prompted", [
+            "kind": need.kind.rawValue, "status": String(describing: status), "reason": need.reason,
+            "trigger": String(describing: need.trigger),
+        ])
         GenesisKit.log("permission \(need.kind.rawValue) still missing here after its dialog saw the grant; dialog shown again")
         presenter.present(dialog, takesFocus: need.trigger == .userAction)
         dialog.startWatching()
@@ -360,6 +368,7 @@ public final class PermissionCenter {
         dialogs[dialog.kind] = nil
         dialog.didClose()
         if dismissedByUser { dismissed.insert(dialog.kind) }
+        GateAudit.write(gate: "privacy-permission", event: dismissedByUser ? "not-now" : "granted", ["kind": dialog.kind.rawValue])
         lock?.release(dialog.kind)
         presenter.close(dialog)
         GenesisKit.log("permission \(dialog.kind.rawValue) dialog closed (\(dismissedByUser ? "not now" : "granted"))")

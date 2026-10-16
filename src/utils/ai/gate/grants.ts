@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
+import { appendGateAudit } from "@genesiscz/utils/audit/gates";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -205,6 +206,8 @@ export async function appendAudit(entry: AuditEntry): Promise<void> {
     const path = auditPath();
     mkdirSync(dirname(path), { recursive: true });
     await appendFile(path, `${SafeJSON.stringify(entry)}\n`, { mode: 0o600 });
+    // The shared trail of every gate (src/utils/audit/gates.ts) gets the same decision.
+    appendGateAudit({ gate: "ai-account", ...entry });
     // File-only: a client that runs `tools ai gate request` reads stderr for the deny reason, so
     // the audit must not land there. `-v` promotes it to the console, and the audit file has it all.
     log.debug(

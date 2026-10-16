@@ -661,6 +661,7 @@ private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: Vaul
             "onceOnly": shown.onceOnlyReason as Any,
         ]
     }
+    GateAudit.write(gate: "vault", event: event, entry)
     guard let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) else { return }
     let path = (VaultGrants.directory as NSString).appendingPathComponent("audit.jsonl")
     try? FileManager.default.createDirectory(atPath: VaultGrants.directory, withIntermediateDirectories: true)

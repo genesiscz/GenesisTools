@@ -544,8 +544,19 @@ private enum BrowserOutcome {
 private func performBrowserDecision(_ decision: RouteDecision, toastEnabled: Bool) async throws -> BrowserOutcome {
     if decision.kind == "run" {
         let argv = decision.argv ?? []
-        if decision.touchId && !requireBrowserTouchID() { return .denied }
-        if decision.needsApproval == true && !confirmBrowser(argv, open: decision.open) { return .denied }
+        if decision.touchId {
+            let ok = requireBrowserTouchID()
+            auditRoute(decision, gate: "touch-id", event: ok ? "allowed" : "denied")
+            if !ok { return .denied }
+        }
+        if decision.needsApproval == true {
+            auditRoute(decision, gate: "approval-card", event: "prompted")
+            let ok = confirmBrowser(argv, open: decision.open)
+            auditRoute(decision, gate: "approval-card", event: ok ? "allowed" : "denied")
+            if !ok { return .denied }
+        } else {
+            auditRoute(decision, gate: "no-approval", event: "allowed")
+        }
         let output = try await Task.detached(priority: .userInitiated) { try runBrowserArgv(argv) }.value
         if !toastEnabled {
             notifyBrowser(decision.notify?.isEmpty == false ? decision.notify! : (output.isEmpty ? "Done" : output))
@@ -559,6 +570,7 @@ private func performBrowserDecision(_ decision: RouteDecision, toastEnabled: Boo
         // The shared contract (src/utils/browser-router/route.ts): a `tool` action "is recorded and not
         // executed", and the CLI's perform() refuses it. The app keeps the same boundary.
         let message = "Tool routes are recorded, not run: " + (["tools", decision.tool ?? ""] + (decision.args ?? [])).joined(separator: " ")
+        auditRoute(decision, gate: "tool-route", event: "recorded")
         if !toastEnabled {
             notifyBrowser(message)
         }
@@ -568,6 +580,18 @@ private func performBrowserDecision(_ decision: RouteDecision, toastEnabled: Boo
     let arguments = decision.openArguments
     try await Task.detached(priority: .userInitiated) { try launchBrowserOpen(arguments) }.value
     return .ran
+}
+
+/// A link that runs a saved command is a gate (Touch ID, the Allow / Deny card, or a route set to run without asking):
+/// each decision goes to the shared gate audit with the link, the route and the command (GenesisKit `GateAudit`).
+private func auditRoute(_ decision: RouteDecision, gate: String, event: String) {
+    var fields: [String: Any] = ["check": gate, "link": decision.original, "url": decision.url, "via": decision.via]
+    fields["route"] = decision.routeIndex
+    fields["argv"] = decision.argv ?? (["tools", decision.tool ?? ""] + (decision.args ?? []))
+    fields["open"] = decision.open
+    fields["approval"] = decision.approval
+    fields["touchId"] = decision.touchId
+    GateAudit.write(gate: "link-command", event: event, fields)
 }
 
 private func requireBrowserTouchID() -> Bool {

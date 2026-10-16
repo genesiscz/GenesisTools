@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gatesAuditPath } from "@genesiscz/utils/audit/gates";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     appendAudit,
     auditPath,
@@ -156,5 +158,22 @@ describe("grants", () => {
         expect(statSync(grantsPath()).mode & 0o777).toBe(0o600);
         expect(statSync(auditPath()).mode & 0o777).toBe(0o600);
         expect(readFileSync(auditPath(), "utf8")).toContain('"event":"allowed"');
+    });
+
+    // Every gate goes to one trail (Martin, 2026-10-16: "I want all permission gates to be audited").
+    test("a decision also lands in the shared gate audit, private to the user", async () => {
+        await appendAudit({
+            at: "2026-09-23T00:00:00Z",
+            event: "denied",
+            client: identity,
+            account: "alice",
+            detail: "no",
+        });
+
+        const lines = readFileSync(gatesAuditPath(), "utf8").trim().split("\n");
+        const last = SafeJSON.parse(lines.at(-1) ?? "{}") as Record<string, unknown>;
+        expect(last).toMatchObject({ gate: "ai-account", event: "denied", account: "alice", detail: "no" });
+        expect(last.writer).toMatchObject({ pid: process.pid });
+        expect(statSync(gatesAuditPath()).mode & 0o777).toBe(0o600);
     });
 });

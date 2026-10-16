@@ -1,3 +1,4 @@
+import { appendGateAudit } from "@genesiscz/utils/audit/gates";
 import {
     type RouteDecision,
     RouteError,
@@ -107,6 +108,15 @@ export async function openMintedLink(
 export async function perform(decision: RouteDecision): Promise<void> {
     if (decision.kind === "run") {
         if (decision.needsApproval) {
+            appendGateAudit({
+                gate: "link-command",
+                event: "denied",
+                check: "approval-card",
+                detail: "asked outside the app: only GenesisTools.app shows the card",
+                link: decision.original,
+                route: decision.routeIndex,
+                argv: decision.argv,
+            });
             throw new Error(`route ${decision.routeIndex} asks before running ${decision.argv.join(" ")}`);
         }
 

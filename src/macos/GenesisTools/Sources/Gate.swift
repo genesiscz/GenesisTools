@@ -191,8 +191,29 @@ struct GateWindowContent {
 
 @MainActor private let gatePresenter = ApprovalPanelPresenter()
 
+/// What the shared gate audit (GenesisKit `GateAudit`) records for an AI-account request: who asked, how it runs, and
+/// which account and token kind. The token itself is never in it.
+private func gateAuditFields(_ params: GateApproveParams) -> [String: Any] {
+    let client = params.client
+    var fields: [String: Any] = ["name": client.name]
+    fields["pid"] = client.pid
+    fields["executable"] = client.executable
+    fields["script"] = client.script
+    fields["command"] = client.command
+    fields["cwd"] = client.cwd
+    fields["parents"] = client.ancestors?.map { ["pid": $0.pid, "command": $0.command] }
+    fields["injected"] = client.injected
+    fields["verified"] = client.verified
+    return ["client": fields, "provider": params.provider, "account": params.account.name,
+            "tokenKind": params.tokenKind ?? "token"]
+}
+
 func approveGate(_ params: GateApproveParams) {
     let content = GateWindowContent.build(params)
+    let audit = gateAuditFields(params)
+    func record(_ event: String, _ extra: [String: Any] = [:]) {
+        GateAudit.write(gate: "ai-account", event: event, audit.merging(extra) { _, new in new })
+    }
     let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
 
     DispatchQueue.main.async {
@@ -207,6 +228,7 @@ func approveGate(_ params: GateApproveParams) {
 
         // The NSAlert this replaces ran a modal loop on the main queue, so this timer never fired there.
         let deadline = DispatchWorkItem {
+            record("denied", ["detail": "no answer within \(Int(gateDeadlineSeconds))s"])
             gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: "no answer within \(Int(gateDeadlineSeconds))s")
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + gateDeadlineSeconds, execute: deadline)
@@ -214,6 +236,7 @@ func approveGate(_ params: GateApproveParams) {
         model.onDeny = {
             deadline.cancel()
             gatePresenter.close()
+            record("denied", ["detail": "denied in the approval window"])
             gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: "denied in the approval window")
         }
 
@@ -227,13 +250,18 @@ func approveGate(_ params: GateApproveParams) {
 
             authenticate(reason: reason) { method, failure in
                 guard let method else {
+                    record("denied", ["detail": failure])
                     gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: failure)
                 }
 
+                record("allowed", ["method": method, "rememberSeconds": remember])
                 gateEmit(decision: "allow", rememberSeconds: remember, method: method, reason: "")
             }
         }
 
+        record("prompted", ["shown": GateAudit.shown(title: content.title, purpose: content.purpose,
+                                                     facts: content.facts + content.details, warning: content.warning,
+                                                     onceOnly: content.rememberChoices.count > 1 ? nil : "only once")])
         gatePresenter.present(model)
     }
 }
