@@ -220,10 +220,18 @@ async function forwardStderrDroppingZleNoise(stream: ReadableStream<Uint8Array>)
  * so each signal is passed on, or claude would keep running after the app let it go.
  */
 async function runClaudeBinaryDirect(argv: string[], launchEnv: Record<string, string | undefined>): Promise<number> {
-    const proc = Bun.spawn({ cmd: argv, stdio: ["inherit", "inherit", "inherit"], env: launchEnv });
     const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
+    let proc: ReturnType<typeof Bun.spawn> | undefined;
+    let pendingSignal: NodeJS.Signals | undefined;
     const forward = (signal: NodeJS.Signals) => {
-        proc.kill(signal);
+        if (!proc) {
+            pendingSignal ??= signal;
+            return;
+        }
+
+        if (proc.exitCode === null) {
+            proc.kill(signal);
+        }
     };
 
     for (const signal of signals) {
@@ -231,6 +239,12 @@ async function runClaudeBinaryDirect(argv: string[], launchEnv: Record<string, s
     }
 
     try {
+        proc = Bun.spawn({ cmd: argv, stdio: ["inherit", "inherit", "inherit"], env: launchEnv });
+
+        if (pendingSignal && proc.exitCode === null) {
+            proc.kill(pendingSignal);
+        }
+
         return await proc.exited;
     } finally {
         for (const signal of signals) {

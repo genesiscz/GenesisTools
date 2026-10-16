@@ -644,6 +644,7 @@ final class HubModel: ObservableObject {
     private var transcriptGeneration = 0
     private var sessionsGeneration = 0
     private var didSettleLaunch = false
+    private var settlingLaunch = false
     var readSessions: (Int) async throws -> [HubSession] = { try await HubSource.sessions(hours: $0) }
     var readSessionCache: (Int) async -> [HubSession]? = { await HubSessionListCache.read(hours: $0) }
     var writeSessionCache: ([HubSession], Int) -> Void = { HubSessionListCache.write($0, hours: $1) }
@@ -705,7 +706,9 @@ final class HubModel: ObservableObject {
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
-            self?.commitLinkRequest = UUID()
+            if self?.settlingLaunch == false {
+                self?.commitLinkRequest = UUID()
+            }
             self?.scheduleNavRecord()
         }
     }
@@ -904,10 +907,7 @@ final class HubModel: ObservableObject {
                         guard let self, self.loadingWorktrees, self.worktrees.isEmpty else { return }
                         HubSWR.painted("worktrees.discover", "\(cached.count) worktrees")
                         self.worktrees = cached
-                        if self.selectedWorktree == nil,
-                           let busiest = cached.max(by: { self.sessionCount(for: $0) < self.sessionCount(for: $1) }) {
-                            self.selectWorktree(busiest)
-                        }
+                        self.selectDefaultWorktree(cached)
                     }
                 }
                 let found = WorktreeDiscovery.discover(sessions: sessions, extra: extra)
@@ -919,10 +919,8 @@ final class HubModel: ObservableObject {
                         withAnimation(SWR.animation) { self.worktrees = found }
                     }
                     self.loadingWorktrees = false
-                    if self.selectedWorktree == nil,
-                       let busiest = found.max(by: { self.sessionCount(for: $0) < self.sessionCount(for: $1) }) {
-                        self.selectWorktree(busiest)
-                    } else if let wanted = self.selectedWorktree, wanted != WorktreeCleanup.selectionID,
+                    self.selectDefaultWorktree(found)
+                    if let wanted = self.selectedWorktree, wanted != WorktreeCleanup.selectionID,
                               !found.contains(where: { $0.path == wanted }) {
                         // Selected while this walk ran (a commit link's checkout): it joins the list on its own.
                         self.addWorktreesIfMissing(wanted)
@@ -945,6 +943,16 @@ final class HubModel: ObservableObject {
 
     func sessionCount(for worktree: HubWorktree) -> Int {
         sessions(for: worktree).count
+    }
+
+    /// Discovery's default selection is initialization, not a later navigation by the reader.
+    func selectDefaultWorktree(_ rows: [HubWorktree]) {
+        guard selectedWorktree == nil,
+              let busiest = rows.max(by: { sessionCount(for: $0) < sessionCount(for: $1) }) else { return }
+        let wasSettling = settlingLaunch
+        settlingLaunch = true
+        defer { settlingLaunch = wasSettling }
+        selectWorktree(busiest)
     }
 
     func selectWorktree(_ worktree: HubWorktree) {
@@ -1207,6 +1215,8 @@ final class HubModel: ObservableObject {
     /// The first selection after a load: the scripted mode or session, else the newest session.
     private func settleSessions() {
         guard !didSettleLaunch else { return }
+        settlingLaunch = true
+        defer { settlingLaunch = false }
         didSettleLaunch = true
         if initialMode == .worktrees {
             if let first = sessions.first {

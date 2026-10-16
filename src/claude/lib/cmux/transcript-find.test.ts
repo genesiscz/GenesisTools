@@ -47,6 +47,7 @@ function fakeClaude({ opens = true, hit }: { opens?: boolean; hit: string }) {
             } else if (value === "n") {
                 const total = Number(hit.match(/\/(\d+)$/)?.[1] ?? 0);
                 current = (current % total) + 1;
+                screen = `ctrl+o to toggle · n/N to navigate   ${current}/${total}`;
             }
         },
         sleep: async () => {},
@@ -75,6 +76,48 @@ describe("transcript find", () => {
         expect(outcome).toEqual({ found: true, current: 1, total: 4 });
         expect(claude.current()).toBe(1);
         expect(claude.typed).toEqual(["key:ctrl+o", "/", "DECISION 7", "key:enter", "n"]);
+    });
+
+    test("confirms delayed oldest navigation before reporting match one", async () => {
+        const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate   4/4" });
+        const read = claude.io.screen;
+        const type = claude.io.text;
+        let waiting = false;
+        let polls = 0;
+        claude.io.text = async (text) => {
+            await type(text);
+            waiting = text === "n";
+        };
+        claude.io.screen = async () => {
+            if (waiting && polls++ === 0) {
+                return "ctrl+o to toggle · n/N to navigate   4/4";
+            }
+
+            return read();
+        };
+
+        expect(await findInTranscript(claude.io, { query: "DECISION 7", oldest: true })).toEqual({
+            found: true,
+            current: 1,
+            total: 4,
+        });
+        expect(polls).toBe(2);
+    });
+
+    test("reports the observed counter when an oldest keypress is dropped", async () => {
+        const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate   4/4" });
+        const type = claude.io.text;
+        claude.io.text = async (text) => {
+            if (text !== "n") {
+                await type(text);
+            }
+        };
+
+        expect(await findInTranscript(claude.io, { query: "DECISION 7", oldest: true, timeoutMs: 0 })).toEqual({
+            found: true,
+            current: 4,
+            total: 4,
+        });
     });
 
     test("types nothing after ctrl+o when the transcript view does not open", async () => {

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { HUB_LINK_KEYS, schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { logger } from "@genesiscz/utils/logger";
@@ -67,6 +68,11 @@ export interface OpenHubResult {
     args: string[];
 }
 
+/** Explicit relative checkouts are relative to the CLI caller, not the app's Launch Services cwd. */
+function repoTarget(repo: string): string {
+    return /^\.{1,2}(?:[/\\]|$)/.test(repo) ? resolve(repo) : repo;
+}
+
 /** The `GenesisTools --hub` arguments for these options (see Sources/Hub/HubWindow.swift). */
 export function hubArgs(options: OpenHubOptions): string[] {
     const args = ["--hub"];
@@ -92,7 +98,7 @@ export function hubArgs(options: OpenHubOptions): string[] {
     }
 
     if (options.repo) {
-        args.push("--repo", options.repo);
+        args.push("--repo", repoTarget(options.repo));
     }
 
     if (options.commit) {
@@ -152,7 +158,9 @@ export function hubUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[numb
     return schemeLink({
         preset: "genesis-hub",
         action: "open",
-        data: Object.fromEntries(HUB_LINK_KEYS.map((key) => [key, options[key]])),
+        data: Object.fromEntries(
+            HUB_LINK_KEYS.map((key) => [key, key === "repo" && options.repo ? repoTarget(options.repo) : options[key]])
+        ),
     });
 }
 

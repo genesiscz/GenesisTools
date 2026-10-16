@@ -231,7 +231,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                     pattern: claudeFindPatterns(host).text,
                     action: {
                         type: "run",
-                        argv: ["tools", "claude", "cmux", "find", "$1", "{q}", "--at", "{at}"],
+                        argv: ["tools", "claude", "cmux", "find", "--at", "{at}", "--", "$1", "{q}"],
                         approval: "ask",
                         trustMinted: true,
                         notify: "Finding {q}",

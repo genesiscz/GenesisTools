@@ -211,6 +211,37 @@ final class HubLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testColdLaunchSelectionPreservesADelayedCommitLookup() async throws {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        model.initialMode = .worktrees
+        model.loadingWorktrees = true // No worktree discovery in this logic test.
+        model.readSessionCache = { _ in nil }
+        let session = HubSession(sessionId: "fixture-launch")
+        model.readSessions = { _ in [session] }
+        let loaded = expectation(description: "launch sessions loaded")
+        model.writeSessionCache = { _, _ in loaded.fulfill() }
+        let request = model.commitLinkRequest
+        model.loadSessions()
+        await fulfillment(of: [loaded], timeout: 2)
+
+        XCTAssertEqual(model.selectedID, session.id)
+        XCTAssertEqual(model.mode, .worktrees)
+        XCTAssertEqual(model.commitLinkRequest, request, "automatic startup selection must keep the pending lookup")
+        let defaultWorktree = HubWorktree(path: "/fixture/default", repo: "default", commonDir: "/fixture/default/.git", branch: "main", isMain: true)
+        model.selectDefaultWorktree([defaultWorktree])
+        XCTAssertEqual(model.commitLinkRequest, request, "automatic discovery must also keep the pending lookup")
+        model.applyCommitLink(.found(.init(root: "/fixture/app", sha: "abcdef0", title: "linked")), request: request)
+        XCTAssertEqual(model.selectedWorktree, "/fixture/app")
+        XCTAssertEqual(model.review?.scope, .commit(sha: "abcdef0", title: "linked"))
+
+        let later = model.commitLinkRequest
+        model.selectedID = "another-session"
+        XCTAssertNotEqual(model.commitLinkRequest, later, "later navigation must still cancel old lookups")
+        model.applyCommitLink(.failed("stale"), request: later)
+        XCTAssertNil(model.notice)
+    }
+
+    @MainActor
     func testAMissingPRCommitReplacesThePreviousCommitScopeWithTheWholePR() throws {
         let json = """
         {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},

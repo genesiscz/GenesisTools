@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { buildLaunchArgs, cmuxPermissionArgs, passthroughHandlesSession, splitStartOperands } from "./start";
 
 describe("splitStartOperands", () => {
@@ -101,5 +102,74 @@ describe("passthroughHandlesSession", () => {
 
     test("bare teammate-unrelated flags do not", () => {
         expect(passthroughHandlesSession(["--model", "fable"])).toBe(false);
+    });
+});
+
+interface DirectProcessFixture {
+    exitCode: number | null;
+    exited: Promise<number>;
+    kill: (signal: string) => void;
+}
+
+type DirectRunner = (argv: string[], environment: Record<string, string>) => Promise<number>;
+
+/** Execute the actual private launch function with fake process signals and no child process. */
+async function directRunner(spawn: () => DirectProcessFixture, signals: EventEmitter): Promise<DirectRunner> {
+    const source = await Bun.file(new URL("./start.ts", import.meta.url)).text();
+    const declaration = source.match(/async function runClaudeBinaryDirect[\s\S]*?\n}/)?.[0];
+    expect(declaration).toBeDefined();
+    const code = new Bun.Transpiler({ loader: "ts" }).transformSync(declaration ?? "");
+    const factory = new Function("Bun", "process", `${code}\nreturn runClaudeBinaryDirect;`);
+    const run: DirectRunner = factory({ spawn }, signals);
+    return run;
+}
+
+describe("direct SDK launch signals", () => {
+    const names = ["SIGTERM", "SIGINT", "SIGHUP"];
+
+    test("registers before spawn and forwards an early signal once the child exists", async () => {
+        const signals = new EventEmitter();
+        const killed: string[] = [];
+        const proc = { exitCode: null, exited: Promise.resolve(143), kill: (signal: string) => killed.push(signal) };
+        const run = await directRunner(() => {
+            expect(names.map((name) => signals.listenerCount(name))).toEqual([1, 1, 1]);
+            signals.emit("SIGTERM", "SIGTERM");
+            return proc;
+        }, signals);
+
+        expect(await run(["fixture"], {})).toBe(143);
+        expect(killed).toEqual(["SIGTERM"]);
+        expect(names.map((name) => signals.listenerCount(name))).toEqual([0, 0, 0]);
+    });
+
+    test("removes every handler if spawning throws", async () => {
+        const signals = new EventEmitter();
+        const run = await directRunner(() => {
+            throw new Error("spawn failed");
+        }, signals);
+
+        await expect(run(["fixture"], {})).rejects.toThrow("spawn failed");
+        expect(names.map((name) => signals.listenerCount(name))).toEqual([0, 0, 0]);
+    });
+
+    test("forwards running-child signals and never kills a child that already exited", async () => {
+        const signals = new EventEmitter();
+        const killed: string[] = [];
+        const proc: DirectProcessFixture = {
+            exitCode: null,
+            exited: Promise.resolve(0),
+            kill: (signal) => {
+                killed.push(signal);
+            },
+        };
+        const run = await directRunner(() => proc, signals);
+        const result = run(["fixture"], {});
+        signals.emit("SIGINT", "SIGINT");
+        proc.exitCode = 0;
+        signals.emit("SIGHUP", "SIGHUP");
+
+        expect(await result).toBe(0);
+        expect(killed).toEqual(["SIGINT"]);
+        expect(names.map((name) => signals.listenerCount(name))).toEqual([0, 0, 0]);
     });
 });

@@ -122,7 +122,22 @@ export async function findInTranscript(
             await io.text("n");
         }
 
-        return { found: true, current: 1, total: count.total };
+        const latest: { count: ReturnType<typeof searchCount> } = { count: null };
+        await waitFor(
+            io,
+            (screen) => {
+                latest.count = searchCount(screen);
+                return latest.count !== null && latest.count !== "none" && latest.count.current === 1;
+            },
+            timeoutMs
+        );
+
+        const shown = latest.count;
+        if (shown === null || shown === "none") {
+            return { found: false, reason: "no-result" };
+        }
+
+        return { found: true, ...shown };
     }
 
     return { found: true, ...count };

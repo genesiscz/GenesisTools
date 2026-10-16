@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as sessionRows from "@app/ai/lib/sessions/agent-session-rows";
 import * as history from "@app/claude/lib/history/search";
 import type { CodexSessionMeta } from "@app/codex/lib/store";
@@ -460,6 +460,20 @@ describe("hub open deep link", () => {
             "--commit",
             "abc1234",
         ]);
+    });
+
+    test("relative checkout paths are anchored before opening or printing a link", () => {
+        for (const repo of [".", "..", "./app", "../my app"]) {
+            const absolute = resolve(repo);
+            expect(hubArgs({ repo, commit: "abc1234" })).toEqual(["--hub", "--repo", absolute, "--commit", "abc1234"]);
+            expect(hubUrl({ repo, commit: "abc1234" })).toBe(
+                `genesis-tools://hub?repo=${encodeURIComponent(absolute)}&commit=abc1234`
+            );
+        }
+
+        expect(hubArgs({ repo: "group/app", commit: "abc1234" })[2]).toBe("group/app");
+        expect(hubUrl({ repo: "group/sub/app", commit: "abc1234" })).toContain("repo=group%2Fsub%2Fapp");
+        expect(hubArgs({ repo: "~/app", commit: "abc1234" })[2]).toBe("~/app");
     });
 
     test("--commit takes 7 to 40 hex characters and needs its PR or its project", () => {
