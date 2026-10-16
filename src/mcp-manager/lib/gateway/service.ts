@@ -21,14 +21,13 @@ import {
     startLaunchd,
     uninstallLaunchd,
 } from "@genesiscz/utils/DashboardApp/launchd";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { gatewayHealth } from "./health.ts";
-
 export const GATEWAY_LAUNCHD_LABEL = "com.genesis-tools.mcp-gateway";
 
 export function gatewayLogFile(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "logs", "mcp-gateway.log");
+    return genesisToolsDir("logs", "mcp-gateway.log");
 }
 
 export function gatewayPlistPath(): string {

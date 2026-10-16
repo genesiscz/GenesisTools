@@ -2,7 +2,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
 import { hookDiag } from "../log";
 import type { NamedChange } from "./named";
 
@@ -42,7 +42,7 @@ interface ManifestEntry {
 export function fableReplaceJournal(): string {
     const override = env.tools.getFableReplaceHome();
     if (override) {
-        return join(override, ".genesis-tools", "fable-replace", "journal.jsonl");
+        return genesisToolsDirIn(override, "fable-replace", "journal.jsonl");
     }
 
     return toolDataDir("fable-replace", "journal.jsonl");

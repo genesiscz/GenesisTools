@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const { log } = logger.scoped("jev-wake");
@@ -35,7 +36,7 @@ export const DEFAULT_WAKE_GATE: WakeGate = {
 };
 
 export function wakeConfigPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "jev", "wake.json");
+    return genesisToolsDir("jev", "wake.json");
 }
 
 function isWakeGatePatch(value: unknown): value is Partial<WakeGate> {

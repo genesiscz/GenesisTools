@@ -1,7 +1,6 @@
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 // Agent-side pairing: re-export the PURE codec from the contract (the source of truth
@@ -24,7 +23,7 @@ export interface PersistedTunnelConfig {
     pairingUri?: string;
 }
 
-const TUNNEL_CONFIG_PATH = join(env.tools.getHome(), ".genesis-tools", "dev-dashboard", "tunnel.json");
+const TUNNEL_CONFIG_PATH = genesisToolsDir("dev-dashboard", "tunnel.json");
 
 export function tunnelConfigPath(): string {
     return TUNNEL_CONFIG_PATH;

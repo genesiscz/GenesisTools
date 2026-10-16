@@ -9,6 +9,7 @@ import type {
 } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 
 const headerSchema = z.object({
@@ -100,7 +101,7 @@ export async function importNativeCodexSession(
     const sourceHome = await realpath(session.sourceHome ?? dirname(sourcePath));
     const targetHome = await realpath(context.targetHome);
     const hash = digest(bytes);
-    const importsDir = join(targetHome, ".genesis-tools", "session-imports");
+    const importsDir = genesisToolsDirIn(targetHome, "session-imports");
     await mkdir(importsDir, { recursive: true, mode: 0o700 });
     const recordPath = join(importsDir, `${digest(`${sourceHome}\0${session.sessionId}`)}.json`);
     const result = (sessionId: string, copied: boolean): NativeSessionImportResult => ({

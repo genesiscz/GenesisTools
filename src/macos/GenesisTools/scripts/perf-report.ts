@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { join } from "node:path";
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/scripts/perf-report.ts at 2026-09-24T04:59:16+02:00 at commit hash 0d268a43e86e6e5e0ce16132aed8c862e201923e
 /**
  * perf-report.ts — summarise `~/.genesis/logs/perf.log` (PerfLog + MonitorPerf).
@@ -12,7 +11,7 @@ import { join } from "node:path";
  * (`main-stall recovered after …`) and every `TIMEOUT` / hang-sample mark, so
  * "what was slow today" is one command instead of an awk session.
  */
-import { env } from "@genesiscz/utils/env";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
@@ -20,7 +19,7 @@ const flag = (name: string): string | undefined => {
     return i >= 0 ? args[i + 1] : undefined;
 };
 // GenesisTools adaptation: GenesisTools.app's PerfLog file; the whole file is biome-formatted (block ifs).
-const file = flag("--file") ?? join(env.tools.getHome(), ".genesis-tools", "logs", "app-perf.log");
+const file = flag("--file") ?? genesisToolsDir("logs", "app-perf.log");
 const tail = Number(flag("--tail") ?? 0);
 const minP95 = Number(flag("--min") ?? 0);
 

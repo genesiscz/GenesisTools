@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { finishBench, parseBenchArgs } from "../fs/shared";
 
 const BASELINE_NAME = "agent-sessions-listing";
@@ -36,7 +37,7 @@ const LISTING = ["usage", "sessions", "--json", "--hours", "24", "--min", "10"];
 const QUERY = { hours: 24, minRows: 10 };
 const SCRATCH_HOME = mkdtempSync(join(tmpdir(), "gt-bench-listing-"));
 /** Where `sessionRowsCachePath()` points under `GENESIS_TOOLS_HOME=SCRATCH_HOME`. */
-const SCRATCH_CACHE = join(SCRATCH_HOME, ".genesis-tools", "ai", "usage-sessions.json");
+const SCRATCH_CACHE = genesisToolsDirIn(SCRATCH_HOME, "ai", "usage-sessions.json");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;

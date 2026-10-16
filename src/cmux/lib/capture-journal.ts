@@ -12,9 +12,9 @@ import {
     writeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 
 const MAX_JOURNAL_BYTES = 1024 * 1024;
@@ -34,7 +34,7 @@ const recordSchema = z.object({
 export type CapturedCommand = z.infer<typeof recordSchema>;
 
 export function captureJournalDirectory(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "cmux", "command-journal");
+    return genesisToolsDir("cmux", "command-journal");
 }
 
 /** One owning shell per surface writes synchronously before the command starts. */

@@ -18,13 +18,13 @@
 //   p.summary();
 
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { getProfilingConfig, type ProfilingDetail } from "@genesiscz/utils/GenesisTools";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { currentTraceId } from "@genesiscz/utils/trace";
-
 export interface ProfilerGate {
     on: boolean;
     scopes: string[] | null;
@@ -200,7 +200,7 @@ export const FLUSH_INTERVAL_MS = 250;
 
 function defaultLogPath(): string {
     const day = formatLocalDate(new Date());
-    return join(env.tools.getHome(), ".genesis-tools", "logs", `${day}-profiling.log`);
+    return genesisToolsDir("logs", `${day}-profiling.log`);
 }
 
 /** Set once a file write fails, so a broken sink cannot keep throwing. */

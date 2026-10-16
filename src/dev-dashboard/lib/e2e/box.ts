@@ -1,8 +1,7 @@
-import { join } from "node:path";
 import type { BoxCipher, KeyPair } from "@app/dev-dashboard/contract/box-types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
@@ -26,7 +25,7 @@ export const naclBoxCipher: BoxCipher = {
 export const toBase64 = naclUtil.encodeBase64;
 export const fromBase64 = naclUtil.decodeBase64;
 
-const DEFAULT_KEY_PATH = join(env.tools.getHome(), ".genesis-tools", "dev-dashboard", "e2e-keys.json");
+const DEFAULT_KEY_PATH = genesisToolsDir("dev-dashboard", "e2e-keys.json");
 
 interface StoredKeys {
     publicKey: string;

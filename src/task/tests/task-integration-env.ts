@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
+
 const TASK_TOOL = resolve(import.meta.dir, "../../../tools");
 
 export interface TaskRunResult {
@@ -54,7 +56,7 @@ export function setupTaskIntegrationHome(): TaskIntegrationEnv {
                 env: { ...childEnv, ...opts?.env },
             });
         },
-        sessionsDir: () => join(homeDir, ".genesis-tools", "task", "sessions"),
+        sessionsDir: () => genesisToolsDirIn(homeDir, "task", "sessions"),
         clean,
     };
 }

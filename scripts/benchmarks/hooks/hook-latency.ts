@@ -18,6 +18,8 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
+
 const runsIndex = process.argv.indexOf("--runs");
 const RUNS = runsIndex >= 0 ? Number(process.argv[runsIndex + 1]) : 20;
 
@@ -284,24 +286,21 @@ function interleave(a: RunSpec, b: RunSpec, runs: number): { a: ArmResult; b: Ar
 function freshHome(prefix: string): string {
     const home = mkdtempSync(join(tmpdir(), prefix));
 
-    mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+    mkdirSync(genesisToolsDirIn(home, "agents"), { recursive: true });
     // `highlight: "none"` keeps every arm below from paying an unrelated `bat` spawn (measured
     // elsewhere at tens of ms per changed file). Left at the default it would land on BOTH
     // sides of a pair and add noise, not signal, to the sink's own delta.
-    writeFileSync(
-        join(home, ".genesis-tools", "agents", "hooks.json"),
-        SafeJSON.stringify({ diff: { highlight: "none" } })
-    );
+    writeFileSync(genesisToolsDirIn(home, "agents", "hooks.json"), SafeJSON.stringify({ diff: { highlight: "none" } }));
 
     return home;
 }
 
 function changesPath(home: string, session: string): string {
-    return join(home, ".genesis-tools", "agents", session, "changes.jsonl");
+    return genesisToolsDirIn(home, "agents", session, "changes.jsonl");
 }
 
 function agentsSessionDirs(home: string): string[] {
-    const dir = join(home, ".genesis-tools", "agents");
+    const dir = genesisToolsDirIn(home, "agents");
 
     if (!existsSync(dir)) {
         return [];
@@ -363,7 +362,7 @@ function guardHome(prefix: string, customRules: string[]): string {
     const home = freshHome(prefix);
 
     writeFileSync(
-        join(home, ".genesis-tools", "agents", "hooks.json"),
+        genesisToolsDirIn(home, "agents", "hooks.json"),
         SafeJSON.stringify({ shadow: false, diff: { enabled: false }, guard: { customRules } })
     );
 

@@ -16,6 +16,7 @@ import { generateHistoryCorpus, type HistoryCorpusManifest } from "@genesiscz/ut
 import { createFixtureWorld, type HistoryFixtureWorld } from "@genesiscz/utils/agent-sessions/testing/fixture-world";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 export type BenchmarkOperation =
     | "metadata-list"
     | "summary-search"
@@ -884,7 +885,7 @@ export function createBaselineBenchmarkVariant(options: {
             const oracle = await createBaselineOracle({ world: options.world, cacheHome: context.cachePath });
             invocationOracle = oracle;
             manifest = oracle.manifest;
-            storagePaths.add(join(context.cachePath, ".genesis-tools", "claude-history", "index.db"));
+            storagePaths.add(genesisToolsDirIn(context.cachePath, "claude-history", "index.db"));
             return {
                 initializationDetails: { ...oracle.startupMeasurement },
                 execute: (operation) => executeBaseline(oracle, operation, options.corpus),

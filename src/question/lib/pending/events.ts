@@ -1,16 +1,15 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { AskForm, PendingEvent, PendingEventKind } from "./types";
-
 /**
  * Lifecycle events are appended to a day-stamped JSONL, exactly like the Q→A log and the
  * handoff log. The dashboard tails the file, so a form created by a CLI process in another
  * terminal reaches the browser with no shared memory and no daemon between them.
  */
 export function pendingEventDir(base?: string): string {
-    return base ?? join(env.tools.getHome(), ".genesis-tools", "question", "pending");
+    return base ?? genesisToolsDir("question", "pending");
 }
 
 export function pendingEventFileFor(ts: number, base?: string): string {

@@ -26,9 +26,9 @@ import {
 import { join } from "node:path";
 import { agentProgressToSubagent } from "@genesiscz/utils/claude/session.utils";
 import type { ConversationMessage, ProgressMessage } from "@genesiscz/utils/claude/types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { claudeMessagesToTurns } from "./claude";
 import type { ResolvedTranscript } from "./resolve";
 import {
@@ -43,7 +43,6 @@ import {
     terminatedOf,
     totalsOf,
 } from "./types";
-
 export const INDEX_MIN_BYTES = 16 * 1024 * 1024;
 // 4: a task result and a message typed mid-turn became turns (prompt parts), which moves the offsets.
 // 5: usage counts once per assistant message id (`messageUsage`), as the full parser does.
@@ -100,7 +99,7 @@ export interface TurnIndexOptions {
 }
 
 export function turnIndexDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "cache", "transcript-index");
+    return genesisToolsDir("cache", "transcript-index");
 }
 
 function indexFileFor(dir: string, path: string): string {

@@ -11,6 +11,16 @@ export function genesisToolsDir(...segments: string[]): string {
     return join(env.tools.getHome(), ".genesis-tools", ...segments);
 }
 
+/**
+ * `<home>/.genesis-tools/<segments>` under an explicit home: a sandbox, a fixture, a benchmark arm. Code
+ * that means the user's own tree calls `genesisToolsDir` instead, so the GENESIS_TOOLS_HOME override and
+ * the test sandbox always apply. Every `.genesis-tools` path is built by this file (lint rule
+ * `no-hand-joined-genesis-tools`).
+ */
+export function genesisToolsDirIn(home: string, ...segments: string[]): string {
+    return join(home, ".genesis-tools", ...segments);
+}
+
 /** `~/.genesis-tools/<tool>/<segments>`: the directory `new Storage(tool).getBaseDir()` returns. */
 export function toolDataDir(tool: string, ...segments: string[]): string {
     return genesisToolsDir(tool, ...segments);

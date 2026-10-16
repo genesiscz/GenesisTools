@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { SoundChoice } from "@genesiscz/utils/audio/runner.server";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -7,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 export interface QuestionConfig {
     sinks: {
         obsidian: boolean;
@@ -55,7 +55,7 @@ const DEFAULT: QuestionConfig = {
 };
 
 export function configPath(): string {
-    return env.question.getConfigPath() ?? join(env.tools.getHome(), ".genesis-tools", "question", "config.json");
+    return env.question.getConfigPath() ?? genesisToolsDir("question", "config.json");
 }
 
 /**

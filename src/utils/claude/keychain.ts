@@ -7,6 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { CLAUDE_CODE_CLIENT_ID, fetchOAuthProfile } from "./auth";
 
@@ -364,7 +365,7 @@ export async function syncKeychainToConfig(aiConfig: AIConfig): Promise<Keychain
  * ai config. Returns the backup path.
  */
 export async function backupKeychainPayload(payload: KeychainPayload): Promise<string> {
-    const dir = join(env.tools.getHome(), ".genesis-tools", "claude", "keychain-backups");
+    const dir = genesisToolsDir("claude", "keychain-backups");
     const path = join(dir, `keychain-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
     await Bun.write(path, SafeJSON.stringify(payload, null, 2));
     chmodSync(path, 0o600);

@@ -21,6 +21,7 @@ import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { serverAuth } from "../auth/policy.ts";
 import { autoLoginRefusal, createLoginLauncher, type LoginLauncher } from "./auto-login.ts";
 import { pendingLoginPath, readPendingLogin, takeLivePendingLogin, writePendingLogin } from "./login-state.ts";
@@ -30,7 +31,7 @@ import { gatewayRepoRoot } from "./service.ts";
 const URL_WAIT_MS = 30_000;
 
 export function loginLogFile(server: string): string {
-    return join(env.tools.getHome(), ".genesis-tools", "logs", `mcp-login-${encodeURIComponent(server)}.log`);
+    return genesisToolsDir("logs", `mcp-login-${encodeURIComponent(server)}.log`);
 }
 
 export function loginSpawnArgs(server: string, clientName?: string): string[] {

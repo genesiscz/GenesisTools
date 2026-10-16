@@ -58,6 +58,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { createBoxTable, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
 import { terminalLocaleEnvRecord } from "@genesiscz/utils/terminal/locale";
 import type { Subprocess } from "bun";
@@ -249,7 +250,7 @@ interface RunDirs {
 function prepareRunDirs(mode: Mode): RunDirs {
     const root = mkdtempSync(join(tmpdir(), "dashboards-idle-cost-"));
     const home = join(root, "home");
-    mkdirSync(join(home, ".genesis-tools", "dev-dashboard"), { recursive: true });
+    mkdirSync(genesisToolsDirIn(home, "dev-dashboard"), { recursive: true });
     return {
         root,
         home,
@@ -265,7 +266,7 @@ function prepareRunDirs(mode: Mode): RunDirs {
  * app rather than a 401, and the port is the free one this run picked.
  */
 async function writeSandboxConfig(home: string, port: number): Promise<string> {
-    const path = join(home, ".genesis-tools", "dev-dashboard", "config.json");
+    const path = genesisToolsDirIn(home, "dev-dashboard", "config.json");
     const config = { port, allowedHosts: [], ttydSessions: [], auth: { enabled: false } };
     await Bun.write(path, `${SafeJSON.stringify(config, null, 4)}\n`);
     return path;

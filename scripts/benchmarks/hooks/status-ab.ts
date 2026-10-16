@@ -32,6 +32,7 @@ import { type BaselineMetrics, withSpawnCounter } from "@app/benchmark/lib";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { finishBench, parseBenchArgs } from "../fs/shared";
 
 const args = parseBenchArgs(process.argv);
@@ -58,9 +59,9 @@ const SANDBOX_HOME = join(SCRATCH, "home");
 process.env.TMPDIR = SANDBOX_TMP;
 process.env.GENESIS_TOOLS_HOME = SANDBOX_HOME;
 mkdirSync(SANDBOX_TMP, { recursive: true });
-mkdirSync(join(SANDBOX_HOME, ".genesis-tools", "agents"), { recursive: true });
+mkdirSync(genesisToolsDirIn(SANDBOX_HOME, "agents"), { recursive: true });
 writeFileSync(
-    join(SANDBOX_HOME, ".genesis-tools", "agents", "hooks.json"),
+    genesisToolsDirIn(SANDBOX_HOME, "agents", "hooks.json"),
     SafeJSON.stringify({ shadow: false, diff: { highlight: "none" } })
 );
 

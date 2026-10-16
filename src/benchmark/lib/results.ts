@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { SavedResult } from "./types";
 
-const RESULTS_DIR = join(env.tools.getHome(), ".genesis-tools", "benchmarks");
+const RESULTS_DIR = genesisToolsDir("benchmarks");
 
 export function ensureResultsDir(): void {
     if (!existsSync(RESULTS_DIR)) {

@@ -1,22 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { launchdPlistNeedsGenesisApp, launchdProgramArgumentsXml } from "@genesiscz/utils/macos/genesis-app";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", "com.genesis-tools.automate.plist");
 const LABEL = "com.genesis-tools.automate";
 
-export const DAEMON_LOG_DIR = join(env.tools.getHome(), ".genesis-tools", "automate", "logs");
+export const DAEMON_LOG_DIR = genesisToolsDir("automate", "logs");
 export const DAEMON_STDOUT_LOG = join(DAEMON_LOG_DIR, "daemon-stdout.log");
 export const DAEMON_STDERR_LOG = join(DAEMON_LOG_DIR, "daemon-stderr.log");
 
 export function generatePlist(): string {
     const home = homedir();
     const daemonScript = resolve(import.meta.dir, "daemon.ts");
-    const logDir = join(home, ".genesis-tools", "automate", "logs");
+    const logDir = DAEMON_LOG_DIR;
     const bunPath = Bun.which("bun") ?? "/usr/local/bin/bun";
 
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -45,7 +45,7 @@ ${launchdProgramArgumentsXml([bunPath, "run", daemonScript])}
  * unload fails, so a failed migration never leaves the user with no agent at all.
  */
 export async function installLaunchd(): Promise<void> {
-    mkdirSync(join(env.tools.getHome(), ".genesis-tools", "automate", "logs"), { recursive: true });
+    mkdirSync(genesisToolsDir("automate", "logs"), { recursive: true });
 
     const previousPlist = existsSync(PLIST_PATH) ? readFileSync(PLIST_PATH, "utf8") : undefined;
 

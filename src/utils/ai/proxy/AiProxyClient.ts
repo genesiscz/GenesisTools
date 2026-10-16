@@ -44,12 +44,11 @@
  * those four. Fold it the moment `coreChat` grows them.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { repairJson } from "@genesiscz/utils/json/repair";
 import { logger } from "@genesiscz/utils/logger";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 export interface AiProxyClientOptions {
     baseUrl?: string;
     apiKey?: string;
@@ -164,7 +163,7 @@ const DEFAULT_PORT = 8317;
  * time read the user's REAL proxy key out of every one of them.
  */
 function configPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "ai-proxy", "config.json");
+    return genesisToolsDir("ai-proxy", "config.json");
 }
 
 interface LocalProxyConfig {

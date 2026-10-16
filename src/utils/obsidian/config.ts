@@ -1,11 +1,9 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { resolveActiveVault } from "./discovery";
-
 export interface ObsidianConfig {
     vaultRoot: string | null;
 }
@@ -18,12 +16,12 @@ export interface ObsidianConfig {
  * vault kept their paths somewhere else entirely. One file, one key per consumer.
  */
 export function pluginConfigPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "plugins", "config.json");
+    return genesisToolsDir("plugins", "config.json");
 }
 
 /** Where the vault root lived before the move. Migrated once, on first read. */
 export function obsidianConfigPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "obsidian", "config.json");
+    return genesisToolsDir("obsidian", "config.json");
 }
 
 type PluginConfig = Record<string, unknown>;

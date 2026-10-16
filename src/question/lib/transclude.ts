@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
-import { env } from "@genesiscz/utils/env";
 import {
     type ImageAttachmentInput,
     parseImageAttachmentInputs,
     readValidatedImage,
 } from "@genesiscz/utils/image/attachments";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
     defaultTransclusionRegistry,
@@ -19,7 +19,6 @@ import {
 import type { QuestionItemInput } from "./decisions/items";
 import type { DecisionSource, StoredTransclusion } from "./decisions/schema";
 import type { AskChoice } from "./pending/types";
-
 /** One token of an item, with the field it was written in (`promptMarkdown`, `reasoning`, `choices[1]`). */
 export type FieldTransclusion = TransclusionToken & { field: string };
 
@@ -45,7 +44,7 @@ export function questionTokenRegistry(): TransclusionRegistry {
 
 /** Where `{{image}}` copies pictures, beside the decision log. */
 export function questionAssetDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "question", "assets");
+    return genesisToolsDir("question", "assets");
 }
 
 const log = logger.child({ component: "question-transclude" });

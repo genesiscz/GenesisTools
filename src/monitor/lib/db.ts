@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { createKyselyClient, type DatabaseClient, type Migration, nowUtcIso } from "@genesiscz/utils/database";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { sql } from "kysely";
 import type { CheckRow, FeedItemRow, IncidentRow, MonitorDB, NotifyTargetRow, WatcherRow } from "./db-types";
 import {
@@ -30,10 +30,9 @@ import {
     type WatcherStatus,
     type WatcherSummary,
 } from "./types";
-
 // Root via `env.tools.getHome()` so the test sandbox's GENESIS_TOOLS_HOME is
 // honoured and no test ever writes the real watcher list.
-export const MONITOR_DIR = join(env.tools.getHome(), ".genesis-tools", "monitor");
+export const MONITOR_DIR = genesisToolsDir("monitor");
 export const DEFAULT_DB_PATH = join(MONITOR_DIR, "monitor.db");
 
 const RECENT_POINTS = 40;

@@ -1,9 +1,10 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, linkSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;
@@ -13,7 +14,7 @@ const TAG_BYTES = 16;
 let cachedKey: Buffer | null = null;
 
 function defaultKeyPath(): string {
-    return env.shops.getSecretKeyPath() ?? join(env.tools.getHome(), ".genesis-tools", "shops", ".secret-key");
+    return env.shops.getSecretKeyPath() ?? genesisToolsDir("shops", ".secret-key");
 }
 
 function readKey(path: string): Buffer {

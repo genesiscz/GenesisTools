@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { ChangeSink } from "./log";
 
 /** Well inside the hook's own 15 s budget, so a stuck `git` fails the store, not the hook. */
@@ -10,7 +10,7 @@ const GIT_TIMEOUT_MS = 8_000;
 
 /** One bare repo for every session. `git hash-object -w` stores identical bytes once. */
 export function objectsDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "agents", "_objects");
+    return genesisToolsDir("agents", "_objects");
 }
 
 function ensureRepo(gitDir: string): void {

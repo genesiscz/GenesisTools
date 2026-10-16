@@ -37,6 +37,7 @@ import {
 } from "@app/benchmark/lib";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { formatTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 
@@ -72,9 +73,9 @@ const SCRATCH = realpathSync(mkdtempSync(join(tmpdir(), "gt-bench-attribution-")
 process.env.TMPDIR = join(SCRATCH, "tmp");
 process.env.GENESIS_TOOLS_HOME = join(SCRATCH, "home");
 mkdirSync(process.env.TMPDIR, { recursive: true });
-mkdirSync(join(process.env.GENESIS_TOOLS_HOME, ".genesis-tools", "agents"), { recursive: true });
+mkdirSync(genesisToolsDirIn(process.env.GENESIS_TOOLS_HOME, "agents"), { recursive: true });
 writeFileSync(
-    join(process.env.GENESIS_TOOLS_HOME, ".genesis-tools", "agents", "hooks.json"),
+    genesisToolsDirIn(process.env.GENESIS_TOOLS_HOME, "agents", "hooks.json"),
     SafeJSON.stringify({ shadow: false, diff: { highlight: "none" } })
 );
 

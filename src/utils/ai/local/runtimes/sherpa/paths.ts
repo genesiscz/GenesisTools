@@ -1,6 +1,4 @@
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
-
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 /**
  * Where the sherpa-onnx diarization weights have always lived. It predates the
  * artifact store and sits under the transcribe tool rather than the ai one;
@@ -14,4 +12,4 @@ import { env } from "@genesiscz/utils/env";
  * `ArtifactStore.prune()` deletes under it — a sandboxed run must never point
  * that at the user's real weights.
  */
-export const DIARIZE_MODEL_DIR = join(env.tools.getHome(), ".genesis-tools", "transcribe", "models", "diarization");
+export const DIARIZE_MODEL_DIR = genesisToolsDir("transcribe", "models", "diarization");

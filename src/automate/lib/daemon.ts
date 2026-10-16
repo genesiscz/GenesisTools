@@ -1,11 +1,10 @@
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { createLogger } from "@genesiscz/utils/logger";
 import { clearPidFile, readLivePid, writePidFileWhenFree } from "@genesiscz/utils/process/pidfile";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { closeDb, getDb } from "./db";
 import { runSchedulerLoop } from "./scheduler";
 
-const PID_FILE = join(env.tools.getHome(), ".genesis-tools", "automate", "daemon.pid");
+const PID_FILE = genesisToolsDir("automate", "daemon.pid");
 
 /**
  * True when a command line is recognisably an automate daemon. Only used to

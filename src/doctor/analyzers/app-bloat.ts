@@ -30,6 +30,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { openFiles, pidsOf } from "@genesiscz/utils/process/open-files";
 
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 export const APP_BLOAT_ANALYZER_ID = "app-bloat";
 
 const MB = 1024 * 1024;
@@ -215,7 +216,7 @@ export class AppBloatAnalyzer extends Analyzer {
             this.p("Library", "Caches"),
             this.p(".cache"),
             this.p(".android", "avd"),
-            join(this.toolsHome, ".genesis-tools", "logs"),
+            genesisToolsDirIn(this.toolsHome, "logs"),
         ];
     }
 
@@ -853,7 +854,7 @@ export class AppBloatAnalyzer extends Analyzer {
     }
 
     private async *bigLogs(c: Ctx): AsyncIterable<Finding> {
-        const logsDir = join(this.toolsHome, ".genesis-tools", "logs");
+        const logsDir = genesisToolsDirIn(this.toolsHome, "logs");
         const roots: Array<{ dir: string; match: RegExp }> = [
             { dir: this.p(".claude"), match: /\.jsonl$/ },
             { dir: logsDir, match: /\.(log|ndjson|jsonl)$/ },

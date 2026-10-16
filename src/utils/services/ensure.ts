@@ -1,11 +1,9 @@
 import { connect } from "node:net";
-import { join } from "node:path";
 import { commandWords, spawnToolDetached } from "@genesiscz/utils/cli";
 import { formatLocalDate } from "@genesiscz/utils/date";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { registryEntryForPort } from "@genesiscz/utils/ui/dashboards";
-
 export interface EnsureTarget {
     name: string;
     launch: string | null;
@@ -100,7 +98,7 @@ export async function ensureRegisteredPort(port: number): Promise<EnsureResult> 
         sleep: (ms) => Bun.sleep(ms),
         now: () => Date.now(),
         // A started tool writes the shared day log; the detached process has no terminal of its own.
-        logPath: () => join(env.tools.getHome(), ".genesis-tools", "logs", `${formatLocalDate(new Date())}.log`),
+        logPath: () => genesisToolsDir("logs", `${formatLocalDate(new Date())}.log`),
     });
 }
 

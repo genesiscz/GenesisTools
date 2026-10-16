@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { parseInterval } from "./interval";
 import { timeOnDay } from "./missed-run";
@@ -30,7 +31,7 @@ function resolveBaseDir(): string {
         return override;
     }
 
-    return join(env.tools.getHome(), ".genesis-tools", "daemon");
+    return genesisToolsDir("daemon");
 }
 
 export function getLogsBaseDir(): string {

@@ -4,6 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 /**
  * GenesisTools.app is a tiny signed launcher (src/macos/GenesisTools) that becomes the macOS TCC
  * "responsible process" for everything `tools` runs. Calendar, Reminders, Contacts, Full Disk
@@ -22,7 +23,7 @@ export const GENESIS_MARKDOWN_BUNDLE_ID = "dev.foltyn.genesis.markdown";
 
 /** Build manifest and prompt stamps; the bundle itself lives in ~/Applications. */
 export function genesisAppDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "app");
+    return genesisToolsDir("app");
 }
 
 export function genesisAppBundlePath(): string {

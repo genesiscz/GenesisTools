@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, sep } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { dirname, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { namedArguments } from "../hooks/diff/command-paths";
 import { safeSegment } from "../hooks/paths";
 
@@ -56,7 +56,7 @@ export function sessionChangesPath(session: string): string {
         throw new Error(`not a session id: "${session}"`);
     }
 
-    return join(env.tools.getHome(), ".genesis-tools", "agents", safe, "changes.jsonl");
+    return genesisToolsDir("agents", safe, "changes.jsonl");
 }
 
 /** The harness file tools this log records: Edit and MultiEdit as `edit`, Write as `write`. */

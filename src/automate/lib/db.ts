@@ -1,13 +1,12 @@
-import { join } from "node:path";
 import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { sql } from "kysely";
 import type { AutomateDB, RunLogRow, RunRow, ScheduleRow } from "./db-types";
 
 export type { RunLogRow, RunRow, ScheduleRow } from "./db-types";
 
-const DB_PATH = join(env.tools.getHome(), ".genesis-tools", "automate", "automate.db");
+const DB_PATH = genesisToolsDir("automate", "automate.db");
 const SCHEMA_VERSION = 1;
 
 const BOOTSTRAP: string[] = [

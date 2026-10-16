@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { compressFile, decompressFile } from "@genesiscz/utils/compress/file";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { formatLocalDate } from "@genesiscz/utils/date";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { genesisToolsDir, genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 
 export const BENCH_ROOT = join(tmpdir(), "gt-bench-compress");
 export const REAL_HOME = genesisToolsDir();
@@ -92,7 +92,7 @@ export interface ArmInfo {
 /** Builds (or reuses) one arm home. */
 export async function buildArm(arm: Arm, { rebuild = false, now = new Date() } = {}): Promise<ArmInfo> {
     const home = armHome(arm);
-    const tools = join(home, ".genesis-tools");
+    const tools = genesisToolsDirIn(home);
     const done = join(home, ".built");
 
     if (!existsSync(done) || rebuild) {

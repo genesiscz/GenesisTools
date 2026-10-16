@@ -2,13 +2,13 @@
 
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { StoredCredential } from "./types";
 
-const CREDENTIALS_DIR = join(env.tools.getHome(), ".genesis-tools", "automate", "credentials");
+const CREDENTIALS_DIR = genesisToolsDir("automate", "credentials");
 
 /** Validate credential name to prevent path traversal */
 function safeName(name: string): string {

@@ -11,10 +11,10 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { AiProxyClient, type SchemaMode } from "@genesiscz/utils/ai/proxy/AiProxyClient";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const SCHEMA = {
     name: "fruit_pick",
@@ -33,7 +33,7 @@ const SCHEMA = {
 const PROMPT = "Pick the fruit that is a berry botanically-speaking from: apple, banana, cherry.";
 
 function lastUsageRecord(model: string): unknown {
-    const path = join(env.tools.getHome(), ".genesis-tools", "ai-proxy", "usage", "requests.jsonl");
+    const path = genesisToolsDir("ai-proxy", "usage", "requests.jsonl");
     if (!existsSync(path)) {
         return "NO requests.jsonl";
     }

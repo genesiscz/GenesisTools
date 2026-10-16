@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
-import { join, sep } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 /**
  * What a REPL turn may `import()`. Read once when the worker starts, never changed by a turn:
  * the allowlist is the one chokepoint every dynamic import passes through, so it is decided
@@ -31,7 +31,7 @@ export const DEFAULT_IMPORT_POLICY: ImportPolicy = {
 };
 
 export function importPolicyPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "node-repl", "trust.json");
+    return genesisToolsDir("node-repl", "trust.json");
 }
 
 /**

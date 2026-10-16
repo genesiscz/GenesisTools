@@ -33,6 +33,7 @@ import { type BaselineMetrics, sampleSelf, withSpawnCounter } from "@app/benchma
 import { CliAgentsTransport } from "@app/codex/lib/agents-bridge";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import { addCommonOptions, type CommonFlags, runPollBenchmark } from "./harness";
 
@@ -56,7 +57,7 @@ function createReadOnlySession(): SessionFixture {
     env.testing.set("GENESIS_TOOLS_HOME", home);
 
     const session = `bench-${Date.now()}`;
-    const sessionDir = join(home, ".genesis-tools", "agents", session);
+    const sessionDir = genesisToolsDirIn(home, "agents", session);
     mkdirSync(join(sessionDir, "slots"), { recursive: true });
     writeFileSync(join(sessionDir, "feed.jsonl"), "");
     chmodSync(join(sessionDir, "slots"), 0o500);

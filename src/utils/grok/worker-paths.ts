@@ -1,9 +1,8 @@
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { safeNamedPath } from "@genesiscz/utils/worker/safe-path";
-
 export function grokRoot(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "grok");
+    return genesisToolsDir("grok");
 }
 
 export function sessionsDir(): string {

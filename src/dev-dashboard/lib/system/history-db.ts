@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { dirname } from "node:path";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { PulsePoint } from "./types";
 
-const DEFAULT_DB_PATH = join(env.tools.getHome(), ".genesis-tools", "dev-dashboard", "pulse.db");
+const DEFAULT_DB_PATH = genesisToolsDir("dev-dashboard", "pulse.db");
 export const MAX_SERIES_POINTS = 360;
 
 export function downsamplePoints(points: PulsePoint[], maxPoints: number = MAX_SERIES_POINTS): PulsePoint[] {

@@ -1,12 +1,13 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { BaseDatabase } from "@genesiscz/utils/database/base";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 export function historyDatabasePath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "claude-history", "index.db");
+    return genesisToolsDir("claude-history", "index.db");
 }
 
 /** The caller owns this read-only handle. No migrations or directory creation occur. */

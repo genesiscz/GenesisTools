@@ -11,6 +11,7 @@ import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import type { HistoryFixtureWorld } from "./fixture-world";
 
 export const BASELINE_REVISION = "010697b869a34af0e79363b5c74bfc4946f74b96";
@@ -803,7 +804,7 @@ export async function createBaselineOracle(options: {
     if (options.cacheHome !== undefined) {
         cacheHome = options.world.assertOwnedPath(options.cacheHome);
         await mkdir(cacheHome, { recursive: true });
-        databasePath = join(cacheHome, ".genesis-tools", "claude-history", "index.db");
+        databasePath = genesisToolsDirIn(cacheHome, "claude-history", "index.db");
     } else if (options.cacheNamespace !== undefined) {
         if (!/^[a-z0-9][a-z0-9-]*$/i.test(options.cacheNamespace)) {
             throw new Error("Baseline cache namespace must contain only letters, digits, and hyphens");
@@ -812,7 +813,7 @@ export async function createBaselineOracle(options: {
             join(options.world.root, "baseline-instance-caches", options.cacheNamespace)
         );
         await mkdir(cacheHome, { recursive: true });
-        databasePath = join(cacheHome, ".genesis-tools", "claude-history", "index.db");
+        databasePath = genesisToolsDirIn(cacheHome, "claude-history", "index.db");
     }
     const environment = {
         ...options.world.environment,
@@ -943,7 +944,7 @@ export async function createBaselineOracle(options: {
                 environment: { ...environment, GENESIS_TOOLS_HOME: cacheHome, BASELINE_ONE_SHOT: "1" },
                 stdin: `${SafeJSON.stringify(request)}\n`,
                 resultPrefix: BASELINE_RESULT_PREFIX,
-                databasePath: join(cacheHome, ".genesis-tools", "claude-history", "index.db"),
+                databasePath: genesisToolsDirIn(cacheHome, "claude-history", "index.db"),
             };
         },
         async probeFailure(message) {

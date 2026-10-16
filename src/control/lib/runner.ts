@@ -13,6 +13,7 @@ import {
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
     ancestorNamesOfThisProcess,
@@ -88,7 +89,7 @@ export function refuseRealMachineInTest(what: string): void {
     throw new RealMachineInTestError(what);
 }
 
-export const RECORD_DIR = join(env.tools.getHome(), ".genesis-tools", "control", "record");
+export const RECORD_DIR = genesisToolsDir("control", "record");
 export const RECORD_SESSION = join(RECORD_DIR, "session.json");
 const RECORDED_COMMANDS = new Set([
     "press",

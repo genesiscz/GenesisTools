@@ -1,17 +1,17 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { discoverTools } from "@app/tools/lib/discovery";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { buildCatalogue, CATALOGUE_VERSION, type ToolCatalogue } from "./catalogue";
 
 const { log } = logger.scoped("jev-route");
 const prof = profiler.scope("jev-route");
 
 export function catalogueCachePath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "jev", "route-catalogue.json");
+    return genesisToolsDir("jev", "route-catalogue.json");
 }
 
 function gitHead(srcDir: string): string {

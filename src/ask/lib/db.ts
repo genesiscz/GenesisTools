@@ -1,6 +1,5 @@
-import { join } from "node:path";
 import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database";
-import { env } from "@genesiscz/utils/env";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { AskDB } from "./db-types";
 
 const BOOTSTRAP: string[] = [
@@ -25,7 +24,7 @@ const BOOTSTRAP: string[] = [
 ];
 
 export function defaultAskDbPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "ask.sqlite");
+    return genesisToolsDir("ask.sqlite");
 }
 
 export function openAskDatabase(path?: string): DatabaseClient<AskDB> {

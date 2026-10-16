@@ -2,8 +2,8 @@ import { join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { DeliveryUnknownError, NotDeliveredError } from "./deliver";
 import {
@@ -26,7 +26,6 @@ import {
     readDecisions,
     restoreUndelivered,
 } from "./store";
-
 /** Session id of the harness posting this process, or null for a human CLI and for tests. */
 export function currentHarnessSession(): string | null {
     if (isTestProcess()) {
@@ -42,7 +41,7 @@ export function currentHarnessSession(): string | null {
     return poster.sessionId;
 }
 
-export function decisionFiles(root = join(env.tools.getHome(), ".genesis-tools", "question", "decisions")): {
+export function decisionFiles(root = genesisToolsDir("question", "decisions")): {
     file: string;
     events: string;
 } {

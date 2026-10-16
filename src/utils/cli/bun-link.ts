@@ -1,8 +1,8 @@
 import { existsSync, linkSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 /**
  * Resolve a bun executable named after the tool it will run, so the process
  * shows up in Activity Monitor / ps / pgrep as "gt-<name>" instead of "bun".
@@ -21,7 +21,7 @@ export function namedBunExecPath(name: string, bunPath: string = process.execPat
     }
 
     const linkName = `gt-${name.replace(/[^\w.-]+/g, "-")}`;
-    const binDir = join(env.tools.getHome(), ".genesis-tools", "bin");
+    const binDir = genesisToolsDir("bin");
     const linkPath = join(binDir, linkName);
 
     try {

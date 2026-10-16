@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
 
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 export const FIXED_HISTORY_NOW = "2026-08-15T12:00:00.000Z";
 
 export interface HistoryFixtureWorld {
@@ -137,7 +138,7 @@ export async function createFixtureWorld(
     };
     const legacyHome = join(root, "databases", "legacy-home");
     const databases = {
-        legacy: join(legacyHome, ".genesis-tools", "claude-history", "index.db"),
+        legacy: genesisToolsDirIn(legacyHome, "claude-history", "index.db"),
         candidate: join(root, "databases", "candidate", "index.db"),
     };
     const git = { root: join(root, "invented-repository"), head: "" };

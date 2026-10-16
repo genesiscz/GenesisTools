@@ -1,16 +1,14 @@
 import { appendFileSync, chmodSync, existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
 import { longLivedTokenUsable } from "./token-verify";
-
 export interface SubscriptionAccount {
     name: string;
     label?: string;
@@ -86,7 +84,7 @@ function isTransientRefreshError(error: unknown): boolean {
 const INVALID_GRANT_COOLDOWN_MS = 10 * 60 * 1000;
 
 function invalidGrantPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "ai", "invalid-grant.json");
+    return genesisToolsDir("ai", "invalid-grant.json");
 }
 
 function readInvalidGrants(): Record<string, number> {
@@ -286,7 +284,7 @@ export function pruneJournal(path: string): void {
 }
 
 function journalPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "ai", "token-journal.jsonl");
+    return genesisToolsDir("ai", "token-journal.jsonl");
 }
 
 /**

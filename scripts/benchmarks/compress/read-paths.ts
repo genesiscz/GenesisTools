@@ -26,6 +26,7 @@ import type { BaselineMetrics } from "@app/benchmark/lib";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { finishBench, median, parseBenchArgs } from "../fs/shared";
 import { ARMS, type Arm, armHome, benchDays, buildArm, TRANSCRIPTS } from "./arms";
@@ -58,7 +59,7 @@ function day(offset: number): string {
 }
 
 function logFile(arm: Arm, name: string): string {
-    const plain = join(armHome(arm), ".genesis-tools", "logs", name);
+    const plain = genesisToolsDirIn(armHome(arm), "logs", name);
     return arm === "zst" ? `${plain}.zst` : plain;
 }
 
@@ -95,7 +96,7 @@ const SCENARIOS: Scenario[] = [
         name: "tail-1000",
         command: (arm) => {
             const md = join(armHome(arm), "tail.md");
-            const path = join(armHome(arm), ".genesis-tools", "logs", `${day(2)}.log`);
+            const path = genesisToolsDirIn(armHome(arm), "logs", `${day(2)}.log`);
             return {
                 argv: [TOOLS, "markdown", "resolve", md],
                 before: () => writeFileSync(md, `# tail\n\n{{tail path="${path}" n=1000}}\n`),

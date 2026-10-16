@@ -39,6 +39,7 @@ import { queryUsage, recordUsage } from "@genesiscz/utils/ai/usage";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { matchGlob } from "@genesiscz/utils/string";
 import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
 import { embed, generateText } from "ai";
@@ -183,7 +184,7 @@ function sandboxHome(): string {
  * never lands in a file this script wrote.
  */
 async function seedAiAccount(home: string): Promise<void> {
-    const dir = join(home, ".genesis-tools", "ai");
+    const dir = genesisToolsDirIn(home, "ai");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
         join(dir, "config.json"),

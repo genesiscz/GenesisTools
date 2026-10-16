@@ -3,11 +3,11 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { YoutubeConfigInit, YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 const API_PORT = WEB_SERVICES["youtube-server"].port;
@@ -36,7 +36,7 @@ function withoutLegacyPort(patch: YoutubeConfigPatch): YoutubeConfigPatch {
 // `env.tools.getHome()` falls back to `homedir()`, so production is unchanged.
 // It reads GENESIS_TOOLS_HOME, which the test preload points at a tmp dir —
 // with a bare `homedir()` here the sandbox cannot protect the real server.json.
-export const DEFAULT_BASE_DIR = join(env.tools.getHome(), ".genesis-tools", "youtube");
+export const DEFAULT_BASE_DIR = genesisToolsDir("youtube");
 export const CONFIG_FILENAME = "server.json";
 
 export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {

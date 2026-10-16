@@ -11,9 +11,9 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { z } from "zod";
 
@@ -30,7 +30,7 @@ export function preferredScreenText(nativeText: string | undefined, cachedText: 
 }
 
 export function screenCacheDirectory(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "cmux", "screens");
+    return genesisToolsDir("cmux", "screens");
 }
 
 function writeAtomic(path: string, text: string): void {

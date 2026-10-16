@@ -19,14 +19,12 @@
  * aliases keep resolving inside the mapped files (per-package tsconfig).
  */
 import { mkdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-
 /** Absolute path to this GenesisTools checkout's `src/scripts/lib/`. `import.meta.dir` is already percent-decoded, unlike `new URL(...).pathname`. */
 export const LIB_DIR = import.meta.dir;
 
@@ -46,7 +44,7 @@ export async function pathExists(path: string): Promise<boolean> {
 
 /** `~/.genesis-tools/scripts`, honoring the test override GENESIS_TOOLS_HOME. */
 export function storeRoot(): string {
-    return join(env.tools.getHome() || homedir(), ".genesis-tools", "scripts");
+    return genesisToolsDir("scripts");
 }
 
 export function persistedDir(root = storeRoot()): string {

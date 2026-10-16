@@ -1,9 +1,8 @@
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { readTextChunks } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
 
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 /** One parsed pino row from a day log. Everything beyond these keys is kept as-is. */
 export interface JevLogRow {
     time: string;
@@ -47,7 +46,7 @@ export interface JevDecision {
 }
 
 export function logsDirectory(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "logs");
+    return genesisToolsDir("logs");
 }
 
 /** Day files only (plain or compressed), newest first; the `-profiling` siblings are a different format. */

@@ -1,13 +1,13 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { createTranscriptAnchor, transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { applyPragmas } from "@genesiscz/utils/database/pragmas";
 import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { ANSWER_CLAIM_TTL_MS, type AskAnswer, type AskForm, type AskFormStatus, type AskItem } from "./types";
 
 const log = logger.child({ component: "question:pending-store" });
@@ -70,7 +70,7 @@ PENDING_MIGRATIONS.push({
 });
 
 export function defaultPendingDbPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "question", "qa.db");
+    return genesisToolsDir("question", "qa.db");
 }
 
 export function openPendingStore(dbPath: string = defaultPendingDbPath()): Database {

@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { env } from "@genesiscz/utils/env";
 import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
+
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 export interface RunTaskCaptureOptions {
@@ -48,7 +50,7 @@ export async function runTaskCli(args: string[], opts: { homeDir: string }): Pro
 }
 
 export async function readTaskJsonl(session: string, homeDir: string) {
-    const path = join(homeDir, ".genesis-tools", "task", "sessions", `${session}.jsonl`);
+    const path = genesisToolsDirIn(homeDir, "task", "sessions", `${session}.jsonl`);
     const records = await readJsonlFile(path);
     return filterLineRecords(records);
 }

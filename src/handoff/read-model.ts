@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { applyHandoffEvent } from "./fold";
 import { handoffLogDir } from "./log-store";
 import type { FoldOutcome, Handoff, HandoffEvent, HandoffPublicEvent } from "./types";
@@ -13,7 +13,7 @@ const log = logger.child({ component: "handoff:read-model" });
 
 /** Same db the /qa dashboard opens — handoffs ARE the QA family (spec §6.2). */
 export function handoffDbPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "question", "qa.db");
+    return genesisToolsDir("question", "qa.db");
 }
 
 function ensureColumn(db: Database, table: string, column: string, ddl: string): void {

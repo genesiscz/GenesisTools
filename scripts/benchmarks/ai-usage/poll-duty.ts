@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * What the `ai-usage-poll` daemon costs, read back out of the day logs.
  *
@@ -28,12 +29,11 @@
  * were produced with the two landing times of cfc1dc0b7 and bb07e6fa9).
  */
 
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 
 interface Poll {
@@ -234,7 +234,7 @@ if (badSplit !== null) {
     const days = rangeFrom && rangeTo ? expandRange(rangeFrom, rangeTo) : positional;
     // Same construction as `createLogger` in src/utils/logger.ts:196. `env.tools.getHome()`
     // is the USER home, not the tool home, so the `.genesis-tools` segment is not optional.
-    const logDir = join(env.tools.getHome(), ".genesis-tools", "logs");
+    const logDir = genesisToolsDir("logs");
     const wanted = days.length > 0 ? days : discoverDays(logDir);
     const summaries: Summary[] = [];
 

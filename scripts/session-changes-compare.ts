@@ -17,7 +17,6 @@ import { join } from "node:path";
 import { rawLogFiles } from "@app/agents/commands/changes";
 import { type ChangeEvent, sessionChangesPath } from "@app/agents/lib/changes/log";
 import { runTool } from "@genesiscz/utils/cli";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { out } from "@genesiscz/utils/logger";
@@ -27,6 +26,7 @@ import {
     loadSessionChanges,
     type TurnChanges,
 } from "@genesiscz/utils/session-changes";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 
 interface Options {
@@ -63,7 +63,7 @@ interface SessionReport {
 }
 
 function recentSessions(count: number): string[] {
-    const dir = join(env.tools.getHome(), ".genesis-tools", "agents");
+    const dir = genesisToolsDir("agents");
     const found: { id: string; mtime: number }[] = [];
 
     for (const id of readdirSync(dir)) {

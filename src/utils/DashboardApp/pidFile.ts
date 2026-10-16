@@ -14,7 +14,6 @@
 
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import {
     clearPidFile,
     inspectPidFile,
@@ -24,8 +23,10 @@ import {
 } from "@genesiscz/utils/process/pidfile";
 import type { PidIdentity } from "@genesiscz/utils/process-identity";
 
-const DASHBOARDS_DIR = join(env.tools.getHome(), ".genesis-tools", "dashboards");
-const LOGS_DIR = join(env.tools.getHome(), ".genesis-tools", "logs");
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+
+const DASHBOARDS_DIR = genesisToolsDir("dashboards");
+const LOGS_DIR = genesisToolsDir("logs");
 
 export function pidFilePath(key: string): string {
     return join(DASHBOARDS_DIR, `${key}.pid`);
