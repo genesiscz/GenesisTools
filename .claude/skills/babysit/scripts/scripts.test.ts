@@ -90,6 +90,27 @@ describe("read-only chains", () => {
     });
 });
 
+describe("fixer edits through fable-replace", () => {
+    const cli = "/Users/x/.codex/plugins/cache/genesis-tools/genesis-tools/1.0.107/skills/fable-replace/scripts/cli.ts";
+    const spec = (target: string) => `@@ ${target}\n<<<\nold\n===\nnew\n>>>`;
+    test("approved only when every target is in scope", () => {
+        expect(allowedCommand(entry, `bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`)).toBe(true);
+        expect(
+            allowedCommand(entry, `GENESIS_TOOLS_HOME=/tmp/cc/p/s/fr bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`)
+        ).toBe(true);
+        for (const command of [
+            `bun ${cli} <<'FR'\n${spec("src/outside.ts")}\nFR`,
+            `bun ${cli} <<'FR'\n${spec("src/a.ts")}\n${spec("../other/b.ts")}\nFR`,
+            `HOME=/tmp/cc/x bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`,
+            `TMPDIR=/Users/x bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`,
+            `bun /tmp/evil/cli.ts <<'FR'\n${spec("src/a.ts")}\nFR`,
+            `bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR\nrm -rf src`,
+        ]) {
+            expect({ command, ok: allowedCommand(entry, command) }).toEqual({ command, ok: false });
+        }
+    });
+});
+
 describe("reviewer reads", () => {
     test("the scratch folder by its absolute path, and the ts readers", () => {
         expect(allowedCommand(entry, `mkdir -p ${entry.cwd}/.claude/work/babysit`)).toBe(true);
