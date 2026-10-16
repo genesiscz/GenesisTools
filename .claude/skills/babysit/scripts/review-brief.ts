@@ -36,7 +36,7 @@ export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift, fr
           : `The reviewer bot found nothing more to fix on PR #${pr} ("${title}"), so the lead wants an independent review. Your findings become the next fix round.`;
     const read = postMerge
         ? `It is detached at current master, which contains the PR. Read what the PR changed with \`gh pr diff ${pr}\`, then read the CURRENT version of each touched file in this folder (later PRs may have changed them).`
-        : `Base: \`origin/${base}\`. Read the diff with \`git diff origin/${base}...HEAD\`, then read the touched files in full where needed.`;
+        : `Base: \`origin/${base}\`. Read the diff with \`git diff --no-textconv --no-ext-diff origin/${base}...HEAD\` (git diff, show and log need both flags, blame and grep need \`--no-textconv\`, or the read waits for the lead), then read the touched files in full where needed.`;
     const lines = [
         `## Independent review of PR #${pr} (read-only)`,
         "",

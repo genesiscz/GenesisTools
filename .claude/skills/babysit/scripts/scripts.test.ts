@@ -626,7 +626,9 @@ describe("independent review brief", () => {
             );
             expect(numbers.length).toBeGreaterThanOrEqual(postMerge ? 5 : 4);
             expect(new Set(numbers)).toEqual(new Set(["498"]));
-            expect(text).toContain(postMerge ? "gh pr diff 498" : "git diff origin/master...HEAD");
+            expect(text).toContain(
+                postMerge ? "gh pr diff 498" : "git diff --no-textconv --no-ext-diff origin/master...HEAD"
+            );
         }
     });
 

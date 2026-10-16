@@ -11,6 +11,8 @@ reruns your checks, and pushes. Quality is judged, not speed.
 - PR #{{PR}}: "{{TITLE}}".
 - You may change only the PR's own files (`git diff --name-only origin/{{BASE}}...HEAD`) and the test files next to
   them. Anything else: stop and report.
+- Git reads that can run a configured converter take the off switches, or each one waits for the lead's approval:
+  `git diff|show|log --no-textconv --no-ext-diff …`, `git blame|grep --no-textconv …`.
 - Commit subject: `fix({{SCOPES}}): #{{PR}} followup - <what the round fixes, short>`. The commit-msg hook checks the
   scopes; if it prints a corrected subject, commit with that.
 
