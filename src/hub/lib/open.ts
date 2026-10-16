@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
-import { schemeLink } from "@genesiscz/utils/browser-router/router-link";
+import { HUB_LINK_KEYS, schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
@@ -141,35 +141,18 @@ export function hubArgs(options: OpenHubOptions): string[] {
     return args;
 }
 
-const HUB_URL_KEYS = [
-    "mode",
-    "session",
-    "agent",
-    "pr",
-    "reveal",
-    "repo",
-    "commit",
-    "tab",
-    "filter",
-    "worktree",
-] as const;
-
 /**
  * The same target as a link: `genesis-tools://hub?session=<parent>&agent=<child>`, with `mode`,
  * `pr`, `reveal`, `repo`, `commit`, `tab`, `filter` and `worktree` as further query items (keys of
  * `HubRequest.linkKeys` in the app). A link without `worktree` and `reveal` lost them: `--print-url`
  * named neither. A commit link: `?pr=owner%2Frepo%2342&commit=<sha>`, or `?repo=<path>&commit=<sha>`.
  */
-export function hubUrl(
-    options: Pick<OpenHubOptions, "mode" | "session" | "agent" | "pr" | "reveal" | "tab" | "filter" | "worktree">
-): string {
+export function hubUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>): string {
     // The link itself is built in the router utils, beside its https twin, so the two cannot drift.
-    const { mode, session, agent, pr, reveal, tab, filter, worktree } = options;
-
     return schemeLink({
         preset: "genesis-hub",
         action: "open",
-        data: { mode, session, agent, pr, reveal, tab, filter, worktree },
+        data: Object.fromEntries(HUB_LINK_KEYS.map((key) => [key, options[key]])),
     });
 }
 
