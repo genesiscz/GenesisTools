@@ -13,6 +13,7 @@ import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 import pc from "picocolors";
+import { DETACH_WAIT_MS, waitForServedUrl } from "./lib/detach";
 import { openArtifact } from "./lib/open";
 import { RUNTIME_DIR } from "./lib/paths";
 import { addEntry, entryUrlPath, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
@@ -141,11 +142,27 @@ program
                     env: env.getProcessEnv(),
                 });
                 child.unref();
-                out.log.success(`Detached server pid ${child.pid} (requested port ${opts.port}).`);
-                out.log.info(
-                    `Log: ${logPath} · status: ${toolCommand("artifact ps")} · stop: ${toolCommand("artifact stop")} ${opts.port}`
-                );
+                const readLog = () => (existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+                const outcome = await waitForServedUrl({ readLog, exitCode: () => child.exitCode });
 
+                if (outcome.kind === "serving") {
+                    const moved = outcome.port !== Number.parseInt(opts.port, 10);
+                    out.log.success(
+                        `Detached server pid ${child.pid}: ${pc.cyan(outcome.url)}${moved ? pc.yellow(` (port ${opts.port} was busy)`) : ""}`
+                    );
+                    out.log.info(
+                        `Log: ${logPath} · status: ${toolCommand("artifact ps")} · stop: ${toolCommand("artifact stop")} ${outcome.port}`
+                    );
+                    return;
+                }
+
+                const tail = readLog().trim().split("\n").slice(-8).join("\n");
+                out.log.error(
+                    outcome.kind === "exited"
+                        ? `The detached server exited (code ${outcome.code}) before it served anything:\n${tail}`
+                        : `The detached server (pid ${child.pid}) printed no URL within ${DETACH_WAIT_MS / 1000} s. Log: ${logPath}\n${tail}`
+                );
+                process.exitCode = 1;
                 return;
             }
 

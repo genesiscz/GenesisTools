@@ -41,6 +41,7 @@ import {
     safeResolve,
     scanArtifacts,
 } from "./catalog";
+import { servedUrlFromLog, waitForServedUrl } from "./detach";
 import { renderMarkdown } from "./markdown";
 import {
     defaultPageForTarget,
@@ -1341,5 +1342,49 @@ describe("runningOutsideRegistry", () => {
         const found = runningOutsideRegistry([server("/work/gtw")], [entry("/work/gtw")]);
 
         expect(found).toEqual([]);
+    });
+});
+
+// `serve --detach` printed the requested port while the child had moved to a free one: the link 404'd (2026-10-16).
+describe("serve --detach reports the port the child serves on", () => {
+    test("reads the URL line, colours and all, and only once it is there", () => {
+        expect(servedUrlFromLog("◇  Serving /x/signal-drive.html\n")).toBeNull();
+        expect(
+            servedUrlFromLog(
+                "◇  Serving /x\n│  \u001b[36mhttp://127.0.0.1:3088/signal-drive\u001b[39m \u001b[2m(catalog at / or /__catalog; …)\u001b[22m\n"
+            )
+        ).toBe("http://127.0.0.1:3088/signal-drive");
+    });
+
+    test("waits for the line, and stops at the child's exit or the deadline", async () => {
+        let clock = 0;
+        let log = "";
+        const sleep = async (ms: number) => {
+            clock += ms;
+            if (clock >= 500) {
+                log = "http://127.0.0.1:3088/a (catalog at / or /__catalog)";
+            }
+        };
+        expect(await waitForServedUrl({ readLog: () => log, exitCode: () => null, now: () => clock, sleep })).toEqual({
+            kind: "serving",
+            url: "http://127.0.0.1:3088/a",
+            port: 3088,
+        });
+        expect(await waitForServedUrl({ readLog: () => "", exitCode: () => 1, now: () => 0, sleep })).toEqual({
+            kind: "exited",
+            code: 1,
+        });
+        let late = 0;
+        expect(
+            await waitForServedUrl({
+                readLog: () => "",
+                exitCode: () => null,
+                timeoutMs: 1000,
+                now: () => late,
+                sleep: async (ms) => {
+                    late += ms;
+                },
+            })
+        ).toEqual({ kind: "timeout" });
     });
 });
