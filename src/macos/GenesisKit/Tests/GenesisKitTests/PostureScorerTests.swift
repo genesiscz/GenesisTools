@@ -133,6 +133,26 @@ final class PostureScorerTests: XCTestCase {
         XCTAssertEqual(scorer.score(forward, against: base).worst, .forwardHead)
     }
 
+    /// eve on #529: calibration measured the forward-head span with the uncapped ratio, scoring with the ratio capped by
+    /// face growth, so the slouch the user calibrated (face +10%, ratio +37.5%) scored about 0.005 instead of 1.
+    func testACalibratedForwardHeadSlouchScoresAsTheFullSlouch() throws {
+        let upright = (0..<6).map { index in
+            let wobble = Double(index % 3 - 1) * 0.002
+            return PostureMetrics([.faceWidth: 0.2 + wobble, .faceWidthRatio: 0.5 + wobble, .shoulderWidth: 0.4])
+        }
+        let slouch = Array(repeating: PostureMetrics([.faceWidth: 0.22, .faceWidthRatio: 0.6875, .shoulderWidth: 0.32]),
+                           count: 4)
+        let base = try XCTUnwrap(PostureBaseline.calibrate(upright: upright, slouch: slouch))
+        let scorer = PostureScorer(enabled: [.forwardHead])
+
+        let score = scorer.score(slouch[0], against: base)
+        let signal = try XCTUnwrap(score.signals.first { $0.kind == .forwardHead })
+        XCTAssertEqual(signal.measure, .faceWidthRatio)
+        XCTAssertTrue(score.isBad)
+        XCTAssertEqual(signal.severity, 1, accuracy: 0.01, "the calibrated slouch is the full slouch")
+        XCTAssertFalse(scorer.score(upright[0], against: base).isBad)
+    }
+
     func testADisabledFaultIsNotScored() throws {
         let base = try baseline()
         let scorer = PostureScorer(enabled: [.forwardHead])

@@ -119,21 +119,20 @@ public struct PostureBaseline: Equatable, Codable, Sendable {
         guard usable.count >= minimumUprightReadings else { return nil }
         let median = PostureMetrics.median(usable)
         guard !median.isEmpty else { return nil }
-        let faceWidth = median[.faceWidth]
         var tolerance = PostureMetrics()
         var span = PostureMetrics()
-        for (measure, base) in median.values {
-            let spread = usable.compactMap { reading in
-                reading[measure].flatMap { measure.deviation(current: $0, baseline: base, baselineFaceWidth: faceWidth) }
-            }.max() ?? 0
+        for measure in median.values.keys {
+            let spread = usable.compactMap { PostureScorer.drift(measure, in: $0, baseline: median) }.max() ?? 0
             let tol = min(max(measure.minimumTolerance, spread), measure.defaultSpan * 0.6)
             tolerance[measure] = tol
             span[measure] = measure.defaultSpan
         }
         let slouchMedian = PostureMetrics.median(slouch.filter { !$0.isEmpty })
-        for (measure, value) in slouchMedian.values {
-            guard let base = median[measure], let tol = tolerance[measure],
-                  let drift = measure.deviation(current: value, baseline: base, baselineFaceWidth: faceWidth),
+        for measure in slouchMedian.values.keys {
+            // The slouch median's own drift, measured the way scoring measures it: a forward head capped by face
+            // growth here too, or the span would come from a drift scoring never sees.
+            guard let tol = tolerance[measure],
+                  let drift = PostureScorer.drift(measure, in: slouchMedian, baseline: median),
                   drift > tol * 1.5 else { continue }
             span[measure] = max(drift - tol, measure.defaultSpan * 0.25)
         }
@@ -235,15 +234,25 @@ public struct PostureScorer: Equatable, Sendable {
                              enterThreshold: enter, exitThreshold: 0.85 * tolerance + 0.7 * zone * span, severity: 1)
     }
 
-    /// How much bigger the face is than in the baseline (0.1: ten percent), nil without a face in both.
-    static func faceGrowth(_ metrics: PostureMetrics, baseline: PostureBaseline) -> Double? {
-        guard let current = metrics[.faceWidth], let base = baseline.metrics[.faceWidth], base > 0 else { return nil }
-        return current / base - 1
+    /// How far `measure` drifted in `metrics` from `baseline`, as scoring judges it; nil when either lacks it.
+    /// Calibration measures tolerance and span with this too, so a calibrated slouch scores as a slouch.
+    static func drift(_ measure: PostureMeasure, in metrics: PostureMetrics, baseline: PostureMetrics) -> Double? {
+        guard let current = metrics[measure], let base = baseline[measure],
+              let deviation = measure.deviation(current: current, baseline: base, baselineFaceWidth: baseline[.faceWidth])
+        else { return nil }
+        guard measure.kind == .forwardHead, measure != .faceWidth,
+              let face = metrics[.faceWidth], let baseFace = baseline[.faceWidth], baseFace > 0
+        else { return deviation }
+        // A head that comes forward comes closer to the camera, so the face itself grows. A ratio to the shoulders
+        // that grows while the face does not comes from the shoulder reading: 3D shoulders estimated below a low
+        // camera's frame jumped 0.44 → 0.77 → 0.58 image heights between runs while the face stayed within 5%
+        // (debug recording 2026-10-15 19:35, an upright sitter judged "head forward 133%" all along). Forward head
+        // counts as far as both agree.
+        return min(deviation, face / baseFace - 1)
     }
 
     public func score(_ metrics: PostureMetrics, against baseline: PostureBaseline) -> PostureScore {
         let zone = deadZone.fraction
-        let faceWidth = baseline.metrics[.faceWidth]
         var signals: [PostureSignal] = []
         var unjudged: Set<PostureMetricKind> = []
         for kind in PostureMetricKind.allCases where enabled.contains(kind) {
@@ -252,17 +261,7 @@ public struct PostureScorer: Equatable, Sendable {
                 continue
             }
             for measure in PostureMeasure.preference(for: kind) {
-                guard let current = metrics[measure], let base = baseline.metrics[measure],
-                      var deviation = measure.deviation(current: current, baseline: base, baselineFaceWidth: faceWidth)
-                else { continue }
-                if kind == .forwardHead, measure != .faceWidth, let grown = Self.faceGrowth(metrics, baseline: baseline) {
-                    // A head that comes forward comes closer to the camera, so the face itself grows. A ratio to
-                    // the shoulders that grows while the face does not comes from the shoulder reading: 3D
-                    // shoulders estimated below a low camera's frame jumped 0.44 → 0.77 → 0.58 image heights between
-                    // runs while the face stayed within 5% (debug recording 2026-10-15 19:35, an upright sitter
-                    // judged "head forward 133%" all along). Forward head counts as far as both agree.
-                    deviation = min(deviation, grown)
-                }
+                guard let deviation = Self.drift(measure, in: metrics, baseline: baseline.metrics) else { continue }
                 var tolerance = baseline.tolerance[measure] ?? measure.minimumTolerance
                 if kind == .forwardHead, measure == .faceWidth, let fallback = forwardHeadWithoutShoulders {
                     guard fallback == .faceSize else {
