@@ -15,7 +15,7 @@ import {
     watchApprovals,
 } from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
-import { postingExitCode } from "./integrate";
+import { PRE_PUSH_GUARDS, postingExitCode } from "./integrate";
 import { summarize, testEvidence } from "./plant";
 import { hitsInAddedLines, probeAddedLines } from "./probe";
 import { reviewBrief } from "./review-brief";
@@ -96,6 +96,15 @@ describe("read-only chains", () => {
         expect(chainSegments("rg 'a;b|c' src && pwd")).toEqual(["rg 'a;b|c' src", "pwd"]);
         expect(chainSegments("echo 'x > y'")).toEqual(["echo 'x > y'"]);
         expect(chainSegments("cat a 2>&1")).toBeNull();
+    });
+});
+
+describe("integrate's gates", () => {
+    test("run every guard of the pre-push hook with the same arguments", () => {
+        const hook = fs.readFileSync(join(import.meta.dir, "../../../../.githooks/pre-push"), "utf8");
+        const fromHook = [...hook.matchAll(/^run_guard (\S+) (.+)$/gm)].map((m) => [m[1], ...m[2].trim().split(/\s+/)]);
+        expect(fromHook.length).toBeGreaterThan(5);
+        expect(PRE_PUSH_GUARDS).toEqual(fromHook);
     });
 });
 

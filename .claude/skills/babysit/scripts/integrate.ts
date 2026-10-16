@@ -19,6 +19,18 @@ import { probeAddedLines } from "./probe";
 import { flag, has, loadRun, worktreeFor } from "./run";
 import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
 
+/** The guards `.githooks/pre-push` runs, label first. Keep this list in step with the hook. */
+export const PRE_PUSH_GUARDS: string[][] = [
+    ["logging-guard", "bash", "scripts/ci/logging-guard.sh"],
+    ["ai-credentials-guard", "bash", "scripts/ci/ai-credentials-guard.sh"],
+    ["pid-safety-guard", "bash", "scripts/ci/pid-safety-guard.sh"],
+    ["package-boundaries", "bun", "scripts/ci/check-package-boundaries.ts"],
+    ["plugin-standalone", "bun", "scripts/ci/check-plugin-standalone.ts"],
+    ["tool-commands", "bun", "scripts/ci/check-tool-commands.ts", "--strict"],
+    ["jev-instrumentation", "bun", "scripts/ci/jev-instrumentation-guard.ts"],
+    ["entrypoint-imports", "bun", "scripts/ci/entrypoint-import-guard.ts"],
+];
+
 export function postingExitCode(posted: number, followups: Array<{ code: number }>): number {
     return posted === 0 && followups.every((reply) => reply.code === 0) ? 0 : 1;
 }
@@ -131,7 +143,12 @@ async function main(): Promise<void> {
         }
 
         must(["bun", "run", "lint:rules"], "lint-rules");
-        must(["bun", "scripts/ci/check-tool-commands.ts"], "check-tool-commands");
+        // The pre-push hook's CI guards, with the same flags (.githooks/pre-push): a judged round that passes a
+        // weaker local check is refused at the push (2026-10-16: tool-commands --strict and pid-safety-guard
+        // refused #533, #536 and #537 after integrate's own gates had passed).
+        for (const [label, ...cmd] of PRE_PUSH_GUARDS) {
+            must(cmd, label);
+        }
         must(["bash", "scripts/ci/placeholder-check.sh"], "placeholder-check");
         const commits = must(["bun", "scripts/git/check-commits.ts", `${gateFrom}..${newHead}`], "check-commits");
 
