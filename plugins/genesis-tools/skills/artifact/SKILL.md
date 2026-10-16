@@ -22,6 +22,10 @@ tools artifact build dashboard.tsx     # → dist/dashboard.html, opens from fil
   route (deep links reload). `/__catalog` lists everything.
 - Folders work too (`serve <dir>` = catalog + everything inside); several serves run side by
   side (ports bump from 3076). `ps` / `stop <name|port>` manage them.
+- **From an agent shell (Codex, Claude Bash, Grok) serve with `--detach`.** It returns once the
+  server listens and prints its real URL. Use that URL, never a guessed 3076: a busy port moves
+  the server to the next free one, and 3076 may be another folder's server (a Codex session
+  opened a 404 there on 2026-10-16). A plain `serve` ties up the shell and dies with it.
 - **`tools artifact library up`** = ONE server for every registered folder: `/` is the library
   page (meta + click to open), each folder mounts at `/a/<name>/`.
 - `build --watch` keeps the single-file output fresh on every edit. Single-file builds embed
