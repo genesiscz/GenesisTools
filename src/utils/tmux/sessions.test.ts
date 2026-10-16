@@ -22,6 +22,7 @@ import {
     scrollTmuxToFraction,
     sessionExists,
     setTmuxSpawnSyncForTests,
+    TERMINAL_FOREIGN_ENV,
     TMUX_CHILD_DEADLINE_MS,
     TMUX_SPAWN_GUARD,
     tmuxPaneArgv,
@@ -445,6 +446,26 @@ describe("tmux sessions", () => {
         ).toBe(true);
     });
 
+    // A tmux server founded by a test run inside an agent handed every dashboard terminal that run's
+    // markers and identity (2026-10-16). The pane's `env` drops them, whatever the server holds.
+    test("a new pane drops test markers and agent identity, plus the caller's own list", () => {
+        const argv = tmuxPaneArgv("", { unsetEnv: ["EXTRA_ID"] }).argv;
+        const unset = argv.flatMap((word, i) => (argv[i - 1] === "-u" ? [word] : []));
+
+        for (const key of [
+            "GENESIS_TOOLS_TEST_RUNTIME",
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CMUX_SURFACE_ID",
+            "EXTRA_ID",
+        ]) {
+            expect(unset).toContain(key);
+        }
+
+        expect(unset).toEqual([...new Set(unset)]);
+        expect(argv[0]).toBe("/usr/bin/env");
+    });
+
     test("a command line runs through the login shell, never as one argv word", () => {
         const shell = env.paths.getShell("/bin/zsh");
         const pane = tmuxPaneArgv("echo hi; sleep 1");
@@ -467,12 +488,14 @@ describe("tmux sessions", () => {
         expect(tmuxPaneArgv("/bin/zsh").argv).not.toContain("-lic");
     });
 
-    test("named variables are unset in the pane, and nothing is unset unless asked", () => {
-        const pane = tmuxPaneArgv("/bin/zsh", { unsetEnv: ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID"] });
+    // Since 2026-10-16 every pane also drops TERMINAL_FOREIGN_ENV (test markers, agent identity), asked or not.
+    test("named variables are unset in the pane, each once, beside the always-dropped ones", () => {
+        const pane = tmuxPaneArgv("/bin/zsh", { unsetEnv: ["CMUX_SURFACE_ID", "MY_ID"] });
+        const unset = pane.argv.flatMap((word, i) => (pane.argv[i - 1] === "-u" ? [word] : []));
 
-        expect(pane.argv.slice(0, 5)).toEqual(["/usr/bin/env", "-u", "CMUX_SURFACE_ID", "-u", "CMUX_WORKSPACE_ID"]);
+        expect(pane.argv[0]).toBe("/usr/bin/env");
+        expect(unset).toEqual([...TERMINAL_FOREIGN_ENV, "MY_ID"]);
         expect(pane.argv.at(-1)).toBe("/bin/zsh");
-        expect(tmuxPaneArgv("/bin/zsh").argv).not.toContain("-u");
     });
 
     test("a command-line session keeps its pane and is not reported when its command died", async () => {
