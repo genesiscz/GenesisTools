@@ -113,7 +113,13 @@ const READERS: Record<string, (args: string[]) => boolean> = {
         !args.some((arg) =>
             ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg)
         ),
-    sed: (args) => args[0] === "-n" && args.length >= 2 && /^(\d+|\$)(,(\d+|\$))?p$/.test(args[1]),
+    // Only `sed -n <range>p <files>`: a second script (`-e 'w <file>'`, `-f`, `-i`) could write, and passed before
+    // (found by a Sol reviewer of #536 on 2026-10-16, which proved a file written through an approved "read").
+    sed: (args) =>
+        args[0] === "-n" &&
+        args.length >= 2 &&
+        /^(\d+|\$)(,(\d+|\$))?p$/.test(args[1]) &&
+        args.slice(2).every((arg) => !arg.startsWith("-")),
     git: (args) =>
         [
             "diff",
@@ -242,6 +248,25 @@ export function readOnlyChain(entry: RunEntry, command: string): boolean {
     });
 }
 
+/**
+ * The briefs' own test command, `timeout <seconds> bun scripts/test.ts <test files>`: every file a `.test.ts(x)` path
+ * inside the worktree. A reviewer runs it once per area, and each one woke the lead (2026-10-16: 6 of the first 15
+ * NEEDS LEAD lines of five Sol reviewers). It runs inside the worker's sandbox like any other approved command.
+ */
+export function testRunCommand(entry: RunEntry, words: string[]): boolean {
+    const rest = words[0] === "timeout" && /^\d+$/.test(words[1] ?? "") ? words.slice(2) : words;
+
+    if (rest[0] !== "bun" || rest[1] !== "scripts/test.ts" || rest.length < 3) {
+        return false;
+    }
+
+    const root = resolve(entry.cwd);
+    return rest.slice(2).every((path) => {
+        const local = relative(root, resolve(root, path));
+        return /\.test\.tsx?$/.test(path) && !isAbsolute(local) && !local.startsWith("..") && !/[*?[\]]/.test(path);
+    });
+}
+
 /** Whether a command approval is one the brief allows. Pure, so it can be replayed on a past session's requests. */
 export function allowedCommand(entry: RunEntry, command: string): boolean {
     if (readOnlyChain(entry, command)) {
@@ -268,6 +293,10 @@ export function allowedCommand(entry: RunEntry, command: string): boolean {
     }
 
     if (words.length === 3 && words[0] === "mkdir" && words[1] === "-p" && words[2] === ".claude/work/babysit") {
+        return true;
+    }
+
+    if (testRunCommand(entry, words)) {
         return true;
     }
 
