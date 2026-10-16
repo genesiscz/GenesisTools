@@ -279,9 +279,41 @@ export function testRunCommand(entry: RunEntry, words: string[]): boolean {
     });
 }
 
+const FABLE_CLI =
+    /(^|\/)(plugins\/genesis-tools|genesis-tools\/genesis-tools\/[\d.]+)\/skills\/fable-replace\/scripts\/cli\.ts$/;
+const FABLE_ENV = new Set(["GENESIS_TOOLS_HOME", "TMPDIR", "FABLE_REPLACE_HOME"]);
+
+/**
+ * The briefs' edit tool: `[ENV=<scratch> …] bun <…>/fable-replace/scripts/cli.ts <<'TAG' … TAG`, approved when every
+ * `@@ <file>` it names is in the brief's scope (or the babysit scratch folder) and each environment value is a
+ * `/tmp/cc/` scratch path. Every fixer edit woke the lead before (2026-10-16: the #537 and #533 fixers' first edits).
+ */
+export function fableReplaceCommand(entry: RunEntry, command: string): boolean {
+    const match = /^((?:[A-Z_]+=\S+ )*)bun (\S+) <<'([A-Za-z0-9_]+)'\n([\s\S]*)\n\3\s*$/.exec(command);
+
+    if (!match || !FABLE_CLI.test(match[2])) {
+        return false;
+    }
+
+    const envOk = match[1]
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .every((pair) => {
+            const [key, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
+            return FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\//.test(value) && !value.includes("..");
+        });
+    const targets = match[4]
+        .split("\n")
+        .filter((line) => line.startsWith("@@"))
+        .map((line) => line.slice(2).trim());
+
+    return envOk && targets.length > 0 && targets.every((path) => !/[`$]/.test(path) && inScope(entry, path));
+}
+
 /** Whether a command approval is one the brief allows. Pure, so it can be replayed on a past session's requests. */
 export function allowedCommand(entry: RunEntry, command: string): boolean {
-    if (readOnlyChain(entry, command)) {
+    if (readOnlyChain(entry, command) || fableReplaceCommand(entry, command)) {
         return true;
     }
 
