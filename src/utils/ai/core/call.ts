@@ -74,6 +74,8 @@ export interface CallLLMOptions {
      * an answer nobody would read.
      */
     abortSignal?: AbortSignal;
+    /** Retries after a retryable failure (429, 5xx). The SDK default is 2; a throwaway request such as a warmup wants fewer. */
+    maxRetries?: number;
 }
 
 export interface CallLLMResult {
@@ -169,6 +171,7 @@ export interface CoreChatOptions {
      * partial answer — that is what `MiniAgent.interject` keeps in history.
      */
     abortSignal?: AbortSignal;
+    maxRetries?: number;
     stream?: boolean;
     /** Required when `stream` is set: where text deltas go. */
     onChunk?: (text: string) => void;
@@ -215,6 +218,7 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         providerOptions: buildProviderOptions(target.providerType),
         ...(options.headers ? { headers: options.headers } : {}),
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
         ...(options.maxTokens ? { maxOutputTokens: options.maxTokens } : {}),
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
         ...(hasTools && tools ? { tools, stopWhen: stepCountIs(options.maxSteps ?? DEFAULT_MAX_STEPS) } : {}),
@@ -239,14 +243,23 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         };
     }
 
-    const result = await streamText(args);
+    // The SDK's default `onError` prints the raw error to stderr, and the stream then ends
+    // with "No output generated" while the real cause is only in an `error` part. The part
+    // is read below and thrown, so the default dump has nothing left to add.
+    const result = await streamText({
+        ...args,
+        onError: ({ error }) => log.debug({ model: target.label, error }, "stream error"),
+    });
     let content = "";
+    const streamErrors: unknown[] = [];
 
     // fullStream rather than textStream: reasoning models emit thinking deltas
     // long before the first content token, and a tool loop reports its calls the
     // same way. A caller that only wants text simply passes no onThinking.
     for await (const part of result.fullStream) {
-        if (part.type === "text-delta") {
+        if (part.type === "error") {
+            streamErrors.push(part.error);
+        } else if (part.type === "text-delta") {
             content += part.text;
             options.onChunk?.(part.text);
         } else if (part.type === "reasoning-delta") {
@@ -264,6 +277,10 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         log.debug({ model: target.label, chars: content.length }, "stream aborted — returning partial text");
 
         return { content };
+    }
+
+    if (streamErrors.length > 0) {
+        throw streamErrors[0];
     }
 
     const usage = await result.usage;
@@ -427,6 +444,7 @@ async function runCall(target: CallTarget, options: CallLLMOptions): Promise<Cal
             temperature: options.temperature,
             headers: options.headers,
             ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+            ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
         });
 
         return { content: result.content, usage: result.usage };
@@ -457,6 +475,7 @@ async function runCall(target: CallTarget, options: CallLLMOptions): Promise<Cal
         temperature: options.temperature,
         headers: options.headers,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
         stream: true,
         onChunk: write,
     });

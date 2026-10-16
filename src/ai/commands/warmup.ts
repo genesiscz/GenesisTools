@@ -18,9 +18,15 @@ function viaHint(result: WarmupResult): string {
 }
 
 function renderResult(result: WarmupResult): string {
-    const icon = result.ok ? pc.green("✓") : pc.red("✗");
-    const tail = result.ok ? pc.dim(viaHint(result)) : pc.red(` ${result.error ?? "failed"}`);
-    return `  ${icon} ${result.accountName} ${pc.dim(`(${providerAliasOf(result.provider)}, ${result.durationMs}ms)`)}${tail}`;
+    const icon = result.ok ? pc.green("✓") : result.skipped ? pc.yellow("–") : pc.red("✗");
+    const reason = result.error ?? "failed";
+    const tail = result.ok
+        ? pc.dim(viaHint(result))
+        : result.skipped
+          ? pc.yellow(` skipped: ${reason}`)
+          : pc.red(` ${reason}`);
+    const line = `  ${icon} ${result.accountName} ${pc.dim(`(${providerAliasOf(result.provider)}, ${result.durationMs}ms)`)}${tail}`;
+    return result.hint ? `${line}\n      ${pc.dim(result.hint)}` : line;
 }
 
 /**
@@ -83,9 +89,13 @@ export function registerWarmupCommand(program: Command, opts: { provider?: strin
         const spinner = flags.json ? undefined : p.spinner();
         spinner?.start(`Warming up ${names.length > 0 ? names.join(", ") : "every account"}...`);
         const results = await warmupAccounts({ store, ...selection });
-        const failed = results.filter((r) => !r.ok).length;
+        const skipped = results.filter((r) => r.skipped).length;
+        const failed = results.filter((r) => !r.ok && !r.skipped).length;
+        const skippedNote = skipped > 0 ? `, ${skipped} skipped (no quota left)` : "";
         spinner?.stop(
-            failed === 0 ? `${results.length} account(s) warmed up` : `${failed} of ${results.length} failed`
+            failed === 0
+                ? `${results.length - skipped} account(s) warmed up${skippedNote}`
+                : `${failed} of ${results.length} failed${skippedNote}`
         );
 
         if (flags.json) {

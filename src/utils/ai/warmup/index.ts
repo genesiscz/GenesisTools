@@ -1,6 +1,7 @@
 import { Writable } from "node:stream";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { WarmupFailure, type WarmupOutcome } from "@genesiscz/utils/ai/providers/account-features";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
@@ -16,6 +17,10 @@ export interface WarmupResult {
     /** Which path sent the request: `chat` (the facade) or a plugin-specific route. */
     via: string;
     error?: string;
+    /** What a person can do about `error`, when they can do anything. */
+    hint?: string;
+    /** Nothing was sent because the account has no quota left. Not a failure: `ok` is false, `error` holds the reason. */
+    skipped?: boolean;
 }
 
 /** The two reads the warmup needs; tests hand in a plain object. */
@@ -28,7 +33,7 @@ export interface WarmupOptions {
     names?: string[];
     store?: WarmupStore;
     /** Test seam: the per-account sender. Production sends one tiny chat turn. */
-    send?: (account: AccountEntry) => Promise<{ via: string }>;
+    send?: (account: AccountEntry) => Promise<WarmupOutcome>;
 }
 
 /**
@@ -58,6 +63,9 @@ export async function sendWarmupChat(account: AccountEntry): Promise<void> {
         task: "chat",
         app: "warmup",
         maxTokens: 5,
+        // A throwaway request: one retry rides out a blip, and a refusal that repeats (a used-up
+        // weekly quota answers 429 with a retry-after of days) does not cost 6 s of backoff.
+        maxRetries: 1,
         streaming: true,
         streamTarget: new Writable({
             write(_chunk, _encoding, callback) {
@@ -71,7 +79,7 @@ export async function sendWarmupChat(account: AccountEntry): Promise<void> {
  * The provider's own route when it declares one (anthropic falls back to its long-lived
  * token when the OAuth grant is dead), the shared chat turn otherwise.
  */
-export async function sendWarmup(account: AccountEntry): Promise<{ via: string }> {
+export async function sendWarmup(account: AccountEntry): Promise<WarmupOutcome> {
     registerBuiltInPlugins();
     const custom = providerPlugin(account.provider).accounts?.warmup;
 
@@ -121,15 +129,23 @@ export async function warmupAccounts(opts: WarmupOptions = {}): Promise<WarmupRe
         const base = { accountId: account.id, accountName: account.name, provider: account.provider };
 
         try {
-            const { via } = await send(account);
+            const { via, skipped } = await send(account);
             const durationMs = Math.round(performance.now() - started);
+
+            if (skipped) {
+                logger.info({ ...base, via, skipped, durationMs }, "[warmup] skipped");
+                results.push({ ...base, ok: false, skipped: true, via, durationMs, error: skipped });
+                continue;
+            }
+
             logger.info({ ...base, via, durationMs }, "[warmup] sent");
             results.push({ ...base, ok: true, via, durationMs });
         } catch (err) {
             const durationMs = Math.round(performance.now() - started);
             const error = err instanceof Error ? err.message : String(err);
-            logger.warn({ ...base, error, durationMs }, "[warmup] failed");
-            results.push({ ...base, ok: false, via: "none", durationMs, error });
+            const hint = err instanceof WarmupFailure ? err.hint : undefined;
+            logger.warn({ ...base, error, ...(hint ? { hint } : {}), durationMs }, "[warmup] failed");
+            results.push({ ...base, ok: false, via: "none", durationMs, error, ...(hint ? { hint } : {}) });
         }
     }
 

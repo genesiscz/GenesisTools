@@ -1,6 +1,6 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import type { WarmupContext, WarmupOutcome } from "@genesiscz/utils/ai/providers/account-features";
+import { type WarmupContext, WarmupFailure, type WarmupOutcome } from "@genesiscz/utils/ai/providers/account-features";
 import {
     longLivedTokenUsable,
     sendLongLivedInferencePing,
@@ -8,6 +8,7 @@ import {
 } from "@genesiscz/utils/claude/token-verify";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { describeAnthropicFailure } from "./failure";
 
 export interface LongLivedTokens {
     longLivedToken?: string;
@@ -28,6 +29,25 @@ function isOAuthAuthFailure(err: unknown): boolean {
 function hasOAuthPair(account: AccountEntry): boolean {
     const c = account.credentials;
     return Boolean(c.accessToken || c.refreshToken || c.authFile);
+}
+
+/**
+ * A refusal no token change fixes (the organization blocks OAuth, the terms need accepting, the
+ * quota is used up) is reported as what it is. A used-up quota is a skip: nothing is wrong, there
+ * is no session to start. Any other error is rethrown unchanged.
+ */
+function explainRefusal(err: unknown): WarmupOutcome {
+    const failure = describeAnthropicFailure(err);
+
+    if (!failure) {
+        throw err;
+    }
+
+    if (failure.kind === "weekly-limit" || failure.kind === "session-limit") {
+        return { via: "oauth", skipped: failure.message };
+    }
+
+    throw new WarmupFailure(failure.message, failure.action);
 }
 
 async function defaultLoadLongLived(accountName: string): Promise<LongLivedTokens | undefined> {
@@ -55,7 +75,8 @@ async function pingLongLived(
 /**
  * Anthropic's warmup: the shared chat turn on the OAuth pair, and the inference ping on a
  * usable long-lived (`tools claude login-long`) token when there is no pair or the pair is
- * dead. A non-auth failure surfaces unchanged; an account with no credential at all fails
+ * dead. A refusal the account cannot fix by logging in again is named (`explainRefusal`), any
+ * other non-auth failure surfaces unchanged, and an account with no credential at all fails
  * before any request.
  */
 export async function anthropicWarmup(
@@ -82,7 +103,7 @@ export async function anthropicWarmup(
         return { via: "oauth" };
     } catch (err) {
         if (!isOAuthAuthFailure(err)) {
-            throw err;
+            return explainRefusal(err);
         }
 
         if (!longLived) {

@@ -362,6 +362,23 @@ export interface WarmupContext {
 export interface WarmupOutcome {
     /** Which route sent the request, for the CLI's hint column (`oauth`, `login-long`, ...). */
     via: string;
+    /**
+     * Set when nothing was sent because the account has no quota left to start: the reason, with
+     * the reset time. A skip is not a failure, so the report and the exit code leave it out of the
+     * failed count.
+     */
+    skipped?: string;
+}
+
+/** A warmup refusal a person can act on; `hint` says how. */
+export class WarmupFailure extends Error {
+    readonly hint?: string;
+
+    constructor(message: string, hint?: string) {
+        super(message);
+        this.name = "WarmupFailure";
+        this.hint = hint;
+    }
 }
 
 export interface AccountFeatures {

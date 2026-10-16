@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { WarmupFailure } from "@genesiscz/utils/ai/providers/account-features";
 import { selectWarmupAccounts, type WarmupStore, warmupAccounts, warmupModelRef } from "./index";
 
 function account(id: string, provider: string, overrides: Partial<AccountEntry> = {}): AccountEntry {
@@ -85,5 +86,28 @@ describe("warmupAccounts", () => {
             ["grk", false, "none", "grok is down"],
         ]);
         expect(results.every((r) => Number.isFinite(r.durationMs))).toBe(true);
+    });
+
+    test("a skipped account is not a success and not a failure, and a refusal keeps its hint", async () => {
+        const results = await warmupAccounts({
+            store,
+            send: async (a) => {
+                if (a.id === "acc_work") {
+                    return { via: "oauth", skipped: "weekly limit used up, resets 2026-10-19 01:00" };
+                }
+
+                if (a.id === "acc_cdx") {
+                    throw new WarmupFailure("HTTP 403: refused", "Ask the owner.");
+                }
+
+                return { via: "chat" };
+            },
+        });
+
+        expect(results.map((r) => [r.accountName, r.ok, r.skipped, r.error, r.hint])).toEqual([
+            ["work", false, true, "weekly limit used up, resets 2026-10-19 01:00", undefined],
+            ["cdx", false, undefined, "HTTP 403: refused", "Ask the owner."],
+            ["grk", true, undefined, undefined, undefined],
+        ]);
     });
 });

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { WarmupFailure } from "@genesiscz/utils/ai/providers/account-features";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
+import { APICallError, RetryError } from "ai";
 import { anthropicWarmup, type LongLivedTokens } from "./warmup";
 
 const LONG = "x".repeat(LONG_TOKEN_MIN_LENGTH);
@@ -103,6 +105,62 @@ describe("anthropicWarmup", () => {
             },
         });
         await expect(outcome).rejects.toThrow("No haiku model available");
+        expect(calls.longLived).toEqual([]);
+    });
+
+    test("an organization that blocks OAuth fails with the action, and never pings login-long", async () => {
+        const { outcome, calls } = run({
+            tokens: { longLivedToken: LONG },
+            generic: async () => {
+                throw new APICallError({
+                    message: "OAuth authentication is currently not allowed for this organization.",
+                    url: "https://api.example.test/v1/messages",
+                    requestBodyValues: {},
+                    statusCode: 403,
+                    responseBody: '{"error":{"details":{"error_code":"oauth_not_allowed_for_organization"}}}',
+                    isRetryable: false,
+                });
+            },
+        });
+        const failure = await outcome.then(
+            () => undefined,
+            (caught: unknown) => caught
+        );
+
+        expect(failure).toBeInstanceOf(WarmupFailure);
+        expect(failure instanceof WarmupFailure && failure.hint).toContain("organization owner");
+        expect(calls.longLived).toEqual([]);
+    });
+
+    test("a used-up weekly quota is a skip carrying the reset time, not a failure", async () => {
+        const full = new APICallError({
+            message: "This request would exceed your account's rate limit.",
+            url: "https://api.example.test/v1/messages",
+            requestBodyValues: {},
+            statusCode: 429,
+            responseBody: "{}",
+            responseHeaders: {
+                "anthropic-ratelimit-unified-5h-reset": "1792174800",
+                "anthropic-ratelimit-unified-5h-utilization": "0.0",
+                "anthropic-ratelimit-unified-7d-reset": "1792364400",
+                "anthropic-ratelimit-unified-7d-utilization": "1.0",
+            },
+            isRetryable: true,
+        });
+        const { outcome, calls } = run({
+            tokens: { longLivedToken: LONG },
+            generic: async () => {
+                throw new RetryError({
+                    message: "Failed after 2 attempts",
+                    reason: "maxRetriesExceeded",
+                    errors: [full, full],
+                });
+            },
+        });
+        const result = await outcome;
+
+        expect(result.via).toBe("oauth");
+        expect(result.skipped).toMatch(/^weekly limit used up, resets /);
         expect(calls.longLived).toEqual([]);
     });
 
