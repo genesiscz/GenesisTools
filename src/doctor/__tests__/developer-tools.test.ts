@@ -1,11 +1,27 @@
 import { describe, expect, it } from "bun:test";
 import { rm } from "node:fs/promises";
-import { hostAppBundle, isDeveloperToolAllowed, SecurityAnalyzer } from "@app/doctor/analyzers/security";
+import {
+    developerToolStatus,
+    hostAppBundle,
+    isDeveloperToolAllowed,
+    SecurityAnalyzer,
+} from "@app/doctor/analyzers/security";
 import { writeCache } from "@app/doctor/lib/cache";
 import { analysisDirFor, cacheFilePath } from "@app/doctor/lib/paths";
 import type { AnalyzerContext, Finding } from "@app/doctor/lib/types";
 
 describe("Developer Tools check", () => {
+    it("keeps partial TCC reads unknown unless a readable database proves a grant", () => {
+        const grant = [{ client: "com.example.host", auth_value: 2 }];
+        expect(developerToolStatus([null, []], "com.example.host")).toBeNull();
+        expect(developerToolStatus([[], null], "com.example.host")).toBeNull();
+        expect(developerToolStatus([null, null], "com.example.host")).toBeNull();
+        expect(developerToolStatus([null, grant], "com.example.host")).toBe(true);
+        expect(developerToolStatus([grant, null], "com.example.host")).toBe(true);
+        expect(developerToolStatus([[], []], "com.example.host")).toBe(false);
+        expect(developerToolStatus([[], grant], "com.example.other")).toBe(false);
+    });
+
     it("ignores cached host findings and scans again when the host changes", async () => {
         let host = "Editor";
         let scans = 0;

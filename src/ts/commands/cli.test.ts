@@ -150,3 +150,60 @@ describe("tools ts skeleton --rank", () => {
         expect(result.stderr).toMatch(/at least 1/);
     });
 });
+
+describe("sourcemap build interruption", () => {
+    for (const keepWorktree of [false, true]) {
+        test(`Ctrl-C stops an ${keepWorktree ? "explicit kept" : "interactively selected"} build`, () => {
+            const script = `
+                import { mock } from "bun:test";
+                import { SafeJSON } from "@genesiscz/utils/json";
+                import { Command } from "commander";
+                const cli = await import("@genesiscz/utils/cli");
+                mock.module("@genesiscz/utils/cli", () => ({ ...cli, isInteractive: () => true }));
+                mock.module("@genesiscz/utils/prompts/p", () => ({
+                    select: async () => "command",
+                    text: async ({ message }) => message.startsWith("Build command") ? "sleep 30" : "unused",
+                }));
+                const build = await import("@genesiscz/utils/ts/sourcemaps/build");
+                let worktree;
+                mock.module("@genesiscz/utils/ts/sourcemaps/build", () => ({
+                    ...build,
+                    buildAtCommit: async (options) => {
+                        worktree = options.worktree;
+                        queueMicrotask(() => process.emit("SIGINT"));
+                        return new Promise(() => {});
+                    },
+                    releaseBuildWorktrees: async (options) => {
+                        process.stdout.write(SafeJSON.stringify({ stop: options?.stop, worktree }));
+                        return [];
+                    },
+                }));
+                const { registerSourcemapsCommands } = await import(${SafeJSON.stringify(join(import.meta.dir, "sourcemaps.ts"))});
+                const program = new Command();
+                registerSourcemapsCommands(program);
+                await program.parseAsync([
+                    "bun", "ts", "sourcemaps", "build", "--repo", "/fixture", "--commit", "HEAD",
+                    "--output", "out", "--project", "interrupt-fixture",
+                    ...${SafeJSON.stringify(keepWorktree ? ["--build-cmd", "sleep 30", "--keep-worktree"] : [])},
+                ]);
+            `;
+            const result = Bun.spawnSync(["bun", "-e", script], {
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+                timeout: 3000,
+            });
+            const stdout = new TextDecoder().decode(result.stdout);
+            const stderr = new TextDecoder().decode(result.stderr);
+            expect({ code: result.exitCode, stderr }).toMatchObject({ code: 130 });
+            const release = SafeJSON.parse(stdout) as { stop: boolean; worktree?: string };
+            expect(release.stop).toBe(true);
+
+            if (keepWorktree) {
+                expect(release.worktree).toMatch(/interrupt-fixture[/\\]worktree$/);
+            } else {
+                expect(release.worktree).toBeUndefined();
+            }
+        });
+    }
+});

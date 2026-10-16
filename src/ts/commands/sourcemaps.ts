@@ -15,6 +15,7 @@ import {
     buildAtCommit,
     buildFilesDir,
     git,
+    managedWorktree,
     releaseBuildWorktrees,
     type WorktreeRemoval,
 } from "@genesiscz/utils/ts/sourcemaps/build";
@@ -60,7 +61,7 @@ import {
 } from "@genesiscz/utils/ts/sourcemaps/resolvers/index";
 import { displaySource } from "@genesiscz/utils/ts/sourcemaps/resolvers/shared";
 import { claudeMcpServer, listSentryScopes, sentryFromMcpServer } from "@genesiscz/utils/ts/sourcemaps/sentry-config";
-import { Command } from "commander";
+import type { Command } from "commander";
 import pc from "picocolors";
 
 const { out } = logger.scoped("ts:sourcemaps");
@@ -322,28 +323,11 @@ function mapStatusLine(snap: { files: DeployedFile[] }): string {
 }
 
 /**
- * Wraps the action of a command that can build (`--build-cmd`). However the command ends (done, failed or Ctrl-C), the
- * managed build worktree it built in is removed afterwards with `git worktree remove`, so the dependencies its build
- * installed do not stay on disk. A Ctrl-C first stops the running build. `--keep-worktree` leaves all of it as before.
+ * Wraps every action that can build, including interactive selection. Ctrl-C stops the build before cleanup.
+ * `--keep-worktree` names the managed worktree explicitly, retaining its directory without bypassing cancellation.
  */
 function releasesWorktree<A extends unknown[]>(action: (...args: A) => Promise<void>): (...args: A) => Promise<void> {
     return async (...args: A) => {
-        // Commander passes the command itself after the parsed options.
-        const command = args.at(-1);
-        const opts = command instanceof Command ? command.opts<BuildOpts>() : {};
-        if (opts.keepWorktree) {
-            return action(...args);
-        }
-
-        if (!opts.buildCmd) {
-            // Only an interactive answer can still make it build. No Ctrl-C handler, so Ctrl-C ends it at once as before.
-            try {
-                return await action(...args);
-            } finally {
-                printReleased(await releaseBuildWorktrees());
-            }
-        }
-
         const ending = await withInterrupt(async (signal) => {
             const interrupted = new Promise<"interrupted">((resolve) => {
                 signal.addEventListener("abort", () => resolve("interrupted"), { once: true });
@@ -493,7 +477,7 @@ async function localBuilds(
             outputDir: opts.output,
             links: opts.link,
             env: await buildEnv(opts, snap),
-            worktree: opts.worktree ? resolve(opts.worktree) : undefined,
+            worktree: opts.worktree ? resolve(opts.worktree) : opts.keepWorktree ? managedWorktree(cache) : undefined,
             onLine: (line) => spinner.message(line.slice(0, 100)),
         });
         spinner.stop(
@@ -1025,7 +1009,11 @@ Examples:
                         outputDir: opts.output,
                         links: opts.link,
                         env: await buildEnv(opts, deployed),
-                        worktree: opts.worktree ? resolve(opts.worktree) : undefined,
+                        worktree: opts.worktree
+                            ? resolve(opts.worktree)
+                            : opts.keepWorktree
+                              ? managedWorktree(cache)
+                              : undefined,
                         firstParent: !opts.allParents,
                         maxBuilds: Number(opts.maxBuilds),
                         onEvent: (event) => {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { run } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
+import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 interface SecurityCheck {
@@ -67,12 +68,10 @@ async function developerToolsFinding(analyzerId: string): Promise<Finding | null
             ?.replace(/\.app$/, "") ?? host;
     const plist = await run("plutil", ["-extract", "CFBundleIdentifier", "raw", join(host, "Contents/Info.plist")]);
     const bundleId = plist.status === 0 ? plist.stdout.trim() : "";
-    const listed = bundleId ? readDeveloperToolClients() : null;
-    if (listed === null) {
+    const allowed = bundleId ? developerToolStatus(readDeveloperToolClients(), bundleId) : null;
+    if (allowed === null) {
         return null;
     }
-
-    const allowed = isDeveloperToolAllowed(listed, bundleId);
     return {
         id: "sec-developer-tools",
         analyzerId,
@@ -110,16 +109,30 @@ export function isDeveloperToolAllowed(rows: Array<{ client: string; auth_value:
     return rows.some((row) => row.client === bundleId && row.auth_value === 2);
 }
 
+interface DeveloperToolClient {
+    client: string;
+    auth_value: number;
+}
+
+/** A grant proves access; a missing grant proves denial only if every database was readable. */
+export function developerToolStatus(reads: Array<DeveloperToolClient[] | null>, bundleId: string): boolean | null {
+    if (reads.some((rows) => rows !== null && isDeveloperToolAllowed(rows, bundleId))) {
+        return true;
+    }
+
+    return reads.length === 0 || reads.some((rows) => rows === null) ? null : false;
+}
+
 /**
- * The Developer Tools rows from both TCC databases (System Settings writes them to the system one). Null when
- * neither can be read (the host has no Full Disk Access): the check is skipped, not failed.
+ * The Developer Tools rows from both TCC databases (System Settings writes them to the system one).
+ * Each unreadable database remains null so a partial read cannot turn an unknown grant into a denial.
  */
-function readDeveloperToolClients(): Array<{ client: string; auth_value: number }> | null {
+function readDeveloperToolClients(): Array<DeveloperToolClient[] | null> {
     const paths = [
         "/Library/Application Support/com.apple.TCC/TCC.db",
         join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"),
     ];
-    let rows: Array<{ client: string; auth_value: number }> | null = null;
+    const reads: Array<DeveloperToolClient[] | null> = [];
     for (const path of paths) {
         try {
             const db = new Database(path, { readonly: true });
@@ -129,16 +142,17 @@ function readDeveloperToolClients(): Array<{ client: string; auth_value: number 
                         "SELECT client, auth_value FROM access WHERE service = 'kTCCServiceDeveloperTool'"
                     )
                     .all();
-                rows = [...(rows ?? []), ...found];
+                reads.push(found);
             } finally {
                 db.close();
             }
-        } catch {
-            // Unreadable without Full Disk Access; the other database may still answer.
+        } catch (error) {
+            logger.debug({ error, path }, "could not read Developer Tools grants");
+            reads.push(null);
         }
     }
 
-    return rows;
+    return reads;
 }
 
 /** `pid` and its ancestors below launchd, nearest first, each as its executable path (its kernel name when unreadable). */
