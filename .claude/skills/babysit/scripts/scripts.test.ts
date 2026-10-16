@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -9,6 +9,7 @@ import {
     allowedCommand,
     chainSegments,
     decide,
+    fableReplaceCommand,
     innerCommand,
     type RunEntry,
     readOnlyChain,
@@ -37,6 +38,17 @@ import {
 } from "./versions";
 import { createTaskLookup, pump } from "./watch-workers";
 
+const mainCheckout = dirname(
+    Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: process.env,
+    })
+        .stdout.toString()
+        .trim()
+);
+const trustedCli = join(mainCheckout, "plugins/genesis-tools/skills/fable-replace/scripts/cli.ts");
+
 const entry: RunEntry = {
     name: "fixture",
     cwd: "/fixture",
@@ -49,12 +61,12 @@ describe("read-only chains", () => {
     test("a chain of readers is approved without the lead", () => {
         for (const command of [
             "pwd; git status --short; git rev-parse --path-format=absolute --git-common-dir; wc -l CLAUDE.md",
-            "git diff --stat origin/master...HEAD; rg --files .claude/rules",
+            "git diff --no-textconv --no-ext-diff --stat origin/master...HEAD; rg --files .claude/rules",
             "rg --files Genesis -g CLAUDE.md | rg 'rules/'",
             "gh pr view 93 --json body --jq .body",
-            "sed -n '40,80p' src/a.ts && git log --oneline -5",
+            "sed -n '40,80p' src/a.ts && git log --no-textconv --no-ext-diff --oneline -5",
             "cd sub && tools github review 93 --llm",
-            "git diff --stat origin/master...HEAD; if test -f /x/AGENTS.md; then cat /x/AGENTS.md; fi",
+            "git diff --no-textconv --no-ext-diff --stat origin/master...HEAD; if test -f /x/AGENTS.md; then cat /x/AGENTS.md; fi",
         ]) {
             expect(readOnlyChain(entry, command)).toBe(true);
             expect(allowedCommand(entry, command)).toBe(true);
@@ -151,7 +163,7 @@ describe("fixer checks", () => {
 });
 
 describe("fixer edits through fable-replace", () => {
-    const cli = "/Users/x/.codex/plugins/cache/genesis-tools/genesis-tools/1.0.107/skills/fable-replace/scripts/cli.ts";
+    const cli = trustedCli;
     const spec = (target: string) => `@@ ${target}\n<<<\nold\n===\nnew\n>>>`;
     test("approved only when every target is in scope", () => {
         expect(allowedCommand(entry, `bun ${cli} <<'FR'\n${spec("src/a.ts")}\nFR`)).toBe(true);
@@ -1121,5 +1133,166 @@ describe("round 2 regression guards", () => {
             "push rejected"
         );
         expect(readEvents(dir)).toHaveLength(1);
+    });
+});
+
+describe("round 3 approval boundaries", () => {
+    const spec = "@@ src/a.ts\n<<<\nold\n===\nnew\n>>>";
+    const invocation = (body: string) => "bun " + trustedCli + " <<'FR'\n" + body + "\nFR";
+
+    test("GitHub review reads use complete allowlisted flags and subcommands", () => {
+        for (const command of [
+            "./tools github review 5 --resolve-thread -t PRRT_fixture",
+            "./tools github review 5 -r fixed -t PRRT_fixture",
+            "./tools github review comment 5 --body text --file src/a.ts --line 1 --now",
+            "tools github review 5 --respond=fixed --thread-id=PRRT_fixture",
+            "tools github review 5 --worktree",
+            "tools github review 5 --save",
+            "tools github review summary --resolve",
+            "tools github review expand t1 -s fixture --resolve-thread",
+            "tools github review 5 --unknown",
+            "tools github review 5 --repo",
+        ]) {
+            expect(allowedCommand(entry, command)).toBe(false);
+        }
+        for (const command of [
+            "tools github review 5 --llm -u -s fixture --repo fixture/repo",
+            "./tools github review 5 --json --session=fixture --author=reviewer",
+            "tools github review expand t1,t2 --session fixture",
+            "tools github review summary -s fixture",
+            "tools github review sessions",
+        ]) {
+            expect(allowedCommand(entry, command)).toBe(true);
+        }
+    });
+
+    test("fable moves and destination-writing modifiers always require the lead", () => {
+        for (const marker of [
+            "<<< move to=src/outside.ts lines=1-1",
+            "<<<move to=src/outside.ts lines=1-1",
+            "<<< move to=src/a.ts symbol=fixture imports=fix",
+            "<<< optional move to=src/outside.ts lines=1-1",
+            "<<< to=src/outside.ts move lines=1-1",
+            "<<< renameTo=src/outside.ts",
+        ]) {
+            const command = invocation("@@ src/a.ts\n" + marker + "\n>>>");
+            expect(fableReplaceCommand(entry, command)).toBe(false);
+            expect(allowedCommand(entry, command)).toBe(false);
+        }
+        const json = '[\n/*\n@@ src/a.ts\n*/\n{"file":"src/outside.ts","createWith":"fixture"}\n]';
+        expect(fableReplaceCommand(entry, invocation(json))).toBe(false);
+        expect(fableReplaceCommand(entry, invocation(spec))).toBe(true);
+    });
+
+    test("Git readers require disabling flags before paths, without later re-enabling converters", () => {
+        for (const verb of ["diff", "show", "log", "blame", "grep"]) {
+            const safe =
+                "git " + verb + " --no-textconv" + (["diff", "show", "log"].includes(verb) ? " --no-ext-diff" : "");
+            expect(allowedCommand(entry, "git " + verb + " fixture")).toBe(false);
+            expect(allowedCommand(entry, safe)).toBe(true);
+            expect(allowedCommand(entry, safe + " --textconv")).toBe(false);
+            expect(allowedCommand(entry, safe + " --textconv=true")).toBe(false);
+            expect(allowedCommand(entry, "git " + verb + " -- --no-textconv --no-ext-diff")).toBe(false);
+        }
+        expect(allowedCommand(entry, "git diff --no-textconv")).toBe(false);
+        expect(allowedCommand(entry, "git diff --no-textconv --no-ext-diff --ext-diff=true")).toBe(false);
+    });
+
+    test("an approved Git read never reaches a configured text converter", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-converter-"));
+        const git = prepGit(dir);
+        expect(git(["init", "-q"]).code).toBe(0);
+        const marker = join(dir, "converter-ran");
+        fs.appendFileSync(join(dir, ".git/config"), '\n[diff "fixture"]\n\ttextconv = /usr/bin/touch ' + marker + "\n");
+        fs.writeFileSync(join(dir, ".gitattributes"), "*.txt diff=fixture\n");
+        fs.writeFileSync(join(dir, "fixture.txt"), "before\n");
+        expect(git(["add", "--", ".gitattributes", "fixture.txt"]).code).toBe(0);
+        fs.writeFileSync(join(dir, "fixture.txt"), "after\n");
+        // Positive fixture control proves this repository really has an executable text converter.
+        expect(git(["diff"]).code).toBe(0);
+        expect(fs.existsSync(marker)).toBe(true);
+        fs.renameSync(marker, join(dir, "positive-control"));
+        const worker = { ...entry, cwd: dir };
+        const unsafe = "git diff -- fixture.txt";
+        expect(allowedCommand(worker, unsafe)).toBe(false);
+        if (allowedCommand(worker, unsafe)) {
+            git(["diff", "--", "fixture.txt"]);
+        }
+        const safe = "git diff --no-textconv --no-ext-diff -- fixture.txt";
+        expect(allowedCommand(worker, safe)).toBe(true);
+        expect(git(["diff", "--no-textconv", "--no-ext-diff", "--", "fixture.txt"]).code).toBe(0);
+        expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    test("fable heredoc terminators and shell expansions never reach command execution", () => {
+        const normal = invocation(spec);
+        expect(fableReplaceCommand(entry, normal)).toBe(true);
+        const bad = [
+            "FABLE_REPLACE_HOME=/tmp/cc/p/s/journal TMPDIR=/tmp/cc/p/s/$(true>/tmp/cc/p/s/env-expansion-proof) " +
+                normal,
+            "TMPDIR=/tmp/cc/p/s/x$(touch\x24{IFS}/tmp/cc/p/s/owned) " + normal,
+            "bun " + trustedCli + " <<'FR'\n" + spec + "\nFR\ntrue > /tmp/cc/p/s/heredoc-proof\nFR",
+            "bun " + trustedCli.replace("/plugins/", "/$(true)/plugins/") + " <<'FR'\n" + spec + "\nFR",
+        ];
+        const execute = spyOn(Bun, "spawnSync").mockImplementation(() => {
+            throw new Error("unauthorized execution reached");
+        });
+        try {
+            for (const command of bad) {
+                const decision = decide(entry, {
+                    method: "item/commandExecution/requestApproval",
+                    cwd: entry.cwd,
+                    command,
+                });
+                if (decision.ok) {
+                    Bun.spawnSync(["/bin/zsh", "-c", command], { env: process.env });
+                }
+                expect(decision.ok).toBe(false);
+            }
+            expect(execute).not.toHaveBeenCalled();
+        } finally {
+            execute.mockRestore();
+        }
+    });
+
+    test("fable CLI trust rejects worker copies and symlinks while accepting approver-owned tools", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-cli-"));
+        const fake = join(dir, ".claude/work/babysit/plugins/genesis-tools/skills/fable-replace/scripts/cli.ts");
+        fs.mkdirSync(dirname(fake), { recursive: true });
+        fs.writeFileSync(fake, "throw new Error('worker-written script executed');\n");
+        const command = (cli: string) => "bun " + cli + " <<'FR'\n" + spec + "\nFR";
+        expect(allowedCommand(entry, command(trustedCli))).toBe(true);
+        const cached = join(
+            homedir(),
+            ".codex/plugins/cache/genesis-tools/genesis-tools/1.0.107/skills/fable-replace/scripts/cli.ts"
+        );
+        if (fs.existsSync(cached)) {
+            expect(allowedCommand(entry, command(cached))).toBe(true);
+        }
+        const symlink = join(
+            dir,
+            ".claude/work/babysit/link/plugins/genesis-tools/skills/fable-replace/scripts/cli.ts"
+        );
+        fs.mkdirSync(dirname(symlink), { recursive: true });
+        fs.symlinkSync(trustedCli, symlink);
+        const execute = spyOn(Bun, "spawnSync").mockImplementation(() => {
+            throw new Error("worker script reached execution");
+        });
+        try {
+            for (const cli of [fake, symlink]) {
+                const decision = decide(entry, {
+                    method: "item/commandExecution/requestApproval",
+                    cwd: entry.cwd,
+                    command: command(cli),
+                });
+                if (decision.ok) {
+                    Bun.spawnSync(["/bin/zsh", "-c", command(cli)], { env: process.env });
+                }
+                expect(decision.ok).toBe(false);
+            }
+            expect(execute).not.toHaveBeenCalled();
+        } finally {
+            execute.mockRestore();
+        }
     });
 });

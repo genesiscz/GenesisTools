@@ -14,8 +14,9 @@
  *
  * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session>
  */
-import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { strictShellWords } from "@app/codex/lib/bus-approval";
 import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -149,10 +150,15 @@ const READERS: Record<string, (args: string[]) => boolean> = {
             "shortlog",
             "describe",
         ].includes(args[0] ?? "") &&
+        (!["diff", "show", "log", "blame", "grep"].includes(args[0]) ||
+            args.slice(1, args.indexOf("--") < 0 ? undefined : args.indexOf("--")).includes("--no-textconv")) &&
+        (!["diff", "show", "log"].includes(args[0]) ||
+            args.slice(1, args.indexOf("--") < 0 ? undefined : args.indexOf("--")).includes("--no-ext-diff")) &&
         !args.some(
             (arg) =>
                 arg.startsWith("--output") ||
-                arg === "--ext-diff" ||
+                arg.startsWith("--ext-diff") ||
+                arg.startsWith("--textconv") ||
                 // `-O<cmd>` attached runs the command as git grep's pager (a #536 reviewer's probe, 2026-10-16).
                 arg.startsWith("-O") ||
                 arg.startsWith("--open-files-in-pager")
@@ -164,17 +170,68 @@ const READERS: Record<string, (args: string[]) => boolean> = {
     "./tools": toolsReader,
 };
 
-/** `tools github review` without its write verbs, and `tools ts skeleton|duplicates|refactors`, which only read. */
+/** Named review reads and their complete flag grammar; every other operation asks the lead. */
 function toolsReader(args: string[]): boolean {
     if (args[0] === "ts") {
         return ["skeleton", "duplicates", "refactors"].includes(args[1] ?? "") && !args.includes("--recommend");
     }
 
-    return (
-        args[0] === "github" &&
-        args[1] === "review" &&
-        !args.some((arg) => /^-?-?(respond|resolve|reply|unresolve)$/.test(arg))
-    );
+    if (args[0] !== "github" || args[1] !== "review") {
+        return false;
+    }
+
+    const [operation, ...rest] = args.slice(2);
+    if (operation === "sessions") {
+        return rest.length === 0;
+    }
+
+    const values = new Set(["-s", "--session"]);
+    const switches = new Set<string>();
+    if (operation === "expand") {
+        if (!/^t\d+(?:,t\d+)*$/.test(rest.shift() ?? "")) {
+            return false;
+        }
+        values.add("--repo");
+    } else if (operation !== "summary") {
+        if (!/^\d+$/.test(operation ?? "")) {
+            return false;
+        }
+        for (const value of ["--repo", "-a", "--author"]) {
+            values.add(value);
+        }
+        for (const option of [
+            "-u",
+            "--unresolved-only",
+            "-g",
+            "--group-by-file",
+            "-j",
+            "--json",
+            "--llm",
+            "-v",
+            "--verbose",
+            "--no-pr-comments",
+        ]) {
+            switches.add(option);
+        }
+    }
+
+    for (let index = 0; index < rest.length; index++) {
+        const [option, inline] = rest[index].split(/=(.*)/s, 2);
+        if (switches.has(option) && inline === undefined) {
+            continue;
+        }
+
+        if (!values.has(option)) {
+            return false;
+        }
+
+        const value = inline ?? rest[++index];
+        if (!value || value.startsWith("-")) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -294,38 +351,85 @@ export function testRunCommand(entry: RunEntry, words: string[]): boolean {
     });
 }
 
-const FABLE_CLI =
-    /(^|\/)(plugins\/genesis-tools|genesis-tools\/genesis-tools\/[\d.]+)\/skills\/fable-replace\/scripts\/cli\.ts$/;
+const MAIN_CLI = (() => {
+    const common = Bun.spawnSync(
+        [
+            "git",
+            "-C",
+            resolve(import.meta.dir, "../../../.."),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        { stdout: "pipe", stderr: "pipe" }
+    );
+    return common.exitCode === 0
+        ? resolve(dirname(common.stdout.toString().trim()), "plugins/genesis-tools/skills/fable-replace/scripts/cli.ts")
+        : null;
+})();
+const CACHE_ROOT = join(homedir(), ".codex/plugins/cache/genesis-tools/genesis-tools");
 const FABLE_ENV = new Set(["GENESIS_TOOLS_HOME", "TMPDIR", "FABLE_REPLACE_HOME"]);
 
-/**
- * The briefs' edit tool: `[ENV=<scratch> …] bun <…>/fable-replace/scripts/cli.ts <<'TAG' … TAG`, approved when every
- * `@@ <file>` it names is in the brief's scope (or the babysit scratch folder) and each environment value is a
- * `/tmp/cc/` scratch path. Every fixer edit woke the lead before (2026-10-16: the #537 and #533 fixers' first edits).
- */
-export function fableReplaceCommand(entry: RunEntry, command: string): boolean {
-    const match = /^((?:[A-Z_]+=\S+ )*)bun (\S+) <<'([A-Za-z0-9_]+)'\n([\s\S]*)\n\3\s*$/.exec(command);
-
-    if (!match || !FABLE_CLI.test(match[2])) {
+/** Compare canonical paths, never a worker-controlled suffix. Temp paths stay untrusted even through symlinks. */
+function trustedFableCli(entry: RunEntry, path: string): boolean {
+    const candidate = resolve(entry.cwd, path);
+    const forbidden = (value: string) =>
+        /^\/(?:private\/)?tmp(?:\/|$)/.test(value) || /\/\.claude\/work(?:\/|$)/.test(value);
+    if (forbidden(candidate)) {
         return false;
     }
 
-    const envOk = match[1]
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .every((pair) => {
-            const [key, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
-            // Plain path characters only: `TMPDIR=/tmp/cc/x$(touch${IFS}y)` passed a prefix check and the shell ran the
-            // substitution (2026-10-16, #536 round 3 review).
-            return FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\/[\w./-]+$/.test(value) && !value.includes("..");
-        });
-    const targets = match[4]
-        .split("\n")
-        .filter((line) => line.startsWith("@@"))
-        .map((line) => line.slice(2).trim());
+    try {
+        const canonical = realpathSync(candidate);
+        if (forbidden(canonical)) {
+            return false;
+        }
 
-    return envOk && targets.length > 0 && targets.every((path) => !/[`$]/.test(path) && inScope(entry, path));
+        if (MAIN_CLI && canonical === realpathSync(MAIN_CLI)) {
+            return true;
+        }
+
+        const cache = realpathSync(CACHE_ROOT);
+        const local = relative(cache, canonical);
+        return /^\d+(?:\.\d+)*\/skills\/fable-replace\/scripts\/cli\.ts$/.test(local);
+    } catch {
+        // Missing or unreadable tools cannot be trusted.
+        return false;
+    }
+}
+
+/** Only literal invocations of the trusted editor, with one closed quoted heredoc and scoped edits. */
+export function fableReplaceCommand(entry: RunEntry, command: string): boolean {
+    const match = /^([^\n]+) <<'([A-Za-z0-9_]+)'\n([\s\S]*)\n\2\n?$/.exec(command);
+    if (!match || match[3].split("\n").includes(match[2]) || match[3].trimStart().startsWith("[")) {
+        return false;
+    }
+
+    const prefix = strictShellWords(match[1]);
+    if (!prefix || prefix.length < 2 || prefix[prefix.length - 2] !== "bun") {
+        return false;
+    }
+
+    const cli = prefix.at(-1) ?? "";
+    if (!trustedFableCli(entry, cli)) {
+        return false;
+    }
+
+    const envOk = prefix.slice(0, -2).every((pair) => {
+        const equals = pair.indexOf("=");
+        const [key, value] = [pair.slice(0, equals), pair.slice(equals + 1)];
+        return (
+            equals > 0 && FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\/[\w./-]+$/.test(value) && !value.includes("..")
+        );
+    });
+    const lines = match[3].split("\n");
+    // Moves can also rewrite importers. All such operations require the lead, even with a scoped destination.
+    if (lines.some((line) => line.startsWith("<<<") && /(?:^|\s)(?:move|to=|imports=|renameTo=)/.test(line.slice(3)))) {
+        return false;
+    }
+
+    const targets = lines.filter((line) => line.startsWith("@@")).map((line) => line.slice(2).trim());
+    return envOk && targets.length > 0 && targets.every((path) => !/[\x60$]/.test(path) && inScope(entry, path));
 }
 
 /** Whether a command approval is one the brief allows. Pure, so it can be replayed on a past session's requests. */
