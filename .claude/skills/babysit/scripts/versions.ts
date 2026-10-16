@@ -130,31 +130,44 @@ export function resolveVersionConflicts(git: GitRun, conflicted: string[]): bool
     if (conflicted.length === 0 || conflicted.some((file) => !VERSION_FILES.has(file))) {
         return false;
     }
-    const root = git(["rev-parse", "--show-toplevel"]);
-    if (root.code !== 0) {
+
+    const top = git(["rev-parse", "--show-toplevel"]);
+
+    if (top.code !== 0) {
         return false;
     }
+
+    const root = top.out.trim();
     const resolved = new Map<string, string>();
+
     for (const file of conflicted) {
-        const text = resolveVersionText(readFileSync(join(root.out.trim(), file), "utf8"));
+        const text = resolveVersionText(readFileSync(join(root, file), "utf8"));
+
         if (text === null) {
             return false;
         }
+
         resolved.set(file, text);
     }
+
     const problems = resolutionProblems(conflicted, (file) => resolved.get(file) ?? "");
+
     if (problems.length > 0) {
         for (const problem of problems) {
             console.error(`✖ ${problem}`);
         }
+
         return false;
     }
+
     for (const [file, text] of resolved) {
-        writeFileSync(join(root.out.trim(), file), text);
+        writeFileSync(join(root, file), text);
+
         if (git(["add", "--", file]).code !== 0) {
             return false;
         }
     }
+
     return true;
 }
 
