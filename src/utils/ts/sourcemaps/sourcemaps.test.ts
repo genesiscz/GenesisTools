@@ -17,6 +17,7 @@ import { deflateRawSync } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
 import { unzip } from "@genesiscz/utils/fs/unzip";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { alignOffset, normalizeIdentifiers } from "./align.ts";
 import { buildAtCommit, managedWorktree, releaseBuildWorktrees, removeBuildWorktree } from "./build.ts";
 import { type PruneResult, SourcemapCache } from "./cache.ts";
@@ -504,7 +505,7 @@ describe("buildAtCommit", () => {
 
         const released = await releaseBuildWorktrees({ stop: true });
         expect(childPid).toBeGreaterThan(0);
-        expect(() => process.kill(childPid, 0)).toThrow();
+        expect(isProcessAlive(childPid)).toBe(false);
         expect(String(await failed)).toContain("build command exited");
         expect(released.map((removal) => removal.outcome)).toEqual(["removed"]);
         expect(existsSync(managedWorktree(cache))).toBe(false);

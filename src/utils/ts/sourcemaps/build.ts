@@ -164,6 +164,7 @@ async function prepareWorktree(options: { repo: string; worktree: string; commit
 async function stopBuild(proc: Subprocess): Promise<void> {
     const signalGroup = (signal: NodeJS.Signals): void => {
         try {
+            // pid-verified: proc is this process's own Bun.spawn child, started detached, so -pid is the group it leads
             process.kill(-proc.pid, signal);
         } catch (error) {
             if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
