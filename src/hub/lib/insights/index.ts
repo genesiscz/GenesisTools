@@ -29,7 +29,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { readProcsReport } from "../procs/sources";
+import { openAgentSessionIds } from "../procs/sources";
 import { composeHandoff, type HandoffDraft, type HandoffMeta, type HandoffRange } from "./handoff";
 import { readStuckThresholds, stuckVerdict } from "./stuck";
 import type { SessionInsights, SessionStuck, StuckThresholds } from "./types";
@@ -287,12 +287,6 @@ export interface StuckOptions {
     liveSessions?: () => Promise<Set<string>>;
 }
 
-/** The sessions the process pane ties to a running agent (one `ps`), for the stuck scan's discovery. */
-async function liveAgentSessions(): Promise<Set<string>> {
-    const report = await readProcsReport();
-    return new Set(report.groups.flatMap((group) => (group.session ? [group.session.sessionId] : [])));
-}
-
 /** Session and error pairs this process has already warned about. */
 const unreadableWarned = new Set<string>();
 
@@ -409,7 +403,7 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
     let live: Set<string> | null = null;
 
     try {
-        live = await (options.liveSessions ?? liveAgentSessions)();
+        live = await (options.liveSessions ?? openAgentSessionIds)();
     } catch (err) {
         log.warn({ err }, "stuck: the process table could not be read; running is unknown");
     }

@@ -67,7 +67,7 @@ function pushRows(table: ReturnType<typeof createBoxTable>, nodes: AgentNode[], 
 
 function renderParent(parent: AgentParent): void {
     const title = truncateDisplay(parent.title ?? "(untitled)", 60);
-    const live = parent.live ? pc.green("● live") : pc.dim("○");
+    const live = parent.live ? pc.green("● live") : parent.open ? pc.cyan("● open") : pc.dim("○");
     out.println(
         `${live} ${pc.bold(title)} ${pc.dim(`${parent.sessionId.slice(0, 8)} · ${parent.project ?? ""} · ${ago(parent.lastAt)}`)}`
     );

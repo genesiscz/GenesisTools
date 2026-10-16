@@ -622,7 +622,12 @@ test("hub roster forwards diagnostic and intentional-refresh modes to every cata
             rows.mockClear();
             claude.mockClear();
             codex.mockClear();
-            await hubAgents({ hours: 168, refresh, teamsRoot: mkdtempSync(join(tmpdir(), "roster-refresh-")) });
+            await hubAgents({
+                hours: 168,
+                refresh,
+                teamsRoot: mkdtempSync(join(tmpdir(), "roster-refresh-")),
+                openSessions: async () => new Set(),
+            });
             expect(rows).toHaveBeenCalledTimes(1);
             expect(claude).toHaveBeenCalledTimes(1);
             expect(codex).toHaveBeenCalledTimes(1);
@@ -636,4 +641,71 @@ test("hub roster forwards diagnostic and intentional-refresh modes to every cata
         codex.mockRestore();
         workers.mockRestore();
     }
+});
+
+describe("a session an open agent process holds", () => {
+    const OPEN_SESSION = "0pen0000-aaaa-bbbb-cccc-000000000001";
+    const QUIET_SESSION = "0e1d0000-aaaa-bbbb-cccc-000000000002";
+
+    // Regression test: a session waiting for its user writes nothing, so its transcript clock called it "not live"
+    // and the Agents tab said "No live agent sessions" for two sessions that were open in terminals (2026-10-16).
+    async function treeWith(openSessions: () => Promise<Set<string>>) {
+        const dir = mkdtempSync(join(tmpdir(), "hub-agents-open-"));
+        const longAgo = Date.now() - 3 * HOUR;
+        const rows = [OPEN_SESSION, QUIET_SESSION].map((sessionId) => {
+            const filePath = join(dir, `${sessionId}.jsonl`);
+            write(filePath, lines(prompt("2026-03-10T09:00:00.000Z", "hello")), longAgo);
+
+            return {
+                provider: "claude" as const,
+                sessionId,
+                title: sessionId.slice(0, 4),
+                cwd: dir,
+                cwdShort: dir,
+                project: "fixture",
+                mtime: longAgo,
+                model: null,
+                account: null,
+                filePath,
+            };
+        });
+        const listing = spyOn(sessionRows, "listAgentSessionRows").mockResolvedValue(rows);
+        const claude = spyOn(history, "getSessionListing").mockResolvedValue({
+            sessions: [],
+            total: 0,
+            subagents: 0,
+            indexed: 0,
+            staleRemoved: 0,
+            reindexed: false,
+            projectCount: 0,
+            scope: "fixture",
+        });
+        const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
+        const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
+
+        try {
+            return await hubAgents({ hours: 24, refresh: false, teamsRoot: dir, openSessions });
+        } finally {
+            listing.mockRestore();
+            claude.mockRestore();
+            codex.mockRestore();
+            workers.mockRestore();
+        }
+    }
+
+    test("is marked open although its transcript is old, and a quiet one is not", async () => {
+        const tree = await treeWith(async () => new Set([OPEN_SESSION]));
+        const byId = new Map(tree.parents.map((parent) => [parent.sessionId, parent]));
+
+        expect(byId.get(OPEN_SESSION)).toMatchObject({ live: false, open: true });
+        expect(byId.get(QUIET_SESSION)).toMatchObject({ live: false, open: false });
+    });
+
+    test("a process list that fails marks nothing open and still answers", async () => {
+        const tree = await treeWith(async () => {
+            throw new Error("ps timed out");
+        });
+
+        expect(tree.parents.map((parent) => parent.open)).toEqual([false, false]);
+    });
 });

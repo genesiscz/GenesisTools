@@ -11,6 +11,7 @@ import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cach
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { openAgentSessionIds } from "../procs/sources";
 import { attachCodexAgents, buildCodexParent, type CodexAgentRecord, recentCodexAgentRecords } from "./codex-agents";
 import { readParent, startedAtOf } from "./parent";
 import { type ParentRow, sortNodes, sortParents, withoutFullPrompts } from "./tree";
@@ -38,6 +39,35 @@ export interface HubAgentsOptions {
     teamsRoot?: string;
     /** Spawn prompt characters read per agent; the list keeps listSubagents' default. */
     promptChars?: number;
+    /** Session ids a live agent process holds (tests pass their own; the default reads the process table). */
+    openSessions?: () => Promise<Set<string>>;
+}
+
+/** The process table changes slowly next to the hub's refresh bursts, so a burst shares one read. */
+const OPEN_SESSIONS_REUSE_MS = 3_000;
+let openSessionsMemo: { at: number; ids: Set<string> } | undefined;
+
+async function recentOpenSessionIds(): Promise<Set<string>> {
+    const now = Date.now();
+
+    if (openSessionsMemo && now - openSessionsMemo.at < OPEN_SESSIONS_REUSE_MS) {
+        return openSessionsMemo.ids;
+    }
+
+    const ids = await openAgentSessionIds();
+    openSessionsMemo = { at: now, ids };
+
+    return ids;
+}
+
+/** A failed process listing leaves every parent to its transcript clock: nothing is marked open. */
+async function readOpenSessions(options: HubAgentsOptions): Promise<Set<string>> {
+    try {
+        return await (options.openSessions ?? recentOpenSessionIds)();
+    } catch (error) {
+        logger.warn({ error }, "[hub agents] the process list is unavailable; no session is marked open");
+        return new Set();
+    }
 }
 
 /**
@@ -240,6 +270,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     const limit = options.limit ?? DEFAULT_AGENTS_LIMIT;
     const root = options.teamsRoot ?? teamsRoot();
     const since = now - hours * 3_600_000;
+    const openSessions = readOpenSessions(options);
 
     const [rows, workers, codexRecords] = await Promise.all([
         prof.measureAsync("parents", () =>
@@ -315,6 +346,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         }
     }
 
+    const open = await openSessions;
     const parents = sortParents(
         prof.measure("tree", () =>
             parentRows.map((row) =>
@@ -326,7 +358,9 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
                       })
             )
         )
-    ).slice(0, limit);
+    )
+        .map((parent) => ({ ...parent, open: open.has(parent.sessionId) }))
+        .slice(0, limit);
     // From the parents returned, after the limit: a worker whose parent was cut is an orphan, never dropped.
     const attached = new Set(parents.map((parent) => parent.sessionId));
     const orphans = options.session

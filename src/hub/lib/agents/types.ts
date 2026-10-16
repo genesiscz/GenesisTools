@@ -64,6 +64,11 @@ export interface AgentParent {
     lastAt: string;
     /** Written in the last `LIVE_PARENT_MS`, or has a running child. */
     live: boolean;
+    /**
+     * A live agent process holds this session (an open terminal tab or window), however long ago its transcript was
+     * written. `live` cannot see an open session that waits for its user.
+     */
+    open?: boolean;
     children: AgentNode[];
 }
 

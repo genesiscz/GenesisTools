@@ -83,6 +83,17 @@ export const realProcsSources: ProcsSources = {
  * polled session listing, `launchctl list` only when launchd adopted a candidate, and `top` only with
  * `energy`.
  */
+/**
+ * The session ids a live agent process holds, from one process-table read: an open terminal tab or app window,
+ * however long ago its transcript was written. A session waiting for its user writes nothing, so a transcript
+ * clock alone calls an open, idle session "not live" (the hub's Agents tab said "No live agent sessions" for two
+ * open ones on 2026-10-16).
+ */
+export async function openAgentSessionIds(sources?: ProcsSources): Promise<Set<string>> {
+    const report = await readProcsReport(sources ? { sources } : {});
+    return new Set(report.groups.flatMap((group) => (group.session ? [group.session.sessionId] : [])));
+}
+
 export async function readProcsReport({
     energy = false,
     sources = realProcsSources,
