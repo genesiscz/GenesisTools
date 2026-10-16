@@ -240,6 +240,31 @@ describe("tools browser-router open", () => {
     });
 });
 
+// A Safari web app hands every off-site link (its sign-in page) to the default browser, so the login cookie landed in
+// Brave and the Grok web app stayed signed out (2026-10-16). A route that opens the link in the app itself fixes it.
+describe("route --browser", () => {
+    test("saves a forward route to that app, and a click on the link opens it there", () => {
+        const app = "com.apple.Safari.WebApp.EXAMPLE";
+        const rule = routeFromFlags("https://accounts\\.example\\.test/sign-in", { browser: app });
+
+        expect(rule.action).toEqual({ type: "forward", browser: app });
+        const decision = route("https://accounts.example.test/sign-in?next=app", {
+            ...defaultRouterConfig(),
+            routes: [rule],
+        });
+        expect(decision.kind).toBe("forward");
+        expect(decision.kind === "forward" ? decision.openArguments : []).toEqual(
+            expect.arrayContaining(["-b", app, "https://accounts.example.test/sign-in?next=app"])
+        );
+    });
+
+    test("does not combine with --run or --tool", () => {
+        expect(() => routeFromFlags("https://x.example.test/", { browser: "Safari", run: "/usr/bin/true" })).toThrow(
+            "--browser opens the link in an app"
+        );
+    });
+});
+
 describe("routeFromFlags toast", () => {
     test("--no-toast (commander sets toast: false) saves toast: false", () => {
         const flags = { run: "/usr/bin/true", approval: "allow" };

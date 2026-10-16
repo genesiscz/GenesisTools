@@ -467,6 +467,10 @@ program
     .argument("<pattern>", "Regular expression. Anchors are added when you omit them.")
     .option("--name <text>", "Headline on this route's card, e.g. 'Open mail'. Default: the command in words.")
     .option("--route-to <template>", "Rewrite to this URL. $1 is the first capture, $$ is a dollar.")
+    .option(
+        "--browser <app>",
+        "Open the link in this app (name, bundle id or path), e.g. a Safari web app that must sign in itself."
+    )
     .option("--run <program>", "Run this program. Arguments come from --arg. Not a shell.")
     .option("--tool <name>", "Record a GenesisTools tool. The helper does not run it yet.")
     .option(

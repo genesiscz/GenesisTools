@@ -239,6 +239,21 @@ export function routeFromFlags(pattern: string, flags: RouteFlags): RouteRule {
         throw new Error("pass only one of --route-to, --tool, or --run");
     }
 
+    // An app of its own: a sign-in link from a Safari web app ("Add to Dock") must open in that app, or the
+    // login cookie lands in the default browser and the app stays signed out (Grok, 2026-10-16).
+    if (flags.browser) {
+        if (flags.tool || flags.run) {
+            throw new Error("--browser opens the link in an app; it does not combine with --tool or --run");
+        }
+
+        const action: RouteAction = {
+            type: "forward",
+            browser: flags.browser,
+            ...(flags.routeTo ? { to: bind(flags.routeTo) } : {}),
+        };
+        return { pattern: storedPattern, action, ...named, ...toast };
+    }
+
     if (flags.routeTo) {
         return { pattern: storedPattern, action: { type: "open", to: bind(flags.routeTo) }, ...named, ...toast };
     }
@@ -266,7 +281,7 @@ export function routeFromFlags(pattern: string, flags: RouteFlags): RouteRule {
         return { pattern: storedPattern, action, ...named, ...toast };
     }
 
-    throw new Error("pass --route-to <template>, --run <program>, or --tool <name>");
+    throw new Error("pass --route-to <template>, --browser <app>, --run <program>, or --tool <name>");
 }
 
 function toastFromFlags(flags: RouteFlags): { toast?: ToastSettings } {
@@ -313,6 +328,8 @@ function readApprovalFlag(value: string | undefined): "ask" | "allow" {
 export interface RouteFlags {
     name?: string;
     routeTo?: string;
+    /** An app name, bundle id or path: the link opens there (a `forward` route). */
+    browser?: string;
     tool?: string;
     run?: string;
     arg?: string[];
